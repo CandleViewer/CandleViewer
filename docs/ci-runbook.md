@@ -34,13 +34,17 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
-├─ _job-e2e.yml   (e2e filter)       → Playwright web + axe-core        (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
+├─ _job-e2e.yml   (e2e filter)       → Playwright web (4 shards), e2e-staging (@demo-rest-only),
+│                                      a11y-axe smoke (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
+├─ _job-a11y.yml  (e2e filter)       → the a11y lane: tools/a11y/gates.py over axe, keyboard, trees,
+│                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, npm-audit,
 │                                      license-scan)                    (CI-SEC-001..005)
-├─ _job-coverage.yml (always)        → per-package threshold + ratchet  (CI-COV-001..003)
-├─ _job-engine-bench.yml (engine filter) → GPU benchmark vs baseline    (CI-BEN-001, stub pending E03-T14)
+├─ _job-coverage.yml (js/py filters) → per-package threshold + ratchet  (CI-COV-001..003)
+├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
+│                                      (CI-BEN-001, stub pending E03-T14)
 └─ ci-required resolver (always)     → final merge gate                 (CI-GATE-001/002)
 
 merge to main (.github/workflows/main.yml)
@@ -54,15 +58,25 @@ merge to main / PRs touching CHANGELOG.md or the changelog tooling (.github/work
 on demand / release branch (.github/workflows/deploy-staging.yml)
 └─ deploy-staging (Environment "staging", required reviewers)          → CI-DEP-001..004, see §8
 
-scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml)
+scheduled (.github/workflows/governance*.yml, coverage-ratchet.yml, cold-cache.yml, a11y-nightly.yml)
 ├─ governance             → bypass-register check                        (CI-PROT-004)
 ├─ governance-drift       → break-glass / register staleness detection   (CI-PROT-004)
 ├─ coverage-ratchet       → baseline-raise PR from merged coverage runs
-└─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
+├─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
+└─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
 
 release tag (.github/workflows/release.yml)
 └─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
 ```
+
+**Dependency-only PRs (#3182).** A PR that changes only `pnpm-lock.yaml`, the root `package.json`
+or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts the `js` lane and,
+through it, `security` and `coverage-thresholds`, but not `e2e` or `a11y`. The manifests stay out of
+the `e2e` filter on purpose: they would put seven more jobs (the four `e2e-web` shards,
+`e2e-staging`, `a11y-axe` and `a11y`) on every dependency bump. The accepted control is the nightly
+`a11y-nightly.yml` sweep on `main`, a named artefact of the release checklist
+(`docs/plan/07-release-and-prr.md` §4.1). The Playwright e2e suite has no scheduled run, so a bump
+that breaks it shows on the next PR that the `e2e` filter starts.
 
 ## 3. Reading the `ci-required` resolver summary
 

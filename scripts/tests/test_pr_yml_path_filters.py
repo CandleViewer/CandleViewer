@@ -28,11 +28,20 @@ job's workflow and its meta-tests), so a PR that changed only those skipped the 
 #3104: the `py` filter named only `tools/statechart/nightly_gate.py`, so a PR that changed only a
 script a `py`-filtered `gates` step runs from `tools/statechart/` (event coverage, the suite budget,
 the machine-hash lock, the xstate-contract script) skipped the gate built to check it.
+
+#3182: a lane must start on its own inputs. The e2e job's workflow and guards, the scripts the
+`statechart-lint` and `pin-check` steps run, and the workflows and scripts of the js, contract,
+migrations, engine-bench and coverage-thresholds jobs were each in another lane's filter or none;
+the js filter also missed the token formats packages/ui imports, and py the a11y gate logic and the
+fixture corpus. The run lines are re-derived here, so a new script needs a filter entry. Every lane's
+`if:` and resolver entry are pinned to the same filters, read from `steps.filter`.
 """
 
 from __future__ import annotations
 
+import functools
 import json
+import posixpath
 import re
 from fnmatch import fnmatch
 from pathlib import Path
@@ -65,6 +74,36 @@ A11Y_PATHS = (
     ".github/workflows/_job-a11y.yml",
     "scripts/tests/test_a11y_gates.py",
 )
+#: The e2e job's own inputs (#3182): its workflow, then the two guards its steps run.
+E2E_PATHS = (
+    ".github/workflows/_job-e2e.yml",
+    "tools/ci/check_demo_rest_only_tag.mjs",
+    "tools/ci/check_built_exports.mjs",
+)
+TOKEN_FORMATS = "tools/style-dictionary/**"
+#: Read beyond services/api (#3182): the a11y gate logic, which the security lane's Semgrep scan
+#: reads like scripts/**/*.py, and the corpora and account pack the backend suites and cvdev load.
+PY_INPUTS = ("tools/a11y/**/*.py", "packages/fixtures/**")
+FILTER_NAMES: tuple[str, ...] = ("js", "py", "engine", "protocol", "infra", "image", "docs")
+FILTER_NAMES += ("e2e", "migrations", "rules", "semgrep")
+#: Lane -> the filters that make it applicable: its `if:` and the resolver read the same (#3182).
+LANE_FILTERS: dict[str, frozenset[str]] = {
+    **dict.fromkeys(["changed-paths", "gates", "gen", "spike-containment"], frozenset()),
+    **dict.fromkeys(["commitlint", "changelog-fragment", "licence-header"], frozenset()),
+    "docs-link-check": frozenset(),
+    "pin-check": frozenset({"infra"}),
+    **dict.fromkeys(["py", "architecture", "integration", "statechart-lint"], frozenset({"py"})),
+    **dict.fromkeys(["event-coverage", "xstate-pin-attestation"], frozenset({"py"})),
+    **dict.fromkeys(["machine-hash-lock", "xstate-contract"], frozenset({"py"})),
+    "js": frozenset({"js"}),
+    "rule-roundtrip": frozenset({"rules"}),
+    "contract": frozenset({"protocol"}),
+    "migrations": frozenset({"migrations"}),
+    "security": frozenset({"js", "py", "infra", "semgrep"}),
+    **dict.fromkeys(["e2e", "a11y"], frozenset({"e2e"})),
+    "engine-bench": frozenset({"engine", "protocol"}),
+    "coverage-thresholds": frozenset({"js", "py"}),
+}
 
 
 def _jobs() -> dict[str, Any]:
@@ -77,14 +116,17 @@ def _single(matches: list[dict[str, Any]], what: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _filters() -> dict[str, list[str]]:
-    """The `dorny/paths-filter` rules of the `changed-paths` job (its `filters:` block is YAML)."""
+def _filter_step() -> dict[str, Any]:
     steps = _jobs()["changed-paths"]["steps"]
-    step = _single(
+    return _single(
         [s for s in steps if str(s.get("uses", "")).startswith("dorny/paths-filter@")],
         "`dorny/paths-filter` step in `changed-paths`",
     )
-    filters: dict[str, list[str]] = yaml.safe_load(step["with"]["filters"])
+
+
+def _filters() -> dict[str, list[str]]:
+    """The `dorny/paths-filter` rules of the `changed-paths` job (its `filters:` block is YAML)."""
+    filters: dict[str, list[str]] = yaml.safe_load(_filter_step()["with"]["filters"])
     return filters
 
 
@@ -108,6 +150,29 @@ def _outputs_in(condition: str) -> set[str]:
     return names
 
 
+def _if_filters(condition: object) -> set[str]:
+    """The filters a job or `gates` step `if:` ORs together after `always() &&`/`!cancelled() &&`.
+
+    No `if:`, or nothing past the prefix, is an always-on lane: no filter.
+    """
+    text = str(condition or "true")
+    wrapped = re.fullmatch(r"\$\{\{ (.*) \}\}", text, re.DOTALL)
+    body = wrapped.group(1) if wrapped else text
+    rest = re.sub(r"^(?:always\(\)|!cancelled\(\))(?: && |$)", "", body)
+    if rest in ("", "true"):
+        return set()
+    return _outputs_in("${{ " + rest.removeprefix("(").removesuffix(")") + " }}")
+
+
+def _lane_if(lane: str) -> object:
+    """The `if:` that starts lane `lane`: its job's, or for a gate its `gates` step's."""
+    jobs = _jobs()
+    if lane in jobs:
+        return jobs[lane].get("if")
+    steps: list[dict[str, Any]] = jobs["gates"]["steps"]
+    return _single([s for s in steps if s.get("id") == lane], f"`gates` step `{lane}`")["if"]
+
+
 def _resolver_step() -> dict[str, Any]:
     steps: list[dict[str, Any]] = _jobs()["ci-required"]["steps"]
     return _single([s for s in steps if s.get("name") == RESOLVER_STEP], f"`{RESOLVER_STEP}` step")
@@ -122,18 +187,22 @@ def _resolver_security_filters() -> set[str]:
 
 
 def _resolver_lane_filters(name: str) -> set[str]:
-    """The filters the resolver ORs together to decide whether lane `name` (unquoted key) applied.
+    """The filters the resolver ORs together to decide whether lane `name` applied (`true`: none).
 
-    `//` comments are stripped first, so a name that only a comment mentions does not count. Then
-    each `||` term must be exactly `isTrue(process.env.FILTER_<NAME>)`, so an `&&` or a `!` fails.
+    The lane must read its result from `RESULT_<NAME>` (`-` as `_`). `//` comments are stripped
+    first, so a name that only a comment mentions does not count. Then each `||` term must be
+    exactly `isTrue(process.env.FILTER_<NAME>)`, so an `&&` or a `!` fails.
     """
+    variable = "RESULT_" + name.upper().replace("-", "_")
     lane = re.search(
-        rf"\b{re.escape(name)}:\s*\{{\s*applicable:(.*?)\bresult:\s*process\.env\.RESULT_{name.upper()}\b",
+        rf'(?<![\w-])"?{re.escape(name)}"?:\s*\{{\s*applicable:(.*?)\bresult:\s*process\.env\.{variable}\b',
         _resolver_step()["run"],
         re.DOTALL,
     )
-    assert lane, f"the ci-required resolver script has no `{name}` lane"
-    expression = re.sub(r"//[^\n]*", "", lane.group(1)).strip().removesuffix(",")
+    assert lane, f"the ci-required resolver script has no `{name}` lane reading {variable}"
+    expression = re.sub(r"//[^\n]*", "", lane.group(1)).strip().removesuffix(",").strip()
+    if expression == "true":
+        return set()
     names: set[str] = set()
     for term in expression.split("||"):
         match = _RESOLVER_TERM.fullmatch(term.strip())
@@ -154,10 +223,17 @@ def test_pr_yml_semgrep_filter_paths_exist_in_the_repo() -> None:
         assert any(ROOT.glob(pattern)), pattern
 
 
-@pytest.mark.parametrize("name", ["semgrep", "e2e"])
+@pytest.mark.parametrize("name", FILTER_NAMES)
 def test_pr_yml_changed_paths_exports_each_filter_as_its_own_output(name: str) -> None:
     outputs = _jobs()["changed-paths"]["outputs"]
     assert outputs.get(name) == "${{ steps.filter.outputs." + name + " }}"
+
+
+def test_pr_yml_changed_paths_exports_every_filter_of_the_step_id_its_outputs_read() -> None:
+    # Renaming only the step id would leave every `steps.filter.outputs.*` empty: each filtered lane
+    # would skip and the resolver would count it as not applicable, so ci-required passes (#3182).
+    assert _filter_step()["id"] == "filter"
+    assert set(_jobs()["changed-paths"]["outputs"]) == set(_filters()) == set(FILTER_NAMES)
 
 
 def test_pr_yml_security_job_runs_when_only_semgrep_paths_change() -> None:
@@ -170,14 +246,29 @@ def test_pr_yml_resolver_security_lane_names_the_same_filters_as_the_job() -> No
     assert _resolver_security_filters() == _outputs_in(_jobs()["security"]["if"])
 
 
-@pytest.mark.parametrize("lane", ["security", "a11y", "js"])
+@pytest.mark.parametrize("lane", sorted(LANE_FILTERS))
 def test_pr_yml_resolver_reads_each_lane_filter_from_its_changed_paths_output(lane: str) -> None:
     env = _resolver_step()["env"]
-    for name in sorted(_resolver_lane_filters(lane)):
+    filters = _resolver_lane_filters(lane)
+    assert filters == LANE_FILTERS[lane]
+    for name in sorted(filters):
         expected = "${{ needs.changed-paths.outputs." + name + " }}"
         assert env.get("FILTER_" + name.upper()) == expected, name
-    # The lane is judged on its own job's result, never another job's.
-    assert env.get("RESULT_" + lane.upper()) == "${{ needs." + lane + ".result }}"
+    # The lane is judged on its own job's result (a gate: its `gates` step's), never another's.
+    own = f"gates.outputs.{lane}" if lane in _jobs()["gates"]["outputs"] else f"{lane}.result"
+    assert env.get("RESULT_" + lane.upper().replace("-", "_")) == "${{ needs." + own + " }}"
+
+
+@pytest.mark.parametrize("lane", sorted(LANE_FILTERS))
+def test_pr_yml_each_lane_starts_on_the_filters_the_resolver_judges_it_on(lane: str) -> None:
+    # Otherwise a lane runs while "not applicable" (a red run leaves ci-required green) or skips
+    # while applicable (CI-GATE-002).
+    assert _if_filters(_lane_if(lane)) == LANE_FILTERS[lane]
+
+
+def test_pr_yml_lane_filter_table_names_every_resolver_lane() -> None:
+    lane = re.compile(r'^\s*"?([\w-]+)"?:\s*\{\s*applicable:', re.MULTILINE)
+    assert set(lane.findall(_resolver_step()["run"])) == set(LANE_FILTERS)
 
 
 def test_pr_yml_py_filter_covers_the_xstate_nightly_workflow() -> None:
@@ -244,3 +335,164 @@ def test_pr_yml_js_job_and_resolver_lane_read_the_same_filters() -> None:
     job = _outputs_in(_jobs()["js"]["if"])
     assert "js" in job
     assert _resolver_lane_filters("js") == job
+
+
+def test_pr_yml_e2e_filter_covers_the_e2e_jobs_own_inputs() -> None:
+    # A PR that edits only the e2e job or a guard its steps run must start the lane (#3182).
+    assert _jobs()["e2e"]["uses"] == "./" + E2E_PATHS[0]
+    callee = yaml.safe_load((ROOT / E2E_PATHS[0]).read_text(encoding="utf-8"))
+    runs = [str(s.get("run", "")) for job in callee["jobs"].values() for s in job["steps"]]
+    for script in E2E_PATHS[1:]:
+        assert (ROOT / script).is_file() and any(f"node {script}" in run for run in runs), script
+    covered = set(_filters()["e2e"])
+    assert set(E2E_PATHS) <= covered, sorted(set(E2E_PATHS) - covered)
+
+
+def test_pr_yml_js_filter_covers_the_token_formats_packages_ui_imports() -> None:
+    # packages/ui's token build and its token-build tests import tools/style-dictionary/formats/,
+    # so a formats-only PR must start the lane and, through js, security (#3182).
+    sources = [*ROOT.glob("packages/ui/scripts/*.mjs"), *ROOT.glob("packages/ui/test/**/*.ts")]
+    assert any("../tools/style-dictionary/" in p.read_text(encoding="utf-8") for p in sources)
+    assert TOKEN_FORMATS in _filters()["js"] and any(ROOT.glob(TOKEN_FORMATS))
+
+
+def test_pr_yml_py_filter_covers_the_a11y_gate_logic_and_the_fixture_corpus() -> None:
+    # The security lane's Semgrep scan reads tools/a11y's Python; tests/_corpus.py and cvdev's
+    # account pack read packages/fixtures, so a fixtures-only PR must run the backend suites.
+    py = _filters()["py"]
+    for pattern in PY_INPUTS:
+        assert pattern in py and any(ROOT.glob(pattern)), pattern
+    corpus = (ROOT / "services" / "api" / "tests" / "_corpus.py").read_text(encoding="utf-8")
+    assert '/ "packages" / "fixtures" /' in corpus
+
+
+# --- What each lane's steps run (#3182) -----------------------------------------------------------
+
+_CALL = re.compile(r"\b(?:python3?|node|bash|sh)\s+(?:-[\w-]+\s+)*([\w./-]+\.(?:py|m?js|sh))\b")
+_MODULE = re.compile(r"\bpython3?\s+-m\s+((?:tools|scripts)(?:\.\w+)+)")
+_MAKE = re.compile(r"(?<![\w-])make\s+([\w-]+)")
+_PY_IMPORT = re.compile(
+    r"^\s*(?:from\s+((?:tools|scripts)(?:\.\w+)+)\s+import\s+([\w, ]+)"
+    r"|import\s+((?:tools|scripts)(?:\.\w+)+))",
+    re.MULTILINE,
+)
+_JS_IMPORT = re.compile(r"""\bfrom\s+["'](\.{1,2}/[^"']+)["']""")
+_GLOB = {r"\*\*/": "(?:.*/)?", r"\*\*": ".*", r"\*": "[^/]*", r"\?": "[^/]"}
+
+
+def _matches(path: str, rule: str) -> bool:
+    """Whether `dorny/paths-filter` (picomatch, `dot: true`) matches `path` to `rule`, for the
+    glob syntax pr.yml uses: `**/`, `**`, `*` and `?`."""
+    regex = re.sub(r"\\\*\\\*/|\\\*\\\*|\\\*|\\\?", lambda m: _GLOB[m.group(0)], re.escape(rule))
+    return re.fullmatch(regex, path) is not None
+
+
+def _repo_file(cwd: str, path: str, *, from_root: bool = True) -> str | None:
+    """`path` as run from `cwd`, else (a script that `cd`s first) from the repo root, if a file."""
+    candidates = [posixpath.normpath(posixpath.join(cwd, path))]
+    candidates += [re.sub(r"^(?:\.\.?/)+", "", path)] if from_root else []
+    for candidate in candidates:
+        if not candidate.startswith("../") and (ROOT / candidate).is_file():
+            return candidate
+    return None
+
+
+def _recipe(target: str) -> str:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    found = re.search(rf"^{re.escape(target)}:.*\n((?:\t.*(?:\n|$))*)", makefile, re.MULTILINE)
+    assert found, f"no Makefile target {target!r}"
+    return found.group(1)
+
+
+def _imports(file: str, source: str) -> list[str | None]:
+    """The repo modules `source` imports: tools/ or scripts/ ones from Python, relative ones
+    from JS."""
+    if not file.endswith(".py"):
+        folder = posixpath.dirname(file)
+        return [_repo_file(folder, m, from_root=False) for m in _JS_IMPORT.findall(source)]
+    paths: list[str | None] = []
+    for module, names, plain in _PY_IMPORT.findall(source):
+        base = (module or plain).replace(".", "/")
+        found = [base + ".py", base + "/__init__.py"]
+        found += [f"{base}/{name.strip()}.py" for name in names.split(",") if name.strip()]
+        paths += [path for path in found if (ROOT / path).is_file()]
+    return paths
+
+
+def _executed(cwd: str, run: str) -> set[str]:
+    """Repo files a `run:` executes: the scripts it calls, also through `make` and `bash`, and the
+    modules those import. Shell comments are skipped."""
+    files: set[str] = set()
+    shells = [(cwd, run)]
+    while shells:
+        where, text = shells.pop()
+        text = re.sub(r"(?m)(?:^|\s)#.*$", "", text)
+        for target in _MAKE.findall(text):
+            files.add("Makefile")
+            shells.append((".", _recipe(target)))
+        modules = [module.replace(".", "/") + ".py" for module in _MODULE.findall(text)]
+        pending = [_repo_file(where, call) for call in _CALL.findall(text) + modules]
+        while pending:
+            file = pending.pop()
+            if file is None or file in files:
+                continue
+            files.add(file)
+            source = (ROOT / file).read_text(encoding="utf-8")
+            if file.endswith(".sh"):
+                shells.append((".", source))
+            else:
+                pending += _imports(file, source)
+    return files
+
+
+@functools.cache
+def _lane_runs() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    """Lane -> (the filters its `if:` reads, the repo files its steps run). A `gates` step is its
+    own lane; a job lane runs its reusable workflow (an input too), every inner job included."""
+    lanes: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
+    for name, job in _jobs().items():
+        steps = [(".", step) for step in job.get("steps") or []]
+        files: set[str] = set()
+        if "uses" in job:
+            files.add(job["uses"].removeprefix("./"))
+            callee = yaml.safe_load((ROOT / job["uses"]).read_text(encoding="utf-8"))
+            for inner in callee["jobs"].values():
+                where = ((inner.get("defaults") or {}).get("run") or {}).get("working-directory")
+                steps += [(where or ".", step) for step in inner.get("steps") or []]
+        for where, step in steps:
+            if "run" in step:
+                ran = _executed(step.get("working-directory", where), step["run"])
+                if name == "gates" and "id" in step:
+                    lanes[step["id"]] = (frozenset(_if_filters(step.get("if"))), frozenset(ran))
+                files |= ran
+        lanes.setdefault(name, (frozenset(_if_filters(job.get("if"))), frozenset(files)))
+    return lanes
+
+
+@pytest.mark.parametrize("lane", sorted(lane for lane, filters in LANE_FILTERS.items() if filters))
+def test_pr_yml_each_lane_filter_covers_what_its_steps_run(lane: str) -> None:
+    # A PR that edits only a lane's workflow or a script its steps run must start that lane, or it
+    # merges with the gate built to run that file skipped (#3182).
+    filters, files = _lane_runs()[lane]
+    assert filters == LANE_FILTERS[lane]
+    rules = [rule for name in sorted(filters) for rule in _filters()[name]]
+    assert sorted(path for path in files if not any(_matches(path, rule) for rule in rules)) == []
+
+
+@pytest.mark.parametrize(
+    ("lane", "path"),
+    [
+        ("pin-check", "tools/ci/resolve_image_digests.py"),
+        ("statechart-lint", "tools/lint_statecharts.py"),
+        ("xstate-contract", "tools/statechart/suite_budget.py"),  # through `bash <script>`
+        ("e2e", ".github/workflows/_job-e2e.yml"),  # the reusable workflow itself
+        ("a11y", "tools/a11y/gates.py"),  # `python -m`
+        ("migrations", "tools/ci/migration_lint.py"),  # `../../` from services/api
+        ("js", "tools/ci/electron_hardening_checks.py"),  # imported by the gate script
+        ("contract", "tools/errorcodes/generate.py"),  # `make contracts`, then an import
+    ],
+)
+def test_pr_yml_lane_inputs_are_derived_through_each_way_a_step_runs_a_file(
+    lane: str, path: str
+) -> None:
+    assert path in _lane_runs()[lane][1]

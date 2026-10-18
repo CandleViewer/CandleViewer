@@ -67,6 +67,17 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'turbo.json'
+              # packages/ui's token build and its token-build tests import these formats (#3182).
+              - 'tools/style-dictionary/**'
+              # The lane's own workflow and the scripts its steps run (#3182).
+              - '.github/workflows/_job-js.yml'
+              - 'tools/ci/check-node-version.mjs'
+              - 'tools/ci/run-allowed-postinstall.mjs'
+              - 'tools/ci/mark-audit-handoff.mjs'
+              - 'tools/ci/turbo-affected-packages.mjs'
+              - 'tools/ci/write-turbo-summary.mjs'
+              - 'tools/ci/electron_hardening_gate.py'
+              - 'tools/ci/electron_hardening_checks.py'
             py:
               - 'services/api/**'
               # Repo-level Python suites (xstate_contract, perf, load, chaos) are scanned by
@@ -93,17 +104,35 @@ jobs:
               # The tests that pin xstate-nightly.yml (#2807) run in this lane; a PR that edits
               # only the workflow must run them (#2963).
               - '.github/workflows/xstate-nightly.yml'
+              # The statechart-lint step's script, the a11y gate logic the security lane scans, the
+              # corpora and account pack the suites and cvdev read, and coverage-thresholds' job
+              # (its gate scripts are under tools/ci/**) (#3182).
+              - 'tools/lint_statecharts.py'
+              - 'tools/a11y/**/*.py'
+              - 'packages/fixtures/**'
+              - '.github/workflows/_job-coverage.yml'
             engine:
               - 'packages/chart-engine/**'
+              # The engine-bench job and the install script it runs (#3182).
+              - '.github/workflows/_job-engine-bench.yml'
+              - 'tools/ci/run-allowed-postinstall.mjs'
             protocol:
               - 'packages/protocol/**'
               - 'docs/plan/22-api-openapi.yaml'
               - 'docs/plan/23-ws-protocol.md'
+              # The contract job, its `make contracts` recipe and the recipe's scripts (#3182).
+              - '.github/workflows/_job-contract.yml'
+              - 'Makefile'
+              - 'tools/contracts/**'
+              - 'tools/errorcodes/**'
             infra:
               - 'infra/**'
               - '.github/workflows/**'
               - 'docker-compose*.yml'
               - 'Dockerfile*'
+              # The scripts the pin-check gates step runs (#3182).
+              - 'tools/ci/check_action_pins.py'
+              - 'tools/ci/resolve_image_digests.py'
             image:
               - 'infra/images/**'
               - 'services/api/pyproject.toml'
@@ -134,6 +163,11 @@ jobs:
               - 'tools/a11y/**'
               - '.github/workflows/_job-a11y.yml'
               - 'scripts/tests/test_a11y_gates.py'
+              # The e2e job and the guards its steps run (#3182). Dependency manifests stay out:
+              # the nightly a11y sweep is their accepted control (docs/ci-runbook.md section 2).
+              - '.github/workflows/_job-e2e.yml'
+              - 'tools/ci/check_demo_rest_only_tag.mjs'
+              - 'tools/ci/check_built_exports.mjs'
             rules:
               - 'services/api/candleviewer/rules/ir/**'
               - 'services/api/candleviewer/rules/compiler/**'
@@ -147,6 +181,8 @@ jobs:
               - 'services/api/**/models.py'
               - 'services/api/alembic.ini'
               - 'tools/ci/verify_migration_lockfile.py'
+              - 'tools/ci/migration_lint.py'
+              - 'tools/ci/run_previous_release_upgrade.py'
               - 'infra/scripts/pg_bootstrap.sql'
               - '.github/workflows/_job-migrations.yml'
             semgrep:
