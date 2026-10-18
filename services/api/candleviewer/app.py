@@ -1792,7 +1792,7 @@ def create_app(
     )
     # E42-T05 (#966 Q10): the jobs a restart loses, saved at a clean stop, counted at the next boot.
     app.state.admin_jobs_lost = LostJobsCount(
-        Path(resolved.parquet_root).parent,
+        resolved.data_dir,
         admin_jobs,
         metrics_facade.get("cv_admin_jobs_lost_on_restart_total").child(),
     )

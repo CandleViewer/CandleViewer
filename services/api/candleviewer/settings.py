@@ -626,6 +626,13 @@ class Settings(BaseSettings):
             o.strip().rstrip("/") for o in self.allowed_origins.split(",") if o.strip()
         )
 
+    @property
+    def data_dir(self) -> Path:
+        """The data dir: the parent of `parquet_root`, with `~` expanded and the path resolved, so
+        it is absolute and holds no `..`. The recorder WAL anchors in it (SR-097 pattern) and so
+        does the lost-jobs count (E42-T05), whatever form `CV_PARQUET_ROOT` is given in."""
+        return Path(self.parquet_root).expanduser().resolve().parent
+
     @model_validator(mode="after")
     def _refuse_shared_volume_outside_testnet(self) -> Settings:
         """E16-FR-11 (#1741, SR-096): live and demo never boot with the shared-volume hatch."""
@@ -662,7 +669,7 @@ class Settings(BaseSettings):
         segment, not be a symlink, and resolve inside the data dir (the parent of
         `parquet_root`). It is created with `mkdir(parents=True)`, so a traversal here would
         create directories anywhere."""
-        root = Path(self.parquet_root).expanduser().resolve().parent
+        root = self.data_dir
         text = self.recorder_wal_dir.strip()
         raw = Path(text).expanduser() if text else root / "recorder-wal"
         if not raw.is_absolute():
