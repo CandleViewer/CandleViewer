@@ -154,9 +154,11 @@ def test_lane_actions_hold_the_adr_rows() -> None:
     rows |= {f"auth.{name}": ("reserved", every) for name in reserved}
     rows |= {"auth.session_refreshed": ("shared", frozenset({"denied"}))}
     rows |= dict.fromkeys(("audit.lane_started", "audit.lane_resumed"), ("reserved", success))
+    ex08 = "auth.disabled_user_session_revoked"  # #3120; holds before and after #3355 registers it
+    rows |= {ex08: ("reserved", success)}
 
     assert dict(LANE_ACTIONS) == rows
-    assert set(LANE_ACTIONS) - AUDIT_ACTIONS == {"audit.lane_started", "audit.lane_resumed"}
+    assert {*LANE_ACTIONS} - AUDIT_ACTIONS - {ex08} == {"audit.lane_started", "audit.lane_resumed"}
 
 
 @pytest.mark.parametrize(

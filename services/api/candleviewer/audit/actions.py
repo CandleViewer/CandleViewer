@@ -230,6 +230,8 @@ LANE_ACTIONS: Mapping[str, tuple[LaneClass, frozenset[str]]] = MappingProxyType(
         "auth.logout": ("reserved", _ANY),
         "auth.session_revoked": ("reserved", _ANY),
         "auth.refresh_reuse_detected": ("reserved", _ANY),
+        # #3120 (EX-08): the backstop revocation's outcome; #3355 adds it to AUDIT_ACTIONS.
+        "auth.disabled_user_session_revoked": ("reserved", frozenset({AuditOutcome.SUCCESS})),
         "auth.session_refreshed": ("shared", frozenset({AuditOutcome.DENIED})),
         "auth.login": ("shared", _ANY),
         "auth.login_failed": ("shared", _ANY),
