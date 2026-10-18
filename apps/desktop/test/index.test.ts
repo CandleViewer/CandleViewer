@@ -56,8 +56,9 @@ describe("isNavigationAllowed", () => {
     expect(isNavigationAllowed("app://candleviewer/login?next=%2Fterminal", undefined)).toBe(true);
   });
 
-  it("denies a file:// URL, even one inside the web app's dist directory", () => {
-    const url = pathToFileURL(path.join(APP_ROOT, "index.html")).href;
+  it("denies a file:// URL, even one inside the real web dist root that index.ts serves", () => {
+    const webDist = path.resolve(import.meta.dirname, "../../web/dist"); // index.ts APP_ROOT_DIR
+    const url = pathToFileURL(path.join(webDist, "index.html")).href;
     expect(isNavigationAllowed(url, undefined)).toBe(false);
     const outside = pathToFileURL(path.resolve(APP_ROOT, "..", "..", "secrets.txt")).href;
     expect(isNavigationAllowed(outside, undefined)).toBe(false);
