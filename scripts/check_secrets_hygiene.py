@@ -392,7 +392,12 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #: shell runs (``bash -c 'set "-x"'``); or of ``_TRAP_DEBUG``, which reads the line with its
 #: quotes (a trap's quoted action is one word: ``trap 'echo DEBUG' EXIT``). Not reported:
 #: - an option or its argument from an expansion the scan cannot read: ``set -e$FLAGS``,
-#:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``
+#:   ``SHELLOPTS=$OPTS``, ``bash -O "$opt" -x``; or from an escape in ``$'...'``, whose quotes
+#:   the scan takes off but not its escapes: ``set $'\x2dx'``
+#: - a command as an expansion's ``-`` default: ``${X:-set -x}`` (no rule starts a word after a
+#:   ``-``, as in ``x-set``)
+#: - a file the shell reads first through ``BASH_ENV`` or ``ENV``, which ``workflow_scripts`` does
+#:   not follow: ``BASH_ENV=tools/env.sh bash ci.sh`` (also in a job's ``env:``)
 #: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``, or
 #:   with an expansion inside its name that no name follows: ``b${X}ash -x`` (but ``ba${X}sh``)
 #: - a shell ``_SHELL_ON`` does not name, though each takes POSIX sh(1)'s ``-x``: ``ash -x``,
@@ -406,7 +411,10 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #:   (one printing ``$BASH_COMMAND`` shows the failing command's line)
 #: Reported though not tracing: a shell name as another tool's option argument (``tmux new -s sh
 #: -x 80``: a session named sh, 80 columns wide), ``set`` as another tool's word (``gh secret set
-#: -v all X``: gh's ``--visibility``), a quoted string's words (``echo "use bash" -x``).
+#: -v all X``: gh's ``--visibility``), a quoted string's words (``echo "use bash" -x``), a shell
+#: name after a ``+``, ``=`` or ``@`` in a word that is no path (``a+bash -x``, ``x=bash -x``; a
+#: path naming no shell is read whole: ``/opt/x+bash -x``), and an rcfile named ``--xtrace``
+#: (``bash --rcfile --xtrace ci.sh``: ``_LONG_XTRACE`` reads any ``--xtrace``).
 _SET_X = (
     _SET_TRACE,
     _SHELL_TRACE,

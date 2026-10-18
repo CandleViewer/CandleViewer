@@ -596,6 +596,11 @@ NOT_TRACED = [
     "$Xbash -x ci.sh",
     "'$X'bash -x ci.sh",
     "b${X}ash -x ci.sh",
+    # #3400: listed beside _SET_X as not reported, though they trace (bash 5.3): an escape in
+    # $'...', a command as an expansion's `-` default, a file BASH_ENV names (not followed).
+    "set $'\\x2dx'",
+    "${X:-set -x}",
+    "BASH_ENV=tools/env.sh bash ci.sh",
 ]
 VIA = ["run", "script"]
 
