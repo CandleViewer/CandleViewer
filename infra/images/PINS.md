@@ -15,7 +15,7 @@ script without flags.
 | prom/pushgateway           | v1.9.0            | sha256:98a458415f8f5afcfd45622d289a0aa67063563bec0f90d598ebc76783571936 | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                     |
 | grafana/grafana            | 11.2.0            | sha256:408afb9726de5122b00a2576763a8a57a3c86d5b0eff5305bc994ceb3eb96c3f | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                     |
 | bitnamilegacy/minio        | 2024.9.13         | sha256:8a92f71856f4b4b5755fa6afe4e7f9d0db7e18c889318f6772cb342d9b13470d | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                     |
-| python                     | 3.12-slim         | sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f | Docker Hub | 2026-10-06  | `infra/images/Dockerfile.api` (stale, refresh tracked) |
+| python                     | 3.12-slim         | sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 | Docker Hub | 2026-10-18  | `infra/images/Dockerfile.api` (builder/runtime stages) |
 | ghcr.io/zaproxy/zaproxy    | 2.17.0            | sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef | ghcr.io    | 2026-10-06  | `.github/workflows/dast-auth-zap.yml`                  |
 | trufflesecurity/trufflehog | 3.97.9            | sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db | Docker Hub | 2026-10-06  | `.github/workflows/_job-security.yml`, `pr.yml`        |
 | zricethezav/gitleaks       | v8.30.1           | sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f | Docker Hub | 2026-10-18  | `.github/workflows/pr.yml`                             |
