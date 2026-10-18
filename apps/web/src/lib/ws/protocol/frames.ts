@@ -54,15 +54,18 @@ export const CAPABILITIES: readonly Capability[] = [
 type Frame<T extends string, P> = { readonly t: T; readonly id: string; readonly p: P };
 type ChannelFrame<T extends string, P> = Frame<T, P> & { readonly ch: string };
 
+/** `rs` names a replay stream (23 5.3, 5.4, 7.5, C20): a frame without it names the live one. */
+type Replay = { readonly rs?: string };
+
 /** Client -> server frames (23 3.1). */
 export type ClientFrame =
   | Frame<"hello", HelloPayload>
   | Frame<"auth", AuthPayload>
   | Frame<"sub", SubPayload>
-  | Frame<"unsub", UnsubPayload>
-  | ChannelFrame<"ctl", CtlPayload>
-  /** `rs` names a replay stream (7.5), and the payload's `sub_id` pins the subscription the `ch` and `rs` name. */
-  | (ChannelFrame<"resync", ResyncPayload> & { readonly rs?: string })
+  | (Frame<"unsub", UnsubPayload> & Replay)
+  | (ChannelFrame<"ctl", CtlPayload> & Replay)
+  /** For a `resync` the payload's `sub_id` also pins the subscription the `ch` and `rs` name. */
+  | (ChannelFrame<"resync", ResyncPayload> & Replay)
   | Frame<"ping" | "pong", HeartbeatPayload>;
 
 /** `c-<n>` ids, unique per source. A factory, not a module counter: no shared mutable state. */
@@ -97,16 +100,28 @@ export const auth = (
 });
 
 export const sub = (id: string, p: SubPayload): ClientFrame => ({ t: "sub", id, p });
-export const unsub = (id: string, topics: UnsubPayload["topics"]): ClientFrame => ({
+/** `rs` applies to every topic of the frame (23 5.3): a replay session's streams take a frame of their own. */
+export const unsub = (
+  id: string,
+  topics: UnsubPayload["topics"],
+  rs?: string | undefined,
+): ClientFrame => ({
   t: "unsub",
   id,
   p: { topics },
+  ...(rs !== undefined && { rs }),
 });
-export const ctl = (id: string, ch: string, p: CtlPayload): ClientFrame => ({
+export const ctl = (
+  id: string,
+  ch: string,
+  p: CtlPayload,
+  rs?: string | undefined,
+): ClientFrame => ({
   t: "ctl",
   id,
   ch,
   p,
+  ...(rs !== undefined && { rs }),
 });
 export const resync = (
   id: string,

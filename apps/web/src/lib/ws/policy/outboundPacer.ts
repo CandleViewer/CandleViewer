@@ -70,7 +70,7 @@ export interface OutboundPacer {
   readonly size: number;
 }
 
-/** A `ctl` merges only into the last waiting frame that names its `ch`, so it never crosses a `sub`, `unsub` or `resync` of it. */
+/** A waiting `sub`, `unsub` or `resync` that names `ch`: a `ctl` of it never merges across one, since the stream changes there. */
 const names = (frame: ClientFrame, ch: string): boolean =>
   frame.t === "sub"
     ? frame.p.topics.some((topic) => topic.ch === ch)
@@ -157,11 +157,14 @@ export function createOutboundPacer(options: OutboundPacerOptions): OutboundPace
     }
   }
 
-  /** The waiting `ctl` for `ch` that a new one may merge into, or -1. */
-  function mergeTarget(ch: string): number {
+  /** The waiting `ctl` for `ch` of the stream `rs` (a replay session, else the live one) that a new one may merge into, or -1. */
+  function mergeTarget(ch: string, rs: string | undefined): number {
     for (let i = queue.length - 1; i >= 0; i -= 1) {
       const waiting = queue[i];
-      if (waiting?.t === "ctl" && waiting.ch === ch) return i;
+      if (waiting?.t === "ctl" && waiting.ch === ch) {
+        if (waiting.rs === rs) return i;
+        continue; // another stream of the `ch`: its retune is its own
+      }
       if (waiting !== undefined && names(waiting, ch)) return -1;
     }
     return -1;
@@ -175,12 +178,14 @@ export function createOutboundPacer(options: OutboundPacerOptions): OutboundPace
     if (frame.t === "ctl") {
       const p = definedOnly(frame.p);
       if (Object.keys(p).length === 0) return false;
-      const at = mergeTarget(frame.ch);
+      const at = mergeTarget(frame.ch, frame.rs);
       const prior = queue[at];
-      queue[at === -1 ? queue.length : at] = ctl(frame.id, frame.ch, {
-        ...(prior?.t === "ctl" ? prior.p : {}),
-        ...p,
-      });
+      queue[at === -1 ? queue.length : at] = ctl(
+        frame.id,
+        frame.ch,
+        { ...(prior?.t === "ctl" ? prior.p : {}), ...p },
+        frame.rs,
+      );
       if (prior?.t === "ctl") options.onSuperseded?.(prior.id);
     } else if (frame.t === "ping") {
       queue.unshift(frame);

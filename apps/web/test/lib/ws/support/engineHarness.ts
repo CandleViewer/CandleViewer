@@ -31,6 +31,9 @@ export function engineHarness(
   const events: EngineEvent[] = [];
   onTestFinished(() => assertEngineOrder(events)); // the order the reducer relies on, in every test
   const delivered = new Map<string, TopicFrame[]>();
+  let changes = 0;
+  let probe: (() => unknown) | undefined;
+  const reads: unknown[] = [];
   const engine = createWsEngine({
     url: URL,
     createSocket: gateway.createSocket,
@@ -40,6 +43,10 @@ export function engineHarness(
       deliver: (ch, rs, frame) => {
         const key = `${ch}#${rs ?? "live"}`;
         delivered.set(key, [...(delivered.get(key) ?? []), frame]);
+      },
+      changed: () => {
+        changes += 1;
+        if (probe !== undefined) reads.push(probe());
       },
     },
     client: { version: "1.0.0", shell: "browser", locale: "en-GB" },
@@ -64,5 +71,22 @@ export function engineHarness(
     gateway.latest
       .of("sub")
       .flatMap((frame) => ((frame["p"] as Json)["topics"] as { ch: string }[]).map((t) => t.ch));
-  return { gateway, tokens, events, engine, advance, start, got, peek, subscribed };
+  return {
+    gateway,
+    tokens,
+    events,
+    engine,
+    advance,
+    start,
+    got,
+    peek,
+    subscribed,
+    changes: () => changes,
+    /** From now on, what `read` returns each time the sink is told something changed (the state at that moment, not a count). */
+    watch: (read: () => unknown): unknown[] => {
+      probe = read;
+      reads.length = 0;
+      return reads;
+    },
+  };
 }

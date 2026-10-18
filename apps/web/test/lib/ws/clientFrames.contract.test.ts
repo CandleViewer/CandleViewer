@@ -22,7 +22,9 @@ const FRAMES: Record<string, F.ClientFrame> = {
     replay_session_id: null,
   }),
   unsub: F.unsub("c-4", ["book.BTCUSDT.50"]),
+  "unsub of a replay stream": F.unsub("c-4", ["book.BTCUSDT.50"], RS),
   ctl: F.ctl("c-5", "heatmap.BTCUSDT", { time_bucket_ms: 1000 }),
+  "ctl of a replay stream": F.ctl("c-5", "heatmap.BTCUSDT", { time_bucket_ms: 1000 }, RS),
   resync: F.resync("c-6", "book.BTCUSDT.50", { last_seq: 1002, reason: "sequence_gap" }),
   "resync of a replay stream": F.resync(
     "c-6",
@@ -48,9 +50,18 @@ describe("client frames validate against the generated WS schemas (C1)", () => {
     expect(validateClientFrame(subWith(topics(50)))).toEqual([]);
   });
 
-  it("a resync carries the replay session in its envelope, and a live one carries none", () => {
-    expect(FRAMES["resync of a replay stream"]).toMatchObject({ rs: RS });
-    expect(FRAMES["resync"]).not.toHaveProperty("rs");
+  it("a resync, a ctl and an unsub carry the replay session in their envelope (C20), and a live one carries none", () => {
+    for (const named of [
+      "resync of a replay stream",
+      "ctl of a replay stream",
+      "unsub of a replay stream",
+    ]) {
+      expect(FRAMES[named]).toMatchObject({ rs: RS });
+    }
+    for (const live of ["resync", "ctl", "unsub"]) expect(FRAMES[live]).not.toHaveProperty("rs");
+    // negative control: `rs` is a string in the envelope (the harness does not assert `format: uuid`)
+    const named = { ...F.ctl("c-5", "heatmap.BTCUSDT", { time_bucket_ms: 1000 }), rs: 5 };
+    expect(validateClientFrame(named).join()).toMatch(/must be string/);
   });
 
   it("ctl needs at least one property: the type refuses what ctl.schema.json refuses (minProperties 1)", () => {

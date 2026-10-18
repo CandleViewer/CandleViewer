@@ -34,6 +34,11 @@ export interface EngineSink {
   event(event: EngineEvent): void;
   /** One validated frame of a stream, in order (`RegistryHost.deliver`). Queueing and fan-out to tabs are the sink's. */
   deliver(ch: string, rs: string | undefined, frame: TopicFrame): void;
+  /**
+   * What a handle reads (`status`, `effective`, `source`) may have changed with no frame to say so:
+   * after every reply of the server and when a snapshot is overdue. The sink reads the handles it holds.
+   */
+  changed?(): void;
 }
 
 export interface EngineOptions {
@@ -91,8 +96,16 @@ export interface WsEngine {
   removePane(paneId: string): void;
   /** The focused pane's topics come back first after a reconnect (9.3); `null` leaves it to each spec's `priority`. */
   focusPane(paneId: string | null): void;
+  /**
+   * The sink dropped frames of a stream it could not keep up with: a fresh snapshot is asked for,
+   * within the resync budget (7.5), and reaches every consumer of the stream. Nothing for a stream
+   * the engine does not hold, or while there is no connection to ask on (the next one subscribes afresh).
+   */
+  rebaseline(ch: string, rs?: string | undefined): void;
   /** `bye.hint.most_expensive_topics` of the last close (8.4): kept, never acted on. */
   readonly slowConsumerHint: readonly string[];
+  /** The server's clock minus ours, from `welcome` (4.2); `undefined` until the current socket has had one. */
+  readonly clockSkewMs: number | undefined;
   /** A fresh snapshot of the counters. */
   readonly counters: EngineCounters;
 }
@@ -260,12 +273,12 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     for (const s of streams.values()) for (const { spec } of s.consumers) yield { spec, rs: s.rs };
   }
 
-  /** `ctl` names a `ch`, not a replay session: the gateway takes the live subscription, else the first (#572), so that is the stream its reply is for. */
+  /** `ctl` names its stream by `ch` and `rs` (5.4, C20; the gateway resolves it so since #3398): the live one's carries none. Flow control still keys by `ch` alone, so a `ch` with a live and a replay stream retunes the live one; each twin's own `ctl` is #3439. */
   function sendCtl(ch: string, payload: F.CtlPayload): void {
     const held = [...streams.values()].filter((s) => s.ch === ch && s.held);
     const target = held.find((s) => s.rs === undefined) ?? held[0];
     const gens = target === undefined ? NO_GENS : gensOf([target]);
-    submit(F.ctl(connection.nextId(), ch, payload), target?.rs, gens);
+    submit(F.ctl(connection.nextId(), ch, payload, target?.rs), target?.rs, gens);
   }
   const flow = createFlowControl(
     {
@@ -431,7 +444,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       }
     }
     const perFrame = connection.topicsPerRequest;
-    // An `unsub` names no replay session, but its reply is applied to the stream of each `ch` it names (`Request.rs`): a frame lists the topics of one `rs`.
+    // A frame lists the topics of one `rs`, which it carries (5.3): the replay session whose subscription it ends.
     for (const run of runsOf(drops)) {
       for (const chunk of chunkTopics(run.items, perFrame)) {
         const topics = mapNonEmpty(chunk, (s) => s.ch);
@@ -439,7 +452,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
           unsubbing.add(ch);
           flow.unsubscribed(ch); // the server holds nothing of it from here: what it was told is void
         }
-        submit(F.unsub(connection.nextId(), topics), run.rs, gensOf(chunk));
+        submit(F.unsub(connection.nextId(), topics, run.rs), run.rs, gensOf(chunk));
       }
     }
     for (const run of runsOf(restoreOrder(adds))) {
@@ -498,6 +511,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     if (ch === SYSTEM && rs === undefined) {
       sink.event({ type: "system_stream", status: system.status });
     }
+    sink.changed?.(); // the stream reads `stale` now
   }
 
   function onFrame(frame: Inbound, decodeMs: number): void {
@@ -506,18 +520,24 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       case "d":
         // The frames of a subscription whose `unsub_ok` is still due belong to the old one.
         if (!unsubbing.has(frame.ch)) registry.onData(frame, decodeMs);
-        return;
+        return; // a frame is its own news: it goes through `deliver`
       case "sub_ok":
-        return onSubOk(frame);
+        onSubOk(frame);
+        break;
       case "ctl_ok":
-        return onCtlOk(frame);
+        onCtlOk(frame);
+        break;
       case "unsub_ok":
-        return onUnsubOk(frame);
+        onUnsubOk(frame);
+        break;
       case "revoked":
-        return onRevoked(frame);
+        onRevoked(frame);
+        break;
       case "err":
-        return onErr(frame);
+        onErr(frame);
+        break;
     }
+    sink.changed?.(); // a reply moves what a handle reads, with no frame to say so
   }
 
   /**
@@ -587,6 +607,10 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       own.deniedFrames += 1;
       if (request.frame.t === "ctl") return flow.denied(request.frame.ch);
       if (!request.resent) return resubmit(request);
+    }
+    // SR-193 (5.4, 8.5): the rebuild budget refused a `ctl` that would have re-snapshotted. It changed nothing, so what the engine took for applied is undone, and it is asked for again after a back-off, never at once and never in a loop.
+    if (frame.p.code === "resync_rate_limited" && request.frame.t === "ctl") {
+      return flow.refused(request.frame.ch);
     }
     if (request.frame.t === "sub") {
       refuseSub(request, request.frame, frame.p);
@@ -658,6 +682,12 @@ export function createWsEngine(options: EngineOptions): WsEngine {
       focusedPane = paneId;
     },
 
+    rebaseline(ch, rs) {
+      if (!connection.ready) return; // nothing leaves, so the guard's budget is not spent on it
+      const session = ch === SYSTEM ? undefined : rs; // `system` has no replay twin
+      if (ch === SYSTEM || streams.has(topicKey(ch, rs))) askBaseline(ch, session);
+    },
+
     consume(spec, rs) {
       const handle = registry.consume(spec, rs);
       if (spec.ch === SYSTEM) return handle;
@@ -693,6 +723,10 @@ export function createWsEngine(options: EngineOptions): WsEngine {
 
     get slowConsumerHint() {
       return connection.slowConsumerHint;
+    },
+
+    get clockSkewMs() {
+      return connection.clockSkewMs;
     },
 
     get counters() {
