@@ -1,4 +1,4 @@
-"""E27-T03 (#836 slice 2b5): the one-shot private-WS `auth` probe on an injected socket.
+"""E27-T03 (#836 slice 2b5): the one-shot private-WS `auth` probe and its adapter seam.
 
 Replies: the documented-shape `tests/fixtures/key_verification/ws_auth_*.json` (README there; no
 recorded capture exists, #2240). `Stream` stands in for the private stream and records every dial
@@ -11,20 +11,29 @@ import asyncio
 import json
 import logging
 import re
+import ssl
 from collections.abc import Callable
 from pathlib import Path
-from typing import get_args
+from types import SimpleNamespace
+from typing import Any, get_args
 from uuid import UUID
 
+import certifi
+import httpx
 import pytest
 from prometheus_client import REGISTRY, generate_latest
 from structlog.testing import capture_logs
+from websockets.client import ClientProtocol
 from websockets.exceptions import ConnectionClosedError, InvalidHandshake
+from websockets.http11 import Request
+from websockets.protocol import State
+from websockets.uri import parse_uri
 
 from candleviewer.exchange.bybit import key_ws_probe
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.key_info import PROBE_ERRORS
 from candleviewer.exchange.bybit.key_ws_probe import KeyWsProbe, WsProbeError, WsProbeResult
+from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.logging import reset_logging
 from candleviewer.secrets import CredentialBorrower, CredentialUnavailable, RequestSignature
 from tests._signing import CREDENTIAL_ID, Call, fake_capability, stand_in_signature
@@ -326,3 +335,198 @@ async def test_no_key_id_signature_or_exchange_text_reaches_a_log_repr_or_metric
     for secret in (MARK, text, *(stand_in_signature(signed) for _, signed, _ in calls)):
         assert [s for s in shown if secret in s] == []
     assert len(calls) == 2
+
+
+class Conn:
+    """A `websockets` client connection whose handshake asked for `url`, in the request the
+    library itself builds. Its closing handshake ends, or with `stall_close` never does; `aborts`
+    counts transport aborts."""
+
+    def __init__(self, url: str, *, stall_close: bool = False) -> None:
+        self.request: Request | None = ClientProtocol(parse_uri(url)).connect()
+        self.transport = SimpleNamespace(abort=self._abort)
+        self.state, self.stall_close = State.OPEN, stall_close
+        self.sent: list[str] = []
+        self.aborts = 0
+
+    def _abort(self) -> None:
+        self.aborts += 1
+
+    async def send(self, frame: str) -> None:
+        self.sent.append(frame)
+
+    async def recv(self, decode: bool | None = None) -> bytes:
+        assert decode is False  # bytes, so the bound counts bytes
+        return OK.encode()
+
+    async def close(self) -> None:
+        if self.stall_close:
+            await asyncio.Event().wait()
+        self.state = State.CLOSED
+
+
+def dial_into(monkeypatch: pytest.MonkeyPatch, conn: Conn) -> dict[str, Any]:
+    """Production's connector with `conn` as what the library's `connect` returns."""
+    seen: dict[str, Any] = {}
+
+    async def dial(url: str, **kwargs: Any) -> Conn:
+        seen.update(kwargs, url=url)
+        return conn
+
+    monkeypatch.setattr(key_ws_probe, "_NoRedirectConnect", dial)
+    return seen
+
+
+async def test_production_dials_with_bounded_frames_and_a_logger_that_shows_no_frame(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """websockets logs each frame at DEBUG, the `auth` op's key id and signature included: the
+    probe's sockets log through a logger that never enables DEBUG, even under a DEBUG root. Each
+    read is bounded twice: by the library's `max_size` and by the read's own `max_bytes`. The
+    library's close bound sits inside the probe's 1 s (the redirect refusal is on a real socket,
+    `test_key_ws_probe_real_socket.py`). It takes no proxy, and its TLS roots are pinned below."""
+    conn = Conn(URLS["demo"])
+    seen = dial_into(monkeypatch, conn)
+    caplog.set_level(logging.DEBUG)
+    socket = await key_ws_probe.connect_private_ws(URLS["demo"])
+    await socket.send("frame")
+    assert await socket.recv(len(OK)) == OK
+    with pytest.raises(ConnectionError):  # a transport error to the probe
+        await socket.recv(len(OK) - 1)
+    await socket.close()
+    assert not seen.pop("logger").isEnabledFor(logging.DEBUG)
+    expected = {"url": URLS["demo"], "open_timeout": 5.0, "close_timeout": 0.5, "proxy": None}
+    assert seen == {**expected, "ping_interval": None, "max_size": 4096, "ssl": key_ws_probe._TLS}
+    assert (conn.sent, conn.state, conn.aborts) == (["frame"], State.CLOSED, 0)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [*PRIVATE_WS_URLS.values(), f"{URLS['demo']}?max_active_time=60s"],
+    ids=[*PRIVATE_WS_URLS, "query"],
+)
+async def test_the_handshake_check_takes_the_request_websockets_builds_for_the_stream(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    """The library's own request passes the check: a `Host` without the default port, and a path
+    that carries the query (research 06's `max_active_time`). A change in how the library renders
+    either fails here instead of failing every real probe closed."""
+    conn = Conn(url)
+    dial_into(monkeypatch, conn)
+    await key_ws_probe.connect_private_ws(url)
+    assert conn.aborts == 0
+
+
+def roots(tls: ssl.SSLContext) -> set[bytes]:
+    """A context's loaded roots, DER. A set: a handshake on a context re-sorts its store."""
+    return set(tls.get_ca_certs(binary_form=True))
+
+
+def certifi_roots() -> set[bytes]:
+    return roots(ssl.create_default_context(cafile=certifi.where()))
+
+
+def test_production_trusts_certifis_roots_and_no_other() -> None:
+    """C-2.7 and C-12.2, defence in depth: the signed `auth` travels under certifi's bundle only,
+    never under the OS store, which may trust a TLS-inspecting gateway's root
+    (`test_key_ws_probe_real_socket.py` dials one)."""
+    tls = key_ws_probe._TLS
+    assert (tls.verify_mode, tls.check_hostname) == (ssl.CERT_REQUIRED, True)
+    assert roots(tls) == certifi_roots() != set()
+
+
+def test_production_keeps_certifis_roots_when_ssl_cert_dir_is_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """httpx's default context, the signed REST client's, takes `SSL_CERT_DIR` instead of
+    certifi's bundle when it is set and `SSL_CERT_FILE` is not (a directory's roots load only as
+    a handshake asks, so none show); the probe's, built again under that environment, keeps
+    certifi's. `SSL_CERT_FILE` is on a real socket (`test_key_ws_probe_real_socket.py`)."""
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path))
+    rest_default, probes = httpx.create_ssl_context(), key_ws_probe._probe_tls()
+    assert (roots(rest_default), roots(probes)) == (set(), certifi_roots())
+
+
+async def test_a_handshake_that_reached_another_stream_is_aborted_before_anything_is_signed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As `rest.py`'s `_assert_same_host`: a demo probe whose handshake reached live's stream is
+    a `transport_error` with nothing signed or sent, and its transport is aborted, not left open."""
+    conn, calls = Conn(URLS["live"]), list[Call]()
+    dial_into(monkeypatch, conn)
+    probe = KeyWsProbe(monotonic=Clock(), wall_ms=lambda: NOW_MS)
+    result = await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)
+    assert (result.error, calls, conn.sent, conn.aborts) == ("transport_error", [], [], 1)
+
+
+async def test_a_connection_with_no_handshake_request_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A connection whose handshake request the library did not keep shows nowhere it went: it
+    is refused and aborted the same way, never trusted."""
+    conn, calls = Conn(URLS["demo"]), list[Call]()
+    conn.request = None
+    dial_into(monkeypatch, conn)
+    probe = KeyWsProbe(monotonic=Clock(), wall_ms=lambda: NOW_MS)
+    result = await probe.probe(fake_capability(MARK, calls), "demo", CREDENTIAL_ID)
+    assert (result.error, calls, conn.sent, conn.aborts) == ("transport_error", [], [], 1)
+
+
+async def test_a_close_the_peer_never_finishes_ends_in_an_abort(
+    monkeypatch: pytest.MonkeyPatch, bounds: list[float | None]
+) -> None:
+    """SR-E27-17: the library aborts an unanswered close at its own bound, and should the probe's
+    bound cancel the close first, the socket aborts the transport itself, so no authenticated
+    socket outlives the probe."""
+    conn = Conn(URLS["demo"], stall_close=True)
+    dial_into(monkeypatch, conn)
+    probe = KeyWsProbe(monotonic=Clock(), wall_ms=lambda: NOW_MS)
+    assert (await probe.probe(fake_capability(), "demo", CREDENTIAL_ID)).ok
+    assert (conn.aborts, bounds) == (1, [5.0, 1.0])
+
+
+async def test_the_adapter_probes_through_its_injected_connector_signed_by_m2() -> None:
+    stream, calls = Stream(), list[Call]()
+    svc = ExchangeBybitService(
+        fake_capability(MARK, calls), private_ws_connect=stream.connect, environment="testnet"
+    )
+    assert (await svc.key_ws_probe("testnet", CREDENTIAL_ID)).ok
+    assert (stream.dialled, [c[2] for c in calls]) == ([URLS["testnet"]], ["sign_ws_auth"])
+
+
+@pytest.mark.parametrize(
+    ("process", "asked"),
+    [("demo", "live"), ("live", "demo"), (None, "demo")],
+    ids=["demo-process-live-stream", "live-process-demo-stream", "no-environment"],
+)
+async def test_the_adapter_refuses_another_environment_before_any_dial_or_signature(
+    process: str | None, asked: str
+) -> None:
+    """C-2.11 (KV-T10): M2 signs only the process environment's keys, so a demo key's signed
+    `auth` never reaches the live stream, nor a live key's the demo one; an adapter built without
+    an environment probes none. The candidate path refuses the same mismatch."""
+    stream, calls = Stream(), list[Call]()
+    svc = ExchangeBybitService(
+        fake_capability(MARK, calls), private_ws_connect=stream.connect, environment=process
+    )
+    with pytest.raises(ValueError, match="not this process's environment"):
+        await svc.key_ws_probe(asked, CREDENTIAL_ID)
+    assert (stream.dialled, calls) == ([], [])
+
+
+async def test_the_adapter_holds_one_budget_for_every_key() -> None:
+    stream = Stream()
+    svc = ExchangeBybitService(
+        credentials=fake_capability(), private_ws_connect=stream.connect, environment="demo"
+    )
+    results = [await svc.key_ws_probe("demo", UUID(int=i)) for i in range(11)]
+    assert [r.error for r in results] == [None] * 10 + ["rate_limited"]
+
+
+async def test_the_adapter_without_a_signer_dials_nothing() -> None:
+    stream = Stream()
+    unsigned = ExchangeBybitService(private_ws_connect=stream.connect, environment="demo")
+    with pytest.raises(RuntimeError, match="no signing capability"):
+        await unsigned.key_ws_probe("demo", CREDENTIAL_ID)
+    assert stream.dialled == []

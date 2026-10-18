@@ -29,6 +29,7 @@ from candleviewer.exchange.bybit.key_verify import (
     key_verification_calls,
     verification_governor,
 )
+from candleviewer.exchange.bybit.key_ws_probe import KeyWsProbe, PrivateWsConnect, WsProbeResult
 from candleviewer.exchange.bybit.klines import BybitKlineFetcher, TickSizeFor
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
 from candleviewer.exchange.bybit.public_ws import (
@@ -74,6 +75,8 @@ class ExchangeBybitService:
         credentials: CredentialBorrower | None = None,
         *,
         rest_transport: httpx.AsyncBaseTransport | None = None,
+        private_ws_connect: PrivateWsConnect | None = None,
+        environment: str | None = None,
     ) -> None:
         self._started = False
         #: E27-T02: the one caller-bound signing capability, injected by `admin.wiring`.
@@ -88,6 +91,15 @@ class ExchangeBybitService:
         self._rest_transport = (
             None if rest_transport is None else _NonClosingTransport(rest_transport)
         )
+        #: #836 slice 2b5: `testApiKey`'s private-WS `auth` probe. One per adapter, so one open
+        #: budget per deployment (SR-E27-05). It dials with production's connector unless the
+        #: composition root passes the dev-only account fixture's, behind its door (#2893).
+        self._ws_probe = (
+            KeyWsProbe() if private_ws_connect is None else KeyWsProbe(private_ws_connect)
+        )
+        #: The process's own environment (`Settings.environment`), the only one whose keys M2
+        #: signs: a stored key's probe dials no other stream (C-2.11). None refuses every probe.
+        self._environment = environment
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
@@ -161,6 +173,23 @@ class ExchangeBybitService:
     #: E27-T03: the bound on one key-verification call, its budget wait and M2's signing included.
     #: The composition root cuts each call at this value, read here (C-2.2), never imported.
     key_call_timeout_s: float = CALL_TIMEOUT_S
+
+    async def key_ws_probe(
+        self, env: str, credential_id: UUID, *, clock_offset_ms: Callable[[], int] | None = None
+    ) -> WsProbeResult:
+        """E27-T03: one private-WS `auth` for a stored key, `testApiKey`'s WebSocket half (its
+        caller is #836 slice 2b6; nothing calls it before that): on `env`'s own stream only
+        (C-2.11), signed by M2 under `sign_ws_auth`, never a subscribe; diagnostic only. The
+        scheduled self-check never calls it (SR-E27-05). M2 signs only the process environment's
+        keys, so any other `env` is refused before anything is signed or dialled, as a candidate
+        of another environment is (KV-T10)."""
+        if self._credentials is None:
+            raise RuntimeError("no signing capability is wired")
+        if env != self._environment:
+            raise ValueError("not this process's environment")
+        return await self._ws_probe.probe(
+            self._credentials, env, credential_id, clock_offset_ms=clock_offset_ms
+        )
 
     def key_verification_calls(
         self,

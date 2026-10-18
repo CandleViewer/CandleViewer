@@ -4,12 +4,16 @@
 stream of the key's own environment only (`PRIVATE_WS_URLS`, US-ACCT-007, C-2.11), send one `auth`
 signed by M2 under `sign_ws_auth` with `expires` at most 10 s ahead (SR-E27-17), read one reply and
 close. It never subscribes (#2877 and #848 own the streaming socket), never retries and never
-falls back to another host. One 5 s bound covers the dial, the signature and the reply; the
-socket is closed on every path under its own short bound, and a cancellation propagates.
-Diagnostic only: it enforces nothing (ruling 11 on #836).
-SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per `KeyWsProbe`, then
-`rate_limited` at once with nothing signed or dialled (slice 2b5b's adapter holds the
-deployment's one probe). Results are `KeyProbeError` names (SR-E27-08), never
+falls back to another host; production's connector follows no redirect either, so a 3xx is a
+`transport_error` and the signed `auth` reaches no other host (SR-040a). It trusts certifi's
+bundle only, which httpx's default context loads when `SSL_CERT_FILE` and `SSL_CERT_DIR` are
+unset; it ignores both, the OS store and any proxy. One 5 s bound covers the dial, the signature
+and the reply; the socket is closed on every path under its own short bound, aborted if the peer
+never finishes the close, and a cancellation propagates. Diagnostic only: it enforces nothing
+(ruling 11 on #836).
+SR-E27-05: at most `OPENS_PER_WINDOW` probes per `WINDOW_S` per deployment (the adapter holds one
+probe), then `rate_limited` at once with nothing signed or dialled; the scheduled self-check never
+names it (`test_ws_probe_callers.py`). Results are `KeyProbeError` names (SR-E27-08), never
 exchange text: a refused `auth` is `auth_error`, no answer `timeout`, a failed or dropped
 connection or a frame that does not decode as JSON `transport_error`, any other reply
 `exchange_unknown`.
@@ -19,15 +23,22 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
+import ssl
 import time
 from asyncio import timeout
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, Protocol
+from urllib.parse import urlsplit
 from uuid import UUID
 
+import httpx
+from websockets.asyncio.client import ClientConnection
+from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
+from websockets.protocol import State
 
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.signer import BybitSigner
@@ -39,6 +50,8 @@ if TYPE_CHECKING:
 PROBE_TIMEOUT_S: Final = 5.0
 #: The close's own bound, after the probe's, so a stalled close cannot hold the caller.
 CLOSE_TIMEOUT_S: Final = 1.0
+#: The library's close bound, inside the probe's: its abort of an unanswered close comes first.
+_LIBRARY_CLOSE_TIMEOUT_S: Final = CLOSE_TIMEOUT_S / 2
 #: SR-E27-17: `expires` at most 10 s ahead of the exchange clock.
 EXPIRES_AHEAD_MS: Final = 10_000
 #: SR-E27-05: probes per window, per deployment (2 % of the venue's 500 per 5 minutes per IP).
@@ -52,6 +65,22 @@ WsProbeError = Literal[
 ]
 #: A failed dial or a dropped socket: the OS's (refused, reset, DNS, TLS) or the library's.
 _TRANSPORT: Final = (OSError, WebSocketException)
+#: websockets logs each frame at DEBUG (the `auth` op's key id and signature too) and takes a
+#: stdlib logger only: this one never enables DEBUG; its other records reach the redacting handlers.
+# nosemgrep: cv-obs-no-direct-getlogger reason=ws-stdlib-logger owner=@basiltt review=2027-03-25
+_SOCKET_LOG: Final = logging.getLogger(f"{__name__}.socket")
+_SOCKET_LOG.setLevel(logging.INFO)
+
+
+def _probe_tls() -> ssl.SSLContext:
+    """certifi's bundle only, which httpx's default context, the signed REST client's, loads when
+    `SSL_CERT_FILE` and `SSL_CERT_DIR` are unset; this one ignores both. Never the OS store, which
+    may trust a TLS-inspecting gateway's root (C-2.7, C-12.2, defence in depth)."""
+    return httpx.create_ssl_context(verify=True, trust_env=False)
+
+
+#: Built once, at import: loading the bundle (a few ms) on every dial would hold the event loop.
+_TLS: Final = _probe_tls()
 
 
 class PrivateSocket(Protocol):
@@ -62,7 +91,7 @@ class PrivateSocket(Protocol):
     async def close(self) -> None: ...
 
 
-#: Dials a `PRIVATE_WS_URLS` value; chosen when the probe is built (production's: slice 2b5b).
+#: Dials a `PRIVATE_WS_URLS` value; chosen when the adapter is built (#2893 S12 injects one).
 PrivateWsConnect = Callable[[str], Awaitable[PrivateSocket]]
 
 
@@ -75,16 +104,73 @@ class WsProbeResult:
     latency_ms: int | None
 
 
+class _Socket:
+    """A `websockets` client connection as a `PrivateSocket`."""
+
+    def __init__(self, conn: ClientConnection) -> None:
+        self._conn = conn
+
+    async def send(self, frame: str) -> None:
+        await self._conn.send(frame)
+
+    async def recv(self, max_bytes: int) -> str:
+        """The library refuses a frame above `max_size` before buffering it; this bound holds
+        whatever that is. A frame that is not UTF-8 decodes leniently and then fails as JSON."""
+        frame = await self._conn.recv(decode=False)
+        if len(frame) > max_bytes:
+            raise ConnectionError("private ws frame above the read bound")
+        return frame.decode("utf-8", "replace")
+
+    async def close(self) -> None:
+        """The library aborts a close the peer never finishes at its own bound; should the
+        probe's bound cancel the close first, the `finally` aborts it (SR-E27-17)."""
+        try:
+            await self._conn.close()
+        finally:
+            if self._conn.state is not State.CLOSED:
+                self._conn.transport.abort()
+
+
+class _NoRedirectConnect(ws_connect):
+    """`connect` follows a 3xx to any host (it refuses only a TLS downgrade). This one follows
+    none, as `rest.py` sets `follow_redirects=False` (SR-040a): a 3xx stays the `InvalidStatus`
+    it is, a transport error, and the signed `auth` is never sent elsewhere."""
+
+    def process_redirect(self, exc: Exception) -> Exception | str:
+        return exc
+
+
+async def connect_private_ws(url: str) -> PrivateSocket:
+    """Production's connector: no redirect, no proxy the environment names, `_TLS`'s roots on
+    `wss://` (every `PRIVATE_WS_URLS` value; `ws://` has no TLS to set), no keepalive pings (the
+    socket lives for one reply), small frames, the library's close bound inside the probe's, and
+    the quiet logger above. As `rest.py`'s `_assert_same_host`, defence in depth: a handshake
+    that did not go to `url` itself is aborted before anything is sent on it."""
+    wanted = urlsplit(url)
+    conn = await _NoRedirectConnect(
+        url, open_timeout=PROBE_TIMEOUT_S, close_timeout=_LIBRARY_CLOSE_TIMEOUT_S,
+        ping_interval=None, max_size=MAX_FRAME_BYTES, logger=_SOCKET_LOG, proxy=None,
+        ssl=_TLS if wanted.scheme == "wss" else None,
+    )  # fmt: skip
+    request = conn.request
+    resource = f"{wanted.path}?{wanted.query}" if wanted.query else wanted.path
+    asked = None if request is None else (request.headers.get("Host"), request.path)
+    if asked != (wanted.netloc, resource):
+        conn.transport.abort()
+        raise ConnectionError("private ws handshake left the requested stream")
+    return _Socket(conn)
+
+
 def _wall_ms() -> int:
     return int(time.time() * 1000)
 
 
 class KeyWsProbe:
-    """One private-WS `auth` probe, holding its open budget."""
+    """The adapter's one private-WS `auth` probe, holding the deployment's open budget."""
 
     def __init__(
         self,
-        connect: PrivateWsConnect,
+        connect: PrivateWsConnect = connect_private_ws,
         *,
         monotonic: Callable[[], float] = time.monotonic,
         wall_ms: Callable[[], int] = _wall_ms,

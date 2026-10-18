@@ -10,7 +10,7 @@ imports anything, so the shipped side never relies on the dev package to refuse,
 re-checks it as well.
 
 S4: `build_app_context` hands the handle's REST transport to the exchange adapter, which builds
-every key-verification client on it; the private socket's connector waits for its own slice. Until
+every key-verification client on it, and (#836 slice 2b5) the private socket's connector. Until
 the guard and serving slices land, the package's transport and connector refuse every request.
 
 S8: the lifespan awaits `account_fixture_guard`, the dev package's boot guard, before any module
@@ -45,17 +45,26 @@ class AccountFixtureRefused(RuntimeError):
     """The account fixture transport may not run in this process, so boot stops (fail closed)."""
 
 
+class PrivateSocket(Protocol):
+    """A private-stream socket as the exchange adapter's `auth` probe uses it (#836 slice 2b5),
+    named here by its shape, so this door imports no venue module."""
+
+    async def send(self, frame: str) -> None: ...
+    async def recv(self, max_bytes: int) -> str: ...
+    async def close(self) -> None: ...
+
+
 class AccountFixture(Protocol):
     """What the dev-only package hands the composition root: the transport of the account REST
     clients (`BybitRestClient(transport=...)`, threaded into the exchange adapter by S4, which
-    shares it and never closes it) and the private socket's zero-argument connector, which a later
-    slice threads."""
+    shares it and never closes it) and the private socket's connector, which dials the URL it is
+    given and is threaded into the adapter by #836 slice 2b5."""
 
     @property
     def rest_transport(self) -> httpx.AsyncBaseTransport: ...
 
     @property
-    def private_ws_connect(self) -> Callable[[], Awaitable[object]]: ...
+    def private_ws_connect(self) -> Callable[[str], Awaitable[PrivateSocket]]: ...
 
 
 def build_account_fixture(settings: Settings) -> AccountFixture | None:
