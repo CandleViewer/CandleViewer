@@ -6,10 +6,11 @@
 // token crosses in one message, `token`, from the tab to the worker's memory; no other message carries it and
 // none is logged. The value of an option, a fault command and the frames of a `data` message are not checked
 // here: the server refuses an unknown option, the fault channel checks its commands, and the engine made the frames.
+// A message the worker refuses gets no reply (it only counts it): the client times out on a connect or a consume (S5f).
 import type { PaneVisibility, TokenResult, TopicFrame } from "../api";
 import { MAX_TOKEN_LENGTH } from "../core/connection";
 import type { EngineCounters } from "../core/engine";
-import { isTopic, isUuid } from "../protocol/codec";
+import { isTopic, isUuid, type DataBody } from "../protocol/codec";
 import type { HelloPayload, SubOptions, SystemUpdate } from "../protocol/frames";
 import type { TopicStatus, WsState } from "../state/types";
 import type { SubscriptionPriority } from "../../../shell/bootstrap/subscriptionOrder";
@@ -336,4 +337,36 @@ export function parseWorkerMessage(data: unknown): WorkerMessage | undefined {
     default:
       return undefined;
   }
+}
+
+// Moving frames between threads. A transferred buffer is detached at the sender (ADR-0005: zero-copy) and
+// reaches one receiver only, so the first consumer of a frame takes the buffers themselves and every other
+// one a copy, made before the first is sent.
+
+const copyBody = (body: DataBody): DataBody =>
+  body.e === "b64" ? { e: "b64", bytes: body.bytes.slice(0) } : body;
+
+/** The same frame with buffers of its own. A structured body is data nobody mutates, and a `reset` has none. */
+export function copyFrame(frame: TopicFrame): TopicFrame {
+  switch (frame.kind) {
+    case "snap":
+      // cast: `map` keeps the length, which is at least one
+      return { ...frame, bodies: frame.bodies.map(copyBody) as [DataBody, ...DataBody[]] };
+    case "d":
+      return { ...frame, body: copyBody(frame.body) };
+    case "reset":
+      return frame;
+  }
+}
+
+/** The buffers `postMessage` is to transfer with `frames`, each once. */
+export function transferListOf(frames: readonly TopicFrame[]): ArrayBuffer[] {
+  const buffers = new Set<ArrayBuffer>();
+  for (const frame of frames) {
+    if (frame.kind === "reset") continue;
+    for (const body of frame.kind === "snap" ? frame.bodies : [frame.body]) {
+      if (body.e === "b64") buffers.add(body.bytes);
+    }
+  }
+  return [...buffers];
 }

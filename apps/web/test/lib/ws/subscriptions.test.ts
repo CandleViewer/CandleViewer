@@ -106,6 +106,22 @@ describe("streams", () => {
     registry.onData(snap(102, { p: { stale: false } }), 1);
     expect(handle.status).toBe("live");
   });
+
+  it("stamps a frame with the size it arrived as: a delta its own, a chunked snapshot all its chunks", () => {
+    const { registry, take } = setup();
+    registry.consume(spec());
+    const chunks = [
+      snap(null, { id: "a", p: { n: 1 } }),
+      snap(null, { id: "a", p: { n: 22 } }),
+      snap(10, { id: "a", p: { n: 333 } }),
+    ];
+    for (const chunk of chunks) registry.onData(chunk, 1);
+    const next = delta(11, { p: { rows: [1, 2, 3] } });
+    registry.onData(next, 1);
+    const whole = chunks.reduce((sum, chunk) => sum + chunk.size, 0);
+    expect(take().map((f) => (f.kind === "reset" ? -1 : f.size))).toEqual([whole, next.size]);
+    expect(next.size).toBeGreaterThan(wire({ rows: [1, 2, 3] }).length); // the whole frame, not its payload
+  });
 });
 
 describe("a gap is never patched (C2)", () => {

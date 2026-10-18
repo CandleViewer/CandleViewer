@@ -34,6 +34,8 @@ interface Stamped {
   /** 13.1: span id of a sampled frame. */
   readonly sp: string | undefined;
   readonly decodeMs: number;
+  /** The frame as it arrived, in encoded bytes (a chunked set: all its chunks): what a queue in front of a consumer charges a structured body for. */
+  readonly size: number;
 }
 
 /**
