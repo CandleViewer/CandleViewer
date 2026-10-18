@@ -1,7 +1,7 @@
 # Container image pin ledger
 
 Digests are real registry manifest (index) digests, resolved anonymously over the registry v2 HTTP
-API by `tools/ci/resolve_image_digests.py` on 2026-10-06 and verified in CI with `--check`
+API by `tools/ci/resolve_image_digests.py` (on each row's date) and verified in CI with `--check`
 (#1857, fixes #1538 #1586). Refresh: edit the tag, replace the digest with any placeholder, run the
 script without flags.
 
@@ -17,9 +17,10 @@ script without flags.
 | bitnamilegacy/minio        | 2024.9.13         | sha256:8a92f71856f4b4b5755fa6afe4e7f9d0db7e18c889318f6772cb342d9b13470d | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                     |
 | python                     | 3.12-slim         | sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f | Docker Hub | 2026-10-06  | `infra/images/Dockerfile.api` (stale, refresh tracked) |
 | ghcr.io/zaproxy/zaproxy    | 2.17.0            | sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef | ghcr.io    | 2026-10-06  | `.github/workflows/dast-auth-zap.yml`                  |
-| trufflesecurity/trufflehog | 3.97.9            | sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db | Docker Hub | 2026-10-06  | `.github/workflows/_job-security.yml`                  |
+| trufflesecurity/trufflehog | 3.97.9            | sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db | Docker Hub | 2026-10-06  | `.github/workflows/_job-security.yml`, `pr.yml`        |
+| zricethezav/gitleaks       | v8.30.1           | sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f | Docker Hub | 2026-10-18  | `.github/workflows/pr.yml`                             |
 
-All 11 pins are verified present in their registry by `--check` (with 3x backoff retry on 429/5xx).
+All 12 pins are verified present in their registry by `--check` (with 3x backoff retry on 429/5xx).
 
 minio: `minio/minio:RELEASE.2024-09-13T20-26-02Z` is no longer anonymously served on Docker Hub or
 quay.io (#1586). Nearest published equivalent is the same-date build `bitnamilegacy/minio:2024.9.13`
