@@ -157,12 +157,27 @@ def test_load_workflow_job_names_empty_when_no_files(tmp_path: Path) -> None:
     assert names == set()
 
 
+# Security review of #3103: a branches or types filter can keep a check from a pull request to main.
+def test_load_workflow_job_names_drops_workflows_a_trigger_filter_narrows(tmp_path: Path) -> None:
+    triggers = {
+        "kept": "types: [opened, synchronize, reopened, edited]\n    branches:\n      - main\n",
+        "labelled": "types: [labeled, synchronize]\n",
+        "release": "branches: [release]\n",
+        "ignore": "branches-ignore: [dev]\n",
+    }
+    for job, trigger in triggers.items():
+        text = f"on:\n  pull_request:\n    {trigger}jobs:\n  {job}:\n    runs-on: x\n"
+        (tmp_path / f"{job}.yml").write_text(text, encoding="utf-8")
+    assert recon.load_workflow_job_names(str(tmp_path / "*.yml")) == {"kept"}
+
+
 def test_load_workflow_job_names_skips_reusable_and_unrelated_workflows() -> None:
     names = recon.load_workflow_job_names(str(ROOT / ".github/workflows/*.yml"))
     assert {"ci-required", "pr-metadata", "architecture", "governance", "js / lint"} <= names
-    # _job-js.yml's jobs, lanes that call a reusable workflow, a matrix job, a schedule
+    # _job-js.yml's jobs, lanes that call a reusable workflow, a matrix job, a schedule, and
+    # docs-spike.yml's job, which does not run when a pull request opens
     unreported = {"lint", "typecheck", "js", "py", "contract", "e2e / e2e-web", "governance-drift"}
-    assert not unreported & names
+    assert not (unreported | {"docs-toolchain-spike"}) & names
 
 
 # Security review of #3103: a lane's caller name would never arrive while its lane runs.
@@ -184,10 +199,13 @@ def test_repo_ci_required_judges_every_c91_check_or_the_file_lists_it_pending() 
         str(ROOT / ".github/workflows/*.yml"),
     )
     assert errors == []
-    assert pending == ["bundle-size", "pr-metadata"]
+    assert pending == ["bundle-size", "pr-metadata"]  # #3080 and #2280 update this as they land
 
 
 DUPLICATE_JS_LANE = " js: {applicable: false, result: process.env.RESULT_JS},"
+SPREAD = '              ...{ js: { applicable: false, result: "success" } },\n'
+FILTER_JS = "FILTER_JS: ${{ needs.changed-paths.outputs.js }}"
+COMMITLINT = '!== "false", result: process.env.RESULT_COMMITLINT'
 
 
 @pytest.mark.parametrize(
@@ -219,6 +237,26 @@ DUPLICATE_JS_LANE = " js: {applicable: false, result: process.env.RESULT_JS},"
         ("pr.yml", "          ')\"\n", "          ')\" || true\n", "whose exit is the resolver's"),
         ("pr.yml", "conclusion\n", "conclusion\n        continue-on-error: true\n", "continue-on"),
         ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: ${{ false }}", "trivy"),
+        # Review round 2 of #3103: each half of a check that runs in two lanes is required.
+        ("_job-py.yml", "\n  py-checks:\n", "\n  py-lint:\n", "'lint'] is stale: no judged py/py"),
+        (
+            "pr.yml",
+            "py: { applicable: isTrue(process.env.FILTER_PY), result: process.env.RESULT_PY }",
+            "py: { applicable: false, result: process.env.RESULT_PY }",
+            "LANE_ALIASES['typecheck'] is stale",
+        ),
+        # ... and each way the resolver step, its program or a lane job stops judging lanes.
+        ("pr.yml", "conclusion\n", "conclusion\n        if: ${{ false }}\n", "with no `if:`"),
+        ("pr.yml", "conclusion\n", "conclusion\n        shell: bash -c true {0}\n", "or shell:"),
+        ("pr.yml", "      - name: Resolve ci", "      - uses: ./x\n$&", "with steps checkout"),
+        ("pr.yml", "            console.log(", "            delete lanes.js;\n$&", "program"),
+        ("pr.yml", "console.log(JSON.stringify(lanes));", 'console.log("{}");', "program"),
+        ("pr.yml", '(v) => v === "true"', "(v) => false", "program must be"),
+        ("pr.yml", "            };\n            console.log(", SPREAD + "$&", "more than lanes"),
+        ("pr.yml", '"secret-scan": { applicable: ', "$&process.exit(0) || ", "more than lanes"),
+        ("pr.yml", FILTER_JS, FILTER_JS.replace(".js", ".py"), "lane 'js' reads ['FILTER_JS']"),
+        ("pr.yml", COMMITLINT, COMMITLINT.replace("false", "true"), "more than lanes"),
+        ("_job-security.yml", "name: trivy\n", "$&    continue-on-error: true\n", "trivy"),
     ],
 )
 def test_dropping_a_lane_from_ci_required_fails_the_proof(
@@ -228,7 +266,7 @@ def test_dropping_a_lane_from_ci_required_fails_the_proof(
     shutil.copytree(ROOT / ".github/workflows", workflows)
     text = (workflows / workflow).read_text(encoding="utf-8")
     assert text.count(old) == 1, old
-    (workflows / workflow).write_text(text.replace(old, new), encoding="utf-8")
+    (workflows / workflow).write_text(text.replace(old, new.replace("$&", old)), encoding="utf-8")
     errors, _ = recon.reconcile_repo(
         str(ROOT / ".github/branch-protection.json"),
         str(ROOT / "CONSTITUTION.md"),

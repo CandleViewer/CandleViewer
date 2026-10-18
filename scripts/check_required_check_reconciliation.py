@@ -32,8 +32,11 @@ AGGREGATE_CONTEXT = "ci-required"
 RESOLVER = "scripts/ci_gate_resolver.mjs"
 
 # §9 names that differ from the lane (`<lane>`) or the job of a lane's reusable workflow
-# (`<lane>/<job>`) that runs the check. Reviewed; a target `ci-required` stops judging fails.
+# (`<lane>/<job>`) that runs the check, or that run in more than one. Reviewed; an entry
+# replaces the same-name match, and a target `ci-required` stops judging fails.
 LANE_ALIASES: dict[str, tuple[str, ...]] = {
+    "lint": ("js/lint", "py/py-checks"),
+    "typecheck": ("js/typecheck", "py/py-checks"),
     "unit-backend": ("py/py-tests",),
     "e2e-smoke": ("e2e/e2e-web",),
     "sast": ("security/codeql", "security/semgrep-bandit"),
@@ -47,19 +50,42 @@ LANE_ALIASES: dict[str, tuple[str, ...]] = {
 # Matches a row of the §9 table: "| 1 | `lint` | ... |"
 CHECK_ROW_RE = re.compile(r"^\|\s*\d+\s*\|\s*`([a-z0-9-]+)`\s*\|")
 JOB_NAME_RE = re.compile(r"^\s{0,2}([a-zA-Z0-9_-]+):\s*$")
-# A lane of the resolver table in `ci-required`: name, applicability, the env var with its result.
+# A lane of the resolver table in `ci-required`: name, applicability (a literal, or FILTER_*
+# variables read by `isTrue` or `!== "false"`, joined by `||`), the env var with its result.
+# Nothing else may be in the table.
+_VAR = r"process\.env\.FILTER_[A-Z0-9_]+"
+_FILTER = rf'(?:isTrue\({_VAR}\)|{_VAR} !== "false")'
 LANE_RE = re.compile(
-    r'"?([a-z0-9-]+)"?:\s*\{\s*applicable:\s*([^{}]*?),\s*'
-    r"result:\s*process\.env\.(RESULT_[A-Z0-9_]+)"
+    rf'\s*"?([a-z0-9-]+)"?:\s*\{{\s*applicable:\s*(true|false|{_FILTER}(?:\s*\|\|\s*{_FILTER})*),'
+    r"\s*result:\s*process\.env\.(RESULT_[A-Z0-9_]+),?\s*\},?"
 )
 # The step that decides `ci-required`: a `run:` block that starts with the resolver call and
 # ends its argument (the lane table) with nothing after it that could override its exit.
 RESOLVER_RUN_RE = re.compile(
     rf"^\s+run: \|\n\s+node {re.escape(RESOLVER)} \"\$\(node -e '$(.*?)^\s+'\)\"$", re.M | re.S
 )
+# That argument's program: this prelude, the lane table, this epilogue, and nothing else.
+PROGRAM_RE = re.compile(
+    r'\s*const isTrue = \(v\) => v === "true";\s*const lanes = \{(.*)\n\s*\};'
+    r"\s*console\.log\(JSON\.stringify\(lanes\)\);\s*",
+    re.S,
+)
+STEP_ACTION_RE = re.compile(r"actions/(checkout|setup-node)@[0-9a-f]{40}")
+# A FILTER_<NAME> variable of the resolver step, set from the `changed-paths` output <name>.
+FILTER_ENV_RE = re.compile(
+    r"^\s+FILTER_(\w+):\s*\$\{\{\s*needs\.changed-paths\.outputs\.([\w-]+)\s*\}\}\s*(?:#.*)?$",
+    re.M,
+)
 USES_RE = re.compile(r"^    uses:\s*\./\.github/workflows/(\S+)", re.M)
-NEVER_RE = re.compile(r"^    if:\s*(\$\{\{\s*)?false\s*(\}\})?\s*$", re.M)
+# A called job that never gates its lane: `if:` the literal false, or continue-on-error that is not
+# the literal false (its failure would not fail the lane).
+NEVER_RE = re.compile(
+    r"^    (if:\s*(\$\{\{\s*)?false\s*(\}\})?|continue-on-error:(?!\s*false\s*$).*)\s*$", re.M
+)
 PATHS_RE = re.compile(r"^\s+paths(-ignore)?:", re.M)
+# GitHub's default pull_request activity types: a `types` filter that drops one stops a check
+# arriving on every pull request.
+DEFAULT_TYPES = {"pull_request": {"opened", "synchronize", "reopened"}}
 
 
 class ReconciliationError(Exception):
@@ -123,17 +149,34 @@ def _check_name(job_id: str, lines: list[str]) -> str | None:
     return None if "${{" in name or re.search(r"^      matrix:", "\n".join(lines), re.M) else name
 
 
+def _on_every(trigger: str, event: str) -> bool:
+    """Whether an `on:` block (comments stripped) runs `event` for every pull request to `main`: no
+    `paths` filter anywhere, no `branches-ignore`, a `branches` filter only if it lists `main`, and
+    a `types` filter only if it keeps GitHub's defaults (DEFAULT_TYPES)."""
+    if not re.search(rf"(?<![\w-]){event}(?![\w-])", trigger) or PATHS_RE.search(trigger):
+        return False
+    block = re.search(rf"^  {event}:.*\n((?:    .*\n|\s*\n)*)", trigger, re.M)
+    keys = re.findall(r"^    ([a-z-]+):(.*(?:\n\s+- .*)*)", block.group(1) if block else "", re.M)
+    filters = {key: set(re.findall(r"[\w*./-]+", values)) for key, values in keys}
+    types = DEFAULT_TYPES.get(event, set())
+    return (
+        "branches-ignore" not in filters
+        and "main" in filters.get("branches", {"main"})
+        and types <= filters.get("types", types)
+    )
+
+
 def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") -> set[str]:
     """Check-run names reported on every `event` (stdlib only): a job's literal `name:`, else its
     id, and `<caller> / <job>` for each job of a reusable workflow a job calls (the caller's own
-    name reports only as a skipped placeholder); see `_check_name`. A workflow with a `paths`
-    filter reports nothing here: on other changes its checks never arrive. Empty when none runs."""
+    name reports only as a skipped placeholder); see `_check_name`. A workflow whose trigger
+    filters narrow `event` (`_on_every`) reports nothing here: on other pull requests its checks
+    never arrive. Empty when none runs."""
     names: set[str] = set()
     for wf_path in sorted(glob.glob(workflows_glob)):
         text = _read(wf_path)
         on = re.search(r"^[\"']?on[\"']?:(.*?)^[^\s#]", text + "\nend", re.M | re.S)
-        trigger = re.sub("#.*", "", on.group(1)) if on else ""
-        if not re.search(rf"(?<![\w-]){event}(?![\w-])", trigger) or PATHS_RE.search(trigger):
+        if not _on_every(re.sub("#.*", "", on.group(1)) if on else "", event):
             continue
         for job_id, lines in _job_blocks(text).items():
             name, uses = _check_name(job_id, lines), USES_RE.search("\n".join(lines))
@@ -148,40 +191,62 @@ def load_workflow_job_names(workflows_glob: str, event: str = "pull_request") ->
 
 def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     """The lanes pr.yml's `ci-required` judges: each lane's name, and `<lane>/<job>` for every job
-    of the reusable workflow it calls whose `if:` is not the literal `false`. `ci-required` must
-    run `if: always()`, never `continue-on-error`, and decide its step by the resolver call
-    (RESOLVER_RUN_RE). A lane counts when its applicability is not the literal `false` and the
-    table, with no key twice, takes its result from the needed job of the lane's own name, or from
-    the `gates` output of that name, which the step of that id backs. Returns (lanes, errors)."""
+    of the reusable workflow it calls that can fail it (not NEVER_RE). `ci-required` must run
+    `if: always()`, with no continue-on-error or shell:, its steps checkout, setup-node and one
+    `run:` step, with no `if:`, that runs the resolver (RESOLVER_RUN_RE) on PROGRAM_RE's program. A
+    lane counts when its applicability is not the literal `false` and reads only FILTER_<NAME>
+    set from the `changed-paths` output <name>, and the table, with no key twice and nothing but
+    lanes, takes its result from the needed job of the lane's own name, or from the `gates`
+    output of that name, which the step of that id backs. Returns (lanes, errors)."""
     path = os.path.join(workflows_dir, "pr.yml")
     jobs = _job_blocks(_read(path))
     body = "\n".join(jobs.get(AGGREGATE_CONTEXT, []))
     run = RESOLVER_RUN_RE.search(body)
+    steps = re.split(r"^      - ", body.split("\n    steps:\n", 1)[-1], flags=re.M)[1:]
+    decider = [step for step in steps if RESOLVER in step]
+    actions = re.findall(r"^\s+(?:- )?uses:\s*(\S+)", body, re.M)
     if (
         not re.search(r"^    if:\s*(\$\{\{\s*)?always\(\)\s*(\}\})?\s*$", body, re.M)
-        or re.search(r"^\s+continue-on-error:", body, re.M)
+        or re.search(r"^\s+(continue-on-error|shell):", body, re.M)
         or not run
+        or len(re.findall(r"^\s+(?:- )?run:", body, re.M)) != 1
+        or len(decider) != 1
+        or re.search(r"^\s*if:", decider[0], re.M)
+        or not all(map(STEP_ACTION_RE.fullmatch, actions))
     ):
         return set(), [
-            f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()`, without continue-on-error, "
-            f"in a `run:` block that starts with {RESOLVER} and whose exit is the resolver's"
+            f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()`, without continue-on-error or "
+            "shell:, with steps checkout, setup-node and one `run:` step, with no `if:`, that "
+            f"starts with {RESOLVER} and whose exit is the resolver's"
         ]
-    table = re.search(r"const lanes = \{(.*?)\n\s*\};", run.group(1), re.S)
+    program = PROGRAM_RE.fullmatch(run.group(1))
+    if not program:
+        return set(), [
+            f"{path}: the `{AGGREGATE_CONTEXT}` program must be the isTrue line, the lane table "
+            "and `console.log(JSON.stringify(lanes));`, nothing else"
+        ]
     needs = set(re.findall(r"^      - ([A-Za-z0-9_-]+)\s*$", body.split("\n    steps:")[0], re.M))
     env = dict(re.findall(r"^\s+(RESULT_[A-Z0-9_]+):\s*\$\{\{\s*(\S+)\s*\}\}\s*$", body, re.M))
+    pairs = FILTER_ENV_RE.findall(body) if "changed-paths" in needs else []
+    filters = {f"FILTER_{var}" for var, out in pairs if var.lower().replace("_", "-") == out}
     gates = "\n".join(jobs.get("gates", []))
     step_ids = set(re.findall(r"^\s+id:\s*([A-Za-z0-9_-]+)\s*$", gates, re.M))
     outputs = re.findall(
         r"^      ([a-z0-9-]+):\s*\$\{\{\s*steps\.([\w-]+)\.outcome\s*\}\}", gates, re.M
     )
     exported = {key for key, step in outputs if key == step and step in step_ids}
-    found = LANE_RE.findall(table.group(1) if table else "")
+    found = LANE_RE.findall(program.group(1))
+    rest = LANE_RE.sub("", program.group(1)).strip()
     keys = [lane for lane, _, _ in found]
     errors = [f"{path}: lane '{k}' repeats" for k in sorted(set(keys)) if keys.count(k) > 1]
+    errors += [f"{path}: the lane table holds more than lanes: {rest[:80]!r}"] if rest else []
     lanes: set[str] = set()
     for lane, applicable, var in found:
         source = env.get(var, "")
-        if applicable.strip() == "false":
+        unset = sorted(set(re.findall(r"FILTER_\w+", applicable)) - filters)
+        if unset:
+            errors.append(f"{path}: lane '{lane}' reads {unset}, not set from changed-paths")
+        if applicable == "false" or unset:
             continue
         if source == f"needs.{lane}.result" and lane in needs and lane in jobs:
             lanes.add(lane)
@@ -196,18 +261,19 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
 
 
 def aggregated_checks(names: list[str], lanes: set[str]) -> tuple[set[str], list[str]]:
-    """The §9 checks a judged lane runs: a lane or lane job of that name, else every target of the
-    name's LANE_ALIASES entry. Returns (checks, errors for aliases that are stale or unknown)."""
+    """The §9 checks a judged lane runs: when the name has a LANE_ALIASES entry, every one of
+    its targets, else a lane or lane job of that name. Returns (checks, errors for aliases that
+    are stale or unknown)."""
     jobs = {entry.split("/", 1)[1] for entry in lanes if "/" in entry}
-    covered = {name for name in names if name in lanes or name in jobs}
     errors = [
         f"LANE_ALIASES['{n}'] is not a §9 check" for n in sorted(set(LANE_ALIASES) - set(names))
     ]
-    for name, targets in sorted(LANE_ALIASES.items()):
-        missing = [target for target in targets if target not in lanes]
-        if name in names and name not in covered and missing:
+    covered: set[str] = set()
+    for name in names:
+        missing = [target for target in LANE_ALIASES.get(name, ()) if target not in lanes]
+        if missing:
             errors.append(f"LANE_ALIASES['{name}'] is stale: no judged {', '.join(missing)}")
-        elif name in names and name not in covered:
+        elif name in LANE_ALIASES or name in lanes or name in jobs:
             covered.add(name)
     return covered, errors
 
