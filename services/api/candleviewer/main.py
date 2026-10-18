@@ -56,6 +56,10 @@ class _Teardown:
     after its stops. Only a `GeneratorExit` leaves at once: the coroutine is being closed, so the
     later steps are skipped and only the `finally` still tries `stop_all`.
 
+    A boot step that raises after `start_all` reaches this teardown as well (#3446). Its exception
+    leaves unchanged once `stop_all` has run, unless a step held one: the held one then wins, and
+    the boot's exception survives as its `__context__`.
+
     No step gets a new time bound. The two that can run long, `BarsRuntime` and the metrics
     listener's drain, are #2878's to bound together with the stop budget (see
     `Settings._refuse_unfittable_stop_budget`); one bound on every step here would cut the WS
