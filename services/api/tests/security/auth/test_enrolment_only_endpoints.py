@@ -205,6 +205,25 @@ def test_session_info_grants_nothing_and_refresh_counts_down(stack: Stack) -> No
     assert "Max-Age=600" in refreshed.headers["set-cookie"]
 
 
+def test_session_info_by_cookie_alone_refuses_a_session_not_minted_enrolment_only(
+    stack: Stack,
+) -> None:
+    """#3214: `GET /auth/session` also finds its session by the `cv_refresh` cookie alone, past
+    the enrolment guard. A full session whose user then lost every method was not minted
+    enrolment-only: it gets the expired 401 there too, as its bearer does, and no user data."""
+    uid, seed = stack.add_user("alice")
+    refresh = stack.sign_in("alice", seed).cookies["cv_refresh"]
+    store = _store(stack)
+    for mid, m in list(store.methods.items()):  # a recovery sign-in or a reset since
+        if m.user_id == uid:
+            store.methods[mid] = m.model_copy(update={"revoked_at": stack.clock.now})
+    stack.client.cookies.clear()
+
+    resp = stack.client.get("/auth/session", headers={"Cookie": f"cv_refresh={refresh}"})
+
+    assert resp.status_code == 401 and "user" not in resp.json()
+
+
 def _fail_on(stack: Stack, monkeypatch: pytest.MonkeyPatch, action: str) -> None:
     """The audit sink refuses *action*, as `AuditWriter.emit` does when it cannot append."""
     emit = stack.audit.emit

@@ -1093,15 +1093,23 @@ def make_session_router(
                 501, "Not implemented", "identity provider not wired (E09-T03); disabled"
             )
         try:
-            enrolment_only = auth_service.enrolment_gate_is_active and (
-                await auth_service.classify(record) is not SessionClass.FULL
-            )
+            verdict = SessionClass.FULL
+            if auth_service.enrolment_gate_is_active:
+                verdict = await auth_service.classify(record)
         except Exception as exc:  # fail closed, as refresh does: never the full grants
             auth_enrolment_refused_total.labels(transport="http", reason="unclassified").inc()
             _log().error(
                 "auth.enrolment_only.unclassified", path="/auth/session", error=type(exc).__name__
             )
             return _session_unchecked()  # the guard's `503 store_unavailable` and Retry-After
+        if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED:
+            # Not minted enrolment-only (Q7): the guard's 401 to its bearer, given here too to
+            # the refresh cookie alone, which reaches this read past the guard (#3214).
+            auth_enrolment_refused_total.labels(transport="http", reason="expired").inc()
+            ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
+            _log().warning("auth.enrolment_only.expired", path="/auth/session", **ids)
+            return _unauthorized()
+        enrolment_only = verdict is not SessionClass.FULL
         at = now()
         response = JSONResponse(
             await _session_info(identity, record, at, enrolment_only=enrolment_only)
