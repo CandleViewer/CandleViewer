@@ -88,7 +88,7 @@ class _LostCodeRace(FakeMfaRepository):
 
     async def complete_recovery(
         self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
-    ) -> bool:
+    ) -> bool | None:
         self.recovery_codes[code_id]["used_at"] = now.isoformat()  # the winner's commit
         return await super().complete_recovery(
             user_id, challenge_id=challenge_id, code_id=code_id, now=now
@@ -100,7 +100,7 @@ class _LostChallengeRace(FakeMfaRepository):
 
     async def complete_recovery(
         self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
-    ) -> bool:
+    ) -> bool | None:
         won = self.challenges[challenge_id].model_copy(update={"satisfied_at": now})
         self.challenges[challenge_id] = won  # the winner's commit
         return await super().complete_recovery(
