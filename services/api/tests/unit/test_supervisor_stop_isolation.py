@@ -238,7 +238,7 @@ def unbounded(monkeypatch: pytest.MonkeyPatch) -> list[float | None]:
     return asked
 
 
-async def test_an_outside_cancellation_of_stop_all_propagates_once_every_later_module_stopped(
+async def test_stop_all_cancelled_from_outside_propagates_after_every_later_stop(
     unbounded: list[float | None],
 ) -> None:
     """The task running `stop_all` is cancelled while the first module it stops hangs. The
