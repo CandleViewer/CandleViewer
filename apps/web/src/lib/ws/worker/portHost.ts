@@ -1,23 +1,37 @@
-// E17-T04 S5c (ADR-0005, D13; 23 4.1, 4.3, C12): the host of the shared worker, the half that serves tabs. One engine
+// E17-T04 S5c, S5d (ADR-0005, D13; 23 4.1, 4.3, 8.5, 9.3; C8, C9, C12; C-2.18): the host of the shared worker. One engine
 // serves every tab of the origin, so one socket does (the gateway allows 8 a user). The host is what the engine's sink
-// is: it reduces the engine's events to the state every tab sees (the kill switch goes out the moment it changes),
-// keeps the latest `system` update of each kind for a tab that joins late, and asks a tab for the access token,
-// which it holds only for as long as `auth` takes. Streams, panes and diagnostics are S5d's. Platform-free: the socket
+// is. S5c: it reduces the engine's events to the state every tab sees (the kill switch goes out the moment it changes),
+// keeps the latest `system` update of each kind for a tab that joins late, and asks a tab for the access token, which it
+// holds only for as long as `auth` takes. S5d: it fans each stream's frames out to the tabs that consume it, one queue
+// and one copy of the buffers per consumer (a transferred buffer reaches one receiver only), holds a newcomer back
+// until its own snapshot, voids a consumer that cannot keep up and asks for a fresh snapshot, and turns what the tabs
+// show into the engine's panes (a hidden tab slows its topics, a collapsed pane lets go). Platform-free: the socket
 // factory and the timers are injected, and a port is anything that posts and listens.
-import type { TokenResult, TokenSource } from "../api";
+import type { PaneVisibility, TokenResult, TokenSource, TopicFrame } from "../api";
 import { TOKEN_WAIT_MS, type SocketFactory } from "../core/connection";
 import { createWsEngine, type EngineSink, type WsEngine } from "../core/engine";
+import { topicKey } from "../core/sequencer";
+import type { StreamHandle } from "../core/subscriptions";
 import { platformTimers, type Timers } from "../policy/timers";
 import {
+  createFrameQueue,
+  DEFAULT_QUEUE_LIMITS,
+  type FrameQueue,
+  type QueueLimits,
+} from "../port/frameQueue";
+import {
+  copyFrame,
   parseClientMessage,
+  transferListOf,
   type ClientMessage,
   type ConnectMessage,
   type HostCounters,
   type WorkerMessage,
+  type WsDiagnostics,
 } from "../port/messages";
 import type { SystemUpdate } from "../protocol/frames";
 import { INITIAL_WS_STATE, reduce } from "../state/reducer";
-import type { WsState } from "../state/types";
+import type { TopicStatus, WsState } from "../state/types";
 
 /** What the host needs of a tab's end of the port (`MessagePort`, a dedicated worker's scope, a test's fake). */
 export interface PortLike {
@@ -31,6 +45,9 @@ export interface PortHostOptions {
   readonly timers?: Partial<Timers> | undefined;
   readonly wallClock?: (() => number) | undefined;
   readonly random?: (() => number) | undefined;
+  readonly limits?: QueueLimits | undefined;
+  /** How long frames are collected into one message; defaults to `FLUSH_MS`. */
+  readonly flushMs?: number | undefined;
   /** Dev only: where a `fault` message goes. Without one it is dropped. */
   readonly fault?: ((command: unknown) => void) | undefined;
 }
@@ -40,10 +57,18 @@ export interface PortHost {
   attach(port: PortLike): void;
   /** Every tab goes, the engine stops, no timer is left. */
   dispose(): void;
-  readonly counters: Pick<HostCounters, "tabs" | "rejectedMessages">;
+  readonly counters: HostCounters;
 }
 
+/**
+ * A frame waits at most this long in the worker (06 5.1 caps a stage's batching window at one frame, 16 ms);
+ * the tab applies what arrived on its next animation frame. The kill switch and the connection state do not
+ * wait: they go out the moment they change.
+ */
+export const FLUSH_MS = 8;
+export const DIAG_INTERVAL_MS = 1_000;
 export const MAX_TABS = 64;
+export const MAX_CONSUMERS_PER_TAB = 512;
 /** The latest update of each `system` kind is kept for a tab that joins late; a server that invents kinds gets no more room. */
 export const MAX_SYSTEM_KINDS = 16;
 
@@ -65,6 +90,11 @@ export function isSocketAllowed(wsUrl: string): boolean {
   }
 }
 
+interface Pane {
+  visibility: PaneVisibility;
+  size?: { readonly cssWidth: number; readonly dpr: number };
+}
+
 interface Session {
   readonly id: string;
   readonly port: PortLike;
@@ -72,29 +102,65 @@ interface Session {
   joined: boolean;
   /** It did not answer its last token request in time; any message from it says it is there. */
   silent: boolean;
+  readonly panes: Map<string, Pane>;
+  readonly consumers: Map<string, Consumer>;
 }
+
+/** What a tab was last told a consumer reads: a change goes out even when no frame carries it. */
+interface Told {
+  readonly status: TopicStatus;
+  readonly effective: Readonly<Record<string, unknown>>;
+  readonly source: "live" | "replay";
+}
+
+interface Consumer {
+  readonly id: string;
+  readonly session: Session;
+  readonly ch: string;
+  readonly rs: string | undefined;
+  readonly handle: StreamHandle;
+  readonly queue: FrameQueue;
+  /** No baseline of its own yet (a newcomer, or voided): deltas are not for it, a snapshot is. */
+  gated: boolean;
+  /** Voided because it could not keep up: reads `resyncing` until its snapshot. */
+  voided: boolean;
+  told: Told | undefined;
+}
+
+const sameTold = (a: Told | undefined, b: Told): boolean =>
+  a !== undefined && a.status === b.status && a.effective === b.effective && a.source === b.source;
 
 export function createPortHost(options: PortHostOptions): PortHost {
   const timers: Timers = { ...platformTimers, ...options.timers };
+  const limits = options.limits ?? DEFAULT_QUEUE_LIMITS;
+  const flushMs = options.flushMs ?? FLUSH_MS;
   /** Tabs that said `connect`, oldest first. */
   const sessions = new Set<Session>();
+  const byStream = new Map<string, Set<Consumer>>();
   const systemKinds = new Map<string, SystemUpdate>();
   const tokenCalls = new Map<
     number,
     { readonly session: Session; resolve(result: TokenResult): void; readonly timer: unknown }
   >();
-  let rejectedMessages = 0;
+  const counters = { overflows: 0, rejectedMessages: 0 };
   let engine: WsEngine | undefined;
   let engineUrl: string | undefined;
   let state: WsState = INITIAL_WS_STATE;
+  let flushTimer: unknown;
+  let diagAt = -Infinity;
+  let diagJson = "";
+  let diagTimer: unknown;
   let tabs = 0;
   let tokenCalled = 0;
   let invalidated = false;
+  let focusOwner: Session | undefined;
+
+  const scoped = (session: Session, pane: string): string => `${session.id}:${pane}`;
 
   /** A port that cannot be written to is a tab that is gone: it is let go of, whatever it held. */
-  function post(session: Session, message: WorkerMessage): void {
+  function post(session: Session, message: WorkerMessage, transfer: ArrayBuffer[] = []): void {
     try {
-      session.port.postMessage(message, []);
+      session.port.postMessage(message, transfer);
     } catch {
       detach(session);
     }
@@ -159,16 +225,132 @@ export function createPortHost(options: PortHostOptions): PortHost {
           systemKinds.set(kind, event.update);
         broadcast({ t: "system", update: event.update });
       }
+      scheduleFlush(); // the counters moved
     },
-    deliver: () => undefined, // no tab consumes a stream yet (S5d)
+    deliver: fanOut,
+    changed: scheduleFlush,
   };
+
+  function scheduleFlush(): void {
+    flushTimer ??= timers.setTimeout(flush, flushMs);
+  }
+
+  /** The frame goes to every consumer of its stream that can take it: the last takes the buffers, the others copies made first. */
+  function fanOut(ch: string, rs: string | undefined, frame: TopicFrame): void {
+    const takers = [...(byStream.get(topicKey(ch, rs)) ?? [])].filter(
+      (consumer) => frame.kind === "snap" || !consumer.gated, // a newcomer holds no state a delta or a reset could change
+    );
+    takers.forEach((consumer, i) => {
+      if (frame.kind === "snap") consumer.gated = consumer.voided = false;
+      const own = i === takers.length - 1 ? frame : copyFrame(frame);
+      if (consumer.queue.push(own) === "overflow") overflow(consumer);
+    });
+    if (takers.length > 0) scheduleFlush();
+  }
+
+  /** It cannot keep up (C-2.18): what it held is gone, it is told so, and it waits for a snapshot, which the engine is asked for. */
+  function overflow(consumer: Consumer): void {
+    counters.overflows += 1;
+    consumer.gated = consumer.voided = true;
+    consumer.queue.push({ kind: "reset", reason: "overflow" });
+    engine?.rebaseline(consumer.ch, consumer.rs);
+  }
+
+  function toldOf(consumer: Consumer): Told {
+    const { handle } = consumer;
+    const status =
+      handle.status === "revoked"
+        ? "revoked"
+        : consumer.voided
+          ? "resyncing"
+          : consumer.gated
+            ? "pending"
+            : handle.status;
+    return { status, effective: handle.effective, source: handle.source };
+  }
+
+  function flush(): void {
+    flushTimer = undefined;
+    for (const session of [...sessions]) {
+      for (const consumer of [...session.consumers.values()]) {
+        if (!sessions.has(session)) break; // a post failed: the tab is gone
+        const frames = consumer.queue.drain();
+        const told = toldOf(consumer);
+        if (frames.length === 0 && sameTold(consumer.told, told)) continue;
+        consumer.told = told;
+        post(session, { t: "data", id: consumer.id, frames, ...told }, transferListOf(frames));
+      }
+    }
+    postDiag();
+  }
+
+  function counts(): HostCounters {
+    let consumers = 0;
+    let queuedFrames = 0;
+    for (const session of sessions) {
+      consumers += session.consumers.size;
+      for (const consumer of session.consumers.values()) queuedFrames += consumer.queue.size;
+    }
+    return { tabs: sessions.size, consumers, queuedFrames, ...counters };
+  }
+
+  /** Counters are posted when they moved, at most once a second: a move inside the second is posted when it is over. */
+  function postDiag(): void {
+    if (engine === undefined) return;
+    const diag: WsDiagnostics = {
+      engine: engine.counters,
+      host: counts(),
+      slowConsumerHint: engine.slowConsumerHint,
+      clockSkewMs: engine.clockSkewMs,
+    };
+    const json = JSON.stringify(diag);
+    if (json === diagJson) return;
+    const wait = diagAt + DIAG_INTERVAL_MS - timers.now();
+    if (wait > 0) {
+      diagTimer ??= timers.setTimeout(() => {
+        diagTimer = undefined;
+        postDiag();
+      }, wait);
+      return;
+    }
+    diagAt = timers.now();
+    diagJson = json;
+    broadcast({ t: "diag", diag });
+  }
+
+  function applyPane(session: Session, id: string): void {
+    const pane = session.panes.get(id);
+    if (pane === undefined) return;
+    const { visibility, size } = pane;
+    engine?.setPane(scoped(session, id), {
+      visibility,
+      tabHidden: session.hidden,
+      ...(size !== undefined && { size }),
+    });
+  }
+
+  function drop(consumer: Consumer): void {
+    consumer.handle.release();
+    consumer.session.consumers.delete(consumer.id);
+    const key = topicKey(consumer.ch, consumer.rs);
+    const group = byStream.get(key);
+    group?.delete(consumer);
+    if (group?.size === 0) byStream.delete(key);
+  }
 
   function detach(session: Session): void {
     if (!sessions.delete(session)) return;
     session.joined = false;
+    for (const consumer of [...session.consumers.values()]) drop(consumer);
+    for (const id of session.panes.keys()) engine?.removePane(scoped(session, id));
     for (const [req, call] of tokenCalls)
       if (call.session === session) settle(req, { kind: "unavailable" });
+    if (focusOwner === session) {
+      focusOwner = undefined;
+      engine?.focusPane(null);
+    }
     if (sessions.size === 0) teardown();
+    else scheduleFlush(); // so the count of tabs is posted
   }
 
   /** The last tab left: the socket closes, and the next `connect` starts afresh. */
@@ -177,7 +359,13 @@ export function createPortHost(options: PortHostOptions): PortHost {
     engine = engineUrl = undefined;
     state = INITIAL_WS_STATE;
     systemKinds.clear();
+    byStream.clear();
     invalidated = false;
+    diagAt = -Infinity;
+    diagJson = "";
+    for (const timer of [flushTimer, diagTimer])
+      if (timer !== undefined) timers.clearTimeout(timer);
+    flushTimer = diagTimer = undefined;
   }
 
   function join(session: Session, message: ConnectMessage): boolean {
@@ -208,7 +396,9 @@ export function createPortHost(options: PortHostOptions): PortHost {
   function onMessage(session: Session, data: unknown): void {
     const message = parseClientMessage(data);
     if (message !== undefined) session.silent = false;
-    if (message === undefined || !dispatch(session, message)) rejectedMessages += 1;
+    if (message !== undefined && dispatch(session, message)) return;
+    counters.rejectedMessages += 1;
+    scheduleFlush(); // so the count is posted
   }
 
   /** `false`: the message made no sense now (not joined, nothing open under that number, not served): it is counted, and changes nothing. */
@@ -221,8 +411,76 @@ export function createPortHost(options: PortHostOptions): PortHost {
     }
     if (!session.joined || engine === undefined) return false;
     switch (message.t) {
+      case "consume": {
+        if (session.consumers.has(message.id) || session.consumers.size >= MAX_CONSUMERS_PER_TAB)
+          return false;
+        if (!session.panes.has(message.pane)) {
+          session.panes.set(message.pane, { visibility: "visible" }); // a pane that was never described is in view
+          applyPane(session, message.pane);
+        }
+        const handle = engine.consume(
+          {
+            ch: message.ch,
+            paneId: scoped(session, message.pane),
+            priority: message.priority,
+            ...(message.opts !== undefined && { opts: message.opts }),
+          },
+          message.rs,
+        );
+        const consumer: Consumer = {
+          id: message.id,
+          session,
+          ch: message.ch,
+          rs: message.rs,
+          handle,
+          queue: createFrameQueue(limits),
+          gated: true,
+          voided: false,
+          told: undefined,
+        };
+        session.consumers.set(message.id, consumer);
+        const key = topicKey(message.ch, message.rs);
+        byStream.set(key, (byStream.get(key) ?? new Set()).add(consumer));
+        scheduleFlush(); // the tab hears what it reads at once, `pending`
+        return true;
+      }
+      case "release":
+      case "resync": {
+        const consumer = session.consumers.get(message.id);
+        if (consumer === undefined) return false;
+        if (message.t === "release") drop(consumer);
+        else {
+          consumer.gated = consumer.voided = true; // the tab voided it: it waits for a snapshot like a newcomer
+          consumer.queue.clear();
+          engine.rebaseline(consumer.ch, consumer.rs);
+          scheduleFlush();
+        }
+        return true;
+      }
+      case "pane": {
+        const size =
+          message.cssWidth === undefined || message.dpr === undefined
+            ? undefined
+            : { cssWidth: message.cssWidth, dpr: message.dpr };
+        session.panes.set(message.id, {
+          visibility: message.visibility,
+          ...(size !== undefined && { size }),
+        });
+        applyPane(session, message.id);
+        return true;
+      }
+      case "focus":
+        if (message.id !== null) {
+          focusOwner = session;
+          engine.focusPane(scoped(session, message.id));
+        } else if (focusOwner === session) {
+          focusOwner = undefined;
+          engine.focusPane(null);
+        }
+        return true;
       case "visibility":
         session.hidden = message.hidden;
+        for (const id of session.panes.keys()) applyPane(session, id);
         return true;
       case "token": {
         const call = tokenCalls.get(message.req);
@@ -233,8 +491,6 @@ export function createPortHost(options: PortHostOptions): PortHost {
       case "fault":
         options.fault?.(message.command);
         return true;
-      default:
-        return false; // streams and panes: S5d
     }
   }
 
@@ -247,6 +503,8 @@ export function createPortHost(options: PortHostOptions): PortHost {
         hidden: false,
         joined: false,
         silent: false,
+        panes: new Map(),
+        consumers: new Map(),
       };
       port.listen((data) => onMessage(session, data));
     },
@@ -254,7 +512,7 @@ export function createPortHost(options: PortHostOptions): PortHost {
       for (const session of [...sessions]) detach(session);
     },
     get counters() {
-      return { tabs: sessions.size, rejectedMessages };
+      return counts();
     },
   };
 }

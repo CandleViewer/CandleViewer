@@ -59,6 +59,14 @@ export class FakeTab implements PortLike {
     if (message === undefined) throw new Error(`no ${t} message`);
     return message;
   }
+
+  /** The frames the worker posted for a consumer, as `snap:1`, `d:2`, `reset:gap`, in order. */
+  frames(id: string): string[] {
+    return this.of("data")
+      .filter((m) => m.id === id)
+      .flatMap((m) => m.frames)
+      .map((f) => (f.kind === "reset" ? `reset:${f.reason}` : `${f.kind}:${f.seq}`));
+  }
 }
 
 export const CONNECT = {
@@ -89,7 +97,9 @@ export function hostHarness(
     tab.say(connect);
     return tab;
   };
+  const consume = (tab: FakeTab, id: string, ch: string, over: object = {}): void =>
+    tab.say({ t: "consume", id, ch, pane: "p1", priority: "focused", ...over });
   /** Moves the fake clock; the microtasks (a socket opening, a token, a flush) run on the way. */
   const advance = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
-  return { gateway, host, tab, advance };
+  return { gateway, host, tab, consume, advance };
 }
