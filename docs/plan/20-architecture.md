@@ -856,6 +856,7 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_DISK_HALT_PCT`               | int    | `95`                      | runtime | write gate: symbols without an open position dropped (gaps)                                                         |
 | `CV_DISK_SAMPLE_INTERVAL_S`      | float  | `60`                      | process | DiskBudget sampling cadence                                                                                         |
 | `CV_ALLOW_SHARED_VOLUME`         | bool   | `false`                   | process | SR-096 escape hatch; refused unless testnet (E16-FR-11)                                                             |
+| `CV_BACKUP_ROOT`                 | path   | unset                     | process | the backup volume, written only by the backup engine and the only place artefacts are read (E42-T05); rules below |
 | `CV_REPLAY_IDLE_TTL_S`           | float  | `7200`                    | process | replay session with no control call this long is DESTROYed (`idle_reclaim`)                                         |
 | `CV_REPLAY_RECLAIM_INTERVAL_S`   | float  | `60`                      | process | idle-reclaim sweep cadence (one bounded batch per sweep)                                                            |
 | `CV_REPLAY_MAX_SESSIONS_PER_USER` | int   | `2`                       | process | open replay sessions per user; create / `PREPARE` past it refused                                                   |
@@ -895,6 +896,28 @@ variable is set (any one refuses, declared or not) and the test clock is off; an
 `CV_ACCOUNT_FIXTURE_DIR` alone counts as unset. Its code is the dev-only `services/api/cvdev`
 package, which no wheel, sdist or image carries, so a release image with the switch set refuses
 boot ("this build carries no fixture transport") instead of ignoring it.
+
+`CV_BACKUP_ROOT` is where the backup services read single-file artefacts (`verifyBackup`,
+`downloadBackup`; E42-T05, `storage/backup_artefacts.py`); only the backup engine writes it, and
+unset, nothing is read. Settings refuses at load a relative path, `/`, `..`, a symlink anywhere in
+the path, and a root that is, contains or lies inside a data directory, compared resolved:
+
+- the directories of `CV_AUDIT_WAL_PATH` and `CV_AUDIT_CHECKPOINT_PATH`;
+- `CV_PARQUET_ROOT`, `CV_RECORDER_WAL_DIR` and `CV_BARS_STATE_ROOT`, defaults derived as their own
+  checks derive them;
+- the directories of `CV_KEK_HANDLE`, `CV_KEK_PREV_HANDLE`, `CV_KEK_ACK_PATH`,
+  `CV_AUDIT_LANE_KEY_FILE` and `CV_AUDIT_LANE_PREVIOUS_KEY_FILE`;
+- the database data directories `/var/lib/postgresql` and `/var/lib/questdb`. They are fixed for
+  v1: the API container mounts neither volume, so this comparison is best-effort, and the read
+  rules below and a volume of its own are the controls. They become settings only if the backup
+  engine makes PGDATA one.
+
+A catalogue `location` is read only once it resolves to a regular file inside the root, walked one
+`O_NOFOLLOW` component at a time from `/`, the root's own components included, so a symlink
+swapped in after boot is refused too. What `O_NOFOLLOW` cannot see is refused on the opened
+descriptor: a file with a second link (`st_nlink` other than 1, so a hard-link snapshot tool aimed
+at the root fails closed) or on another device than the root (a mount below it). A refusal is
+`artefact_missing`; an I/O error or a process out of descriptors is `store_unavailable`.
 
 ### 7.3 Environment parity for developers
 

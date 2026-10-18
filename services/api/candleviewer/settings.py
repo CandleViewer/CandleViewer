@@ -23,6 +23,7 @@ import ipaddress
 import math
 import os
 import re
+from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -111,6 +112,46 @@ class RecorderWalDirError(ValueError):
     """`CV_RECORDER_WAL_DIR` is unsafe (relative, `..`, symlink, or outside the data dir)."""
 
     code = "recorder_wal_dir_invalid"
+
+
+#: E42-T05 (#966): the database data directories, which no setting names: where the stack mounts
+#: the Postgres and QuestDB volumes (`infra/compose/docker-compose.yml`, 21 §8.2). Fixed for v1:
+#: the API container mounts neither, so this check is best-effort; the walk's refusals and a
+#: volume of its own are the controls. Settings only if the backup engine makes PGDATA one.
+DATABASE_DATA_DIRS: Final = ("/var/lib/postgresql", "/var/lib/questdb")
+
+
+def _data_directories(data: Mapping[str, Any]) -> dict[str, Path]:
+    """E42-T05: what `CV_BACKUP_ROOT` stays apart from, resolved as the process opens it: the
+    audit WAL's and checkpoints' directories, the recordings (the Parquet lake and the spill WAL),
+    the bar state, the directories of the KEK handles, the KEK ack and the audit lane keys, and
+    `DATABASE_DATA_DIRS`. The spill WAL and bar state defaults mirror their `_anchor_*` rules."""
+
+    def setting(name: str) -> Path | None:
+        value = data.get(name)
+        return Path(value).expanduser() if isinstance(value, str) and value.strip() else None
+
+    def parent(name: str) -> Path | None:
+        path = setting(name)
+        return None if path is None else path.parent
+
+    lake = setting("parquet_root")
+    spill = setting("recorder_wal_dir") or (lake and lake.resolve().parent / "recorder-wal")
+    bars = setting("bars_state_root") or (lake and lake.parent / "bars" / "state")
+    found = {
+        "the directory of CV_AUDIT_WAL_PATH": parent("audit_wal_path"),
+        "the directory of CV_AUDIT_CHECKPOINT_PATH": parent("audit_checkpoint_path"),
+        "CV_PARQUET_ROOT": lake,
+        "CV_RECORDER_WAL_DIR": spill,
+        "CV_BARS_STATE_ROOT": bars,
+        "the directory of CV_KEK_HANDLE": parent("kek_handle"),
+        "the directory of CV_KEK_PREV_HANDLE": parent("kek_prev_handle"),
+        "the directory of CV_KEK_ACK_PATH": parent("kek_ack_path"),
+        "the directory of CV_AUDIT_LANE_KEY_FILE": parent("audit_lane_mac_file"),
+        "the directory of CV_AUDIT_LANE_PREVIOUS_KEY_FILE": parent("audit_lane_previous_mac_file"),
+        **{directory: Path(directory) for directory in DATABASE_DATA_DIRS},
+    }
+    return {name: Path(os.path.realpath(p)) for name, p in found.items() if p is not None}
 
 
 #: Ports a browser leaves out of a serialised origin (WHATWG URL "special" schemes).
@@ -539,6 +580,10 @@ class Settings(BaseSettings):
     # symlink; it is normalised with expanduser().resolve() at settings load.
     bars_enabled: bool = False
     bars_state_root: str = ""
+    # E42-T05 (#966 Q7): the backup volume, the only place backup artefacts are read from
+    # (`storage/backup_artefacts.py`); only the backup engine writes it. Empty (default) = unwired.
+    # Declared after every path `_refuse_unsafe_backup_root` compares, so they are in `info.data`.
+    backup_root: str = ""
     # E12-S04: renko builders (`bars.renko`, C-4.13: off by default; on in staging; the
     # descoping switch, removal at R2). Never gates a safety invariant (C-4.14).
     bars_renko_enabled: bool = False
@@ -827,6 +872,31 @@ class Settings(BaseSettings):
         if Path(os.path.realpath(path)) != path:  # Path equality ignores a trailing `/`
             raise ValueError("CV_ACCOUNT_FIXTURE_DIR must not be under a symlinked directory")
         return value
+
+    @field_validator("backup_root")
+    @classmethod
+    def _refuse_unsafe_backup_root(cls, value: str, info: ValidationInfo) -> str:
+        """E42-T05: the test clock's path rules (#2728), not `/`, blank = unset; and none of
+        `_data_directories`, nor inside or above one, so no catalogue `location` reaches their
+        files through the root. A field validator, so a refusal carries only this value (#2728,
+        C-12.6). Returned normalised (no trailing `/`), as `LocalArtefactStore` takes it."""
+        if not value.strip():
+            return ""
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("CV_BACKUP_ROOT must be an absolute path")
+        if path == Path("/"):
+            raise ValueError("CV_BACKUP_ROOT must not be /")
+        if ".." in path.parts:
+            raise ValueError("CV_BACKUP_ROOT must not contain '..'")
+        if path.is_symlink():
+            raise ValueError("CV_BACKUP_ROOT must not be a symlink")
+        if Path(os.path.realpath(path)) != path:
+            raise ValueError("CV_BACKUP_ROOT must not be under a symlinked directory")
+        for name, directory in _data_directories(info.data).items():
+            if path.is_relative_to(directory) or directory.is_relative_to(path):
+                raise ValueError(f"CV_BACKUP_ROOT must not be, contain or lie inside {name}")
+        return str(path)
 
     @field_validator("uvicorn_drain_timeout_s", mode="before")
     @classmethod
