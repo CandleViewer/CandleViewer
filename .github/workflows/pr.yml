@@ -540,9 +540,9 @@ jobs:
 
   # --- C-10.2 (#2892): a PR that touches a security path gets `security-review`; red (CI-GATE-004) if
   # the label cannot be added, or the changed files cannot all be read while it is missing. One job
-  # adds and judges: a label added with GITHUB_TOKEN starts no other run. It is the only job here
-  # that can write to the PR, so it checks out `main` and runs main's script, never the PR's code
-  # (SR-132). Until main has the script (the PR adding it), it labels every PR: never fewer reviews.
+  # adds and judges: a label added with GITHUB_TOKEN starts no other run. It can write to the PR,
+  # so it checks out `main` and runs main's script, never the PR's code (SR-132). Until main has
+  # the script (the PR adding it), it labels every PR: never fewer reviews.
   # It never removes a label. A merge group has no PR to label (its PR's own run labelled it before
   # it could be enqueued), so the step runs on pull requests only and the job passes there (#3433).
   security-review-label:

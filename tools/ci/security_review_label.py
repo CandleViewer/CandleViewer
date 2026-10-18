@@ -28,10 +28,10 @@ Exit 1 (CI-GATE-004), failing closed: a security path is touched and the label c
 changed files cannot all be read (an API error, a short list, more than the API's 3000 files) and
 the label is not on the PR; or the event or the PR number is not one this script knows.
 
-Trust model (SR-132): the only pr.yml job with a write permission, so it checks out `main`, never
-the PR, and runs this file from it with `python3 -I`: a PR cannot change the rule that judges it.
-Under `pull_request` the workflow YAML itself is still the PR's; the C-10.2 workflow review covers
-that. Stdlib only.
+Trust model (SR-132): the job can write to the PR (`pull-requests: write`), so it checks out
+`main`, never the PR, and runs this file from it with `python3 -I`: a PR cannot change the rule
+that judges it. Under `pull_request` the workflow YAML itself is still the PR's; the C-10.2
+workflow review covers that. Stdlib only.
 """
 
 from __future__ import annotations
