@@ -66,6 +66,9 @@ EXPANSIONS = {
     # tools/ci/py_test_lanes.py pytest-args prints paths and --ignore= only: its collects() raises
     # on any other option, and test_py_test_lanes runs it on every lane.
     ("_job-py.yml", "py-tests"): frozenset({"${lane_paths[@]}"}),
+    # tools/ci/governance_shards.py prints test file paths only (scripts/tests or scripts/gh/tests
+    # `test_*.py`), and test_governance_shards checks its shards partition exactly those (#3789).
+    ("governance.yml", "governance-tests"): frozenset({"${files[@]}"}),
 }
 QUARANTINE = "flaky"  # C-9.3 quarantines a test by adding it on top of the test's lane markers
 # Shell scripts a workflow step runs, read like a `run:` (#3091): the blocking xstate-contract gate.
