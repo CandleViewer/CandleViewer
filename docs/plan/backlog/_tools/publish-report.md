@@ -2,7 +2,12 @@
 
 Run date: 2026-09-24
 Repo: `CandleViewer/CandleViewer` (node `R_kgDOUZDklw`)
-Project: `#10` owner `basiltt` (`PVT_kwHOAzoHns4BjW_b`)
+Project: `#10` owner `basiltt` (`PVT_kwHOAzoHns4BjW_b`), the user project at the time of the run
+
+> Note (2026-10-20): this report is a point-in-time record of the former user project
+> `basiltt/projects/10`. The repository moved to the organisation on 2026-10-19 and the board was
+> re-created as `CandleViewer/projects/3` (`PVT_kwDOFI4N5c4BnyHX`) with identical views, fields and
+> option ids. The narrative below is left as written; the repro commands target the organisation project.
 
 ## Summary
 
@@ -93,7 +98,7 @@ board-sync task.
 ```bash
 export PATH="$PATH:/c/Program Files/GitHub CLI"
 gh api graphql -f query='...'                     # subIssues / projectItems checks
-gh project item-list 10 --owner basiltt --format json --limit 1500
+gh project item-list 3 --owner CandleViewer --format json --limit 1500
 gh api graphql -F query=@remove_placeholders.graphql   # deleteProjectV2Item x26
 gh api graphql -F query=@add_sprints.graphql           # updateProjectV2Field (Sprint 19-26)
 python docs/plan/backlog/_tools/publish_board.py ...   # (SPRINT_OPTS ids updated)

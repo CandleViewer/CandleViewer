@@ -1,4 +1,4 @@
-"""Dump Project #10 items (issue number, title, status, sprint, assignees, labels, state) to
+"""Dump Project #3 items (issue number, title, status, sprint, assignees, labels, state) to
 _board_snapshot.json for autonomous planning. Read-only. Usage: python board_snapshot.py"""
 
 import json

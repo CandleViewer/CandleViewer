@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 Publish the CandleViewer backlog (docs/plan/backlog/all-tickets.json) to
-GitHub issues + Project #10, resumably.
+GitHub issues + Project #3 (the CandleViewer organisation project), resumably.
 
 Phases (each independently resumable via the ledger file):
   1. create issues (skip label "retired")
   2. link sub-issues (parent/child) via GraphQL addSubIssue
   3. link blocked-by via GraphQL addBlockedBy
-  4. add every issue to Project #10 and set fields
+  4. add every issue to Project #3 and set fields
 
 Ledger: docs/plan/backlog/_tools/published.json
   {key: {"number": int, "node_id": str, "item_id": str|None,
@@ -40,9 +40,9 @@ LEDGER_PATH = os.path.join(HERE, "published.json")
 FAILURES_PATH = os.path.join(HERE, "publish_failures.json")
 
 REPO = "CandleViewer/CandleViewer"
-PROJECT_NUMBER = "10"
-PROJECT_OWNER = "basiltt"
-PROJECT_ID = "PVT_kwHOAzoHns4BjW_b"
+PROJECT_NUMBER = "3"
+PROJECT_OWNER = "CandleViewer"
+PROJECT_ID = "PVT_kwDOFI4N5c4BnyHX"
 
 GH = "gh"
 SLEEP_BETWEEN_CREATES = 5.0
@@ -426,20 +426,21 @@ def _flush_blockedby_batch(batch, pairs, ledger, failures):
 
 
 # --------------------------------------------------------------------------
-# Project field ids (from `gh project field-list 10 --owner basiltt --format json`)
+# Project field ids (from `gh project field-list 3 --owner CandleViewer --format json`;
+# organisation project since 2026-10-19)
 FIELD_IDS = {
-    "Status": "PVTSSF_lAHOAzoHns4BjW_bzhiLk7Y",
-    "Priority": "PVTSSF_lAHOAzoHns4BjW_bzhiLlGY",
-    "Kind": "PVTSSF_lAHOAzoHns4BjW_bzhiL_So",
-    "Phase": "PVTSSF_lAHOAzoHns4BjW_bzhiL_Tk",
-    "Risk": "PVTSSF_lAHOAzoHns4BjW_bzhiL_To",
-    "Estimate": "PVTF_lAHOAzoHns4BjW_bzhiL_WY",
-    "Rollup": "PVTF_lAHOAzoHns4BjW_bzhiL_Wc",
-    "Due": "PVTF_lAHOAzoHns4BjW_bzhiL_Wg",
-    "Start": "PVTF_lAHOAzoHns4BjW_bzhiL_Wk",
-    "Sprint": "PVTSSF_lAHOAzoHns4BjW_bzhiL_f0",
-    "Component": "PVTSSF_lAHOAzoHns4BjW_bzhiL_f4",
-    "Perspective": "PVTSSF_lAHOAzoHns4BjW_bzhiL_gU",
+    "Status": "PVTSSF_lADOFI4N5c4BnyHXzhmVIC0",
+    "Priority": "PVTSSF_lADOFI4N5c4BnyHXzhmVIEU",
+    "Kind": "PVTSSF_lADOFI4N5c4BnyHXzhmVIEY",
+    "Phase": "PVTSSF_lADOFI4N5c4BnyHXzhmVIEg",
+    "Risk": "PVTSSF_lADOFI4N5c4BnyHXzhmVIEk",
+    "Estimate": "PVTF_lADOFI4N5c4BnyHXzhmVIEw",
+    "Rollup": "PVTF_lADOFI4N5c4BnyHXzhmVIE0",
+    "Due": "PVTF_lADOFI4N5c4BnyHXzhmVIE4",
+    "Start": "PVTF_lADOFI4N5c4BnyHXzhmVIE8",
+    "Sprint": "PVTSSF_lADOFI4N5c4BnyHXzhmVIFI",
+    "Component": "PVTSSF_lADOFI4N5c4BnyHXzhmVIFM",
+    "Perspective": "PVTSSF_lADOFI4N5c4BnyHXzhmVIFQ",
 }
 
 STATUS_OPTS = {"Backlog": "0bf8b687", "Ready": "7b6bf5d3",

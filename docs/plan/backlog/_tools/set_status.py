@@ -1,4 +1,4 @@
-"""Set the Project #10 Status (and optionally comment) for a ticket key. Usage:
+"""Set the Project #3 Status (and optionally comment) for a ticket key. Usage:
    python docs/plan/backlog/_tools/set_status.py E02-T01 "In Progress" ["comment text"]
 Statuses: Backlog, Ready, In Progress, In Review, In Test, Blocked, Done."""
 import json, os, subprocess, sys

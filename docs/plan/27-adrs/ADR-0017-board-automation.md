@@ -219,3 +219,14 @@ see that file's own change in this PR.
 - All verbatim evidence (run IDs, job IDs, GraphQL responses) is inlined above rather than linked, so
   this record remains valid even if the scratch repo is later deleted.
 
+## Amendment 1 (2026-10-20, #2701)
+
+- **The board moved.** The repository was transferred to the `CandleViewer` organisation on 2026-10-19.
+  A user project cannot be linked to an organisation repository, so the board was re-created as the
+  organisation project `CandleViewer/projects/3` (`PVT_kwDOFI4N5c4BnyHX`) with identical views, fields and
+  option ids. The board tooling under `docs/plan/backlog/_tools/` targets it.
+- **This record is not rewritten.** The probes above ran against the user-level project
+  `https://github.com/users/basiltt/projects/10` (`PVT_kwHOAzoHns4BjW_b`) and against scratch repositories.
+  Their evidence, and every reference to that project, stay as recorded. This amendment does not re-run the
+  Q1 (credential) or Q2 (event) probes against the organisation project.
+
