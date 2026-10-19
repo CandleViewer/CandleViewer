@@ -20,15 +20,35 @@ jobs:
         run: uv sync --project services/api
       - name: Proxy harness (DuckDB shapes, regression gate)
         id: proxy
-        run: uv run --project services/api python tests/perf/storage/harness.py --out results.json
+        # Exit 1 is the harness's regression gate (a warm p95 over baseline). The exit code is
+        # recorded as the step output `rc` for the ticket step below, and the step fails with it.
+        run: |
+          rc=0
+          uv run --project services/api python tests/perf/storage/harness.py \
+            --out results.json || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
       - name: Real-engine harness (QuestDB 8.1.1 via testcontainers; docker is preinstalled on ubuntu-latest)
         id: real
         working-directory: services/api
-        run: uv run pytest tests/integration/storage/test_storage_perf_harness.py -m "integration and perf and not flaky" -p no:randomly
+        # --no-cov: the perf assertions are this step's check; the normal lanes measure coverage.
+        # services/api's addopts add --cov-fail-under=85 for the whole package; four perf tests
+        # cannot reach it, so every night ended in a coverage failure (exit 1) with all four passed
+        # and filed a false regression ticket (#3429). Without the floor, exit 1 is a failed test.
+        run: |
+          rc=0
+          uv run pytest tests/integration/storage/test_storage_perf_harness.py \
+            -m "integration and perf and not flaky" --no-cov -p no:randomly || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
       - name: Open ticket on >20% regression
-        # Only a perf-gate failure (harness exit 1 / pytest exit 1) opens an issue;
-        # infrastructure errors (docker, uv sync, timeouts) fail the job without a regression ticket.
-        if: failure() && (steps.proxy.outcome == 'failure' || steps.real.outcome == 'failure') && steps.sync.outcome == 'success'
+        # Opens an issue only for a perf-gate exit, as each harness step recorded it in `rc`: 1 from
+        # the proxy harness (a warm p95 over baseline) or 1 from the real-engine pytest run (a perf
+        # test failed), after a `uv sync` that succeeded. Any other exit fails the job without a
+        # ticket: pytest's 2 (interrupted or collection error), 3 (internal), 4 (usage) or 5
+        # (nothing collected), a kill signal, a failed `uv sync`. Exit 1 is also what an uncaught
+        # harness error or a fixture error (docker not reachable) gives: those open one too.
+        if: failure() && (steps.proxy.outputs.rc == '1' || steps.real.outputs.rc == '1') && steps.sync.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
