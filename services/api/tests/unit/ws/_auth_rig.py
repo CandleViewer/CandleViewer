@@ -88,9 +88,17 @@ class _Audit:
 
 class Rig:
     """One gateway on the test's loop (module docstring); `now` is its fake clock. The auth call
-    bound is production's, or 10 ms (loop clock) if a test's call `hangs`; `hub` goes to the hub."""
+    bound is production's, or 10 ms (loop clock) if a test's call `hangs`; `hub` goes to the hub,
+    and `options` (the auth window, the close flush bound, the backpressure flag) to the router."""
 
-    def __init__(self, *, tick_s: float = 0.005, hangs: bool = False, **hub: int) -> None:
+    def __init__(
+        self,
+        *,
+        tick_s: float = 0.005,
+        hangs: bool = False,
+        options: dict[str, Any] | None = None,
+        **hub: int,
+    ) -> None:
         self.audit, self.hub, self.now = _Audit(), GatewayHub(**hub), 0.0
         self.revocation = RevocationHub(wall_ms=lambda: BASE_MS)
         self.gates: dict[str, asyncio.Event] = {}
@@ -135,6 +143,7 @@ class Rig:
             clock=lambda: self.now,
             wall_ms=lambda: BASE_MS + int(self.now * 1000),
             tick_s=tick_s,
+            **(options or {}),
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)

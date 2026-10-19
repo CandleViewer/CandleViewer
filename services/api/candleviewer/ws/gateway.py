@@ -61,7 +61,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   counted only once its `PongBudget` is spent, and one over `MAX_PONG_BYTES` closes
   `protocol_violation` (§8.5), never decoded when `t: "pong"` leads it. An envelope `id` that is
   not a string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
-  handled, so no reply echoes it (§13.1, #2572).
+  handled, so no reply echoes it (§13.1, #2572). Fair scheduling between connections: the reader
+  yields to the loop after each frame it handles, and `handle_sub` within a long `sub`.
 - Every server-initiated close after `accept` goes through `_Connection.close_with`, which
   queues `bye` ahead of the close frame (requirement S11), except the handler's own fault `bye`
   and 1011, which the handler counts itself. Token expiry and revocation seal the close:
@@ -202,7 +203,12 @@ from candleviewer.ws.permissions import (
     handle_unsub,
 )
 from candleviewer.ws.permissions import handle_sub as _handle_sub
-from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
+from candleviewer.ws.pipeline import (
+    CLOSE_FLUSH_DEADLINE,
+    ConnectionPipeline,
+    Terminal,
+    slow_consumer_bye,
+)
 from candleviewer.ws.revocation import (
     CLOSE_USER_DISABLED,
     RevocationHub,
@@ -535,6 +541,7 @@ class _Connection:
         backpressure: BackpressureConfig | None = None,
         flag_visible: FlagVisible | None = None,
         tick_s: float = WATCHDOG_TICK_S,
+        close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
     ) -> None:
         self.ws = ws
         self.encoding = encoding
@@ -559,6 +566,9 @@ class _Connection:
         #: `session_id` when that auth is accepted and is dropped however else the auth ends.
         self.pending_session_id: str | None = None
         self.authz: ConnectionAuthz | None = None
+        #: #415: the one registered with the permission registry for SR-189, kept apart from
+        #: `authz`, so teardown always unregisters it.
+        self.registered: ConnectionAuthz | None = None
         self.emitter: TopicEmitter | None = None
         self.system_seq = 0
         #: §15.9 (E42-T03): the flag keys a Manager or Viewer may learn; `None`, no key.
@@ -585,6 +595,11 @@ class _Connection:
         #: on the close timer left no close (`_close_timer_fired`); that check's is `timer_fault`.
         self.end_writer: Callable[[], object] = lambda: None
         self.timer_fault: BaseException | None = None
+        #: #415: the flush timer (`arm_flush_deadline`), which ends a writer still running at its
+        #: deadline, and whether it fired. With the flag on a close's flush is the pipeline's.
+        self.close_flush_s = close_flush_s if backpressure is None else backpressure.close_flush_s
+        self.flush_timer: asyncio.TimerHandle | None = None
+        self.flush_passed = False
         self.opened_at = now
         #: E17-T03 (#412): the budgeted outbound path while `CV_WS_BACKPRESSURE_ENABLED` is on;
         #: None keeps `outbound` and its `OUTBOUND_QUEUE_MAX` push bound.
@@ -691,9 +706,53 @@ class _Connection:
             self.arm_close_timer(self.tick_s if failed else CLOSE_REARM_MIN_S)
 
     def stop_close_timer(self) -> None:
-        """Teardown (C-2.18, TG5): the close timer is cancelled and none is armed after it."""
+        """Teardown (C-2.18, TG5): the close and flush timers are cancelled, none armed after."""
         self.timer_stopped = True
         self.arm_close_timer()
+        self.stop_flush_deadline()
+
+    def arm_flush_deadline(self, delay: float) -> None:
+        """#415: end the writer `delay` s from now (loop clock) if it still runs then: flag off a
+        close's `close_flush_s`, and from `accept` to the first `auth_ok` `auth_timeout_s` plus it.
+        The earliest stands; none after teardown, after one fired, or with no loop (no writer)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        when = loop.time() + delay
+        if self.timer_stopped or self.flush_passed:
+            return
+        if self.flush_timer is not None:
+            if self.flush_timer.when() <= when:
+                return
+            self.flush_timer.cancel()
+        self.flush_timer = loop.call_at(when, self._flush_deadline_passed)
+
+    def stop_flush_deadline(self) -> None:
+        """#415: at the first `auth_ok` (its accept-time bound ends) and at teardown."""
+        if self.flush_timer is not None:
+            self.flush_timer.cancel()
+            self.flush_timer = None
+
+    def _flush_deadline_passed(self) -> None:
+        """#415: the socket closes `slow_consumer` unless a close is under way, and the writer ends
+        even if that raises, so the handler tears the socket down. A writer still running had a peer
+        that stopped reading: counted and logged as the flag-on path does (`abandon`)."""
+        self.flush_timer, self.flush_passed = None, True
+        try:
+            if not self.closing:
+                self.close_with("slow_consumer")
+        finally:
+            running = bool(self.end_writer())  # False: it had ended, its flush made it in time
+        if not running:
+            return
+        reason = str(self.bye_frame["p"]["reason"]) if self.bye_frame is not None else None
+        if self.pipeline is not None:  # counted once per connection, as its writer's expiry
+            self.pipeline.abandon(reason)
+        else:
+            cv_ws_overflow_total.labels(reason=CLOSE_FLUSH_DEADLINE).inc()
+            fields = {"connection_id": self.connection_id, "reason": reason}
+            _log().warning("ws close deadline passed", **fields)
 
     # -- outbound -----------------------------------------------------------
 
@@ -810,6 +869,7 @@ class _Connection:
             self.bye_frame = frame
             for item in (frame, _CLOSE, code):
                 self.outbound.put_nowait(item)
+            self.arm_flush_deadline(self.close_flush_s)  # #415: the flag on's bound, flag off
         _log().info(
             "ws close",
             connection_id=self.connection_id,
@@ -1085,6 +1145,7 @@ def make_ws_router(
     # root from the flag registry. Without it a flag reaches the Owner alone (fail closed).
     flag_visible: FlagVisible | None = None,
     backpressure: BackpressureConfig | None = None,
+    close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
 ) -> APIRouter:
     """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline but one, so tests
     inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
@@ -1099,7 +1160,11 @@ def make_ws_router(
     deadline. `None`, today's path, keeps the `OUTBOUND_QUEUE_MAX` push bound. A config also
     makes the `welcome` advertise `features.coalescing` (§4.2); the flag stays off until #410's
     chaos scenarios pass (§8.4 Rollout). Without a config the `welcome` says
-    `coalescing: false`."""
+    `coalescing: false`.
+
+    #415: flag off, a close flushes within `close_flush_s` (loop clock), then a writer parked on a
+    send ends; until the first `auth_ok`, `auth_timeout_s` plus that bound from `accept` ends one,
+    flag on or off."""
     router = APIRouter()
     gateway_hub = hub if hub is not None else GatewayHub()
     killed = kill_switch or (lambda: {"engaged": False, "scope": "global"})
@@ -1244,13 +1309,14 @@ def make_ws_router(
             source_ip=_source_ip(conn.ws.scope),
         )
 
-    def auth_call_late(conn: _Connection, call: str, *, reauth: bool) -> None:
+    def auth_call_late(conn: _Connection, call: str, *, reauth: bool, fresh: bool) -> None:
         """#2155 (§4.3): an `auth` call outlived `auth_call_timeout_s`. A server fault, not a failed
-        `auth` (no strike, no audit row): `bye internal_error` + `1011`, a re-auth's too. Its SR-189
-        registration goes here, its `RevocationHub` one in `do_auth`, as a failure's do."""
-        if not reauth and conn.authz is not None:
+        `auth` (no strike, no audit row): `bye internal_error` + `1011`, a re-auth's too. The SR-189
+        registration a `fresh` one made goes here (#415: only the one this `auth` made), its
+        `RevocationHub` one in `do_auth`, as a failure's do."""
+        if fresh and conn.authz is not None:
             registry.unregister(conn.authz)
-            conn.authz = None
+            conn.authz = conn.registered = None
         _log().warning(
             "ws auth call timed out",
             connection_id=conn.connection_id,
@@ -1299,6 +1365,7 @@ def make_ws_router(
         body = frame.get("p")
         token = body.get("access_token") if isinstance(body, dict) else None
         reauth = conn.lifecycle.authenticated
+        fresh = conn.authz is None  # #415: only the `auth` that registers undoes the registration
         if reauth:
             conn.lifecycle.fire(ConnEvent.REAUTH)
         failure = "rejected"
@@ -1324,6 +1391,8 @@ def make_ws_router(
             if expires_ms <= now_ms:
                 failure = "token_expired"  # never `auth_ok` an identity that is already dead
                 raise PermissionError("access token already expired")
+            if conn.closing:  # #415: closed while this auth was in flight: nothing to register
+                return
             if conn.authz is None:  # SR-189: register, then re-check, under the auth deadline
                 if snap.principal.user_id != user_id:  # #415: built from the token's user only
                     raise SnapshotUserMismatch("a permission snapshot of another user")
@@ -1335,6 +1404,7 @@ def make_ws_router(
                     clock=conn.clock,  # SR-193: the rebuild budget's window
                 )
                 registry.register(conn.authz, conn.send, conn.evict, conn.closer)
+                conn.registered = conn.authz
                 async with _auth_call("recheck", auth_call_timeout_s):
                     await registry.recheck(conn.authz)
                 revoked: list[dict[str, Any]] = []
@@ -1346,7 +1416,7 @@ def make_ws_router(
         except AuthenticatorContractError:
             raise  # a server fault, not a failed auth: the handler closes 1011
         except AuthCallTimeout as late:
-            auth_call_late(conn, str(late), reauth=reauth)
+            auth_call_late(conn, str(late), reauth=reauth, fresh=fresh)
             return
         except AuthRefused as refused:
             # §4.3: refused at once, never `auth_ok`, not counted as a failure, nothing
@@ -1370,9 +1440,9 @@ def make_ws_router(
         except Exception as exc:
             if isinstance(exc, SnapshotUserMismatch):  # #415: a snapshot of another user, from
                 failure = "user_mismatch"  # any check, is refused as another user's token is
-            if not reauth and conn.authz is not None:  # the SR-189 re-check failed: undo
+            if fresh and conn.authz is not None:  # the SR-189 re-check failed: undo
                 registry.unregister(conn.authz)
-                conn.authz = None
+                conn.authz = conn.registered = None
             # C-2.9: count the failure and audit the 3rd one even when the socket
             # began closing while this auth was in flight.
             cv_ws_auth_failures_total.labels(reason=failure).inc()
@@ -1428,6 +1498,7 @@ def make_ws_router(
         conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000
         conn.token_expires_at_ms = expires_ms  # the same instant on the wall clock
         conn.arm_close_timer()  # #3100: at the new expiry, a re-auth's too
+        conn.stop_flush_deadline()  # #415: the bound from `accept` ends at the first `auth_ok`
         if conn.session_id != session_id:  # the old registration goes only after the check
             if conn.session_id is not None:
                 revocation_hub.unregister(conn.session_id, conn.closer)
@@ -1613,6 +1684,8 @@ def make_ws_router(
             if frame is _OVERSIZE:
                 return
             await dispatch(conn, frame)
+            if not conn.closing:  # fair scheduling between connections: one frame per turn, as
+                await asyncio.sleep(0)  # `receive` returns at once while frames are queued
 
     async def writer(conn: _Connection) -> None:
         if conn.pipeline is not None:
@@ -1767,6 +1840,7 @@ def make_ws_router(
             backpressure=backpressure,
             flag_visible=flag_visible,
             tick_s=tick_s,
+            close_flush_s=close_flush_s,
         )
         if gateway_hub.unauthenticated >= gateway_hub.max_unauthenticated:  # #2155 (§4.3)
             await shed(conn)
@@ -1790,6 +1864,7 @@ def make_ws_router(
         write_task.add_done_callback(_writer_done)
         fault: BaseException | None = None
         gateway_hub.admit_unauthenticated(conn)  # #2155: no await since the cap check above
+        conn.arm_flush_deadline(auth_timeout_s + conn.close_flush_s)  # #415: until `auth_ok`
         try:
             await reader(conn)
             reading = False
@@ -1837,6 +1912,10 @@ def make_ws_router(
                     gateway_hub.discard(conn)
                 with _step(conn, "gauge"):
                     cv_ws_connections_in_use.dec()
+                # #415, defence in depth: the undo sites reset `registered` with `authz`, so no
+                # path resets `authz` alone today; if one does, what was registered is released.
+                if conn.authz is None:
+                    conn.authz = conn.registered
                 if conn.pipeline is not None:
                     with _step(conn, "pipeline"):
                         conn.pipeline.release()

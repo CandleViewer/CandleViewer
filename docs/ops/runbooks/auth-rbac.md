@@ -726,7 +726,8 @@ Not counted:
 - permission checks written inline in other route modules (market data, instruments, and so on),
   which write no `rbac.denied` row either: their only trace is the `403` response itself;
 - WS subscribe denials: see `cv_ws_subscribe_total{result="forbidden"}` and the audit action
-  `ws.subscribe.denied`;
+  `ws.subscribe.denied` (at the 200-subscription cap a refusal is counted as `subscription_limit`, whatever the
+  topic would have got; a private family's row records that reason; accepted residual: classification only, #415);
 - the owner-floor `409` (audited as `rbac.denied`, see the note below, but a business refusal rather
   than a permission check) and `step_up_required` (§2).
 
