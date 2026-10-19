@@ -11,6 +11,9 @@ events, its limits, the records that name each link and tell a bearer-less fetch
 rulings on #966: Q4, Q5, Q8, Q9, Q10, Q11, and on the BK-0 reviews). Every change is additive
 (C-6.3). It reads the contract and the plan docs and drives no route;
 `test_admin_ops_contract.py` validates every example of these operations.
+
+It also pins what an admission answers when it cannot take the backups admission lock in time, and
+what that costs a delete or a restore (SR-BK7A-03, from the BK-7a review).
 """
 
 from __future__ import annotations
@@ -221,6 +224,32 @@ def test_delete_keeps_the_row_and_names_its_conflicts() -> None:
     assert locked + "lock, one delete at a time." in delete
     lock = "The backups admission lock is the one process-wide lock that admits a run, a "
     assert lock + "verification, a restore and a delete one at a time" in delete  # R2-06
+
+
+def test_an_admission_that_cannot_take_the_lock_is_a_503_and_a_spent_grant_stays_spent() -> None:
+    """SR-BK7A-03 (C-6.1): an admission waits a bounded time for the backups lock, then is refused
+    `503 store_unavailable` with `Retry-After`. A run or a verification has written nothing and
+    started nothing; a delete or a restore is refused after its grant is spent, so the grant is
+    gone, its failure record is written first and the operator steps up again. A run spends no
+    grant, so its sentence never speaks of a step-up, which the registry sweep would read as a
+    gated route."""
+    create, delete = _desc("createBackup"), _desc("deleteBackup")
+    run = "A run that cannot take the backups admission lock (`deleteBackup`) within its wait is "
+    run += "`503 store_unavailable` with `Retry-After`, before any record, and starts nothing."
+    assert run in create
+    admission = "An admission that cannot take that lock within its wait is "
+    admission += "`503 store_unavailable` with `Retry-After`. A run or a verification then writes "
+    admission += "no record and starts nothing; a delete or a restore is refused after its grant "
+    admission += "is spent, so the grant is gone, its failure record (`backup.deleted` or "
+    admission += "`backup.restore`, `outcome: failure`) is written first, and the operator steps "
+    admission += "up again to retry."
+    assert admission in delete
+    # "that lock" is the one the sentence before it names.
+    named = "The backups admission lock is the one process-wide lock"
+    assert delete.index(named) < delete.index(admission)
+    # A run's text, whole, never speaks of a step-up: the sweep's pattern (`_STEP_UP_TEXT`) plus the
+    # inflection the delete sentence uses, so that sentence pasted into `createBackup` fails too.
+    assert not re.search(r"step(?:s|ped|ping)?[-_ ]up", create, re.IGNORECASE)
 
 
 def test_backup_schema_gains_optional_deleted_at() -> None:
