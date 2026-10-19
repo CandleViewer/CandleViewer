@@ -480,9 +480,9 @@ class KeySelfCheck:
         self._failing()
 
     def _failing(self) -> None:
-        """Publish each rule's failing keys (every rule, 0 when none), then whether this job
-        latched the gate, in that order: a failure never reads as a bare latch, whose page waits
-        while a key fails. Callers publish after enforcing, so a fault withholds nothing."""
+        """Publish each rule's failing keys (every rule, 0 when none), then whether this job latched
+        the gate, in that order. Only that write order is promised: a scrape reads the two series
+        one after the other. Callers publish after enforcing, so a fault withholds nothing."""
         codes = [c.code for c in tuple(self.results.values()) if c.outcome == "failed"]
         for rule in Rule:
             self._m.get("cv_keys_failing_policy").labels(rule.value).set(codes.count(rule.value))

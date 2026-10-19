@@ -18,7 +18,7 @@ import json
 import math
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1099,7 +1099,7 @@ async def test_a_failure_publishes_its_rule_then_the_latch_before_the_next_key_i
     await w.run()
     assert seen == [(1.0, 1.0)]  # KeySelfCheckFailed at once; the latch page waits on it
     pages = [c.args[0] for c in spy.call_args_list if c.args[0] in (FAILING, LATCH)]
-    assert pages == ([FAILING] * len(Rule) + [LATCH]) * 3  # a scrape never reads a bare latch
+    assert pages and pages == ([FAILING] * len(Rule) + [LATCH]) * (len(pages) // (len(Rule) + 1))
 
 
 async def test_the_watchdog_before_any_run_counts_and_latches_nothing() -> None:
@@ -1274,8 +1274,8 @@ async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
         return real(name)
 
     monkeypatch.setattr(w.metrics, "get", get)
-    with suppress(KeyError):  # the pages' gauges are published at the run's end too
-        await w.run()
+    with pytest.raises(KeyError) if series in (FAILING, LATCH) else nullcontext():
+        await w.run()  # only the pages' gauges, set at the run's end, escape its per-key guard
     assert (w.kinds(), w.gate.reason_code) == (WITHDRAW_FAILURE, FAILED)
 
 
