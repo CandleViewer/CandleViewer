@@ -2591,6 +2591,14 @@ The offline break-glass Owner reset (E09-S11, SR-023) writes `component='auth'`,
 the Owner's MFA methods and sessions (`revoked_reason='break_glass'`). The same transaction also
 upserts the event's incident (§3.10.2a).
 
+The account health runtime (E27-T04, #837) writes `exchange`/`dms_hook_owed`/`warning` (no
+incident, §3.10.2a), unresolved, with `exchange_account_id`, before an episode's first
+dead-man's-switch hook call: `event_ts` when the account went down, `details` only the closed
+codes `from_state` and `reason` (any other value is refused, so these rows need no redaction
+serializer, §12). A returned call resolves it and the account's older open rows; the next boot
+replays the open ones (latest per account, at most 100), a soft-deleted account's included.
+Statements filter on the account's `env` (C-2.11).
+
 #### 3.10.2a `incidents` (E42-T05, migration `0028_incidents_backups`)
 
 The incident read model behind `GET /admin/incidents` (`22-api-openapi.yaml`, `Incident`): one row per `(component, signature)`, materialised when an `error` or `critical` `system_events` row is written, never aggregated per request. `signature` is 16 hex characters of sha256 over the component, the error class (`system_events.kind`) and the message normalised by stripping ids, timestamps, numbers and symbols. `title` is that normalised message and `detail` the latest event's message, both through `candleviewer.observability.redaction.redact_text`, cut to 200 and 2000 characters (the DDL has no cap), and `detail` is `NULL` when redaction fails. `severity` is the worst grouped event. A new occurrence reopens a `resolved` incident: the write path sets `status` back to `open` and clears `resolved_at`, `acknowledged_by` and `acknowledged_at` (the acknowledgement belonged to the earlier episode and stays in the audit log), and `inc_resolved` rejects a row whose `resolved_at` and `status = 'resolved'` disagree in either direction; an `acknowledged` incident stays acknowledged, unless a new occurrence raises `severity` from `error` to `critical`, which sets `status` back to `open` and clears `acknowledged_by` and `acknowledged_at` so the escalation alerts again. Retention (§7): open and acknowledged rows are kept, a `resolved` row is dropped 24 months after `last_seen_at` (the `system_events` total horizon), found through `ix_incidents_status_seen`. Neither a resolution text nor a duration is stored; see the note in §3.10.2. Data class: P0 (§12). `component` carries no CHECK: it is copied from `system_events.component`, which `se_component` already closes, so a new component needs no second migration.
