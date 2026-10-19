@@ -71,6 +71,12 @@ _OBJECTS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
 #: The `killSwitch` fields a Manager or Viewer receives, besides its own `exchange_account_ids`.
 NEUTRAL_KILL_SWITCH: Final = frozenset({"engaged", "scope", "engaged_at_ms"})
 #: The roles that receive the role-neutral view (C-12.4); `owner` receives the frame whole.
+#: `system` is implicit and holds no permission (§6.3), so `decide()` has nothing to ask: this
+#: role split is the policy. The three `roles.isdisjoint(SCOPED_ROLES)` tests below each carry a
+#: reasoned nosemgrep marker for cv-ws-no-adhoc-authz. Pins: `system_view`, the RBAC matrix
+#: tests/contract/rbac/test_scope_and_ws.py::test_every_system_kind_x_actor_matches_the_matrix;
+#: `withheld_reason` and `kill_switch_view`, the agreement tests in tests/unit/ws/
+#: test_system_withheld.py and test_system_filter.py.
 SCOPED_ROLES: Final = frozenset({"manager", "viewer"})
 
 
@@ -90,6 +96,7 @@ def system_view(
         return None
     if principal.is_owner:
         return body
+    # nosemgrep: cv-ws-no-adhoc-authz reason=sys-view owner=@CandleViewer/security review=2027-03-25
     if principal.roles.isdisjoint(SCOPED_ROLES):
         return None
     if _is_stateless(kind, body):
@@ -121,6 +128,7 @@ def withheld_reason(body: object, principal: PrincipalSnapshot | None) -> Withhe
         return "invalid_body"
     if principal is None:
         return "no_principal"
+    # nosemgrep: cv-ws-no-adhoc-authz reason=sys-view owner=@CandleViewer/security review=2027-03-25
     return "no_role" if principal.roles.isdisjoint(SCOPED_ROLES) else None
 
 
@@ -132,6 +140,7 @@ def kill_switch_view(
     accounts for a Manager or Viewer, `None` (nothing) for a principal with no role."""
     if principal.is_owner:
         return state
+    # nosemgrep: cv-ws-no-adhoc-authz reason=sys-view owner=@CandleViewer/security review=2027-03-25
     if principal.roles.isdisjoint(SCOPED_ROLES):
         return None
     return _kill_switch_view(state, principal)
