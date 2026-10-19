@@ -68,7 +68,7 @@ def _load(name: str) -> dict[Any, Any]:
 
 
 def test_regression_guard_reruns_only_when_what_it_reads_changes() -> None:
-    # It reads the PR's files, its body (`Closes #N`) and each closed issue's own labels.
+    # It reads the PR's files, its body (`Closes #N`) and each closed issue's own labels and body.
     doc = _load("regression-guard.yml")
     assert _on(doc)["pull_request"]["types"] == ["opened", "edited", "synchronize", "reopened"]
     assert doc["concurrency"]["group"] == "regression-guard-${{ github.event.pull_request.number }}"
@@ -86,6 +86,9 @@ def test_board_automation_runs_no_job_unless_the_guards_enforce() -> None:
         assert str(job["if"]).startswith(f"{ENFORCING} && "), name
         assert "||" not in str(job["if"]), name
         assert job["permissions"] == {"issues": "write", "contents": "read"}, name
+    # No job holds a runner for the 360-minute default if a call hangs.
+    timeouts = {name: job["timeout-minutes"] for name, job in jobs.items()}
+    assert timeouts == {"kind-sync": 5, "security-label-sync": 5, "close-guards": 20}
     # A close has its own group, so a label event right after it cannot cancel the close guards.
     group = (
         "board-${{ github.event.issue.number }}-"
@@ -115,6 +118,10 @@ def test_board_automation_runs_the_three_close_guards_in_one_job() -> None:
     after = "${{ !cancelled() && steps.python.outcome == 'success' }}"
     assert [step["if"] for step in guards[1:]] == [after, after]
     assert [step["timeout-minutes"] for step in guards] == [5, 5, 5]
+    # A failed guard fails the job (nothing hides it), and the job's own timeout sits above the
+    # guards' so it never cancels one before its step timeout.
+    assert not any("continue-on-error" in step for step in steps)
+    assert job["timeout-minutes"] > sum(step["timeout-minutes"] for step in guards)
     # The step that condition reads exists, sets up Python, and comes before every guard.
     (python,) = [i for i, step in enumerate(steps) if step.get("id") == "python"]
     assert str(steps[python]["uses"]).startswith("actions/setup-python@")

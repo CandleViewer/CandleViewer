@@ -55,6 +55,7 @@ jobs:
       github.event.sender.login != 'github-actions[bot]' &&
       contains(fromJSON('["opened","edited","labeled","unlabeled"]'), github.event.action)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
       contents: read
@@ -80,6 +81,7 @@ jobs:
       github.event.sender.login != 'github-actions[bot]' &&
       contains(fromJSON('["opened","labeled"]'), github.event.action)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
       contents: read
@@ -102,6 +104,8 @@ jobs:
     # failed, so one guard's failure never skips another's check.
     if: vars.GOVERNANCE_ENFORCE == 'true' && github.event.action == 'closed'
     runs-on: ubuntu-latest
+    # Above the three 5-minute guard steps and setup, so a job timeout never cuts a guard short.
+    timeout-minutes: 20
     permissions:
       issues: write
       contents: read
