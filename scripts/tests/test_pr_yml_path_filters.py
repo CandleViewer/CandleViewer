@@ -96,6 +96,7 @@ READ_INPUTS = (
     ("js", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
     ("engine-bench", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
     ("migrations", "tools/ci/migration_lint.py", "tools/ci/security-sensitive-tables.txt"),
+    ("pin-check", "tools/ci/check_action_pins.py", ".github/actions-pins.md"),  # #3580
 )
 FILTER_NAMES: tuple[str, ...] = ("js", "py", "engine", "protocol", "infra", "image", "docs")
 FILTER_NAMES += ("e2e", "migrations", "rules", "semgrep")
