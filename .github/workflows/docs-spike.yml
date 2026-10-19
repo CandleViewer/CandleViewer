@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# #3751: a push or a relabel replaces the PR's previous run; a dispatched run is never cancelled.
+concurrency:
+  group: docs-spike-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   docs-toolchain-spike:
     name: docs-toolchain-spike

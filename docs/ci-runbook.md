@@ -85,6 +85,11 @@ release tag (.github/workflows/release.yml)
 └─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
 ```
 
+**One run per PR per workflow (#3751).** Every `pull_request`-triggered workflow cancels the
+PR's superseded run, so a body edit or a push replaces the previous run instead of queueing
+behind it; scheduled, dispatched and `main` runs are never cancelled by a PR run.
+`scripts/tests/test_workflow_concurrency.py` fails a new `pull_request` workflow without its group.
+
 **Dependency-only PRs (#3182).** A PR that changes only `pnpm-lock.yaml`, the root `package.json`
 or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts `js`, `security`
 and `coverage-thresholds` but not `e2e` or `a11y`. The manifests stay out of the `e2e` filter on

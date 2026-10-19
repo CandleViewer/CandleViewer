@@ -1,0 +1,56 @@
+"""#3751: every pull_request-triggered workflow cancels the PR's superseded run.
+
+Without a concurrency group, each PR body edit or push queues another full run behind the
+account's concurrency limit, and every PR's `ci-required` waits behind the duplicates. A
+group keyed on the PR (its head ref, number or merge ref) with `cancel-in-progress` true for
+pull_request events replaces the previous run instead. Scheduled, dispatched and push runs
+keep groups a PR run never shares, so they are never cancelled by one.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+# A PR's own key: its head ref, its number, or its merge ref (github.ref is refs/pull/N/merge).
+PR_KEYS = ("github.head_ref", "github.event.pull_request.number", "github.ref")
+
+
+def _on(doc: dict[Any, Any]) -> Any:
+    # YAML 1.1 reads a bare `on:` key as the boolean True.
+    return doc.get("on", doc.get(True))
+
+
+def _pull_request_workflows() -> list[Path]:
+    found = []
+    for path in WORKFLOWS:
+        on = _on(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+        names = [on] if isinstance(on, str) else list(on or [])
+        if "pull_request" in names or "pull_request_target" in names:
+            found.append(path)
+    return found
+
+
+def test_the_scan_finds_the_pull_request_workflows() -> None:
+    # Guards the test itself: an empty or wrong list would pass every case below.
+    names = {path.stem for path in _pull_request_workflows()}
+    assert {"pr", "pr-metadata", "governance", "regression-guard"} <= names
+
+
+@pytest.mark.parametrize("path", _pull_request_workflows(), ids=lambda p: p.stem)
+def test_a_pull_request_workflow_cancels_the_prs_superseded_run(path: Path) -> None:
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    concurrency = doc.get("concurrency")
+    assert isinstance(concurrency, dict), f"{path.name}: no top-level concurrency group (#3751)"
+    group = str(concurrency.get("group", ""))
+    assert any(key in group for key in PR_KEYS), f"{path.name}: group {group!r} is not per PR"
+    cancel = concurrency.get("cancel-in-progress")
+    # True, or an expression that is true for a pull_request event only.
+    assert cancel is True or (
+        isinstance(cancel, str) and "github.event_name == 'pull_request'" in cancel
+    ), f"{path.name}: cancel-in-progress {cancel!r} does not cancel a superseded PR run"
