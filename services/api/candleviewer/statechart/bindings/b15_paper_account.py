@@ -50,7 +50,8 @@ register_binding_module("paper_account", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "paper_account",
     {
         "MARK_UPDATE": _ANY_PAYLOAD,
-    }
+    },
 )

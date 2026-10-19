@@ -68,6 +68,7 @@ register_binding_module("twap", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "twap",
     {
         "KILL": _ANY_PAYLOAD,
         "CHILDREN_TERMINAL": _ANY_PAYLOAD,
@@ -79,5 +80,5 @@ register_event_schemas(
         "USER_CANCEL": _ANY_PAYLOAD,
         "USER_PAUSE": _ANY_PAYLOAD,
         "WS_DISCONNECT": _ANY_PAYLOAD,
-    }
+    },
 )

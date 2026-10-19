@@ -57,11 +57,12 @@ register_binding_module("live_gate", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "live_gate",
     {
         "DISABLE_REQUESTED": _ANY_PAYLOAD,
         "EMERGENCY_DISABLE": _ANY_PAYLOAD,
         "ENABLE_REQUESTED": _ANY_PAYLOAD,
         "EVIDENCE_INVALIDATED": _ANY_PAYLOAD,
         "EVIDENCE_RECORDED": _ANY_PAYLOAD,
-    }
+    },
 )

@@ -563,7 +563,7 @@ Supersedes the interpreter-side guidance in §1.3b's amendment notes. The chart-
 ```python
 machine = create_machine(chart, logic=logic, strict_config=True)
 interpreter = Interpreter(
-    machine, strict=True, event_schemas=CV_EVENT_SCHEMAS,
+    machine, strict=True, event_schemas=CV_EVENT_SCHEMAS[machine_key],  # per machine (#847)
     max_queue_size=CV_INBOX_BOUND,     # async only; SyncInterpreter(max_queue_size=...) -> ValueError (#245)
     overflow_policy="refuse",
 ).use(CvErrorHooks())

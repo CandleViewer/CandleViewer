@@ -125,7 +125,8 @@ def _event_validators(schemas: dict[str, dict[str, Any]]) -> dict[str, Any]:
 def make_machine(machine_key: str, chart: dict[str, Any]) -> MachineNode[Any]:
     """`create_machine` with the mandatory config block (§1.3c). Shared by
     `build()` and `persistence.Restorer` so a restored machine is constructed
-    exactly like a fresh one (E50-T49)."""
+    exactly like a fresh one (E50-T49). The event schemas are *machine_key*'s
+    own (`CV_EVENT_SCHEMAS` is keyed by machine, #847)."""
     maps = load_binding_maps(machine_key)
     logic: MachineLogic[Any] = MachineLogic(
         actions=maps.actions,
@@ -138,7 +139,7 @@ def make_machine(machine_key: str, chart: dict[str, Any]) -> MachineNode[Any]:
         context_type=dict,
         logic=logic,
         strict_targets=True,
-        event_schemas=_event_validators(CV_EVENT_SCHEMAS),
+        event_schemas=_event_validators(CV_EVENT_SCHEMAS.get(machine_key, {})),
         strict_config=True,
     )
 
@@ -172,7 +173,7 @@ async def build(
     §1.3c) unconditionally: `strict_config=True` + the chart's own
     `strictConfig`/`strict`/`strictTargets`/`onUnhandled`/`maxIterations`
     keys (already asserted present by `registry.validate()`), `strict=True`
-    + `event_schemas=CV_EVENT_SCHEMAS` on the interpreter, the per-lane
+    + the machine's own `CV_EVENT_SCHEMAS[machine_key]`, the per-lane
     inbox bound with `overflow_policy="refuse"`, the per-lane service pool
     size, the injected `clock=`, every plugin passed via `.use(...)`, bring-
     up, and a bounded `start()`.

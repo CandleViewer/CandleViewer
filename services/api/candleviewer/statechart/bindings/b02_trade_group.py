@@ -67,6 +67,7 @@ register_binding_module("trade_group", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "trade_group",
     {
         "KILL": _ANY_PAYLOAD,
         "ALL_LEGS_FLAT": _ANY_PAYLOAD,
@@ -79,5 +80,5 @@ register_event_schemas(
         "LEG_OPEN": _ANY_PAYLOAD,
         "LEG_SKIPPED": _ANY_PAYLOAD,
         "QUIESCE_DEADLINE": _ANY_PAYLOAD,
-    }
+    },
 )

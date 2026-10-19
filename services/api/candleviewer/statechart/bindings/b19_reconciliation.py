@@ -75,6 +75,7 @@ register_binding_module("reconciliation", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "reconciliation",
     {
         "CANCEL": _ANY_PAYLOAD,
         "KILL": _ANY_PAYLOAD,
@@ -84,5 +85,5 @@ register_event_schemas(
         "STARTUP": _ANY_PAYLOAD,
         "SWEEP_DUE": _ANY_PAYLOAD,
         "UNKNOWN_ORDER": _ANY_PAYLOAD,
-    }
+    },
 )

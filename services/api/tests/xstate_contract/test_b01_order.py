@@ -310,7 +310,7 @@ async def _at(
 
 async def test_b01_binding_stubs_and_event_schemas() -> None:
     """Every event has a schema, every guard denies (A6), every audit reaches the hook (C-2.9)."""
-    assert all_events(CHART) <= set(CV_EVENT_SCHEMAS)
+    assert all_events(CHART) <= set(CV_EVENT_SCHEMAS["order"])
     assert not any(guard({}, None) for guard in b01.GUARDS.values())
     # Deny-all: adoption_allowed until E45-S01 records D6; the others have no body yet
     # (sl_attach_ok came with slice 1b's B1 version 2).

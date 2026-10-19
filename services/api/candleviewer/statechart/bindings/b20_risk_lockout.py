@@ -64,11 +64,12 @@ register_binding_module("risk_lockout", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "risk_lockout",
     {
         "CAP_BREACH": _ANY_PAYLOAD,
         "EXPIRY_DUE": _ANY_PAYLOAD,
         "MANUAL_LOCK": _ANY_PAYLOAD,
         "OVERRIDE_REQUESTED": _ANY_PAYLOAD,
         "PNL_UPDATE": _ANY_PAYLOAD,
-    }
+    },
 )

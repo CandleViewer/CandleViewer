@@ -421,9 +421,10 @@ SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {
 
 register_binding_module("order", __name__)
 
-#: Permissive payload schemas (B2-B9 shape); E29 tightens them.
+#: Permissive payload schemas (B2-B9 shape), this machine's own; E29 tightens them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "order",
     {
         name: _ANY_PAYLOAD
         for name in (
@@ -481,9 +482,10 @@ GUARDS.update(
     )
 )
 register_event_schemas(
+    "order",
     dict.fromkeys(
         ("ADOPT", "DISCOVERED", "MISMATCH", "OPERATOR_RESOLVED", "REMOTE_CANCELLED"), _ANY_PAYLOAD
-    )
+    ),
 )
 
 # --- #847 slice 1b, chart version 2 (C-2.6, INV-B1-f): the attach result counts only if its

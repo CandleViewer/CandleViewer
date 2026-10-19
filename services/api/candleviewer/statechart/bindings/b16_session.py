@@ -525,6 +525,7 @@ register_binding_module("session", __name__)
 #: fields each event may carry, all optional so a bare `{"type": "..."}`
 #: event (e.g. `LOGOUT`, `REVOKE`) still validates.
 register_event_schemas(
+    "session",
     {
         "MFA_OK": {"type": "object", "additionalProperties": True},
         "MFA_FAILED": {"type": "object", "additionalProperties": True},
@@ -541,5 +542,5 @@ register_event_schemas(
         "READONLY_EXPIRED": {"type": "object", "additionalProperties": True},
         "UNLOCK_OK": {"type": "object", "additionalProperties": True},
         "UNLOCK_FAILED": {"type": "object", "additionalProperties": True},
-    }
+    },
 )

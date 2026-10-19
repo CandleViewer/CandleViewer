@@ -109,15 +109,12 @@ async def test_event_schemas_validate_through_real_factory_path(
 
     from candleviewer.statechart import config as cfg
 
-    monkeypatch.setitem(
-        cfg.CV_EVENT_SCHEMAS,
-        "GO",
-        {
-            "type": "object",
-            "properties": {"n": {"type": "integer"}},
-            "additionalProperties": False,
-        },
-    )
+    schema = {
+        "type": "object",
+        "properties": {"n": {"type": "integer"}},
+        "additionalProperties": False,
+    }
+    monkeypatch.setitem(cfg.CV_EVENT_SCHEMAS, "test.factory_min", {"GO": schema})
     result = await build(
         "test.factory_min", clock=SimulatedClock(), lane="platform", registry=factory_registry
     )
@@ -135,9 +132,27 @@ def test_every_registered_event_schema_compiles_to_working_validator() -> None:
     from candleviewer.statechart.config import CV_EVENT_SCHEMAS
     from candleviewer.statechart.factory import _event_validators
 
-    validators = _event_validators(CV_EVENT_SCHEMAS)
-    assert set(validators) == set(CV_EVENT_SCHEMAS)
-    assert validators
-    for name, validate in validators.items():
-        assert validate.is_valid({}) or validate.iter_errors({}), name
-        assert not validate.is_valid("not-an-object"), name
+    assert CV_EVENT_SCHEMAS["session"]
+    for machine, schemas in CV_EVENT_SCHEMAS.items():
+        validators = _event_validators(schemas)
+        assert set(validators) == set(schemas)
+        for name, validate in validators.items():
+            assert validate.is_valid({}) or validate.iter_errors({}), (machine, name)
+            assert not validate.is_valid("not-an-object"), (machine, name)
+
+
+async def test_a_machine_gets_only_its_own_event_schemas(
+    factory_registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#847: another machine's schema for the same event name never applies."""
+    from candleviewer.statechart import config as cfg
+
+    closed = {"type": "object", "additionalProperties": False}
+    monkeypatch.setitem(cfg.CV_EVENT_SCHEMAS, "test.another_machine", {"GO": closed})
+    result = await build(
+        "test.factory_min", clock=SimulatedClock(), lane="platform", registry=factory_registry
+    )
+    try:
+        await result.interpreter.send("GO", n=1)
+    finally:
+        await result.interpreter.stop()

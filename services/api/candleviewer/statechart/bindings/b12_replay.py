@@ -214,11 +214,12 @@ SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {
 
 register_binding_module("replay", __name__)
 
-#: Permissive payload schemas, unchanged: `CV_EVENT_SCHEMAS` is one map keyed by event name
-#: across every chart (a different `KILL`/`PAUSE`/`CANCEL` schema here would collide), so the
-#: service validates each payload instead (`sessions_service._payload_for`).
+#: Permissive payload schemas, unchanged: the service validates each payload
+#: (`sessions_service._payload_for`). `CV_EVENT_SCHEMAS` is keyed by machine since #847, so closing
+#: them here would no longer collide with another chart's `KILL`/`PAUSE`/`CANCEL`.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "replay",
     {
         "CANCEL": _ANY_PAYLOAD,
         "CONSUMER_SLOW": _ANY_PAYLOAD,
@@ -232,5 +233,5 @@ register_event_schemas(
         "SET_SPEED": _ANY_PAYLOAD,
         "SOURCE_ERROR": _ANY_PAYLOAD,
         "STEP": _ANY_PAYLOAD,
-    }
+    },
 )

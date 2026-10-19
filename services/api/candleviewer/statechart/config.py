@@ -1,8 +1,8 @@
 """candleviewer.statechart.config — E50-T59.
 
 Static configuration for `factory.py`: the per-lane inbox bound, service
-pool size, the shared start-timeout, and the (currently empty, populated by
-future tickets) `CV_EVENT_SCHEMAS` map.
+pool size, the shared start-timeout, and the per-machine `CV_EVENT_SCHEMAS`
+map each binding module fills at import time.
 
 This module is deliberately data-only (29-statechart-adoption-plan.md §1.1)
 so it can be imported anywhere — including `registry.py`, `tools/
@@ -53,6 +53,12 @@ CV_START_TIMEOUT: Final[float] = 5.0
 #: On timeout the kill proceeds (audited); reconciliation re-syncs (C-2.5).
 CV_KILL_CANCEL_TIMEOUT: Final[float] = 5.0
 
+#: Bound on B1's write-ahead step (#847): `persist_event` awaits the OMS's `order_events` write
+#: inside `asyncio.timeout(CV_PERSIST_TIMEOUT)`. A store that does not answer in time refuses the
+#: step, and `actionErrorPolicy: "rollback"` leaves the machine as it was (24 Sec.8.2 S7, S11).
+#: The p95 budget of a whole transition is 5 ms; this bounds a stalled store, not a slow one.
+CV_PERSIST_TIMEOUT: Final[float] = 1.0
+
 #: `maxIterations` default sized against the descent plateau
 #: (`limit + 3`, CV-C62); individual chart JSON may declare its own value
 #: when the descent plateau requires it, but every chart must set the key
@@ -72,28 +78,29 @@ CV_DEFAULT_MAX_ITERATIONS: Final[int] = 500
 #: our accepted minimum.
 SNAPSHOT_V: Final[int] = 3
 
-#: Event-name -> JSON-Schema map passed to `Interpreter(event_schemas=...)`
-#: (CV-C-strict unknown-event refusal). Populated per machine as B1-B20
-#: land (E50-T02..T?? bindings tickets); empty here is valid — an empty
-#: map plus `strict=True` still refuses every event, which is the correct,
-#: safe default until a machine registers its own schemas via
-#: `register_event_schemas()`.
-CV_EVENT_SCHEMAS: dict[str, dict[str, Any]] = {}
+#: Machine key -> event name -> JSON-Schema, passed to `create_machine(event_schemas=...)` for
+#: that machine only (CV-C-strict: an unknown event or a payload its schema refuses is refused
+#: at `send()`). Keyed by machine since #847: charts share event names with different payloads
+#: (B1's closed `EXEC`, `CANCEL`, `KILL`, `SL_DEADLINE` and `SL_OBSERVED`; B3's, B2's, B8's and
+#: the rest stay permissive). A machine with no entry gets an empty map, and `strict=True` still
+#: refuses every event its chart does not declare.
+CV_EVENT_SCHEMAS: dict[str, dict[str, dict[str, Any]]] = {}
 
 
-def register_event_schemas(schemas: dict[str, dict[str, Any]]) -> None:
-    """Merge *schemas* into the module-level `CV_EVENT_SCHEMAS` map.
+def register_event_schemas(machine_key: str, schemas: dict[str, dict[str, Any]]) -> None:
+    """Merge *schemas* into *machine_key*'s map in `CV_EVENT_SCHEMAS`.
 
-    Called once per machine binding module at import time (`bindings/
-    b01_order.py`, etc.) so the factory's `event_schemas=CV_EVENT_SCHEMAS`
-    kwarg reflects every machine that has been imported so far. Raises on a
-    colliding event name registered with a different schema, since that
-    would silently change which chart's validation wins.
+    Called once per binding module at import time (`bindings/b01_order.py`, etc.), so
+    `factory.make_machine` passes each machine the schemas its binding registered. Raises on an
+    event registered for the same machine with a different schema, since that would silently
+    change which validation wins; another machine's schema for the same name is independent.
     """
+    bucket = CV_EVENT_SCHEMAS.setdefault(machine_key, {})
     for name, schema in schemas.items():
-        existing = CV_EVENT_SCHEMAS.get(name)
+        existing = bucket.get(name)
         if existing is not None and existing != schema:
             raise ValueError(
-                f"event schema collision for '{name}': already registered with a different schema"
+                f"event schema collision for '{machine_key}' event '{name}': already registered "
+                "with a different schema"
             )
-        CV_EVENT_SCHEMAS[name] = schema
+        bucket[name] = schema

@@ -68,6 +68,7 @@ register_binding_module("leg", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "leg",
     {
         "KILL": _ANY_PAYLOAD,
         "CLOSE": _ANY_PAYLOAD,
@@ -79,5 +80,5 @@ register_event_schemas(
         "ORDER_UNKNOWN": _ANY_PAYLOAD,
         "SUBMIT_TIMEOUT": _ANY_PAYLOAD,
         "UNWIND": _ANY_PAYLOAD,
-    }
+    },
 )
