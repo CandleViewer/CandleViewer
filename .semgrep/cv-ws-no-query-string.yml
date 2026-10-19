@@ -1,11 +1,13 @@
 # The rule sees one file at a time and only `ws/`: a scope or a connection handed to a helper
-# outside it is not followed. Known limits within `ws/`, each a `todoruleid` (a miss) or `todook`
-# (a false positive) row in the fixture. Not seen: `.query` on a URL not spelled `<x>.url.query`
-# (an alias, a helper's parameter, `urlsplit(str(ws.url)).query`, `URL(scope=ws.scope).query`),
-# `ws.url.components[3]`, `getattr(ws, "query_params")`, a key held in a constant, a `Mapping`
-# method other than `get` (`pop`, `setdefault`), the scope read whole (`items()`, `{**scope}`),
-# `fastapi.params.Query(...)`, a read in the target of a strip, a route registered by a call
-# (`add_api_websocket_route`) or through a decorator alias, an unannotated route parameter,
+# outside it is not followed. A path parameter (`/ws/{token}`) is not the query string and is
+# outside the rule by design. Known limits within `ws/`, each a `todoruleid` (a miss) or `todook`
+# (a false positive) row in the fixture. Not seen: the URL read whole (`str(ws.url)`, `ws.url`
+# handed to a logger or another parser), `.query` on a URL not spelled `<x>.url.query` (an alias,
+# a helper's parameter, `urlsplit(str(ws.url)).query`, `URL(scope=ws.scope).query`),
+# `ws.url.components[3]`, `getattr(ws, "query_params")`, a constant key in a subscript, a
+# `Mapping` method other than `get` (`pop`, `setdefault`), the scope read whole (`items()`,
+# `{**scope}`), `fastapi.params.Query(...)`, a read in the target of a strip, a route registered by
+# a call (`add_api_websocket_route`) or through a decorator alias, an unannotated route parameter,
 # `**kwargs` and the parameters of a dependency (FastAPI binds those to the query string too). A
 # route parameter counts as a path parameter when its name occurs in the text of the route argument
 # (the constant's name when the path is a constant). Flagged: one bound to a header or a cookie,

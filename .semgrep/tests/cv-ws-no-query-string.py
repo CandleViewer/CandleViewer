@@ -32,6 +32,8 @@ async def reads_bad(ws: WebSocket, token: str = Query(None)):  # ruleid: cv-ws-n
     scope = ws.scope
     scope["query_string"]  # ruleid: cv-ws-no-query-string
     urlsplit(str(ws.url)).query  # todoruleid: cv-ws-no-query-string
+    str(ws.url)  # todoruleid: cv-ws-no-query-string
+    log.info("connect", url=ws.url)  # todoruleid: cv-ws-no-query-string
     URL(scope=ws.scope).query  # todoruleid: cv-ws-no-query-string
     url = ws.url
     url.query  # todoruleid: cv-ws-no-query-string
@@ -72,6 +74,14 @@ async def path_keyword_bad(conn: WebSocket, token: str | None = None): ...  # ru
 async def api_route_bad(conn: WebSocket, token: str | None = None): ...  # ruleid: cv-ws-no-query-string
 @router.websocket(WS_PATH)
 async def constant_path_bad(conn: WebSocket, token: str | None = None): ...  # ruleid: cv-ws-no-query-string
+@router.websocket("/ws", name="ws_main")
+async def extra_argument_bad(conn: WebSocket, token: str | None = None): ...  # ruleid: cv-ws-no-query-string
+@router.websocket(name="ws_main", path="/ws", dependencies=[])
+async def path_among_arguments_bad(conn: WebSocket, token: str | None = None): ...  # ruleid: cv-ws-no-query-string
+@router.websocket("/ws")
+async def wrapped_plain_annotated_bad(conn: WebSocket, n: Annotated[  # ruleid: cv-ws-no-query-string
+    int, Field(ge=1)
+]): ...
 @router.websocket("/ws")
 async def websocket_state_bad(conn: WebSocketState): ...  # ruleid: cv-ws-no-query-string
 @router.websocket("/ws")
