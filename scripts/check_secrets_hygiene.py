@@ -495,9 +495,10 @@ _NOT_SHELL = re.compile(
 #: ``BASH_ENV: tools/env.sh``, ``env: { BASH_ENV: x.sh }``), by a shell assignment
 #: (``BASH_ENV=x.sh bash ci.sh``, ``export ENV=x.sh``, ``BASH_ENV+=x.sh``,
 #: ``echo "BASH_ENV=x.sh" >> "$GITHUB_ENV"``) or by ``core.exportVariable("BASH_ENV", "x.sh")`` (a
-#: ``github-script`` step), read with its quotes off; one set empty (``BASH_ENV=``, ``ENV: ""``)
-#: names no file. An ``env:`` mapping given as an expression (``env: ${{ matrix.env }}``, or as a
-#: block scalar: ``env: >-``) may set either name: it is read as a setting naming no file.
+#: ``github-script`` step), read with its quotes off up to its end (``_LINE_END``, ``_FLOW_END``,
+#: ``_CALL_END``, a shell word's); one set empty (``BASH_ENV=``, ``ENV: ""``, ``{ENV: ''}``) names
+#: no file. An ``env:`` mapping given as an expression (``env: ${{ matrix.env }}``, or as a block
+#: scalar: ``env: >-``) may set either name: it is read as a setting naming no file.
 #: ``workflow_scripts`` follows each value read here, in a workflow or a script it runs, whichever
 #: steps it reaches (a step's and the job's it overrides), and reports one naming no repository file
 #: unless ``_env_settings`` waives it (a waived line's file is still followed). A relative value is
@@ -506,18 +507,34 @@ _NOT_SHELL = re.compile(
 #: built from an expansion (``BASH${X}_ENV=x``) or given by a variable
 #: (``exportVariable(name, x)``), a call split before its name, a flow key with no space after its
 #: colon (``{"BASH_ENV":x}``), an explicit key (``? BASH_ENV``), a list item (``- ENV: x``, a
-#: matrix's), an ``env:`` expression on the next line, one set in a local action's ``action.yml``
-#: (not scanned) or in another language (a ``pwsh`` step's ``$env:BASH_ENV = x``,
-#: ``process.env.BASH_ENV = x``, a Python file writing ``$GITHUB_ENV``). Reported though no file is
-#: read: a key outside ``env:`` (``with: {ENV: prod}``), an ``ENV`` no interactive sh reads, a value
-#: on the next line (``BASH_ENV: >-``, ``BASH_ENV=\``, ``$GITHUB_ENV``'s ``BASH_ENV<<EOF``), as each
-#: line is read alone.
+#: matrix's), an ``env:`` expression on the next line, a value's part after what ends it unquoted
+#: (a blank or an operator in a shell word: ``BASH_ENV='a b.sh'``, ``$GITHUB_ENV``'s
+#: ``BASH_ENV=a b.sh``; a quoted ``,`` or ``}`` in a flow mapping: ``{ENV: "a,b.sh"}``; a quoted
+#: ``)`` in a call), one set in a local action's ``action.yml`` (not scanned), by a writer of
+#: ``$GITHUB_ENV`` other than a line read here or ``_ENV_APPEND``'s ``cat`` (``tee -a``, a Python
+#: file) or in another language (a ``pwsh`` step's ``$env:BASH_ENV = x``,
+#: ``process.env.BASH_ENV = x``). Reported though no file is read: a value read only in part
+#: (``BASH_ENV: a,b.sh``; a flow mapping's entry on a later line, ``BASH_ENV: x.sh,``), a key
+#: outside ``env:`` (``with: {ENV: prod}``), an ``ENV`` no interactive sh reads, a value on the
+#: next line (``BASH_ENV: >-``, ``BASH_ENV=\``, ``$GITHUB_ENV``'s ``BASH_ENV<<EOF``), as each line
+#: is read alone.
 _SHELL_ENV = re.compile(
-    r"(?:^|(?<!\$)\{|,)\s*(?:(?P<key>(?:BASH_)?ENV)\s*:(?!\S)\s*(?P<entry>[^\s,}]*)"
+    r"(?:^|(?P<flow>(?<!\$)\{|,))\s*"
+    r"(?:(?P<key>(?:BASH_)?ENV)\s*:(?!\S)\s*(?P<entry>[^\s,}]*)"
     r"|(?:-\s+)?(?P<map>env)\s*:\s*(?:\$\{\{|[|>]))"
-    r"|" + _WORD_START + r"(?<![${])(?P<name>(?:BASH_)?ENV)(?:\+?=|<<)(?P<value>[^\s;&|()<>`]*)"
+    r"|" + _WORD_START + r"(?<![${])(?P<name>(?:BASH_)?ENV)"
+    r"(?:\+?=|(?P<doc><<))(?P<value>[^\s;&|()<>`]*)"
     r"|exportVariable\s*\(\s*(?P<arg>(?:BASH_)?ENV)\s*,\s*(?P<given>[^\s,)]*)"
 )
+#: Where a value ``_SHELL_ENV`` reads ends (#3525): a YAML key's at the line's end, in a flow
+#: mapping also at ``,`` or ``}``; an ``exportVariable`` call's at its ``)``. One going on past it
+#: (``BASH_ENV: a,b.sh``, ``exportVariable("ENV", dir + "/e.sh")``) is read only in part.
+_LINE_END = re.compile(r"\s*$")
+_FLOW_END = re.compile(r"\s*(?:[,}]|$)")
+_CALL_END = re.compile(r"\s*\)")
+#: A repository file ``cat`` adds to ``$GITHUB_ENV`` (``cat ci/vars.env >> "$GITHUB_ENV"``, the line
+#: read with its quotes off): its ``NAME=x`` lines set the names for the later steps (#3525).
+_ENV_APPEND = re.compile(r"\bcat\s+([\w.][\w./-]*)\s*>>?\s*\$\{?GITHUB_ENV\b")
 
 
 def _sr146_hits(text: str) -> list[tuple[int, str]]:
@@ -572,16 +589,26 @@ def _run_lines(text: str) -> list[str]:
 def _env_settings(text: str) -> Iterator[tuple[int, str, str, bool]]:
     """(line, what, value, waived) per ``BASH_ENV`` or ``ENV`` that ``text`` sets, but one set
     empty (what: ``<name> file``), and per ``env:`` mapping it gives as an expression (what:
-    ``env mapping``, value ``""``), outside comments (``_SHELL_ENV``); a YAML key or call whose
-    value starts on a later line gives ``""``. An allow-marked line's setting is waived, but a
-    ``BASH_ENV``'s: it only ever names a startup file."""
+    ``env mapping``, value ``""``), outside comments (``_SHELL_ENV``); a value read only in part, a
+    heredoc's (``<<``), a block scalar's (``|``, ``>``) or a YAML key's or call's starting on a
+    later line gives ``""``. An allow-marked line's setting is waived, but a ``BASH_ENV``'s: it
+    only ever names a startup file."""
     for n, line in enumerate(text.splitlines(), 1):
-        for m in _SHELL_ENV.finditer(_unquoted(_code(line))):
+        view, marked = _unquoted(_code(line)), _SKIP_ALLOW in line
+        for m in _SHELL_ENV.finditer(view):
             name = m["key"] or m["name"] or m["arg"] or m["map"]
             value = m["entry"] or m["value"] or m["given"] or ""
-            if value not in ('""', "''") and (value or not m["name"]):
-                what = "env mapping" if m["map"] else f"{name} file"
-                yield n, what, value, _SKIP_ALLOW in line and name != "BASH_ENV"
+            unread = bool(m["map"] or m["doc"])
+            if m["key"] or m["arg"]:
+                rule = _CALL_END if m["arg"] else _FLOW_END if m["flow"] else _LINE_END
+                end = rule.match(view, m.end())
+                unread = not end or value.startswith(("|", ">")) or not (value or end[0].strip())
+            if unread:
+                value = ""
+            elif value in ("", '""', "''"):
+                continue  # set empty
+            what = "env mapping" if m["map"] else f"{name} file"
+            yield n, what, value, marked and name != "BASH_ENV"
 
 
 def _read(path: Path, size: int = -1) -> str | None:
@@ -625,13 +652,16 @@ def _is_shell(path: Path, interpreter: str) -> bool:
 
 
 def _invoked(root: Path, bases: list[PurePosixPath], line: str) -> Iterator[str]:
-    """The root-relative repository shell scripts that ``line`` runs or sources."""
+    """The root-relative repository shell scripts that ``line`` runs or sources, and the files it
+    adds to ``$GITHUB_ENV`` (``_ENV_APPEND``)."""
     for interpreter, rel in _INVOKES.findall(line):
         if not interpreter and "/" not in rel:
             continue  # a bare command name is a PATH lookup, not a repository file
         for script in _in_repo(root, bases, rel):
             if _is_shell(script, interpreter):
                 yield script.relative_to(root).as_posix()
+    for rel in _ENV_APPEND.findall(_unquoted(line)):
+        yield from (file.relative_to(root).as_posix() for file in _in_repo(root, bases, rel))
 
 
 def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, int, str]]]:
@@ -660,9 +690,10 @@ def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, in
     ``xargs bash x``), a wrapper option taking a word (``timeout -s KILL``), other interpreters.
     The file a ``BASH_ENV`` or ``ENV`` setting names in a workflow or a script it runs, in the
     forms ``_SHELL_ENV`` reads, is a script it runs, whatever its suffix, tried from the same paths
-    (#3525); a setting naming no repository file (another expression, a path outside the root, a
-    missing file) or an ``env:`` mapping given as an expression fails the scan, as an unreadable
-    script does, unless it is waived (``_env_settings``).
+    (#3525), as is a repository file ``cat`` adds to ``$GITHUB_ENV`` (``_ENV_APPEND``), whose
+    settings are read; a setting naming no repository file (another expression, a value read only
+    in part, a path outside the root, a missing file) or an ``env:`` mapping given as an expression
+    fails the scan, as an unreadable script does, unless it is waived (``_env_settings``).
     """
     root = root.resolve()
     found: dict[str, set[str]] = {}
