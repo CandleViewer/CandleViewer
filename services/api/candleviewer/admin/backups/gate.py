@@ -122,9 +122,9 @@ class JobAdmission(Admission):
 
     def submit(self, runner: JobRunner, job_id: UUID, work: JobWork, on_done: JobDone) -> None:
         self.check()
+        deadline = self._gate._deadlines_s[self._kind]  # first: a kind with none registers nothing
         running, token = self._gate._running, object()
         running[token] = (self._kind, self._on)
-        deadline = self._gate._deadlines_s[self._kind]
 
         async def bounded(progress: Progress) -> dict[str, object]:
             async with asyncio.timeout(deadline):  # a hung job fails and frees its lane

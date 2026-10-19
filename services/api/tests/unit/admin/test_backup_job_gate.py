@@ -14,7 +14,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from candleviewer.admin.backups import limits
 from candleviewer.admin.backups.gate import Admission, BackupConflict, BackupJobGate, JobAdmission
+from candleviewer.admin.backups.limits import ADMIT_WAIT_S, JOB_DEADLINE_S
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobKind
 from candleviewer.admin.errors import OpsUnavailable
 from candleviewer.api.recorder_admin import AdminJobStore
@@ -279,3 +281,22 @@ async def test_a_shutdown_releases_a_job_cancelled_before_its_first_step() -> No
     async with asyncio.timeout(_BOUND):
         await store.stop()  # no scheduler turn between: the job never ran
     assert (job and job.status, gate.active()) == ("queued", [])
+
+
+async def test_a_kind_with_no_deadline_registers_nothing() -> None:
+    """SR-BK7A-01: the deadline is looked up before the entry is made."""
+    gate = BackupJobGate(deadlines_s={"backup": 3600.0})
+    with pytest.raises(KeyError):
+        await _start(gate, _runner(), VERIFY, X)
+    assert gate.active() == []
+
+
+def test_the_shipped_bounds_are_pinned() -> None:
+    """R2-02: a change to a shipped bound changes this test with it."""
+    hour = 3600.0
+    deadlines = {"backup": 24 * hour, "backup_verify": 12 * hour, "backup_restore": 24 * hour}
+    assert (ADMIT_WAIT_S, dict(JOB_DEADLINE_S)) == (5.0, deadlines)
+    gate = BackupJobGate()
+    assert (gate._admit_wait_s, gate._deadlines_s) == (ADMIT_WAIT_S, JOB_DEADLINE_S)
+    budgets = (limits.RECORD_BUDGET_S, limits.WRITE_BUDGET_S, limits.LOST_READ_BUDGET_S)
+    assert (budgets, limits.WRITE_TRIES, limits.LOST_RUNS_LIMIT) == ((2.0, 2.0, 2.0), 2, 16)

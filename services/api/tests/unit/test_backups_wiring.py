@@ -14,11 +14,13 @@ import pytest
 from structlog.testing import capture_logs
 
 import candleviewer.backups_wiring as wiring
+from candleviewer.admin.backups import ports
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobErrorCode, OpenPositions
 from candleviewer.admin.errors import OpsNotWired, PositionsUnknownError
 from candleviewer.api.recorder_admin import AdminJobStore
 from candleviewer.backups_wiring import AdminJobRunner, UnknownOpenPositions
 from candleviewer.settings import Settings
+from candleviewer.storage.repositories import backups
 from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
 from tests.unit.admin._backup_fakes import Store, row
 
@@ -75,6 +77,13 @@ async def test_a_failing_logger_never_replaces_the_closed_code(
     monkeypatch.setattr("candleviewer.backups_wiring.structlog.get_logger", lambda *_: logger)
     view, ends = await _failed(FileNotFoundError(_PATH))
     assert (view["error"], ends) == ("internal_error", [JobEnd("failed", None, "internal_error")])
+
+
+def test_job_error_codes_are_the_catalogues() -> None:
+    """BK-7 open question 1: a job's `error` and its row's are one closed set, not two copies."""
+    assert ports.JOB_ERROR_CODES is backups.BACKUP_ERROR_CODES
+    assert ports.JobErrorCode == backups.BackupErrorCode
+    assert ports.VerifyMethod == backups.VerifyMethod
 
 
 async def test_unknown_positions_are_none_never_zero() -> None:
