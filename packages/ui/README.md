@@ -112,8 +112,9 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 
 ## Storybook (E05-T03)
 
-- Run: `build:tokens`, then `storybook` (dev server, port 6006) or `storybook:build`. The preview
-  imports the generated token bundles the app imports. Storybook 10 needs Node 20.19+ or 22.12+.
+- Run: `build:tokens`, then `storybook` (dev server on 127.0.0.1:6006) or `storybook:build`. The
+  preview imports the generated token bundles the app imports. Storybook 10 needs Node 20.19+ or
+  22.12+.
 - Test: `storybook:test` runs the `storybook` Vitest project (`@storybook/addon-vitest`) in headless
   Chromium (once: `pnpm --filter @candleviewer/ui exec playwright install chromium`): each story's
   play function, then axe. A serious or critical violation fails the story, naming the rule and the

@@ -31,4 +31,12 @@ describe("Storybook main config", () => {
     expect(scripts.storybook).toMatch(/ --disable-telemetry --no-version-updates$/);
     expect(scripts["storybook:build"]).toMatch(/ --disable-telemetry$/);
   });
+
+  it("binds the dev server to loopback itself, not through Storybook's default host", async () => {
+    // C-12.9: 10.6.2 listens on 127.0.0.1 when no host is given; the flag keeps a changed default
+    // from widening the dev server's exposure.
+    const { scripts } = (await import("../../package.json")).default;
+    expect(scripts.storybook).toMatch(/^storybook dev .* --host 127\.0\.0\.1 /);
+    expect(scripts.storybook.match(/--host\b|\s-h\s/g)).toEqual(["--host"]);
+  });
 });
