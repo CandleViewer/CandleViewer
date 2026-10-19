@@ -174,6 +174,17 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/basiltt/CandleViewer/issues/3639"
+  # #3549: CI's Semgrep venv (tools/ci/requirements-semgrep.txt). semgrep 1.181.0, the newest
+  # release, pins mcp==1.29.0 exactly, and only mcp 1.30.0 has the fix. The entry ends inside
+  # C-12.3's 30 days, so it needs no exception. No gate reads it until the alert gate lands, so
+  # check_accepted_risk_expiry.py enforces its date.
+  - id: "GHSA-84m7-p3x7-pcfv"
+    tool: dependabot
+    severity: MEDIUM
+    reason: "mcp 1.29.0, pinned exactly by semgrep 1.181.0 (the newest release) in CI's Semgrep venv only; fixed in mcp 1.30.0. The flaw is in mcp's Streamable HTTP server: the security lane runs `semgrep scan`, which never starts it, and nothing ships the venv. Bump Semgrep once a release takes mcp 1.30.0"
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
+    expires: "2026-11-14"
+    ticket: "https://github.com/basiltt/CandleViewer/issues/3672"
   # E03 #1755 review round 4 (#1778 B5-b forbids file-level excludes): applied migration
   # 0004_instruments.py is immutable (C-5.4), so its three legacy `nosemgrep` markers
   # cannot gain reason/owner/review fields. The `exchange_code` enum value names the one
