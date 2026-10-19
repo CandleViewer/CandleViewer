@@ -251,8 +251,8 @@ def make_market_router(
     optional `Callable[[str, str], CoverageIndex | None]` used only to
     compute the `meta.coverage_holes` diagnostic (never required for
     correctness of the returned bars) — the fake/default storage backend
-    has no coverage tracking of its own, so a request against it simply
-    reports an empty hole list.
+    has no coverage tracking of its own, so a request against it reports
+    no hole before now (the part of a window after now is always declared).
 
     `principal_resolver=None` (no identity provider composed, i.e. the fake
     storage backend; same posture as `make_audit_router`'s own default and
@@ -271,7 +271,9 @@ def make_market_router(
     `422` (declared by the route) before any read, job or per-key state. With a read service
     but no catalogue check wired, the route fails closed (`503`). The window may span at
     most 400 days (`422 bar_window_too_large`); narrower windows are paged by rows, each read
-    asking for `limit + 1` rows (22-api paging rule, #2087 A1/A4).
+    asking for `limit + 1` rows (22-api paging rule, #2087 A1/A4). The window is bounded at
+    `now_us()` (#3808): its part after now is never read or backfilled and is reported in
+    `meta.coverage_holes` (the cache has no bars for it yet), so no new refusal is added.
 
     S3 (#2087 security review): FastAPI parses and validates query parameters before this
     handler, so an unauthenticated caller can see a 400/422 schema error before the 401. Those
@@ -336,8 +338,9 @@ def make_market_router(
                 422, "Unprocessable entity",
                 f"{price_type} candles are not recorded yet; request price_type=trade.",
             )  # fmt: skip
+        now = now_us()
         try:
-            end_dt = _parse_time(to, default=datetime.fromtimestamp(now_us() / 1e6, tz=UTC))
+            end_dt = _parse_time(to, default=datetime.fromtimestamp(now / 1e6, tz=UTC))
             start_dt = _parse_time(from_, default=None)
         except ValueError:
             return _problem(400, "Bad request", "from/to must be RFC 3339 timestamps.")
@@ -346,7 +349,7 @@ def make_market_router(
         if start_dt > end_dt:
             return _problem(400, "Bad request", "'from' must not be after 'to'.")
         start_us = int(start_dt.timestamp() * 1_000_000)
-        end_us = int(end_dt.timestamp() * 1_000_000)
+        end_us = int(end_dt.timestamp() * 1_000_000) if to is not None else now
         width = _INTERVAL_US[interval]
         grid = None if interval == "M" else width  # `M` is calendar-variable: no fixed grid
         if cursor is not None:
@@ -365,6 +368,10 @@ def make_market_router(
             # The only window refusal (22-api): the SR-E12-02 hard cap. Anything narrower is
             # served page by page.
             return _window_too_large()
+        # #3808: no bar exists after now, so the server bounds the window there: a later part
+        # (a client clock ahead of the exchange, or any future window) is never read, paged or
+        # backfilled, and is declared uncovered in `meta.coverage_holes` below.
+        requested_end_us, end_us = end_us, min(end_us, now)
         service = read_service_provider() if read_service_provider is not None else None
         if service is not None and symbol_listed is None:
             return _problem(
@@ -417,6 +424,12 @@ def make_market_router(
             index = coverage_index_provider(symbol, interval)
             if isinstance(index, CoverageIndex):
                 holes = [{"start_us": h.start_us, "end_us": h.end_us} for h in index.holes(rng)]
+        tail_start = max(start_us, end_us)
+        if not more and requested_end_us > tail_start:  # the part after now: no bars yet
+            if holes and holes[-1]["end_us"] >= tail_start:
+                holes[-1]["end_us"] = requested_end_us
+            else:
+                holes.append({"start_us": tail_start, "end_us": requested_end_us})
         served = sources if rows else []  # a tier is claimed only when its rows are served
         record_page("klines", len(rows), list(served))
         meta = build_meta(

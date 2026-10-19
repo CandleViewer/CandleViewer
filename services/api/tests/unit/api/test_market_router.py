@@ -333,3 +333,102 @@ class TestGetKlinesSecurityReview:
         assert cache.calls == []  # rejected before any read
         ok = {**params, "from": "2023-12-29T00:00:00Z"}  # 3 days = 4 320 bars <= 5 000
         assert client.get("/market/klines", params=ok).status_code == 200
+
+
+class TestGetKlinesFutureWindow:
+    """#3808: the server bounds the window at its own now. The part after now is never read,
+    paged or backfilled; it is declared uncovered in `meta.coverage_holes` (200, no bars)."""
+
+    _NOW = 3_600_000_000  # 1970-01-01T01:00:00Z
+    _P: ClassVar[dict[str, str]] = {"symbol": "BTCUSDT", "interval": "1"}
+
+    def _client(self, service: object) -> TestClient:
+        app = FastAPI()
+        app.include_router(
+            make_market_router(
+                lambda: _FakeCache(), principal_resolver=_AUTHORIZED,
+                read_service_provider=lambda: service,  # type: ignore[arg-type,return-value]  # duck-typed service
+                symbol_listed=lambda s: s == "BTCUSDT", now_us=lambda: self._NOW,
+            )
+        )  # fmt: skip
+        return TestClient(app, client=("127.0.0.1", 50000))
+
+    def test_window_after_now_is_never_read_and_is_declared_uncovered(self) -> None:
+        from candleviewer.ingestion.kline_backfill import KlineBackfillService
+        from candleviewer.ingestion.kline_read import KlineReadService
+
+        fetches: list[object] = []
+
+        async def fetch(*a: object, **kw: object) -> list[object]:
+            fetches.append(a)
+            return []
+
+        class _Hot:
+            async def read_klines(self, *a: object, **kw: object) -> list[object]:
+                return []
+
+            async def write_klines(self, rows: object) -> None: ...
+
+        backfill = KlineBackfillService(fetch_klines=fetch, cache=_Hot(), now_us=lambda: self._NOW)  # type: ignore[arg-type]  # structural fakes
+        client = self._client(KlineReadService(_Hot(), backfill=backfill))  # type: ignore[arg-type]  # structural fake
+        future = {**self._P, "from": "1970-01-01T02:00:00Z", "to": "1970-01-01T03:00:00Z"}
+        body = client.get("/market/klines", params=future).json()
+        assert body["bars"] == [] and body["meta"]["has_more"] is False
+        hole = {"start_us": 7_200_000_000, "end_us": 10_800_000_000}
+        assert body["meta"]["coverage_holes"] == [hole]
+        assert fetches == [] and backfill.tracked_keys == 0  # no read, job or per-key state
+        present = {**self._P, "from": "1970-01-01T00:00:00Z", "to": "1970-01-01T00:30:00Z"}
+        assert client.get("/market/klines", params=present).status_code == 200
+        assert backfill.tracked_keys == 1  # a present-time read is served as before
+
+    def test_window_crossing_now_is_read_only_up_to_now(self) -> None:
+        from candleviewer.ingestion.kline_coverage import Range
+        from candleviewer.ingestion.kline_read import KlineRead
+
+        asked: list[Range] = []
+
+        class _Svc:
+            async def read(
+                self, symbol: str, interval: str, rng: Range, limit: int | None = None
+            ) -> KlineRead:
+                asked.append(rng)
+                return KlineRead([], [], None, [], False)
+
+        crossing = {**self._P, "from": "1970-01-01T00:30:00Z", "to": "1970-01-01T02:00:00Z"}
+        body = self._client(_Svc()).get("/market/klines", params=crossing).json()
+        assert asked and max(r.end_us for r in asked) == self._NOW
+        assert body["meta"]["coverage_holes"] == [{"start_us": self._NOW, "end_us": 7_200_000_000}]
+        assert body["meta"]["has_more"] is False
+
+    def test_cursor_after_now_reads_nothing_and_declares_the_rest_uncovered(self) -> None:
+        """A well-formed cursor past now (it is checked against the requested `to`) reads
+        nothing; the rest of the window is declared uncovered."""
+        from candleviewer.api.market_response import cursor_scope, encode_cursor
+
+        cache, at = _FakeCache(), 1_700_000_100_000_000  # 2023-11-14T22:15Z, a minute after now
+        app = FastAPI()
+        app.include_router(
+            make_market_router(
+                lambda: cache, principal_resolver=_AUTHORIZED, now_us=lambda: at - 60_000_000
+            )
+        )
+        cursor = encode_cursor(cursor_scope("klines", "BTCUSDT", "1"), at)
+        window = {"from": "2023-11-14T22:13:00Z", "to": "2023-11-14T22:16:00Z", "cursor": cursor}
+        body = TestClient(app).get("/market/klines", params={**self._P, **window}).json()
+        assert cache.calls == [] and body["bars"] == [] and body["meta"]["has_more"] is False
+        assert body["meta"]["coverage_holes"] == [{"start_us": at, "end_us": at + 60_000_000}]
+
+    def test_future_part_merges_with_the_adjacent_coverage_hole(self) -> None:
+        from candleviewer.ingestion.kline_coverage import CoverageIndex
+
+        app = FastAPI()
+        app.include_router(
+            make_market_router(
+                lambda: _FakeCache(), principal_resolver=_AUTHORIZED,
+                coverage_index_provider=lambda s, i: CoverageIndex(), now_us=lambda: self._NOW,
+            )
+        )  # fmt: skip
+        crossing = {**self._P, "from": "1970-01-01T00:30:00Z", "to": "1970-01-01T02:00:00Z"}
+        body = TestClient(app).get("/market/klines", params=crossing).json()
+        hole = {"start_us": 1_800_000_000, "end_us": 7_200_000_000}  # [from, now) + [now, to)
+        assert body["meta"]["coverage_holes"] == [hole]
