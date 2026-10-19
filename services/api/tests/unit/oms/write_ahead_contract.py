@@ -184,15 +184,38 @@ class WriteAheadContract:
         assert states == [(None, "accepted"), (None, None), (None, None)]
 
     async def test_a_create_a_step_and_a_fill_leave_the_chart_state_null(self, h: Harness) -> None:
-        """`orders.lifecycle_state` (`0034_order_vocabulary`) has no default, and no write path
-        sets it yet (#847's remaining implementation PR sets it beside `state`): each write leaves
-        it NULL, as returned and as stored, so `ord_lifecycle` holds on every row."""
+        """`orders.lifecycle_state` (`0034_order_vocabulary`) has no default: a create, a step
+        and a fill that name no chart state leave it NULL, as returned and as stored, so
+        `ord_lifecycle` holds on every row (B1's step writer always names it, #847)."""
         row = await h.order("pending_submit")
         moved = await h.orders.transition(step(row, "accepted"))
         done = await h.executions.commit_fill(fill(moved.order, "E1", "0.1"))
         assert done is not None
         assert [r.lifecycle_state for r in (row, moved.order, done.order)] == [None, None, None]
         assert await h.stored(row) == (done.order, [0, 1, 2])
+
+    async def test_every_write_keeps_the_chart_state_beside_state(self, h: Harness) -> None:
+        """`orders.lifecycle_state` holds the B1 state that `state` persists (24 Sec.8.2 mapping,
+        `ord_lifecycle`), and a step stores the exchange order id B1 bound (SR-E29-03): set by the
+        create, a step and a fill that name them (#847)."""
+        row = await h.order("pending_submit", lifecycle_state="validated")
+        bind = step(row, "submitted", lifecycle_state="submitting", exchange_order_id="x-1")
+        moved = await h.orders.transition(bind)
+        done = await h.executions.commit_fill(fill(moved.order, "E1", "0.1"))
+        assert done is not None and row.lifecycle_state == "validated"
+        assert (moved.order.lifecycle_state, moved.order.exchange_order_id) == ("submitting", "x-1")
+        assert done.order.lifecycle_state == "submitting"  # a fill's step that names none keeps it
+        assert (await h.stored(row))[0] == done.order
+
+    async def test_a_step_binding_an_id_another_order_holds_changes_nothing(
+        self, h: Harness
+    ) -> None:
+        """`ux_orders_exch_id`: one exchange order binds to one row of its account (SR-E29-03)."""
+        held = await h.order("accepted", exchange_order_id="x-1")
+        row = await h.order("pending_submit", exchange_account_id=held.exchange_account_id)
+        with pytest.raises(port.OrderConstraintError, match="ux_orders_exch_id"):
+            await h.orders.transition(step(row, "submitted", exchange_order_id="x-1"))
+        assert await h.stored(row) == (row, [0])
 
     async def test_a_latency_of_zero_is_stored(self, h: Harness) -> None:
         """`oe_latency` refuses a negative `latency_ms` (`_REFUSED`), not zero."""

@@ -147,7 +147,6 @@ class InMemoryOrderStore:
             **asdict(order), leaves_qty=_EXACT.subtract(order.qty, order.cum_exec_qty),
             created_ts=self._clock(), submitted_ts=None, last_reconciled_at=None, reject_code=None,
             reject_message=None, submit_attempts=0, idempotency_state="unsent",
-            lifecycle_state=None,  # no default, and no write sets it yet, so `ord_lifecycle` holds
         )  # fmt: skip
         row = _at_scale(row, _ORDER_SCALES)
         event = self._event(row, first_event, (None, row.state))
@@ -232,6 +231,13 @@ class InMemoryOrderStore:
         if order.state != step.from_state:
             raise port.StaleOrderState(step.order_id, step.from_state)
         changes: dict[str, Any] = {**step.changes(), **(totals or {})}
+        bound = changes.get("exchange_order_id")
+        if bound is not None and any(
+            (r.exchange_account_id, r.exchange_order_id) == (order.exchange_account_id, bound)
+            for r in self._orders.values()
+            if r.id != order.id
+        ):
+            raise port.OrderConstraintError("ux_orders_exch_id")  # as the UPDATE meets the index
         row = replace(order, **changes)
         leaves = _EXACT.subtract(row.qty, row.cum_exec_qty)
         row = _at_scale(replace(row, leaves_qty=leaves), _ORDER_SCALES)

@@ -49,6 +49,7 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
     StaleOrderState,
     require_aware,
+    require_lifecycle,
     require_money,
 )
 from tests.unit.oms.write_ahead_contract import event, fill, step
@@ -121,7 +122,7 @@ def test_rows_and_inserts_follow_the_table_columns() -> None:
     left_to_the_database = set(order_cols) - {f.name for f in fields(NewOrder)}
     assert left_to_the_database == {
         "leaves_qty", "created_ts", "submitted_ts", "last_reconciled_at", "reject_code",
-        "reject_message", "submit_attempts", "idempotency_state", "lifecycle_state",
+        "reject_message", "submit_attempts", "idempotency_state",
     }  # fmt: skip
 
 
@@ -147,6 +148,21 @@ def test_require_money_refuses_what_the_column_would_change(value: Any, error: t
     with pytest.raises(error, match=r"^price ") as exc:
         require_money("price", value)
     assert str(value) not in str(exc.value)  # the column only: a value is P1 (21 Sec.12)
+
+
+@pytest.mark.parametrize(("chart", "state", "ok"), [("validated", "pending_submit", True),
+                         ("submitted", "accepted", True), ("submitted", "submitted", False),
+                         ("held", "accepted", False), (None, "accepted", True)])  # fmt: skip
+def test_lifecycle_state_comes_only_with_the_state_it_maps_to(
+    chart: Any, state: Any, ok: bool
+) -> None:
+    """`ord_lifecycle` in code (#847): a chart state and the `order_state` 24 Sec.8.2 maps it to,
+    or none; `submitted` names a different state on each side."""
+    if ok:
+        require_lifecycle(chart, state)
+        return
+    with pytest.raises(ValueError, match="ord_lifecycle"):
+        require_lifecycle(chart, state)
 
 
 def test_require_aware_refuses_only_a_naive_datetime() -> None:

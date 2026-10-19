@@ -21,8 +21,9 @@ an event without a state transition (`OrderEventStore.append`). Updates of an ex
 (state, fills, reject fields) with events that carry `from_state`/`to_state` are E29-T03's
 write-ahead step (`transition`, `ExecutionStore.commit_fill`); E29-T04 adds the 24 Sec.8.4 columns.
 `state` is the persisted form of the B1 chart's state (`ORDER_STATE_OF`), and `lifecycle_state`
-(`0034`) the chart state verbatim. No write path sets `lifecycle_state` yet: `create` and every
-step leave it NULL. #847's remaining implementation PR sets it, beside `state`, on every path.
+(`0034`) the chart state verbatim. `create` and every step set it with `state` when the caller
+names it, as B1's write-ahead step always does (E29-T03 #847, `oms.order_steps`), and both stores
+refuse a pair that `ORDER_STATE_OF` does not map; a row written without it keeps NULL.
 
 For the OMS (24 Sec.8.2 S7): an exception from any call means its write is not confirmed. The OMS
 does not accept the order and sends nothing under its id; a commit cut off by a lost connection
@@ -186,9 +187,11 @@ class NewOrder:
     exchange_created_ts: datetime | None = None
     exchange_updated_ts: datetime | None = None
     is_paper: bool = False
+    lifecycle_state: LifecycleState | None = None
 
     def __post_init__(self) -> None:
         check_fields(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
+        require_lifecycle(self.lifecycle_state, self.state)
 
 
 def typed_fields(cls: type, kind: type) -> tuple[str, ...]:
@@ -219,6 +222,13 @@ class NewOrderEvent:
         require_aware("event_ts", self.event_ts)
 
 
+def require_lifecycle(lifecycle_state: LifecycleState | None, state: OrderState) -> None:
+    """`ord_lifecycle` (21 Sec.3.3.4): a chart state comes only with the `order_state` value
+    24 Sec.8.2 maps it to."""
+    if lifecycle_state is not None and ORDER_STATE_OF.get(lifecycle_state) != state:
+        raise ValueError("lifecycle_state is not the chart state of state (ord_lifecycle)")
+
+
 def require_exchange_record(event: NewOrderEvent) -> None:
     """OM-R02: an event that puts an order in a state, `create`'s first one too, carries the
     exchange's message as its `payload` when the exchange reported it."""
@@ -237,8 +247,11 @@ def require_no_fill(event: NewOrderEvent, to_state: OrderState | None = None) ->
 class OrderTransition:
     """A write-ahead step (24 Sec.8.2 S8): `state` moves to `to_state` only while the row holds
     `from_state` (compare-and-set), and `event` is appended with both states, in one transaction.
-    `reject_code` and `reject_message` are set when given. Built only from the columns' values,
-    so every store refuses anything else alike, before any statement (OM-T04)."""
+    `reject_code`, `reject_message`, `lifecycle_state` (the chart state `to_state` persists) and
+    `exchange_order_id` (the exchange's id for the order, once B1 binds it, SR-E29-03) are set
+    when given; `ux_orders_exch_id` refuses an id another order of the account holds. Built only
+    from the columns' values, so every store refuses anything else alike, before any statement
+    (OM-T04)."""
 
     account_id: UUID
     order_id: UUID
@@ -247,16 +260,23 @@ class OrderTransition:
     event: NewOrderEvent
     reject_code: str | None = None
     reject_message: str | None = None
+    lifecycle_state: LifecycleState | None = None
+    exchange_order_id: str | None = None
 
     def __post_init__(self) -> None:
         require_exchange_record(self.event)
         given = (self.from_state, self.to_state, self.event.kind, self.event.source)
         if any(value not in values for value, values in zip(given, _LITERALS, strict=True)):
             raise ValueError("a step's states, kind and source must be values of their columns")
+        require_lifecycle(self.lifecycle_state, self.to_state)
 
     def changes(self) -> dict[str, object]:
         """The columns it sets, the exchange's text redacted like `ret_msg` (#845 decision 2)."""
         values: dict[str, object] = {"state": self.to_state}
+        if self.lifecycle_state is not None:
+            values["lifecycle_state"] = self.lifecycle_state
+        if self.exchange_order_id is not None:
+            values["exchange_order_id"] = self.exchange_order_id
         if self.reject_code is not None:
             values["reject_code"] = redact_exchange_text(self.reject_code, max_chars=MAX_CODE_CHARS)
         if self.reject_message is not None:
