@@ -377,7 +377,7 @@ export interface paths {
     post?: never;
     /**
      * Delete a backup artefact
-     * @description Needs a fresh `backups` step-up elevation (E42-T05). `backups` is a no-grace class, so each delete spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Audited as `backup.deleted` (actor, backup id, `before_state.status`) ahead of the `204`; an attempt refused after RBAC and step-up is audited with `outcome: failure`. Effect (E42-T05): the artefact is removed from the backup volume and the catalogue row is kept, since the catalogue is kept forever (`21-database-schema.md` section 7): the row gains `deleted_at` and records who deleted it (not exposed), its `status` is unchanged, and a later verify, link or restore of it is `409 conflict` with rule `backup_not_usable`. An unknown backup is `404` before any challenge. After the grant is spent, and in this order, a backup already deleted is `409 conflict` with rule `backup_deleted`; one that is `running`, or that a running verification or restore uses, is `409 conflict` with rule `backup_in_use`; and the last backup of its `kind` that is verified and not deleted (`status` `verified` or `restored` with `verified_at` set, no `deleted_at`) is `409 conflict` with rule `last_usable_backup`, so no kind loses its last verified backup; this rule counts only a verified backup as usable, a narrower sense than in `backup_not_usable`, which also admits an `ok` backup that was never verified. The three conflicts are evaluated and the row marked under the backups admission lock, one delete at a time. The backups admission lock is the one process-wide lock that admits a run, a verification, a restore, a delete and a download-link issue one at a time (#966 Q6; BK-7 builds it). An admission that cannot take that lock within its wait is `503 store_unavailable` with `Retry-After`. A run or a verification then writes no record and starts nothing; a delete or a restore is refused after its grant is spent, so the grant is gone, its failure record (`backup.deleted` or `backup.restore`, `outcome: failure`) is written ahead of the `503`, and the operator steps up again to retry. A download-link issue is refused the same way after its grant is spent, with a record of its own (`issueBackupDownload`). When a delete's failure record cannot be written, for this `503` or for any `409 conflict` after the grant is spent, the answer is `503 audit_unavailable` and the grant stays spent. The challenge's `action_summary` template is `Delete the artefact of backup '<backupId>' (<kind>)` and `target` is null; the `backup.deleted` record names the `challenge_id` of the grant it spent. If the artefact cannot be removed after the record is written, a second `backup.deleted` record with `outcome: failure` follows, the row is unchanged, and the answer is `503 store_unavailable`, a code that here also covers the backup volume. Until an artefact remover is wired the operation answers `501 not_implemented` before any challenge.
+     * @description Needs a fresh `backups` step-up elevation (E42-T05). `backups` is a no-grace class, so each delete spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Audited as `backup.deleted` (actor, backup id, `before_state.status`) ahead of the `204`; an attempt refused after RBAC and step-up is audited with `outcome: failure`. Effect (E42-T05): the artefact is removed from the backup volume and the catalogue row is kept, since the catalogue is kept forever (`21-database-schema.md` section 7): the row gains `deleted_at` and records who deleted it (not exposed), its `status` is unchanged, and a later verify, link or restore of it is `409 conflict` with rule `backup_not_usable`. An unknown backup is `404` before any challenge, and a catalogue that cannot be read is `503 store_unavailable` with `Retry-After`, also before any challenge: that `503` spends no grant and writes no `backup.deleted` record. After the grant is spent, and in this order, a backup already deleted is `409 conflict` with rule `backup_deleted`; one that is `running`, or that a running verification or restore uses, is `409 conflict` with rule `backup_in_use`; and the last backup of its `kind` that is verified and not deleted (`status` `verified` or `restored` with `verified_at` set, no `deleted_at`) is `409 conflict` with rule `last_usable_backup`, so no kind loses its last verified backup; this rule counts only a verified backup as usable, a narrower sense than in `backup_not_usable`, which also admits an `ok` backup that was never verified. The three conflicts are evaluated and the row marked under the backups admission lock, one delete at a time. The backups admission lock is the one process-wide lock that admits a run, a verification, a restore, a delete and a download-link issue one at a time (#966 Q6; BK-7 builds it). An admission that cannot take that lock within its wait is `503 store_unavailable` with `Retry-After`. A run or a verification then writes no record and starts nothing; a delete or a restore is refused after its grant is spent, so the grant is gone, its failure record (`backup.deleted` or `backup.restore`, `outcome: failure`) is written ahead of the `503`, and the operator steps up again to retry. A download-link issue is refused the same way after its grant is spent, with a record of its own (`issueBackupDownload`). A delete's failure record for this `503` carries `reason: store_unavailable`, like the link issue's (`issueBackupDownload`). When a delete's failure record cannot be written, for this `503` or for any `409 conflict` after the grant is spent, the answer is `503 audit_unavailable` and the grant stays spent. The challenge's `action_summary` template is `Delete the artefact of backup '<backupId>' (<kind>)` and `target` is null; the `backup.deleted` record names the `challenge_id` of the grant it spent. If the artefact cannot be removed after the record is written, a second `backup.deleted` record with `outcome: failure` follows, the row is unchanged, and the answer is `503 store_unavailable`, a code that here also covers the backup volume. When that second record cannot be written, the answer is `503 audit_unavailable` and the grant stays spent. A row that cannot be marked once the artefact is gone ends as a failed removal does (the second record, `503 store_unavailable`, the row unmarked), and a retry completes the delete, because an artefact already gone counts as removed; until the retry completes, the unmarked row still counts as a usable backup. Until an artefact remover is wired the operation answers `501 not_implemented` before any challenge.
      */
     delete: operations["deleteBackup"];
     options?: never;
@@ -398,7 +398,7 @@ export interface paths {
     put?: never;
     /**
      * Issue a single-use, five-minute download link for a backup artefact
-     * @description Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a download is a link that works once and expires 5 minutes after issue (E42-T05). Issuing needs a fresh `backups` step-up elevation. `backups` is a no-grace class (`NO_GRACE_ACTION_CLASSES` in `auth/step_up.py` and `statechart/bindings/b16_session.py`, kept equal by `tests/xstate_contract/test_b16.py`), so each link spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Issuing is audited as `backup.downloaded` with `after_state.stage: issued` at severity `error` before the response; when that record cannot be written, the link is never sent: the answer is `503 audit_unavailable` and the grant stays spent. The link appears only in this response body: access logs, traces, metrics labels and audit fields record the route template, never the link or its token. It carries a one-time token, and fetching it is a `GET` that the token itself authenticates, served as the issuing user (`downloadBackup`). Only a backup with `status` `ok`, `verified` or `restored` can be downloaded; any other status is `409 conflict` with rule `backup_not_usable`. A user may issue at most 10 links per hour, after which the call is `429 rate_limited` with `Retry-After`. Order (E42-T05): an unknown backup (`404`) and the hourly limit (`429`) are decided before any challenge, and `backup_not_usable` after the grant is spent, as on `restoreBackup`; a backup whose artefact was deleted, that is recorded with `encrypted: false`, or whose artefact is not a single file is not usable. A refusal after the grant is spent is audited as `backup.downloaded` with `stage: issued` and `outcome: failure` and a `reason`: `backup_not_usable` for the `409`, `links_full` for a full link store and `store_unavailable` for any other `503 store_unavailable` after the spend (the lock wait, or a catalogue or artefact store that fails or is too slow); every record names the `challenge_id` of the grant it spent, and the record of an issued link also names its `after_state.link_id`, an id minted with the link that the fetch's records repeat, never the token or its hash. An issue that cannot take the backups admission lock (`deleteBackup`) within its wait is `503 store_unavailable` with `Retry-After`, after the grant is spent, so the grant is gone, its failure record (`backup.downloaded`, `stage: issued`, `outcome: failure`, `reason: store_unavailable`) is written ahead of the `503`, and the operator steps up again to retry. A catalogue or artefact store that fails or is too slow once the lock is held ends the same way, with the same record. An issue that finds the link store full (1024 links live; `downloadBackup` states the bounds) is refused the same way: `503 store_unavailable` with `Retry-After`, `reason: links_full`, a code that here also covers the in-process link store. When that failure record cannot be written, for any of these `503`s or for the `409`, the answer is `503 audit_unavailable` and the grant stays spent. The challenge's `action_summary` template is `Issue a 5-minute download link for backup '<backupId>' (<kind>)` and `target` is null. The token carries 256 bits from a CSPRNG (43 base64url characters) and is the only credential the fetch needs: `downloadBackup` needs no `Authorization` header, so a browser can save the artefact from a plain link. The link is bound to the session that issued it and to that session's user, and follows that session across the rotations a refresh or a step-up makes, into its successors (its family): a rotation does not end the link. The link ends with the events that end the grant that minted it, not with the grant's 60-second expiry or its use: after the family's session logged out, idle-locked or turned read-only, after the family was revoked other than by a rotation or expired, or after its user was disabled, a fetch is `410 gone` (`downloadBackup`). The `200` is sent with `Cache-Control: no-store`. Until the catalogue and the artefact store are wired the operation answers `501 not_implemented` before any challenge.
+     * @description Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a download is a link that works once and expires 5 minutes after issue (E42-T05). Issuing needs a fresh `backups` step-up elevation. `backups` is a no-grace class (`NO_GRACE_ACTION_CLASSES` in `auth/step_up.py` and `statechart/bindings/b16_session.py`, kept equal by `tests/xstate_contract/test_b16.py`), so each link spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Issuing is audited as `backup.downloaded` with `after_state.stage: issued` at severity `error` before the response; when that record cannot be written, the link is never sent: the answer is `503 audit_unavailable` and the grant stays spent. The link appears only in this response body: access logs, traces, metrics labels and audit fields record the route template, never the link or its token. It carries a one-time token, and fetching it is a `GET` that the token itself authenticates, served as the issuing user (`downloadBackup`). Only a backup with `status` `ok`, `verified` or `restored` can be downloaded; any other status is `409 conflict` with rule `backup_not_usable`. A user may issue at most 10 links per hour, after which the call is `429 rate_limited` with `Retry-After`. Order (E42-T05): a catalogue that cannot be read (`503 store_unavailable` with `Retry-After`), an unknown backup (`404`) and the hourly limit (`429`) are decided before any challenge (the `503` spends no grant and writes no `backup.downloaded` record), and `backup_not_usable` after the grant is spent, as on `restoreBackup`; a backup whose artefact was deleted, that is recorded with `encrypted: false`, or whose artefact is not a single file is not usable. A refusal after the grant is spent is audited as `backup.downloaded` with `stage: issued` and `outcome: failure` and a `reason`: `backup_not_usable` for the `409`, `links_full` for a full link store and `store_unavailable` for any other `503 store_unavailable` after the spend (the lock wait, or a catalogue or artefact store that fails or is too slow); every record names the `challenge_id` of the grant it spent, and the record of an issued link also names its `after_state.link_id`, an id minted with the link that the fetch's records repeat, never the token or its hash. An issue that cannot take the backups admission lock (`deleteBackup`) within its wait is `503 store_unavailable` with `Retry-After`, after the grant is spent, so the grant is gone, its failure record (`backup.downloaded`, `stage: issued`, `outcome: failure`, `reason: store_unavailable`) is written ahead of the `503`, and the operator steps up again to retry. A catalogue or artefact store that fails or is too slow once the lock is held ends the same way, with the same record. An issue that finds the link store full (1024 links live; `downloadBackup` states the bounds) is refused the same way: `503 store_unavailable` with `Retry-After`, `reason: links_full`, a code that here also covers the in-process link store. When that failure record cannot be written, for any of these `503`s or for the `409`, the answer is `503 audit_unavailable` and the grant stays spent. The challenge's `action_summary` template is `Issue a 5-minute download link for backup '<backupId>' (<kind>)` and `target` is null. The token carries 256 bits from a CSPRNG (43 base64url characters) and is the only credential the fetch needs: `downloadBackup` needs no `Authorization` header, so a browser can save the artefact from a plain link. The link is bound to the session that issued it and to that session's user, and follows that session across the rotations a refresh or a step-up makes, into its successors (its family): a rotation does not end the link. The link ends with the events that end the grant that minted it, not with the grant's 60-second expiry or its use: after the family's session logged out, idle-locked or turned read-only, after the family was revoked other than by a rotation or expired, or after its user was disabled, a fetch is `410 gone` (`downloadBackup`). The `200` is sent with `Cache-Control: no-store`. Until the catalogue and the artefact store are wired the operation answers `501 not_implemented` before any challenge.
      */
     post: operations["issueBackupDownload"];
     delete?: never;
@@ -465,7 +465,7 @@ export interface paths {
     put?: never;
     /**
      * Verify a backup by restoring it into a scratch namespace
-     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data. Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and sets `status: verified` and `verified_at` and clears `error`, whatever the status was before (`restored` included: the latest outcome wins), or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does not match) and records the failed verification on the backup row (`status: failed`, `error`), except for `store_unavailable`, which leaves the row unchanged. A failed re-verify leaves `verified_at` at the last successful verification. Either outcome is audited as `backup.verified`. Integrity first (E42-T05): when the backup's kind produces a single-file artefact, the job hashes that file and compares its SHA-256 with `checksum_sha256` and with the digest the run's `backup.run` record bound, before anything is decrypted or restored. A mismatch is `checksum_mismatch`, no bound record is `checksum_unbound`, and an artefact that is missing or whose `location` does not resolve, without following a symbolic link, to a regular file inside the backup root is `artefact_missing`. A directory or repository artefact (such as a QuestDB snapshot or a restic repository) is checked by the backup engine's own verifier instead. A failed scratch-restore assertion is `verify_failed`. An artefact that exists but cannot be read (for instance an I/O error on the backup volume) is `store_unavailable`: the job ends `failed` and `backup.verified` (`stage: finished`, `outcome: failure`, `error: store_unavailable`) is still written, but the row keeps its `status`, `error` and `verified_at`, since an unreadable store makes the verification inconclusive, not evidence against the backup. `backup.verified` is written with `after_state.stage: requested` before the `202` (when it cannot be written the answer is `503 audit_unavailable` and nothing is scheduled), and with `stage: finished`, the outcome and the `error` code when the job ends, before the row changes. A backup whose `status` is `running`, whose artefact was deleted or that is recorded with `encrypted: false` is `409 conflict` with rule `backup_not_usable`. One verification runs at a time: while another is running a new one is `409 conflict` with rule `verify_running`, and while a restore is running, with rule `backup_or_restore_running`. A verification that cannot take the backups admission lock (`deleteBackup`) within its wait is `503 store_unavailable` with `Retry-After`, before any record, and schedules nothing. A user may start at most 12 verifications in a rolling hour, else `429 rate_limited` with `Retry-After`. Until a verifier is wired the operation answers `501 not_implemented` and schedules nothing.
+     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data. Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and sets `status: verified` and `verified_at` and clears `error`, whatever the status was before (`restored` included: the latest outcome wins; a `running` backup, or one whose artefact was deleted, is refused first, `409 conflict` with rule `backup_not_usable`), or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does not match). Only a conclusive failure (`checksum_mismatch`, `checksum_unbound`, `artefact_missing` or `verify_failed`) records the failed verification on the backup row (`status: failed`, `error`); an inconclusive one (`store_unavailable`, `audit_unavailable` or `internal_error`, for instance a job past its deadline) leaves the row's `status`, `error` and `verified_at` as they were, since a check that could not finish is no evidence against the backup. A failed re-verify leaves `verified_at` at the last successful verification. Either outcome is audited as `backup.verified`. Integrity first (E42-T05): when the backup's kind produces a single-file artefact, the job hashes that file and compares its SHA-256 with `checksum_sha256` and with the digest the run's `backup.run` record bound, before anything is decrypted or restored. A mismatch is `checksum_mismatch`, no bound record is `checksum_unbound`, and an artefact that is missing or whose `location` does not resolve, without following a symbolic link, to a regular file inside the backup root is `artefact_missing`. A directory or repository artefact (such as a QuestDB snapshot or a restic repository) is checked by the backup engine's own verifier instead. A failed scratch-restore assertion is `verify_failed`. An artefact that exists but cannot be read (for instance an I/O error on the backup volume) is `store_unavailable`: the job ends `failed` and `backup.verified` (`stage: finished`, `outcome: failure`, `error: store_unavailable`) is still written, but the row keeps its `status`, `error` and `verified_at`, since an unreadable store makes the verification inconclusive, not evidence against the backup. `backup.verified` is written with `after_state.stage: requested` before the `202` (when it cannot be written the answer is `503 audit_unavailable` and nothing is scheduled), and with `stage: finished`, the outcome and the `error` code when the job ends, before the row changes. The outcome is written inside the job, under the backups admission lock (`deleteBackup`). A job that cannot take it within its wait ends `failed` with `store_unavailable` (inconclusive, so the row is unchanged), and `backup.verified` (`stage: finished`, `outcome: failure`, `error: store_unavailable`) is still written. When the outcome write cannot write the `finished` record, the job ends `failed` with `audit_unavailable` and the row is unchanged (write-ahead, C-2.9). A job past its deadline ends `failed` with `internal_error` instead: its `finished` record follows that end, and the row is unchanged whether or not that record can be written. A backup whose `status` is `running`, whose artefact was deleted or that is recorded with `encrypted: false` is `409 conflict` with rule `backup_not_usable`. One verification runs at a time: while another is running a new one is `409 conflict` with rule `verify_running`, and while a restore is running, with rule `backup_or_restore_running`. A verification that cannot take the backups admission lock (`deleteBackup`) within its wait is `503 store_unavailable` with `Retry-After`, before any record, and schedules nothing. A user may start at most 12 verifications in a rolling hour, else `429 rate_limited` with `Retry-After`. Until a verifier is wired the operation answers `501 not_implemented` and schedules nothing.
      */
     post: operations["verifyBackup"];
     delete?: never;
@@ -5715,7 +5715,7 @@ export interface components {
        */
       deleted_at?: string | null;
       encrypted?: boolean;
-      /** @description Why the run or its latest conclusive verification failed, as a stable code such as `checksum_mismatch` (E42-T05), never an exception message, a path or key material. A passing verification clears it and an inconclusive one (`store_unavailable`) leaves it as it was (`verifyBackup`). Stored in `backups.error_message`; `null` when nothing failed. */
+      /** @description Why the run or its latest conclusive verification failed, as a stable code such as `checksum_mismatch` (E42-T05), never an exception message, a path or key material. A passing verification clears it and an inconclusive one (`store_unavailable`, `audit_unavailable` or `internal_error`) leaves it as it was (`verifyBackup`). Stored in `backups.error_message`; `null` when nothing failed. */
       error?: string | null;
       /** Format: date-time */
       finished_at?: string | null;
@@ -9856,7 +9856,7 @@ export interface components {
     /** @description Inclusive start of the time window (RFC 3339 UTC). */
     From: string;
     HotkeyProfileId: string;
-    /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+    /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
     IdempotencyKey: string;
     /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
     IdempotencyKeyRequired: string;
@@ -10070,7 +10070,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -10318,7 +10318,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -11461,7 +11461,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12734,7 +12734,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12856,7 +12856,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12939,7 +12939,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -13567,7 +13567,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -16214,7 +16214,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -16435,7 +16435,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -16696,7 +16696,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18067,7 +18067,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18746,7 +18746,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18862,7 +18862,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -18976,7 +18976,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -19106,7 +19106,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
