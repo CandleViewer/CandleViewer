@@ -8,17 +8,17 @@ issue for it every night since at least 2026-10-06. This pins the fix:
 - the real-engine run is `--no-cov`. Its perf assertions are its check, the normal lanes measure
   coverage, and a coverage miss exits 1 as a failed test does;
 - both harness steps record their exit code as the step output `rc` and fail the job with it;
-- the ticket step files an issue only for a perf-gate exit: 1 from the proxy harness (a warm p95
-  over baseline) or 1 from the real-engine pytest run (a perf test failed), after a `uv sync` that
-  succeeded. Any other exit (pytest's 2 to 5, a kill signal) fails the job without one. Its `if:`
-  names `failure()`: with no status function GitHub reads `success() && ...`, which skips the
-  step after a failed one;
-- the rest keeps its shape: triggers, permissions (the workflow's only), `CV_ENV`, no
-  `continue-on-error`, no secret in a harness step's env, the pinned actions (their SHAs belong
-  to Dependabot and tools/ci/check_action_pins.py) and the artifact upload.
+- the job's `regressed` output, which the `storage-perf-issue` job reads to file the report through
+  `_nightly-issue.yml` (#1849), is true only for a perf-gate exit: 1 from the proxy harness (a warm
+  p95 over baseline) or 1 from the real-engine pytest run (a perf test failed), after a `uv sync`
+  that succeeded. Any other exit (pytest's 2 to 5, a kill signal) fails the job without one. A job
+  output has no implicit `success()`, so it reads the recorded codes alone;
+- the rest keeps its shape: triggers, permissions (`contents: read`; only the report job may
+  write), `CV_ENV`, no `continue-on-error`, no secret in a harness step's env, the pinned actions
+  (their SHAs belong to Dependabot and tools/ci/check_action_pins.py) and the artifact upload.
 
 Each rule runs the workflow's own step scripts under `bash -e` with a stand-in `uv`, or evaluates
-the ticket step's `if:` over a table of outcomes. MUTANTS proves every rule can still fail, as
+the `regressed` output over a table of outcomes. MUTANTS proves every rule can still fail, as
 governance's canary self-test does for its checks. Not modelled: exit 1 is also what an uncaught
 error in the harness, an unset `CV_ENV` and a fixture error (docker not reachable) give."""
 
@@ -40,9 +40,11 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "perf-storage-nightly.yml"
-#: The job's steps in order: by id, else by action, else (the one that opens the issue) by role.
-LABELS = ["actions/checkout", "astral-sh/setup-uv", "sync", "proxy", "real", "ticket"]
+#: The job's steps in order: by id, else by action.
+LABELS = ["actions/checkout", "astral-sh/setup-uv", "sync", "proxy", "real"]
 LABELS += ["actions/upload-artifact"]
+#: The caller job that files the report from the `regressed` output (#1849).
+REPORT_IF = "${{ always() && needs.storage-perf.outputs.regressed == 'true' }}"
 ARTIFACT_PATHS = ["results.json", "services/api/build/reports/storage-perf.json"]
 PROXY_ARGV = [
     *("run", "--project", "services/api", "python", "tests/perf/storage/harness.py"),
@@ -107,10 +109,10 @@ def _step(doc: dict[Any, Any], step_id: str) -> dict[str, Any]:
     return step
 
 
-def _ticket(doc: dict[Any, Any]) -> dict[str, Any]:
-    """The one step that opens the issue."""
-    (step,) = [step for step in _steps(doc) if "gh issue create" in step.get("run", "")]
-    return step
+def _verdict(doc: dict[Any, Any]) -> str:
+    """The `regressed` output the report job reads."""
+    outputs: dict[str, str] = doc["jobs"]["storage-perf"]["outputs"]
+    return outputs["regressed"]
 
 
 def _label(step: dict[str, Any]) -> str:
@@ -118,7 +120,7 @@ def _label(step: dict[str, Any]) -> str:
         return str(step["id"])
     if "uses" in step:
         return str(step["uses"]).partition("@")[0]
-    return "ticket" if "gh issue create" in step.get("run", "") else str(step.get("name"))
+    return str(step.get("name"))
 
 
 def _run(tmp: Path, script: str, exit_code: int) -> Ran:
@@ -155,14 +157,15 @@ def _run(tmp: Path, script: str, exit_code: int) -> Ran:
     return Ran(proc.returncode, dict(written), calls, proc.stdout + proc.stderr)
 
 
-def _holds(condition: str, steps: dict[str, dict[str, Any]]) -> bool:
-    """Evaluate a step's `if:` over `steps` ({id: {"outcome", "outputs"}}), for the part of GitHub's
-    expression language this workflow uses: `failure()`, `success()`, `steps.<id>.outcome`,
-    `steps.<id>.outputs.<name>`, strings, `==`, `!=`, `&&`, `||` and parentheses. As on GitHub, an
-    `if:` with no status function (success, failure, always, cancelled) reads `success() && (...)`.
-    Anything else raises, so a construct this does not read fails loudly instead of passing. A step
-    that wrote no output reads '' here and null there, which differ only for `== '0'`: no `if:`
-    here compares with it."""
+def _holds(condition: str, steps: dict[str, dict[str, Any]], *, step_if: bool = True) -> bool:
+    """Evaluate a step's `if:` (or, with `step_if=False`, a job output) over `steps` ({id:
+    {"outcome", "outputs"}}), for the part of GitHub's expression language this workflow uses:
+    `failure()`, `success()`, `steps.<id>.outcome`, `steps.<id>.outputs.<name>`, strings, `==`,
+    `!=`, `&&`, `||` and parentheses. As on GitHub, a step's `if:` with no status function
+    (success, failure, always, cancelled) reads `success() && (...)`; a job output has no such
+    wrapper. Anything else raises, so a construct this does not read fails loudly instead of
+    passing. A step that wrote no output reads '' here and null there, which differ only for
+    `== '0'`: no condition here compares with it."""
     wrapped = re.fullmatch(r"\s*\$\{\{(.*)\}\}\s*", condition, re.DOTALL)
     text = (wrapped.group(1) if wrapped else condition).strip()
     tree = ast.parse(text.replace("&&", " and ").replace("||", " or "), mode="eval").body
@@ -200,7 +203,7 @@ def _holds(condition: str, steps: dict[str, dict[str, Any]]) -> bool:
         raise ValueError(f"cannot read {ast.unparse(node)!r} in {text!r}")
 
     calls = (ast.unparse(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call))
-    implicit_success = not set(calls) & {"success", "failure", "always", "cancelled"}
+    implicit_success = step_if and not set(calls) & {"success", "failure", "always", "cancelled"}
     return truth(tree) and not (implicit_success and failed)
 
 
@@ -208,8 +211,12 @@ def _keeps_its_shape(wf: Path, _tmp: Path) -> None:
     """Nothing else changed: the same triggers, permissions, steps, actions and artifact."""
     doc = _load(wf)
     assert doc.get(True) == {"schedule": [{"cron": "17 3 * * *"}], "workflow_dispatch": {}}
-    assert doc.get("permissions") == {"contents": "read", "issues": "write"}
-    assert list(doc["jobs"]) == ["storage-perf"]
+    assert doc.get("permissions") == {"contents": "read"}
+    assert list(doc["jobs"]) == ["storage-perf", "storage-perf-issue"]
+    report = doc["jobs"]["storage-perf-issue"]
+    assert (report.get("needs"), report.get("if")) == ("storage-perf", REPORT_IF)
+    assert report.get("uses") == "./.github/workflows/_nightly-issue.yml"
+    assert report.get("permissions") == {"issues": "write"}
     job = doc["jobs"]["storage-perf"]
     # The harness exits 1, the code of its regression gate, when CV_ENV is not `test`.
     assert job.get("env") == {"CV_ENV": "test"}
@@ -226,7 +233,8 @@ def _keeps_its_shape(wf: Path, _tmp: Path) -> None:
     assert all(re.fullmatch(r"[0-9a-f]{40}", sha) for _, _, sha in pins), pins
     # Values reach a script through env, never as an expression expanded into it.
     assert [_label(step) for step in steps if "${{" in step.get("run", "")] == []
-    assert _ticket(doc).get("env") == {"GH_TOKEN": "${{ github.token }}"}
+    # No step of the measuring job files or holds a token: the report job does (#1849).
+    assert not [step for step in steps if "gh issue" in step.get("run", "") or "env" in step]
     upload = steps[-1]
     assert upload.get("if") == "always()"
     assert upload.get("with", {}).get("name") == "storage-perf-results"
@@ -257,21 +265,21 @@ def _harness_steps_record_their_exit_code(wf: Path, tmp: Path) -> None:
 
 
 def _ticket_only_for_a_perf_gate_exit(wf: Path, _tmp: Path) -> None:
-    """The ticket step opens an issue for the proxy harness's exit 1 or the real-engine pytest's
+    """The `regressed` output is true for the proxy harness's exit 1 or the real-engine pytest's
     exit 1, and for nothing else, whatever it was that failed."""
-    condition: str = _ticket(_load(wf))["if"]
+    condition = _verdict(_load(wf))
     for name, proxy, real, filed in RUNS:
         steps = {"sync": {"outcome": "success", "outputs": {}}}
         for step_id, (outcome, rc) in (("proxy", proxy), ("real", real)):
             steps[step_id] = {"outcome": outcome, "outputs": {} if rc is None else {"rc": rc}}
-        assert _holds(condition, steps) is filed, f"{name}: the ticket step should be {filed}"
+        assert _holds(condition, steps, step_if=False) is filed, f"{name}: regressed is {filed}"
     # A failed `uv sync` is not a regression, even if a later edit let a harness step run after it.
     steps = {
         "sync": {"outcome": "failure", "outputs": {}},
         "proxy": {"outcome": "failure", "outputs": {"rc": "1"}},
         "real": {"outcome": "skipped", "outputs": {}},
     }
-    assert not _holds(condition, steps), "a failed uv sync files a ticket"
+    assert not _holds(condition, steps, step_if=False), "a failed uv sync files a report"
 
 
 CHECKS: list[Check] = [
@@ -283,10 +291,16 @@ CHECKS: list[Check] = [
 
 
 def _edit(step_id: str, key: str, old: str, new: str) -> Mutant:
-    """A mutant: the step's `run` or `if` with every `old` replaced by `new`."""
+    """A mutant: the step's `run` (or, for "verdict", the `regressed` output) with every `old`
+    replaced by `new`."""
 
     def mutate(doc: dict[Any, Any]) -> None:
-        step = _ticket(doc) if step_id == "ticket" else _step(doc, step_id)
+        if step_id == "verdict":
+            outputs = doc["jobs"]["storage-perf"]["outputs"]
+            assert old in outputs["regressed"], f"regressed has no {old!r}: nothing would change"
+            outputs["regressed"] = outputs["regressed"].replace(old, new)
+            return
+        step = _step(doc, step_id)
         assert old in step[key], f"{step_id} {key} has no {old!r}: the mutant would change nothing"
         step[key] = step[key].replace(old, new)
 
@@ -311,12 +325,11 @@ MUTANTS: dict[Check, dict[str, Mutant]] = {
         "no-cov-removed": _edit("real", "run", " --no-cov", ""),
     },
     _ticket_only_for_a_perf_gate_exit: {
-        "any-failed-step": _edit("ticket", "if", GATE, ANY_FAILED),
-        "failure-guard-dropped": _edit("ticket", "if", "failure() && ", ""),
-        "any-non-zero-exit": _edit("ticket", "if", "== '1'", "!= '0'"),
-        "a-failed-real-step": _edit("ticket", "if", REAL_GATE, "steps.real.outcome == 'failure'"),
-        "after-a-failed-sync": _edit("ticket", "if", " && steps.sync.outcome == 'success'", ""),
-        "proxy-gate-dropped": _edit("ticket", "if", "steps.proxy.outputs.rc == '1' || ", ""),
+        "any-failed-step": _edit("verdict", "", GATE, ANY_FAILED),
+        "any-non-zero-exit": _edit("verdict", "", "== '1'", "!= '0'"),
+        "a-failed-real-step": _edit("verdict", "", REAL_GATE, "steps.real.outcome == 'failure'"),
+        "after-a-failed-sync": _edit("verdict", "", "steps.sync.outcome == 'success' && ", ""),
+        "proxy-gate-dropped": _edit("verdict", "", "steps.proxy.outputs.rc == '1' || ", ""),
     },
     _harness_steps_record_their_exit_code: {
         "real-step-swallows-the-failure": _edit("real", "run", 'exit "$rc"', "exit 0"),
@@ -329,6 +342,9 @@ MUTANTS: dict[Check, dict[str, Mutant]] = {
         "upload-skipped-after-a-failure": lambda doc: _steps(doc)[-1].pop("if"),
         "continue-on-error-on-a-harness-step": _put("real", "continue-on-error", True),
         "job-level-permissions": _put(None, "permissions", {"contents": "write"}),
+        "report-job-files-without-the-verdict": lambda doc: doc["jobs"]["storage-perf-issue"].pop(
+            "if"
+        ),
         "secret-in-a-harness-env": _put("proxy", "env", {"T": "${{ secrets.GITHUB_TOKEN }}"}),
     },
 }

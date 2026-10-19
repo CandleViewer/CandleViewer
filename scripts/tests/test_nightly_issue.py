@@ -73,8 +73,9 @@ SIGNALS = {
 #: `failure()`, which a failed step implies.
 SYNCED = "${{ steps.sync.outcome == 'success' && "
 VERDICTS = {
+    # #3429: the storage gate is a recorded exit code 1, not any failed step.
     ("perf-storage-nightly.yml", "storage-perf", "regressed"): SYNCED
-    + "(steps.proxy.outcome == 'failure' || steps.real.outcome == 'failure') }}",
+    + "(steps.proxy.outputs.rc == '1' || steps.real.outputs.rc == '1') }}",
     ("perf-ingestion-nightly.yml", "ingestion-soak", "soak-regressed"): SYNCED
     + "(steps.soak.outcome == 'failure' || steps.burst.outcome == 'failure') }}",
     ("perf-ingestion-nightly.yml", "ingestion-soak", "pack-regressed"): SYNCED
