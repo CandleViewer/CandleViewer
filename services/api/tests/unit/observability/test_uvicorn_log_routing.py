@@ -2,10 +2,11 @@
 
 `candleviewer.server` builds `uvicorn.Config(APP, **uvicorn_kwargs())`. uvicorn applies its logging
 config in `Config.__init__`; the app module is imported afterwards, and importing it calls
-`configure_logging()` (`candleviewer/main.py`). These tests replay that boot order with no socket,
-no sleep and no network. They call the loggers the way uvicorn's server and protocols do and check
-what reached stdout, stderr and the support bundle's log buffer: uvicorn's lines must be redacted
-JSON from the root handler, and nothing may come from a handler uvicorn installed itself.
+`configure_logging()` (`candleviewer/main.py`). These tests replay that boot order with no sleep
+and no network (two of them drive a real server on loopback). They call the loggers the way
+uvicorn's server and protocols do and check what reached stdout, stderr and the support bundle's
+log buffer: uvicorn's lines must be redacted JSON from the root handler, and nothing may come
+from a handler uvicorn installed itself.
 
 Secret-shaped canaries are assembled at runtime so no literal sits in the repo
 (`tests/security/test_e04_abuse_cases.py`).
@@ -14,20 +15,22 @@ Secret-shaped canaries are assembled at runtime so no literal sits in the repo
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import json
 import logging
 import re
+import socket
 import traceback
-from collections.abc import Callable, Iterator
-from contextlib import redirect_stderr, redirect_stdout
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import redirect_stderr, redirect_stdout, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
 import pytest
 import uvicorn
 
-from candleviewer.observability.logging import configure_logging, reset_logging
+from candleviewer.observability.logging import UpgradeLineFilter, configure_logging, reset_logging
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_server import MetricsRuntime
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
@@ -280,3 +283,225 @@ def test_metrics_listener_mutes_the_http_access_line_but_not_websocket_lines(
 
     assert got.err == ""
     assert got.events() == [("info", '127.0.0.1:50000 - "WebSocket /ws" [accepted]')]
+
+
+#: A 43-character URL-safe value, assembled at runtime (no literal).
+VALUE = "".join(
+    ("Zq9X", "w3Lm", "Pv7R", "t2Yb", "Nc4H", "dK8s", "Ae5F", "gJ6u", "Vx1o", "Bq3Y", "m0W")
+)
+#: Request targets an upgrade may carry (`{p}` is the path, `{v}` the value).
+_TARGETS = {
+    "plain": "{p}?access_token={v}",
+    "short-name": "{p}?token={v}",
+    "second": "{p}?a=1&access_token={v}",
+    "prefixed": "{p}?access_token=Bearer%20{v}",
+    "quoted": "{p}?access_token=%22{v}%22",
+    "encoded": "{p}%3Faccess_token={v}",
+    "parameter": "{p};access_token={v}",
+    "absolute": "ws://localhost{p}?access_token=%22{v}%22",
+}
+
+
+async def _bare_app(scope: Any, receive: Any, send: Any) -> None:
+    """Accepts a WebSocket upgrade whose target names `/ws`, however it is spelled, and refuses
+    every other."""
+    if scope["type"] == "websocket":
+        await receive()  # websocket.connect
+        if b"/ws" in scope["raw_path"]:
+            await send({"type": "websocket.accept"})
+            await receive()  # the client's close
+        else:
+            await send({"type": "websocket.close"})
+
+
+async def _denial_app(scope: Any, receive: Any, send: Any) -> None:
+    """Refuses every WebSocket upgrade with a response of its own, a status line and a body
+    (`websocket.http.response.*`): uvicorn logs that refusal with its status code."""
+    if scope["type"] == "websocket":
+        await receive()  # websocket.connect
+        await send({"type": "websocket.http.response.start", "status": 404, "headers": []})
+        await send({"type": "websocket.http.response.body", "body": b""})
+
+
+def _upgrade_request(target: str) -> bytes:
+    """The handshake of a client, written as it is: `target` as the request target, and a cookie."""
+    key = base64.b64encode(bytes(16)).decode()
+    headers = ["Host: localhost", "Upgrade: websocket", "Connection: Upgrade"]
+    headers += [f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
+    headers += [f"Cookie: access_token=%22{VALUE}%22"]
+    return "\r\n".join([f"GET {target} HTTP/1.1", *headers, "", ""]).encode("ascii")
+
+
+async def _upgrade_to(*targets: str, app: Callable[..., Awaitable[None]] = _bare_app) -> None:
+    """Each of `targets` as the request target of a WebSocket upgrade, one after the other, to a
+    real uvicorn server (the production kwargs, a loopback port) running `app`."""
+    kwargs = uvicorn_kwargs(Settings())
+    del kwargs["host"], kwargs["port"]  # the pre-bound loopback socket below
+    config = uvicorn.Config(app, lifespan="off", **kwargs)
+    config.load()
+    server = uvicorn.Server(config)
+    server.lifespan = config.lifespan_class(config)  # as `Server.serve` does before `startup`
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        await server.startup(sockets=[sock])
+        try:
+            async with asyncio.timeout(10):
+                for target in targets:
+                    reader, writer = await asyncio.open_connection(*sock.getsockname())
+                    writer.write(_upgrade_request(target))
+                    await reader.readuntil(b"\r\n\r\n")  # the 101, or the head of a refusal
+                    writer.close()
+                    with suppress(ConnectionError):
+                        await writer.wait_closed()
+        finally:
+            await server.shutdown(sockets=[sock])
+
+
+@pytest.mark.parametrize(
+    ("level", "request_lines"),
+    [
+        ("info", []),
+        (
+            "debug",
+            [
+                "< GET /ws HTTP/1.1",
+                "< cookie: <redacted>",
+                "< GET /other HTTP/1.1",
+                "< cookie: <redacted>",
+            ],
+        ),
+    ],
+)
+@pytest.mark.parametrize("target", _TARGETS.values(), ids=_TARGETS.keys())
+def test_websocket_upgrade_lines_name_the_path_and_not_the_query(
+    target: str, level: str, request_lines: list[str]
+) -> None:
+    """The accepted and refused lines (INFO) and the request and cookie lines (DEBUG) of an upgrade
+    with a query string, as a real server writes them and the app's log config formats them: the
+    path alone and the cookie's marker, on stdout and in the support bundle's buffer."""
+    targets = [target.format(p=path, v=VALUE) for path in ("/ws", "/other")]
+    got = _replay_boot(lambda: asyncio.run(_upgrade_to(*targets)), level=level, ring=True)
+
+    assert got.err == ""
+    assert VALUE not in "\n".join((got.out, got.err, *got.ring))
+    lines = [event for _, event in got.events()]
+    upgrades = [m[1] for line in lines if (m := re.match(r'\S+ - ("WebSocket .*)', line))]
+    assert upgrades == ['"WebSocket /ws" [accepted]', '"WebSocket /other" 403']
+    assert [line for line in lines if line.startswith(("< GET", "< cookie"))] == request_lines
+
+
+@pytest.mark.parametrize("level", ["info", "debug"])
+def test_websocket_denial_response_lines_name_the_path_and_not_the_query(level: str) -> None:
+    """The line of an upgrade that the app refuses with a response of its own: uvicorn writes it
+    with the status code (`"WebSocket /other" 404`), in a call apart from the accepted line and
+    the `403` of a close, so the real server checks its format against the pinned library."""
+    targets = [_TARGETS["quoted"].format(p=path, v=VALUE) for path in ("/ws", "/other")]
+    got = _replay_boot(
+        lambda: asyncio.run(_upgrade_to(*targets, app=_denial_app)), level=level, ring=True
+    )
+
+    assert got.err == ""
+    assert VALUE not in "\n".join((got.out, got.err, *got.ring))
+    lines = [event for _, event in got.events()]
+    upgrades = [m[1] for line in lines if (m := re.match(r'\S+ - ("WebSocket .*)', line))]
+    assert upgrades == ['"WebSocket /ws" 404', '"WebSocket /other" 404']
+
+
+def _upgrade_filters() -> list[UpgradeLineFilter]:
+    lg = logging.getLogger("uvicorn.error")
+    return [f for f in lg.filters if isinstance(f, UpgradeLineFilter)]
+
+
+def _record(msg: str, args: object) -> logging.LogRecord:
+    return logging.makeLogRecord({"name": "uvicorn.error", "msg": msg, "args": args})
+
+
+def test_configure_logging_installs_one_upgrade_line_filter_and_reset_removes_it() -> None:
+    configure_logging(env="ci")
+    configure_logging(env="ci")
+    try:
+        assert len(_upgrade_filters()) == 1
+    finally:
+        reset_logging()
+    assert _upgrade_filters() == []
+
+
+#: The lines that name a request target, as `(format, arguments before it, arguments after it)`.
+_FORMATS = [
+    ('%s - "WebSocket %s" [accepted]', ("127.0.0.1:50000",), ()),
+    ('%s - "WebSocket %s" 403', ("127.0.0.1:50000",), ()),
+    ('%s - "WebSocket %s" %d', ("127.0.0.1:50000",), (404,)),
+    ("< %s %s %s", ("GET",), ("HTTP/1.1",)),
+]
+#: A target as a line names it (uvicorn's lines write it percent-encoded) and the path that stays.
+_CUTS = [
+    ("/ws", "/ws"),
+    ("/a-b_c.d~e/ws?x=1", "/a-b_c.d~e/ws"),  # the unreserved punctuation stays
+    ("/Api/V1/ws?x=1", "/Api/V1/ws"),  # so do upper case letters and digits
+    ("/ws?a=b", "/ws"),
+    ("/ws%3Fa=b", "/ws"),
+    ("/ws;a=b", "/ws"),
+    ("/ws%3Ba%3Db", "/ws"),
+    ("/ws#a", "/ws"),
+    ("/ws%23a", "/ws"),
+    ("ws://localhost/ws?a=b", "/ws"),
+    ("ws%3A//localhost%3A8000/ws?a=b", "/ws"),
+    ("ws://localhost?a=/b", ""),  # no path: nothing of the query stays
+    ("ws://localhost#a/b", ""),  # nor of the fragment
+]
+
+
+@pytest.mark.parametrize(
+    ("msg", "before", "after"),
+    _FORMATS,
+    ids=["accepted", "refused", "status", "request-line"],
+)
+@pytest.mark.parametrize(("target", "path"), _CUTS)
+def test_upgrade_line_filter_keeps_the_path_of_the_target_and_the_other_arguments(
+    msg: str, before: tuple[str, ...], after: tuple[object, ...], target: str, path: str
+) -> None:
+    record = _record(msg, (*before, target, *after))
+
+    assert UpgradeLineFilter().filter(record) is True
+    assert record.args == (*before, path, *after)
+
+
+@pytest.mark.parametrize(
+    ("msg", "args"),
+    [
+        ("upstream replied %s", ("/ws?a=b",)),
+        ("%s replied %s", ("peer", "/ws?a=b")),
+        ("%s rejected: %s", ("token", "reason text")),
+        ('%s - "WebSocket %s" [accepted]', ("127.0.0.1:50000",)),
+        ('%s - "WebSocket %s" %d', ("127.0.0.1:50000", b"/ws?a=b", 404)),
+        ("< %s: %s", ("Host", "localhost:8000/ws?a=b")),
+        ("> %s: %s", ("Sec-WebSocket-Accept", "a?b")),
+        ("%(path)s", {"path": "/ws?a=b"}),
+    ],
+    ids=[
+        "other-line",
+        "other-two-arguments",
+        "other-key-name",
+        "no-target",
+        "not-a-str",
+        "request-header",
+        "response-header",
+        "mapping",
+    ],
+)
+def test_upgrade_line_filter_leaves_any_other_argument_as_it_is(msg: str, args: object) -> None:
+    record = _record(msg, args)
+
+    assert UpgradeLineFilter().filter(record) is True
+    assert record.args == args
+
+
+@pytest.mark.parametrize("msg", ["< %s: %s", "> %s: %s"], ids=["request", "response"])
+@pytest.mark.parametrize("name", ["Cookie", "authorization", " Set-Cookie "])
+def test_upgrade_line_filter_replaces_the_value_of_a_header_named_as_a_secret(
+    msg: str, name: str
+) -> None:
+    record = _record(msg, (name, f"access_token=%22{VALUE}%22"))
+
+    assert UpgradeLineFilter().filter(record) is True
+    assert record.args == (name, "[redacted:key-name]")

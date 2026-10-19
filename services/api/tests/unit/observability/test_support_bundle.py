@@ -111,6 +111,16 @@ def test_scan_rules_hit(text: str) -> None:
     assert list(scan_text(text))
 
 
+@pytest.mark.parametrize(
+    "text",
+    ['access_token="' + "a" * 24 + '"', "GET /ws?token=" + "a" * 24 + " HTTP/1.1"],
+    ids=["access_token", "token"],
+)
+def test_scan_labelled_secret_rule_covers_the_access_token_and_token_key_names(text: str) -> None:
+    """The rule is built from the redaction key names, so their widening is deliberate."""
+    assert list(scan_text(text)) == ["labelled-secret"]
+
+
 def test_scan_ignores_redacted_placeholders() -> None:
     assert not list(scan_text('{"api_secret": "[redacted:key-name]"}'))
     assert not list(scan_text("password=<omitted>"))
