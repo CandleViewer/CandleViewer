@@ -278,8 +278,8 @@ async def test_ladder_order_drop_then_backpressure_snap_below_half_then_no_close
 async def test_orders_backlog_over_budget_closes_4429_with_hint_and_warning_audit() -> None:
     """§8.4 steps 1, 3 and 4: over budget the ladder drops the book first; the `orders` frame it
     cannot drop keeps the queue over, so the connection closes `slow_consumer` 4429 in the same
-    check, both lanes freed at once. The `bye` is step 3's, its hint naming the book (the most
-    expensive topic when the overflow began); each step counts once; the close is audited at
+    check, both lanes freed at once. The `bye` is step 3's, its hint naming `orders` and the book
+    (the most expensive when the overflow began); each step counts once; the close is audited at
     `warning` with `after_state` `{"trigger": "budget"}` (§4.3)."""
     rig, sock = _Rig(BackpressureConfig(max_bytes=4096)), _Wire()
     before, closes = _counts(), _closes("slow_consumer")
@@ -295,12 +295,35 @@ async def test_orders_backlog_over_budget_closes_4429_with_hint_and_warning_audi
         assert conn.closing and (len(queue), queue.bytes) == (0, 0)  # freed at once
         (bye,) = await sock.next()
         await handler
-    assert bye["p"] == slow_consumer_bye(BASE_MS, [_BOOK])["p"]
+    assert bye["p"] == slow_consumer_bye(BASE_MS, ["orders", _BOOK])["p"]
     assert sock.closed_with == 4429 and sock.sent.empty()
     assert _counts(before) == [1, 0, 1, 0]
     assert _closes("slow_consumer") == closes + 1
     assert _rows(rig) == [("ws.connection.closed", "slow_consumer", Severity.WARNING)]
     assert rig.audit.records[0]["after_state"] == {"trigger": "budget"}
+
+
+async def test_orders_over_budget_after_the_book_was_shed_name_the_book_in_the_hint() -> None:
+    """#3365, #410 scenario 2 through the router: the book's deltas take the queue over budget and
+    are shed (the topic marked); `orders` frames, which are never dropped, then take it over again
+    on later pushes, the writer not having run. The `bye` still names the book, the topic that
+    was the most expensive when the overflow began, where the closing check holds none."""
+    rig, sock = _Rig(BackpressureConfig(max_bytes=4096)), _Wire()
+    before = _counts()
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        await rig.sub(sock)
+        await rig.sub(sock, "orders")
+        for i in range(3):
+            rig.book_delta(i, pad="x" * 1500)  # the third goes over: step 1 sheds the book
+        assert _counts(before) == [1, 0, 0, 0] and not conn.closing
+        for _ in range(3):  # the third goes over again: nothing is left to drop
+            rig.sequencing.publish("orders", {"orders": [], "pad": "x" * 1500}, account=ACC_A)
+        assert conn.closing
+        (bye,) = await sock.next()
+        await handler
+    assert bye["p"] == slow_consumer_bye(BASE_MS, [_BOOK])["p"] and sock.closed_with == 4429
+    assert _counts(before) == [1, 0, 1, 0]
 
 
 async def test_three_redrops_close_with_close_redrop() -> None:

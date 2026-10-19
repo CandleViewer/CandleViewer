@@ -37,7 +37,7 @@ from candleviewer.ws.topics import FAMILIES
 from tests.unit.test_settings_ws_backpressure import FLOOR_BYTES, FLOOR_FRAMES
 from tests.unit.ws._seq_support import Conn, Source
 from tests.unit.ws.test_bars_wire import _bar
-from tests.unit.ws.test_outbound import RS, _bid, _checking_push, _frame, _setup, _sub
+from tests.unit.ws.test_outbound import RS, _bid, _checking_push, _drain, _frame, _setup, _sub
 from tests.unit.ws.test_pipeline_outbound import _DEADLINE_S, _ENCODINGS, _overflow, _Rig, _Wire
 
 _BARS, _BOOK, _TRADES = "bars.BTCUSDT.time.1", "book.BTCUSDT.50", "trades.BTCUSDT"
@@ -350,6 +350,89 @@ def test_a_close_after_share_drops_names_only_the_bars_topics() -> None:
         queue.push(encode(_frame("d", "bars.BTCUSDT.time.5", pad="x" * 2_900)))
         events += ladder.check(subs)
     assert events[-1] == LadderEvent("close", (_BARS, "bars.BTCUSDT.time.5"), "redrop")
+
+
+def test_a_share_overflow_that_goes_over_the_budget_ranks_every_topic_there() -> None:
+    """#3365: the episode's first check found the share exceeded and ranked the `bars` topics. When
+    the budget is exceeded the ladder runs for every family alike, so the close names the topics
+    ranked at the first check over the budget: the book and the tape, not the `bars` topic."""
+    conn, _, queue, ladder, subs, _ = _rig()  # 40 frames, a share of 20
+    bars, book, trades = subs
+    for i in range(21):
+        conn.emitter.delta(bars, _bars(i))
+    assert ladder.check(subs) == [LadderEvent("drop", (_BARS,), "share")]
+    for i in range(12):
+        conn.emitter.delta(book, _bid("BTCUSDT", str(90 + i)))
+    for _ in range(6):
+        conn.emitter.delta(trades, _PRINT)
+    for _ in range(41):  # more than the budget, and nothing step 1 can shed
+        queue.push(encode(_frame("err")))
+    assert ladder.check(subs) == [
+        LadderEvent("drop", (_BOOK, _TRADES)),
+        LadderEvent("close", (_BOOK, _TRADES), "budget"),
+    ]
+
+
+def test_a_share_check_after_a_budget_overflow_names_the_bars_topics_it_ranked() -> None:
+    """#3365: the episode began over the whole budget, which ranked the book. The close that a
+    later check over the share alone fires, the third redrop of a `bars` snapshot, names `bars`
+    topics only, in the order of the first check over the share: the stream no longer subscribed
+    has outgrown the snapshot by the close, and is still named second."""
+    _, pacer, queue, ladder, subs, source = _rig(max_bytes=12_000)  # a share of 6 000 B
+    source.bodies["bars"] = SnapshotBody(_bars(*range(32)))  # about 3.3 KB
+    source.gen += 1
+    pacer.drop(subs[0])  # `bars` is marked first: each drain tries it before the book
+    queue.push(encode(_frame("d", _BOOK, pad="x" * 12_000)))  # over the budget: the book is shed
+    assert ladder.check(subs) == [LadderEvent("drop", (_BOOK,))]
+    for ch in (_BOOK, "orders"):  # a book and an `orders` frame beside the `bars` ones
+        queue.push(encode(_frame("d", ch, pad="x" * 900)))
+    events: list[LadderEvent] = []
+    for pad in (2_900, 2_900, 2_900, 4_000):  # the second drain is the book's snapshot
+        events = ladder.drain()
+        queue.push(encode(_frame("d", "bars.BTCUSDT.time.5", pad="x" * pad)))
+        events += ladder.check(subs)
+    assert events[-1] == LadderEvent("close", (_BARS, "bars.BTCUSDT.time.5"), "redrop")
+
+
+def test_a_second_share_overflow_ranks_its_own_bars_topic_and_a_budget_close_names_it() -> None:
+    """#3365: two overflows of the share alone, by two `bars` topics, the first recovered between
+    them: the second ranks its own topic. Control frames then take the budget over with no topic
+    left to rank, so the close names the share's ranking: never empty when a topic held bytes."""
+    conn, _, queue, ladder, subs, _ = _rig()  # 40 frames, a share of 20
+    five = _sub(conn, queue, "bars.BTCUSDT.time.5")
+    subs.append(five)
+    for _ in range(21):
+        queue.push(encode(_frame("d", _BARS)))
+    assert ladder.check(subs) == [LadderEvent("drop", (_BARS,), "share")]
+    assert ladder.drain() == [LadderEvent("resnapshot", (_BARS,))]
+    _drain(queue)  # the writer sends the snapshot
+    assert ladder.check(subs) == []  # both limits met, nothing awaited: that overflow is over
+    for _ in range(21):
+        queue.push(encode(_frame("d", five.ch)))
+    assert ladder.check(subs) == [LadderEvent("drop", (five.ch,), "share")]
+    for _ in range(41):  # over the budget, with nothing step 1 can shed
+        queue.push(encode(_frame("err")))
+    assert ladder.check(subs) == [LadderEvent("close", (five.ch,), "budget")]
+
+
+def test_a_budget_close_after_a_share_check_names_the_budget_ranking() -> None:
+    """#3365: one ranking per limit. The episode's first check, over the budget, ranks the book and
+    the tape; a later check over the share alone ranks `bars`; control frames then take the budget
+    over again, and the close names the budget's ranking, which the share's left as it was."""
+    _, _, queue, ladder, subs, _ = _rig()  # 40 frames, a share of 20
+    for ch, pad in ((_BOOK, 900), (_TRADES, 600)):
+        queue.push(encode(_frame("d", ch, pad="x" * pad)))
+    for _ in range(39):
+        queue.push(encode(_frame("err")))
+    assert ladder.check(subs) == [LadderEvent("drop", (_BOOK, _TRADES))]
+    for _ in range(20):
+        queue.pop()  # the reader takes 20 of the control frames: 19 are left
+    for _ in range(21):
+        queue.push(encode(_frame("d", _BARS)))
+    assert ladder.check(subs) == [LadderEvent("drop", (_BARS,), "share")]
+    for _ in range(22):
+        queue.push(encode(_frame("err")))
+    assert ladder.check(subs) == [LadderEvent("close", (_BOOK, _TRADES), "budget")]
 
 
 @_ENCODINGS

@@ -25,11 +25,28 @@ of one `ch` together.
    subscription whose `backpressure` snapshot is dropped `MAX_REDROPS` times in a row, each time
    before it was sent (a snapshot larger than the budget), ends in the same close.
 
+An overflow is an episode (#3365). It begins at a check that finds a limit exceeded, and it is over
+once no live subscription (neither ended, paused nor parked) awaits its `backpressure` snapshot and
+none of those snapshots is queued unsent: when step 2 has recovered what step 1 shed, not when step
+1's drop takes the queue under budget, which it does at once (a later check that `orders` frames
+take over would then rank them alone). Every check tests that end first, before its limits, and
+every `drain` last: a check that does not close leaves both limits met, so a check over a limit that
+finds the recovery done begins a new overflow. Each limit's ranking is taken at the episode's first
+check over it, before its drop, and kept; a close names the ranking of the limit its check found
+exceeded. So the topics step 1 shed are still named when `orders` take the queue over budget on a
+later check, a redrop close names that ranking too (not a looping topic marked after it), and a
+later overflow ranks afresh. Over the budget every topic of the connection counts, the priority
+lane's `orders` and `executions` included, never `system` (implicit) or a control frame; over the
+share, the `bars` topics alone. A budget ranking with no topic takes the share's, if the episode
+began there: the hint is empty only when no topic held any bytes when the overflow began.
+
 `bars` has its own share of the budget, `BARS_SHARE_PCT` of each limit (SR-E12-07): its queued
 `d` and `snap` frames, live and replay, are also counted apart (its windows are not). A check
 that finds the share over and the budget not runs step 1 for `bars` alone (`drop_share`), and
 step 2 passes over a `bars` snapshot while those frames hold half the share or more. A redrop
-close fired by a share check names only `bars` topics in its `bye.hint`.
+close fired by a share check names only `bars` topics in its `bye.hint`, ranked at the episode's
+first check over the share; an episode that begins over the share alone and then goes over the
+budget ranks every topic at its first check over the budget.
 
 Every step counts in `cv_ws_overflow_total{reason}` (step 4, `LadderEvent.reason`) and comes back
 as a `LadderEvent`; the caller writes the warning audit entry when step 3 fires (with the close's
@@ -60,7 +77,7 @@ from typing import Any, Final
 from candleviewer.ws.limits import BARS_SHARE_PCT
 from candleviewer.ws.metrics import cv_ws_overflow_total
 from candleviewer.ws.pacing import Pacer
-from candleviewer.ws.permissions import Subscription
+from candleviewer.ws.permissions import SYSTEM_TOPIC, Subscription
 
 QUEUE_BYTES: Final = 8 * 1024 * 1024
 QUEUE_FRAMES: Final = 2000
@@ -151,9 +168,10 @@ def encode(
 @dataclass(frozen=True, slots=True)
 class LadderEvent:
     """One §8.4 step that fired: `drop`, `resnapshot` or `close`, and the topics it concerned
-    (for `close`, the most expensive ones). A `close` names its step-3 `trigger`: `budget` (still
-    over budget after the drop) or `redrop` (`MAX_REDROPS`), for the metric label and the audit
-    entry; a `drop` of the `bars` topics alone, over their share, names `share` (SR-E12-07)."""
+    (for `close`, the most expensive ones when the overflow began). A `close` names its step-3
+    `trigger`: `budget` (still over budget after the drop) or `redrop` (`MAX_REDROPS`), for the
+    metric label and the audit entry; a `drop` of the `bars` topics alone, over their share,
+    names `share` (SR-E12-07)."""
 
     action: str
     topics: tuple[str, ...]
@@ -269,6 +287,15 @@ class OutboundQueue:
         """Queued bytes of every key with droppable frames."""
         return dict(self._key_bytes)
 
+    def priority_key_bytes(self) -> dict[Key, int]:
+        """Queued bytes of every key on the priority lane (`orders`, `executions`, `system`): a
+        scan of that lane, for the ranking at an overflow's first check (#3365)."""
+        costs: dict[Key, int] = {}
+        for frame in self._priority:
+            if frame.key is not None:
+                costs[frame.key] = costs.get(frame.key, 0) + frame.size
+        return costs
+
     def drop(self, keys: Collection[Key]) -> int:
         """Remove the droppable frames of `keys` (the normal lane only); returns how many were
         dropped."""
@@ -336,18 +363,27 @@ class Backpressure:
         self._deferred: list[Subscription] | None = None
         #: Step 3 fired: the connection is going away, so nothing fires (or counts) again.
         self._closed = False
+        #: The episode's `bye.hint` (module docstring) per limit, keyed by `shared`: `False` the
+        #: budget's ranking, `True` the `bars` share's. Each is taken at the episode's first check
+        #: over that limit; empty between episodes.
+        self._hints: dict[bool, tuple[str, ...]] = {}
 
     def over_budget(self) -> bool:
         return self.queue.over_budget(self.pacer.pending_bytes)
 
     def check(self, subs: Iterable[Subscription]) -> list[LadderEvent]:
         """Steps 1 and 3, when the connection is over its budget. `subs` is the connection's full
-        subscription set. Over the `bars` share alone, step 1 sheds `bars` only (SR-E12-07)."""
+        subscription set. Over the `bars` share alone, step 1 sheds `bars` only (SR-E12-07). A
+        close names the ranking that the episode took at its first check over that limit."""
         if self._draining:
             self._deferred = list(subs)
             return []
         over = self.over_budget()
-        if self._closed or not (over or self.queue.share_over()):
+        if self._closed:
+            return []
+        if self._hints:  # an episode is open: every check tests its end first (module docstring)
+            self._end()
+        if not (over or self.queue.share_over()):
             return []
         subs = list(subs)
         self._settle()
@@ -357,7 +393,11 @@ class Backpressure:
         for sub_id in [s for s in self._snapped if s not in current]:
             del self._snapped[sub_id]
         shed = subs if over else [s for s in subs if s.topic.family.family == SHARE_FAMILY]
-        hint = self._most_expensive(shed, shared=not over)
+        shared = not over
+        hint = self._hints.get(shared)
+        if hint is None:  # this limit's first check of the episode: when its overflow began
+            hint = self._most_expensive(shed, shared=shared) or self._hints.get(True, ())
+            self._hints[shared] = hint  # empty over the budget: the share's ranking, if any
         queued = self.queue.key_bytes().keys()
         offending = [
             sub
@@ -392,13 +432,32 @@ class Backpressure:
         lane = self.pacer.lanes.get(sub.sub_id)
         return lane is not None and lane.queue.pending
 
+    def _end(self) -> None:
+        """End the open episode (module docstring) once no live subscription (neither ended,
+        paused nor parked) awaits its `backpressure` snapshot and none that `drain` queued is
+        unsent. Every check runs it first and every `drain` last: a check that does not close
+        leaves both limits met, so a check over a limit that finds the recovery done begins a new
+        overflow. O(marks), bounded by the subscriptions; run only while an episode is open."""
+        for sub_id, sub in self.pacer.resnapshot_required.items():
+            if not sub.ended and not _paused(sub) and sub_id not in self._parked:
+                return  # step 2 has yet to recover it
+        if not any(self.queue.resnap_queued(key) for key in self._snapped.values()):
+            self._hints.clear()
+
     def _most_expensive(self, subs: list[Subscription], *, shared: bool) -> tuple[str, ...]:
         """Topics by queued plus pending bytes, largest first (`bye.hint`): a live and a replay
-        subscription of one topic count together; `shared`: the `bars` topics only (SR-E12-07)."""
+        subscription of one topic count together. Every topic of the connection counts, the
+        priority lane's `orders` and `executions` too (one scan of it), but not `system` (implicit,
+        §6.2) nor a control frame; `shared`: the `bars` topics only (SR-E12-07). It runs once per
+        episode per limit, at the episode's first check over that limit (#3365)."""
         costs: dict[str, int] = {}
         for key, size in self.queue.key_bytes().items():
             if not shared or _shared(key):
                 costs[key[0]] = costs.get(key[0], 0) + size
+        if not shared:
+            for key, size in self.queue.priority_key_bytes().items():
+                if key[0] != SYSTEM_TOPIC:
+                    costs[key[0]] = costs.get(key[0], 0) + size
         for sub in subs:
             lane = self.pacer.lanes.get(sub.sub_id)
             if lane is not None and lane.queue.pending_bytes:
@@ -464,6 +523,8 @@ class Backpressure:
             if deferred is not None:
                 held += self.check(deferred)
             break  # one snapshot per call, queued or not
+        if self._hints:  # a mark deleted, a snapshot sent or parked: the episode may end here
+            self._end()
         return _record([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held
 
     def retry(self) -> None:

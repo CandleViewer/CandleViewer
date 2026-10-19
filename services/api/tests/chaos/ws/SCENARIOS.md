@@ -88,9 +88,9 @@ holds account A's `orders`, updated 128 times a second, frames §8.4 never drops
 market topics; then the orders take the queue past 2 000 frames with nothing left to drop, so it
 closes `slow_consumer` (`close_budget` +1, `cv_ws_closes_total{reason="slow_consumer"}` +1), both
 lanes freed at once and the queued frames unsent. Step 3's `bye` carries §8.4's literals (`4429`,
-`retry_after_ms` 3000, the fixed message). As built, its `most_expensive_topics` are counted at the
-closing check, after step 1 shed the market topics, so the list is empty; #3365 ranks every topic at
-the episode's first over-budget check and freezes that ranking, and the assertion flips with its PR.
+`retry_after_ms` 3000, the fixed message). Its `most_expensive_topics` are the ranking taken when
+the overflow began (#3365), at the check that went over (recounted by the test on its entry): the
+tape, the orders and the book, kept to the close, where the orders alone are left.
 The lane heals in the close's own synchronous turn (the feed's `until` hook, no await between),
 inside the close's 2 s flush; the client backs off (§9.2 attempt 1) and re-snapshots every topic,
 `orders` first (§9.3), no gap.

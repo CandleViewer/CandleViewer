@@ -70,7 +70,9 @@ class Check:
     """One `Backpressure.check` at virtual time `at`, after `pushed` pushes to its queue: the
     accounting on entry and on return, what it fired, and on return the droppable bytes still
     queued, the topics marked for a `backpressure` snapshot, the lanes' and windows' bytes
-    recounted and the class. `held`: `drain` was queuing a snapshot (checked once whole)."""
+    recounted and the class. `held`: `drain` was queuing a snapshot (checked once whole).
+    `ranked`: when it was over budget on entry, the topics by queued plus pending bytes then,
+    largest first, recounted from the lanes and windows (`_ranked`); else empty."""
 
     at: float
     pushed: int
@@ -82,14 +84,33 @@ class Check:
     marked: tuple[str, ...]
     recount: tuple[int, int]
     cls: str
+    ranked: tuple[str, ...]
 
     def over(self) -> bool:
-        queued, pending, frames = self.exit
-        return queued + pending > BUDGET.max_bytes or frames > BUDGET.max_frames
+        return _over(self.exit)
+
+
+def _over(acct: Acct) -> bool:
+    queued, pending, frames = acct
+    return queued + pending > BUDGET.max_bytes or frames > BUDGET.max_frames
 
 
 def _acct(ladder: Backpressure) -> Acct:
     return ladder.queue.bytes, ladder.pacer.pending_bytes, len(ladder.queue)
+
+
+def _ranked(ladder: Backpressure) -> tuple[str, ...]:
+    """The topics by queued plus pending bytes, largest first, ties by name, at most five (§8.4
+    step 3), recounted from both lanes' data frames (`orders` and `executions` included, `system`
+    aside: #3365's ruling) and the windows rather than from the queue's per-key counters."""
+    costs: dict[str, int] = defaultdict(int)
+    for frame in (*ladder.queue._priority, *ladder.queue._normal):
+        if frame.key is not None and frame.key[0] != "system":
+            costs[frame.key[0]] += len(frame.payload)
+    for lane in ladder.pacer.lanes.values():
+        costs[lane.sub.ch] += lane.queue.pending_bytes
+    order = sorted((-n, ch) for ch, n in costs.items() if n)
+    return tuple(ch for _, ch in order[:5])
 
 
 class Spy:
@@ -114,13 +135,14 @@ class Spy:
                 return check(ladder, subs)
             q, pacer = ladder.queue, ladder.pacer
             held, n, entry = ladder._draining, self.pushes[q], _acct(ladder)
+            ranked = _ranked(ladder) if _over(entry) else ()
             events = check(ladder, subs)
             lanes = sum(len(f.payload) for f in (*q._priority, *q._normal))
             windows = sum(lane.queue.pending_bytes for lane in pacer.lanes.values())
             marked = tuple(sorted(s.ch for s in pacer.resnapshot_required.values()))
             left, now, cls = sum(q.key_bytes().values()), pacer.emitter.clock(), pacer.cls.value
             out, fired, recount = _acct(ladder), (*events,), (lanes, windows)
-            record = Check(now, n, entry, out, fired, held, left, marked, recount, cls)
+            record = Check(now, n, entry, out, fired, held, left, marked, recount, cls, ranked)
             self.checks[ladder].append(record)
             return events
 
@@ -402,6 +424,7 @@ async def test_s2b_sleeper_holding_orders_it_cannot_shed_closes_4429_then_resync
     assert_d8(spy.checks[ladder])
     drop, close = spy.events(ladder)  # steps 1, then 3, on two checks
     assert (drop.reason, drop.topics, close.reason) == ("drop", CHANNELS, "close_budget")
+    (dropping,) = [c for c in spy.checks[ladder] if drop in c.events]
     (closing,) = [c for c in spy.checks[ladder] if close in c.events]
     # Only when what remains cannot be dropped: nothing droppable left, still over the budget.
     assert closing.events == (close,) and closing.droppable == closing.exit[1] == 0
@@ -411,11 +434,12 @@ async def test_s2b_sleeper_holding_orders_it_cannot_shed_closes_4429_then_resync
     p, want = bye["p"], {"code": 4429, "reason": "slow_consumer", "retry_after_ms": 3000}
     assert {k: p[k] for k in want} == want and p["reconnect"] is True  # §8.4's step 3 `bye`
     assert p["message"] == "Client is not draining its outbound queue."
-    # As built, the hint names the topics with droppable or pending bytes at the closing check:
-    # none, step 1 having shed them. #3365 ranks every topic at the episode's first over-budget
-    # check and freezes that ranking; these two lines flip with its PR.
+    # The hint is the ranking taken when the overflow began (#3365): at the check that went over
+    # and shed the market topics, recounted here on entry with the orders queued then, and kept
+    # until the close. A ranking taken at the closing check would name the orders alone.
     assert p["hint"] == {"most_expensive_topics": list(close.topics)}
-    assert close.topics == ()
+    assert close.topics == dropping.ranked == (TRADES["ch"], ORDERS["ch"], BOOK)  # by bytes
+    assert closing.ranked == (ORDERS["ch"],)
     # The close cleared both lanes: of the orders it took, those still queued never went out.
     assert sum(f["t"] == "d" and f["ch"] == "orders" for f in slow.frames) < run.orders
     assert grew(cv_ws_overflow_total, overflow) == {"drop": 2, "close_budget": 1}
