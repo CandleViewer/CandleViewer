@@ -46,6 +46,11 @@ hook's lines are `account.dms_hook_failed`, `account.dms_hook_stuck` and `accoun
 restart reads every account as `never_connected`, which resolves an open page: read the account's
 state (07 command 1) before treating it as recovered.
 
+The episode journal's failures are `account.dms_journal_failed` (critical for a record, which a kill
+would lose; error for a resolve, whose row the next boot replays once more), counted in
+`cv_account_dms_journal_failures_total`. The hook is called all the same; a rise means Postgres is
+refusing the writes (`PostgresDown`), and nothing alerts on it yet.
+
 ## Symptom: `/readyz` reports the `accounts` check degraded on an account-health loop
 
 The detail names the loop: `the account-health-tick loop ended`, or `the account-health-tracking
@@ -81,5 +86,6 @@ lives in memory: a restart counts the keys already in either state again. It nev
 and the order-entry gate never reads it (US-ACCT-005). The policy is deployment config: a change
 takes a restart, and the first read after it recomputes every key. Rotate a key through SCR-127
 (Owner, step-up, audited). A read the job cannot evaluate logs `account_health.key_age_failed`
-(error, the error type only) once per change: its series and tickets may lag until a read
-evaluates again, while tracking and order entry carry on. That is a bug: file it.
+(error, the error type only) once per change, and the job counts, sets and keeps nothing of it:
+its series and tickets lag until a read evaluates whole, while tracking, the key standing and
+order entry carry on. That is a bug: file it.

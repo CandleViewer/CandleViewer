@@ -52,7 +52,8 @@ def plain_decimal(value: Decimal) -> str:
 
 
 class HealthViews(Protocol):
-    """`AccountHealthMonitor.view`: an account's health, `None` if it is not monitored."""
+    """An account's health, `None` if it is not monitored: `AccountHealthMonitor.view`, or the
+    runtime's `view` (#837 W5), which also hides an account tracked for a replayed call alone."""
 
     def view(self, account_id: UUID) -> AccountHealth | None: ...
 

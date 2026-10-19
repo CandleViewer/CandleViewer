@@ -115,13 +115,18 @@ class KeyAgeNotices:
 
     def observe(self, keys: Iterable[RegisteredKey]) -> None:
         """Evaluate `keys`, the whole of one read: a key missing from it is forgotten, so one
-        that comes back in `warn` or `overdue` is counted again."""
+        that comes back in `warn` or `overdue` is counted again. All or nothing: every key is
+        evaluated before anything is counted, set or kept, so a read that raises midway (a key
+        it cannot evaluate) leaves the notices, the gauge and what was counted as they were."""
         now, mono = self._clock.now(), self._clock.monotonic()
+        rotations = [
+            (key, self._policy.evaluate(key.created_at, key.status, now=now)) for key in keys
+        ]
         held = dict.fromkeys(RotationState, 0)
         warned: set[UUID] = set()
         overdue: dict[UUID, float] = {}
-        for key in keys:
-            rotation = self._policy.evaluate(key.created_at, key.status, now=now)
+        notices: list[tuple[RegisteredKey, RotationState, datetime]] = []
+        for key, rotation in rotations:
             state, due = rotation.rotation_state, rotation.rotation_due_at
             if state is None or due is None:
                 continue
@@ -129,16 +134,18 @@ class KeyAgeNotices:
             if state is RotationState.WARN:
                 warned.add(key.key_id)
                 if key.key_id not in self._warned:
-                    self._notice(key, state, due)
+                    notices.append((key, state, due))
             elif state is RotationState.OVERDUE:
                 last = self._overdue.get(key.key_id, -math.inf)
                 if mono - last >= OVERDUE_EVERY_S:
-                    self._notice(key, state, due)
+                    notices.append((key, state, due))
                     last = mono
                 overdue[key.key_id] = last
         self._warned, self._overdue = warned, overdue
         for rotation_state, count in held.items():
             self._states.labels(rotation_state).set(count)
+        for key, state, due in notices:
+            self._notice(key, state, due)
 
     def _notice(self, key: RegisteredKey, state: RotationState, due: datetime) -> None:
         """Count and log one notice. The due date is logged to the second: a stored

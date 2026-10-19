@@ -7,8 +7,9 @@ The lifespan's order is in `test_main_lifespan_stop_order.py`."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock
@@ -28,22 +29,29 @@ from candleviewer.account_health_wiring import (
     wire_account_health,
 )
 from candleviewer.accounts.health import DMS_HOOK_TIMEOUT_S, HealthState, HealthTransition
+from candleviewer.accounts.key_age import KeyAgeNotices
 from candleviewer.accounts.verification import KeyRefused, Refusal
 from candleviewer.accounts.wallet import WalletThresholds, WalletUnavailable
 from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.app import AppContext
 from candleviewer.observability.health import HealthStatus
 from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.redaction import redact_structure
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
-from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
-    DmsEpisodeRow,
-    SqlAlchemyDmsEpisodeJournal,
-)
-from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
-from tests.unit.accounts._fakes import ACC, ACC_B, DAY, T0, FakeClock, Journal, key_row
+from tests.unit.accounts._fakes import (
+    ACC,
+    ACC_B,
+    DAY,
+    T0,
+    FakeClock,
+    Journal,
+    SqlEdges,
+    fake_sql_edges,
+    key_row,
+)
 from tests.unit.accounts._runtime_rig import Rig, snapshot
 
 _ECHO = "echoed exchange text: key abc123"  # what a failing collaborator's message may carry
@@ -86,6 +94,18 @@ async def test_the_stand_ins_log_what_is_unbound_and_the_wallet_read_is_unavaila
     ]
     with pytest.raises(WalletUnavailable):
         await UnavailableWalletRest().wallet(ACC)
+
+
+async def test_the_unbound_hook_logs_its_down_time_to_the_second_through_the_redaction() -> None:
+    """A transition's `at` carries microseconds: logged in full, its 6-digit run would read as a
+    TOTP code and the log redaction would replace the whole value (C-12.6)."""
+    at = T0 + timedelta(microseconds=123_456)
+    episode = HealthTransition(ACC, HealthState.DEGRADED, HealthState.DOWN, "no_success", at)
+    with capture_logs() as logs:
+        await LoggingDeadMansSwitch().account_down(episode)
+    [event] = logs
+    assert redact_structure(event) == event
+    assert event["down_at"] == at.isoformat(timespec="seconds")
 
 
 async def test_a_rejected_wallet_read_refuses_at_once_and_only_a_later_pass_clears_it() -> None:
@@ -232,6 +252,17 @@ async def test_the_tracking_loop_reads_at_start_and_then_every_refresh_interval(
     await rig.run(1)
     assert rig.runtime.monitor.current(ACC_B) is HealthState.DOWN
     await rig.close()
+
+
+async def test_the_key_standing_lapses_a_minute_after_the_last_good_read() -> None:
+    """24-internal-schemas.md section 8.4.1 says 60 s: written here, not read from
+    `TRACKING_FAULT_AFTER_S`, so that the bound and the contract cannot move apart."""
+    rig = Rig()
+    rig.runtime.standings.observe([key_row(ACC, verified_at=rig.clock.now())])
+    rig.clock.advance(60.0)
+    assert rig.runtime.standings.standing(ACC) is not None
+    rig.clock.advance(0.001)
+    assert rig.runtime.standings.standing(ACC) is None
 
 
 async def test_without_a_repository_a_refresh_tracks_nothing() -> None:
@@ -650,33 +681,16 @@ def _account_row(
 
 
 @pytest.fixture
-def stored(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
+def stored(monkeypatch: pytest.MonkeyPatch) -> SqlEdges:
     """The real-backend `create_app` with the usable-key read and the episode journal's replay
-    read faked at their SQL edge, each recording the environment its store was bound to."""
-    edges = SimpleNamespace(rows=[], envs=[], journal_envs=[], disposed=0)
-
-    async def targets(store: SqlAlchemyKeySelfCheckStore) -> tuple[SelfCheckTargetRow, ...]:
-        edges.envs.append(store._env)
-        return tuple(edges.rows)
-
-    async def open_episodes(
-        journal: SqlAlchemyDmsEpisodeJournal, limit: int
-    ) -> tuple[DmsEpisodeRow, ...]:
-        edges.journal_envs.append(journal._env)
-        return ()
-
-    async def dispose(_repository: SqlAlchemyRelationalRepository) -> None:
-        edges.disposed += 1
-
-    monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
-    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", open_episodes)
-    monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
+    read faked at their SQL edge (`fake_sql_edges`), each recording the environment its store or
+    journal was bound to."""
     monkeypatch.setattr(appmod, "_build_accounts_counts", lambda _settings: None)
-    yield edges
+    return fake_sql_edges(monkeypatch)
 
 
 async def test_the_real_backend_tracks_only_the_enabled_accounts_of_its_environment(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     stored.rows = [
         _account_row(ACC),
@@ -690,7 +704,7 @@ async def test_the_real_backend_tracks_only_the_enabled_accounts_of_its_environm
 
 
 async def test_the_real_backend_binds_the_store_it_reads_to_the_process_environment(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     runtime = appmod.create_app(_real()).state.account_health
     await runtime.refresh_tracking()
@@ -698,7 +712,7 @@ async def test_the_real_backend_binds_the_store_it_reads_to_the_process_environm
 
 
 async def test_a_row_of_another_environment_is_logged_once_for_as_long_as_it_stays(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     runtime = appmod.create_app(_real()).state.account_health
     foreign = _account_row(_ACC_C, env="live")  # the store filters on `env`: a bug worth a line
@@ -711,18 +725,52 @@ async def test_a_row_of_another_environment_is_logged_once_for_as_long_as_it_sta
 
 
 async def test_a_stop_releases_the_pool_of_the_runtimes_own_store_and_only_that_one(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     runtime = appmod.create_app(_real()).state.account_health
     await runtime.stop()
     assert stored.disposed == 1
 
 
+async def test_a_down_transition_through_the_real_backend_never_connects(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#837 W6c: an account that goes down has its episode recorded, its hook called and its row
+    resolved on the faked journal, and nothing reaches for a connection: the journal's writes are
+    SQL edges too (`fake_sql_edges`), so no test of the real backend can dial a database."""
+    clock = FakeClock()
+    monkeypatch.setattr(wiring, "SystemClock", lambda: clock)
+    stored.rows = [_account_row(ACC)]
+    app = appmod.create_app(_real())
+    feed = app.state.app_context.accounts.account_health
+    await app.state.account_health.refresh_tracking()
+    feed.ws_heartbeat(ACC)
+    clock.advance(30)  # the down window passes with no success
+    with capture_logs() as logs:
+        moved = feed.ws_dropped(ACC)  # the evidence call commits the lapse and owes the hook
+        await app.state.account_health.monitor.drain()
+    assert moved is not None and moved.to_state is HealthState.DOWN
+    episodes = [(e.account_id, e.reason, e.resolved) for e in stored.journal.rows.values()]
+    assert episodes == [(ACC, "no_success", True)]
+    failures = [e["event"] for e in logs if e["log_level"] in ("error", "critical")]
+    assert failures == ["account.dms_policy_unbound"]  # the hook ran, and no write failed
+    assert stored.connects == 0
+
+
+async def test_an_edge_that_is_not_faked_counts_a_connection_and_is_refused(
+    stored: SqlEdges,
+) -> None:
+    repository = SqlAlchemyRelationalRepository("postgresql+asyncpg://127.0.0.1:1/none")
+    with pytest.raises(ConnectionError):
+        repository.unit_of_work()
+    assert stored.connects == 1
+
+
 @pytest.mark.parametrize(
     ("days", "held", "noticed"), [(90, [1, 1, 1], [1, 1]), (180, [2, 1, 0], [1, 0])]
 )
 async def test_the_real_backend_counts_key_age_from_the_tracking_read_and_disables_nothing(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
     monkeypatch: pytest.MonkeyPatch,
     days: int,
     held: list[int],
@@ -751,7 +799,7 @@ async def test_the_real_backend_counts_key_age_from_the_tracking_read_and_disabl
 
 
 async def test_a_key_age_job_that_raises_never_keeps_the_read_from_tracking(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     """#837 W6: the job only reports. A row it cannot evaluate (a naive registration time) is
     logged by its error type, once per change, and the enabled account is tracked at every read
@@ -767,6 +815,48 @@ async def test_a_key_age_job_that_raises_never_keeps_the_read_from_tracking(
     assert tracked == [HealthState.DOWN] * 4  # tracked, never connected
     errors = [(e["event"], e["error"]) for e in logs if e["log_level"] == "error"]
     assert errors == [("account_health.key_age_failed", "TypeError")] * 2
+
+
+async def _reads_with_a_key_age_job(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch, *, raises: bool
+) -> tuple[list[bool], list[tuple[HealthState | None, bool]]]:
+    """Two tracking reads, the account listed and then gone, with a key-age job that raises at
+    each read if `raises`: whether the job found that read's key standing in place, and what each
+    read left tracked and standing."""
+    fed: list[bool] = []
+
+    def observe(_job: KeyAgeNotices, _keys: object) -> None:
+        fed.append(runtime.standings.standing(ACC) is not None)  # the read is in the standing
+        if raises:
+            raise RuntimeError(_ECHO)
+
+    monkeypatch.setattr(wiring, "SystemClock", FakeClock)
+    monkeypatch.setattr(KeyAgeNotices, "observe", observe)
+    runtime = appmod.create_app(_real()).state.account_health
+    seen: list[tuple[HealthState | None, bool]] = []
+    for rows in ([_account_row(ACC)], []):  # listed, then gone
+        stored.rows = rows
+        await runtime.refresh_tracking()
+        seen.append((runtime.monitor.current(ACC), runtime.standings.standing(ACC) is not None))
+    return fed, seen
+
+
+async def test_the_key_age_job_runs_once_the_read_has_fed_the_key_standing(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#837 W6: the job runs last, once the read has fed the key standing (the order-entry gate's
+    input): it finds a listed account's standing in place, and none once the account is gone."""
+    fed, _ = await _reads_with_a_key_age_job(stored, monkeypatch, raises=False)
+    assert fed == [True, False]
+
+
+async def test_a_key_age_job_that_raises_leaves_the_tracking_and_the_standing_to_the_read(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#837 W6: a job that raises at every read holds back neither the tracked set nor the key
+    standing: a listed account is tracked with a standing, and one gone leaves both."""
+    _, seen = await _reads_with_a_key_age_job(stored, monkeypatch, raises=True)
+    assert seen == [(HealthState.DOWN, True), (None, False)]
 
 
 def test_the_fake_backend_wires_the_runtime_with_no_repository_to_read() -> None:

@@ -16,8 +16,9 @@ read the boot-time clock, and the loops sleep on the event loop's: a wall-clock 
   A read that fails keeps the set and is a failed pass. An untracked account has no state
   (`current()` is `None`, which the order-entry gate refuses). The same read feeds the key
   standing and the key-age job (`KeyAgeNotices`), so the job runs at boot and every interval
-  after; the job only reports, so one that raises is logged and the read still tracks. The fake
-  backend has no repository, so it runs no such loop and tracks none.
+  after. The job runs last and only reports, so one that raises is logged and the read still
+  feeds the standing and tracks. The fake backend has no repository, so it runs no such loop and
+  tracks none.
 - Dead-man's-switch episodes outlive the process (#837 W5): the monitor journals each before its
   hook call (`system_events`). The tracking loop's first pass that works is the boot: it replays the
   open ones once and tracks `at_boot`, so an account with no evidence for `down_s` is owed one.
@@ -30,15 +31,16 @@ unavailable (E29), so sizing is off once a snapshot is stale after a failed atte
 old; the dead-man's-switch hook (E39) logs the episode.
 
 The runtime serves health and balances on the WS `wallet` topic (`accounts/wallet_topic.py`), which
-`create_app` builds on the gateway's hub and hands in: the topic's snapshots read the monitor and
-the cache, and the runtime publishes a health delta when an account's monitoring starts and on each
-transition it commits, whichever call commits it (the tick, the feed or the reconciler's `rest_ok`),
-and a balance delta on each refresh, pushed or read, and when the tick finds a refreshed balance
-turned stale.
+`create_app` builds on the gateway's hub and hands in: the topic's snapshots read the runtime's
+`view` (the monitor's, less an account tracked for a replayed call alone) and the cache, and the
+runtime publishes a health delta when an account's monitoring starts and on each transition it
+commits, whichever call commits it (the tick, the feed or the reconciler's `rest_ok`), and a balance
+delta on each refresh, pushed or read, and when the tick finds a refreshed balance turned stale.
 
 `order_entry_check` is the account check of the app's one gate, `OrderEntryGate(maintenance,
-order_entry_check)` (#837 W3), over the monitor, the key standing (`accounts.key_standing`) and the
-cache; the reconciler reports a rejected credential to the standing, never as health evidence.
+order_entry_check)` (#837 W3): it refuses on the key standing (`accounts.key_standing`) and the
+monitor's health, and the cache feeds only its sizing flag. The reconciler reports a rejected
+credential to the standing, never as health evidence.
 """
 
 from __future__ import annotations
@@ -191,7 +193,9 @@ class LoggingDeadMansSwitch:
             "account.dms_policy_unbound",
             account_id=str(transition.account_id),
             reason=transition.reason,
-            down_at=transition.at.isoformat(),
+            # to the second: a 6-digit run of microseconds reads as a TOTP code to the log
+            # redaction, which would replace the whole value (C-12.6)
+            down_at=transition.at.isoformat(timespec="seconds"),
         )
 
 
@@ -234,15 +238,17 @@ class HealthSeries:
     """The catalogue series the runtime sets and counts (#837 W6), per state, reason and result and
     never per account (SR-125's allow-list; the log lines name the account): each committed
     transition, whichever call commits it, under the state entered; at each tick, the monitored
-    accounts per state and reason and the age of the oldest wallet snapshot; each reconciliation
-    read by how it ended. `bind` registers them on the app's metrics and binds every child, the
-    key-age notices and states too (the key-age job's), so each reads 0 from boot and `increase()`
-    sees the first event (the AccountDown page reads both health series)."""
+    accounts per state and reason, the age of the oldest wallet snapshot and the growth of the
+    monitor's failed journal writes; each reconciliation read by how it ended. `bind` registers
+    them on the app's metrics and binds every child, the key-age notices and states too (the
+    key-age job's), so each reads 0 from boot and `increase()` sees the first event (the
+    AccountDown page reads both health series)."""
 
     states: BoundedMetric
     transitions: BoundedMetric
     wallet_age: BoundedMetric
     reconciles: BoundedMetric
+    journal_failures: BoundedMetric
 
     @classmethod
     def bind(cls, metrics: Metrics) -> HealthSeries:
@@ -252,6 +258,7 @@ class HealthSeries:
             r0["cv_account_health_transitions_total"],
             r0["cv_wallet_snapshot_age_seconds"],
             r0["cv_wallet_reconcile_total"],
+            r0["cv_account_dms_journal_failures_total"],
         )
         for state, reason in HEALTH_SERIES:
             series.states.labels(state, reason)
@@ -266,20 +273,22 @@ class HealthSeries:
 
 
 class AccountHealthRuntime:
-    """The running monitor, wallet cache and reconciler, with the loops that drive them. `monitor`
-    and `wallets` are for the readers (the order-entry gate, the read models); the private-WS
-    consumer gets `feed` through `ctx.accounts.account_health` (`AccountHealthFeed`): the evidence
-    calls of the monitor, and the wallet cache's `apply` as `wallet_pushed`. `wallet_pushed` does
-    not bound a frame's `updated_at`: the consumer refuses a frame dated ahead of the host clock
-    before it gets here (a dated-ahead snapshot would block every later refresh).
+    """The running monitor, wallet cache and reconciler, with the loops that drive them. `view` (the
+    monitor's health, less an account tracked for a replayed call alone) and `wallets` are for the
+    readers (the `wallet` topic, the read models); the order-entry gate reads the monitor through
+    `order_entry_check`. The private-WS consumer gets `feed` through `ctx.accounts.account_health`
+    (`AccountHealthFeed`): the evidence calls of the monitor, and the wallet cache's `apply` as
+    `wallet_pushed`. `wallet_pushed` does not bound a frame's `updated_at`: the consumer refuses a
+    frame dated ahead of the host clock before it gets here (a dated-ahead snapshot would block
+    every later refresh).
 
     `monitored` reads the ids of the accounts to track (`None`: the fake backend, nothing is
     tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped;
     `episodes` is the journal the boot replays (the monitor writes it). `standings` is the key
     standing: the reconciler reports a rejected credential to it, and `order_entry_check`, the
-    account check of the app's order-entry gate, reads it with the monitor and the cache. `topic`
-    is the `wallet` topic it publishes on. Meant for one event loop, the one that runs the loops and
-    the hook calls."""
+    account check of the app's order-entry gate, reads it with the monitor (the cache feeds only
+    the check's sizing flag). `topic` is the `wallet` topic it publishes on. Meant for one event
+    loop, the one that runs the loops and the hook calls."""
 
     def __init__(
         self,
@@ -301,6 +310,7 @@ class AccountHealthRuntime:
         self._monitored, self._release, self._episodes = monitored, release, episodes
         self._sleep = sleep
         self._series = series  # the catalogue series it sets and counts
+        self._journal_failures = 0  # the monitor's `journal_failures` as the series has it
         self._tracked: set[UUID] = set()
         self._booted = False  # a tracking pass has worked: the boot's replay is done
         self._replay: asyncio.Task[tuple[DmsEpisodeRow, ...]] | None = None  # the last replay read
@@ -485,13 +495,22 @@ class AccountHealthRuntime:
     async def _tick(self) -> None:
         for transition in self.monitor.tick():  # the monitor logs each one and owes the hook
             self._moved(transition)
+        self._count_journal_failures()
         self.topic.stale_check()
         self._census()
+
+    def _count_journal_failures(self) -> None:
+        """Add the journal writes the monitor has failed since the last tick to the series (the
+        monitor keeps the running total, `journal_failures`)."""
+        failed = self.monitor.journal_failures
+        if failed > self._journal_failures:
+            self._series.journal_failures.child().inc(failed - self._journal_failures)
+            self._journal_failures = failed
 
     def _census(self) -> None:
         """Set the health gauge, every state and reason (0 for one no account reads), and the age
         of the oldest wallet snapshot (0 with none monitored), from the accounts the cache tracks:
-        the monitor's, since tracking adds and drops an account in both."""
+        the monitor's, less an account tracked for a replayed call alone, as `view` shows them."""
         silence = self.wallets.silence_s()
         views = (self.monitor.view(account_id) for account_id in silence)
         held = Counter((view.state, view.reason) for view in views if view is not None)
@@ -601,7 +620,7 @@ def _repository_source(
         own = [row for row in rows if row.account.env == env]
         standings.observe(own)
         enabled = frozenset(row.account.id for row in own if row.account.is_enabled)
-        try:
+        try:  # last: neither the standing nor the tracked set waits on a job that only reports
             key_ages.observe(
                 RegisteredKey(row.key_id, row.account.id, row.created_at, KeyStatus(row.status))
                 for row in own

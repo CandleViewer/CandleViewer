@@ -180,7 +180,9 @@ class DeadMansSwitch(Protocol):
     for an account the policy cannot act on: a raise is retried for as long as the account stays
     tracked, and replayed at every boot. At least once, so idempotent: a resolved row is never
     replayed, and a call that returned before its resolve committed (a kill between the two, or a
-    failed write) is made at most once more."""
+    failed write) is made at most once more. The boot is the runtime's first tracking pass whose
+    replay read works: until then it tracks nothing, so no call is made for any account, and order
+    entry refuses them all."""
 
     async def account_down(self, transition: HealthTransition) -> None: ...
 
@@ -263,7 +265,9 @@ class AccountHealthMonitor:
         self._dms_timeout_s = dms_timeout_s
         self._rng = rng if rng is not None else random.SystemRandom()  # retry jitter only
         self._journal, self._journal_timeout_s = journal, journal_timeout_s
-        self.journal_failures = 0  # writes that failed, timed out or were skipped; W6 exports it
+        # writes that failed, timed out or were skipped: the health runtime counts its growth in
+        # `cv_account_dms_journal_failures_total` at each tick
+        self.journal_failures = 0
         self._accounts: dict[UUID, _Account] = {}
         self._calls: dict[UUID, asyncio.Task[None]] = {}  # the latest call per account id
         self._watchers: set[asyncio.Task[None]] = set()  # one per call: ends with it or abandons it

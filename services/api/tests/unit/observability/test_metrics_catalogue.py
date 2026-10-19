@@ -262,7 +262,8 @@ def test_wallet_sizing_counter_is_live_and_carries_no_label() -> None:
 def test_account_health_and_key_age_series_are_bounded_by_their_closed_sets() -> None:
     """E27-T04 (#837 W6): per state, reason and result, never per account (SR-125's allow-list):
     one series per health reason (each belongs to one state), per reconciliation result and per
-    rotation state the job counts or sets; the oldest wallet age carries no label."""
+    rotation state the job counts or sets; the oldest wallet age and the dead-man's-switch
+    journal's failed writes carry no label."""
     from typing import get_args
 
     from candleviewer.account_health_wiring import NOTICE_STATES, RECONCILE_RESULTS
@@ -279,6 +280,7 @@ def test_account_health_and_key_age_series_are_bounded_by_their_closed_sets() ->
     notices = ("counter", ("state",), len(NOTICE_STATES), "E27")
     assert specs["cv_key_rotation_notices_total"] == notices
     assert specs["cv_keys_rotation_state"] == ("gauge", ("state",), len(RotationState), "E27")
+    assert specs["cv_account_dms_journal_failures_total"] == ("counter", (), 1, "E27")
 
 
 def test_labels_exercised_contain_no_personal_data() -> None:

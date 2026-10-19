@@ -288,7 +288,7 @@ async def test_an_unreadable_setting_at_boot_falls_back_to_the_default(error: Ex
     assert await wiring.read_budget_ms(None) == 500
 
 
-async def test_start_ensures_the_rows_and_the_poll_opens_the_order_gate() -> None:
+async def test_start_ensures_the_rows_and_the_poll_opens_the_maintenance_gate() -> None:
     runtime, account = _runtime(), uuid.uuid4()
     refusal = runtime.gate.refusal(account)
     assert refusal is not None and refusal.reason == "maintenance"  # unknown: engaged

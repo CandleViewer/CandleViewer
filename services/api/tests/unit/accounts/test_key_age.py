@@ -192,6 +192,22 @@ def test_the_job_counts_an_overdue_key_once_a_day_and_never_disables_it() -> Non
     assert key.status is KeyStatus.ACTIVE  # it only reports: there is nothing to disable with
 
 
+def test_a_read_with_a_key_the_job_cannot_evaluate_counts_and_sets_nothing() -> None:
+    """All or nothing (#837 W6): a key that raises after one entering `warn` (a naive registration
+    time) leaves the whole read uncounted, so the warn key is noticed once, by the first read that
+    evaluates whole, not again at every read while the bad row stays."""
+    job = _Job()
+    warn = job.key(80)
+    bad = RegisteredKey(UUID(int=2), ACC, warn.created_at.replace(tzinfo=None), KeyStatus.ACTIVE)
+    for _ in range(3):  # three reads while the bad row stays
+        with pytest.raises(TypeError):
+            job.run([warn, bad])
+    assert job.read(NOTICES, WARN) == job.read(STATES, WARN) == [None]
+    with capture_logs() as logs:
+        job.run([warn])  # the row is fixed: the read evaluates whole
+    assert len(logs) == 1 and job.read(NOTICES, WARN) == job.read(STATES, WARN) == [1]
+
+
 def test_the_job_sets_the_active_keys_per_state_and_counts_a_returning_key_again() -> None:
     job = _Job()
     keys = [job.key(10, 1), job.key(80, 2), job.key(100, 3), job.key(100, 4, KeyStatus.ROTATING)]

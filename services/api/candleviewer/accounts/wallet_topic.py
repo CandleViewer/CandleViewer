@@ -5,7 +5,7 @@ account health runtime publishes on it.
 Adapters live in their owning module and the gateway only wires them (#1778 Q2). The accounts
 module may not import `ws` (CONSTITUTION §3), so the protocol is met structurally, as the book's
 is: `sub` is typed by the field read here, and the gateway's body constructor and its hub's
-`publish` are injected (`ws_wiring.wallet_topic`). The runtime attaches its monitor and wallet
+`publish` are injected (`ws_wiring.wallet_topic`). The runtime attaches its health `view` and wallet
 cache, and every item is read through the `ExchangeAccount` read model when it is sent, so `stale`
 and `stale_since_ms` are REST `balance_stale` and `balance_stale_since`.
 

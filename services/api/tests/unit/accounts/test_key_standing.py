@@ -285,8 +285,8 @@ def test_the_later_pass_of_a_key_that_has_failed_since_does_not_clear_a_rejectio
 
 
 def test_a_rejection_a_later_pass_cleared_never_merges_into_the_next() -> None:
-    """No read runs between the pass and the next rejection: the 403 reason never depends on
-    whether one did."""
+    """No read runs between the pass and the next rejection, and the pass is still in evidence
+    (the job's result): the cleared refusal's disable does not merge into the next."""
     standings, job, clock = _world()
     standings.credential_rejected(ACC, Refusal.IP_NOT_ALLOWED)
     clock.advance(1)

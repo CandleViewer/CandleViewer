@@ -1,12 +1,14 @@
 """E27-T04 (#837 W6): the catalogue series the account health runtime sets and counts, per state,
 reason and result and never per account (SR-125): the health gauge and the transition counter the
-AccountDown page reads, the oldest wallet snapshot's age and the reconciliation reads. The wired
-runtime on a fake clock and sleeper (`_runtime_rig.Rig`), on the app's catalogue registration."""
+AccountDown page reads, the oldest wallet snapshot's age, the reconciliation reads and the
+dead-man's-switch journal's failed writes. The wired runtime on a fake clock and sleeper
+(`_runtime_rig.Rig`), on the app's catalogue registration."""
 
 from __future__ import annotations
 
 from typing import get_args, get_type_hints
 
+import pytest
 from prometheus_client import generate_latest
 
 from candleviewer.account_health_wiring import HEALTH_SERIES, NOTICE_STATES, RECONCILE_RESULTS
@@ -14,11 +16,12 @@ from candleviewer.accounts.health import AccountHealthMonitor, HealthReason, Hea
 from candleviewer.accounts.key_age import RotationState
 from candleviewer.accounts.verification import KeyRefused, Refusal
 from candleviewer.accounts.wallet import WalletPoll, WalletUnavailable
-from tests.unit.accounts._fakes import ACC, ACC_B, Dms, FakeClock
+from tests.unit.accounts._fakes import ACC, ACC_B, Dms, FakeClock, Journal
 from tests.unit.accounts._runtime_rig import Rig, snapshot
 
 STATES, MOVES = "cv_account_health_state", "cv_account_health_transitions_total"
 AGE, READS = "cv_wallet_snapshot_age_seconds", "cv_wallet_reconcile_total"
+JOURNAL = "cv_account_dms_journal_failures_total"
 
 
 def _value(rig: Rig, name: str, **labels: str) -> float | None:
@@ -59,7 +62,7 @@ def test_every_series_reads_zero_from_the_wiring_before_any_event() -> None:
     assert {_value(rig, READS, result=result) for result in RECONCILE_RESULTS} == {0.0}
     notices = {_value(rig, "cv_key_rotation_notices_total", state=s) for s in NOTICE_STATES}
     keys = {_value(rig, "cv_keys_rotation_state", state=s) for s in RotationState}
-    assert notices == keys == {0.0} and _value(rig, AGE) == 0.0
+    assert notices == keys == {0.0} and _value(rig, AGE) == _value(rig, JOURNAL) == 0.0
 
 
 async def test_each_transition_counts_once_under_the_state_entered_and_the_gauge_follows() -> None:
@@ -104,4 +107,23 @@ async def test_each_reconciliation_read_counts_once_under_how_it_ended() -> None
     assert [_value(rig, READS, result=result) for result in RECONCILE_RESULTS] == [1.0] * 3
     moved = (HealthState.DEGRADED, "rest_only")  # the ok read's `rest_ok` commits it
     assert _pairs(rig, MOVES) == {pair: float(pair == moved) for pair in HEALTH_SERIES}
+    await rig.close()
+
+
+@pytest.mark.parametrize("step", ["record", "resolve"])
+async def test_each_failed_journal_write_counts_once_whichever_step_fails(step: str) -> None:
+    """The monitor keeps the running total (`journal_failures`); the runtime adds its growth at
+    each tick: the series is the total, not the total again at every tick or on each new failure."""
+    journal = Journal()
+    journal.fail[step] = RuntimeError("echoed exchange text: key abc123")
+    rig = Rig(ACC, ACC_B, journal=journal)
+    await rig.boot()
+    rig.ws.connect()
+    await rig.run(0.5)
+    rig.ws.drop()  # ACC's last success is at 0 s: down at 30 s
+    await rig.run(9.5)
+    rig.accounts.account_health.ws_heartbeat(ACC_B)  # ACC_B's is at 10 s: down at 40 s
+    await rig.run(35)
+    assert rig.runtime.monitor.journal_failures == 2  # one write fails per episode
+    assert _value(rig, JOURNAL) == 2.0
     await rig.close()

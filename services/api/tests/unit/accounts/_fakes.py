@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import random
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, get_args
+from typing import Any, NoReturn, get_args
 from uuid import UUID
+
+import pytest
 
 from candleviewer.accounts.health import HealthTransition
 from candleviewer.accounts.order_gate import KeyStanding
 from candleviewer.domain.primitives import Exchange
 from candleviewer.observability.context import get_context
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
-from candleviewer.storage.repositories.dms_episodes_sqlalchemy import DmsEpisodeRow
+from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
+    DmsEpisodeRow,
+    SqlAlchemyDmsEpisodeJournal,
+)
+from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
 DAY = timedelta(days=1)
@@ -171,13 +178,15 @@ class Journal:
     """The episode journal (`system_events` in production), rows by id. A step (`record`,
     `resolve`, `read`) in `fail` raises; one in `hold` waits for the event first, and holds its
     cancellation until then too (a stuck server, which the driver's cleanup also waits for), then
-    raises its `fail`, if any, in the cancellation's place."""
+    raises its `fail`, if any, in the cancellation's place. `cancelled` names each held step that
+    was cancelled, in order."""
 
     def __init__(self, *episodes: Episode) -> None:
         self.rows = {n: replace(e) for n, e in enumerate(episodes, start=1)}  # its own copies
         self.fail: dict[str, BaseException] = {}
         self.hold: dict[str, asyncio.Event] = {}
         self.limits: list[int] = []
+        self.cancelled: list[str] = []
 
     def open(self) -> list[UUID]:
         return [e.account_id for e in self.rows.values() if not e.resolved]
@@ -187,6 +196,7 @@ class Journal:
             try:
                 await hold.wait()
             except asyncio.CancelledError:
+                self.cancelled.append(name)
                 await hold.wait()
                 raise self.fail.get(name, asyncio.CancelledError()) from None
         if (error := self.fail.get(name)) is not None:
@@ -212,3 +222,69 @@ class Journal:
         return tuple(
             DmsEpisodeRow(n, e.account_id, e.from_state, e.reason, e.at) for n, e in newest
         )
+
+
+@dataclass
+class SqlEdges:
+    """The real backend's account health SQL edges as `fake_sql_edges` fakes them: the usable-key
+    read answers `rows`, or raises the first error in `down`; the episode journal is `journal`,
+    which finds no open episode until one is recorded; a pool release is counted. Each read
+    records the environment its store or journal was bound to, and `connects` counts the times
+    anything asked for a connection: an edge that is not faked."""
+
+    rows: list[SelfCheckTargetRow] = field(default_factory=list)
+    down: list[Exception] = field(default_factory=list)
+    envs: list[str] = field(default_factory=list)
+    journal_envs: list[str] = field(default_factory=list)
+    journal: Journal = field(default_factory=Journal)
+    disposed: int = 0
+    connects: int = 0
+
+
+def fake_sql_edges(monkeypatch: pytest.MonkeyPatch) -> SqlEdges:
+    """Fake, for one test, every SQL edge the real backend's account health runtime reaches: the
+    usable-key read, the episode journal's replay read, `record` and `resolve`, and the pool
+    release, each with the signature of the method it replaces. Under them, the one door to a
+    connection (`unit_of_work`) counts in `connects` and raises, so an edge added later and not
+    faked fails its test at once instead of dialling a database. The app-wiring tests share it."""
+    edges = SqlEdges()
+
+    async def targets(store: SqlAlchemyKeySelfCheckStore) -> tuple[SelfCheckTargetRow, ...]:
+        edges.envs.append(store._env)
+        if edges.down:
+            raise edges.down[0]
+        return tuple(edges.rows)
+
+    async def open_episodes(
+        journal: SqlAlchemyDmsEpisodeJournal, limit: int
+    ) -> tuple[DmsEpisodeRow, ...]:
+        edges.journal_envs.append(journal._env)
+        return await edges.journal.open_episodes(limit)
+
+    async def record(
+        _journal: SqlAlchemyDmsEpisodeJournal,
+        account_id: UUID,
+        *,
+        from_state: str,
+        reason: str,
+        at: datetime,
+    ) -> int:
+        return await edges.journal.record(account_id, from_state=from_state, reason=reason, at=at)
+
+    async def resolve(_journal: SqlAlchemyDmsEpisodeJournal, account_id: UUID, row: int) -> None:
+        await edges.journal.resolve(account_id, row)
+
+    async def dispose(_repository: SqlAlchemyRelationalRepository) -> None:
+        edges.disposed += 1
+
+    def unit_of_work(_repository: SqlAlchemyRelationalRepository) -> NoReturn:
+        edges.connects += 1
+        raise ConnectionError("a SQL edge of the account health runtime is not faked")
+
+    monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", open_episodes)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "record", record)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "resolve", resolve)
+    monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
+    monkeypatch.setattr(SqlAlchemyRelationalRepository, "unit_of_work", unit_of_work)
+    return edges

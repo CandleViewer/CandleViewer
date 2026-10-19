@@ -224,7 +224,8 @@ def book_snapshot_source(ctx: AppContext) -> BookSnapshotSource[SnapshotBody]:
 def wallet_topic(hub: SequencingHub) -> WalletTopic[SnapshotBody]:
     """#837: the `wallet` family's adapter, which the accounts module owns: it renders through the
     gateway's `SnapshotBody` and publishes its deltas through `hub`. The account health runtime
-    attaches its monitor and wallet cache (`wire_account_health`); before, `build` gives `None`."""
+    attaches its health `view` and wallet cache (`wire_account_health`); before, `build` gives
+    `None`."""
     return WalletTopic(hub.publish, SnapshotBody)
 
 
