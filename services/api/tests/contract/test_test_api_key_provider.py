@@ -15,6 +15,8 @@ import httpx
 import pytest
 import respx
 from fastapi import FastAPI
+from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.repository import AccountsRepository
@@ -48,6 +50,8 @@ _DEMO = "wss://stream-demo.bybit.com/v5/private"
 _OK = SPEC["paths"]["/exchange-accounts/{accountId}/keys/{keyId}/test"]["post"]["responses"]["200"]
 #: The contract's `wsBudgetSpent` example (SR-E27-05).
 _SPENT: dict[str, Any] = _OK["content"]["application/json"]["examples"]["wsBudgetSpent"]["value"]
+#: The store gate's refusal whose `rbac.denied` the sink refused (`World`: a `RuntimeError`).
+_UNAUDITED = {"event": "key_test_denial_unaudited", "error": "RuntimeError", "log_level": "warning"}
 
 
 class OwnerOnly(Reads):
@@ -88,6 +92,11 @@ def answer(response: httpx.Response, status: int, schema: str) -> dict[str, Any]
     body: dict[str, Any] = response.json()
     validate_example(schema if schema.startswith("/") else f"/components/schemas/{schema}", body)
     return body
+
+
+def keys_read_denials() -> float:
+    """`authz_denied_total{permission="keys:read"}` (SR-125): a test asserts its delta."""
+    return REGISTRY.get_sample_value("authz_denied_total", {"permission": "keys:read"}) or 0.0
 
 
 def adapter_route(stream: Stream) -> tuple[Route, Rig, ExchangeBybitService]:
@@ -204,11 +213,12 @@ async def test_no_verdict_is_a_200_with_the_rest_error_and_no_verification() -> 
     ids=["manager", "viewer", "cross-account", "store-gate"],
 )
 async def test_only_the_owner_may_test_a_key(who: str, path: str, denied: UUID) -> None:
-    route = Route()
+    route, counted = Route(), keys_read_denials()
     body = answer(await route.post(who, path), 403, _PROBLEM)
     records = [(e[1], e[2]["object_id"]) for e in route.w.of("audit")]
     assert records == [("rbac.denied", str(denied))]  # every refusal names the account (C-2.9)
     assert body["code"] == "forbidden" and route.w.built == []
+    assert keys_read_denials() == counted + 1  # and is counted once, by the layer refusing it
 
 
 async def test_the_store_gates_refusal_is_audited_as_enforce_audits_its_own() -> None:
@@ -225,12 +235,18 @@ async def test_the_store_gates_refusal_is_audited_as_enforce_audits_its_own() ->
     )  # fmt: skip
 
 
-@pytest.mark.parametrize("who", ["manager", "reader"], ids=["enforce", "store-gate"])
-async def test_a_refusal_that_cannot_be_audited_is_still_a_403(who: str) -> None:
-    route = Route()
+@pytest.mark.parametrize(
+    ("who", "logged"), [("manager", []), ("reader", [_UNAUDITED])], ids=["enforce", "store-gate"]
+)
+async def test_a_refusal_that_cannot_be_audited_is_still_a_403(who: str, logged: list[Any]) -> None:
+    """Each layer counts its denial before the record (SR-125); the store gate's lost record is a
+    warning naming the error's class alone (C-12.6)."""
+    route, counted = Route(), keys_read_denials()
     route.w.fail_audit = True  # a test never answers on an audit record
-    body = answer(await route.post(who), 403, _PROBLEM)
+    with capture_logs() as logs:
+        body = answer(await route.post(who), 403, _PROBLEM)
     assert (body["code"], route.w.built) == ("forbidden", [])
+    assert (keys_read_denials(), logs) == (counted + 1, logged)
 
 
 async def test_no_session_is_a_401_and_no_resolver_a_501() -> None:

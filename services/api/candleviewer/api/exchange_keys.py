@@ -33,6 +33,7 @@ import uuid
 from collections.abc import Coroutine
 from typing import Annotated, Any, Final, Protocol
 
+import structlog
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
@@ -55,6 +56,7 @@ from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import authz_denied_total, normalise_permission
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.secret_type import Secret
@@ -196,15 +198,18 @@ def _untested(exc: AccountsError) -> JSONResponse:
 async def _not_owner(audit: _Emitter, actor: Importer) -> None:
     """`rbac.denied` for a caller the store's live-owner gate refused once `enforce` let it
     through (SR-051), with `enforce`'s fields and its reason's shape (`audit` names the account).
-    Best-effort, as `enforce`'s record is here: a refusal whose record fails is still a 403."""
+    Counted before the record, as `enforce` counts (SR-125), so a lost record never hides it: a
+    refusal whose record fails is still a 403, logged by the error's class alone (C-12.6)."""
+    authz_denied_total.labels(permission=normalise_permission(Permission.KEYS_READ)).inc()
     try:
         await audit.emit(
             "rbac.denied", actor_label=str(actor.user_id), actor_user_id=actor.user_id,
             actor_ip=actor.ip, session_id=None, outcome="denied", severity="warning",
             reason=_NOT_OWNER, request_id=actor.request_id,
         )  # fmt: skip
-    except (AuditError, RuntimeError):  # RuntimeError: the audit writer is not started
-        return
+    except (AuditError, RuntimeError) as exc:  # RuntimeError: the audit writer is not started
+        log = structlog.get_logger(__name__)  # per call: a module logger pins a stale chain (#2008)
+        log.warning("key_test_denial_unaudited", error=type(exc).__name__)
 
 
 def _actor(principal: PrincipalSnapshot, request: Request) -> Importer:
