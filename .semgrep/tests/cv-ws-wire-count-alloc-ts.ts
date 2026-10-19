@@ -38,6 +38,8 @@ export function everySourceBad(view: DataView, u8: Uint8Array, buf: ArrayBuffer)
   const words = new Uint16Array(buf);
   let cells = new Uint32Array(buf);
   cells = cells.subarray(1);
+  let late: Uint32Array;
+  late = new Uint32Array(buf);
   return [
     new Array(a), // ruleid: cv-ws-wire-count-alloc-ts
     new Array(b), // ruleid: cv-ws-wire-count-alloc-ts
@@ -47,6 +49,7 @@ export function everySourceBad(view: DataView, u8: Uint8Array, buf: ArrayBuffer)
     new Array(f), // ruleid: cv-ws-wire-count-alloc-ts
     new Array(words[2]), // ruleid: cv-ws-wire-count-alloc-ts
     new Array(cells[0]), // ruleid: cv-ws-wire-count-alloc-ts
+    new Array(late[0]), // ruleid: cv-ws-wire-count-alloc-ts
     new Array(header.recordCount), // ruleid: cv-ws-wire-count-alloc-ts
   ];
 }
@@ -93,6 +96,8 @@ export function everySinkBad(view: DataView, ok: boolean): unknown[] {
   while (w--) k += 1; // ruleid: cv-ws-wire-count-alloc-ts
   w = view.getUint32(16, true);
   while (w) w >>= 1; // ruleid: cv-ws-wire-count-alloc-ts
+  w = view.getUint32(20, true);
+  while (w-- > 0) k += 1; // ruleid: cv-ws-wire-count-alloc-ts
   return out;
 }
 
@@ -160,6 +165,10 @@ export function aCheckHoldsUntilTheNameIsAssignedAgain(view: DataView, offsets: 
   }
   if (n > MAX_RECORDS) throw new Error("n");
   out.push(new Array(n)); // ok: cv-ws-wire-count-alloc-ts
+  let [p] = [view.getUint32(24, true)];
+  assertFits(p, 16, view.byteLength, "p");
+  [p] = [view.getUint32(28, true)];
+  out.push(new Array(p)); // ruleid: cv-ws-wire-count-alloc-ts
   return out;
 }
 
@@ -287,6 +296,64 @@ export function anyAssignmentEndsACheck(view: DataView, flag: boolean, k: number
   return out;
 }
 
+export function aMemberOrElementAssignedInTheFunction(
+  buf: ArrayBuffer,
+  view: DataView,
+  h: H,
+  flag: boolean,
+  offs: number[],
+): unknown[] {
+  const u = new Uint32Array(buf);
+  const out: unknown[] = [];
+  if (u[0] > MAX_RECORDS) throw new Error("u0");
+  u[0] = view.getUint32(12, true);
+  out.push(new Array(u[0])); // ruleid: cv-ws-wire-count-alloc-ts
+  if (u[1] > MAX_RECORDS) throw new Error("u1");
+  if (flag) {
+    u[1] = view.getUint32(16, true);
+  }
+  out.push(new Array(u[1])); // ruleid: cv-ws-wire-count-alloc-ts
+  if (u[2] > MAX_RECORDS) throw new Error("u2");
+  for (const off of offs) u[2] = view.getUint32(off, true);
+  out.push(new Array(u[2])); // ruleid: cv-ws-wire-count-alloc-ts
+  if (u[3] > MAX_RECORDS) throw new Error("u3");
+  if ((u[3] = view.getUint32(20, true)) > 8) out.push(0);
+  out.push(new Array(u[3])); // ruleid: cv-ws-wire-count-alloc-ts
+  if (h.recordCount > MAX_RECORDS) throw new Error("rc");
+  if (flag) h.recordCount = view.getUint32(24, true);
+  out.push(new Array(h.recordCount)); // ruleid: cv-ws-wire-count-alloc-ts
+  assertFits(u[4], 16, buf.byteLength, "u4");
+  if ((u[4] = view.getUint32(28, true)) > 8) out.push(0);
+  out.push(new Array(u[4])); // ruleid: cv-ws-wire-count-alloc-ts
+  u[5] = view.getUint32(32, true);
+  if (u[5] > MAX_RECORDS) throw new Error("u5");
+  out.push(new Array(u[5])); // todook: cv-ws-wire-count-alloc-ts
+  if (u[6] > MAX_RECORDS) throw new Error("u6");
+  out.push(new Array(u[6])); // todook: cv-ws-wire-count-alloc-ts
+  u[6] = view.getUint32(36, true);
+  if (u[7] > MAX_RECORDS) throw new Error("u7");
+  [u[7]] = [view.getUint32(40, true)];
+  out.push(new Array(u[7])); // todoruleid: cv-ws-wire-count-alloc-ts
+  let v = new Uint32Array(buf, 8, 1);
+  if (v[0] > MAX_RECORDS) throw new Error("v0");
+  v = new Uint32Array(buf, 12, 1);
+  out.push(new Array(v[0])); // todoruleid: cv-ws-wire-count-alloc-ts
+  return out;
+}
+
+export function aCheckOnOneFieldLeavesTheOthers(view: DataView): unknown[] {
+  const counts = [view.getUint32(0, true), view.getUint32(4, true)];
+  const o = { a: view.getUint32(8, true), b: view.getUint32(12, true) };
+  if (counts[0] > MAX_RECORDS) throw new Error("counts0");
+  if (o.a > MAX_RECORDS) throw new Error("a");
+  return [
+    new Array(counts[1]), // ruleid: cv-ws-wire-count-alloc-ts
+    new Array(o.b), // ruleid: cv-ws-wire-count-alloc-ts
+    new Array(counts[0]), // ok: cv-ws-wire-count-alloc-ts
+    new Array(o.a), // ok: cv-ws-wire-count-alloc-ts
+  ];
+}
+
 export function clampsAndSafeSizesOk(view: DataView, buf: Uint8Array, h: H, sizes: number[]) {
   const a = view.getUint32(0, true);
   const b = view.getUint32(4, true);
@@ -392,6 +459,36 @@ export function knownLimits(buf: ArrayBuffer, ok: boolean, view: DataView, offs:
   new Array(u[15]); // todook: cv-ws-wire-count-alloc-ts
   let at = 0;
   while (at < view.byteLength) at += 4 + view.getUint16(at, true); // todook: cv-ws-wire-count-alloc-ts
+  const start = view.getUint32(4, true);
+  for (let i = start; i < 8; i += 1) out.push(i); // todook: cv-ws-wire-count-alloc-ts
+  let j = start;
+  do {
+    j += 1;
+  } while (j < 8); // todook: cv-ws-wire-count-alloc-ts
+  let left = view.getUint32(8, true);
+  for (; left > 0; left -= 1) out.push(left); // todoruleid: cv-ws-wire-count-alloc-ts
+  const [a, b, c] = [view.getUint32(12, true), view.getUint32(16, true), view.getUint32(20, true)];
+  const [d, e, f] = [view.getUint32(24, true), view.getUint32(28, true), view.getUint32(32, true)];
+  if (view.byteLength !== 24 + 16 * a) throw new Error("a");
+  out.push(new Array(a)); // todook: cv-ws-wire-count-alloc-ts
+  out.push(new Array(b > MAX_RECORDS ? MAX_RECORDS : b)); // todook: cv-ws-wire-count-alloc-ts
+  const want = 24 + c * 16;
+  if (view.byteLength !== want) throw new Error("c");
+  out.push(new Uint8Array(want)); // todook: cv-ws-wire-count-alloc-ts
+  if (d > 1) throw new Error("d");
+  out.push(new Array(d)); // todook: cv-ws-wire-count-alloc-ts
+  if (e > MAX_RECORDS) throw new Error("too many rows; for (e)");
+  out.push(new Array(e)); // todook: cv-ws-wire-count-alloc-ts
+  assertFits(1, f * 16, view.byteLength - 12, "f");
+  out.push(new Array(f)); // todook: cv-ws-wire-count-alloc-ts
   if (m > 8) return [new Array(m)]; // todook: cv-ws-wire-count-alloc-ts
   return out;
 }
+
+// At a module's top level, outside any function, an assignment to a checked element is not seen.
+declare const moduleBuffer: ArrayBuffer;
+declare const moduleView: DataView;
+const moduleWords = new Uint32Array(moduleBuffer);
+if (moduleWords[0] > MAX_RECORDS) throw new Error("module0");
+moduleWords[0] = moduleView.getUint32(12, true);
+export const moduleRows = new Array(moduleWords[0]); // todoruleid: cv-ws-wire-count-alloc-ts

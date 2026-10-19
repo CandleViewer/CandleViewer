@@ -244,3 +244,24 @@ def known_limits(buf, raw: bytes, frames, kind, pad):
     gap = len(buf) - 12
     if gap > 8: return b"\x00" * gap  # todook: cv-ws-wire-count-alloc
     return pad * m, "x".ljust(m)  # todoruleid: cv-ws-wire-count-alloc
+
+
+def guard_spellings_flagged(buf):
+    a, b, c, d, e, f, g, h, i = struct.unpack_from("<9I", buf, 8)
+    for _ in range(i, 0, -1): pass  # todoruleid: cv-ws-wire-count-alloc
+    if len(buf) != 12 + 85 * a: raise ValueError("a")
+    bytearray(a)  # todook: cv-ws-wire-count-alloc
+    if not 0 <= b < MAX_RECORDS: raise ValueError("b")
+    bytearray(b)  # todook: cv-ws-wire-count-alloc
+    if not 0 < c < MAX_RECORDS: raise ValueError("c")
+    bytearray(c)  # todook: cv-ws-wire-count-alloc
+    if not d < MAX_RECORDS: raise ValueError("d")
+    bytearray(d)  # todook: cv-ws-wire-count-alloc
+    bytearray(MAX_RECORDS if e > MAX_RECORDS else e)  # todook: cv-ws-wire-count-alloc
+    exact = 12 + f * 85
+    if len(buf) != exact: raise ValueError("f")
+    bytearray(exact)  # todook: cv-ws-wire-count-alloc
+    if g > 1: raise ValueError("g")
+    bytearray(g)  # todook: cv-ws-wire-count-alloc
+    _fits(1, h * 16, len(buf) - 12, "h")
+    bytearray(h)  # todook: cv-ws-wire-count-alloc

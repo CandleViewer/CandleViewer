@@ -1,20 +1,28 @@
 # Known limits, each a `todoruleid` (a miss) or `todook` (a false positive) row in the fixture.
 # Taint is intra-procedural: a count handed to a helper that allocates, or returned by one, is not
-# followed. `a.length = n` is not a sink; a destructured `{ recordCount }` and a count built from
-# `getUint8` bytes are not sources. A bound is read by shape: an upper-bound comparison of the
-# value, or of a length computed from it in place, in an `if` whose body ends in a throw, return
-# or continue and holds no other `if`, loop, `switch` or `try`. So another wire value as the bound,
-# every name in the compared expression (`a * b > max` checks both), a conjunction
-# (`ok && n > MAX`), a negated upper bound (`!(n > MAX)`) and a lower bound under `!` count too,
-# as does `n <= MAX ? x : y` for both of its branches. For a name, a check holds from its
-# comparison on, along every path, until the name is assigned again, so a throw caught in the same
-# function and a loop's last count after a `continue` guard count as checked. For a member or an
-# element it holds in the rest of its block, so a header parsed again into the same name is not
-# seen. A negated bound (`!(n <= MAX)`), a guard written the positive way round, a bound checked
-# through a variable other than the exact length, a use in a guard's `else` or in a later
-# guard-shaped `if` (`if (n > 8) return x`), a clamp by assignment and a cursor that the buffer
-# bounds but a wire length moves (`while (at < view.byteLength) at += len`) are flagged. The only
-# named check is `assertFits`.
+# followed. `a.length = n` and a `for` with an empty init (`for (; i > 0; i -= 1)`) are not sinks; a
+# destructured `{ recordCount }` and a count built from `getUint8` bytes are not sources. A bound is
+# read by shape: an upper-bound comparison of the value (not with 0 or 1), or of a length computed
+# from it in place, in an `if` whose body ends in a throw, return or continue and holds no other
+# `if`, loop, `switch` or `try`. So another wire value as the bound, every name in the compared
+# expression (`a * b > max` checks both; `o` in `o.a > MAX` is not one), a conjunction
+# (`ok && n > MAX`), a negated upper bound (`!(n > MAX)`) and a lower bound under `!` count too, as
+# does `n <= MAX ? x : y` for both of its branches. For a name, a check holds from its comparison
+# on, along every path, until the name is assigned again, so a throw caught in the same function and
+# a loop's last count after a `continue` guard count as checked. For a member or an element it holds
+# in the rest of its block, unless the function assigns it anywhere (`=` or `+=`, in any block, a
+# condition or a closure there): then no check of it counts in that function, before or after the
+# assignment. Destructuring into it, an assignment at a module's top level (outside any function)
+# and its typed array or header assigned again whole (`u = new Uint32Array(...)`) are not seen. A
+# negated bound (`!(n <= MAX)`), a guard written the positive way round, a bound of 0 or 1
+# (`if (n > 1) throw`), the factor first in the exact-length idiom (`24 + 16 * n`), a bound checked
+# through a variable other than the exact length, that exact length itself (`new Uint8Array(want)`),
+# a refusal message with a statement start in it (`"rows; for (n)"`), a use in a guard's `else` or
+# in a later guard-shaped `if` (`if (n > 8) return x`), a clamp by assignment or by
+# `n > MAX ? MAX : n`, a count in a later argument of `assertFits` (`assertFits(1, n * 16, ...)`)
+# and a counter or cursor that starts at or moves by a wire value while a constant or the buffer
+# bounds it (`for (let i = start; i < 8; ...)`, `while (at < view.byteLength) at += len`) are
+# flagged. The only named check is `assertFits`.
 rules:
   - id: cv-ws-wire-count-alloc-ts
     languages: [typescript]
@@ -80,7 +88,8 @@ rules:
               regex: (?s)^(?!.*(?:^|[;{}])\s*(?:if|for|while|switch)\s*\()(?!.*(?:^|[;{}])\s*(?:try|do)\s*\{).*(?:^|[;{}])\s*(?:throw|return|continue)\b[^;]*;?\s*\}?\s*$
     pattern-sanitizers:
       # `assertFits` throws, so the uses of the count after it are clean: for a name, until it is
-      # assigned again; for a member or an element, in the rest of the block.
+      # assigned again; for a member or an element, in the rest of the block unless a block around
+      # it (in effect the function) assigns it anywhere.
       - by-side-effect: true
         patterns:
           - pattern: assertFits($N, ...)
@@ -88,13 +97,15 @@ rules:
       - patterns:
           - pattern: $N
           - pattern-inside: "assertFits($N, ...);\n..."
+          - pattern-not-inside: "{\n...\n<... $N = $Y ...>;\n...\n}"
           - metavariable-regex:
               metavariable: $N
               regex: ^(?![A-Za-z_$][\w$]*$)
       # A guard: a name compared with an upper bound in the condition of an `if` whose body only
       # refuses, or the exact-length idiom of `decodeBars` (the frame's length against one computed
       # from the count). By side effect from the comparison, as `assertFits`: the name is clean from
-      # it on, until it is assigned again. A comparison with 0 or 1 is not a bound.
+      # it on, until it is assigned again. A comparison with 0 or 1 is not a bound, and the base of
+      # a member or an element compared (`o` in `o.a > MAX`) is not checked by it.
       - by-side-effect: true
         patterns:
           - pattern: $N
@@ -119,6 +130,8 @@ rules:
                   - pattern-either:
                       - pattern-inside: "$E = <... $N ...>;\nif ($B !== $E) $BODY"
                       - pattern-inside: "$E = <... $N ...>;\nif ($E !== $B) $BODY"
+          - pattern-not-inside: $N[$I]
+          - pattern-not-inside: $N.$P
           - metavariable-regex:
               metavariable: $N
               regex: ^[A-Za-z_$][\w$]*$
@@ -129,7 +142,8 @@ rules:
               metavariable: $BODY
               regex: (?s)^(?!.*(?:^|[;{}])\s*(?:if|for|while|switch)\s*\()(?!.*(?:^|[;{}])\s*(?:try|do)\s*\{).*(?:^|[;{}])\s*(?:throw|return|continue)\b[^;]*;?\s*\}?\s*$
       # The same shapes for a member or an element (each read of one is a source): the uses after
-      # the `if` in its block are clean, its own body is not.
+      # the `if` in its block are clean unless a block around them (in effect the function)
+      # assigns it anywhere; its own body is not.
       - patterns:
           - pattern: $N
           - pattern-either:
@@ -149,6 +163,7 @@ rules:
           - pattern-not-inside: "$E = <... $N ...>;\nif ($E !== $X) $S"
           - pattern-not-inside: "if (<... $X !== <... $N * $K ...> ...>) $S"
           - pattern-not-inside: "if (<... <... $N * $K ...> !== $X ...>) $S"
+          - pattern-not-inside: "{\n...\n<... $N = $Y ...>;\n...\n}"
           - metavariable-regex:
               metavariable: $N
               regex: ^(?![A-Za-z_$][\w$]*$)
@@ -189,8 +204,9 @@ rules:
               - pattern: $S.repeat($N)
               - pattern: $S.padStart($N, ...)
               - pattern: $S.padEnd($N, ...)
-              # Any loop condition the count flows into (`i < n`, `ok && i < n`, `n--`, `n`), and
-              # a cached length: `for (let i = 0, len = <count>; i < len; ...)`.
+              # A `for` (with an init), `while` or `do` condition the count flows into (`i < n`,
+              # `ok && i < n`, `n--`, `k-- > 0`, `n`), and a cached length:
+              # `for (let i = 0, len = <count>; i < len; ...)`.
               - pattern: for (...; $N; ...) $BODY
               - pattern: for (var $I = 0, $L = $N; ...; ...) $BODY
               - pattern: while ($N) $BODY
