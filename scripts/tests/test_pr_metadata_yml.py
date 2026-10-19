@@ -171,7 +171,14 @@ def _run(tmp_path: Path, main: Files, pr: Files) -> Any:
     return proc.returncode, proc.stdout.decode(), lines
 
 
-PR_COPY: Files = {"tools/triage/run.py": _stub("PR CODE RAN\n", 0)}
+# No PR code runs in the step: neither the PR's guard nor a root module that would shadow the one
+# the stop token is minted with, were that python not isolated (`-I`) from the PR's checkout.
+PR_COPY: Files = {
+    "tools/triage/run.py": _stub("PR CODE RAN\n", 0),
+    "secrets.py": "print('PR CODE RAN')\n",
+}
+# The stop token: `secrets.token_hex(16)`, 32 lowercase hex digits, on a line of its own.
+STOP = re.compile(r"^::stop-commands::([0-9a-f]{32})$", re.MULTILINE)
 
 
 def test_a_bug_closed_without_a_test_is_a_warning_and_a_summary_line(tmp_path: Path) -> None:
@@ -190,7 +197,7 @@ def test_a_last_line_without_a_newline_cannot_keep_workflow_commands_off(tmp_pat
     # a line, or every later line, the warning included, would print as plain text.
     out = "#12: FAIL - closing a Bug requires a regression test"
     rc, log, summary = _run(tmp_path, {"tools/triage/run.py": _stub(out, 1)}, {})
-    match = re.search(r"^::stop-commands::(\w{32})$", log, re.MULTILINE)
+    match = STOP.search(log)
     assert match, log
     lines, resume = log.splitlines(), f"::{match.group(1)}::"
     assert resume in lines and FAIL_12 in lines, log
@@ -202,11 +209,24 @@ def test_the_guards_output_is_printed_with_workflow_commands_off(tmp_path: Path)
     # An issue's exemption reason is quoted in the log: none of its lines may act as a command.
     out = "#3: PASS - exempt: typo\n::error title=x::forged\n"
     rc, log, summary = _run(tmp_path, {"tools/triage/run.py": _stub(out, 0)}, {})
-    match = re.search(r"^::stop-commands::(\w{32})$", log, re.MULTILINE)
+    match = STOP.search(log)
     assert match, log
     start, end = match.end(), log.index(f"\n::{match.group(1)}::\n")
     assert start < log.index("::error title=x::forged") < end
     assert (rc, summary) == (0, "") and WARNING not in log
+
+
+def test_every_run_mints_a_fresh_stop_token(tmp_path: Path) -> None:
+    # The token ends the region printed with workflow commands off, so no text the log quotes can
+    # know it beforehand: a new one on every run, from a python that loads none of the PR's code.
+    main: Files = {"tools/triage/run.py": _stub("#3: PASS - test file changed\n", 0)}
+    tokens: list[str] = []
+    for run in ("one", "two"):
+        (tmp_path / run).mkdir()
+        rc, log, summary = _run(tmp_path / run, main, PR_COPY)
+        assert (rc, summary) == (0, "") and "PR CODE RAN" not in log, log
+        tokens += STOP.findall(log)
+    assert len(tokens) == 2 and tokens[0] != tokens[1], tokens
 
 
 LINKED: Files = {
