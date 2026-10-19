@@ -175,7 +175,7 @@ class Journal:
 
     def __init__(self, *episodes: Episode) -> None:
         self.rows = {n: replace(e) for n, e in enumerate(episodes, start=1)}  # its own copies
-        self.fail: dict[str, Exception] = {}
+        self.fail: dict[str, BaseException] = {}
         self.hold: dict[str, asyncio.Event] = {}
         self.limits: list[int] = []
 

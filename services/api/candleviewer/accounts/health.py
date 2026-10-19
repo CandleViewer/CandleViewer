@@ -65,7 +65,8 @@ DMS_RETRY_MIN_S: Final = 1.0
 #: it. A write still running then is cancelled and left to unwind on its own task, never awaited (a
 #: driver's cleanup can wait on a stuck server). So, whatever the database does, the hook is called
 #: at most this long after its call starts, and both waits fit in the call's watch (twice the hook
-#: timeout): a slow or stuck write never abandons a call.
+#: timeout): a slow or stuck write never abandons a call. The watch starts with the record, so its
+#: wait comes out of the time a hook that times out gets to unwind (`DeadMansSwitch`).
 DMS_JOURNAL_TIMEOUT_S: Final = 1.0
 
 
@@ -164,7 +165,8 @@ class DeadMansSwitch(Protocol):
     is cancelled and gets the same time again to unwind; one that still has not returned is
     abandoned: logged as `account.dms_hook_stuck` and counted as failed, so it holds neither its
     account's next call nor `drain()`. The monitor keeps the abandoned task referenced until it
-    ends and never awaits it.
+    ends and never awaits it. With a journal, the time to unwind is less the wait for the episode's
+    record, up to `DMS_JOURNAL_TIMEOUT_S`: the call, and so its watch, starts with that wait.
 
     Across restarts (#837 W5), with an `EpisodeJournal`: an episode is recorded before its first
     call, so a kill (SIGKILL included, which skips `drain()`) leaves its row open for the next boot
@@ -509,6 +511,9 @@ class AccountHealthMonitor:
                 task.cancel()
         if not task.done():
             self._journal_failed(step, owed, TimeoutError.__name__)
+            return None
+        if task.cancelled():  # by its driver or a pool teardown, not by this call: it failed
+            self._journal_failed(step, owed, asyncio.CancelledError.__name__)
             return None
         if (error := task.exception()) is not None:
             self._journal_failed(step, owed, type(error).__name__)

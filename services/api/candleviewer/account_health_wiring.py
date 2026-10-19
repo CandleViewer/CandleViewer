@@ -52,6 +52,7 @@ import structlog
 
 from candleviewer.accounts.health import (
     DMS_HOOK_TIMEOUT_S,
+    AccountHealth,
     AccountHealthMonitor,
     Clock,
     DeadMansSwitch,
@@ -144,6 +145,13 @@ def _episode(row: DmsEpisodeRow) -> HealthTransition:
     return HealthTransition(row.account_id, state, HealthState.DOWN, reason, row.at)
 
 
+def _retrieved(task: asyncio.Task[Any]) -> None:
+    """Done-callback of a replay read: its outcome is retrieved, so one left to unwind is never
+    reported as unretrieved (its message could echo the driver's text, C-12.6)."""
+    if not task.cancelled():
+        task.exception()
+
+
 def logger() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
@@ -233,6 +241,8 @@ class AccountHealthRuntime:
         self._sleep = sleep
         self._tracked: set[UUID] = set()
         self._booted = False  # a tracking pass has worked: the boot's replay is done
+        self._replay: asyncio.Task[tuple[DmsEpisodeRow, ...]] | None = None  # the last replay read
+        self._replay_only: set[UUID] = set()  # tracked for a replayed call alone: the monitor's
         self._tasks: list[asyncio.Task[None]] = []
         self._loops: dict[str, _Loop] = {}
         self._failures: dict[str, int] = {}  # passes failed in a row, by loop
@@ -240,6 +250,11 @@ class AccountHealthRuntime:
         # the reconciler gives its evidence through this runtime, so a stop gates it as the feed
         self._reconciler = WalletReconciler(wallets, rest, self, standings)
         self.feed: AccountHealthFeed = _Feed(self)
+
+    def view(self, account_id: UUID) -> AccountHealth | None:
+        """The health the `wallet` topic shows (`HealthViews`): the monitor's, but none for an
+        account it tracks for a replayed call alone."""
+        return None if account_id in self._replay_only else self.monitor.view(account_id)
 
     # -- the evidence of the private-WS consumer (`AccountHealthFeed`, through `feed`) and of the
     # wallet reconciler (`HealthEvidence`). Once a stop has begun it gives nothing: evidence could
@@ -344,7 +359,7 @@ class AccountHealthRuntime:
         The first pass that works is the boot: it also reads the journal's open episodes, before
         anything is tracked (a failed read fails the pass), tracks its accounts `at_boot` and each
         episode's account too, owed that episode until its call has returned; once only. The wallet
-        cache tracks the accounts the repository reports, not one tracked for its replay alone."""
+        cache and topic hold the reported accounts, not one tracked for its replay alone."""
         if self._monitored is None:
             return
         async with asyncio.timeout(READ_TIMEOUT_S):
@@ -354,14 +369,17 @@ class AccountHealthRuntime:
         kept = wanted | {episode.account_id for episode, _ in replayed}
         added = kept - self._tracked
         removed = {account_id for account_id in self._tracked - kept if account_id not in owed}
+        shown = wanted & (added | self._replay_only)  # their monitoring starts, for the topic
+        self._replay_only = (self._replay_only | added) - wanted - removed
         for account_id in added:
             self.monitor.track(account_id, at_boot=not self._booted)
-            self.topic.health_changed(account_id)  # its monitoring starts (§15.4)
         for account_id in removed:
             self.monitor.untrack(account_id)
             self.wallets.untrack(account_id)
         for account_id in wanted:  # a replayed account alone is the monitor's, for its call
             self.wallets.track(account_id)
+        for account_id in shown:
+            self.topic.health_changed(account_id)  # its monitoring starts (§15.4)
         for episode, row in replayed:
             self.monitor.replay(episode, row)
         self._tracked = (self._tracked - removed) | added
@@ -375,10 +393,25 @@ class AccountHealthRuntime:
             )
 
     async def _replayed(self) -> list[tuple[HealthTransition, int]]:
+        """The open episodes, read as the monitor writes them: as a task of its own that the pass
+        waits for, `READ_TIMEOUT_S` at most. One still running then fails the pass and is cancelled
+        but never awaited (a driver's cleanup can wait on a stuck server); until it has ended, a
+        pass starts no other and fails at once."""
         if self._episodes is None:
             return []
-        async with asyncio.timeout(READ_TIMEOUT_S):
-            rows = await self._episodes.open_episodes(REPLAY_BATCH + 1)
+        if self._replay is not None and not self._replay.done():
+            raise TimeoutError
+        read = self._replay = spawn(
+            self._episodes.open_episodes(REPLAY_BATCH + 1), name="account-health-replay"
+        )
+        read.add_done_callback(_retrieved)
+        try:
+            await asyncio.wait({read}, timeout=READ_TIMEOUT_S)
+        finally:
+            read.cancel()  # a no-op once it is done; else it was cut off, or the pass cancelled
+        if not read.done() or read.cancelled():  # cut off, or cancelled by its driver
+            raise TimeoutError
+        rows = read.result()
         if len(rows) > REPLAY_BATCH:
             logger().error("account_health.replay_truncated", replayed=REPLAY_BATCH)
         return [(_episode(row), row.row) for row in rows[:REPLAY_BATCH]]
@@ -506,7 +539,7 @@ def wire_account_health(
     journal: EpisodeStore | None = None,
 ) -> AccountHealthRuntime:
     """Build the runtime; `create_app` calls it with the settings, its metrics, the `wallet` topic,
-    which this attaches to the monitor and the cache, and the stored-key self-check whose results
+    which this attaches to the runtime and the cache, and the stored-key self-check whose results
     the key standing reads (`None` on the fake backend, which has none). The rest are the seams of
     the bindings that land later and of the tests: the clock (the standing reads its wall time, the
     one the self-check dates passes on, and ages its last good read on the monotonic one), the
@@ -535,8 +568,7 @@ def wire_account_health(
         WalletThresholds.from_settings(settings),
         old_snapshot_decisions=register_r0(metrics)[OLD_SNAPSHOT_DECISIONS],
     )
-    topic.attach(monitor, wallets)
-    return AccountHealthRuntime(
+    runtime = AccountHealthRuntime(
         monitor,
         wallets,
         rest or UnavailableWalletRest(),
@@ -547,3 +579,5 @@ def wire_account_health(
         sleep=sleep,
         episodes=journal,
     )
+    topic.attach(runtime, wallets)
+    return runtime

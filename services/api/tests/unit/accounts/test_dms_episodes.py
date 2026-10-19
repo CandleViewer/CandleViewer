@@ -25,6 +25,7 @@ from candleviewer.accounts.health import (
 )
 from tests.unit.accounts._fakes import ACC, ACC_B, T0, Dms, Episode, FakeClock, Jitter, Journal
 from tests.unit.accounts._runtime_rig import START, Rig
+from tests.unit.accounts._wallet_ws import Conn, owner
 
 _ECHO = "echoed exchange text: key abc123"  # what a failing journal's message may carry
 _OPEN = Episode(ACC, "degraded", "no_success", T0)  # a row a killed process left open
@@ -108,15 +109,18 @@ async def test_a_retried_call_reuses_its_row_and_its_success_resolves_it() -> No
     assert len(dms.transitions) == 2 and len(journal.rows) == 1 and journal.open() == []
 
 
-async def test_a_failed_advance_write_still_calls_the_hook_logs_critical_and_counts() -> None:
+@pytest.mark.parametrize("error", [RuntimeError(_ECHO), asyncio.CancelledError()])  # its driver's
+async def test_a_failed_advance_write_still_calls_the_hook_logs_critical_and_counts(
+    error: BaseException,
+) -> None:
     journal = Journal()
-    journal.fail["record"] = RuntimeError(_ECHO)
+    journal.fail["record"] = error
     monitor, clock, dms = _journaled(journal)
     with capture_logs() as logs:
         down = _down(monitor, clock)
         await monitor.drain()
     assert dms.transitions == [down] and monitor.owed() == []  # the policy ran: delivered
-    assert _journal_failures(logs) == [("critical", "record", "RuntimeError")]
+    assert _journal_failures(logs) == [("critical", "record", type(error).__name__)]
     assert monitor.journal_failures == 1 and journal.rows == {} and _ECHO not in repr(logs)
 
 
@@ -169,6 +173,7 @@ async def test_a_resolve_stuck_past_its_cancellation_ends_the_call_as_delivered(
     asyncio.get_running_loop().set_exception_handler(lambda _, context: unretrieved.append(context))
     journal.hold["resolve"], journal.fail["resolve"] = asyncio.Event(), RuntimeError(_ECHO)
     monitor, clock, dms = _journaled(journal, journal_timeout_s=0.001)
+    monitor.track(ACC_B)
     try:
         with capture_logs() as logs:
             down = _down(monitor, clock)
@@ -177,6 +182,11 @@ async def test_a_resolve_stuck_past_its_cancellation_ends_the_call_as_delivered(
         assert dms.transitions == [down] and monitor.owed() == [] and journal.open() == [ACC]
         assert _journal_failures(logs) == [("error", "resolve", "TimeoutError")]
         assert monitor.journal_failures == 1 and not _HOOK_TROUBLE & {e["event"] for e in logs}
+        monitor.rest_ok(ACC_B)  # ACC_B goes down while ACC's write unwinds: the skip is per
+        clock.advance(30)  # account, so ACC_B's record is written (its resolve then sticks too)
+        monitor.tick()
+        await monitor.drain()
+        assert journal.open() == [ACC, ACC_B]
     finally:
         journal.hold["resolve"].set()  # its cleanup then fails: the monitor retrieves that
         await asyncio.wait(_writes())  # which retrieves nothing
@@ -219,15 +229,18 @@ async def test_an_episode_a_kill_cut_short_is_replayed_once_by_the_next_boot() -
     assert third.dms.calls == [] and journal.open() == []
 
 
-async def test_a_call_whose_resolve_never_committed_is_made_once_more_by_the_next_boot() -> None:
+@pytest.mark.parametrize("error", [RuntimeError(_ECHO), asyncio.CancelledError()])
+async def test_a_call_whose_resolve_never_committed_is_made_once_more_by_the_next_boot(
+    error: BaseException,
+) -> None:
     journal = Journal()
     first = Rig(journal=journal)
-    journal.fail["resolve"] = RuntimeError(_ECHO)  # the hook has returned; the resolve is lost
+    journal.fail["resolve"] = error  # the hook has returned; the resolve is lost
     with capture_logs() as logs:
         await _silent_down(first)
         await first.close()
     assert first.dms.calls == [(ACC, "no_success")] and journal.open() == [ACC]
-    assert _journal_failures(logs) == [("error", "resolve", "RuntimeError")]
+    assert _journal_failures(logs) == [("error", "resolve", type(error).__name__)]
     assert first.runtime.monitor.journal_failures == 1
     del journal.fail["resolve"]
     second, third = await _restart(journal), await _restart(journal)
@@ -252,36 +265,79 @@ async def test_a_failed_replay_read_fails_the_boot_pass_and_the_next_pass_retrie
     with pytest.raises(RuntimeError):
         await rig.runtime.refresh_tracking()
     assert rig.runtime.monitor.current(ACC) is None  # nothing tracked: the gate refuses it
+    journal.fail["read"] = asyncio.CancelledError()  # its driver's: a failed pass, as well
+    with pytest.raises(TimeoutError):
+        await rig.runtime.refresh_tracking()
     del journal.fail["read"]
     for _ in range(2):  # it works, then a later pass reads no more
         await rig.runtime.refresh_tracking()
     await rig.runtime.monitor.drain()
     assert rig.dms.calls == [(ACC, "no_success")]
-    assert journal.limits == [wiring.REPLAY_BATCH + 1] * 2
+    assert journal.limits == [wiring.REPLAY_BATCH + 1] * 3
 
 
-async def test_the_replay_reads_one_bounded_batch_and_says_when_rows_are_left_open(
+async def test_a_replay_read_stuck_past_its_cancellation_fails_the_pass_within_its_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(wiring, "REPLAY_BATCH", 1)
+    monkeypatch.setattr(wiring, "READ_TIMEOUT_S", 0.001)
+    journal = Journal(_OPEN)
+    journal.hold["read"] = stuck = asyncio.Event()  # it answers neither the read nor its cancel
+    rig = Rig(journal=journal)
+    for _ in range(2):  # a failed pass each; the second starts no read while the first unwinds
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(1) as deadline:  # so that a lost bound fails, not hangs
+                await rig.runtime.refresh_tracking()
+        assert not deadline.expired() and journal.limits == [wiring.REPLAY_BATCH + 1]
+    assert rig.runtime.monitor.current(ACC) is None  # nothing tracked: the gate refuses it
+    stuck.set()  # the server answers: the read left to unwind ends, and the next pass replays
+    await asyncio.wait({t for t in asyncio.all_tasks() if t.get_name() == "account-health-replay"})
+    await rig.runtime.refresh_tracking()
+    await rig.runtime.monitor.drain()
+    assert rig.dms.calls == [(ACC, "no_success")]
+
+
+@pytest.mark.parametrize(
+    ("batch", "left_open", "logged"),
+    [(1, [ACC], [("error", 1)]), (2, [], [])],  # 2: an exact fit
+)
+async def test_the_replay_reads_one_bounded_batch_and_says_when_rows_are_left_open(
+    monkeypatch: pytest.MonkeyPatch, batch: int, left_open: list[Any], logged: list[Any]
+) -> None:
+    monkeypatch.setattr(wiring, "REPLAY_BATCH", batch)
     journal = Journal(_OPEN, Episode(ACC_B, "healthy", "no_success", T0))
     rig = Rig(ACC, ACC_B, journal=journal)
     with capture_logs() as logs:
         await rig.runtime.refresh_tracking()
         await rig.runtime.monitor.drain()
-    assert journal.limits == [2] and rig.dms.calls == [(ACC_B, "no_success")]  # the newest
+    assert journal.limits == [batch + 1] and journal.open() == left_open  # the newest first
     truncated = [e for e in logs if e["event"] == "account_health.replay_truncated"]
-    assert [(e["log_level"], e["replayed"]) for e in truncated] == [("error", 1)]
+    assert [(e["log_level"], e["replayed"]) for e in truncated] == logged
 
 
 async def test_a_replayed_account_no_longer_wanted_is_tracked_for_its_call_then_dropped() -> None:
     rig = Rig(ACC_B, journal=Journal(_OPEN))  # ACC was disabled while the process was down
+    before, after = (Conn(rig.hub, rig.topic, owner(), rig.clock) for _ in range(2))
+    before.sub(ACC, ACC_B)
     await rig.boot()
     assert rig.dms.calls == [(ACC, "no_success")]  # tracked at boot, so its call is made
     assert rig.runtime.monitor.current(ACC) is not None and rig.runtime.wallets.view(ACC) is None
+    after.sub(ACC, ACC_B)  # nor does the `wallet` topic show it: no delta, no snapshot entry
+    frames = before.take() + after.take()
+    assert {e["exchange_account_id"] for _, p in frames for e in p["health"]} == {str(ACC_B)}
     await rig.run(16)  # the pass at 15 s finds nothing owed for it
     assert rig.runtime.monitor.current(ACC) is None
     await rig.close()
+
+
+async def test_a_replayed_account_wanted_again_is_announced_by_the_pass_that_finds_it() -> None:
+    rig = Rig(ACC_B, journal=Journal(_OPEN))
+    conn = Conn(rig.hub, rig.topic, owner(), rig.clock)
+    conn.sub(ACC)
+    await rig.boot()
+    rig.wanted = frozenset({ACC, ACC_B})  # the owner enables ACC again
+    await rig.run(16)
+    await rig.close()
+    assert [len(p["health"]) for _, p in conn.take()] == [0, 1]  # the snapshot, then its start
 
 
 async def test_an_account_still_down_with_no_evidence_30_s_after_boot_is_owed_one_call() -> None:
@@ -296,6 +352,16 @@ async def test_an_account_still_down_with_no_evidence_30_s_after_boot_is_owed_on
     boot = HealthTransition(ACC, HealthState.DOWN, HealthState.DOWN, "never_connected", at)
     assert rig.dms.transitions == [boot] and journal.open() == [] and len(journal.rows) == 1
     assert rig.dms.called_at == [START + 30]  # the tick at exactly 30 s, not the next one
+
+
+async def test_a_boot_episode_a_late_tick_finds_is_dated_when_its_window_lapsed() -> None:
+    clock, dms = FakeClock(), Dms()
+    monitor = AccountHealthMonitor(clock, dms)
+    monitor.track(ACC, at_boot=True)
+    clock.advance(32)  # the first tick after the window comes 2 s late
+    monitor.tick()
+    await monitor.drain()
+    assert [t.at for t in dms.transitions] == [T0 + timedelta(seconds=30)]
 
 
 async def test_no_boot_episode_once_evidence_arrives_nor_for_an_account_tracked_later() -> None:
