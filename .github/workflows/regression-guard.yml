@@ -7,7 +7,9 @@ name: regression-guard
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+    # #3751: the guard reads the PR's files and body (its `Closes #N` lines) and each closed
+    # issue's own labels, never the PR's labels, so a PR label event changes nothing it reads.
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   contents: read
@@ -16,7 +18,7 @@ permissions:
 
 # #3751: each body edit or push replaces the PR's previous run instead of queueing behind it.
 concurrency:
-  group: regression-guard-${{ github.head_ref }}
+  group: regression-guard-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:

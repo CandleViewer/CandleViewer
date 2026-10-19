@@ -5,6 +5,12 @@ account's concurrency limit, and every PR's `ci-required` waits behind the dupli
 group keyed on the PR (its head ref, number or merge ref) with `cancel-in-progress` true for
 pull_request events replaces the previous run instead. Scheduled, dispatched and push runs
 keep groups a PR run never shares, so they are never cancelled by one.
+
+The orchestrator's count on 2026-10-19 found about 950 auxiliary runs against 14 `pr` runs in
+10 hours, so the auxiliary workflows also start fewer runs: `regression-guard` no longer runs on
+a PR label event, which changes nothing it reads, and `board-automation` runs no job unless
+`GOVERNANCE_ENFORCE` is "true" (observe-only runs enforced nothing) and runs its three close
+guards in one job.
 """
 
 from __future__ import annotations
@@ -54,3 +60,44 @@ def test_a_pull_request_workflow_cancels_the_prs_superseded_run(path: Path) -> N
     assert cancel is True or (
         isinstance(cancel, str) and "github.event_name == 'pull_request'" in cancel
     ), f"{path.name}: cancel-in-progress {cancel!r} does not cancel a superseded PR run"
+
+
+def _load(name: str) -> dict[Any, Any]:
+    doc: dict[Any, Any] = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text("utf-8"))
+    return doc
+
+
+def test_regression_guard_reruns_only_when_what_it_reads_changes() -> None:
+    # It reads the PR's files, its body (`Closes #N`) and each closed issue's own labels.
+    doc = _load("regression-guard.yml")
+    assert _on(doc)["pull_request"]["types"] == ["opened", "edited", "synchronize", "reopened"]
+    assert doc["concurrency"]["group"] == "regression-guard-${{ github.event.pull_request.number }}"
+
+
+ENFORCING = "vars.GOVERNANCE_ENFORCE == 'true'"
+CLOSE_GUARDS = ["qa-guard", "security-guard --mode close", "a11y-guard"]
+
+
+def test_board_automation_runs_no_job_unless_the_guards_enforce() -> None:
+    jobs = _load("board-automation.yml")["jobs"]
+    assert sorted(jobs) == ["close-guards", "kind-sync", "security-label-sync"]
+    for name, job in jobs.items():
+        assert str(job["if"]).startswith(f"{ENFORCING} && "), name
+
+
+def test_board_automation_runs_the_three_close_guards_in_one_job() -> None:
+    job = _load("board-automation.yml")["jobs"]["close-guards"]
+    assert job["if"] == f"{ENFORCING} && github.event.action == 'closed'"
+    assert job["env"] == {
+        "ISSUE_NUMBER": "${{ github.event.issue.number }}",
+        "ACTOR_LOGIN": "${{ github.event.sender.login }}",
+    }
+    guards = [step for step in job["steps"] if "run" in step]
+    assert [step["run"] for step in guards] == [
+        f"python -m scripts.gh.run_guard {guard}" for guard in CLOSE_GUARDS
+    ]
+    # One guard's failure never skips another's check: each later guard runs unless the run was
+    # cancelled or Python never got set up.
+    assert "if" not in guards[0]
+    after = "${{ !cancelled() && steps.python.outcome == 'success' }}"
+    assert [step["if"] for step in guards[1:]] == [after, after]
