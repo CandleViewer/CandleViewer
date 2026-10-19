@@ -138,7 +138,9 @@ def test_store_is_bounded() -> None:
     assert len(store._held) == 3 and _fetch(store, issued[0]) == LinkUnknown()
     assert all(isinstance(_fetch(store, token), LinkGone) for token in issued[1:])
     clock.now = T0 + LINK_TTL  # expired links are not live either
-    assert [_issue(store) for _ in range(3)] and len(store._held) == 5
+    for _ in range(3):
+        _issue(store)
+    assert len(store._held) == 5
 
 
 @pytest.mark.parametrize("spent_after", [timedelta(minutes=1), None], ids=["spent", "unspent"])
@@ -167,3 +169,14 @@ def test_a_discarded_link_is_unknown_and_frees_its_place() -> None:
     store.discard(link.link_id)  # once is enough; again is nothing
     assert _fetch(store, token) == LinkUnknown()
     _issue(store)
+
+
+def test_a_token_no_codec_can_encode_is_unknown_never_an_error() -> None:
+    store = DownloadLinks()
+    _issue(store)
+    assert _fetch(store, "\ud800" * 43) == LinkUnknown()  # a lone surrogate, from a path
+
+
+def test_the_default_clock_is_utc() -> None:
+    _, link = _issue(DownloadLinks())
+    assert link.issued_at.utcoffset() == link.expires_at.utcoffset() == timedelta(0)

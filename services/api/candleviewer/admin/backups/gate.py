@@ -20,7 +20,8 @@ Bounds (`limits`): an admission waits `ADMIT_WAIT_S` for the lock, then `OpsUnav
 `store_unavailable`, retryable) with nothing registered; every await inside an admission needs
 its own budget, since a stalled one holds the lock for every caller. An admitted job's `work`
 ends at its kind's `JOB_DEADLINE_S` and fails `internal_error`. The lock is not re-entrant: an
-`admit` or `admit_delete` inside an admission block waits on itself, then is refused."""
+`admit`, `admit_delete` or `admit_link` inside an admission block waits on itself, then is
+refused."""
 
 from __future__ import annotations
 

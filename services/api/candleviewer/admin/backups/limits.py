@@ -27,7 +27,10 @@ JOB_DEADLINE_S: Final[Mapping[JobKind, float]] = {
     "backup_verify": 12 * _HOUR,
     "backup_restore": 24 * _HOUR,
 }
-RESOLVE_BUDGET_S: Final = 2.0  # one artefact resolve, under the admission lock
+#: `issueBackupDownload`: a user may issue at most 10 links per hour; one counts from its check.
+LINKS_PER_HOUR: Final = 10
+#: A link issue holds the lock 4.5 s at worst (read 2, resolve, record 2): under `ADMIT_WAIT_S`.
+RESOLVE_BUDGET_S: Final = 0.5  # one artefact resolve: a walk of the path and an fstat
 LINK_RECORD_BUDGET_S: Final = 2.0  # one `backup.downloaded` record
 #: `createBackup`: "A user may start at most 4 runs in a rolling hour"; a run counts once its
 #: `requested` record is written, and so does a refusal of an unencrypted plan once its record is.

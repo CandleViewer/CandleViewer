@@ -149,6 +149,11 @@ class _AuthLike(Protocol):
     def sessions_is_active(self) -> bool: ...
 
 
+#: The two seams a handler-gated route passes to `require_bound_elevation`, by public name.
+StepUpAuth = _AuthLike
+StepUpEmitter = _Emitter
+
+
 class _UserLookup(Protocol):
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None: ...
 
@@ -547,6 +552,9 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # the handler test. The restore's write-ahead audit record must name the `challenge_id` of
     # the `SpentGrant` that gate returns (B16 records no spend: #2799).
     ("POST", "/admin/backups/{backupId}/restore", "backups"),
+    # issueBackupDownload (04 §7.2.2 row 52a, E42-T05 BK-10): the same no-grace class, one fresh
+    # code per link; its handler spends the grant after the 404, the 501 and the hourly limit.
+    ("POST", "/admin/backups/{backupId}/download", "backups"),
     # #2738 (SR-025, 04 §7.2.2 rows 8, 9 and 9a). Not mounted yet: the E16-T08 (#492) PR that
     # mounts them must drop them from the registry test's `_PENDING_HANDLER_GATES` (it fails
     # while a listed route is mounted), add the handler test, and demand `recorder` elevation
@@ -926,6 +934,8 @@ def make_step_up_router(
 
 __all__ = [
     "SpentGrant",
+    "StepUpAuth",
+    "StepUpEmitter",
     "StepUpRefused",
     "make_read_only_guard",
     "make_step_up_router",

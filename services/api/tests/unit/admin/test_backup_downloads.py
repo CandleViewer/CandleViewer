@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.admin.backups import limits
+from candleviewer.admin.backups import catalogue, limits
 from candleviewer.admin.backups.downloads import USABLE_STATUSES, LinkNotUsable, LinkRecord
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.links import LINK_TTL, DownloadLinks, LinksFull, LinkSpent
@@ -182,10 +182,29 @@ async def test_a_session_less_caller_is_refused_before_anything() -> None:
     assert (w.store.calls, w.audit.records) == ([], [])
 
 
-def test_each_wait_defaults_to_its_limits_budget() -> None:
+def test_each_wait_defaults_to_its_limits_budget_and_all_fit_the_admission_wait() -> None:
     downloads = world([row(1)]).downloads
     budgets = (limits.RESOLVE_BUDGET_S, limits.LINK_RECORD_BUDGET_S)
-    assert (downloads._resolve_budget_s, downloads._record_budget_s) == budgets == (2.0, 2.0)
+    assert (downloads._resolve_budget_s, downloads._record_budget_s) == budgets == (0.5, 2.0)
+    held = catalogue.READ_BUDGET_S + sum(budgets)  # the row read, a resolve, a record
+    assert held == 4.5 < limits.ADMIT_WAIT_S  # one issue never times out the next admission
+
+
+async def test_a_cancelled_record_write_leaves_no_link() -> None:
+    w, writing = world([row(1)]), asyncio.Event()
+
+    async def stalled(entry: LinkRecord) -> None:
+        writing.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(w.downloads.issue(BID, WHO, GRANT, stalled))
+    async with asyncio.timeout(_BOUND):
+        await writing.wait()
+        assert len(w.links._held) == 1  # minted, its record under way
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert w.links._held == {}  # never sent: discarded with the cancelled write
 
 
 def test_backup_downloaded_is_a_registered_action() -> None:

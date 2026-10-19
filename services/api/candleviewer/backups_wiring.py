@@ -16,7 +16,9 @@
   restart lost and counts them with the jobs it lost (SR-BK7-05).
 - BK-13: the restore guard reads maintenance mode fresh from the flag repository
   (`FlagStoreMaintenance`) and positions stay unknown. Nothing builds it until BK-14 mounts the
-  restore after D7 (#3084)."""
+  restore after D7 (#3084).
+- BK-10: a download link is issued once the catalogue is read and `CV_BACKUP_ROOT` is set; until
+  then `POST /admin/backups/{backupId}/download` answers `501` before any challenge."""
 
 from __future__ import annotations
 
@@ -30,19 +32,23 @@ import structlog
 
 from candleviewer.admin.backups import ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
+from candleviewer.admin.backups.downloads import BackupDownloads
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.limits import RUNS_PER_HOUR
+from candleviewer.admin.backups.links import DownloadLinks
 from candleviewer.admin.backups.metrics import BackupFreshness, export_backup_metrics
 from candleviewer.admin.backups.ports import JOB_ERROR_CODES, BackupJobError, JobEnd
 from candleviewer.admin.backups.rows import LostCount, LostRuns, RunAudit, RunRows
 from candleviewer.admin.backups.runs import BackupRuns
 from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.service import DEFAULT_READ_BUDGET_MS
+from candleviewer.admin.http import AuditEmitter
 from candleviewer.api.audit_limiter import AuditVerifyLimiter
 from candleviewer.api.recorder_admin import AdminJobStore, Job
 from candleviewer.auth.step_up import POSITION_SOURCE_NOT_DEPLOYED
 from candleviewer.observability.metrics import CollectorRegistry, ReexportCollector
 from candleviewer.settings import Settings
+from candleviewer.storage.backup_artefacts import LocalArtefactStore
 from candleviewer.storage.repositories.backups_sqlalchemy import SqlAlchemyBackups
 from candleviewer.storage.repositories.flags_sqlalchemy import FlagRow
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
@@ -190,3 +196,14 @@ def build_backup_runs(
     limit = AuditVerifyLimiter(rate_per_hour=RUNS_PER_HOUR)
     runs = BackupRuns(rows, None, gate=gate, jobs=AdminJobRunner(jobs), audit=audit, limit=limit)
     return runs, None if rows is None else LostRuns(rows)
+
+
+def build_backup_downloads(
+    settings: Settings, catalogue: BackupCatalogue, *, gate: BackupJobGate, audit: AuditEmitter
+) -> BackupDownloads | None:
+    """The link issue on the catalogue the reads serve, under the one admission lock; None until
+    `BACKUPS_CATALOGUED` and `CV_BACKUP_ROOT` are both set."""
+    if not (BACKUPS_CATALOGUED and settings.backup_root):
+        return None
+    reader = LocalArtefactStore(settings.backup_root)
+    return BackupDownloads(catalogue, reader, DownloadLinks(), gate=gate, audit=audit)

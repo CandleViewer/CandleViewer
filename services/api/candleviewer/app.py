@@ -82,6 +82,7 @@ from candleviewer.api import (
     make_ticker_router,
     make_trades_router,
 )
+from candleviewer.api.admin_backup_links import make_admin_backup_links_router
 from candleviewer.api.admin_backups import make_admin_backup_runs_router, make_admin_backups_router
 from candleviewer.api.admin_capacity import make_admin_capacity_router
 from candleviewer.api.admin_jobs import LostJobsCount, make_admin_jobs_router
@@ -164,6 +165,7 @@ from candleviewer.auth.session_service import (
 from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
 from candleviewer.backups_wiring import (
     build_admin_backups,
+    build_backup_downloads,
     build_backup_freshness,
     build_backup_runs,
     serve_backup_metrics,
@@ -1936,11 +1938,10 @@ def create_app(
     )
     # E42-T05 (#966 BK-4): the backup catalogue reads, `backups:read` on the audited admin router;
     # `501 not_implemented` until a backup engine records runs (`BACKUPS_CATALOGUED`).
+    backups_catalogue = build_admin_backups(resolved, system_settings=admin_settings)
     app.include_router(
         make_admin_backups_router(
-            build_admin_backups(resolved, system_settings=admin_settings),
-            resolver=audit_resolver,
-            audit=_LazyAuditEmitter(ctx.audit),
+            backups_catalogue, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
         )
     )
     # BK-5: the backup series and the freshness the lifespan loads, also only once catalogued.
@@ -1962,6 +1963,19 @@ def create_app(
     app.include_router(
         make_admin_backup_runs_router(
             backup_runs, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+        )
+    )
+    # BK-10: a single-use download link (`backups:write`, one fresh `backups` step-up each), `501`
+    # until the catalogue and an artefact store are wired, on the one gate above.
+    app.include_router(
+        make_admin_backup_links_router(
+            backups_catalogue,
+            build_backup_downloads(
+                resolved, backups_catalogue, gate=backups_gate, audit=_LazyAuditEmitter(ctx.audit)
+            ),
+            auth=ctx.auth,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
         )
     )
     # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
