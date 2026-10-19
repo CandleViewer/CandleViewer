@@ -6,9 +6,11 @@ import { withThemeRuntime } from "./withThemeRuntime.js";
 
 const preview: Preview = {
   parameters: {
-    // Zero serious/critical a11y violations is the bar (CONSTITUTION §9 #9).
+    // Serious and critical violations fail a story, moderate and minor are only reported
+    // (03-testing-strategy.md): the addon's `toHaveNoViolations` keeps the `impactLevels` axe echoes.
     a11y: {
       test: "error",
+      options: { impactLevels: ["critical", "serious"] },
     },
     controls: {
       matchers: {

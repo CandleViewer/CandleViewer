@@ -114,6 +114,11 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 
 - Run: `build:tokens`, then `storybook` (dev server, port 6006) or `storybook:build`. The preview
   imports the generated token bundles the app imports. Storybook 10 needs Node 20.19+ or 22.12+.
+- Test: `storybook:test` runs the `storybook` Vitest project (`@storybook/addon-vitest`) in headless
+  Chromium (once: `pnpm --filter @candleviewer/ui exec playwright install chromium`): each story's
+  play function, then axe. A serious or critical violation fails the story, naming the rule and the
+  element; moderate and minor are reported only. Stories tagged `perf` are skipped unless
+  `CV_STORYBOOK_PERF=1` (a quiet machine).
 - Organisation: titles sit under a catalogue band (`Atoms/` .. `ChartEngine/`, see catalogue
   §0.3 rule 8) or `Foundations/`; the `candleviewer/story-title-bands` lint rule fails any other.
   The Theme, Density and Motion toolbars drive the E05-T02 runtime; decorators paint the canvas with
@@ -127,5 +132,5 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   Dictionary-driven, see above) then the tsup build.
 - `pnpm --filter @candleviewer/ui build:tokens` — token build only.
 - `pnpm --filter @candleviewer/ui storybook` — dev server with the a11y addon.
-- `pnpm --filter @candleviewer/ui storybook:build` — static build.
-- `pnpm --filter @candleviewer/ui test` / `test:cov` — Vitest, ≥80% gate.
+- `pnpm --filter @candleviewer/ui storybook:build` / `storybook:test` — static build / its Vitest project.
+- `pnpm --filter @candleviewer/ui test` / `test:cov` — the Vitest unit project, ≥80% gate.

@@ -219,8 +219,13 @@ export const TextScaleReflow: Story = {
   },
 };
 
-/** One-frame budget: the median of 30 warmed theme and density switches over 500 rows stays within 16.6 ms. */
+/**
+ * One-frame budget: the median of 30 warmed theme and density switches over 500 rows stays within 16.6 ms.
+ * Tagged `perf`: a wall-clock budget is not a pass/fail check on a shared CI runner, so the storybook
+ * Vitest project skips it (#269); on a quiet machine run `CV_STORYBOOK_PERF=1 storybook:test`.
+ */
 export const StyleRecalcBenchmark: Story = {
+  tags: ["perf"],
   render: () => <Benchmark />,
   play: async ({ canvasElement }) => {
     const ui = within(canvasElement);

@@ -147,10 +147,12 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
+  # #269 (E05-T03) adds vitest browser mode (packages/ui's Storybook a11y gate); its C-10.2 security
+  # review covers the reason's new last clause, for the owner to ratify on #2701.
   - id: "GHSA-82fw-gwwq-j7x9"
     tool: npm-audit
     severity: MEDIUM
-    reason: "vitest and @vitest/mocker 3.2.7, test-only, never shipped; fixed only in 4.1.11, a major (#1819 test-stack step). Reached through the mocker plugins on a dev server's socket; no package uses them or vitest browser mode. Also covers Dependabot alerts 35, 37, 41, 43, 45, 47 and 49"
+    reason: "vitest and @vitest/mocker 3.2.7, test-only, never shipped; fixed only in 4.1.11, a major (#1819 test-stack step). Reached without authentication through the public mocker plugins on a dev server's socket, which no package uses. packages/ui's browser-mode project (#269) registers mocks over vitest's token-authenticated browser RPC on a localhost-bound server, with the browser API's file writes and exec off. Also covers Dependabot alerts 35, 37, 41, 43, 45, 47 and 49"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"

@@ -20,15 +20,16 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:cov": "vitest run --coverage",
+    "test": "vitest run --project unit",
+    "test:cov": "vitest run --project unit --coverage",
     "build": "pnpm run build:tokens && tsup",
     "build:tokens": "node scripts/build-tokens.mjs",
     "contrast:gate": "node ../../tools/contrast/generate.mjs && node ../../tools/contrast/data-ink.mjs --check && node ../../tools/contrast/no-hue-alone.mjs",
     "contrast:data-ink": "node ../../tools/contrast/data-ink.mjs",
     "size": "echo \"@candleviewer/ui: size-limit wired alongside E05 components\"",
     "storybook": "storybook dev -p 6006 -c .storybook",
-    "storybook:build": "storybook build -c .storybook -o storybook-static"
+    "storybook:build": "storybook build -c .storybook -o storybook-static",
+    "storybook:test": "vitest run --project storybook"
   },
   "devDependencies": {
     "@candleviewer/config": "workspace:*",
