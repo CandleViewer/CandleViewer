@@ -32,7 +32,8 @@ name: fuzz-nightly
 # uploaded ONLY as an `openssl enc` archive (AES-256-CBC, PBKDF2) keyed from the Actions secret
 # CV_FUZZ_ARTIFACT_KEY (32 characters or more), which reaches that one step through its
 # environment. Without such a key the job uploads nothing, so that night's failing inputs are
-# lost, and still fails with the digest. The owner decrypts offline:
+# lost, and still fails with the digest. The owner downloads the artifact (GitHub serves it as a
+# zip), unzips it, and decrypts the .enc file offline:
 #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:CV_FUZZ_ARTIFACT_KEY \
 #     -in fuzz-failures-python.enc | tar -xzf -
 # No issue is filed automatically; a red night is reported privately.
