@@ -3,8 +3,8 @@
 The session guard refuses a lookup of a host outside the loopback/CV_CI_ALLOWED_HOSTS
 allow-list at every resolver entry point, before the resolver runs; loopback and the
 allow-listed compose names keep resolving; and every refusal is recorded, so a client
-that absorbs the error still fails its test at teardown (a refusal left after the last
-test fails the session, and a wrapper left replaced fails its test and is put back).
+that absorbs the error still fails its test at teardown; a wrapper left replaced fails
+its test and is put back, and either left after the last test fails the session.
 No lookup leaves the machine here: refused names use the reserved `.invalid` TLD and
 TEST-NET-1, the captured real resolvers are tripwires while they are tried, and the real
 lookups are loopback only.
@@ -226,6 +226,7 @@ def absorbs_a_lookup_at_module_teardown():
         socket.getaddrinfo("venue.invalid", 443)
     except Exception:
         pass
+    socket.socket.connect_ex = lambda self, address: 0  # and leaves a wrapper replaced
 
 
 def test_the_last_test(absorbs_a_lookup_at_module_teardown):
@@ -274,7 +275,7 @@ def test_a_refusal_absorbed_by_the_code_under_test_fails_that_test(
     )
 
 
-def test_a_refusal_left_after_the_last_test_fails_the_session(
+def test_a_refusal_or_wrapper_left_after_the_last_test_fails_the_session(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = _run_inner(pytester, monkeypatch, _LEFT_AFTER_THE_LAST_TEST)
@@ -282,7 +283,8 @@ def test_a_refusal_left_after_the_last_test_fails_the_session(
     result.stdout.fnmatch_lines(
         [
             "*ERROR at teardown of test_the_last_test*",
-            "*network guard refused 1 outbound attempt(s) after the last test: "
+            "*the network guard's connect_ex wrapper(s) were replaced after the last test and left "
+            "in place*network guard refused 1 outbound attempt(s) after the last test: "
             "getaddrinfo('venue.invalid'). *",
         ]
     )

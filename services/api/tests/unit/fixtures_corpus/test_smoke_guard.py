@@ -9,6 +9,7 @@ import importlib.util
 import os
 import socket
 import tomllib
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -68,14 +69,21 @@ def test_every_smoke_test_carries_the_marker() -> None:
     assert "pytestmark = pytest.mark.exchange_smoke" in src
 
 
-@pytest.mark.parametrize(("opt_in", "looked_up"), [(None, ()), ("1", DEMO_HOSTS)])
-def test_smoke_conftest_resolves_the_demo_hosts_at_import_only_when_opted_in(
-    monkeypatch: pytest.MonkeyPatch, opt_in: str | None, looked_up: tuple[str, ...]
+@pytest.mark.parametrize(
+    ("env", "looked_up", "aborts"),
+    [
+        pytest.param({}, (), False, id="unset"),
+        pytest.param({"CV_EXCHANGE_SMOKE": "1"}, DEMO_HOSTS, False, id="demo"),
+        pytest.param({"CV_EXCHANGE_SMOKE": "1", "CV_ENVIRONMENT": "live"}, (), True, id="live"),
+    ],
+)
+def test_smoke_conftest_resolves_the_demo_hosts_at_import_only_when_opted_in_on_demo(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], looked_up: tuple[str, ...], aborts: bool
 ) -> None:
     for key in [k for k in os.environ if k.upper().startswith("CV_")]:
-        monkeypatch.delenv(key)  # a clean demo configuration: no CV_* variable but the opt-in
-    if opt_in is not None:
-        monkeypatch.setenv("CV_EXCHANGE_SMOKE", opt_in)
+        monkeypatch.delenv(key)  # a clean configuration: no CV_* variable but those in `env`
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
     seen: list[object] = []
 
     def resolver(host: object, *_args: object, **_kwargs: object) -> list[Any]:
@@ -86,6 +94,7 @@ def test_smoke_conftest_resolves_the_demo_hosts_at_import_only_when_opted_in(
     spec = importlib.util.spec_from_file_location("cv_smoke_conftest_probe", _SMOKE_CONFTEST)
     assert spec is not None and spec.loader is not None
     conftest = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(conftest)  # a fresh import, as collection runs it before the guard
-    assert tuple(seen) == looked_up  # unset: the early resolution never runs
-    assert conftest.DEMO_IPS == ({"192.0.2.10"} if looked_up else frozenset())
+    with pytest.raises(SmokeGuardError) if aborts else nullcontext():
+        spec.loader.exec_module(conftest)  # a fresh import, as collection runs it before the guard
+    assert tuple(seen) == looked_up  # unset, or live-looking: the early resolution never runs
+    assert getattr(conftest, "DEMO_IPS", frozenset()) == ({"192.0.2.10"} if looked_up else set())
