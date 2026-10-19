@@ -500,6 +500,15 @@ def test_restore_backup_is_handler_gated_because_its_grant_binds_one_request() -
     assert "backups" in NO_GRACE_ACTION_CLASSES and not _ungated("POST", path)
 
 
+def test_issue_backup_download_is_handler_gated_because_its_grant_binds_one_request() -> None:
+    """04 §7.2.2 row 52a (E42-T05 BK-10): each link spends a `backups` code bound to its request."""
+    path = "/admin/backups/{backupId}/download"
+    assert DANGEROUS_PATH_PATTERN.match(path)
+    assert dangerous_action_class("POST", _concrete(path)) is None
+    assert ("POST", path, "backups") in HANDLER_GATED_ROUTES and not _ungated("POST", path)
+    assert ("POST", path) in served_operations(create_app()) - _PENDING_HANDLER_GATES
+
+
 def test_recorder_purge_is_handler_gated_not_middleware_gated() -> None:
     """E16-T06 review (a): middleware step-up would pre-empt the handler's owner-only check."""
     assert dangerous_action_class("POST", "/admin/recorder/purge") is None

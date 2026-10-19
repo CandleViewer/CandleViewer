@@ -95,6 +95,64 @@ async def kill_ok():
     return None
 
 
+@router.post("/backups/{backupId}/download")  # ruleid: stepup-required
+async def link_unbound_bad(auth):
+    await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+    return None
+
+
+@router.post("/backups/{backupId}/download")  # ok: stepup-required
+async def link_bound_ok(auth):
+    spent = await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+    if not isinstance(spent, SpentGrant):
+        return spent
+    return None
+
+
+@router.post("/backups/{backupId}/download")  # ruleid: stepup-required
+async def link_discarded_bad(auth):
+    _ = await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+
+
+@router.post("/backups/{backupId}/download")  # ruleid: stepup-required
+async def link_unchecked_bad(auth):
+    spent = await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+    return {"spent": str(spent)}
+
+
+@router.post("/backups/{backupId}/download")  # ruleid: stepup-required
+async def link_swallowed_bad(auth):
+    try:
+        spent = await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+    except Exception:
+        spent = None
+
+
+@router.post("/backups/{backupId}/download")  # ruleid: stepup-required
+async def link_checked_not_returned_bad(auth):
+    spent = await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+    if not isinstance(spent, SpentGrant):
+        pass
+
+
+@router.post("/backups/{backupId}/restore")  # ruleid: stepup-required
+async def restore_unbound_bad(auth):
+    await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+
+
+@router.post("/backups/{backupId}/restore")  # ok: stepup-required
+async def restore_bound_ok(auth):
+    spent = await require_bound_elevation(auth, "s", "backups", fingerprint="f", emitter=None)
+    if not isinstance(spent, SpentGrant):
+        return spent
+    return None
+
+
+@router.get("/backups/{backupId}/download/{token}")  # ok: stepup-required
+async def link_fetch_ok():
+    return None
+
+
 # --- no-secret-logging (SR-122) -------------------------------------------
 def log_bad(logger, session_token):
     logger.info("login", session_token)  # ruleid: no-secret-logging

@@ -5,9 +5,11 @@ rules:
     message: >-
       SR-025: this route performs a step-up-gated action but has no
       require_step_up dependency. Add dependencies=[Depends(require_step_up(...))],
-      a Depends(require_step_up(...)) parameter, or an awaited
-      require_elevation_for(...) call in the handler. A comment or unused
-      import does not count.
+      a Depends(require_step_up(...)) parameter, an awaited
+      require_elevation_for(...) call in the handler, or, for a no-grace grant
+      the handler names (backups), a require_bound_elevation(...) result whose
+      refusal it returns at once (if not isinstance(spent, SpentGrant): return
+      spent). A comment or unused import does not count.
     metadata:
       sr: SR-025
     patterns:
@@ -27,7 +29,7 @@ rules:
       # the regex runs on its source text.
       - metavariable-regex:
           metavariable: $P
-          regex: "(?i)^(?!.*reset-preview).*(mfa/reset|api-keys|api_keys|kill-switch|kill_switch|/roles|roles_path|recovery-codes/regenerate|revoke-all|revoke_all|/password|password_path).*$"
+          regex: "(?i)^(?!.*reset-preview).*(mfa/reset|api-keys|api_keys|kill-switch|kill_switch|/roles|roles_path|recovery-codes/regenerate|revoke-all|revoke_all|/password|password_path|backups/[{][^}]*[}]/(download|restore)(?![/A-Za-z0-9_{])).*$"
       # Real dependency in the decorator.
       - pattern-not: |
           @$R.$M(..., dependencies=[..., Depends(require_step_up(...)), ...], ...)
@@ -64,6 +66,16 @@ rules:
           async def $F(...):
               ...
               await require_step_up(...)
+              ...
+      # E42-T05 BK-10 (BK-1 security F2, SR-BK10B-02): the no-grace grant a backups handler
+      # spends and names counts only when its refusal is returned at once, as the response.
+      - pattern-not: |
+          @$R.$M(...)
+          async def $F(...):
+              ...
+              $G = await require_bound_elevation(...)
+              if not isinstance($G, SpentGrant):
+                  return $G
               ...
     paths:
       exclude:

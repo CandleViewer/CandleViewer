@@ -88,3 +88,22 @@ def test_verify_limiter_bound_evicts_only_users_with_no_run_in_the_hour() -> Non
     assert lim.retry_after("c") is None
     lim.record_start("c")
     assert len(lim._users) <= 2
+
+
+def test_release_frees_one_place_and_keeps_the_others() -> None:
+    lim = AuditVerifyLimiter(rate_per_hour=2, clock=_Clock())
+    lim.record_start("owner")
+    lim.record_start("owner")
+    lim.release("owner")  # one refused after its check
+    assert lim.retry_after("owner") is None  # its place is free
+    lim.record_start("owner")  # taken again: the other start still counts
+    assert lim.retry_after("owner") == 3600
+
+
+@pytest.mark.parametrize("user", ["owner", "nobody"], ids=["past-its-starts", "unknown-user"])
+def test_a_release_with_nothing_to_free_frees_nothing(user: str) -> None:
+    lim = AuditVerifyLimiter(rate_per_hour=2, clock=_Clock())
+    lim.record_start("owner")
+    lim.release("owner")  # its one start is freed
+    lim.release(user)  # nothing is left to free, and no one new is tracked
+    assert list(lim._users) == ["owner"] and list(lim._users["owner"]) == []

@@ -104,7 +104,8 @@ class AuditVerifyLimiter:
     `409`, a `429` or a `503` never counts (`createBackup` also counts a refused plan once its
     record is written: `503 backup_engine_invalid`). State is bounded (C-2.18): at most
     `tracked_users` users; one with no run in the hour is evicted first, and a new user that
-    finds no room is refused rather than let through uncounted."""
+    finds no room is refused rather than let through uncounted. A link issue (BK-10) takes its
+    place at the check instead, so starts in flight count, and `release`s it when refused."""
 
     def __init__(
         self,
@@ -136,3 +137,10 @@ class AuditVerifyLimiter:
         stamps = self._users.pop(user, None) or deque()
         stamps.append(self._clock())
         self._users[user] = stamps  # most recently used last
+
+    def release(self, user: str) -> None:
+        """Free `user`'s latest start: one recorded at the check, so starts in flight count, then
+        refused (BK-10's link issue, SR-BK10B-01). A user with none frees nothing."""
+        stamps = self._users.get(user)
+        if stamps:
+            stamps.pop()

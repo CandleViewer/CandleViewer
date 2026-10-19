@@ -208,11 +208,11 @@ checks the permission in the route itself. Paths in the control column are under
 | `listBackups` | `GET /admin/backups` | `backups:read` | — | C (paths, sizes, coverage) | served, 501 until `BACKUPS_CATALOGUED` (m:47; `api/admin_backups.py:162`) | Planned (E42-T05) |
 | `getBackup` | `GET /admin/backups/{backupId}` | `backups:read` | — | C | served, 501 until `BACKUPS_CATALOGUED` (m:59; `api/admin_backups.py:178`) | Planned (E42-T05) |
 | `createBackup` | `POST /admin/backups` | `backups:write` | none by design (registry test :46) | SA | served, 501 until a backup engine is wired (m:53; `api/admin_backups.py:201`) | `backup.run` written ahead; 4 runs per user per rolling hour; an unencrypted plan refused, `503 backup_engine_invalid` (E42-T05) |
-| `verifyBackup` | `POST /admin/backups/{backupId}/verify` | `backups:write` | none by design (registry test :47) | SA | contract-only (m:93, a:377) | Planned (E42-T05) |
+| `verifyBackup` | `POST /admin/backups/{backupId}/verify` | `backups:write` | none by design (registry test :47) | SA | contract-only (m:92, a:373) | Planned (E42-T05) |
 | `deleteBackup` | `DELETE /admin/backups/{backupId}` | `backups:write` | `backups`, no grace (yaml:9092-9094); no row yet | SA | contract-only (m:65, a:17) | Inside the tripwire (registry test :398) |
-| `issueBackupDownload` | `POST /admin/backups/{backupId}/download` | `backups:write` | `backups`, no grace (yaml:9145-9149); no row yet | S out (single-use link), SA | contract-only (m:72, a:369) | Inside the tripwire (§3.3) |
-| `downloadBackup` | `GET /admin/backups/{backupId}/download/{token}` | `backups:read` | none: the token is the gate (yaml:9197-9208) | S (token in path), SA | contract-only (m:79, a:77) | Single-use, 5-minute, same-user token; template-only logs (yaml:9200-9203) |
-| `restoreBackup` | `POST /admin/backups/{backupId}/restore` | `backups:write` | `backups`, no grace, one-shot, handler-gated (:433) | SA; the whole installation | contract-only (m:86, a:373) | Pre-registered handler gate (#3144): a no-grace grant binds the request the handler validated, which a path cannot name (`test_dangerous_route_registry.py:479`). The contract has the guard spend the grant before the preconditions (yaml:11389-11401), and §6 reconciles the two; AD-F02 (a restore must keep later revocations and its own audit tail, #3084), AD-F07 (the artefact's integrity and origin are not authenticated) |
+| `issueBackupDownload` | `POST /admin/backups/{backupId}/download` | `backups:write` | `backups`, no grace, one-shot, handler-gated (`api/step_up.py:557`) | S out (single-use link), SA | served, 501 until `BACKUPS_CATALOGUED` and `CV_BACKUP_ROOT` (m:72; `api/admin_backup_links.py:83`) | BK-10: the 404, the 501s and the hourly 429 (links in flight counted) before the challenge; usability and `backup.downloaded` under the admission lock, written ahead and naming the spent `challenge_id` |
+| `downloadBackup` | `GET /admin/backups/{backupId}/download/{token}` | `backups:read` | none: the token is the gate (yaml:9197-9208) | S (token in path), SA | contract-only (m:78, a:77) | Single-use, 5-minute, same-user token; template-only logs (yaml:9200-9203) |
+| `restoreBackup` | `POST /admin/backups/{backupId}/restore` | `backups:write` | `backups`, no grace, one-shot, handler-gated (:433) | SA; the whole installation | contract-only (m:85, a:369) | Pre-registered handler gate (#3144): a no-grace grant binds the request the handler validated, which a path cannot name (`test_dangerous_route_registry.py:479`). The contract has the guard spend the grant before the preconditions (yaml:11389-11401), and §6 reconciles the two; AD-F02 (a restore must keep later revocations and its own audit tail, #3084), AD-F07 (the artefact's integrity and origin are not authenticated) |
 | **View-as (SCR-124): #3085's contract (#3164), cited at `0cfb12c2`** | | | | | | |
 | `startViewAs` | `POST /admin/view-as` | `users:write` | `users` (`api/step_up.py:464`), handler-gated, pending (registry test :541) | C, P1, P2 (the target's whole read scope) | contract-only (m:229, a:401) | Planned: G, then the start's refusals in a fixed order before the step-up gate, an Owner or self target among them (yaml:11450-11469), and `admin.view_as_started` written ahead with the target told (:11471-11479). Not served, so the session-wide rules (yaml:191-259) hold only once #3085's server slice serves it (AD-F03) |
 | `getViewAs` | `GET /auth/session/view-as` | self | — | P1 (the target's username and display name) | contract-only (m:389, a:109) | The caller's own session only (SR-026); the context is server-set (yaml:1441-1454) |
@@ -224,9 +224,10 @@ checks the permission in the route itself. Paths in the control column are under
 62 rows: the 60 operations (the 57 read at the anchor, of which 29 served, 2 at 501 and 26 contract-only, `deleteUser`
 and `setUserAccountAccess` served since; and the three view-as operations, contract-only), the `system` topic and
 SCR-149, the one surface with no contract.
-Seventeen operations need a step-up: fourteen have a registry row or a handler gate today, two of them
-(`setFeatureFlag`, `downloadAuditExport`) since #3160 and one (`startViewAs`) since #3164, and three
-(`revokeUserSession`, `deleteBackup`, `issueBackupDownload`) have no row but cannot be mounted ungated (§3.3).
+Seventeen operations need a step-up: fifteen have a registry row or a handler gate today, two of them
+(`setFeatureFlag`, `downloadAuditExport`) since #3160, one (`startViewAs`) since #3164 and one
+(`issueBackupDownload`) since #966 BK-10, and two (`revokeUserSession`, `deleteBackup`) have no row but cannot be
+mounted ungated (§3.3).
 
 Contract gap (design requirement, contract-first, C-6.1): `createUser`, `reissueInvite` and `revokeInvite` are
 served with the `users` step-up in code (`api/step_up.py:391-393`), but their operations do not declare it
@@ -490,8 +491,9 @@ and the B16 binding (`statechart/bindings/b16_session.py:303`), with its tests (
 `audit` (`api/step_up.py:449-461`). Both are pending handler gates: the build fails while either is mounted
 (`test_dangerous_route_registry.py:528-535`, :542) or if one is mounted without its gate (:216), so E42-T03 (#964)
 and E42-T02 (#889) each drop the pending row and add the handler test that proves the class chosen under the row
-lock, or after the requester check. `revokeUserSession`, `deleteBackup` and `issueBackupDownload` still have no
-row, and their text names a step-up, so either sweep fails a PR that mounts one without its gate. Outside the gate
+lock, or after the requester check. `revokeUserSession` and `deleteBackup` still have no row (`issueBackupDownload`
+has a handler-gated one since #966 BK-10), and their text names a step-up, so either sweep fails a PR that mounts
+one without its gate. Outside the gate
 by design, each allow-listed with its reason: `verifyAuditChain` (04 §7.2.2 row 49a), `createBackup` and
 `verifyBackup` (row 52), `compactRecorder` and `importTradeArchive` (row 51), and `setSubaccountTier`, whose
 contract says why (yaml:10857-10860).
@@ -930,7 +932,7 @@ slice registers, with its test, the names it first emits (AD-F17).
 | `flags.change`, `settings.change` | AD-T03, AD-D07, AD-I10 | yes (`audit/actions.py:161-162`); no flag route writes `flags.change` yet | E42-T03 (#964) |
 | `maintenance.enabled`, `.disabled` (yaml:8898) | AD-R02, AD-D02 | no; registered since by #3241 (`audit/actions.py:170-171` at `0cfb12c2`), for E42-X02 to re-read | E42-T03 (#964) |
 | `backup.run`, `backup.restore` | AD-R05, AD-D08 | yes (`audit/actions.py:167-168`) | E42-T05 (#966), #3084 |
-| `backup.verified`, `.deleted`, `.downloaded` (yaml:9120, :9094, :9150, :9199) | AD-R02, AD-T05, AD-I04 | no | E42-T05 (#966) |
+| `backup.verified`, `.deleted`, `.downloaded` (yaml:9120, :9094, :9150, :9199) | AD-R02, AD-T05, AD-I04 | `.downloaded` since #966 BK-10 (`audit/actions.py:195`); the other two no | E42-T05 (#966) |
 | `incident.acknowledged` (yaml:10977), a name AD-R02's list missed | AD-R02 | no | E42-T05 (#966) |
 | `admin.view_as_started`, `.view_as_ended`, `.view_as_refused` | AD-I05, AD-E04 | yes since #3164 (`audit/actions.py:189-191` at `0cfb12c2`); nothing emits them before #3085's server slice | #3085 |
 | `admin.session_elevated`, if D8 picks the server window | AD-E01 | no | E42-T06 (#1085), E42-S01 |

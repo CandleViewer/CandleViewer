@@ -40,8 +40,8 @@ _ISSUE = _PATHS["/admin/backups/{backupId}/download"]["post"]
 _FETCH = _PATHS["/admin/backups/{backupId}/download/{token}"]["get"]
 _RESTORE = _PATHS["/admin/backups/{backupId}/restore"]["post"]
 _STEP_UP = _PATHS["/auth/step-up"]["post"]
+#: BK-10 serves the link issue (its matrix row is executed); the fetch waits for BK-11.
 _NEW_OPS = {
-    "POST /admin/backups/{backupId}/download": (_ISSUE, "backups:write"),
     "GET /admin/backups/{backupId}/download/{token}": (_FETCH, "backups:read"),
 }
 #: Every operation this slice adds or changes.

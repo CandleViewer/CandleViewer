@@ -455,6 +455,7 @@ _ADMIN_MUTATIONS = [
     ("POST", "/users/{uid}/mfa/reset", None),
     ("POST", "/admin/recorder/purge", _PURGE_BODY),  # 04 §7.2.2 row 9a; mounted by E16-T06 (#490)
     ("POST", "/exchange-accounts/{uid}/keys", _IMPORT_BODY),  # createApiKey, mounted by #836
+    ("POST", "/admin/backups/{uid}/download", None),  # 04 §7.2.2 row 52a; E42-T05 BK-10
 ]  # fmt: skip
 
 

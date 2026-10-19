@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import candleviewer.app as appmod
+from candleviewer.backups_wiring import build_admin_backups, build_backup_downloads
 from candleviewer.retention_wiring import build_retention_manager as _original_retention_builder
 from candleviewer.settings import get_settings
 from candleviewer.storage.repositories.alerts_sqlalchemy import (
@@ -38,6 +39,12 @@ def _retention_builder() -> object:
     return getattr(appmod, "build_retention_manager")  # noqa: B009 - non-exported name
 
 
+def _backups_builders() -> tuple[object, object]:
+    catalogue = getattr(appmod, "build_admin_backups")  # noqa: B009 - non-exported name
+    downloads = getattr(appmod, "build_backup_downloads")  # noqa: B009 - non-exported name
+    return catalogue, downloads
+
+
 def _world_env() -> dict[str, str | None]:
     return {name: os.environ.get(name) for name in WORLD_ENV}
 
@@ -46,6 +53,7 @@ def test_pack_left_no_patch_behind() -> None:
     assert appmod.build_identity_provider is _ORIGINAL_IDENTITY, "identity patch leaked"
     assert _alert_repository() is OriginalAlertRepository, "alert patch leaked"
     assert _retention_builder() is _original_retention_builder, "retention patch leaked"
+    assert _backups_builders() == (build_admin_backups, build_backup_downloads), "backups leaked"
     assert _world_env() == _ORIGINAL_ENV, "env patch leaked"
 
 
@@ -69,4 +77,5 @@ def test_world_patches_are_undone_by_the_monkeypatch_teardown(tmp_path: Path) ->
     assert appmod.build_identity_provider is _ORIGINAL_IDENTITY
     assert _alert_repository() is OriginalAlertRepository
     assert _retention_builder() is _original_retention_builder
+    assert _backups_builders() == (build_admin_backups, build_backup_downloads)
     assert _world_env() == _ORIGINAL_ENV, "env patch leaked"

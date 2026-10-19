@@ -1,12 +1,14 @@
 """Unit (E42-T05, #966): the backups composition. BK-7: stable job codes (C-12.6), unknown
 positions. BK-4: the catalogue reads answer `501` on every backend until `BACKUPS_CATALOGUED` is
 set (Q3); once it is, what each backend serves. BK-8: a run answers `501` until an engine is
-wired, through the app's one admission gate."""
+wired, through the app's one admission gate. BK-10: the link issue needs that and a backup root,
+and then reads artefacts there."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
@@ -18,6 +20,8 @@ from structlog.testing import capture_logs
 import candleviewer.app as app_module
 import candleviewer.backups_wiring as wiring
 from candleviewer.admin.backups import limits, ports
+from candleviewer.admin.backups.catalogue import BackupCatalogue
+from candleviewer.admin.backups.downloads import LinkNotUsable, LinkRecord
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobErrorCode, OpenPositions
 from candleviewer.admin.backups.rows import LostRuns
@@ -30,7 +34,7 @@ from candleviewer.backups_wiring import AdminJobRunner, UnknownOpenPositions
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories import backups
 from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
-from tests.unit.admin._admin_fakes import principal
+from tests.unit.admin._admin_fakes import AuditSpy, principal
 from tests.unit.admin._backup_fakes import Store, row
 from tests.unit.admin._run_fakes import Lost
 
@@ -228,3 +232,58 @@ def test_create_app_builds_exactly_one_backups_gate(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(BackupJobGate, "__init__", counted)
     app = create_app()
     assert built == [app.state.backups_gate]
+
+
+@pytest.mark.parametrize(("catalogued", "root"), [(False, True), (True, False)])
+def test_the_link_issue_is_unwired_until_catalogued_with_a_backup_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, catalogued: bool, root: bool
+) -> None:
+    monkeypatch.setattr(wiring, "BACKUPS_CATALOGUED", catalogued)
+    settings = Settings(backup_root=str(tmp_path) if root else "")
+    catalogue = BackupCatalogue(Store([row(1)]))
+    assert wiring.build_backup_downloads(
+        settings, catalogue, gate=BackupJobGate(), audit=AuditSpy()
+    ) is None  # fmt: skip
+
+
+@pytest.mark.usefixtures("catalogued")
+async def test_the_link_issue_reads_artefacts_inside_the_backup_root(tmp_path: Path) -> None:
+    (tmp_path / "pg.dump.age").write_bytes(b"age")
+    inside, outside = row(1, target_path=f"{tmp_path}/pg.dump.age"), row(2)  # `/backups/...`
+    catalogue, spy, who = BackupCatalogue(Store([inside, outside])), AuditSpy(), principal("owner")
+    settings = Settings(backup_root=str(tmp_path))
+    built = wiring.build_backup_downloads(settings, catalogue, gate=BackupJobGate(), audit=spy)
+    assert built is not None
+
+    async def write_ahead(record: LinkRecord) -> None:
+        await built.audit_issue(who, record)
+
+    token, link = await built.issue(inside.id, who, uuid4(), write_ahead)
+    assert (len(token), link.backup_id) == (43, inside.id)
+    with pytest.raises(LinkNotUsable):
+        await built.issue(outside.id, who, uuid4(), write_ahead)
+    assert [r["outcome"].value for r in spy.records] == ["success", "failure"]
+
+
+def test_create_app_builds_one_admission_gate_and_the_link_issue_takes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One lock per process (Q6, SR-BK10B-03): fails on a second gate or another gate passed."""
+    built: list[BackupJobGate] = []
+    init = BackupJobGate.__init__
+
+    def counted(self: BackupJobGate, **kwargs: Any) -> None:
+        built.append(self)
+        init(self, **kwargs)
+
+    seen: list[BackupJobGate] = []
+    build = wiring.build_backup_downloads
+
+    def spy(*args: Any, gate: BackupJobGate, **kwargs: Any) -> Any:
+        seen.append(gate)
+        return build(*args, gate=gate, **kwargs)
+
+    monkeypatch.setattr(BackupJobGate, "__init__", counted)
+    monkeypatch.setattr(app_module, "build_backup_downloads", spy)
+    app = create_app()
+    assert built == seen == [app.state.backups_gate]

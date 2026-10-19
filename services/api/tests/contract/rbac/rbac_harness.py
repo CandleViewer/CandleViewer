@@ -25,6 +25,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import candleviewer.app as appmod
+from candleviewer.admin.backups.catalogue import BackupCatalogue
+from candleviewer.admin.backups.downloads import BackupDownloads
+from candleviewer.admin.backups.links import DownloadLinks
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.audit.models import AuditPage, ExportResult, VerifyResult
@@ -48,9 +51,12 @@ from candleviewer.storage.repositories.account_access import (
     AccessUserNotFoundError,
 )
 from candleviewer.storage.repositories.alerts import Page
+from candleviewer.storage.repositories.backups import BackupRow
 from candleviewer.storage.repositories.user_lifecycle import UserStatusChange
 from candleviewer.user_cascade_wiring import NoOrderCounter
 from tests.csrf_helpers import csrf_headers
+from tests.unit.admin._backup_fakes import row
+from tests.unit.admin._link_fakes import Reader
 
 MATRIX_PATH = Path(__file__).with_name("matrix.yaml")
 #: A stored-hash placeholder for seeded users; nothing in the pack ever verifies a password.
@@ -250,7 +256,7 @@ class _Resolver:
 
 class _StepUp:
     """Stand-in for the DB-backed `StepUpService` (same seam as `tests/unit/ws`). `elevated`
-    models a completed step-up on the caller's session (SR-025)."""
+    models a completed step-up on the caller's session (SR-025), a window or a one-shot grant."""
 
     def __init__(self) -> None:
         self.elevated = True
@@ -259,8 +265,18 @@ class _StepUp:
         if not self.elevated:
             raise StepUpRequired(action_class)
 
-    async def record_pending(self, session_id: str, action_class: str) -> StepUpChallenge:
-        return StepUpChallenge(uuid.uuid4(), action_class, datetime.now(UTC) + CHALLENGE_WINDOW)
+    async def record_pending(
+        self, session_id: str, action_class: str, *, fingerprint: str | None = None
+    ) -> StepUpChallenge:
+        expires = datetime.now(UTC) + CHALLENGE_WINDOW
+        return StepUpChallenge(uuid.uuid4(), action_class, expires, fingerprint)
+
+    async def consume_single_use(
+        self, session_id: str, action_class: str, *, fingerprint: str
+    ) -> StepUpChallenge:
+        if not self.elevated:
+            raise StepUpRequired(action_class)
+        return await self.record_pending(session_id, action_class, fingerprint=fingerprint)
 
     async def assert_writable(self, session_id: str) -> None:
         return None
@@ -448,6 +464,22 @@ class _PurgeBackend:
         raise AssertionError("the RBAC pack must never run a purge")
 
 
+class _Backups:
+    """The catalogue's reads (E42-T05 BK-10): every id is one usable backup, and none is listed."""
+
+    async def page(self, *_args: Any) -> list[BackupRow]:
+        return []
+
+    async def get(self, backup_id: uuid.UUID) -> BackupRow:
+        return row(1, id=backup_id)  # verified, encrypted, not deleted
+
+
+def _backup_downloads(
+    _settings: Any, catalogue: BackupCatalogue, *, gate: Any, audit: Any
+) -> BackupDownloads:
+    return BackupDownloads(catalogue, Reader(), DownloadLinks(), gate=gate, audit=audit)
+
+
 class _ScopeSource:
     """`ScopeSource` over the seeded actors: grants and permissions come from the contract."""
 
@@ -543,6 +575,9 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # route is mounted either way, so give it the call-recording stand-in (never plans/deletes).
     purge_backend = _PurgeBackend()
     mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge_backend)
+    # E42-T05 BK-10: a catalogue and artefact store stand-in, so the link issue reaches its gate.
+    mp.setattr(appmod, "build_admin_backups", lambda *_a, **_k: BackupCatalogue(_Backups()))
+    mp.setattr(appmod, "build_backup_downloads", _backup_downloads)
     for name, value in world_env(bars_state_root).items():
         mp.setenv(name, value)
     app = appmod.create_app(
