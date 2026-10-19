@@ -242,6 +242,7 @@ register_event_schemas(
     )
 )
 
-# --- #847 slice 1b, chart version 2: an attach result marks the stop present only if the exchange
-# confirmed it (C-2.6, INV-B1-f). Fail-closed: no result is confirmed until slice 5's attach.
+# --- #847 slice 1b, chart version 2 (C-2.6, INV-B1-f): the attach result counts only if its
+# read-back confirms the stop (fail-closed until slice 5), and no protection reading is deferred.
 GUARDS["sl_attach_ok"] = _deny_guard
+ACTIONS["record_sl_fact_ignored"] = _noop_action

@@ -772,6 +772,15 @@
         }
       },
       "on": {
+        "SL_OBSERVED": {
+          "actions": ["record_sl_fact_ignored"]
+        },
+        "SL_LOST": {
+          "actions": ["record_sl_fact_ignored"]
+        },
+        "FIRST_FILL": {
+          "actions": ["record_sl_fact_ignored"]
+        },
         "KILL": {
           "actions": [
             "audit_kill_protection_retained"
