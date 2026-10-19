@@ -76,6 +76,8 @@ def test_x02_ac_05_a_sub_naming_another_account_is_denied_on_every_family(
 def test_x02_ac_05_one_frame_naming_b_on_every_scoped_family_is_one_denial_record(
     world: RawWorld,
 ) -> None:
+    """Each single-topic refusal asserts its `cv_ws_subscribe_total` count; this frame of six
+    asserts their codes and its one record (SR-192)."""
     m1 = world.login("m1", ACC_A)
     with raw_connect(world) as c:
         authenticated(c, m1)
@@ -285,9 +287,10 @@ def _kind_uses(fn: ast.AsyncFunctionDef) -> tuple[set[str], list[str]]:
 def test_x02_the_gateway_dispatches_these_frame_types_and_no_action_frame() -> None:
     """A pin on `dispatch`'s own source: a new branch on the frame's type is a new surface, for a
     security review (§6.3: a viewer's `orders` is read-only, and anything that acts comes over
-    REST). It fails closed: no `match`, and each use of `kind` is a `==`/`!=` against a string or
-    `isinstance(kind, str)`, so a table, an `in` or a call on it fails the pin too. It follows the
-    one name `dispatch` binds the type to; the test below covers each type of the envelope."""
+    REST). It fails closed: no `match`, each use of `kind` is a `==`/`!=` against a string or
+    `isinstance(kind, str)` (so a table, an `in` or a call on it fails the pin too), and the key
+    `"t"` is read once, where `kind` is bound (so a second read of the type fails it as well). The
+    test below covers each type of the envelope."""
     (fn,) = [
         n
         for n in ast.walk(ast.parse(inspect.getsource(gateway)))
@@ -296,6 +299,8 @@ def test_x02_the_gateway_dispatches_these_frame_types_and_no_action_frame() -> N
     compared, other = _kind_uses(fn)
     assert not [n for n in ast.walk(fn) if isinstance(n, ast.Match)]
     assert other == []
+    # The key "t" is read once, to bind `kind`; a branch on `frame.get("t")` would read it again.
+    assert sum(isinstance(n, ast.Constant) and n.value == "t" for n in ast.walk(fn)) == 1
     assert compared == _DISPATCHED and _DISPATCHED <= set(_ENVELOPE)
 
 
