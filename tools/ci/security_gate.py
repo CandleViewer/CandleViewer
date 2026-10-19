@@ -1369,7 +1369,7 @@ def judge_alert_fixes(
             why = f"this tree leaves it at {was} in {old}"
         elif old in _AUDITED or all(_patched(p, v, alert) for p in held for v in held[p]):
             fix = "fixed here"
-            if old in _AUDITED and before & after:  # a version left is its audit's to judge
+            if old in _AUDITED:  # the gate never reads the range there: its audit judges it
                 fix = f"changed here, for {_AUDITED[old]} to judge"
             fixed.append(
                 f"{fix}: dependabot alert {alert.number} ({finding.finding_id}, "

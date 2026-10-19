@@ -427,7 +427,8 @@ index alone, removing nothing.
   job, is the independent second signal (#3558). For `dependabot` it is: the
   alerts API call failed (gh prints why: an outage, so re-run; a token without
   `vulnerability-alerts: read`, which GitHub may withhold from a fork's pull
-  request, so push the branch to this repository instead; or Dependabot alerts
+  request or a Dependabot-triggered run, so push the branch (for Dependabot's,
+  its commit) to a branch in this repository instead; or Dependabot alerts
   turned off for the repository, a 403 that says so, which only the owner may
   change); a listing that is not
   pages of open alerts, each with a known severity, a GHSA id, a package and a

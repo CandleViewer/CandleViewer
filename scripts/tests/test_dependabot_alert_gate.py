@@ -66,7 +66,10 @@ MAIN: Files = {"pnpm-lock.yaml": LOCK}
 FIX = {"pnpm-lock.yaml": LOCK.replace("vitest@3.2.7", "vitest@4.1.11")}  # fixes alert 37
 UNRELATED = {"pnpm-lock.yaml": LOCK.replace("tinypool@2.2.0", "tinypool@2.2.1")}  # not vitest
 OK = "security_gate[dependabot]: OK\n"
-FIXED = "fixed here: dependabot alert 37 ({}, {}), npm:vitest in pnpm-lock.yaml: 3.2.7 -> 4.1.11\n"
+FIXED = (
+    "changed here, for npm-audit to judge: dependabot alert 37 ({}, {}), npm:vitest in "
+    "pnpm-lock.yaml: 3.2.7 -> 4.1.11\n"
+)
 KEPT = " (this tree leaves it at 3.2.7 in pnpm-lock.yaml)\n"
 Gate = Callable[..., tuple[int, str, str]]
 
@@ -171,7 +174,7 @@ def test_alert_blocks_from_high_unless_this_tree_fixes_it_or_its_entry_accepts_i
     files = dict(pr)
     if entry:  # the PR adds the entry
         fields = dict(zip(("severity", "expires", "tool"), (*entry, "dependabot"), strict=False))
-        fields |= {"id": VITEST, "reason": "test", "approver": "basiltt"}
+        fields |= {"id": VITEST, "reason": "test", "approver": "basiltt", "ticket": "#3558"}
         files[REGISTER] = yaml.safe_dump({"entries": [fields]})
     rc, out, err = gate([_alert(37, severity)], files)
     if verdict == "fixed":
@@ -251,7 +254,14 @@ def test_each_ecosystem_judges_the_alerts_package_in_its_lockfile(
     package = "{ecosystem}:{name}".format(**alert["dependency"]["package"])
     if fixed:
         assert (rc, err) == (0, "")
-        assert out.startswith(f"fixed here: dependabot alert {alert['number']} (")
+        # In an audited lock the gate only sees the change; its audit judges the new version.
+        audited = change.split(": ")[0] in ("pnpm-lock.yaml", "services/api/uv.lock")
+        lead = "changed here, for {} to judge".format(
+            "npm-audit" if change.startswith("pnpm-lock.yaml") else "pip-audit"
+        )
+        assert out.startswith(
+            f"{lead if audited else 'fixed here'}: dependabot alert {alert['number']} ("
+        )
         assert out.endswith(f"), {package} in {change}\n{OK}")
     else:
         path, versions = change.split(": ")[0], change.split(": ")[1].split(" -> ")[0]
@@ -628,8 +638,8 @@ def test_alerts_step_counts_a_fix_queued_ahead_in_the_merge_group(tmp_path: Path
 
 API_FAILED = (
     "CI-SEC-005: dependabot: the alerts API call failed (gh's error above): a token without "
-    "vulnerability-alerts: read (GitHub may withhold it from a fork's pull request) or an "
-    "API outage\n"
+    "vulnerability-alerts: read (GitHub may withhold it from a fork's or a Dependabot-triggered "
+    "pull request) or an API outage\n"
 )
 
 

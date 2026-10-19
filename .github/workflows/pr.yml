@@ -613,7 +613,7 @@ jobs:
         run: |
           fail() { echo "CI-SEC-005: dependabot: $*" >&2; exit 1; }
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" > dependabot-alerts.json ||
-            fail "the alerts API call failed (gh's error above): a token without vulnerability-alerts: read (GitHub may withhold it from a fork's pull request) or an API outage"
+            fail "the alerts API call failed (gh's error above): a token without vulnerability-alerts: read (GitHub may withhold it from a fork's or a Dependabot-triggered pull request) or an API outage"
           unset GH_TOKEN
           base=$(git merge-base HEAD origin/main) || fail "this checkout has no merge base with origin/main"
           python tools/ci/security_gate.py --tool dependabot --report dependabot-alerts.json --base "$base"
