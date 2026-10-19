@@ -57,7 +57,7 @@ _EXCHANGE_LIVE = ("submitted", "triggered", "partially_filled", "cancel_pending"
 
 INVARIANTS: dict[str, str] = {
     "INV-B1-a": "test_b01_order_core.py::test_inv_b1_a_fills_in_any_order_give_the_same_totals",
-    "INV-B1-b": "test_b01_order_core.py::test_inv_b1_b_a_repeated_exec_id_changes_nothing",
+    "INV-B1-b": "test_b01_order_core.py::test_cancel_loses_the_race_to_a_fill_not_to_a_repeat",
     "INV-B1-c": "test_inv_b1_c_amend_rejected_never_terminal",
     "INV-B1-d": "test_inv_b1_d_cancel_pending_handles_exec",
     "INV-B1-e": "test_inv_b1_e_unknown_resolved_only_by_recon",

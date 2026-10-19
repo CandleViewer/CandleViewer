@@ -6,21 +6,30 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from collections.abc import Awaitable, Callable, Iterator
 from decimal import Decimal
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
+from candleviewer.oms.execution import apply_fields
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import Charts, park, settle
 
 _CHART = Registry().get("order")
-LINK = "cvd-link-1"
-ORDER = {"order_id": "o1", "order_link_id": LINK, "account_id": "a1", "symbol": "BTCUSDT"}
-ORDER |= {"side": "buy", "qty": "1", "price": "63000"}
+FACTS = {"order_id": "o1", "order_link_id": "cvd-link-1", "account_id": "a1", "symbol": "BTCUSDT"}
+FACTS |= {"side": "buy"}
+ORDER = FACTS | {"qty": "1", "price": "63000", "stop_loss": "62000"}
+GATES = ("risk", "rate", "kill_switch", "live_gate", "native_stop")
+HOSTILE: tuple[str, ...] = ("1" * 21, "0." + "0" * 18 + "1", "1E+100", "1E+100000", "1E+999999999")
+HOSTILE += (" 1", "1_0", "\u0661")  # past numeric(38,18), or not C6 text: space, `_`, non-ASCII
+MAX = "99999999999999999999.999999999999999999"  # numeric(38,18)'s largest value
+MAX_LEAVES = "99999999999999999999.749999999999999999"  # MAX - 0.25
 
 
 class _Ev:  # an `Event`: its fields ride on `payload`
@@ -28,9 +37,9 @@ class _Ev:  # an `Event`: its fields ride on `payload`
         self.payload: dict[str, Any] = payload
 
 
-class _Done:  # a `DoneEvent` (`data`) or an `ErrorEvent` (`error`)
-    def __init__(self, data: object = None, error: object = None) -> None:
-        self.data, self.error = data, error
+class _Done:  # a `DoneEvent`: the service's result rides on `data`
+    def __init__(self, data: object = None) -> None:
+        self.data = data
 
 
 class _Hostile(dict[str, Any]):
@@ -38,19 +47,25 @@ class _Hostile(dict[str, Any]):
         raise RuntimeError("boom")
 
 
+@pytest.fixture(autouse=True)
+def _fill_core() -> Iterator[None]:
+    b01.set_fill_core(apply_fields)
+    yield
+    b01.set_fill_core(None)
+
+
 def _ctx(**over: object) -> dict[str, Any]:
-    c = {"order_link_id": LINK, "qty": "1", "filled_qty": "0", "leaves_qty": "1"}
-    return c | {"avg_price": None, "seen_exec_ids": [], "recon_misses": 0, "price": "63000"} | over
+    c = FACTS | {"exchange_order_id": "x1", "qty": "1", "filled_qty": "0", "leaves_qty": "1"}
+    return c | {"avg_price": None, "seen_exec_ids": [], "price": "63000"} | over
 
 
-def _exec(
-    exec_id: str, qty: object, price: str = "63000", fee: str = "0", link: object = LINK
-) -> _Ev:
-    return _Ev(exec_id=exec_id, order_link_id=link, qty=qty, price=price, fee=fee)
+def _exec(exec_id: str, qty: object, price: str = "63000", **over: object) -> _Ev:
+    fill = {"exchange_order_id": "x1", "exec_id": exec_id, "exec_type": "trade", "fee": "0"}
+    return _Ev(**FACTS | fill | {"qty": qty, "price": price, "fee_rate": "0.0002"} | over)
 
 
-def _validate(gates: dict[str, object] | None = None, **order: object) -> _Ev:
-    return _Ev(gates=dict.fromkeys(b01.GATES, True) | (gates or {}), order=ORDER | order)
+def _validate(gates: dict[str, object] | None = None, /, **order: object) -> _Ev:
+    return _Ev(gates=dict.fromkeys(GATES, "pass") | (gates or {}), order=ORDER | order)
 
 
 async def _run(action: str, ctx: dict[str, Any], event: object) -> dict[str, Any]:
@@ -58,22 +73,40 @@ async def _run(action: str, ctx: dict[str, Any], event: object) -> dict[str, Any
     return ctx
 
 
-@pytest.mark.parametrize(("qty", "closes"), [("0.4", False), ("1", True)])
-def test_exec_guards_admit_a_new_fill_by_its_outcome(qty: str, closes: bool) -> None:
-    assert b01.exec_new_and_closes(_ctx(), _exec("e1", qty)) is closes
-    assert b01.exec_new_and_partial(_ctx(), _exec("e1", qty)) is not closes
+@pytest.mark.parametrize(
+    ("guard", "over", "event", "expected"),
+    [
+        ("exec_new_and_closes", {}, _exec("e1", "1"), True),
+        ("exec_new_and_partial", {}, _exec("e1", "1"), False),
+        ("exec_new_and_closes", {}, _exec("e1", "0.4"), False),
+        ("exec_new_and_partial", {}, _exec("e1", "0.4"), True),
+        ("has_fills", {"filled_qty": "0.1"}, None, True),
+        ("has_fills", {}, None, False),
+        ("ret_code_ok", {}, _Done({"ok": True}), True),
+        ("ret_code_ok", {}, _Done({"ok": "true"}), False),
+        ("ret_code_ok", {}, _Done(), False),
+        ("is_duplicate_link_id", {}, _Done({"error_code": "DUPLICATE_CLIENT_ID"}), True),
+        ("is_duplicate_link_id", {}, _Done({"error_code": "RATE_LIMITED"}), False),
+    ],
+)
+def test_a_guard_reads_its_event_and_context(
+    guard: str, over: dict[str, Any], event: object, expected: bool
+) -> None:
+    assert b01.GUARDS[guard](_ctx(**over), event) is expected
 
 
 @pytest.mark.parametrize(
     ("over", "event"),
     [
         ({"seen_exec_ids": ["e1"]}, _exec("e1", "0.1")),  # a repeat (S4)
-        ({}, _exec("e1", "0.1", link="cvd-other")),
         ({}, _exec("e1", "1.1")),  # an overfill (INV-1, OM-T04)
         ({}, _exec("e1", "0.1", price="0")),
+        ({}, _exec("e1", "0.1", fee="-100", fee_rate="-0.0001")),  # past MAX_FEE_RATE
         ({}, _exec("e1", 0.1)),  # a float
+        *[({}, _exec("e1", qty)) for qty in HOSTILE],
         ({}, _exec("x" * 65, "0.1")),
-        ({"order_link_id": None}, _exec("e1", "0.1", link=None)),
+        *[({}, _exec("e1", "0.1", **{key: "zz"})) for key in (*b01.PAIRING, "exec_type")],
+        ({"exchange_order_id": None}, _exec("e1", "0.1", exchange_order_id=None)),  # unbound
         ({"seen_exec_ids": [str(i) for i in range(b01.MAX_FILLS)]}, _exec("e1", "0.1")),
         ({"filled_qty": "junk"}, _exec("e1", "0.1")),
         ({}, _Done({"exec_id": "e1"})),
@@ -84,41 +117,45 @@ def test_exec_guards_deny_what_must_not_apply(over: dict[str, Any], event: objec
     assert not b01.exec_new_and_closes(ctx, event) and not b01.exec_new_and_partial(ctx, event)
 
 
-@pytest.mark.parametrize(
-    ("guard", "over", "event", "expected"),
-    [
-        ("has_fills", {"filled_qty": "0.1"}, None, True),
-        ("has_fills", {}, None, False),
-        ("ret_code_ok", {}, _Done({"ok": True}), True),
-        ("ret_code_ok", {}, _Done({"ok": "true"}), False),
-        ("ret_code_ok", {}, _Done(), False),
-        ("is_duplicate_link_id", {}, _Done({"error_code": "DUPLICATE_CLIENT_ID"}), True),
-        ("is_duplicate_link_id", {}, _Done({"error_code": "RATE_LIMITED"}), False),
-        ("second_consecutive_miss", {"recon_misses": 1}, None, True),
-        ("second_consecutive_miss", {"recon_misses": 0}, None, False),
-        ("second_consecutive_miss", {"recon_misses": True}, None, False),
-    ],
-)
-def test_result_and_count_guards(
-    guard: str, over: dict[str, Any], event: object, expected: bool
+def test_exec_guards_deny_every_fill_until_the_oms_sets_its_fill_core() -> None:
+    b01.set_fill_core(None)
+    with capture_logs() as logs:  # a denial, not a guard failure
+        assert (b01.exec_new_and_partial(_ctx(), _exec("e1", "0.4")), logs) == (False, [])
+
+
+@pytest.mark.parametrize(("seen", "level", "why"), [([], "error", "INV-1"), (["e1"], "info", "S4")])
+async def test_a_denied_exec_is_logged_and_audited_once_with_its_exec_id_and_why(
+    seen: list[str], level: str, why: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert b01.GUARDS[guard](_ctx(**over), event) is expected
+    monkeypatch.setattr(b01, "_hook", hook := AsyncMock())
+    ctx, event = _ctx(seen_exec_ids=seen), _exec("e1", "2")  # an overfill, or a repeat
+    with capture_logs() as logs:
+        assert not (b01.exec_new_and_closes(ctx, event) or b01.exec_new_and_partial(ctx, event))
+        await _run("audit_guard_denied", ctx, event)
+    ((name, audited),) = [call.args for call in hook.await_args_list]
+    (log,) = logs
+    assert (log["log_level"], log["exec_id"], why in log["reason"]) == (level, "e1", True)
+    assert (name, audited["denied"]) == ("guard_denied", {"exec_id": "e1", "reason": log["reason"]})
+
+
+def test_gates_are_the_five_synchronous_verdicts() -> None:
+    assert b01.GATES == ("risk", "rate", "kill_switch", "live_gate", "native_stop")
 
 
 @pytest.mark.parametrize(
     ("event", "passes"),
     [
         (_validate(), True),
-        (_validate({"native_stop": False}), False),
-        (_validate({"risk": None}), False),
-        (_validate({"live_gate": "yes"}), False),
+        *[(_validate({g: v}), False) for g in GATES for v in ("fail", None, True, 1)],
+        *[(_Ev(gates={k: "pass" for k in GATES if k != g}, order=ORDER), False) for g in GATES],
         (_validate(qty="0"), False),
+        *[(_validate(**{key: v}), False) for key in ("qty", "price") for v in HOSTILE],
         (_validate(stop_loss="-1"), False),
         (_validate(account_id=""), False),
         (_Ev(order=ORDER), False),
     ],
 )
-def test_passes_all_gates_needs_every_verdict_and_a_well_formed_order(
+def test_passes_all_gates_needs_every_verdict_pass_and_a_well_formed_order(
     event: object, passes: bool
 ) -> None:
     assert b01.passes_all_gates({}, event) is passes
@@ -130,19 +167,59 @@ def test_guards_are_total_and_deny_on_hostile_input() -> None:
             assert guard(_Hostile(), event) is False, name
 
 
-async def test_stamp_validated_pins_the_order_and_set_local_reject_names_the_reason() -> None:
-    ctx = await _run("stamp_validated", {}, _validate(qty="0.50", stop_loss="62E3"))
-    terms = {"price": "63000", "trigger_price": None, "take_profit": None, "stop_loss": "62000"}
-    assert ctx == ORDER | terms | {"qty": "0.5", "leaves_qty": "0.5"}
-    assert await _run("stamp_validated", {}, _validate(qty="0")) == {}  # behind the guard
-    native = await _run("set_local_reject", {}, _validate({"native_stop": False}))
-    other = await _run("set_local_reject", {}, _validate({"risk": False}))
-    assert native["reject_code"] == "NATIVE_STOP_REQUIRED" and other["reject_code"] is None
+_STAMPED = ORDER | {"trigger_price": None, "take_profit": None, "qty": "0.5", "leaves_qty": "0.5"}
+_X1, _X2 = {"ok": True, "exchange_order_id": "x1"}, _Done({"ok": True, "exchange_order_id": "x2"})
+_NATIVE = {"reject_code": "NATIVE_STOP_REQUIRED"}
 
 
-_FILL = st.tuples(
-    *(st.decimals(lo, hi, places=n) for lo, hi, n in ((1, 9, 2), (1, 99, 1), (-1, 1, 4)))
+@pytest.mark.parametrize(
+    ("action", "event", "expected"),
+    [
+        ("stamp_validated", _validate(qty="0.50", stop_loss="62000.0"), _STAMPED),
+        ("stamp_validated", _validate({"risk": "fail"}), {}),
+        ("set_local_reject", _validate({"native_stop": "fail"}), _NATIVE),
+        ("set_local_reject", _validate({"risk": "fail"}), {"reject_code": None}),
+        ("apply_fill", _exec("e1", "0.4"), {}),  # refused: changes nothing (INV-B1-b)
+        ("adopt_ack", _X2, {}),  # the bound id is never replaced
+        ("adopt_cancel_ack", _Done(), {}),  # an ack without an id
+        ("map_reject_code", _Done({"error_code": "RATE_LIMITED"}), {"reject_code": "RATE_LIMITED"}),
+        ("map_reject_code", _Done({"error_code": "110007"}), {"reject_code": "EXCHANGE_UNKNOWN"}),
+        ("map_reject_code", _Done(), {"reject_code": "EXCHANGE_UNKNOWN"}),
+    ],
 )
+async def test_a_context_action_writes_only_its_fields(
+    action: str, event: object, expected: dict[str, Any]
+) -> None:
+    start = {"exchange_order_id": "x1"}
+    assert await _run(action, dict(start), event) == start | expected
+
+
+_KEPT = ("63000", "1", "0.75", 1)  # price, qty, leaves_qty and one ERROR log: not adopted
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"ok": True, "terms": {"price": "64000", "qty": "0.8"}}, ("64000", "0.8", "0.55", 0)),
+        ({"ok": True, "terms": {"qty": "0.25"}}, ("63000", "0.25", "0", 0)),  # qty == filled_qty
+        ({"ok": True, "terms": {"qty": MAX}}, ("63000", MAX, MAX_LEAVES, 0)),  # exact at 38 digits
+        ({"ok": False, "terms": {"price": "64000"}}, _KEPT),
+        ({"ok": True, "terms": {"price": "0"}}, _KEPT),
+        ({"ok": True, "terms": {"qty": "0.1"}}, _KEPT),  # under filled_qty (INV-1)
+        *[({"ok": True, "terms": {key: v}}, _KEPT) for key in ("qty", "price") for v in HOSTILE],
+        ({"ok": True}, _KEPT),
+    ],
+)
+async def test_adopt_amend_adopts_only_an_accepted_well_formed_amend(
+    result: dict[str, Any], expected: tuple[object, ...]
+) -> None:
+    with capture_logs() as logs:
+        ctx = await _run("adopt_amend", _ctx(filled_qty="0.25", leaves_qty="0.75"), _Done(result))
+    assert (ctx["price"], ctx["qty"], ctx["leaves_qty"], len(logs)) == expected
+
+
+_RATES = st.sampled_from([Decimal("-0.0001"), Decimal("0.0002"), Decimal("0.00055")])
+_FILL = st.tuples(st.decimals(1, 9, places=2), st.decimals(1, 99, places=1), _RATES)
 
 
 @settings(max_examples=40, deadline=None, derandomize=True)
@@ -150,7 +227,10 @@ _FILL = st.tuples(
 async def test_inv_b1_a_fills_in_any_order_give_the_same_totals(
     fills: list[tuple[Decimal, Decimal, Decimal]], data: st.DataObject
 ) -> None:
-    events = [_exec(f"e{i}", str(q), str(p), str(f)) for i, (q, p, f) in enumerate(fills)]
+    events = [
+        _exec(f"e{i}", str(q), str(p), fee=str(q * p * r), fee_rate=str(r))
+        for i, (q, p, r) in enumerate(fills)
+    ]
     totals = []
     for order in (events, data.draw(st.permutations(events))):
         ctx = _ctx(qty="50")
@@ -160,122 +240,72 @@ async def test_inv_b1_a_fills_in_any_order_give_the_same_totals(
     assert totals[0] == totals[1] and Decimal(totals[0][0]) == sum(q for q, _, _ in fills)
 
 
-async def test_apply_fill_changes_nothing_for_an_exec_the_guards_deny() -> None:
-    ctx = _ctx(seen_exec_ids=["e1"])
-    assert await _run("apply_fill", copy.deepcopy(ctx), _exec("e1", "0.4")) == ctx  # INV-B1-b
+async def _hang(*_a: object) -> None:
+    await asyncio.Event().wait()
 
 
-async def _submitted(charts: Charts, monkeypatch: pytest.MonkeyPatch) -> Any:
-    """A B1 machine on the library with the real guards and context actions: VALIDATE, SEND and
-    an ok place ack take it to `submitted`; a cancel stays in flight."""
+async def _hostile_amend(*_a: object) -> dict[str, object]:
+    return {"ok": True, "terms": {"qty": "1E+80"}}
 
-    async def _ack(*_a: object) -> dict[str, object]:
-        return {"ok": True, "exchange_order_id": "x1"}
 
-    async def _hang(*_a: object) -> None:
-        await asyncio.Event().wait()
-
-    monkeypatch.setitem(b01.SERVICES, "place_order", _ack)
+async def _submitted(
+    charts: Charts, monkeypatch: pytest.MonkeyPatch, amend: Callable[..., Awaitable[Any]] = _hang
+) -> Any:
+    """B1 on the library with the real guards and context actions, in `submitted` after VALIDATE,
+    SEND and an ok place ack; a cancel, and an amend unless *amend* answers it, stay in flight."""
+    monkeypatch.setitem(b01.SERVICES, "place_order", AsyncMock(return_value=_X1))
     monkeypatch.setitem(b01.SERVICES, "cancel_order", _hang)
+    monkeypatch.setitem(b01.SERVICES, "amend_order", amend)
     interp = (await park("order", _CHART, "lifecycle.draft", charts)).interpreter
     await interp.send("VALIDATE", wait=True, **_validate().payload)
     await interp.send("SEND", wait=True)
     await settle()
-    assert "order.lifecycle.submitted" in interp.current_state_ids
     return interp
 
 
-async def test_inv_b1_b_a_repeated_exec_id_changes_nothing(
-    charts: Charts, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("exec_id", "qty", "state", "leaves"),
+    [
+        ("e3", "0.4", "filled", "0"),
+        ("e3", "0.1", "partially_filled", "0.3"),
+        ("e2", "0.2", "cancel_pending", "0.4"),
+    ],
+)
+async def test_cancel_loses_the_race_to_a_fill_not_to_a_repeat(
+    exec_id: str, qty: str, state: str, leaves: str, charts: Charts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    interp = await _submitted(charts, monkeypatch)
-    try:
-        await interp.send("EXEC", wait=True, **_exec("e1", "0.4").payload)
-        before = copy.deepcopy(interp.context)
-        await interp.send("EXEC", wait=True, **_exec("e1", "0.4").payload)
-        assert interp.context == before and before["filled_qty"] == "0.4"
-        assert "order.lifecycle.partially_filled" in interp.current_state_ids
-    finally:
-        await interp.stop()
-
-
-async def test_cancel_loses_the_race_to_a_fill(
-    charts: Charts, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Gherkin "Cancel loses the race to a fill" (S3), partial, partial then full, on the library:
-    the closing EXEC in `cancel_pending` fills the order."""
+    """Gherkin "Cancel loses the race to a fill" (S3) on the library: a closing or a partial EXEC in
+    `cancel_pending` applies, and a repeat changes nothing (S4). The lost-race record and the quiet
+    UI are the facade's (slice 6)."""
     interp = await _submitted(charts, monkeypatch)
     try:
         for event in (_exec("e1", "0.4"), _exec("e2", "0.2", "63100")):
             await interp.send("EXEC", wait=True, **event.payload)
         await interp.send("CANCEL", wait=True)
+        await interp.send("EXEC", wait=True, **_exec(exec_id, qty, "63200").payload)
         await settle()
-        assert "order.lifecycle.cancel_pending" in interp.current_state_ids
-        await interp.send("EXEC", wait=True, **_exec("e3", "0.4", "63200").payload)
-        await settle()
-        assert "order.lifecycle.filled" in interp.current_state_ids
-        ctx = interp.context
-        assert (ctx["filled_qty"], ctx["leaves_qty"], ctx["avg_price"]) == ("1", "0", "63100")
-        assert (ctx["seen_exec_ids"], ctx["exchange_order_id"]) == (["e1", "e2", "e3"], "x1")
+        seen = list(dict.fromkeys(["e1", "e2", exec_id]))
+        assert f"order.lifecycle.{state}" in interp.current_state_ids
+        assert (interp.context["leaves_qty"], interp.context["seen_exec_ids"]) == (leaves, seen)
     finally:
         await interp.stop()
 
 
-async def test_adopt_records_the_exchange_order_id_once_and_recon_ends_the_misses() -> None:
-    ctx = await _run("adopt_ack", _ctx(recon_misses=1), _Done({"exchange_order_id": "x1"}))
-    await _run("adopt_cancel_ack", ctx, _Done({"ok": True, "exchange_order_id": "x2"}))
-    await _run("adopt_recon", ctx, _Ev(exchange_order_id=None))
-    assert (ctx["exchange_order_id"], ctx["recon_misses"]) == ("x1", 0)
-
-
-@pytest.mark.parametrize(
-    ("result", "expected"),
-    [
-        ({"ok": True, "terms": {"price": "64000", "qty": "0.8"}}, ("64000", "0.8", "0.55")),
-        ({"ok": False, "terms": {"price": "64000"}}, ("63000", "1", "0.75")),
-        ({"ok": True, "terms": {"price": "0"}}, ("63000", "1", "0.75")),
-        ({"ok": True, "terms": {"qty": "0.1"}}, ("63000", "1", "0.75")),  # under filled_qty
-        ({"ok": True}, ("63000", "1", "0.75")),
-    ],
-)
-async def test_adopt_amend_adopts_only_an_accepted_well_formed_amend(
-    result: dict[str, Any], expected: tuple[str, str, str]
+@pytest.mark.parametrize("amend", [_hang, _hostile_amend])
+async def test_amend_rejection_does_not_move_the_stop(
+    amend: Callable[..., Awaitable[Any]], charts: Charts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ctx = await _run("adopt_amend", _ctx(filled_qty="0.25", leaves_qty="0.75"), _Done(result))
-    assert (ctx["price"], ctx["qty"], ctx["leaves_qty"]) == expected
-
-
-async def test_amend_rejection_does_not_move_the_stop() -> None:
-    """Gherkin "Amend rejection does not move the stop" (S2) at the binding: price 63000 stays."""
-    ctx = _ctx(stop_loss="62000")
-    before = copy.deepcopy(ctx)
-    await _run("keep_prior_order_live", ctx, _Ev(error_code="INSUFFICIENT_MARGIN"))
-    assert ctx == before and ctx["price"] == "63000"
-
-
-@pytest.mark.parametrize(
-    ("code", "expected"),
-    [("RATE_LIMITED", "RATE_LIMITED"), ("110007", "EXCHANGE_UNKNOWN"), (None, "EXCHANGE_UNKNOWN")],
-)
-async def test_map_reject_code_keeps_a_taxonomy_code(code: object, expected: str) -> None:
-    ctx = await _run("map_reject_code", {}, _Done({"ok": False, "error_code": code}))
-    assert ctx["reject_code"] == expected
-
-
-@pytest.mark.parametrize(
-    ("error", "expected"),
-    [
-        (TimeoutError("echoed signed request"), "TimeoutError"),
-        (None, "unknown"),
-        (type("bad name", (Exception,), {})(), "unknown"),
-    ],
-)
-async def test_record_transport_fault_keeps_the_class_name(error: object, expected: str) -> None:
-    ctx = await _run("record_transport_fault", {}, _Done(error=error))
-    assert ctx == {"transport_fault": expected}
-
-
-async def test_recon_misses_count_up_and_the_second_rejects_the_order_unresolvable() -> None:
-    ctx = await _run("bump_recon_misses", {"recon_misses": 0}, None)
-    await _run("set_reject_unresolvable", ctx, None)
-    assert ctx == {"recon_misses": 2, "reject_code": "UNRESOLVED_AFTER_RECONCILE"}
+    """Gherkin "Amend rejection does not move the stop" (S2) on the library: an amend rejected, or
+    acked ok with terms that cannot apply, is sent once and leaves the order live with price 63000,
+    its qty and its stop. `notify_amend_rejected` emits `amend_rejected` in slice 5."""
+    interp = await _submitted(charts, monkeypatch, sent := AsyncMock(side_effect=amend))
+    try:
+        await interp.send("EXEC", wait=True, **_exec("e1", "0.25").payload)
+        before = copy.deepcopy(interp.context)
+        for event in ("AMEND", "AMEND_REJECTED"):  # unhandled once the ack has landed: deferred
+            await interp.send(event, wait=True)
+            await settle()
+        assert "order.lifecycle.partially_filled" in interp.current_state_ids
+        assert (sent.await_count, interp.context["price"], interp.context) == (1, "63000", before)
+    finally:
+        await interp.stop()

@@ -1,15 +1,13 @@
 """candleviewer.statechart.bindings.b01_order — MachineLogic for B1 `order`
 (#1650, E50). Chart: `machines/B01.order.machine.json`.
 
-E29-T03 implements the guards (pure, total, deny by default; catalogue A6) and the context
-actions; the effectful actions and the services stay idempotent no-ops for its next slice.
-Statecharts record, synchronous code enforces (C-2.21): risk, the rate budget, the kill switch,
-the live gate and the native-stop decision (E32-T01) run before `VALIDATE`, which carries their
-verdicts (`gates`) and the validated order (`order`). `EXEC` carries a 24-internal-schemas.md
-Sec.8.1 `Execution`; `place`, `cancel` and `amend` finish with a Sec.14.4 `OrderAck` (the amend's
-adds the `terms` it sent), all as JSON. A service answers only a definite outcome and raises on an
-ambiguous one, so `onError` takes the order to `unknown` (S1). Money is canonical decimal text in
-context, like the chart's `"qty": "0"`, so a snapshot stays plain JSON.
+E29-T03 implements the fill, validation and ack guards (pure, total, deny by default; catalogue
+A6) and context actions; the rest stay idempotent no-ops for its later slices.
+Statecharts record, synchronous code enforces (C-2.21): `VALIDATE` carries the verdicts of the
+checks run before it (`gates`) and the order. `EXEC` carries a 24-internal-schemas.md Sec.8.1
+`Execution` and its `exchange_order_id`; services answer a Sec.14.4 `OrderAck` (an amend's adds
+its `terms`) and raise on an ambiguous outcome, so `onError` lands in `unknown` (S1). Money is
+canonical decimal text in context, like the chart's `"qty": "0"`: a snapshot stays plain JSON.
 
 KILL semantics (owner decision #1778 item X, option a): root `lifecycle.on.KILL`
 lands in the final `lifecycle.killed`, whose entry marks the order
@@ -24,15 +22,14 @@ The `protection` region is untouched by KILL (C-2.6): it only audits.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable, Mapping
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal
 from typing import Any, Final
 
 import structlog
 
 from candleviewer.exchange.base.errors import OmsErrorCode
-from candleviewer.oms.errors import ExecutionRefused
-from candleviewer.oms.execution import Fill, OrderFills, apply_execution
 from candleviewer.statechart.bindings import register_binding_module
 from candleviewer.statechart.config import CV_KILL_CANCEL_TIMEOUT, register_event_schemas
 
@@ -59,27 +56,46 @@ def set_audit_hook(hook: AuditHook | None) -> None:
     _hook = hook or _no_hook
 
 
+#: `oms.execution.apply_fields`, set by the OMS like the audit hook, as the statechart package
+#: imports no `oms` module (C-3.1). It refuses a fill with `ValueError`, and so does its absence.
+FillCore = Callable[[Mapping[str, Decimal], Mapping[str, Decimal]], Mapping[str, Decimal | None]]
+_core: FillCore | None = None
+
+
+def set_fill_core(core: FillCore | None) -> None:
+    global _core
+    _core = core
+
+
 async def _noop_action(*_args: object, **_kwargs: object) -> None:
     return None
+
+
+def _deny_guard(*_args: object, **_kwargs: object) -> bool:
+    return False
 
 
 async def _idempotent_service(*_args: object, **_kwargs: object) -> None:
     return None
 
 
-#: `VALIDATE`'s verdicts (each must be `True`), the order's identity, and its optional terms
-#: an amend may change besides `qty` (24 Sec.14.4 `AmendOrderRequest`).
+#: `VALIDATE`'s verdicts (each `PASSED`: a bool could read as "engaged"), the order's identity, the
+#: terms an amend may change besides `qty` (22-api-openapi.yaml `AmendOrderRequest`), and what an
+#: EXEC shares with its order: it pairs on the bound exchange order id (SR-E29-03).
 GATES: Final = ("risk", "rate", "kill_switch", "live_gate", "native_stop")
+PASSED: Final = "pass"
+FAILED: Final = "fail"
 FACTS: Final = ("order_id", "order_link_id", "account_id", "symbol", "side")
 TERMS: Final = ("price", "trigger_price", "take_profit", "stop_loss")
-#: The reject codes T03 sets (#847): the native-stop refusal (E32-T01 decides it) and 24
-#: Sec.8.5's second consecutive reconciliation miss.
+PAIRING: Final = ("exchange_order_id", *FACTS)
+#: The local reject code T03 sets: the native-stop refusal, which E32-T01 decides.
 NATIVE_STOP_REQUIRED: Final = "NATIVE_STOP_REQUIRED"
-UNRESOLVED_AFTER_RECONCILE: Final = "UNRESOLVED_AFTER_RECONCILE"
-RECON_MISSES_TO_REJECT: Final = 2
-#: Bounds on what a payload may put into context (C-2.18): fills per order, id and number text.
+#: Bounds on what a payload may put into context (C-2.18): fills per order, id text, and money as
+#: 22's `Decimal` text (C6: no exponent, space or `_`) with numeric(38,18)'s 20 + 18 digits.
 MAX_FILLS: Final = 10_000
 MAX_TEXT: Final = 64
+_MONEY: Final = re.compile(r"-?[0-9]{1,20}(\.[0-9]{1,18})?")
+REPEAT: Final = "a repeat exec_id (S4)"
 _REJECT_CODES: Final = frozenset(code.value for code in OmsErrorCode)
 
 
@@ -93,15 +109,11 @@ def _id(raw: object) -> str | None:
     return raw if isinstance(raw, str) and 0 < len(raw) <= MAX_TEXT else None
 
 
-def _number(raw: object) -> Decimal | None:
-    """A finite decimal from bounded text; never from a float."""
-    if not isinstance(raw, str) or len(raw) > MAX_TEXT:
-        return None
-    try:
-        value = Decimal(raw)
-    except InvalidOperation:
-        return None
-    return value if value.is_finite() else None
+def _money(raw: object) -> Decimal:
+    """Money from `_MONEY` text, else `ValueError`; never from a float."""
+    if not isinstance(raw, str) or not _MONEY.fullmatch(raw):
+        raise ValueError("a money value is not C6 text that numeric(38,18) holds")
+    return Decimal(raw)
 
 
 def _text(value: Decimal) -> str:
@@ -112,34 +124,14 @@ def _text(value: Decimal) -> str:
     return "0" if out == "-0" else out
 
 
-def _positives(raw: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Decimal] | None:
-    """*raw*'s values for *keys*, each above zero (absent or null: skipped), else None."""
-    out: dict[str, Decimal] = {}
-    for key in keys:
-        if raw.get(key) is not None:
-            value = _number(raw[key])
-            if value is None or value <= 0:
-                return None
-            out[key] = value
+def _positives(raw: object, keys: tuple[str, ...]) -> dict[str, Decimal]:
+    """*raw*'s money for *keys*, each above zero (absent or null: skipped), else `ValueError`."""
+    if not isinstance(raw, Mapping):
+        raise ValueError("the terms are not a mapping")
+    out = {key: _money(raw[key]) for key in keys if raw.get(key) is not None}
+    if any(value <= 0 for value in out.values()):
+        raise ValueError("a term is zero or less")
     return out
-
-
-def _totals(context: Mapping[str, Any]) -> OrderFills:
-    """The context's fill values; refuses a context these actions did not write."""
-    qty, filled, value, fee = (
-        _number(context.get(key, "0"))
-        for key in ("qty", "filled_qty", "cum_exec_value", "fee_paid")
-    )
-    if qty is None or filled is None or value is None or fee is None:
-        raise ExecutionRefused("the order context holds a fill value that is not a decimal")
-    return OrderFills(qty, filled, value, fee)
-
-
-def _misses(context: Mapping[str, Any]) -> int:
-    misses = context.get("recon_misses", 0)
-    if type(misses) is not int or misses < 0:
-        raise ValueError("recon_misses is not a count")
-    return misses
 
 
 def _gates(event: Any) -> Mapping[str, Any]:
@@ -148,39 +140,40 @@ def _gates(event: Any) -> Mapping[str, Any]:
 
 
 def _validated(event: Any) -> dict[str, str | None] | None:
-    """The validated order as context values when every gate passed and it is well formed."""
+    """The order as context values when every verdict is `PASSED`; `ValueError` if malformed."""
     order = _fields(event).get("order")
-    if not isinstance(order, Mapping) or any(_gates(event).get(g) is not True for g in GATES):
+    if not isinstance(order, Mapping) or any(_gates(event).get(g) != PASSED for g in GATES):
         return None
     facts = {key: _id(order.get(key)) for key in FACTS}
     terms = _positives(order, ("qty", *TERMS))
-    if terms is None or "qty" not in terms or None in facts.values():
-        return None
+    if "qty" not in terms or None in facts.values():
+        raise ValueError("the order has no qty, or a malformed identity")
     stamped: dict[str, str | None] = {**facts, **dict.fromkeys(TERMS)}
     stamped.update({key: _text(value) for key, value in terms.items()})
     stamped["leaves_qty"] = stamped["qty"]
     return stamped
 
 
-def _accepted_fill(context: Mapping[str, Any], event: Any) -> tuple[str, OrderFills] | None:
-    """`(exec_id, totals after it)` for a new EXEC of this order; None for a repeat (S4), or one
-    that is malformed, another order's, past `MAX_FILLS` or refused by `apply_execution`."""
+def _admit(context: Mapping[str, Any], event: Any) -> tuple[str, Mapping[str, Decimal | None]]:
+    """`(exec_id, the order's totals after it)` for a new trade EXEC of this order, else a
+    `ValueError` saying why: `REPEAT` (S4), another order's (SR-E29-03) or hostile (OM-T04)."""
     p, seen = _fields(event), context.get("seen_exec_ids")
-    link, exec_id = _id(context.get("order_link_id")), _id(p.get("exec_id"))
-    if isinstance(seen, list) and exec_id in seen:
-        return None  # the deny arm audits a repeat, which changes nothing (INV-B1-b)
-    qty, price, fee = (_number(p.get(key)) for key in ("qty", "price", "fee"))
-    try:
-        if link is None or exec_id is None or p.get("order_link_id") != link:
-            raise ExecutionRefused("the execution is malformed or another order's")
-        if not isinstance(seen, list) or len(seen) >= MAX_FILLS:
-            raise ExecutionRefused("seen_exec_ids is missing or at MAX_FILLS")
-        if qty is None or price is None or fee is None:
-            raise ExecutionRefused("the execution's qty, price or fee is not a decimal")
-        return exec_id, apply_execution(_totals(context), Fill(exec_id, qty, price, fee))
-    except ExecutionRefused as exc:
-        logger().error("b01_exec_refused", reason=str(exc), order_link_id=link)
-        return None
+    exec_id = _id(p.get("exec_id"))
+    if exec_id is None or not isinstance(seen, list):
+        raise ValueError("the execution has no exec_id, or the order no seen_exec_ids")
+    if exec_id in seen:
+        raise ValueError(REPEAT)
+    if p.get("exec_type") != "trade" or any(
+        _id(p.get(key)) is None or p.get(key) != context.get(key) for key in PAIRING
+    ):
+        raise ValueError("the execution is not a trade of this order's bound exchange order")
+    if len(seen) >= MAX_FILLS:
+        raise ValueError("the order holds MAX_FILLS fills")
+    if _core is None:
+        raise ValueError("the OMS has not set its fill arithmetic")
+    fill = {key: _money(p.get(key)) for key in ("qty", "price", "fee", "fee_rate")}
+    totals = ("qty", "filled_qty", "cum_exec_value", "fee_paid")
+    return exec_id, _core({key: _money(context.get(key, "0")) for key in totals}, fill)
 
 
 def _total(name: str, check: Callable[[], bool]) -> bool:
@@ -203,17 +196,20 @@ def exec_new_and_partial(context: dict[str, Any], event: Any) -> bool:
 
 
 def _closes(context: Mapping[str, Any], event: Any) -> bool | None:
-    found = _accepted_fill(context, event)
-    return None if found is None else found[1].closes
+    """Whether a new EXEC fills the order; None when it is refused (the deny arm says why)."""
+    try:
+        return _admit(context, event)[1]["leaves_qty"] == 0
+    except ValueError:
+        return None
 
 
 def has_fills(context: dict[str, Any], event: Any) -> bool:
     """Some quantity is filled, so the order's live state is `partially_filled`."""
-    return _total("has_fills", lambda: _totals(context).filled_qty > 0)
+    return _total("has_fills", lambda: _money(context.get("filled_qty", "0")) > 0)
 
 
 def ret_code_ok(context: dict[str, Any], event: Any) -> bool:
-    """The exchange accepted the request: the ack says `ok` (the adapter reads retCode, C-2.2)."""
+    """The exchange accepted the request: the ack says `ok` (the adapter reads the code, C-2.2)."""
     return _total("ret_code_ok", lambda: _fields(event).get("ok") is True)
 
 
@@ -224,14 +220,9 @@ def is_duplicate_link_id(context: dict[str, Any], event: Any) -> bool:
 
 
 def passes_all_gates(context: dict[str, Any], event: Any) -> bool:
-    """Every verdict `VALIDATE` carries is `True` and its order is well formed. It records the
+    """Every verdict `VALIDATE` carries is `PASSED` and its order is well formed. It records the
     synchronous checks' verdicts and decides none of them (C-2.21)."""
     return _total("passes_all_gates", lambda: _validated(event) is not None)
-
-
-def second_consecutive_miss(context: dict[str, Any], event: Any) -> bool:
-    """This `RECON_MISS` is the second in a row (24 Sec.8.5)."""
-    return _total("second_consecutive_miss", lambda: _misses(context) + 1 >= RECON_MISSES_TO_REJECT)
 
 
 async def stamp_validated(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
@@ -244,25 +235,20 @@ async def stamp_validated(_i: Any, context: dict[str, Any], event: Any, _a: Any)
 
 
 async def set_local_reject(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """`NATIVE_STOP_REQUIRED` when the native-stop verdict refused, the one local reason T03
+    """`NATIVE_STOP_REQUIRED` when the native-stop verdict is `FAILED`, the one local reason T03
     exposes; any other refusal records no code (its verdicts stay in the event)."""
-    native_refused = _gates(event).get("native_stop") is False
+    native_refused = _gates(event).get("native_stop") == FAILED
     context["reject_code"] = NATIVE_STOP_REQUIRED if native_refused else None
 
 
 async def apply_fill(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """S4: the EXEC's new totals (`apply_execution`) and its `exec_id` in `seen_exec_ids`. Only
-    an EXEC a guard admitted reaches it; a repeat changes nothing (INV-B1-b)."""
-    found = _accepted_fill(context, event)
-    if found is None:
+    """S4: an admitted EXEC's totals, and its `exec_id` in `seen_exec_ids` (INV-B1-b)."""
+    try:
+        exec_id, totals = _admit(context, event)
+    except ValueError:
         return
-    exec_id, totals = found
     context.update(
-        filled_qty=_text(totals.filled_qty),
-        leaves_qty=_text(totals.leaves_qty),
-        cum_exec_value=_text(totals.cum_exec_value),
-        fee_paid=_text(totals.fee_paid),
-        avg_price=None if totals.avg_price is None else _text(totals.avg_price),
+        {key: None if value is None else _text(value) for key, value in totals.items()},
         seen_exec_ids=[*context["seen_exec_ids"], exec_id],
     )
 
@@ -281,60 +267,30 @@ async def adopt_ack(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> No
     _adopt_exchange_id(context, _fields(event))
 
 
-async def adopt_recon(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """Reconciliation found the order: adopt its id, and the run of misses ends."""
-    _adopt_exchange_id(context, _fields(event))
-    context["recon_misses"] = 0
-
-
 async def adopt_amend(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """An accepted amend: adopt the `terms` it sent. A result that is not `ok`, or terms that are
-    malformed or would put `qty` under `filled_qty` (INV-1), keep the prior order as it is (S2).
-    Never raises: on this `onDone` arm a rollback would send the amend again."""
+    """An accepted amend's `terms`, all or none; any other result keeps the prior order (S2) and
+    logs why. Never raises: on this `onDone` arm a rollback would send the amend again."""
     result = _fields(event)
-    sent = result.get("terms")
-    terms = _positives(sent, ("qty", *TERMS)) if isinstance(sent, Mapping) else None
-    if result.get("ok") is not True or terms is None:
+    try:
+        if result.get("ok") is not True:
+            raise ValueError("the amend ack is not ok")
+        terms = _positives(result.get("terms"), ("qty", *TERMS))
+        filled, qty = _money(context.get("filled_qty")), terms.get("qty") or _money(context["qty"])
+        if qty < filled:
+            raise ValueError("the amend puts qty under filled_qty (INV-1)")
+        leaves = Context(prec=40).subtract(qty, filled)  # exact: both fit numeric(38,18)
+    except Exception as exc:  # any failure keeps the prior order
+        link = context.get("order_link_id")
+        logger().error("b01_amend_not_adopted", order_link_id=link, reason=str(exc))
         return
-    filled = _number(context.get("filled_qty"))
-    qty = terms.get("qty", _number(context.get("qty")))
-    if filled is None or qty is None or qty < filled:
-        logger().error("b01_amend_terms_refused", order_link_id=context.get("order_link_id"))
-        return
-    context.update({key: _text(value) for key, value in terms.items()})
-    context["leaves_qty"] = _text(OrderFills(qty, filled).leaves_qty)
-
-
-async def keep_prior_order_live(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """S2: a rejected amend leaves the prior order live and unchanged; only `adopt_amend` changes
-    the terms, so `qty`, the price and the stop stay. `notify_amend_rejected` tells the UI."""
-    logger().info("b01_amend_rejected_prior_kept", order_link_id=context.get("order_link_id"))
+    context.update({key: _text(value) for key, value in terms.items()}, leaves_qty=_text(leaves))
 
 
 async def map_reject_code(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """The ack's internal code (24 Sec.8.6; the adapter maps the retCode, C-2.2). A code outside
-    the taxonomy, or none, takes the table's default for any other code, `EXCHANGE_UNKNOWN`."""
+    """The ack's 24 Sec.8.6 code (the adapter maps it, C-2.2); else `EXCHANGE_UNKNOWN`."""
     code = _fields(event).get("error_code")
     known = isinstance(code, str) and code in _REJECT_CODES
     context["reject_code"] = code if known else OmsErrorCode.EXCHANGE_UNKNOWN.value
-
-
-async def record_transport_fault(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """S1: `unknown`, never resent. Keeps the failure's class name, never its text (it may echo
-    a signed request)."""
-    failure = getattr(event, "error", None)
-    name = type(failure).__name__ if isinstance(failure, BaseException) else ""
-    context["transport_fault"] = name[:MAX_TEXT] if name.isidentifier() else "unknown"
-
-
-async def bump_recon_misses(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    context["recon_misses"] = _misses(context) + 1
-
-
-async def set_reject_unresolvable(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """24 Sec.8.5: the second consecutive miss rejects the order as unresolvable."""
-    context["recon_misses"] = _misses(context) + 1
-    context["reject_code"] = UNRESOLVED_AFTER_RECONCILE
 
 
 # --- KILL arm (#1650) ----------------------------------------------------------------
@@ -390,14 +346,26 @@ async def audit_kill_protection_retained(
     await _hook("kill_protection_retained", context)
 
 
-async def audit_guard_denied(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    await _hook("guard_denied", context)
+async def audit_guard_denied(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """B1's one deny arm, an EXEC's: logged and audited once with its `exec_id` and why; all but
+    `REPEAT` is hostile (OM-T04), at ERROR for the OMS to answer with `FAULT`."""
+    detail = {"exec_id": _id(_fields(event).get("exec_id")), "reason": ""}
+    try:
+        _admit(context, event)
+    except ValueError as exc:
+        detail["reason"] = str(exc)
+    log = logger().info if detail["reason"] == REPEAT else logger().error
+    log("b01_exec_refused", order_link_id=context.get("order_link_id"), **detail)
+    await _hook("guard_denied", {**context, "denied": detail})
 
 
 _STUB_ACTIONS = (
+    "adopt_recon",
     "arm_recon_deadline",
     "arm_sl_deadline",
+    "bump_recon_misses",
     "emit_terminal",
+    "keep_prior_order_live",
     "mark_needs_lookup",
     "notify_amend_rejected",
     "notify_protection_region",
@@ -405,9 +373,11 @@ _STUB_ACTIONS = (
     "raise_critical_alert",
     "raise_naked_position_alert",
     "raise_unknown_alert",
+    "record_transport_fault",
     "request_fallback_sl",
     "request_reconciliation",
     "reserve_rate_token",
+    "set_reject_unresolvable",
 )
 
 ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
@@ -415,14 +385,9 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "adopt_ack": adopt_ack,
     "adopt_amend": adopt_amend,
     "adopt_cancel_ack": adopt_ack,
-    "adopt_recon": adopt_recon,
     "apply_fill": apply_fill,
-    "bump_recon_misses": bump_recon_misses,
-    "keep_prior_order_live": keep_prior_order_live,
     "map_reject_code": map_reject_code,
-    "record_transport_fault": record_transport_fault,
     "set_local_reject": set_local_reject,
-    "set_reject_unresolvable": set_reject_unresolvable,
     "stamp_validated": stamp_validated,
     "audit_guard_denied": audit_guard_denied,
     "audit_kill": audit_kill,
@@ -441,7 +406,7 @@ GUARDS: dict[str, Callable[..., bool]] = {
     "is_duplicate_link_id": is_duplicate_link_id,
     "passes_all_gates": passes_all_gates,
     "ret_code_ok": ret_code_ok,
-    "second_consecutive_miss": second_consecutive_miss,
+    "second_consecutive_miss": _deny_guard,
 }
 
 SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {

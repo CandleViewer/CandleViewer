@@ -7,12 +7,13 @@ product is exact under `_EXACT`, a local context with `Inexact` trapped; the thr
 never used. `avg_price` is the one division, of the exact totals, rounded once (half-even) to 18
 places, so fills in any order give the same result (INV-B1-a). A fill the order cannot absorb
 raises `ExecutionRefused` (OM-T04) and is never clamped (INV-1). The `exec_id` dedupe (24 Sec.8.2
-S4) is the caller's, before this runs.
+S4) is the caller's. The OMS sets `apply_fields` into the B1 binding (`set_fill_core`).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, fields
 from decimal import ROUND_HALF_EVEN, Context, Decimal, Inexact, InvalidOperation, Overflow
 from fractions import Fraction
 from typing import Final
@@ -26,17 +27,19 @@ _SCALE: Final = 18
 _EXACT: Final = Context(
     prec=80, rounding=ROUND_HALF_EVEN, traps=[InvalidOperation, Overflow, Inexact]
 )
+#: A bound on hostile data (OM-T04), not a fee model: no fee or rebate passes 1% of the value.
+MAX_FEE_RATE: Final = Decimal("0.01")
 
 
 @dataclass(frozen=True, slots=True)
 class Fill:
-    """One execution of an order (24 Sec.8.1 `Execution`): `qty` at `price`, charged `fee`. A fee
-    may be negative (a maker rebate) and is summed as reported."""
+    """One execution of an order (24 Sec.8.1 `Execution`): `qty` at `price`, charged `fee` at
+    `fee_rate`. A negative fee is a maker rebate, so its `fee_rate` is negative too."""
 
-    exec_id: str
     qty: Decimal
     price: Decimal
     fee: Decimal
+    fee_rate: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,10 +56,6 @@ class OrderFills:
     def leaves_qty(self) -> Decimal:
         return _EXACT.subtract(self.qty, self.filled_qty)
 
-    @property
-    def closes(self) -> bool:  # no quantity is left: the order is filled
-        return self.filled_qty == self.qty
-
 
 def apply_execution(order: OrderFills, fill: Fill) -> OrderFills:
     """*order*'s totals after *fill*; `ExecutionRefused` when the fill cannot apply (OM-T04)."""
@@ -68,11 +67,24 @@ def apply_execution(order: OrderFills, fill: Fill) -> OrderFills:
     filled = _EXACT.add(order.filled_qty, fill.qty)
     if filled > order.qty:
         raise ExecutionRefused("the execution takes filled_qty past qty (INV-1)")
-    value = _EXACT.add(order.cum_exec_value, _EXACT.multiply(fill.price, fill.qty))
+    notional = _EXACT.multiply(fill.price, fill.qty)
+    if fill.fee.copy_abs() > _EXACT.multiply(notional, MAX_FEE_RATE) or (
+        fill.fee != 0 and (fill.fee < 0) != (fill.fee_rate < 0)
+    ):
+        raise ExecutionRefused("the fee is past MAX_FEE_RATE of the value or against fee_rate")
+    value = _EXACT.add(order.cum_exec_value, notional)
     fee = _EXACT.add(order.fee_paid, fill.fee)
     totals = OrderFills(order.qty, filled, value, fee, _average(value, filled))
     _require_fit(totals)
     return totals
+
+
+def apply_fields(
+    order: Mapping[str, Decimal], fill: Mapping[str, Decimal]
+) -> dict[str, Decimal | None]:
+    """`apply_execution` over `OrderFills` and `Fill` field maps, with `leaves_qty` added."""
+    after = apply_execution(OrderFills(**order), Fill(**fill))
+    return asdict(after) | {"leaves_qty": after.leaves_qty}
 
 
 def _require_fit(*rows: Fill | OrderFills) -> None:
@@ -81,7 +93,7 @@ def _require_fit(*rows: Fill | OrderFills) -> None:
         for row in rows:
             for field in fields(row):
                 value = getattr(row, field.name)
-                if field.name != "exec_id" and value is not None:
+                if value is not None:
                     require_money(field.name, value)
     except (TypeError, ValueError) as exc:
         raise ExecutionRefused(str(exc)) from exc
