@@ -441,9 +441,11 @@ def test_self_service_routes_reject_a_target_user_query_parameter(
 #: A valid `POST /admin/recorder/purge` body (22-api-openapi.yaml `purgeRecordedData`), so the
 #: call can only be refused for who sends it or for the missing step-up, never as malformed.
 _PURGE_BODY = {"symbol": "BTCUSDT", "confirm_symbol": "BTCUSDT", "reason": "free disk"}
-#: Purge also requires an `Idempotency-Key`; the other administrative mutations take none.
+#: A valid `createApiKey` body (#836): refused only for who sends it or the missing step-up.
+_IMPORT_BODY = {"api_key": "k" * 18, "api_secret": "s" * 36}
+#: Purge and key import also require an `Idempotency-Key`; the other mutations take none.
 _IDEMPOTENCY_KEY = "00000000-0000-4000-8000-0000000000e1"
-_KEYED_MUTATIONS = {("POST", "/admin/recorder/purge")}
+_KEYED_MUTATIONS = {("POST", "/admin/recorder/purge"), ("POST", "/exchange-accounts/{uid}/keys")}
 
 _ADMIN_MUTATIONS = [
     ("PUT", "/users/{uid}/roles", {"roles": ["viewer"]}),
@@ -452,6 +454,7 @@ _ADMIN_MUTATIONS = [
     ("DELETE", "/users/{uid}/invite", None),
     ("POST", "/users/{uid}/mfa/reset", None),
     ("POST", "/admin/recorder/purge", _PURGE_BODY),  # 04 §7.2.2 row 9a; mounted by E16-T06 (#490)
+    ("POST", "/exchange-accounts/{uid}/keys", _IMPORT_BODY),  # createApiKey, mounted by #836
 ]  # fmt: skip
 
 

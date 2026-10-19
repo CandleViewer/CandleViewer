@@ -161,3 +161,30 @@ def test_adr0009_crafted_key_absent_from_stdout_files_and_metrics(
     out = capsys.readouterr()
     for sink in (out.out, out.err, log_file.read_text(), body):
         assert RAW_KEY not in sink
+
+
+async def test_the_key_import_route_leaks_no_key_material(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#836 slice 2b4: a pasted pair through `createApiKey`'s 201, 422, 502 and 500 is in no
+    answer, log line, traceback (the 500's, logged by the error handler) or /metrics body."""
+    from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH
+    from candleviewer.observability.metrics import generate_latest
+    from tests.contract.test_create_api_key_provider import Route, booted
+    from tests.unit.test_key_import_wiring import Refusing, Rig
+
+    pair = {"api_key": CANARY + "X1y2", "api_secret": CANARY + "-secret-" + RAW_KEY}
+    broken = Rig()  # an unmapped error inside the import: the error handler's 500 and traceback
+    broken.flow = broken.importer(Refusing(RuntimeError("a defect")))
+    configure_logging(env="demo", level="debug", fmt="json")
+    try:
+        routes = [await booted(), await booted(withdraw=True), Route(broken)]
+        routes.insert(2, await booted(swap={KEY_INFO_PATH: "error_10004.json"}))
+        answers = [await route.post(**pair) for route in routes]
+    finally:
+        reset_logging()
+    assert [a.status_code for a in answers] == [201, 422, 502, 500]
+    out = capsys.readouterr()
+    for sink in (*(a.text for a in answers), out.out, out.err, generate_latest().decode()):
+        assert CANARY not in sink and RAW_KEY not in sink
+    assert "Traceback" in out.out + out.err  # the 500's traceback was rendered, and holds neither

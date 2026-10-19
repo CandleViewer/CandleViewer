@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
 from candleviewer.account_health_wiring import wire_account_health
+from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.flags import default_registry
@@ -105,6 +106,7 @@ from candleviewer.api.enrolment_guard import (
     sessionless_operations,
 )
 from candleviewer.api.error_redaction import install_error_redaction
+from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.idle_lock import IdleLockMiddleware
@@ -212,6 +214,7 @@ from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import TradeStream
 from candleviewer.ingestion.watchdog import StalenessWatchdog
 from candleviewer.journal.service import JournalService
+from candleviewer.key_import_wiring import wire_key_import
 from candleviewer.key_selfcheck_wiring import wire_key_selfcheck
 from candleviewer.net import (
     BindingSelfCheck,
@@ -710,6 +713,7 @@ def build_app_context(
     auth_clock: Callable[[], datetime] | None = None,
     secrets_bundle: SecretsBundle | None = None,
     account_fixture: AccountFixture | None = None,
+    audit: AuditHandle | None = None,
 ) -> AppContext:
     """Construct an `AppContext` with real scaffold modules, no I/O performed.
 
@@ -722,6 +726,9 @@ def build_app_context(
     unless `CV_ACCOUNT_FIXTURE` is set; its REST transport becomes the exchange adapter's account
     REST transport, and (#836 slice 2b5) its private-socket connector the adapter's private-WS
     connector. None keeps httpx's own transport and production's connector.
+
+    `audit` is M19 (built here when `None`); `create_app()` passes the one M2's sink writes
+    through, holding the bundle's candidate capability for key import (#836).
     """
     resolved = settings or get_settings()
     read_only_gate = ReadOnlyGate()
@@ -740,7 +747,7 @@ def build_app_context(
         env=resolved.environment.value,
         read_only_gate=read_only_gate,
     )
-    audit = _build_audit(resolved)
+    audit = _build_audit(resolved) if audit is None else audit
     secrets = secrets_bundle or _build_secrets(resolved, audit)
     return AppContext(
         settings=resolved,
@@ -1178,11 +1185,14 @@ def create_app(
     app.add_exception_handler(GatewayOverloadedError, gateway_overloaded_handler)
     app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
     install_error_redaction(app)  # E43-T06: no secret echo via 422/500 bodies
+    audit = _build_audit(resolved)
+    bundle = secrets_bundle or _build_secrets(resolved, audit)
     ctx = build_app_context(
         resolved,
         auth_clock=auth_clock,
-        secrets_bundle=secrets_bundle,
+        secrets_bundle=bundle,
         account_fixture=account_fixture,
+        audit=audit,
     )
     app.state.app_context = ctx
     app.state.account_fixture = account_fixture
@@ -1726,6 +1736,19 @@ def create_app(
     # E27-T03 (#836): the stored-key boot assertion and hourly re-check, run by the supervisor-
     # started `AccountsService` before the app serves (real backend only).
     wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit), metrics_facade)
+    # E27-T03 (#836): `createApiKey`; its flow holds M2's candidate capability (real backend only).
+    # The lifespan drains its imports before `stop_all` stops audit and M2, then frees its pool.
+    key_imports = wire_key_import(ctx, bundle.candidate_keys, _LazyAuditEmitter(ctx.audit))
+    app.state.key_imports = key_imports
+    app.include_router(
+        make_exchange_keys_router(
+            key_imports,
+            _LazyAuditEmitter(ctx.audit),
+            owner_resolver,
+            egress_ip=resolved.egress_ip,
+            rotation=KeyRotationPolicy.from_settings(resolved),
+        )
+    )
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
     # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's. It
     # serves the `wallet` topic built above.

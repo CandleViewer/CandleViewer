@@ -561,8 +561,9 @@ operations:
     permissions: ['keys:manage']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      json: {api_key: kkkkkkkkkkkkkkkk, api_secret: ssssssssssssssssssssssss}
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   DELETE /exchange-accounts/{accountId}/keys/{keyId}:
     permissions: ['keys:manage']
