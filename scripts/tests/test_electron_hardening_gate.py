@@ -775,6 +775,16 @@ def test_web_dist_missing_from_the_asset_root_fails_sr174(
         ("extraResources", None),
         ("extraFiles", "resources/web/dist/src"),
         ("files", "../web/dist/src"),
+        # Names the gate cannot compare with the root: win and mac fold case past ASCII,
+        # win drops a name's trailing dots and spaces, and 8.3 short names alias long ones.
+        ("extraResources", "web/d\u0131st"),
+        ("extraResources", "web/di\u017ft"),
+        ("extraResources", "web/dist."),
+        ("extraResources", '"web/dist "'),
+        ("extraResources", "web./dist"),
+        ("extraResources", "web /dist"),
+        ("extraFiles", "resources/web/d\u0131st"),
+        ("extraFiles", "RESOUR~1/web/dist"),
     ],
 )
 def test_another_writer_into_the_asset_root_fails_sr174(
@@ -900,6 +910,16 @@ def test_the_shipped_builder_config_packages_the_web_dist_without_maps() -> None
     config = root / "apps/desktop/electron-builder.yml"
     text = config.read_text(encoding="utf-8")
     assert check_packaging(text, config.parent, root / "apps/web/dist") == []
+
+
+def test_build_installer_refuses_to_package_without_the_web_dist() -> None:
+    # electron-builder only warns when an extraResources `from` is missing.
+    desktop = Path(__file__).resolve().parents[2] / "apps/desktop"
+    package = json.loads((desktop / "package.json").read_text(encoding="utf-8"))
+    guard = (desktop / "scripts/require-web-dist.mjs").read_text(encoding="utf-8")
+    build = package["scripts"]["build:installer"]
+    assert build.startswith("node scripts/require-web-dist.mjs && electron-builder ")
+    assert '"../../web/dist/index.html"' in guard and "process.exit(1)" in guard
 
 
 @pytest.mark.parametrize(
