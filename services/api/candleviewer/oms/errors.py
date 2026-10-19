@@ -2,9 +2,65 @@
 
 from __future__ import annotations
 
+from typing import Final
+
+#: Codes the OMS raises itself, never mapped from an exchange answer (24 Sec.8.6).
+ILLEGAL_TRANSITION: Final = "ILLEGAL_TRANSITION"
+POST_TERMINAL_PUSH: Final = "POST_TERMINAL_PUSH"
+
 
 class OmsError(Exception):
     """Base exception for the M14 `oms` module."""
+
+
+class IllegalTransition(OmsError):
+    """A command, or a step, that B1's static table does not list for the order's state (24
+    Sec.8.2): refused before anything is sent or written. `attempted` is the event, or the state a
+    step would enter."""
+
+    code: Final = ILLEGAL_TRANSITION
+
+    def __init__(self, state: str, attempted: str) -> None:
+        super().__init__(f"{attempted} is not a transition of {state} (B1)")
+        self.state = state
+        self.attempted = attempted
+
+
+class ReconcileAnomaly(OmsError):
+    """S6: an exchange push for an order that is final, or a fill for one that is held, changes
+    nothing. It is audited ahead (`oms.reconcile_anomaly`) and counted before this is raised."""
+
+    code: Final = POST_TERMINAL_PUSH
+
+    def __init__(self, state: str, event: str) -> None:
+        super().__init__(f"{event} for an order that is {state} changes nothing (24 Sec.8.2 S6)")
+        self.state = state
+        self.event = event
+
+
+class OrderStepRefused(OmsError):
+    """B1 rolled the step back (24 Sec.8.2 S7, S11): its write-ahead row was refused or an action
+    failed, so the order is as it was and nothing was sent. `failure` is the error's class."""
+
+    def __init__(self, event: str, failure: str) -> None:
+        super().__init__(f"the order did not take {event}: {failure}")
+        self.event = event
+        self.failure = failure
+
+
+class OrderNotLoaded(OmsError):
+    """No machine in this process holds the order, and its stored row is not final (or the account
+    holds no such order): nothing was sent."""
+
+
+class OrderMachinesFull(OmsError):
+    """The process holds `MAX_MACHINES` live order machines (C-2.18). A live machine is never
+    evicted, so the new order is refused before anything is written."""
+
+
+class OrderBufferFull(OmsError):
+    """The order's reorder buffer holds `MAX_HELD` pushes (C-2.18): this one is refused, so the
+    caller must resync it (24 Sec.8.5 step 2 applies every execution again)."""
 
 
 class InvalidOrderLinkId(OmsError):

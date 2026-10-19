@@ -51,7 +51,7 @@ from candleviewer.storage.repositories.orders import (
 
 from .repository import ExecutionRepository, OrderRepository
 
-__all__ = ["MAX_EXPECTED", "OrderStepWriter"]
+__all__ = ["MAX_EXPECTED", "OrderStepWriter", "event_kind"]
 
 #: Orders registered for their first step and not yet written, the oldest dropped first (C-2.18).
 MAX_EXPECTED: Final = 1024
@@ -125,7 +125,7 @@ class OrderStepWriter:
         to_state = _chart_state(step.to_state)
         if step.from_state is None:
             return await self._create(step, account, order_id, to_state)
-        kind, source = _kind_of(step)
+        kind, source = event_kind(step)
         reject = _text(step.context.get("reject_code")) if to_state == "rejected" else None
         move = OrderTransition(
             account_id=account,
@@ -160,7 +160,7 @@ class OrderStepWriter:
         if order is None or to_state not in ("validated", "untracked"):
             raise ValueError("no registered order for this order's first row")
         _agrees(order, step, account)
-        kind, source = _kind_of(step)
+        kind, source = event_kind(step)
         first = NewOrderEvent(
             kind=kind, source=source, event_ts=self._clock(), payload=step.payload
         )
@@ -201,7 +201,9 @@ def _execution(step: Step) -> Mapping[str, Any] | None:
     return carried if isinstance(carried, Mapping) else None
 
 
-def _kind_of(step: Step) -> tuple[OrderEventKind, OrderEventSource]:
+def event_kind(step: Step) -> tuple[OrderEventKind, OrderEventSource]:
+    """The kind and source of *step*'s `order_events` row (24 Sec.8.2), which the facade's
+    `oms_state_transitions_total{source}` reads too; `ValueError` for a trigger with none."""
     declared = step.payload.get("source")
     if _execution(step) is not None:
         fill: OrderEventKind = "fill" if step.to_state == "filled" else "partial_fill"

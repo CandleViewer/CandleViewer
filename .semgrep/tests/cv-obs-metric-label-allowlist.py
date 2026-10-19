@@ -45,6 +45,10 @@ def ok_bars_1998(reg: object) -> None:
     reg.counter("cv_u", "h", ("from_source", "to_source"))  # ok: cv-obs-metric-label-allowlist
 
 
+def ok_order_transitions_847(reg: object) -> None:
+    reg.counter("cv_v_total", "h", ("from", "to", "source"))  # ok: cv-obs-metric-label-allowlist
+
+
 def ok_table(reg: object) -> None:
     reg.histogram("cv_t_seconds", "help", ("table",))  # ok: cv-obs-metric-label-allowlist
 

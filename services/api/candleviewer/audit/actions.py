@@ -147,6 +147,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "orders.submit",
         "orders.cancel",
         "orders.amend",
+        # E29-T03 (#847, 24 Sec.8.2 S6): an exchange push a final or held order did not take, or an
+        # execution B1 refused as hostile (OM-T04); the OMS facade writes it ahead (system actor).
+        "oms.reconcile_anomaly",
         "trade_group.submit",
         "positions.flatten",
         "risk.freeze_manager",
