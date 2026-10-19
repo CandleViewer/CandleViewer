@@ -17,8 +17,9 @@ admission lock from its first check through the job's submit, and checks in the 
 Each read is bounded by `RESTORE_READ_BUDGET_S`, each record by `RESTORE_RECORD_BUDGET_S`
 (SR-BK7-01). Every attempt writes `backup.restore` at severity `error` before its answer (C-2.9),
 naming the spent grant's `challenge_id`, the components and both acknowledgements: a refusal with
-its rule (or `store_unavailable`) as `reason`, an acceptance with the operator's `reason` and the
-job id, ahead of the job; unwritten, 503 `audit_unavailable` and no job. A lock wait past
+its rule (or `store_unavailable`) as `reason` and the operator's text as `operator_reason`, an
+acceptance with the operator's text as `reason` and the job id, ahead of the job; unwritten, 503
+`audit_unavailable` and no job. A request names at least one component. A lock wait past
 `ADMIT_WAIT_S` is 503 after its failure record (#3695). An attempt without a job, a 503 too, counts
 `cv_restore_jobs_total{result="refused"}` (Q17).
 
@@ -47,10 +48,9 @@ from candleviewer.admin.errors import OpsAuditUnavailable, OpsUnavailable
 from candleviewer.admin.http import AuditEmitter
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.storage.repositories.backups import BackupRow
+from candleviewer.storage.repositories.backups import SUCCESS_STATUSES, BackupRow
 
 _T = TypeVar("_T")  # not PEP 695 `[T]`: Semgrep 1.99.0 (CI) would skip the rest of this file
-USABLE: Final = frozenset({"ok", "verified", "restored"})
 _DETAILS: Final = {  # the contract's examples
     "maintenance_mode_required": "Restore requires maintenance mode to be on.",
     "positions_unknown": "The open-position state could not be read; acknowledge it to restore.",
@@ -59,13 +59,19 @@ _DETAILS: Final = {  # the contract's examples
 
 @dataclass(frozen=True, slots=True)
 class RestoreRequest:
-    """`restoreBackup`'s validated body; the route has matched `confirm_backup_id` already."""
+    """`restoreBackup`'s validated body; the route has matched `confirm_backup_id` already and
+    resolved an absent `components` to an explicit set: an empty one is refused, never read as
+    "all" or "none"."""
 
     backup_id: UUID
     reason: str
     components: frozenset[ports.Component]
     acknowledge_open_positions: bool = False
     acknowledge_unknown_positions: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.components:
+            raise ValueError("a restore names at least one component")
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +209,7 @@ class RestoreGuard:
         return await self._start(admission, at, row.target_path)
 
     async def _usable(self, row: BackupRow, backup_id: UUID) -> bool:
-        if row.status not in USABLE or row.deleted_at is not None or not row.encrypted:
+        if row.status not in SUCCESS_STATUSES or row.deleted_at is not None or not row.encrypted:
             return False
         bound = await self._read(self._evidence.bound_digest, "evidence", backup_id)
         digest = row.checksum_sha256
@@ -261,7 +267,7 @@ class RestoreGuard:
 
     async def _decline(self, at: _Attempt, rule: str, count: int | None = None) -> RestoreRefused:
         count_restore("refused")
-        await self._write(at, AuditOutcome.FAILURE, rule)
+        await self._write(at, AuditOutcome.FAILURE, rule, operator_reason=at.request.reason)
         return RestoreRefused(rule, count)
 
     async def _write(

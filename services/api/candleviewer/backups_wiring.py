@@ -7,13 +7,17 @@
   reads the `backups` table over the admin area's one engine, and the fake backend still has no
   catalogue.
 - BK-5: the backup series are served, and the freshness loaded at boot, only once
-  `BACKUPS_CATALOGUED` is set."""
+  `BACKUPS_CATALOGUED` is set.
+- BK-13: the restore guard reads maintenance mode fresh from the flag repository
+  (`FlagStoreMaintenance`) and positions stay unknown. Nothing builds it until BK-14 mounts the
+  restore after D7 (#3084)."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
-from collections.abc import Callable
-from typing import Final, Literal
+from collections.abc import Callable, Mapping
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -22,11 +26,14 @@ from candleviewer.admin.backups import ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.metrics import BackupFreshness, export_backup_metrics
 from candleviewer.admin.backups.ports import JOB_ERROR_CODES, BackupJobError, JobEnd
+from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
+from candleviewer.admin.flags.service import DEFAULT_READ_BUDGET_MS
 from candleviewer.api.recorder_admin import AdminJobStore, Job
 from candleviewer.auth.step_up import POSITION_SOURCE_NOT_DEPLOYED
 from candleviewer.observability.metrics import CollectorRegistry, ReexportCollector
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.backups_sqlalchemy import SqlAlchemyBackups
+from candleviewer.storage.repositories.flags_sqlalchemy import FlagRow
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.system_settings import SystemSettings
 from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
@@ -84,6 +91,33 @@ class UnknownOpenPositions:
 
     async def count_open(self) -> int | None:
         return None
+
+
+class FlagRows(Protocol):
+    async def load(self) -> Mapping[str, FlagRow]: ...  # `SqlAlchemyFlagRepository.load`
+
+
+class FlagStoreMaintenance:
+    """The restore guard's `MaintenanceState`: `maintenance.mode` read fresh from the flag
+    repository within the flag read budget (`flags.read_budget_ms`), never `FlagService.value()`,
+    whose outage value is "on" (`restrictive`) and would admit a restore. A failure, a read past
+    the budget, no row or a value that is not a bool reads `None`; overrides never count for a
+    kill switch."""
+
+    def __init__(self, flags: FlagRows, *, read_budget_ms: int = DEFAULT_READ_BUDGET_MS) -> None:
+        self._flags, self._budget_s = flags, read_budget_ms / 1000
+
+    async def read(self) -> bool | None:
+        try:
+            async with asyncio.timeout(self._budget_s):
+                rows = await self._flags.load()
+        except Exception as exc:  # an outage, a refused statement, the budget spent
+            log = structlog.get_logger(__name__)  # per call, never module-level (#2008)
+            log.warning("backups.maintenance_unread", error=type(exc).__name__)
+            return None
+        row = rows.get(MAINTENANCE_MODE)
+        value = None if row is None else row.value
+        return value if isinstance(value, bool) else None
 
 
 def _catalogue(
