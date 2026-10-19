@@ -47,6 +47,7 @@ REF_RE = re.compile(
 LEDGER = "infra/images/PINS.md"
 COUNT_RE = re.compile(r"^All (\d+) pins\b")
 SEPARATOR_RE = re.compile(r"\|(?:\s*:?-+:?\s*\|)+")
+TABLE_LINE_RE = re.compile(r"\s*(?:\||:?-+:?\s*\|)")  # a row, or a pipe-less separator
 Pin = tuple[str, str, str]  # (repo, tag or "", digest hex)
 ACCEPT = (
     "application/vnd.oci.image.index.v1+json, "
@@ -235,6 +236,12 @@ def read_ledger(
         if m is None:
             raise LedgerError(f"{LEDGER}:{n + 1}: cannot read the image, tag or digest")
         rows.append(((m.group("repo"), m.group("tag") or "", m.group("digest")), n + 1))
+    end = head + 2 + len(rows)  # the first line after the table
+    for n in range(end, len(lines)):
+        if TABLE_LINE_RE.match(lines[n]):
+            raise LedgerError(f"{LEDGER}:{n + 1}: a table line after the table ends")
+    if end < len(lines) and lines[end].strip():
+        raise LedgerError(f"{LEDGER}:{end + 1}: no blank line after the table")
     counts = [
         (int(c[1]), n + 1) for n, s in enumerate(lines) if (c := COUNT_RE.match(s))
     ]

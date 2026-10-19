@@ -17,6 +17,7 @@ REAL = "sha256:" + "0123456789abcdef" * 2 + "fedcba9876543210" * 2
 REAL2 = "sha256:a1b2c3d4e5f60718293a4b5c6d7e8f901f2e3d4c5b6a798897a6b5c4d3e2f101"
 PLACEHOLDER = "sha256:" + "ab12cd34" * 8
 PG = ("postgres", "16.4", REAL2)
+BARE = f"redis | 7 | {REAL}"  # a row no source pin matches, without outer pipes
 LEDGER = "infra/images/PINS.md"
 COMPOSE = "infra/compose/docker-compose.yml"
 
@@ -240,6 +241,10 @@ def _two_digest_columns(s: str) -> str:
         lambda s: s.replace("Hub", "H\xfcb").encode("latin-1"),
         lambda s: "# Pins\n\nAll 0 pins are verified.\n",
         None,
+        lambda s: s + f"\n| Image | Tag | Digest |\n| --- | --- | --- |\n| {BARE} |\n",
+        lambda s: s.replace("Hub |\n\n", f"Hub |\n\n  | {BARE} |\n"),
+        lambda s: s.replace("Hub |\n\n", f"Hub |\n{BARE}\n\n"),
+        lambda s: s + f"\nImage | Tag | Digest\n--- | --- | ---\n{BARE}\n",
     ],
     ids=[
         "no-digest-column",
@@ -251,6 +256,10 @@ def _two_digest_columns(s: str) -> str:
         "not-utf8",
         "no-table",
         "no-file",
+        "second-table",
+        "row-after-blank-line",
+        "pipeless-row-under-table",
+        "pipeless-second-table",
     ],
 )
 def test_ledger_unreadable_table_fails_closed(
