@@ -3,6 +3,12 @@
   "rest_lane": "rest",
   "lanes": {
     "unit-heavy": ["tests/unit/bars", "tests/unit/orderflow", "tests/unit/ws", "tests/unit/api"],
-    "db-chaos-contract": ["tests/integration", "tests/chaos", "tests/contract"]
+    "db-chaos": ["tests/integration", "tests/chaos"],
+    "contract-security": [
+      "tests/contract",
+      "tests/xstate_contract",
+      "tests/security",
+      "tests/rules"
+    ]
   }
 }

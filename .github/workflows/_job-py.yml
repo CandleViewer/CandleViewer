@@ -137,8 +137,9 @@ jobs:
     name: py-tests (${{ matrix.lane }})
     runs-on: ubuntu-latest
     # The py-only variable (#2185, #2426), so tuning the shared CV_CI_TIMEOUT_MINUTES for other
-    # lanes cannot shrink it. Each lane runs about a third of the suite: ~10 min on a slow shared
-    # runner, against 24-30 min when one job ran it all.
+    # lanes cannot shrink it. Each lane runs about a quarter of the suite: 13-16 min on a slow
+    # shared runner (#3751: four lanes since 2026-10-19, measured in ADR-0013's Validation),
+    # against 24-30 min when one job ran it all.
     timeout-minutes: ${{ fromJSON(vars.CV_CI_PY_TIMEOUT_MINUTES || 30) }}
     strategy:
       # Every lane runs to the end, so one red lane never hides another lane's failures.
@@ -146,7 +147,7 @@ jobs:
       matrix:
         # The lanes of tools/ci/py-test-lanes.json, rest last. scripts/tests/test_py_test_lanes.py
         # fails when this list and the manifest differ.
-        lane: [unit-heavy, db-chaos-contract, rest]
+        lane: [unit-heavy, db-chaos, contract-security, rest]
     defaults:
       run:
         working-directory: services/api

@@ -1,6 +1,6 @@
 """D2-G3 (#2787, decision D-G2 of #399): the bars series store's first reads on a REAL QuestDB.
 
-Runs in CI's `integration` job, and in the py job's db-chaos-contract lane under `--cov` (where
+Runs in CI's `integration` job, and in the py job's db-chaos lane under `--cov` (where
 tracing slows it); `D2G3_MACHINE` names the host in the output line. SYNTHETIC bars
 (pure functions of a fixed seed, no exchange data) go in through the production row path (`bar_row`
 into `QuestDbRowSink`, as `app._build_bars_sink` builds it): 16 series of 1 m time bars, and 8
