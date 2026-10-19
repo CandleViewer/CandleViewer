@@ -5109,3 +5109,5 @@ tracker).
 - **infra-devops**: E04-K01 instrumentation overhead spike (#1522) (817a527)
 
 ### Security
+
+- **rule-engine**: the rules-engine freeze scope is keyed by owner and account (#415) (#3847)

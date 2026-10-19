@@ -295,7 +295,7 @@ async def test_runtime_refresh_applies_revocation_without_api_call() -> None:
     src.grants = [(A, True, False)]
     await svc._refresh_scope_for(rules)  # type: ignore[arg-type]  # test double
     assert B not in svc.scope_state.granted_accounts(OWNER)
-    assert svc.scope_state.account(B) is None
+    assert svc.scope_state.account(OWNER, B) is None
 
 
 async def test_failed_refresh_fails_closed() -> None:

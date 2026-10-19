@@ -27,8 +27,8 @@ class FakeState:
     def granted_accounts(self, owner: UUID) -> frozenset[UUID]:
         return frozenset(self.grants.get(owner, set()))
 
-    def account(self, account_id: UUID) -> AccountState | None:
-        return self.accounts.get(account_id)
+    def account(self, owner: UUID, account_id: UUID) -> AccountState | None:
+        return self.accounts.get(account_id)  # one owner per fake: `accounts` is OWNER's view
 
     def owner_frozen(self, owner: UUID) -> bool:
         return owner in self.frozen
