@@ -1,4 +1,5 @@
-"""The scrubber and the fixture sink: a capture holding fake key-shaped values comes out clean.
+"""The scrubber and the fixture sink: a capture holding fake key-shaped values comes out clean,
+and a read endpoint keeps one capture per kind of reply.
 
 Fake values are derived at run time from fixed labels (no secret-shaped literal in the source).
 Field names follow the documented Bybit v5 shapes (`docs/research/06-bybit-api.md` §10).
@@ -123,3 +124,49 @@ def test_fixture_sink_writes_the_corpus_layout(tmp_path: Path) -> None:
     assert all(required <= set(e) for e in manifest["fixtures"])
     written = "".join(p.read_text() for p in root.rglob("*") if p.is_file())
     assert LINK not in written and (root / "README.e29-k01.md").exists()
+
+
+def _read(recorder: RestRecorder, path: str, rows: list[dict[str, Any]]) -> None:
+    """One `GET` reply listing `rows`, as the demo REST host answers a read."""
+    request = httpx.Request("GET", f"https://api-demo.bybit.com{path}")
+    reply = {"retCode": 0, "retMsg": "OK", "result": {"category": "linear", "list": rows}}
+    recorder(request, 200, httpx.Headers(), json.dumps(reply).encode(), 0.1)
+
+
+def test_read_captures_keep_the_populated_reply_beside_the_empty_one(tmp_path: Path) -> None:
+    """The preflight reads an empty order list and a flat position first; the rows the
+    integration suites need (a resting order, an open position) are kept as their own files."""
+    scrubber = _scrubber()
+    recorder = RestRecorder(scrubber)
+    resting = {"orderId": ORDER, "orderLinkId": LINK, "orderStatus": "New", "qty": "0.005"}
+    position = {"symbol": "ETHUSDT", "side": "", "size": "0", "positionValue": ""}
+    _read(recorder, "/v5/order/realtime", [])
+    _read(recorder, "/v5/position/list", [position])
+    _read(recorder, "/v5/order/realtime", [resting])
+    _read(recorder, "/v5/position/list", [position | {"side": "Buy", "size": "0.005"}])
+    _read(recorder, "/v5/order/realtime", [resting | {"orderStatus": "PartiallyFilled"}])
+    _read(
+        recorder,
+        "/v5/order/realtime",
+        [resting | {"orderLinkId": new_link(AccountId(uuid4()), "entry")}],
+    )
+    sink = FixtureSink(
+        tmp_path, symbol="ETHUSDT", mode="orders", date="2026-10-19", scrubber=scrubber
+    )
+    assert sorted(e["path"] for e in sink.write(recorder.captures)) == [
+        "rest/order_realtime_0_New.json",
+        "rest/order_realtime_0_PartiallyFilled.json",
+        "rest/order_realtime_0_empty.json",
+        "rest/position_list_0_flat.json",
+        "rest/position_list_0_open.json",
+    ]
+
+
+def test_a_known_uid_counts_only_as_a_whole_number() -> None:
+    """A UID inside a longer number (a timestamp) is neither masked nor refused; standing alone,
+    or touching letters, it is both."""
+    scrubber = _scrubber()
+    stamp = f"17{FAKE_UID}123"
+    assert scrubber.mask_known(f"uid {FAKE_UID} at {stamp}") == f"uid {MASK} at {stamp}"
+    assert scrubber.mask_known(f"key={FAKE_ID}") == f"key={MASK}"
+    assert scrubber.leaks(stamp) == [] and scrubber.leaks(f"uid{FAKE_UID}") == ["known-value"]

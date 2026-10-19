@@ -1,7 +1,9 @@
 """`python -m spikes.oms_demo_path {orders,soak}` (run from `services/api/`; see README.md).
 
-The demo key pair comes from the process environment only and is popped from it at once; the
-environment variable `CV_SPIKE_BYBIT_ENV` must say `demo`. Every refusal names its rule only.
+The demo key pair comes from the process environment only and is popped from it at once, so no
+child process inherits it; the environment variable `CV_SPIKE_BYBIT_ENV` (read, not popped) must
+say `demo`. Every refusal names its rule only. The exit code is 0 only for a `completed` run: 1
+for an interrupted run, a run stopped early or a cleanup that did not finish; 2 for a refusal.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import structlog
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS, SIGNED_REST_BASES
 from candleviewer.observability import configure_logging
 
-from .runner import Config, run
+from .runner import COMPLETED, Config, run
 from .safety import (
     ENV_VAR,
     MAX_ORDER_NOTIONAL,
@@ -65,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
             symbol=args.symbol,
             out=args.out / stamp,
             staging=args.staging / stamp,
-            hours=args.hours or (4.0 if args.mode == "orders" else 24.0),
+            hours=(4.0 if args.mode == "orders" else 24.0) if args.hours is None else args.hours,
             orders=args.orders,
             lots=args.lots,
             max_order_usdt=args.max_order_usdt,
@@ -89,11 +91,11 @@ def main(argv: list[str] | None = None) -> int:
     except SafetyRefusal as exc:
         log.error("refused", rule=str(exc))
         return 2
-    except Exception as exc:  # through the redacting logger, never a bare traceback
-        log.error("run_failed", error=type(exc).__name__, detail=str(exc))
+    except Exception as exc:  # the class only: an exchange text can echo the key id (C-12.2)
+        log.error("run_failed", error=type(exc).__name__)
         return 1
     log.info("run_written", out=str(cfg.out), outcome=report["outcome"])
-    return 0 if report["outcome"] == "completed" else 1
+    return 0 if report["outcome"] == COMPLETED else 1
 
 
 if __name__ == "__main__":

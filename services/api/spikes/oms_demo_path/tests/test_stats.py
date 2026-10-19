@@ -1,4 +1,5 @@
-"""Pure measurement maths: quantiles, frame items, the 23-ws S5 ordering checker, backfill diff.
+"""Pure measurement maths: quantiles, frame items, the 23-ws S5 ordering checker, the backfill
+diff, and the stream's down windows with the REST-only split they decide.
 
 Synthetic frames use only the documented Bybit v5 private fields (`docs/research/06-bybit-api.md`
 §10): `topic`, `creationTime`, `data[].orderId/orderStatus/cumExecQty/updatedTime` (order) and
@@ -10,13 +11,21 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+import pytest
+
 from spikes.oms_demo_path.stats import (
+    GRACE_MS,
+    RestExecution,
     WsItem,
     backfill_only,
     check_ordering,
+    delivering_at,
+    down_windows,
     items_from_frame,
     latencies,
     quantiles,
+    rest_execution,
+    split_rest_only,
 )
 
 T0 = 1_760_000_000_000
@@ -93,9 +102,58 @@ def test_ordering_dedupes_exec_ids_and_counts_an_execution_with_no_order_push() 
 
 
 def test_backfill_only_counts_rest_executions_the_stream_missed_by_type() -> None:
-    rest = {"e1": "Trade", "e2": "Trade", "e3": "Funding"}
+    rest = {
+        e: RestExecution(t, T0) for e, t in (("e1", "Trade"), ("e2", "Trade"), ("e3", "Funding"))
+    }
     assert backfill_only(rest, {"e1"}) == {"Trade": 1, "Funding": 1}
     assert backfill_only(rest, set(rest)) == {}
+
+
+def test_rest_execution_keeps_the_type_and_the_exec_time() -> None:
+    row = {"execId": "e1", "execType": "Trade", "execTime": str(T0)}
+    assert rest_execution(row) == RestExecution("Trade", T0)
+    assert rest_execution({"execType": "Funding"}).exec_ms is None
+
+
+def test_down_windows_are_the_run_outside_every_live_span() -> None:
+    live = [(T0 + 30, T0 + 40), (T0 + 10, T0 + 20)]
+    assert down_windows(live, T0, T0 + 50) == [
+        (T0, T0 + 10),
+        (T0 + 20, T0 + 30),
+        (T0 + 40, T0 + 50),
+    ]
+    assert down_windows([(T0 - 5, T0 + 60)], T0, T0 + 50) == []
+    assert down_windows([], T0, T0 + 50) == [(T0, T0 + 50)]
+
+
+@pytest.mark.parametrize(
+    ("at", "delivering"),
+    [
+        (T0 + GRACE_MS - 1, False),
+        (T0 + GRACE_MS, True),
+        (T0 + 5_000, True),
+        (T0 + 5_001, False),
+        (None, None),
+    ],
+    ids=["inside-the-grace", "grace-ends", "last-frame", "after-the-last-frame", "no-time"],
+)
+def test_delivering_at_counts_a_span_from_its_grace_to_its_last_frame(
+    at: int | None, delivering: bool | None
+) -> None:
+    assert delivering_at(at, [(T0, T0 + 5_000)]) is delivering
+
+
+def test_split_rest_only_places_each_missed_execution_against_the_live_spans() -> None:
+    live = [(T0, T0 + 5_000)]
+    rest = {
+        "streamed": RestExecution("Trade", T0 + 2_000),
+        "connected": RestExecution("Trade", T0 + 3_000),
+        "also connected": RestExecution("Trade", T0 + 4_000),
+        "down": RestExecution("Trade", T0 + 9_000),
+        "untimed": RestExecution("Funding", None),
+    }
+    split = split_rest_only(rest, {"streamed"}, live)
+    assert split == {"while_connected": 2, "stream_down": 1, "no_exec_time": 1}
 
 
 def test_latencies_run_from_the_exchange_stamp_to_receipt_per_topic() -> None:

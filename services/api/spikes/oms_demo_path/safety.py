@@ -2,9 +2,10 @@
 
 Every REST request goes through `GuardedTransport`, which refuses before anything is sent: a host
 other than the demo REST host, a method or path outside `ALLOWED_PATHS` (no fund-movement endpoint
-is listed, so none is reachable), and an order body that breaks the native-SL rule (C-2.6), the
-symbol allow-list, the per-order notional cap or the 24 §8.3 `orderLinkId` format. The private
-stream dials `DEMO_WS_URL` only (`check_ws_url`). Refusals name the rule, never a value.
+is listed, so none is reachable), an order body that breaks the native-SL rule (C-2.6), the
+symbol allow-list, the per-order notional cap or the 24 §8.3 `orderLinkId` format, and an amend
+that touches anything but the price of an order the run created, or moves it to its stop. The
+private stream dials `DEMO_WS_URL` only (`check_ws_url`). Refusals name the rule, never a value.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final
 from urllib.parse import urlsplit
@@ -20,8 +21,10 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from candleviewer.accounts._permissions import reject_withdraw
-from candleviewer.accounts.errors import WithdrawPermissionError
+# M13's own key judgements (E27-T03), applied unchanged: its fund-right gate (the C-2.8 deny-list,
+# then `withdraw_enabled` for any right of `Wallet`, a fiat or a card group, or a lookalike
+# spelling) and its single-host test for a whitelist entry (`createApiKey` step 5).
+from candleviewer.accounts.verification import _gate_failures, _host
 from candleviewer.domain.order_link import OUR_ID
 from candleviewer.domain.primitives import AccountId, GroupId
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS, SIGNED_REST_BASES
@@ -45,9 +48,9 @@ ALLOWED_PATHS: Final[Mapping[str, frozenset[str]]] = {
     "GET": frozenset(f"/v5/{p}" for p in f"{_GETS} {_GETS_MORE}".split()),
     "POST": frozenset({"/v5/order/create", "/v5/order/amend", "/v5/order/cancel"}),
 }
-#: An amend changes price or qty only: the protection is never amended, so no amend can remove
-#: or loosen the native SL.
-_AMEND_FIELDS: Final = frozenset({"category", "symbol", "orderLinkId", "price", "qty"})
+#: An amend changes the price only: never the qty (the per-order cap holds) and never the
+#: protection, so no amend can remove or loosen the native SL.
+_AMEND_FIELDS: Final = frozenset({"category", "symbol", "orderLinkId", "price"})
 #: A credential field: 1 to 128 visible ASCII characters (as M2's candidate check).
 _FIELD: Final = re.compile(r"[\x21-\x7e]{1,128}")
 ENV_VAR: Final = "CV_SPIKE_BYBIT_ENV"
@@ -72,13 +75,19 @@ def check_ws_url(url: str) -> None:
         raise SafetyRefusal("the private stream must be the demo stream")
 
 
-def check_permissions(read_only: bool, permissions: Mapping[str, object]) -> None:
-    """C-2.8: refuse a key with any withdrawal or transfer right (M13's predicate), and a
-    read-only key, which cannot trade."""
-    try:
-        reject_withdraw(permissions)
-    except WithdrawPermissionError:
-        raise SafetyRefusal("key grants a withdrawal or transfer right (C-2.8)") from None
+def check_permissions(
+    read_only: bool, permissions: Mapping[str, object], *, ips: Sequence[str]
+) -> None:
+    """C-2.8: refuse a key that may move funds (M13's `withdraw_enabled` judgement: a withdrawal
+    or transfer right, any right of `Wallet` or of a fiat or card group, or one named for either
+    in another spelling) and a key with no IP allowlist (empty, a wildcard or a range: every
+    entry must be one host address). Then refuse a read-only key, which cannot trade."""
+    if _gate_failures(permissions)[1]:
+        raise SafetyRefusal(
+            "key may move funds: a withdrawal, transfer, wallet, fiat or card right (C-2.8)"
+        )
+    if not ips or any(_host(entry) is None for entry in ips):
+        raise SafetyRefusal("key has no IP allowlist of host addresses (C-2.8)")
     if read_only:
         raise SafetyRefusal("key is read-only")
 
@@ -119,34 +128,53 @@ def new_link(account_id: AccountId, purpose: OrderPurpose) -> str:
     ).value
 
 
-def check_order(body: Mapping[str, Any], *, max_notional: Decimal) -> None:
+def check_order(body: Mapping[str, Any], *, max_notional: Decimal) -> Decimal | None:
     """A create body. An opening order (not reduce-only) is a Buy limit within the per-order cap
-    that carries a native stopLoss below its price (C-2.6); a Sell must be reduce-only."""
+    that carries a native stopLoss below its price (C-2.6); a Sell must be reduce-only. Returns
+    the opening order's stopLoss (`None` for a reduce-only order)."""
     _check_market(body)
     _check_link(body)
     qty = _positive(body.get("qty"), "qty")
     if body.get("reduceOnly") is True:
-        return
+        return None
     if body.get("side") != "Buy" or body.get("orderType") != "Limit":
         raise SafetyRefusal("an opening order must be a Buy limit; a Sell must be reduce-only")
     price = _positive(body.get("price"), "price")
     if body.get("stopLoss") in (None, ""):
         raise SafetyRefusal("an opening order must carry a native stopLoss (C-2.6)")
-    if _positive(body.get("stopLoss"), "stopLoss") >= price:
+    stop = _positive(body.get("stopLoss"), "stopLoss")
+    if stop >= price:
         raise SafetyRefusal("the stopLoss of a Buy must be below its price (C-2.6)")
     if qty * price > max_notional:
         raise SafetyRefusal("order notional is above the per-order cap")
+    return stop
 
 
-def check_amend(body: Mapping[str, Any]) -> None:
+def check_amend(body: Mapping[str, Any], *, stops: Mapping[str, Decimal]) -> None:
+    """An amend of an opening order this run created (`stops`: its `orderLinkId` to its
+    stopLoss): the price only, and still above that stopLoss (C-2.6). The qty never changes, so
+    the per-order cap holds; the protection is never touched."""
     _check_market(body)
     _check_link(body)
     if not set(body) <= _AMEND_FIELDS:
-        raise SafetyRefusal("an amend may change price or qty only, never the protection")
+        raise SafetyRefusal("an amend may change the price only, never the qty or the protection")
+    stop = stops.get(str(body.get("orderLinkId")))
+    if stop is None:
+        raise SafetyRefusal("an amend must target an opening order this run created")
+    if _positive(body.get("price"), "price") <= stop:
+        raise SafetyRefusal("an amend may not move the price to or below the stopLoss (C-2.6)")
 
 
-def check_request(method: str, url: httpx.URL, content: bytes, *, max_notional: Decimal) -> None:
-    """Refuse, before anything is sent, a request the harness must never make."""
+def check_request(
+    method: str,
+    url: httpx.URL,
+    content: bytes,
+    *,
+    max_notional: Decimal,
+    stops: MutableMapping[str, Decimal],
+) -> None:
+    """Refuse, before anything is sent, a request the harness must never make. An opening
+    create that passes leaves its stopLoss in `stops`, the bound for later amends of it."""
     if url.scheme != "https" or url.host != DEMO_REST_HOST or url.port not in (None, 443):
         raise SafetyRefusal("request host is not the demo REST host")
     if url.path not in ALLOWED_PATHS.get(method, frozenset()):
@@ -160,9 +188,11 @@ def check_request(method: str, url: httpx.URL, content: bytes, *, max_notional: 
     if not isinstance(body, dict):
         raise SafetyRefusal("an order request body must be a JSON object")
     if url.path == "/v5/order/create":
-        check_order(body, max_notional=max_notional)
+        stop = check_order(body, max_notional=max_notional)
+        if stop is not None:
+            stops[body["orderLinkId"]] = stop
     elif url.path == "/v5/order/amend":
-        check_amend(body)
+        check_amend(body, stops=stops)
     else:
         _check_market(body)
 
@@ -176,7 +206,8 @@ _FRAMING: Final = frozenset({"content-encoding", "content-length", "transfer-enc
 class GuardedTransport(httpx.AsyncBaseTransport):
     """The transport of every REST client of the harness: `check_request` first, then the send,
     timed from the hand-off to the end of the body (the REST round trip, signing and the
-    adapter's governor excluded), then `on_response` with the reply's bytes."""
+    adapter's governor excluded), then `on_response` with the reply's bytes. It keeps the
+    stopLoss of every opening create it let through, the bound of the amend check."""
 
     def __init__(
         self,
@@ -188,9 +219,16 @@ class GuardedTransport(httpx.AsyncBaseTransport):
     ) -> None:
         self._inner, self._on_response = inner, on_response
         self._max_notional, self._body_cap = max_notional, body_cap
+        self._stops: dict[str, Decimal] = {}
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        check_request(request.method, request.url, request.content, max_notional=self._max_notional)
+        check_request(
+            request.method,
+            request.url,
+            request.content,
+            max_notional=self._max_notional,
+            stops=self._stops,
+        )
         request.headers["Accept-Encoding"] = "identity"
         started = time.perf_counter()
         response = await self._inner.handle_async_request(request)
@@ -218,7 +256,9 @@ class GuardedTransport(httpx.AsyncBaseTransport):
 
 class EnvCredentials:
     """The run's signing capability: the demo key pair from the process environment, held only in
-    M2's `Secret` wrappers and MAC'd by M2's own `request_signature` (C-2.7). Never rendered."""
+    M2's `Secret` wrappers and MAC'd by M2's own `request_signature`. Never rendered. Holding the
+    pair outside `services/api/secrets/` is a deviation from C-2.7 and C-3.2 that this throwaway,
+    never-merged spike records (README.md, Deviations)."""
 
     __slots__ = ("_pair",)
 
@@ -240,7 +280,9 @@ class EnvCredentials:
 
 
 def load_credentials(environ: MutableMapping[str, str]) -> EnvCredentials:
-    """Take the key pair out of the environment (popped: no child process inherits it)."""
+    """Take the key pair out of the environment. Popped, so no child process inherits it; the
+    process's own initial environment block keeps it, so the README scopes the pair to the one
+    command."""
     key_id, secret = (Secret(environ.pop(name, "")) for name in PAIR_VARS)
     if not all(_FIELD.fullmatch(part.reveal()) for part in (key_id, secret)):
         raise SafetyRefusal(f"{' and '.join(PAIR_VARS)} must hold 1-128 visible ASCII chars")

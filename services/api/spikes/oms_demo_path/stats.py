@@ -6,6 +6,9 @@
   (the first push whose `cumExecQty` covers it) is a violation; E29-T05 then needs a reorder
   buffer keyed on `(ts_exec, seq)`.
 - `backfill_only`: executions the REST backfill lists that the stream never delivered.
+- `down_windows` and `split_rest_only`: when the stream could not deliver, and whether each
+  REST-only execution happened then or while it was delivering (the evidence that decides
+  ADR-0006's reconciliation cadence).
 """
 
 from __future__ import annotations
@@ -17,6 +20,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Final
 
 EXEC_TOPICS: Final = ("execution", "execution.fast")
+#: The REST backfill starts this long before the run, so an execution at its edge is not missed.
+OVERLAP_MS: Final = 5_000
+#: The start of a live span that does not count yet: the topics were requested, not yet acked.
+GRACE_MS: Final = 1_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,10 +154,62 @@ def check_ordering(items: Sequence[WsItem], exec_topic: str) -> OrderingReport:
     return OrderingReport(total, violations, unmatched, quantiles(lags))
 
 
-def backfill_only(rest: Mapping[str, str], streamed: Collection[str]) -> dict[str, int]:
-    """REST executions (`execId` to `execType`) the stream never delivered, counted by type."""
+@dataclass(frozen=True, slots=True)
+class RestExecution:
+    """One row of the REST execution backfill: its `execType`, and its `execTime` in ms."""
+
+    exec_type: str
+    exec_ms: int | None
+
+
+def rest_execution(row: Mapping[str, Any]) -> RestExecution:
+    return RestExecution(str(row.get("execType")), _int(row.get("execTime")))
+
+
+def backfill_only(rest: Mapping[str, RestExecution], streamed: Collection[str]) -> dict[str, int]:
+    """REST executions (by `execId`) the stream never delivered, counted by `execType`."""
     missing: dict[str, int] = {}
-    for exec_id, exec_type in rest.items():
+    for exec_id, row in rest.items():
         if exec_id not in streamed:
-            missing[exec_type] = missing.get(exec_type, 0) + 1
+            missing[row.exec_type] = missing.get(row.exec_type, 0) + 1
     return missing
+
+
+def down_windows(
+    live: Sequence[tuple[int, int]], start_ms: int, end_ms: int
+) -> list[tuple[int, int]]:
+    """The parts of `[start_ms, end_ms]` outside every live span (a connection from its connect to
+    the last frame it delivered, or to the stop): before the first connect, each drop window and
+    after the stop."""
+    out: list[tuple[int, int]] = []
+    cursor = start_ms
+    for begin, end in sorted(live):
+        if begin > cursor:
+            out.append((cursor, min(begin, end_ms)))
+        cursor = max(cursor, end)
+    if cursor < end_ms:
+        out.append((cursor, end_ms))
+    return [(begin, end) for begin, end in out if end > begin]
+
+
+def delivering_at(ms: int | None, live: Sequence[tuple[int, int]]) -> bool | None:
+    """Whether the stream was delivering at `ms`: inside a live span, past its first `GRACE_MS`.
+    `None` when there is no time to judge."""
+    if ms is None:
+        return None
+    return any(begin + GRACE_MS <= ms <= end for begin, end in live)
+
+
+def split_rest_only(
+    rest: Mapping[str, RestExecution], streamed: Collection[str], live: Sequence[tuple[int, int]]
+) -> dict[str, int]:
+    """REST-only executions by when they happened: `stream_down` is expected (the harness does not
+    resync after a drop); `while_connected` is evidence against the stream as the source of truth;
+    `no_exec_time` cannot be judged."""
+    split = {"while_connected": 0, "stream_down": 0, "no_exec_time": 0}
+    for exec_id, row in rest.items():
+        if exec_id not in streamed:
+            state = delivering_at(row.exec_ms, live)
+            key = "no_exec_time" if state is None else "while_connected" if state else "stream_down"
+            split[key] += 1
+    return split

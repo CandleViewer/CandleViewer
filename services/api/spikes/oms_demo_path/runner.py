@@ -4,9 +4,13 @@
 position (exposure cap), places a small Buy limit carrying a native stopLoss (C-2.6) at the bid
 (every `taker_every`-th cycle one tick through the ask, so fills happen), waits for a fill on the
 private stream, amends the rest one tick lower and cancels it. The first order is sent twice with
-the same `orderLinkId` (the duplicate capture, C-2.10). Whatever happens, the run cancels what it
-left open and flattens what it opened. `soak`: the private stream alone. Both end with a REST
-execution backfill over the run window and always write the run directory.
+the same `orderLinkId` (the duplicate capture, C-2.10). A cycle that an exchange error ends (a
+read that failed after the adapter's retries) is recorded, its order gets one cancel and the run
+goes on; three in a row, or a key, clock or rate refusal, stop it. Whatever happens, the run then
+cancels what it left open, by its own `orderLinkId`, and flattens what it opened; a cleanup that
+does not finish is in the outcome and the exit code. `soak`: the private stream alone. Both end
+with a REST execution backfill over the run window and always write the run directory. The 10018
+burst runs last, and only after a complete run that left the account flat.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import csv
 import io
 import signal
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, Decimal
@@ -35,6 +39,7 @@ from candleviewer.exchange.base.errors import (
     ClockDriftError,
     DuplicateClientIdError,
     ExchangeError,
+    NotFoundError,
     RateLimitError,
     TransportError,
     UnknownStateError,
@@ -64,14 +69,33 @@ from .safety import (
     new_link,
 )
 from .scrub import Scrubber
-from .stats import EXEC_TOPICS, WsItem, as_decimal, items_from_frame
-from .stream import PrivateStream
+from .stats import (
+    EXEC_TOPICS,
+    OVERLAP_MS,
+    RestExecution,
+    WsItem,
+    as_decimal,
+    items_from_frame,
+    rest_execution,
+)
+from .stream import PrivateStream, Socket, StreamAuthRefused, dial
 
 SKEW_MS: Final = 30_000  # far outside the 5 s recv_window: the 10002 capture
 BURST_CEILING: Final = 1000
+COMPLETED: Final = "completed"
+#: A stop request (the first Ctrl-C) ended the run before its last cycle or hour.
+INTERRUPTED: Final = "interrupted"
+#: `notes["cleanup"]` once every open order of the run is cancelled and the position is flat.
+CLEAN: Final = "own orders cancelled, position flat"
 _OPEN: Final = ("New", "PartiallyFilled", "Untriggered")
 #: A create that may have landed: looked up by its `orderLinkId` (24 §8.3 rule 3), never re-sent.
 _UNRESOLVED: Final = (DuplicateClientIdError, TransportError, UnknownStateError)
+#: Refusals about the key, the clock or the rate budget: the run stops at the first one.
+_SYSTEMIC: Final = (AuthError, ClockDriftError, RateLimitError)
+#: Failed creates, or cycles an exchange error ended, in a row that stop the run.
+_IN_A_ROW: Final = 3
+#: The bound of each cleanup step (the open-order read, each cancel, the flatten).
+_STEP_S: Final = 120.0
 _MAX_ITEMS: Final = 500_000
 _MAX_PAGES: Final = 100
 
@@ -144,17 +168,46 @@ def _plain_ok(reply: httpx.Response) -> bool:
     return reply.status_code == 200 and isinstance(body, dict) and body.get("retCode") == 0
 
 
+def _leaves(exc: BaseException) -> list[BaseException]:
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for inner in exc.exceptions for leaf in _leaves(inner)]
+    return [exc]
+
+
+def _render(exc: BaseException) -> str:
+    """A failure in fixed words: an exchange error by its class, retCode and code, never its
+    text (a 10004 retMsg echoes the signed string, key id included: C-12.2); a guard rail or the
+    stream's auth refusal by its rule; anything else by its class alone."""
+    if isinstance(exc, ExchangeError):
+        return _describe(exc)
+    if isinstance(exc, SafetyRefusal | StreamAuthRefused):
+        return f"{type(exc).__name__}: {exc}"
+    return type(exc).__name__
+
+
 def _why(exc: BaseException) -> str:
-    leaves = exc.exceptions if isinstance(exc, BaseExceptionGroup) else (exc,)
-    return "stopped early: " + "; ".join(f"{type(e).__name__}: {e}" for e in leaves)
+    return "stopped early: " + "; ".join(_render(leaf) for leaf in _leaves(exc))
 
 
 class Harness:
-    def __init__(self, cfg: Config, creds: EnvCredentials) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        creds: EnvCredentials,
+        *,
+        transport_factory: Callable[[], httpx.AsyncBaseTransport] = httpx.AsyncHTTPTransport,
+        dial_fn: Callable[[str], Awaitable[Socket]] = dial,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        """The defaults reach the demo venue. The three seams serve the offline tests:
+        `transport_factory` gives the inner transport under every `GuardedTransport` (so the
+        guard rails stay in the path), `dial_fn` the private stream's dial, and `sleep` every
+        timed wait but the cycle pacing (adapter backoff, flatten polling, stream re-dial)."""
         self.cfg, self.symbol = cfg, cfg.symbol
+        self._transport, self._sleep = transport_factory, sleep
         self.scrubber = Scrubber([creds.key_id])
         self.recorder = RestRecorder(self.scrubber)
-        self.governor = TokenBucketGovernor()
+        self.governor = TokenBucketGovernor(sleep=sleep)
         self.signer = BybitSigner(creds, uuid4())
         self.metrics = Metrics(DEMO)
         spec = next(s for s in CATALOGUE if s.name == "order_submit_seconds")
@@ -167,7 +220,9 @@ class Harness:
         self.sink = FixtureSink(
             cfg.staging, symbol=cfg.symbol, mode=cfg.mode, date=today, scrubber=self.scrubber
         )
-        self.stream = PrivateStream(self.signer, self._on_frame, now_ms=self.now_ms)
+        self.stream = PrivateStream(
+            self.signer, self._on_frame, now_ms=self.now_ms, dial_fn=dial_fn, sleep=sleep
+        )
         self.items: list[WsItem] = []
         self.fills: dict[str, asyncio.Event] = {}
         self.links: set[str] = set()
@@ -177,23 +232,29 @@ class Harness:
         self.account_id = AccountId(uuid4())
         self.inst: Instrument | None = None
         self.stopping = asyncio.Event()
+        #: `None` until the cleanup ran (never, in `soak`), then whether it finished.
+        self.cleanup_ok: bool | None = None
         self._failures = 0
+        self._failed_cycles = 0
 
     def now_ms(self) -> int:
         """The exchange clock: local wall clock plus the measured offset."""
         return int(time.time() * 1000) + self.offset_ms
 
-    def _client(self, offset: Callable[[], int], retries: int = 3) -> BybitRestClient:
-        transport = GuardedTransport(
-            httpx.AsyncHTTPTransport(), self.recorder, max_notional=self.cfg.max_order_usdt
+    def _guarded(self) -> GuardedTransport:
+        return GuardedTransport(
+            self._transport(), self.recorder, max_notional=self.cfg.max_order_usdt
         )
+
+    def _client(self, offset: Callable[[], int], retries: int = 3) -> BybitRestClient:
         return BybitRestClient(
             RestClientConfig(base_url=DEMO_REST_BASE, max_retries=retries),
             uid="e29-k01",
             signer=self.signer,
             governor=self.governor,
-            transport=transport,
+            transport=self._guarded(),
             clock_offset_ms_provider=offset,
+            sleep=self._sleep,
         )
 
     def _on_frame(self, frame: dict[str, Any], recv_ms: int) -> None:
@@ -262,11 +323,12 @@ class Harness:
         return bid, ask
 
     async def preflight(self) -> None:
-        """Clock, key permissions (C-2.8), and for `orders` a tradable USDT perpetual that is flat
-        with no open orders, so the end-of-run flatten closes only what the run opened."""
+        """Clock, the key (C-2.8: no fund right, an IP allowlist of host addresses, write
+        access), and for `orders` a tradable USDT perpetual that is flat with no open orders, so
+        the end-of-run flatten closes only what the run opened."""
         await self.sync_clock()
         facts = parse_key_info(await self.client.signed_request("GET", KEY_INFO_PATH))
-        check_permissions(facts.read_only, facts.permissions)
+        check_permissions(facts.read_only, facts.permissions, ips=facts.ip_whitelist)
         self.scrubber.add_known(facts.uid)
         if self.cfg.mode == "soak":
             return
@@ -287,6 +349,10 @@ class Harness:
         self.links.add(link)
         return link
 
+    def _ref(self, link: str) -> dict[str, Any]:
+        """The fields naming one of the run's orders: every amend and cancel goes by its link."""
+        return {"category": "linear", "symbol": self.symbol, "orderLinkId": link}
+
     async def _post(
         self, op: str, path: str, body: dict[str, Any]
     ) -> tuple[ExchangeError | None, float]:
@@ -305,6 +371,23 @@ class Harness:
         return error, elapsed
 
     async def cycle(self, i: int) -> None:
+        """One order cycle; its row is kept whatever happens. An exchange error that ends it is
+        put in the row and re-raised; the cycle's order, once sent and not yet cancelled, gets
+        one cancel first, so a failed cycle does not leave it resting."""
+        row: dict[str, Any] = {"cycle": i}
+        try:
+            await self._cycle(i, row)
+        except ExchangeError as exc:
+            row["error"] = _describe(exc)
+            if "order_link_id" in row and "cancel" not in row:
+                ref = self._ref(row["order_link_id"])
+                err, took = await self._post("cancel", "/v5/order/cancel", ref)
+                row.update(cancel=_code(err), cancel_ms=round(took * 1e3, 1))
+            raise
+        finally:
+            self.rows.append(row)
+
+    async def _cycle(self, i: int, row: dict[str, Any]) -> None:
         inst, cfg = self.inst, self.cfg
         if inst is None:
             raise SafetyRefusal("no instrument: the preflight did not run")
@@ -315,11 +398,11 @@ class Harness:
         stop = (price * (1 - cfg.sl_pct) / tick).to_integral_value(ROUND_FLOOR) * tick
         await self._cap_exposure(qty * price)
         link = self._link("entry")
-        ref: dict[str, Any] = {"category": "linear", "symbol": self.symbol, "orderLinkId": link}
+        ref = self._ref(link)
         body = {**ref, "side": "Buy", "orderType": "Limit", "qty": str(qty), "price": str(price)}
         body |= {"timeInForce": "GTC", "positionIdx": 0, "stopLoss": str(stop)}
         body |= {"slTriggerBy": "MarkPrice", "tpslMode": "Full"}
-        row: dict[str, Any] = {"cycle": i, "order_link_id": link, "created_ms": self.now_ms()}
+        row.update(order_link_id=link, created_ms=self.now_ms())
         row["kind"] = "taker" if taker else "passive"
         self.fills[link] = asyncio.Event()
         try:
@@ -348,14 +431,21 @@ class Harness:
             row.update(status=final.get("orderStatus", ""), filled=final.get("cumExecQty", ""))
         finally:
             self.fills.pop(link, None)
-            self.rows.append(row)
 
     def _judge(self, error: ExchangeError | None) -> None:
         """Stop on a system-level refusal (key, clock, rate) or three failed creates in a row."""
         accepted = error is None or isinstance(error, DuplicateClientIdError)
         self._failures = 0 if accepted else self._failures + 1
-        if isinstance(error, AuthError | ClockDriftError | RateLimitError) or self._failures >= 3:
+        if isinstance(error, _SYSTEMIC) or self._failures >= _IN_A_ROW:
             raise SafetyRefusal(f"create refused ({_describe(error)}): stopping the run")
+
+    def _cycle_failed(self, error: ExchangeError) -> None:
+        """A cycle an exchange error ended: the run goes on, unless the error is a key, clock or
+        rate refusal, or the cycles before it failed too (three in a row)."""
+        self._failed_cycles += 1
+        _log().warning("cycle_failed", error=type(error).__name__, in_a_row=self._failed_cycles)
+        if isinstance(error, _SYSTEMIC) or self._failed_cycles >= _IN_A_ROW:
+            raise SafetyRefusal(f"cycle failed ({_describe(error)}): stopping the run")
 
     async def _exposure(self) -> Decimal:
         """Position value plus the resting Buy orders of the run, from REST."""
@@ -389,24 +479,51 @@ class Harness:
         for _ in range(15):
             if (await self._position())[0] == 0:
                 return
-            await asyncio.sleep(2)
+            await self._sleep(2)
         raise SafetyRefusal("the position is still open after the flatten")
 
+    async def _own_open(self) -> list[str]:
+        """The `orderLinkId`s of the run's orders REST still lists as open."""
+        links = (str(order.get("orderLinkId")) for order in await self._open_orders())
+        return [link for link in links if link in self.links]
+
     async def cleanup(self) -> None:
-        """Cancel what the run left open, then flatten, bounded. A position this cannot close
-        keeps its native SL, and the log says to flatten it in the demo UI."""
+        """Cancel what the run left open, by its own `orderLinkId` (the adapter refuses an order
+        call without one), then flatten. Each step is bounded and runs whatever the step before
+        it did, so a failed cancel never skips the flatten. A position this cannot close keeps
+        its native SL; the notes, the outcome and the exit code say to flatten it by hand."""
+        failed: list[str] = []
+        links: list[str] = []
         try:
-            async with asyncio.timeout(120):
-                for order in await self._open_orders():
-                    if order.get("orderLinkId") in self.links:
-                        cancel = {"category": "linear", "symbol": self.symbol}
-                        cancel["orderId"] = str(order.get("orderId"))
-                        await self._post("cleanup", "/v5/order/cancel", cancel)
+            async with asyncio.timeout(_STEP_S):
+                links = await self._own_open()
+        except Exception as exc:  # a failed read must not skip the flatten
+            failed.append(f"open orders: {_render(exc)}")
+        for link in links:
+            try:
+                async with asyncio.timeout(_STEP_S):
+                    error, _ = await self._post("cleanup", "/v5/order/cancel", self._ref(link))
+            except Exception as exc:  # nor a failed cancel
+                failed.append(f"cancel: {_render(exc)}")
+                continue
+            if error is not None and not isinstance(error, NotFoundError):  # 110001: gone
+                failed.append(f"cancel: {_describe(error)}")
+        try:
+            async with asyncio.timeout(_STEP_S):
                 await self.flatten("end")
-            self.notes["cleanup"] = "own orders cancelled, position flat"
         except Exception as exc:
-            self.notes["cleanup"] = f"INCOMPLETE ({type(exc).__name__}): flatten in the demo UI"
-            _log().error("cleanup_incomplete_flatten_by_hand", error=type(exc).__name__)
+            failed.append(f"flatten: {_render(exc)}")
+        self.cleanup_ok = not failed
+        if failed:
+            steps = "; ".join(failed)
+            self.notes["cleanup"] = f"INCOMPLETE ({steps}): flatten in the demo UI"
+            _log().error("cleanup_incomplete_flatten_by_hand", failed_steps=len(failed))
+        else:
+            self.notes["cleanup"] = CLEAN
+
+    async def _flat(self) -> bool:
+        """A fresh REST read shows no position and no open order of the run."""
+        return (await self._position())[0] == 0 and not await self._own_open()
 
     async def trade(self) -> None:
         if self.cfg.capture_10002:
@@ -416,7 +533,12 @@ class Harness:
             for i in range(self.cfg.orders):
                 if self.stopping.is_set():
                     break
-                await self.cycle(i)
+                try:
+                    await self.cycle(i)
+                except ExchangeError as exc:
+                    self._cycle_failed(exc)
+                else:
+                    self._failed_cycles = 0
                 if i % 10 == 9:
                     _log().info("orders_progress", done=i + 1, of=self.cfg.orders)
                     with contextlib.suppress(ExchangeError):
@@ -424,7 +546,7 @@ class Harness:
                 await self._pause(t0 + (i + 1) * interval - time.monotonic())
         finally:
             await self.cleanup()
-            await asyncio.sleep(10)  # the flatten's trailing pushes
+            await self._sleep(10)  # the flatten's trailing pushes
 
     async def soak(self) -> None:
         end = time.monotonic() + self.cfg.hours * 3600
@@ -453,11 +575,8 @@ class Harness:
         """10018: ONE bounded burst of unsigned server-time reads that bypasses the governor on
         purpose (flag-gated): waves of 50 until a reply is not a plain success, at most
         `burst_max` requests. The IP may then be held for 10 minutes or more: it runs last."""
-        transport = GuardedTransport(
-            httpx.AsyncHTTPTransport(), self.recorder, max_notional=self.cfg.max_order_usdt
-        )
         sent, stopped_by = 0, "no limit reply"
-        async with httpx.AsyncClient(base_url=DEMO_REST_BASE, transport=transport) as client:
+        async with httpx.AsyncClient(base_url=DEMO_REST_BASE, transport=self._guarded()) as client:
             while sent < self.cfg.burst_max and stopped_by == "no limit reply":
                 wave = min(50, self.cfg.burst_max - sent)
                 with labelled("burst"):
@@ -486,15 +605,16 @@ class Harness:
 
     # -- run ------------------------------------------------------------------------------
 
-    async def backfill(self) -> dict[str, str]:
-        """`execId` -> `execType` of every execution REST lists for the run, 5 s overlap."""
-        rest: dict[str, str] = {}
-        window = {"startTime": self.started_ms - 5_000, "endTime": self.now_ms(), "limit": 100}
+    async def backfill(self) -> dict[str, RestExecution]:
+        """Every execution REST lists for the run (from `OVERLAP_MS` before it), by `execId`:
+        its `execType` and `execTime`, to place it against the stream's drop windows."""
+        rest: dict[str, RestExecution] = {}
+        window = {"startTime": self.started_ms - OVERLAP_MS, "endTime": self.now_ms(), "limit": 100}
         cursor = ""
         for _ in range(_MAX_PAGES):
             page = {**window, "cursor": cursor} if cursor else window
             body = await self._get("/v5/execution/list", EndpointClass.ORDER, **page)
-            rest |= {str(r.get("execId")): str(r.get("execType")) for r in _rows(body)}
+            rest |= {str(r.get("execId")): rest_execution(r) for r in _rows(body)}
             result = body.get("result")
             cursor = str(result.get("nextPageCursor") or "") if isinstance(result, dict) else ""
             if not cursor:
@@ -512,18 +632,30 @@ class Harness:
                 await self.stream.stop()
 
     async def wrap_up(self, outcome: str) -> dict[str, Any]:
-        rest: dict[str, str] = {}
+        """The backfill, the retention probe and, last, the gated 10018 burst; then the outputs,
+        whatever failed before them."""
+        rest: dict[str, RestExecution] = {}
         try:
             rest = await self.backfill()
             if self.cfg.retention_probe is not None:
                 await self.retention(self.cfg.retention_probe)
-            if self.cfg.capture_10018 and outcome == "completed":
-                await self.burst()
+            if self.cfg.capture_10018:
+                await self._burst_when_flat(outcome)
         except Exception as exc:
             self.notes["wrap_up"] = _why(exc)
         report = build_report(self, rest, outcome)
-        await asyncio.to_thread(write_outputs, self, report)
+        await asyncio.to_thread(write_outputs, self, report, rest)
         return report
+
+    async def _burst_when_flat(self, outcome: str) -> None:
+        """The burst may hold the host IP for 10 minutes or more, which locks out every cancel and
+        flatten (C-12.7). It runs only after a complete run whose cleanup finished, with no stop
+        request, and when a fresh REST read shows no position and no open order of the run."""
+        complete = outcome == COMPLETED and self.cleanup_ok is not False
+        if complete and not self.stopping.is_set() and await self._flat():
+            await self.burst()
+        else:
+            self.notes["ip_limit_10018"] = "skipped: account not flat or run stopped"
 
 
 async def _serve_metrics(h: Harness, port: int) -> asyncio.Server:
@@ -558,23 +690,45 @@ def _on_signals(h: Harness) -> None:
         loop.add_signal_handler(sig, handler)
 
 
-async def run(cfg: Config, creds: EnvCredentials) -> dict[str, Any]:
-    """Preflight (a refusal leaves before any order), the run, then the wrap-up, which always
+def outcome_of(h: Harness, error: BaseException | None) -> str:
+    """`completed`, `interrupted` (a stop request ended the run early) or `stopped early: ...`;
+    a cleanup that did not finish is appended. Only a full run with a clean cleanup reads
+    `completed`, the one outcome that exits 0 and lets the 10018 burst run."""
+    if error is not None:
+        outcome = _why(error)
+    else:
+        outcome = INTERRUPTED if h.stopping.is_set() else COMPLETED
+    if h.cleanup_ok is False:
+        outcome += "; cleanup INCOMPLETE: flatten in the demo UI"
+    return outcome
+
+
+async def drive(h: Harness) -> dict[str, Any]:
+    """Preflight (a refusal leaves before any order), the session, then the wrap-up, which always
     writes the run directory and the fixture staging."""
+    try:
+        await h.preflight()
+        h.started_ms = h.now_ms()
+        try:
+            await h.session()
+        except Exception as exc:
+            outcome = outcome_of(h, exc)
+            _log().error("run_stopped_early", reason=outcome)
+        else:
+            outcome = outcome_of(h, None)
+        return await h.wrap_up(outcome)
+    finally:
+        await h.client.aclose()
+
+
+async def run(cfg: Config, creds: EnvCredentials) -> dict[str, Any]:
+    """The run as the CLI starts it: `drive` with the signal handlers and the metrics endpoint."""
     h = Harness(cfg, creds)
     _on_signals(h)
     server = await _serve_metrics(h, cfg.metrics_port) if cfg.metrics_port else None
     try:
-        await h.preflight()
-        h.started_ms, outcome = h.now_ms(), "completed"
-        try:
-            await h.session()
-        except Exception as exc:
-            outcome = _why(exc)
-            _log().error("run_stopped_early", reason=outcome)
-        return await h.wrap_up(outcome)
+        return await drive(h)
     finally:
-        await h.client.aclose()
         if server is not None:
             server.close()
             await server.wait_closed()

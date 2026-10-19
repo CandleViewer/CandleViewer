@@ -1,8 +1,10 @@
 """Recording for the E29-K01 harness: REST round trips, reply shapes, fixture staging.
 
 `RestRecorder` is the `GuardedTransport` callback. It keeps one `RestSample` per HTTP exchange
-(the round-trip data) and the first reply per `(path, retCode, HTTP status)`, scrubbed as it is
-recorded: those are the fixture captures. The key-info reply is never kept. `FixtureSink` writes
+(the round-trip data) and the first reply per `(path, retCode, HTTP status, variant)`, scrubbed
+as it is recorded: those are the fixture captures. The variant tells apart what a read reply's
+list holds (`_variant`), so the populated order rows and the open position are kept beside the
+empty replies the preflight reads first. The key-info reply is never kept. `FixtureSink` writes
 the captures and the scrubbed private-stream frames in the `packages/fixtures/bybit/<date>/`
 layout (`rest/*.json`, `ws/*.jsonl`, manifest entries, README lines) under a staging directory;
 the owner reviews them before anything moves into `packages/fixtures`.
@@ -24,6 +26,7 @@ import structlog
 
 from .safety import DEMO_REST_HOST, DEMO_WS_URL
 from .scrub import LeakError, Scrubber
+from .stats import as_decimal
 
 #: The harness operation a request belongs to (`create`, `amend`, `skew`, `burst`, ...).
 OP: ContextVar[str] = ContextVar("op", default="read")
@@ -77,13 +80,37 @@ class Capture:
     headers: dict[str, str]
     body: Any
     is_json: bool
+    variant: str = ""
+
+
+#: `(path, retCode, HTTP status, variant)`: one capture each.
+CaptureKey = tuple[str, int | None, int, str]
+
+
+def _variant(body: object) -> str:
+    """What a read reply's `result.list` holds: `empty`, the first row's `orderStatus` (an order
+    read), `flat` or `open` (a position read); `""` for any other rows and for a reply with no
+    list (a write)."""
+    result = body.get("result") if isinstance(body, dict) else None
+    rows = result.get("list") if isinstance(result, dict) else None
+    if not isinstance(rows, list):
+        return ""
+    if not rows:
+        return "empty"
+    first = rows[0] if isinstance(rows[0], dict) else {}
+    status = first.get("orderStatus")
+    if isinstance(status, str) and status.isascii() and status.isalpha():
+        return status
+    if "size" in first:
+        return "open" if as_decimal(first.get("size")) else "flat"
+    return ""
 
 
 class RestRecorder:
     def __init__(self, scrubber: Scrubber) -> None:
         self._scrubber = scrubber
         self.samples: list[RestSample] = []
-        self.captures: dict[tuple[str, int | None, int], Capture] = {}
+        self.captures: dict[CaptureKey, Capture] = {}
 
     def __call__(
         self, request: httpx.Request, status: int, headers: httpx.Headers, raw: bytes, rtt_s: float
@@ -99,7 +126,8 @@ class RestRecorder:
             now_ms = int(time.time() * 1e3)
             sample = RestSample(now_ms, op, request.method, path, status, ret_code, rtt_s * 1e3)
             self.samples.append(sample)
-        key = (path, ret_code, status)
+        variant = _variant(body)
+        key = (path, ret_code, status, variant)
         if path in _NOT_KEPT or key in self.captures:
             return
         with contextlib.suppress(ValueError):  # the request's ids first, for a retMsg echoing one
@@ -108,8 +136,9 @@ class RestRecorder:
         ret_msg = scrubbed.get("retMsg") if isinstance(scrubbed, dict) else None
         kept = {name: headers[name] for name in _HEADERS if name in headers}
         self.captures[key] = Capture(
-            op, request.method, path, status, ret_code, str(ret_msg or ""), kept, scrubbed, is_json
-        )
+            op, request.method, path, status, ret_code, str(ret_msg or ""), kept, scrubbed, is_json,
+            variant,
+        )  # fmt: skip
 
 
 def _cap(size: int) -> int:
@@ -136,12 +165,13 @@ class FixtureSink:
             self.ws_withheld = exc.patterns
             _log().warning("ws_capture_withheld", patterns=exc.patterns)
 
-    def write(self, captures: dict[tuple[str, int | None, int], Capture]) -> list[dict[str, Any]]:
+    def write(self, captures: dict[CaptureKey, Capture]) -> list[dict[str, Any]]:
         """Write every capture and the stream lines; returns the manifest entries."""
         entries: list[dict[str, Any]] = []
         for c in captures.values():
             code = c.ret_code if c.ret_code is not None else f"http{c.status}"
             stem = f"rest/{c.path.removeprefix('/v5/').replace('/', '_')}_{code}"
+            stem += f"_{c.variant}" if c.variant else ""
             text = json.dumps(c.body, ensure_ascii=False, indent=2) if c.is_json else c.body
             try:
                 self._scrubber.check(text)
@@ -150,6 +180,7 @@ class FixtureSink:
                 continue
             name = stem + (".json" if c.is_json else ".txt")
             event = f"{c.op}: retCode {c.ret_code}, HTTP {c.status}"
+            event += f", {c.variant}" if c.variant else ""
             entry = self._put(name, text + "\n", f"{c.method} {c.path}", event, c.status)
             entries.append({**entry, "headers": c.headers} if c.headers else entry)
         if self._ws_lines and not self.ws_withheld:

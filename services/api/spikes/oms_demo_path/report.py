@@ -1,28 +1,40 @@
 """Outputs of an E29-K01 run: `summary.json` and `summary.md` (the tables for #843 and the
-ADR-0006 §Validation addendum), CSVs of every REST call, cycle and stream item, a snapshot of
-the metrics, and the scrubbed fixture staging."""
+ADR-0006 §Validation addendum), CSVs of every REST call, cycle, stream item and REST execution,
+a snapshot of the metrics, and the scrubbed fixture staging. Every output has the run's known
+values masked and passes the scrubber's leak check, or is withheld (C-12.2): the summary goes on
+a public issue."""
 
 from __future__ import annotations
 
 import csv
 import dataclasses
+import io
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
+
+import structlog
 
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.observability.metrics import generate_latest
 
 from .capture import Capture
+from .scrub import LeakError
 from .stats import (
     EXEC_TOPICS,
+    OVERLAP_MS,
     OrderingReport,
     Quantiles,
+    RestExecution,
     backfill_only,
     check_ordering,
+    delivering_at,
+    down_windows,
     latencies,
     quantiles,
+    split_rest_only,
 )
 
 if TYPE_CHECKING:
@@ -32,6 +44,22 @@ if TYPE_CHECKING:
 RTT_ALLOCATION_MS: Final = 250.0
 END_TO_END_P95_MS: Final = 300.0
 _Q: Final = ["", "n", "p50", "p95", "p99"]
+
+
+def _log() -> Any:
+    return structlog.get_logger(__name__)
+
+
+def budget_4(p95: float | None) -> dict[str, Any]:
+    """Budget #4 on demo: the create round trip's p95 against its 250 ms allocation, and the
+    backend headroom left inside the 300 ms end-to-end p95. No creates, no verdict (`None`)."""
+    if p95 is None:
+        return {"create_rtt_p95_ms": None, "within_allocation": None, "backend_headroom_ms": None}
+    return {
+        "create_rtt_p95_ms": p95,
+        "within_allocation": p95 <= RTT_ALLOCATION_MS,
+        "backend_headroom_ms": round(END_TO_END_P95_MS - p95, 1),
+    }
 
 
 def _q(value: Quantiles) -> dict[str, Any]:
@@ -55,30 +83,30 @@ def _error(c: Capture) -> dict[str, Any]:
     return entry
 
 
-def build_report(h: Harness, rest: dict[str, str], outcome: str) -> dict[str, Any]:
+def build_report(h: Harness, rest: Mapping[str, RestExecution], outcome: str) -> dict[str, Any]:
     stats, rows = h.stream.stats, h.rows
     rtt: dict[str, list[float]] = {}
     for s in h.recorder.samples:
         rtt.setdefault(f"{s.op} {s.method} {s.path}", []).append(s.rtt_ms)
     p95 = quantiles(s.rtt_ms for s in h.recorder.samples if s.op == "create").p95
     mine = [it for it in h.items if it.symbol == h.symbol]
+    live = [(begin, end) for begin, end in stats.live]
     parity = {}
     for topic in EXEC_TOPICS:
         ids = {it.exec_id for it in mine if it.topic == topic and it.exec_id}
         parity[topic] = {"streamed": len(ids), "rest_only": backfill_only(rest, ids)}
+        parity[topic]["rest_only_when"] = split_rest_only(rest, ids, live)
         parity[topic]["stream_only"] = len(ids - rest.keys())
     cycles = [r for r in rows if r["cycle"] >= 0]
+    partial = {it.link_id for it in mine if it.topic == "order" and it.status == "PartiallyFilled"}
+    start, end = h.started_ms, h.now_ms()
     return {
         "mode": h.cfg.mode,
         "symbol": h.symbol,
-        "window_ms": [h.started_ms, h.now_ms()],
+        "window_ms": [start, end],
         "outcome": outcome,
         "clock_offset_ms": [h.offset_ms, round(h.offset_err_ms, 1)],
-        "budget_4": {
-            "create_rtt_p95_ms": p95,
-            "within_allocation": p95 is not None and p95 <= RTT_ALLOCATION_MS,
-            "backend_headroom_ms": None if p95 is None else round(END_TO_END_P95_MS - p95, 1),
-        },
+        "budget_4": budget_4(p95),
         "rest_rtt_ms": {k: _q(quantiles(v)) for k, v in sorted(rtt.items())},
         "order_submit_ms": _q(quantiles(h.submit_ms)),
         "ws_latency_ms": {k: _q(v) for k, v in latencies(h.items).items()},
@@ -88,6 +116,8 @@ def build_report(h: Harness, rest: dict[str, str], outcome: str) -> dict[str, An
         "stream": {
             "connects": stats.connects,
             "drops": stats.drops,
+            "live_ms": live,
+            "down_ms": down_windows(live, start - OVERLAP_MS, end),
             "pong_rtt_ms": _q(quantiles(stats.pong_rtt_ms)),
             "subscribed": stats.subscribed,
         },
@@ -97,34 +127,48 @@ def build_report(h: Harness, rest: dict[str, str], outcome: str) -> dict[str, An
         "cycles": {
             "cycles": len(cycles),
             "acked": sum(r.get("create") == "0" for r in cycles),
-            "partial_fill": sum(bool(r.get("partial")) for r in cycles),
+            "partial_fill_stream": sum(r.get("order_link_id") in partial for r in cycles),
+            "partial_fill_rest": sum(bool(r.get("partial")) for r in cycles),
             "filled": sum(r.get("status") == "Filled" for r in cycles),
             "amended": sum(r.get("amend") == "0" for r in cycles),
             "cancelled": sum(r.get("cancel") == "0" for r in cycles),
+            "failed": sum("error" in r for r in cycles),
             "flattens": len(rows) - len(cycles),
         },
         "notes": h.notes,
     }
 
 
-def _csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(dict.fromkeys(k for r in rows for k in r)))
-        writer.writeheader()
-        writer.writerows(rows)
+def _csv(rows: list[dict[str, Any]]) -> str:
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=list(dict.fromkeys(k for r in rows for k in r)))
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue()
 
 
-def write_outputs(h: Harness, report: dict[str, Any]) -> None:
+def _write(h: Harness, path: Path, text: str) -> None:
+    """`text` with the run's known values masked, then leak-checked; a file that still fails the
+    check is withheld: what is written names the failed checks only."""
+    try:
+        text = h.scrubber.check(h.scrubber.mask_known(text))
+    except LeakError as exc:
+        _log().warning("output_withheld", file=path.name, patterns=exc.patterns)
+        text = f"withheld by the leak check: {', '.join(exc.patterns)}\n"
+    path.write_text(text, encoding="utf-8", newline="")
+
+
+def write_outputs(h: Harness, report: dict[str, Any], rest: Mapping[str, RestExecution]) -> None:
     out = h.cfg.out
     out.mkdir(parents=True, exist_ok=True)
     report["fixtures"] = [e["path"] for e in h.sink.write(h.recorder.captures)]
     report["ws_capture_withheld"] = h.sink.ws_withheld
-    (out / "summary.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    (out / "summary.md").write_text(render(report), encoding="utf-8")
-    (out / "metrics.prom").write_bytes(generate_latest(h.metrics.registry))
-    _csv(out / "rest_calls.csv", [dataclasses.asdict(s) for s in h.recorder.samples])
-    _csv(out / "orders.csv", h.rows)
-    stand_in = h.scrubber.stand_in  # stream ids leave the process only as stand-ins
+    _write(h, out / "summary.json", json.dumps(report, indent=2) + "\n")
+    _write(h, out / "summary.md", render(report))
+    _write(h, out / "metrics.prom", generate_latest(h.metrics.registry).decode())
+    _write(h, out / "rest_calls.csv", _csv([dataclasses.asdict(s) for s in h.recorder.samples]))
+    _write(h, out / "orders.csv", _csv(h.rows))
+    stand_in = h.scrubber.stand_in  # exchange ids leave the process only as stand-ins
     items = [
         dataclasses.asdict(it)
         | {
@@ -134,7 +178,28 @@ def write_outputs(h: Harness, report: dict[str, Any]) -> None:
         }
         for it in h.items
     ]
-    _csv(out / "ws_items.csv", items)
+    _write(h, out / "ws_items.csv", _csv(items))
+    _write(h, out / "rest_executions.csv", _csv(_rest_rows(h, rest)))
+
+
+def _rest_rows(h: Harness, rest: Mapping[str, RestExecution]) -> list[dict[str, Any]]:
+    """One row per REST execution: whether the stream was delivering when it happened, and on
+    which execution topic the stream delivered it."""
+    live = [(begin, end) for begin, end in h.stream.stats.live]
+    seen = {t: {it.exec_id for it in h.items if it.topic == t} for t in EXEC_TOPICS}
+    rows = []
+    for exec_id, row in sorted(rest.items(), key=lambda kv: kv[1].exec_ms or 0):
+        state = delivering_at(row.exec_ms, live)
+        rows.append(
+            {
+                "exec_id": h.scrubber.stand_in("opaque", exec_id),
+                "exec_type": row.exec_type,
+                "exec_ms": row.exec_ms,
+                "stream": "" if state is None else "connected" if state else "down",
+            }
+            | {f"on_{t.replace('.', '_')}": exec_id in seen[t] for t in EXEC_TOPICS}
+        )
+    return rows
 
 
 def _f(value: object) -> str:
@@ -152,44 +217,76 @@ def _quantiles(table: dict[str, dict[str, Any]]) -> list[str]:
     return _table(_Q, [[name, v["n"], v["p50"], v["p95"], v["p99"]] for name, v in table.items()])
 
 
+def _budget(r: dict[str, Any]) -> list[str]:
+    """The budget #4 and `order_submit_seconds` sections; none for a run with no creates."""
+    b = r["budget_4"]
+    if b["create_rtt_p95_ms"] is None:
+        return []
+    verdict = "within" if b["within_allocation"] else "NOT within"
+    return [
+        "## Budget #4 (06-performance §5.2)",
+        "",
+        f"Demo `POST /v5/order/create` round trip p95: {_f(b['create_rtt_p95_ms'])} ms, "
+        f"{verdict} the {RTT_ALLOCATION_MS:.0f} ms allocation. Backend headroom at p95 "
+        f"inside {END_TO_END_P95_MS:.0f} ms: {_f(b['backend_headroom_ms'])} ms.",
+        "",
+        "## order_submit_seconds: the create call with signing and governor (ms)",
+        "",
+        *_quantiles({"create": r["order_submit_ms"]}),
+    ]
+
+
+def _partial(r: dict[str, Any]) -> list[str]:
+    """How many cycles saw a partial fill; nothing for a run with no cycles."""
+    c = r["cycles"]
+    if not c["cycles"]:
+        return []
+    return [
+        f"Cycles with a partial fill: {c['partial_fill_stream']} by the stream's `order` pushes "
+        f"({c['partial_fill_rest']} by the REST status at lookup). Zero means this run did not "
+        "observe the S5 ordering of a partial fill.",
+        "",
+    ]
+
+
 def render(r: dict[str, Any]) -> str:
     start, end = (datetime.fromtimestamp(ms / 1000, UTC).isoformat() for ms in r["window_ms"])
-    b, (offset, err) = r["budget_4"], r["clock_offset_ms"]
-    verdict = "within" if b["within_allocation"] else "NOT within"
+    offset, err = r["clock_offset_ms"]
     subscribed = r["stream"]["subscribed"]
-    parity = [[t, subscribed.get(t), p["streamed"], p["rest_only"] or 0, p["stream_only"]]
-              for t, p in r["parity"].items()]  # fmt: skip
+    parity = [[t, subscribed.get(t), p["streamed"], p["rest_only"] or 0,
+               p["rest_only_when"]["while_connected"], p["rest_only_when"]["stream_down"],
+               p["stream_only"]] for t, p in r["parity"].items()]  # fmt: skip
     order = [[t, o["executions"], o["violations"], o["unmatched"], o["lag_ms"]["p95"]]
              for t, o in r["ordering"].items()]  # fmt: skip
     errors = [[e["op"], e["call"], e["http"], e["retCode"], e["retMsg"], e.get("adapter"),
                e.get("retryable")] for e in r["errors"]]  # fmt: skip
     rest = {k: r[k] for k in ("stream", "cycles", "notes", "fixtures", "ws_capture_withheld")}
+    head = ["stream", "subscribed", "streamed", "REST-only (0)", "connected", "down", "stream-only"]
     return "\n".join(
         [
             f"# E29-K01 `{r['mode']}` run on {r['symbol']} (demo)",
             "",
             f"{start} to {end}: {r['outcome']}. Clock offset {offset} ms (±{err} ms).",
             "",
-            "## Budget #4 (06-performance §5.2)",
-            "",
-            f"Demo `POST /v5/order/create` round trip p95: {_f(b['create_rtt_p95_ms'])} ms, "
-            f"{verdict} the {RTT_ALLOCATION_MS:.0f} ms allocation. Backend headroom at p95 "
-            f"inside {END_TO_END_P95_MS:.0f} ms: {_f(b['backend_headroom_ms'])} ms.",
-            "",
+            *_budget(r),
             "## REST round trip per call (ms)",
             "",
             *_quantiles(r["rest_rtt_ms"]),
-            "## order_submit_seconds: the create call with signing and governor (ms)",
-            "",
-            *_quantiles({"create": r["order_submit_ms"]}),
             "## Private stream: exchange stamp to receipt (ms)",
             "",
             *_quantiles(r["ws_latency_ms"]),
             f"## Execution parity: the REST backfill listed {r['rest_executions']}",
             "",
-            *_table(["stream", "subscribed", "streamed", "REST-only (0)", "stream-only"], parity),
+            "A REST-only execution that happened while the stream was delivering (`connected`) is "
+            "evidence against the stream as the source of truth. One inside a down window "
+            "(`down`: before the first connect, from a drop's last frame to the next connect, "
+            "after the stop) is expected: the harness does not resync. `stream.down_ms` lists the "
+            "windows; `rest_executions.csv` places each execution.",
+            "",
+            *_table(head, parity),
             "## Ordering, 23-ws S5: executions received after the order push they caused",
             "",
+            *_partial(r),
             *_table(["stream", "executions", "violations", "unmatched", "lag p95 ms"], order),
             "## Error shapes and the E08 adapter taxonomy",
             "",

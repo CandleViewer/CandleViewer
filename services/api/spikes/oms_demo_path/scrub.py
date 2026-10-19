@@ -7,7 +7,9 @@ env letter, `seq2` and purpose tag, a UUID stays a UUID, a digit string stays di
 text (`retMsg`) a raw id already met, or any `OUR_ID`- or UUID-shaped token, gets its stand-in
 too. `dumps` refuses output that still holds a known credential value or matches a secret
 pattern of the CI gates (gitleaks Bybit rules, `packages/fixtures/scripts/verify.mjs`, a
-key-shape tripwire).
+key-shape tripwire). A digits-only known value (the account UID) is matched as a whole number
+only, so a timestamp that contains its digits is neither masked nor refused. `mask_known` masks
+the known values of a run output (`report.write_outputs`) before its leak check.
 """
 
 from __future__ import annotations
@@ -67,6 +69,31 @@ def _key_shaped(token: str) -> bool:
     return any(c.isdigit() for c in token) and any(c.isalpha() for c in token)
 
 
+def _found(text: str, value: str) -> list[int]:
+    """Where `value` starts in `text`. A digits-only value (an account UID) counts only where no
+    digit touches it: a longer number that happens to contain it, such as a timestamp, is not it."""
+    starts: list[int] = []
+    at = text.find(value)
+    while at >= 0:
+        end = at + len(value)
+        touched = value.isdigit() and (
+            (at > 0 and text[at - 1].isdigit()) or (end < len(text) and text[end].isdigit())
+        )
+        if not touched:
+            starts.append(at)
+        at = text.find(value, at + 1)
+    return starts
+
+
+def _masked(text: str, value: str) -> str:
+    parts, last = [], 0
+    for at in _found(text, value):
+        if at >= last:
+            parts += [text[last:at], MASK]
+            last = at + len(value)
+    return "".join(parts) + text[last:]
+
+
 class Scrubber:
     """One per run, shared by the REST recorder and the private-stream capture."""
 
@@ -120,10 +147,13 @@ class Scrubber:
         return self._text(value) if isinstance(value, str) else value
 
     def _text(self, text: str) -> str:
+        return _TOKEN.sub(self._token, self.mask_known(text))
+
+    def mask_known(self, text: str) -> str:
+        """`text` with every known value (the key id, the account UID) replaced by `MASK`."""
         for known in self._known:
-            if known.reveal() in text:
-                text = text.replace(known.reveal(), MASK)
-        return _TOKEN.sub(self._token, text)
+            text = _masked(text, known.reveal())
+        return text
 
     def _token(self, match: re.Match[str]) -> str:
         """A known raw id, or an id-shaped token (`OUR_ID`, UUID) met first in free text."""
@@ -139,7 +169,7 @@ class Scrubber:
         found = [name for name, rx in _PATTERNS.items() if rx.search(text)]
         if any(_key_shaped(token) for token in _TOKEN.findall(text)):
             found.append("key-shape")
-        if any(known.reveal() in text for known in self._known):
+        if any(_found(text, known.reveal()) for known in self._known):
             found.append("known-value")
         return found
 

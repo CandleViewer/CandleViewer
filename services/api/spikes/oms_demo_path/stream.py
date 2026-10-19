@@ -5,7 +5,9 @@ backoff for as long as the run lasts. The `auth` op is signed by the adapter's `
 (`expires` 10 s ahead of the exchange clock). Each topic is subscribed in its own request, so a
 topic the demo stream refuses does not take the others down. Bybit's application ping goes out
 every 20 s; a socket silent for 60 s is dropped and re-dialled. Every frame but `pong` goes to
-`on_frame` with its receipt time on the exchange clock.
+`on_frame` with its receipt time on the exchange clock. `stats.live` keeps, per connection, the
+span in which it delivered: from the connect to the last frame received (to the stop, for the
+connection `stop()` ends), so a drop's window runs from its last frame to the next connect.
 """
 
 from __future__ import annotations
@@ -72,6 +74,8 @@ class StreamStats:
     drops: list[tuple[int, str]] = field(default_factory=list)
     pong_rtt_ms: list[float] = field(default_factory=list)
     subscribed: dict[str, bool] = field(default_factory=dict)
+    #: Per connection, `[connect, last frame received]` in exchange-clock ms.
+    live: list[list[int]] = field(default_factory=list)
 
 
 class PrivateStream:
@@ -83,11 +87,13 @@ class PrivateStream:
         now_ms: Callable[[], int],
         topics: Sequence[str] = TOPICS,
         dial_fn: Callable[[str], Awaitable[Socket]] = dial,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._signer, self._on_frame, self._now_ms = signer, on_frame, now_ms
-        self._topics, self._dial = tuple(topics), dial_fn
+        self._topics, self._dial, self._sleep = tuple(topics), dial_fn, sleep
         self._pings: deque[float] = deque(maxlen=16)
         self._socket: Socket | None = None
+        self._live: list[int] | None = None
         self._stop = asyncio.Event()
         self.ready = asyncio.Event()
         self.stats = StreamStats()
@@ -103,12 +109,25 @@ class PrivateStream:
                     self.stats.drops.append((self._now_ms(), type(exc).__name__))
                     _log().warning("private_stream_dropped", reason=type(exc).__name__)
             backoff = 1.0 if time.monotonic() - started > 60 else min(backoff * 2, 60.0)
-            with contextlib.suppress(TimeoutError):
-                jitter = 0.5 + secrets.randbelow(500) / 1000
-                await asyncio.wait_for(self._stop.wait(), backoff * jitter)
+            await self._backoff(backoff * (0.5 + secrets.randbelow(500) / 1000))
+
+    async def _backoff(self, seconds: float) -> None:
+        """The wait before a re-dial, through the injected sleep; `stop()` cuts it short."""
+        waits: tuple[asyncio.Future[Any], ...] = (
+            asyncio.ensure_future(self._sleep(seconds)),
+            asyncio.ensure_future(self._stop.wait()),
+        )
+        try:
+            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiting in waits:
+                waiting.cancel()
+            await asyncio.gather(*waits, return_exceptions=True)
 
     async def stop(self) -> None:
         self._stop.set()
+        if self._live is not None:  # the connection delivered until now
+            self._live[1] = self._now_ms()
         if self._socket is not None:
             with contextlib.suppress(*_DROPS):
                 await self._socket.close()
@@ -134,6 +153,9 @@ class PrivateStream:
             for topic in self._topics:
                 await socket.send(json.dumps({"op": "subscribe", "req_id": topic, "args": [topic]}))
             self.stats.connects += 1
+            now = self._now_ms()
+            self._live = [now, now]
+            self.stats.live.append(self._live)
             self.ready.set()
             pinger = asyncio.create_task(self._ping(socket))
             try:
@@ -142,7 +164,7 @@ class PrivateStream:
                 pinger.cancel()
                 await asyncio.gather(pinger, return_exceptions=True)
         finally:
-            self._socket = None
+            self._socket, self._live = None, None
             with contextlib.suppress(*_DROPS):
                 await socket.close()
 
@@ -159,6 +181,8 @@ class PrivateStream:
             async with asyncio.timeout(SILENCE_S):
                 raw = await socket.recv()
             received = self._now_ms()
+            if self._live is not None:
+                self._live[1] = received
             frame = json.loads(raw)
             if not isinstance(frame, dict):
                 continue

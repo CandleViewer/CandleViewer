@@ -33,6 +33,7 @@ from spikes.oms_demo_path.safety import (
     check_amend,
     check_order,
     check_permissions,
+    check_request,
     check_target,
     check_ws_url,
     load_credentials,
@@ -40,6 +41,8 @@ from spikes.oms_demo_path.safety import (
 )
 
 CAP = Decimal(250)
+#: A host address from the documentation range (RFC 5737), as the key-info fixture uses.
+HOST = ["203.0.113.7"]
 #: The Bybit v5 doc worked example (`docs/research/06-bybit-api.md`, as `test_signer.py`): the
 #: placeholder is both the key id and the synthetic secret; the MAC is the doc's fixed value.
 DOC_PLACEHOLDER = "XXXXXXXXXX"
@@ -59,6 +62,12 @@ def _opening(**changes: Any) -> dict[str, Any]:
         "orderLinkId": new_link(AccountId(uuid4()), "entry"),
     }
     return {k: v for k, v in (body | changes).items() if v is not None}
+
+
+def _live_link() -> str:
+    """A well-formed 24 §8.3 id for the live environment (`cvl-`): never a demo order (C-2.11)."""
+    link = new_link(AccountId(uuid4()), "entry")
+    return f"{link[:2]}l{link[3:]}"
 
 
 def _transport(seen: list[httpx.Request], replies: list[httpx.Response] | None = None) -> Any:
@@ -141,6 +150,7 @@ async def test_guarded_transport_sends_an_allowed_request_and_records_it() -> No
         ({"category": "spot"}, "linear"),
         ({"qty": "0.10"}, "per-order cap"),
         ({"orderLinkId": "my-own-id"}, r"8\.3"),
+        ({"orderLinkId": _live_link()}, r"8\.3"),
     ],
 )
 def test_check_order_refuses(changes: dict[str, Any], rule: str) -> None:
@@ -154,29 +164,92 @@ def test_check_order_lets_a_protected_entry_and_a_reduce_only_flatten_through() 
     check_order(flatten | {"reduceOnly": True}, max_notional=CAP)
 
 
-def test_check_amend_never_touches_the_protection() -> None:
-    ref = {k: _opening()[k] for k in ("category", "symbol", "orderLinkId")}
-    check_amend(ref | {"price": "2999.99"})
-    with pytest.raises(SafetyRefusal, match="protection"):
-        check_amend(ref | {"stopLoss": "0"})
+def _ref(order: dict[str, Any]) -> dict[str, Any]:
+    return {k: order[k] for k in ("category", "symbol", "orderLinkId")}
+
+
+def test_check_amend_lets_a_price_above_the_order_stop_through() -> None:
+    order = _opening()
+    check_amend(_ref(order) | {"price": "2999.99"}, stops={order["orderLinkId"]: Decimal(2940)})
+
+
+@pytest.mark.parametrize(
+    ("change", "rule"),
+    [
+        ({"price": "2999.99", "stopLoss": "0"}, "protection"),
+        ({"price": "2999.99", "qty": "5"}, "price only"),
+        ({"qty": "5"}, "price only"),
+        ({"price": "2940.00"}, "stopLoss"),
+        ({"price": "2900.00"}, "stopLoss"),
+        ({}, "price must be"),
+    ],
+    ids=["protection", "qty-and-price", "qty", "price-at-stop", "price-below-stop", "no-price"],
+)
+def test_check_amend_refuses_anything_but_a_price_above_the_stop(
+    change: dict[str, str], rule: str
+) -> None:
+    order = _opening()
+    with pytest.raises(SafetyRefusal, match=rule):
+        check_amend(_ref(order) | change, stops={order["orderLinkId"]: Decimal(2940)})
+
+
+def test_check_amend_refuses_an_order_the_run_did_not_create() -> None:
+    with pytest.raises(SafetyRefusal, match="this run created"):
+        check_amend(_ref(_opening()) | {"price": "2999.99"}, stops={})
+
+
+def test_an_opening_create_bounds_the_amends_of_its_order() -> None:
+    """The guard keeps the stop of every opening create it lets through: an amend of that order
+    may not reach it (C-2.6), while a reduce-only create leaves no bound behind."""
+    url = httpx.URL(f"{DEMO_REST_BASE}/v5/order/create")
+    order, flatten = _opening(), _opening(side="Sell", orderType="Market", price=None)
+    stops: dict[str, Decimal] = {}
+    for body in (order, flatten | {"stopLoss": None, "reduceOnly": True}):
+        content = json.dumps({k: v for k, v in body.items() if v is not None}).encode()
+        check_request("POST", url, content, max_notional=CAP, stops=stops)
+    assert stops == {order["orderLinkId"]: Decimal("2940.00")}
+    amend = httpx.URL(f"{DEMO_REST_BASE}/v5/order/amend")
+    low = json.dumps(_ref(order) | {"price": "2939.99"}).encode()
+    with pytest.raises(SafetyRefusal, match="stopLoss"):
+        check_request("POST", amend, low, max_notional=CAP, stops=stops)
 
 
 @pytest.mark.parametrize(
     "permissions",
-    [{"Wallet": ["AccountTransfer"]}, {"Withdraw": ["Withdraw"]}, {"Spot": ["withdraw"]}],
+    [
+        {"Wallet": ["AccountTransfer"]},
+        {"Withdraw": ["Withdraw"]},
+        {"Spot": ["withdraw"]},
+        {"Wallet": ["AnyNewRight"]},
+        {"FiatP2P": ["P2PTrade"]},
+        {"BitCard": ["CardPay"]},
+        {"With draw": ["Enabled"]},
+    ],
+    ids=["transfer", "withdraw", "withdraw-value", "wallet", "fiat", "card", "spelling"],
 )
-def test_check_permissions_refuses_a_withdrawal_or_transfer_right(
+def test_check_permissions_refuses_a_key_that_may_move_funds(
     permissions: dict[str, object],
 ) -> None:
     with pytest.raises(SafetyRefusal, match=r"C-2\.8"):
-        check_permissions(False, permissions)
+        check_permissions(False, permissions, ips=HOST)
+
+
+@pytest.mark.parametrize(
+    "ips",
+    [[], ["*"], ["203.0.113.0/24"], ["203.0.113.7", "*"], ["not-an-address"]],
+    ids=["none", "wildcard", "range", "wildcard-too", "garbage"],
+)
+def test_check_permissions_refuses_a_key_without_a_host_ip_allowlist(ips: list[str]) -> None:
+    with pytest.raises(SafetyRefusal, match=r"IP allowlist.*C-2\.8"):
+        check_permissions(False, {"ContractTrade": ["Order", "Position"]}, ips=ips)
 
 
 def test_check_permissions_refuses_read_only_and_passes_a_trading_key() -> None:
-    trading = {"ContractTrade": ["Order", "Position"], "Wallet": []}
+    trading = {"ContractTrade": ["Order", "Position"], "Wallet": [], "Spot": []}
     with pytest.raises(SafetyRefusal, match="read-only"):
-        check_permissions(True, trading)
-    check_permissions(False, trading)
+        check_permissions(True, trading, ips=HOST)
+    for ips in (HOST, ["203.0.113.7/32"], ["2001:db8::7"]):
+        check_permissions(False, trading, ips=ips)
 
 
 def test_new_link_follows_the_8_3_format_for_demo() -> None:
