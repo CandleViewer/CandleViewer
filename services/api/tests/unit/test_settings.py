@@ -133,7 +133,7 @@ def test_settings_ws_connect_rate_defaults_to_20_per_minute() -> None:
     assert get_settings().ws_max_auths_per_user_per_min == 20
 
 
-@pytest.mark.parametrize("value", [1, 20, 600])
+@pytest.mark.parametrize("value", [1, 7, 20])
 def test_settings_ws_connect_rate_accepts_its_documented_bounds(
     monkeypatch: pytest.MonkeyPatch, value: int
 ) -> None:
@@ -141,8 +141,8 @@ def test_settings_ws_connect_rate_accepts_its_documented_bounds(
     assert get_settings().ws_max_auths_per_user_per_min == value
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "601", "1.5", "many"])
-def test_settings_ws_connect_rate_rejects_values_outside_1_to_600(
+@pytest.mark.parametrize("value", ["0", "-1", "21", "600", "1.5", "many"])
+def test_settings_ws_connect_rate_rejects_values_outside_1_to_20(  # #415: lowered, never raised
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
     monkeypatch.setenv("CV_WS_MAX_AUTHS_PER_USER_PER_MIN", value)

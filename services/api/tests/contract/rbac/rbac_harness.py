@@ -61,6 +61,7 @@ from candleviewer.storage.repositories.alerts import Page
 from candleviewer.storage.repositories.backups import BackupRow
 from candleviewer.storage.repositories.user_lifecycle import UserStatusChange
 from candleviewer.user_cascade_wiring import NoOrderCounter
+from candleviewer.ws.lifecycle import ConnectRateLimiter
 from tests.csrf_helpers import csrf_headers
 from tests.unit.admin._backup_fakes import row
 from tests.unit.admin._link_fakes import Reader
@@ -600,13 +601,6 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
             raise PermissionError("unknown token")
         return f"ws-{actor}", _USER_IDS[actor], datetime(2100, 1, 1, tzinfo=UTC)  # far future
 
-    # The per-user connect rate (#2558) is not under test here, and this world lives for a whole
-    # module on the real clock. `test_scope_and_ws.py` opens one socket per (topic family, actor)
-    # cell plus a revocation case: `manager_with_grant` spent 19 of the default 20 first auths a
-    # minute when the limit was added. The next topic family would be refused with
-    # `client_rate_limited` and read as an RBAC regression. The limit itself is covered by
-    # `tests/unit/ws/test_connect_rate.py`.
-    mp.setenv("CV_WS_MAX_AUTHS_PER_USER_PER_MIN", "600")  # create_app() reads get_settings()
     mp.setattr(appmod, "build_identity_provider", lambda _settings: _Identity(spec))
     mp.setattr(appmod, "SqlAlchemyAlertRepository", lambda _pg: _AlertRepo())
     # E16-T06: the real retention manager exists only on the `real` storage backend; the purge
@@ -626,6 +620,14 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
         snapshot_loader=snapshot_loader,
         ws_authenticate=ws_authenticate,
     )
+    # The per-user connect rate (#2558) is not under test here, and this world lives for a whole
+    # module on the real clock. `test_scope_and_ws.py` opens one socket per (topic family, actor)
+    # cell plus a revocation case: `manager_with_grant` spent 19 of the default 20 first auths a
+    # minute when the limit was added. The next topic family would be refused with
+    # `client_rate_limited` and read as an RBAC regression. The limit itself is covered by
+    # `tests/unit/ws/test_connect_rate.py`. Settings cap it at 20 (#415), so the hub's limiter is
+    # widened here, on the built app.
+    app.state.ws_hub.connect_rate = ConnectRateLimiter(600)
     _CSRF_CODEC[:] = [app.state.csrf_codec]
     ctx = app.state.app_context
     ctx.audit._writer = audit

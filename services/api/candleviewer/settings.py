@@ -553,9 +553,13 @@ class Settings(BaseSettings):
     # E08-T04: public WS ingestion skeleton flag (C-4.13: off by default;
     # removal tracked by E08-T05). Public data only — no credentials.
     ingestion_ws_enabled: bool = False
-    # E17 client WS gateway (`23-ws-protocol.md` §4, §9.4): `CV_WS_*`. Defaults = the doc.
+    # E17 client WS gateway (`23-ws-protocol.md` §4, §9.4): `CV_WS_*`. Defaults = the doc. #415
+    # (E17-R-25): the inbound frame cap, the connections per user and the new sockets per user a
+    # minute may be lowered, never raised past the protocol's values (threat model §6: a raise
+    # needs a security review). M1 may not import `ws`, so the values are spelled out; a test pins
+    # them to `ws.limits` and `ws.lifecycle`, and the frame cap to the server's transport cap.
     ws_auth_timeout_s: float = Field(default=10.0, gt=0, le=60)
-    ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
+    ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=262_144)
     # E17-T03 (#412): the WS backpressure pipeline (coalescing, adaptive throttling and the §8.4
     # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default; removal ticket
     # #2900). It swaps the mechanism that bounds a connection's outbound frames and never removes
@@ -578,11 +582,11 @@ class Settings(BaseSettings):
     ws_queue_bytes: int = Field(default=8_388_608, ge=4_194_304, le=8_388_608)
     ws_queue_frames: int = Field(default=2_000, ge=256, le=2_000)
     ws_classify_interval_ms: int = Field(default=1_000, ge=500, le=10_000)
-    ws_max_connections_per_user: int = Field(default=8, ge=1, le=64)
+    ws_max_connections_per_user: int = Field(default=8, ge=1, le=8)
     # #2558: new sockets one user may authenticate per sliding 60 s (§4.3). The excess is refused
     # `bye client_rate_limited` + 4429 before `auth_ok`. Default = `ws.lifecycle` constant of the
     # same name, upper-cased.
-    ws_max_auths_per_user_per_min: int = Field(default=20, ge=1, le=600)
+    ws_max_auths_per_user_per_min: int = Field(default=20, ge=1, le=20)
     ws_shutdown_grace_ms: int = Field(default=5000, ge=0, le=60_000)
     ws_shutdown_expected_downtime_ms: int = Field(default=20_000, ge=0, le=600_000)
     # #2565: the api container's SIGTERM -> SIGKILL budget (`CV_API_STOP_BUDGET_S`; the compose
