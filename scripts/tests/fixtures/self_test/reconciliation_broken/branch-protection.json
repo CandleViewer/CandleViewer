@@ -1,5 +1,5 @@
 {
   "required_status_checks": {
-    "contexts": ["governance-renamed"]
+    "checks": [{ "context": "governance-renamed", "app_id": 15368 }]
   }
 }

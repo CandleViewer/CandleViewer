@@ -32,8 +32,8 @@ _CONSTITUTION_NAMES = [
 
 def _desired_state(contexts: list[str]) -> dict[str, object]:
     return {
-        "required_status_checks": {"contexts": contexts},
-        "x-pending-contexts": [n for n in _CONSTITUTION_NAMES if n not in contexts],
+        "required_status_checks": {"checks": [{"context": c, "app_id": 15368} for c in contexts]},
+        "pending_checks": {n: "fixture" for n in _CONSTITUTION_NAMES if n not in contexts},
     }
 
 
@@ -57,5 +57,5 @@ def build_drift_fixture() -> tuple[bool, str]:
     )
     job_names = {"lint", "typecheck", "unit-backend", "coverage-check", "contract"}
     errors = _reconcile_mod.reconcile(desired, _CONSTITUTION_NAMES, job_names)
-    ok = any("coverage-thresholds" in e and "no job named" in e for e in errors)
+    ok = any("coverage-thresholds" in e and "no check run named" in e for e in errors)
     return (not ok, f"{len(errors)} error(s): {errors}")
