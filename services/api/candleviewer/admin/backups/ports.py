@@ -7,26 +7,20 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol, get_args
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from candleviewer.admin.errors import AdminError
+from candleviewer.storage.repositories.backups import BACKUP_ERROR_CODES, BackupErrorCode
+from candleviewer.storage.repositories.backups import VerifyMethod as VerifyMethod  # BK-3a's
 
 JobKind = Literal["backup", "backup_verify", "backup_restore"]  # `Job.kind` values
-#: The closed set of a failed backups job's `Job.error` (C-12.6); anything else is
+#: The closed set of a failed backups job's `Job.error` (C-12.6) is the catalogue's own (BK-3a,
+#: `backups.error_message`), so a job and its row name a failure alike; anything else is
 #: `internal_error`, so no class name, message, path or key material reaches a client.
-JobErrorCode = Literal[
-    "checksum_mismatch",
-    "checksum_unbound",
-    "artefact_missing",
-    "verify_failed",
-    "audit_unavailable",
-    "store_unavailable",
-    "internal_error",
-]
-JOB_ERROR_CODES: Final[frozenset[str]] = frozenset(get_args(JobErrorCode))
+JobErrorCode = BackupErrorCode
+JOB_ERROR_CODES: Final = BACKUP_ERROR_CODES
 Component = Literal["postgres", "questdb", "parquet", "config"]
-VerifyMethod = Literal["restore_smoke", "checksum", "pg_verifybackup", "duckdb_scan"]
 Progress = Callable[[float], None]
 JobWork = Callable[[Progress], Awaitable[dict[str, object]]]  # returns `Job.result`
 
