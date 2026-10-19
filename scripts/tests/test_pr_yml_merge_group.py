@@ -111,7 +111,7 @@ MIGRATIONS_BASE = "github.base_ref || github.event.merge_group.base_ref || 'main
 #: by job: a value can weaken a check there as a condition can (a `continue-on-error`, a lane's
 #: input, a shell test of the event), so a new or changed one is reviewed here first.
 EVENT_VALUES = [
-    ("pr.yml", "github.event.merge_group.head_sha || inputs.train_head || github.head_ref"),
+    ("pr.yml", "github.event.merge_group.head_sha || github.head_ref || github.sha"),
     ("pr.yml", "github.event_name == 'pull_request'"),
     ("pr.yml:changed-paths", "steps.change.outputs.pr"),
     ("pr.yml:changed-paths", "github.event_name"),
@@ -220,9 +220,9 @@ def test_concurrency_cancels_superseded_pr_runs_and_never_a_queue_run() -> None:
     # Each merge group build runs in its own group (an empty head_ref would put every queue run in
     # `pr-`), even a PR enqueued again on the same base, whose queue ref is the same, and is never
     # cancelled: the queue would read the cancelled check as a failure. So does each merge train,
-    # keyed on its head (#3783): the orchestrator merges its PRs on the run's result.
+    # keyed on its own commit (#3783), never an input, which might name a PR's branch.
     builds = [_queue(7, "3" * 40), _queue(7, "4" * 40), _queue(8, "5" * 40)]
-    builds += [_train("6" * 40), _train("7" * 40)]
+    builds += [_train("6" * 40), _train("7" * 40) | {"inputs.train_head": "chore/e03-x"}]
     groups = {_render(group, build) for build in builds}
     assert len(groups) == 5 and not {"pr-", "pr-chore/e03-x"} & groups
     assert {_render(cancel, build) for build in builds} == {"false"}
@@ -477,11 +477,11 @@ def _guards(condition: object) -> bool:
 
 def _has_fallback(read: str) -> bool:
     """`a || b || c` of context paths: one under `github.event.merge_group`, one a merge train's
-    input (#3783). In a lane pr.yml calls, which sees its own inputs only, the train's is `'main'`,
-    the branch a train is built on, last since it is never empty."""
+    input (#3783) or, last as never empty, `'main'` (a train's base in a lane pr.yml calls, which
+    sees its own inputs only) or `github.sha` (the train's head, which `changed-paths` checks)."""
     terms = [term.strip() for term in read.split("||")]
-    if terms[-1] == "'main'":
-        terms[-1] = "inputs.train_base"
+    last = {"'main'": "inputs.train_base", "github.sha": "inputs.train_head"}
+    terms[-1] = last.get(terms[-1], terms[-1])
     group = any(term.startswith("github.event.merge_group.") for term in terms)
     train = any(re.fullmatch(r"inputs\.train_(?:base|head)", term) for term in terms)
     return len(terms) == 3 and all(re.fullmatch(r"[\w.]+", t) for t in terms) and group and train
@@ -623,8 +623,8 @@ def test_workflow_run_consumers_of_pr_ignore_merge_group_runs() -> None:
 
 def test_the_train_inputs_reach_no_script_but_through_the_change_step() -> None:
     # #3783: a dispatch's inputs are free text until the `change` step checks them, so they reach
-    # its env, the secret-scan range (which checks them again, as env) and the concurrency group
-    # (a name): never a `run:` script, a `with:`, a condition or a lane pr.yml calls.
+    # its env and the secret-scan range (which checks them again, as env, and never prints them):
+    # never a `run:` script, a `with:`, a condition, the concurrency group or a lane pr.yml calls.
     reads = {
         f"{where}:{key}.{sub}"
         for name in dict.fromkeys(_called("pr.yml"))
@@ -634,7 +634,6 @@ def test_the_train_inputs_reach_no_script_but_through_the_change_step() -> None:
         if re.search(r"\binputs\.train_|github\.event\.inputs\b", str(text))
     }
     assert reads == {
-        "pr.yml:concurrency.group",
         "pr.yml:changed-paths:change:env.TRAIN_BASE",
         "pr.yml:changed-paths:change:env.TRAIN_HEAD",
         "pr.yml:gates:secret-scan:env.BASE_SHA",

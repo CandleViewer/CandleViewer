@@ -530,7 +530,7 @@ def test_secret_scan_fails_on_any_finding_or_scanner_failure(
 @pytest.mark.parametrize(
     ("base", "fake", "message"),
     [
-        ("", {}, "CI-SEC-005: no PR commit range"),
+        ("", {}, "CI-SEC-005: no PR commit range - scanner infrastructure"),
         ("0" * 40, {}, "CI-SEC-005: the checkout lacks the PR's commits"),
         (None, {"SEEN": "0"}, "CI-SEC-005: the gitleaks image reads '0' of the PR's 1 commit(s)"),
     ],

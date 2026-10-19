@@ -45,9 +45,9 @@ permissions:
 
 # A push to a PR branch cancels the branch's last run. A merge group build has a group of its own
 # (its head commit) and is never cancelled: the queue would read that as a failure (#3433). So
-# has a merge train's run (its head commit, #3783): the orchestrator merges on its result.
+# has a merge train's run (its own commit, never an input, #3783): the orchestrator merges on it.
 concurrency:
-  group: pr-${{ github.event.merge_group.head_sha || inputs.train_head || github.head_ref }}
+  group: pr-${{ github.event.merge_group.head_sha || github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -83,8 +83,8 @@ jobs:
       # a later one that passed, trusting the later run to have checked the combined change.
       # #3783: a merge train is diffed from train_base, so its lanes cover every PR in it. It is
       # refused unless its run tests the train itself: a train/* branch whose head is train_head,
-      # built on train_base, a commit of `main`, by merges alone. Its `ci-required` then lands on
-      # the train's own merge commit, never on a PR's head, whose own run checked its metadata.
+      # built on train_base, a commit of `main`, by merges alone. A PR merges on its own run, or a
+      # train run holding its head: never on its commit's latest `ci-required` (01-sdlc §7).
       - name: Change under test (pr, base, head)
         id: change
         env:
@@ -364,7 +364,7 @@ jobs:
           set -euo pipefail
           fail() { echo "CI-SEC-005: $* - scanner infrastructure failure, never a clean scan" >&2; exit 1; }
           range="$BASE_SHA..$HEAD_SHA"
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "no PR commit range ('$range')"
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "no PR commit range"
           count=$(git rev-list --count "$range") || fail "the checkout lacks the PR's commits ($range)"
           { docker pull --quiet "$GITLEAKS_IMAGE" && docker pull --quiet "$TRUFFLEHOG_IMAGE"; } || fail "image pull"
           # security_gate.py's PyYAML, in its own venv as `gen` keeps its own.

@@ -175,9 +175,9 @@ requires; every lane above feeds it. Read its job summary top to bottom:
 - A merge train's run (#3783; `workflow_dispatch` on a `train/*` branch, see 01-sdlc §7) reads as
   a merge group's: the filters compare the train with `train_base`, the PR-metadata gates read
   `false`/`skipped`, `secret-scan` scans `train_base..train_head`, and it is never cancelled. A red
-  `changed-paths` saying `merge train refused` names the check the dispatch failed (full SHAs; a
-  `train/*` branch whose head is `train_head`; `train_base` on `main` and the train; merges only):
-  rebuild the train and dispatch it again, never merge on such a run.
+  `changed-paths` saying `merge train refused` names the check the dispatch failed: rebuild the
+  train and dispatch it again, never merge on such a run. Its red `ci-required` stays on the commit
+  it ran on (protection reads the latest): on a PR's head, re-run the PR's own `pr` run to clear it.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
