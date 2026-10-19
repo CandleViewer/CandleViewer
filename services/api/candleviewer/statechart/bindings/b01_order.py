@@ -210,6 +210,11 @@ def ret_code_ok(context: dict[str, Any], event: Any) -> bool:
     return _total("ret_code_ok", lambda: _fields(event).get("ok") is True)
 
 
+def ret_code_ok_and_has_fills(context: dict[str, Any], event: Any) -> bool:
+    """The first `amend` result arm (B1.5): an accepted amend of an order with fills."""
+    return ret_code_ok(context, event) and has_fills(context, event)
+
+
 def is_duplicate_link_id(context: dict[str, Any], event: Any) -> bool:
     """The exchange already holds this `order_link_id`: accepted, never resent (24 Sec.8.3)."""
     duplicate = OmsErrorCode.DUPLICATE_CLIENT_ID.value
@@ -398,7 +403,7 @@ GUARDS: dict[str, Callable[..., bool]] = {
     "is_duplicate_link_id": is_duplicate_link_id,
     "passes_all_gates": passes_all_gates,
     "ret_code_ok": ret_code_ok,
-    "second_consecutive_miss": _deny_guard,
+    "ret_code_ok_and_has_fills": ret_code_ok_and_has_fills,
 }
 
 SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {
@@ -465,7 +470,7 @@ ACTIONS.update({f"audit_{name}": _audited(name) for name in _AUDITED.split()})
 GUARDS.update(
     dict.fromkeys(
         "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch"
-        " ret_code_ok_and_has_fills".split(),
+        " second_consecutive_miss".split(),
         _deny_guard,
     )
 )

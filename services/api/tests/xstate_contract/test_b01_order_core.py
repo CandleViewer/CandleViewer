@@ -1,10 +1,7 @@
-"""B1 `order` binding core (E29-T03 #847), a member of the contract gate beside test_b01_order.py:
-guards pure, total and deny-by-default (A6), each context action's effect on `context`, INV-B1-a
-and INV-B1-b, and S2, S3, S4 and the native-SL invariant at the binding and on the library."""
+"""B1 `order` binding core (E29-T03 #847): guards (A6), actions, INV-B1-a/b, S2-S4, native SL."""
 
 from __future__ import annotations
 
-import asyncio
 import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -20,7 +17,7 @@ from structlog.testing import capture_logs
 from candleviewer.oms.execution import apply_fields
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.registry import Registry
-from tests.xstate_contract._harness import Charts, park, settle
+from tests.xstate_contract._harness import Charts, _hang, park, settle
 
 _CHART = Registry().get("order")
 PAIRING = ("exchange_order_id", "order_id", "order_link_id", "account_id", "symbol", "side")
@@ -83,7 +80,7 @@ async def _run(action: str, ctx: dict[str, Any], event: object) -> dict[str, Any
 
 
 @pytest.mark.parametrize(
-    ("guard", "over", "event", "expected"),
+    ("guard", "over", "event", "want"),
     [
         ("exec_new_and_closes", {}, _exec("e1", "1"), True),
         ("exec_new_and_partial", {}, _exec("e1", "1"), False),
@@ -94,14 +91,15 @@ async def _run(action: str, ctx: dict[str, Any], event: object) -> dict[str, Any
         ("ret_code_ok", {}, _Done({"ok": True}), True),
         ("ret_code_ok", {}, _Done({"ok": "true"}), False),
         ("ret_code_ok", {}, _Done(), False),
+        ("ret_code_ok_and_has_fills", {"filled_qty": "0.1"}, _Done({"ok": True}), True),
+        ("ret_code_ok_and_has_fills", {}, _Done({"ok": True}), False),
+        ("ret_code_ok_and_has_fills", {"filled_qty": "0.1"}, _Done({"ok": False}), False),
         ("is_duplicate_link_id", {}, _Done({"error_code": "DUPLICATE_CLIENT_ID"}), True),
         ("is_duplicate_link_id", {}, _Done({"error_code": "RATE_LIMITED"}), False),
     ],
 )
-def test_a_guard_reads_its_event_and_context(
-    guard: str, over: dict[str, Any], event: object, expected: bool
-) -> None:
-    assert b01.GUARDS[guard](_ctx(**over), event) is expected
+def test_a_guard_reads_its_event_and_context(guard: str, over: Any, event: Any, want: bool) -> None:
+    assert b01.GUARDS[guard](_ctx(**over), event) is want
 
 
 @pytest.mark.parametrize(
@@ -148,8 +146,7 @@ async def test_a_denied_exec_is_logged_and_audited_once_with_its_exec_id_and_why
 
 
 def test_gates_identity_pairing_and_fill_bound_are_pinned_literally() -> None:
-    assert (b01.GATES, b01.FACTS) == (GATES, PAIRING[1:])
-    assert (b01.PAIRING, b01.MAX_FILLS) == (PAIRING, 10_000)
+    assert (b01.GATES, b01.FACTS, b01.PAIRING, b01.MAX_FILLS) == (GATES, (*FACTS,), PAIRING, 10_000)
 
 
 @pytest.mark.parametrize(
@@ -189,7 +186,7 @@ def test_guards_are_total_and_deny_on_hostile_input() -> None:
 
 
 @pytest.mark.parametrize(
-    ("action", "event", "expected"),
+    ("action", "event", "want"),
     [
         ("stamp_validated", _validate(qty="0.50", stop_loss="62000.0"), _STAMPED),
         ("stamp_validated", _validate({"risk": "fail"}), {}),
@@ -201,15 +198,13 @@ def test_guards_are_total_and_deny_on_hostile_input() -> None:
         ("map_reject_code", _Done(), {"reject_code": "EXCHANGE_UNKNOWN"}),
     ],
 )
-async def test_a_context_action_writes_only_its_fields(
-    action: str, event: object, expected: dict[str, Any]
-) -> None:
+async def test_a_context_action_writes_only_its_fields(action: str, event: Any, want: Any) -> None:
     start = {"exchange_order_id": "x1"}
-    assert await _run(action, dict(start), event) == start | expected
+    assert await _run(action, dict(start), event) == start | want
 
 
 @pytest.mark.parametrize(
-    ("result", "expected"),
+    ("ack", "want"),
     [
         ({"ok": True, "terms": {"price": "64000", "qty": "0.8"}}, ("64000", "0.8", "0.55", 0)),
         ({"ok": True, "terms": {"qty": "0.25"}}, ("63000", "0.25", "0", 0)),  # qty == filled_qty
@@ -221,12 +216,10 @@ async def test_a_context_action_writes_only_its_fields(
         ({"ok": True}, _KEPT),
     ],
 )
-async def test_adopt_amend_adopts_only_an_accepted_well_formed_amend(
-    result: dict[str, Any], expected: tuple[object, ...]
-) -> None:
+async def test_adopt_amend_adopts_only_an_accepted_well_formed_amend(ack: Any, want: Any) -> None:
     with capture_logs() as logs:
-        ctx = await _run("adopt_amend", _ctx(filled_qty="0.25", leaves_qty="0.75"), _Done(result))
-    assert (ctx["price"], ctx["qty"], ctx["leaves_qty"], len(logs)) == expected
+        ctx = await _run("adopt_amend", _ctx(filled_qty="0.25", leaves_qty="0.75"), _Done(ack))
+    assert (ctx["price"], ctx["qty"], ctx["leaves_qty"], len(logs)) == want
 
 
 @settings(max_examples=40, deadline=None, derandomize=True)
@@ -247,14 +240,9 @@ async def test_inv_b1_a_fills_in_any_order_give_the_same_totals(
     assert totals[0] == totals[1] and Decimal(totals[0][0]) == sum(q for q, _, _ in fills)
 
 
-async def _hang(*_a: object) -> None:
-    await asyncio.Event().wait()
-
-
 @asynccontextmanager
 async def _sent(charts: Charts, gates: dict[str, object] | None = None) -> AsyncIterator[Any]:
-    """B1 on the library with the real guards and context actions after VALIDATE (every verdict
-    `pass` but *gates*), SEND and the ok place ack: `submitted` if all pass. Stopped on exit."""
+    """B1 on the library, real bindings, after VALIDATE (`pass` but *gates*), SEND and an ok ack."""
     interp = (await park("order", _CHART, "lifecycle.draft", charts)).interpreter
     try:
         await interp.send("VALIDATE", wait=True, **_validate(gates).payload)
@@ -291,8 +279,7 @@ async def test_cancel_loses_the_race_to_a_fill_not_to_a_repeat(
     exec_id: str, qty: str, state: str, leaves: str, seen: list[str], charts: Charts
 ) -> None:
     """Gherkin "Cancel loses the race to a fill" (S3) on the library: a closing or a partial EXEC in
-    `cancel_pending` applies, and a repeat changes nothing (S4). The lost-race record and the quiet
-    UI are the facade's (slice 6)."""
+    `cancel_pending` applies, a repeat changes nothing (S4); the lost-race record is slice 6's."""
     async with _sent(charts) as interp:
         for event in (_exec("e1", "0.4"), _exec("e2", "0.2", "63100")):
             await interp.send("EXEC", wait=True, **event.payload)
@@ -308,8 +295,7 @@ async def test_amend_rejection_does_not_move_the_stop(
     amend: object, charts: Charts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gherkin "Amend rejection does not move the stop" (S2) on the library: an amend rejected, or
-    acked ok with terms that cannot apply, is sent once and leaves the order live with price 63000,
-    its qty and its stop. `notify_amend_rejected` emits `amend_rejected` in slice 5."""
+    acked ok with terms it cannot use, is sent once and changes nothing; slice 5 emits the event."""
     monkeypatch.setitem(b01.SERVICES, "amend_order", sent := AsyncMock(side_effect=amend))
     async with _sent(charts) as interp:
         await interp.send("EXEC", wait=True, **_exec("e1", "0.25").payload)

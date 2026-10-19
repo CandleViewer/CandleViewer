@@ -308,9 +308,10 @@ async def _at(
 
 
 async def test_b01_binding_stubs_and_event_schemas() -> None:
-    """Every event has a schema, every guard denies (A6), every audit reaches the hook (C-2.9)."""
+    """Every event has a schema, stub guards deny (A6), every audit reaches the hook (C-2.9)."""
     assert all_events(CHART) <= set(CV_EVENT_SCHEMAS)
-    assert not any(guard() for guard in b01.GUARDS.values())
+    stubs = "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch"  # no body yet
+    assert not any(b01.GUARDS[n]({}, None) for n in (*stubs.split(), "second_consecutive_miss"))
     audits, hook = sorted(n for n in b01.ACTIONS if n.startswith("audit_")), AsyncMock()
     b01.set_audit_hook(hook)
     try:
