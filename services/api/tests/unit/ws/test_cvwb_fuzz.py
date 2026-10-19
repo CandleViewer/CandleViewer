@@ -13,15 +13,13 @@ which byte mutation of small seeds cannot reach; its third builds open levels, e
 its cap of children before opening the next (distinct or duplicate map keys).
 A failure reports only its target and a sha256 digest of (seed, input): the tests take one redacted
 `_Input`, and Hypothesis reports nothing (no failing-case report, blob or explanation). The pair is
-written to ``CV_FUZZ_ARTIFACT_DIR``, which CI uploads only encrypted (fuzz-nightly.yml).
+written to ``CV_FUZZ_ARTIFACT_DIR``, which CI uploads only encrypted (fuzz-nightly.yml). Those
+helpers are shared with the parser suite (`_fuzz.py`).
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
-import os
 import random
 import struct
 import tracemalloc
@@ -30,7 +28,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from hypothesis import HealthCheck, Phase, Verbosity, given, seed, settings
+from hypothesis import given, seed
 from hypothesis import strategies as st
 
 from candleviewer.ws.binary import FrameMalformedError, decode
@@ -41,6 +39,10 @@ from candleviewer.ws.codec import (
     decode_client_frame,
 )
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
+from tests.unit.ws._fuzz import FUZZ_SETTINGS as _FUZZ_SETTINGS
+from tests.unit.ws._fuzz import SEED
+from tests.unit.ws._fuzz import Input as _Input
+from tests.unit.ws._fuzz import save_failure as _save_failure
 from tests.unit.ws._msgpack_bounds import peak_bound
 
 REPO = Path(__file__).resolve().parents[5]
@@ -54,7 +56,6 @@ MSGPACK_SEEDS: Final[list[bytes]] = [
         (REPO / "tests/fuzz/ws-frames/msgpack-client.json").read_text(encoding="utf-8")
     )
 ]
-EXAMPLES: Final[int] = int(os.environ.get("CV_FUZZ_EXAMPLES", "200"))
 MAX_PEAK_BYTES: Final[int] = 1 << 20
 _INTERESTING: Final[tuple[int, ...]] = (0, 1, 2, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0xFFFFFFFE)
 
@@ -85,56 +86,7 @@ def mutate(seed: bytes, ops: list[tuple[str, int, int]]) -> bytes:
     return bytes(buf)
 
 
-SEED: Final[int] = int(os.environ.get("CV_FUZZ_SEED", "12648430"))
 random.seed(SEED)
-
-
-def _digest(data: bytes) -> str:
-    """How a failure names its input without printing it: sha256 over the seed and the input."""
-    return hashlib.sha256(f"{SEED}:".encode() + data).hexdigest()
-
-
-class _Input:
-    """One fuzz input, built on demand. Its `repr` is its target and digest alone, so a traceback
-    that prints the test's arguments shows no more than a failure message does."""
-
-    __slots__ = ("_build", "target")
-
-    def __init__(self, target: str, build: Callable[[], bytes]) -> None:
-        self.target = target
-        self._build = build
-
-    @property
-    def data(self) -> bytes:
-        return self._build()
-
-    def __repr__(self) -> str:
-        return f"{self.target} sha256={_digest(self.data)}"
-
-
-def _write_record(case: _Input, path: Path) -> str:
-    """Writes {seed, target, input} to `path`, the seed as a decimal string (a reader that parses
-    numbers as doubles would round a 64-bit one). Returns "" when it did, else the class of the
-    error that stopped it: the error is dropped here, with the frames that held the input."""
-    b64 = base64.b64encode(case.data).decode()
-    record = {"seed": str(SEED), "target": case.target, "input": b64}
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(record), encoding="utf-8")
-    except OSError as exc:
-        return type(exc).__name__
-    return ""
-
-
-def _save_failure(case: _Input) -> str:
-    """Writes the failure's file under CV_FUZZ_ARTIFACT_DIR; returns the only text a failure may
-    carry: the target and the digest, and the class of the error if the file was not written."""
-    digest = _digest(case.data)
-    label = f"{case.target} sha256={digest}"
-    if out := os.environ.get("CV_FUZZ_ARTIFACT_DIR"):
-        if failed := _write_record(case, Path(out) / f"{case.target}-{digest}.json"):
-            label += f" (not saved: {failed})"
-    return label
 
 
 def _json_like_depth(value: object) -> int:
@@ -202,19 +154,6 @@ def _check(
 def _check_msgpack(case: _Input) -> None:
     """The SR-185 invariant for one input: a typed refusal or a bounded JSON-like value."""
     _check(case, decode_client_frame, MsgpackFrameError, peak_bound, MAX_MSGPACK_DEPTH)
-
-
-# print_blob: the blob encodes the input. verbosity: the failing-case report names the generated
-# arguments. phases: the explanation names the code only failing inputs reach.
-_FUZZ_SETTINGS = settings(
-    max_examples=EXAMPLES,
-    deadline=None,
-    suppress_health_check=list(HealthCheck),
-    database=None,
-    print_blob=False,
-    verbosity=Verbosity.quiet,
-    phases=[p for p in Phase if p is not Phase.explain],
-)
 
 
 @st.composite
