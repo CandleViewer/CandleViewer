@@ -2,20 +2,21 @@
 cannot tell an account that exists outside her scope from an id no user holds. On every
 account-scoped family a `sub` naming either leaves one observation, compared whole: every frame the
 socket receives up to the `pong` of a later `ping` (the reply among them: code, message, no
-`field`), one `ws.subscribe.denied` row, the change in each counter and histogram (one
-`cv_ws_subscribe_total` series), the log events and records, and the lookups made. So does each
-other form of an out-of-scope request. Neither `sub` reads the principal loader, the account
-store or the snapshot source: the principal is read once per socket, at `auth`, by production's
-`StorePrincipalLoader` over an account store read by owner, and both requests are checked against
-it alike. The timing leg is opt-in, as E09-X02's AC-ENUM-03 is, and uses its method and threshold
-through the gateway in process. Both subprotocols; a fake clock wherever time is not the
-measurement.
+`field`), one `ws.subscribe.denied` row, the change in each counter, gauge and histogram (one
+`cv_ws_subscribe_total` series), the log events and records, what was printed, and the lookups
+made. So does each other form of an out-of-scope request. Neither `sub` reads the principal
+loader, the account store or the snapshot source: the principal is read once per socket, at
+`auth`, by production's `StorePrincipalLoader` over an account store read by owner, and both
+requests are checked against it alike. The timing leg is opt-in, as E09-X02's AC-ENUM-03 is, and
+uses its method and threshold through the gateway in process. Both subprotocols; a fake clock
+wherever time is not the measurement.
 """
 
 from __future__ import annotations
 
 import gc
 import json
+import math
 import os
 import random
 import signal
@@ -58,7 +59,9 @@ UNKNOWN, *OTHERS = [uuid.UUID(int=_DRAWN.getrandbits(128), version=4) for _ in r
 #: existence only: the account bob holds, and one alice is linked to by a grant row without view
 #: (it exists and is outside her scope).
 BOB, UNVIEWED = (uuid.UUID(int=_DRAWN.getrandbits(128), version=4) for _ in range(2))
-WATCHDOG_S = 60  # the timing leg takes seconds: a reply that never comes ends it in a failure
+#: The timing leg takes seconds. Its whole timed loop has this long: a reply that never comes ends
+#: it in a failure, not a hang.
+WATCHDOG_S = 60
 #: The §10.2 refusal, with no `field` (§6.2: an absent list is refused the same way).
 DENIED = {
     "code": "account_scope_denied",
@@ -67,7 +70,8 @@ DENIED = {
 }
 NOT_GRANTED = DenyReason.ACCOUNT_NOT_GRANTED
 Check = tuple[uuid.UUID | None, DenyReason | None]  # a `decide` call's account and refusal reason
-Series = dict[tuple[str, tuple[tuple[str, str], ...]], float]
+Key = tuple[str, tuple[tuple[str, str], ...]]  # a sample's name and its labels, sorted
+Series = dict[Key, float]
 
 
 @dataclass
@@ -153,18 +157,32 @@ def checked(spies: Spies, monkeypatch: pytest.MonkeyPatch) -> Spies:
 
 
 def _series() -> Series:
-    """Every sample of every counter and histogram in process, where E09-X02 reads them too, less
-    the `_created` stamp of a new series and what differs by nature: the interpreter's and the
-    process's own collectors (`python_`, `process_`) and the sum of a duration (`*_seconds_sum`).
-    Gauges are state, not counts."""
+    """Every sample of every counter, gauge and histogram in process, where E09-X02 reads them
+    too, less the `_created` stamp of a new series and what differs by nature: the interpreter's
+    and the process's own collectors (`python_`, `process_`), the sum of a duration
+    (`*_seconds_sum`) and a gauge that reads a clock (`*_age_seconds`, bound by `set_function`)."""
     return {
         (s.name, tuple(sorted(s.labels.items()))): s.value
         for metric in REGISTRY.collect()
-        if metric.type in {"counter", "histogram"}
+        if metric.type in {"counter", "gauge", "histogram"}
         and not metric.name.startswith(("python_", "process_"))
         for s in metric.samples
-        if not s.name.endswith(("_created", "_seconds_sum"))
+        if not s.name.endswith(("_created", "_seconds_sum", "_age_seconds"))
     }
+
+
+def _moved(before: Series, after: Series) -> dict[Key, float | str]:
+    """The samples that changed from `before` to `after`, each by how much. A gauge can be NaN
+    (`cv_audit_chain_verified_state` until its first run) and `nan != nan`: a sample that is NaN in
+    both is unchanged, and a change to or from NaN reads `"NaN"`, so equal runs compare equal."""
+    moved: dict[Key, float | str] = {}
+    for key, now in after.items():
+        was = before.get(key, 0.0)
+        if now == was or (math.isnan(now) and math.isnan(was)):
+            continue
+        step = now - was
+        moved[key] = "NaN" if math.isnan(step) else step
+    return moved
 
 
 def _sub(ch: str, ids: list[uuid.UUID] | None) -> dict[str, Any]:
@@ -178,8 +196,8 @@ def _observe(
     """What one `sub` of `ch` naming `ids` left, read once a later `ping` is answered (the gateway
     handles a socket's frames in turn): its reply, every frame the socket received from the `sub`
     to the `pong` (a `ping` among them), audit rows, change in each series, log events and
-    records and the lookups it caused (principal loads, store reads, snapshot source calls); and,
-    apart, its scope checks."""
+    records, what was printed to stdout and stderr, and the lookups it caused (principal loads,
+    store reads, snapshot source calls); and, apart, its scope checks."""
     rows, events, stdlib, loads, reads, snaps, checks, frames = (
         len(x)
         for x in (
@@ -193,19 +211,22 @@ def _observe(
             c.seen,
         )
     )
+    world.std.readouterr()  # what was printed so far is not this window's
     before = _series()
     c.send(_sub(ch, ids))
     reply = c.next_of("sub_ok")
     c.send({"t": "ping", "id": "p"})
     c.next_of("pong")
     after = _series()
+    printed = world.std.readouterr()
     seen = {
         "reply": reply,
         "frames": c.seen[frames:],
         "rows": world.audit.records[rows:],
-        "series": {k: v - before.get(k, 0.0) for k, v in after.items() if v != before.get(k, 0.0)},
+        "series": _moved(before, after),
         "events": world.events[events:],
         "stdlib": world.log.record_tuples[stdlib:],
+        "std": (printed.out, printed.err),
         "lookups": spies.loads[loads:] + spies.reads[reads:] + spies.snaps[snaps:],
     }
     return seen, spies.checks[checks:]
@@ -243,6 +264,7 @@ def test_x02_ac_05_an_existing_account_and_an_unknown_id_get_one_refusal(
     labels = ("cv_ws_subscribe_total", (("result", "account_scope_denied"), ("topic", family)))
     assert {k: v for k, v in existing["series"].items() if k[0] == labels[0]} == {labels: 1.0}
     assert existing["events"] == existing["stdlib"] == existing["lookups"] == []
+    assert existing["std"] == ("", "")  # nothing printed
     assert str(BOB) not in repr(existing)  # bob's account is named nowhere
     # One scope check each way: the family's permission, then the id against alice's grants.
     assert by_existing == [(None, None), (BOB, NOT_GRANTED)]
@@ -298,13 +320,16 @@ def test_x02_ac_05_without_the_family_permission_both_ids_get_forbidden(
 
 def test_x02_ac_05_the_spies_see_a_sub_that_is_served(world: RawWorld, spies: Spies) -> None:
     """The control for the lookups above: a `sub` of an account alice may view builds its
-    snapshot, which the snapshot source's spy sees."""
+    snapshot, which the snapshot source's spy sees. A public topic is built through the shared
+    cache, which asks for the `generation` too; a private family is built without it."""
     alice = world.login("alice")
     with raw_connect(world) as c:
         authenticated(c, alice)
         served, _ = _observe(world, spies, c, "positions", [ACC_A])
+        public, _ = _observe(world, spies, c, "ticker.BTCUSDT", None)
     assert served["reply"]["p"]["results"][0]["ok"] is True
     assert "build" in served["lookups"]
+    assert {"build", "generation"} <= set(public["lookups"])  # not `continuity`: no-snapshot only
 
 
 def test_x02_ac_05_every_collaborator_of_the_subscription_services_is_known_to_the_spies() -> None:
@@ -329,7 +354,7 @@ def _round_trip(c: RawClient, payload: bytes | str) -> dict[str, Any]:
 
 
 def _no_reply(*_: object) -> NoReturn:
-    raise TimeoutError(f"no reply within {WATCHDOG_S} s")
+    raise TimeoutError(f"the timed loop did not finish within {WATCHDOG_S} s (a reply never came)")
 
 
 @pytest.mark.perf
@@ -345,9 +370,10 @@ def test_x02_ac_05_the_two_refusals_take_the_same_time(
     encoded once; interleaved, each pair's order alternating; `WARMUP` pairs dropped, then
     `SAMPLES` per arm with gc off; the ratio of medians and Mann-Whitney. Before each frame the
     gateway's clock steps 0.25 s (inside the inbound limits) and the clock of the connection's
-    denial-record budget a full window, so every sample writes its row. A reply that never comes
-    fails the leg after `WATCHDOG_S` seconds (an alarm: the session's receive has no bound). The
-    raw samples go to `tmp_path` only: #298 classes them SECRET."""
+    denial-record budget a full window, so every sample writes its row. The whole timed loop has
+    `WATCHDOG_S` seconds (an alarm: the session's receive has no bound), so a reply that never
+    comes fails the leg instead of hanging it. The raw samples go to `tmp_path` only: #298 classes
+    them SECRET."""
     alice = world.login("alice")
     world.login("bob", BOB)
     budget = Clock()
@@ -359,11 +385,12 @@ def test_x02_ac_05_the_two_refusals_take_the_same_time(
         assert len({len(p) for p in payloads.values()}) == 1  # one frame size
         refused = [{"ch": "positions", "ok": False, "error": DENIED}]
         arms: dict[str, list[float]] = {name: [] for name in payloads}
-        before = signal.signal(signal.SIGALRM, _no_reply)
-        signal.alarm(WATCHDOG_S)
+        before = signal.getsignal(signal.SIGALRM)
         gc.collect()
-        gc.disable()
         try:
+            signal.signal(signal.SIGALRM, _no_reply)
+            signal.alarm(WATCHDOG_S)  # the first statements of the `try`: the loop is on this clock
+            gc.disable()
             for i in range(WARMUP + SAMPLES):
                 for name in sorted(arms, reverse=i % 2 == 1):
                     world.clock.now += 0.25
