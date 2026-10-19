@@ -19,10 +19,10 @@ lower and cancels it. Every `--taker-every`-th cycle crosses the ask by one tick
 A partial fill depends on market flow: `summary.md` counts the cycles that saw one, by the stream's
 `order` pushes and by the REST status at lookup; zero means the run did not observe the S5
 ordering of a partial fill. The first order is sent twice with the same `orderLinkId` (the
-duplicate capture). A cycle whose reads still fail after the adapter's retries is recorded, its
-order gets one cancel, and the run goes on. The demo 7-day retention (24 §8.3 rule 6) is a note
-from `--retention-probe`: run a short `orders` run at least 8 days after a full one, passing the
-full run's `orders.csv`.
+duplicate capture), once its create is accepted: a refused or unresolved create is not sent again.
+A cycle whose reads still fail after the adapter's retries is recorded, its order gets one cancel,
+and the run goes on. The demo 7-day retention (24 §8.3 rule 6) is a note from `--retention-probe`:
+run a short `orders` run at least 8 days after a full one, passing the full run's `orders.csv`.
 
 ## Before a run
 
@@ -54,19 +54,38 @@ spike() { ( read -rs k && read -rs s && CV_SPIKE_BYBIT_ENV=demo CV_SPIKE_BYBIT_A
 spike soak
 # 2. In a second terminal (define spike there too): the 4 h orders run with the 10002 capture.
 spike orders --capture-10002 --metrics-port 9464
-# 3. Last, and only after the soak ends: the 10018 capture. The burst sends at most
-#    --burst-max unsigned server-time reads and may get the host IP held for 10 min or more.
+# 3. Last, and only after the soak ends: the 10018 capture (an orders run only: with a soak
+#    it is refused). The burst sends at most --burst-max unsigned server-time reads and may get
+#    the host IP held for 10 min or more.
 spike orders --orders 2 --hours 0.05 --capture-10018
 # 4. At least 8 days later: the retention note.
 spike orders --orders 2 --hours 0.05 --retention-probe runs/<run>/orders.csv
 ```
 
-`--help` lists every option. `BTCUSDT` needs `--lots 2` to stay under the per-order cap. Ctrl-C once
-stops between cycles: the run still cancels, flattens and writes its outputs, and reports
-`interrupted` (the 10018 burst does not run). A second Ctrl-C aborts (then flatten by hand in the
-demo UI; the native SL protects the position meanwhile). The exit code is 0 only for a `completed`
-run; an `interrupted` run, a run `stopped early` and a cleanup that did not finish (the outcome
-then says `cleanup INCOMPLETE`: flatten in the demo UI) exit 1, a refusal 2.
+`--help` lists every option. `BTCUSDT` needs `--lots 2` to stay under the per-order cap.
+
+Stop requests (Ctrl-C or SIGTERM). The first stops between cycles: the run still cancels, flattens
+and writes its outputs, and reports `interrupted` (the 10018 burst does not run). The second cancels
+the step in progress (a wait for a fill, a request, the backfill) and the run still winds down: if
+the cancel cut the cleanup short it cancels its orders and flattens once more, then it writes what
+it has and reports `interrupted`. A soak never flattens: it places no order. A stop request that
+cuts that second cleanup short aborts the run, with nothing more cancelled, flattened or written;
+the log then says what to do by hand (below). No stop request prints exchange text: an aborted run
+logs the error class only.
+
+The exit code is 0 only for a `completed` run; an `interrupted` run, a run `stopped early`, a
+cleanup that did not finish and a REST backfill that failed exit 1, a refusal 2.
+
+After a run whose outcome says `cleanup INCOMPLETE`, and after an aborted run, the run's orders may
+still rest and a position may still be open (its native SL protects it meanwhile): in the demo UI,
+cancel the open orders of the symbol whose `orderLinkId` starts with `cvd-` (the run's), then
+flatten the position of the symbol. `orders.csv` lists the run's own ids, if the run got to write it.
+
+A backfill that failed (the outcome then says `REST execution backfill FAILED: the AC2 number ... is
+missing`) leaves no REST-only count, the number behind #843's second acceptance criterion:
+`summary.json` has `rest_backfill_error`, and `summary.md` heads the parity section with the failure
+and reads n/a, not 0, in every cell that needs the listing.
+
 `--metrics-port` serves `order_submit_seconds{env="demo",transport="rest"}`, registered from the
 metric catalogue through the repo's `Metrics` facade, on `127.0.0.1` for a Prometheus scrape (any
 path, so the default `/metrics` works), so Grafana panels can be built on the data; `metrics.prom`
@@ -98,6 +117,8 @@ keeps a final copy.
 - Every REST call goes through the adapter's governor; only the flagged 10018 burst bypasses it.
   The burst runs only after a `completed` run, with no stop request, when a fresh REST read shows
   no position and no open order of the run, so the IP hold never locks out a cancel or a flatten.
+  It is for an `orders` run only: a soak has no orders of its own to show the account flat, so
+  `--capture-10018` with `soak` is refused when the config is built, before anything is sent.
 - `orderLinkId`s follow 24 §8.3 (`cvd-...`); retries reuse them (C-2.10). A create whose outcome is
   unknown is looked up by its id, never re-sent under a new one. The run stops after a key, clock or
   rate refusal, three failed creates in a row, or three cycles in a row that a failed read ended.
@@ -108,10 +129,11 @@ keeps a final copy.
 spans and down windows), `rest_calls.csv` (every request with its round trip), `orders.csv`
 (cycles; our own `orderLinkId`s, needed by the retention probe), `ws_items.csv` (stream items with
 stand-in ids), `rest_executions.csv` (each REST execution with a stand-in id, its type and time,
-whether the stream was delivering then, and on which execution topic the stream delivered it) and
-`metrics.prom`. A REST-only execution while the stream was delivering is evidence against the
-stream as the source of truth; one inside a down window (before the first connect, from a drop's
-last frame to the next connect, after the stop) is expected, since the harness does not resync.
+whether the stream was delivering then, and on which execution topic the stream delivered it; empty
+when the backfill failed) and `metrics.prom`. A REST-only execution while the stream was delivering
+is evidence against the stream as the source of truth; one inside a down window (before the first
+connect, from a drop's last frame to the next connect, after the stop) is expected, since the
+harness does not resync.
 
 `staging/<stamp>-<mode>/bybit/<date>/`: the captures, scrubbed (credential fields masked; UIDs and
 account, connection, message, cursor and order ids replaced by stable, shape-keeping stand-ins;
@@ -146,7 +168,15 @@ where present) and `README.e29-k01.md` lines (source, date, symbol, env, redacti
   M2's signing helpers and M13's private key judgements. `lint-imports` does not check `spikes/`
   (its root packages are `candleviewer` and `cvdev`). This is acceptable only because the spike is
   never merged; the owner's acceptance belongs on #843.
-- Size and gates: about 2,250 lines of source and 1,350 of tests against the C-4.8 preference of
+- Audit (C-2.9): no audit record of each order action is written. `orders.csv` (every cycle's
+  create, amend and cancel with their retCodes and round trips) and `rest_calls.csv` (every
+  request) stand in for it; they are run outputs, not an append-only, hash-chained log.
+- Test data: `tests/venue.py` builds the fake venue the tests run against (REST through
+  `httpx.MockTransport` under the harness's own `GuardedTransport`, and a fake private stream). A
+  recorded reply of the corpus is reused where it has one; the corpus holds none of an order, a
+  position, an execution or the tickers, so those rows are built from the documented v5 fields, and
+  no test proves a real payload shape. This run records them (AGENTS.md §6, rule 5).
+- Size and gates: about 2,350 lines of source and 1,800 of tests against the C-4.8 preference of
   400 changed lines, in a new top-level `services/api/spikes/` directory, and the repo's Semgrep
   rules flag this tree. The PR gates would refuse it, which is why the branch stays PR-less and is
   deleted after the run.

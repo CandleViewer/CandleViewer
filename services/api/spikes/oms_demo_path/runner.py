@@ -9,8 +9,14 @@ read that failed after the adapter's retries) is recorded, its order gets one ca
 goes on; three in a row, or a key, clock or rate refusal, stop it. Whatever happens, the run then
 cancels what it left open, by its own `orderLinkId`, and flattens what it opened; a cleanup that
 does not finish is in the outcome and the exit code. `soak`: the private stream alone. Both end
-with a REST execution backfill over the run window and always write the run directory. The 10018
-burst runs last, and only after a complete run that left the account flat.
+with a REST execution backfill over the run window and always write the run directory; a backfill
+that failed is in the outcome too, since the count it gives (#843 AC2) is then missing. The 10018
+burst (`orders` only) runs last, and only after a complete run that left the account flat.
+
+A first stop request (SIGINT or SIGTERM) ends the run between cycles. A second cancels the step
+in progress, and the run still winds down: it cleans up once more if the cancel cut that short,
+writes its outputs and reports `interrupted`. A stop request that cuts that second cleanup short
+aborts the run: the log then says what to do by hand.
 """
 
 from __future__ import annotations
@@ -59,6 +65,7 @@ from .report import build_report, write_outputs
 from .safety import (
     DEMO,
     DEMO_REST_BASE,
+    LINK_PREFIX,
     MAX_ORDER_NOTIONAL,
     MAX_RUN_EXPOSURE,
     SYMBOLS,
@@ -87,6 +94,11 @@ COMPLETED: Final = "completed"
 INTERRUPTED: Final = "interrupted"
 #: `notes["cleanup"]` once every open order of the run is cancelled and the position is flat.
 CLEAN: Final = "own orders cancelled, position flat"
+#: The `outcome` suffix of a run whose REST execution backfill failed or was cut short: there is
+#: no count of the executions seen only through REST (#843 AC2), so the run is not a clean one.
+BACKFILL_FAILED: Final = (
+    "REST execution backfill FAILED: the AC2 number (executions seen only via REST) is missing"
+)
 _OPEN: Final = ("New", "PartiallyFilled", "Untriggered")
 #: A create that may have landed: looked up by its `orderLinkId` (24 §8.3 rule 3), never re-sent.
 _UNRESOLVED: Final = (DuplicateClientIdError, TransportError, UnknownStateError)
@@ -135,6 +147,11 @@ class Config:
             raise SafetyRefusal("need 0 < sl-pct <= 10, lots >= 2 and orders >= 1")
         if not (0 < self.burst_max <= BURST_CEILING) or self.hours <= 0:
             raise SafetyRefusal(f"need 0 < burst-max <= {BURST_CEILING} and hours > 0")
+        if self.mode == "soak" and self.capture_10018:
+            raise SafetyRefusal(
+                "the 10018 burst runs in orders mode only: a soak has no orders of its own "
+                "to show the account flat"
+            )
 
 
 def _rows(body: dict[str, Any]) -> list[dict[str, Any]]:
@@ -185,8 +202,30 @@ def _render(exc: BaseException) -> str:
     return type(exc).__name__
 
 
+def _failure(exc: BaseException) -> str:
+    return "; ".join(_render(leaf) for leaf in _leaves(exc))
+
+
 def _why(exc: BaseException) -> str:
-    return "stopped early: " + "; ".join(_render(leaf) for leaf in _leaves(exc))
+    return f"stopped early: {_failure(exc)}"
+
+
+def _by_hand(symbol: str) -> str:
+    """What the owner does when a cleanup did not finish. The run could not say what still rests
+    (a failed read of the open orders, a failed cancel) or what is still held (a failed
+    flatten), so both are named: its orders are found by the `orderLinkId` prefix."""
+    return (
+        f"in the demo UI cancel the run's open {symbol} orders (orderLinkId prefix {LINK_PREFIX})"
+        f" and flatten the {symbol} position"
+    )
+
+
+def _consume_cancel() -> None:
+    """A stop request's cancellation ends in the code that handles it (`Task.uncancel`), so the
+    timeouts and task groups after it count only the cancellations that are their own."""
+    task = asyncio.current_task()
+    if task is not None:
+        task.uncancel()
 
 
 class Harness:
@@ -234,6 +273,8 @@ class Harness:
         self.stopping = asyncio.Event()
         #: `None` until the cleanup ran (never, in `soak`), then whether it finished.
         self.cleanup_ok: bool | None = None
+        #: Why the REST execution backfill gave no listing (`wrap_up`); `None` when it did.
+        self.backfill_error: str | None = None
         self._failures = 0
         self._failed_cycles = 0
 
@@ -409,7 +450,7 @@ class Harness:
             error, took = await self._post("create", "/v5/order/create", body)
             row.update(create=_code(error), create_ms=round(took * 1e3, 1))
             self._judge(error)
-            if i == 0:
+            if i == 0 and error is None:  # the duplicate capture needs an order the venue holds
                 duplicate, _ = await self._post("duplicate", "/v5/order/create", body)
                 self.notes["duplicate_order_link_id"] = _describe(duplicate)
             if error is not None and not isinstance(error, _UNRESOLVED):
@@ -491,7 +532,7 @@ class Harness:
         """Cancel what the run left open, by its own `orderLinkId` (the adapter refuses an order
         call without one), then flatten. Each step is bounded and runs whatever the step before
         it did, so a failed cancel never skips the flatten. A position this cannot close keeps
-        its native SL; the notes, the outcome and the exit code say to flatten it by hand."""
+        its native SL; the notes, the outcome and the exit code say what to do by hand."""
         failed: list[str] = []
         links: list[str] = []
         try:
@@ -516,8 +557,10 @@ class Harness:
         self.cleanup_ok = not failed
         if failed:
             steps = "; ".join(failed)
-            self.notes["cleanup"] = f"INCOMPLETE ({steps}): flatten in the demo UI"
-            _log().error("cleanup_incomplete_flatten_by_hand", failed_steps=len(failed))
+            self.notes["cleanup"] = f"INCOMPLETE ({steps}): {_by_hand(self.symbol)}"
+            _log().error(
+                "cleanup_incomplete", failed_steps=len(failed), by_hand=_by_hand(self.symbol)
+            )
         else:
             self.notes["cleanup"] = CLEAN
 
@@ -633,8 +676,12 @@ class Harness:
 
     async def wrap_up(self, outcome: str) -> dict[str, Any]:
         """The backfill, the retention probe and, last, the gated 10018 burst; then the outputs,
-        whatever failed before them."""
-        rest: dict[str, RestExecution] = {}
+        whatever failed before them, a stop request that cancels this step included (it ends the
+        measuring, not the writing). A backfill that failed or was cut short is in the outcome (so
+        the exit code) and the outputs: with no listing there is no REST-only count (#843 AC2),
+        and an empty one must not read as zero."""
+        rest: dict[str, RestExecution] | None = None
+        stopped: BaseException | None = None
         try:
             rest = await self.backfill()
             if self.cfg.retention_probe is not None:
@@ -642,9 +689,17 @@ class Harness:
             if self.cfg.capture_10018:
                 await self._burst_when_flat(outcome)
         except Exception as exc:
-            self.notes["wrap_up"] = _why(exc)
-        report = build_report(self, rest, outcome)
-        await asyncio.to_thread(write_outputs, self, report, rest)
+            stopped = exc
+        except asyncio.CancelledError as exc:
+            _consume_cancel()
+            stopped = exc
+        if stopped is not None:
+            self.notes["wrap_up"] = _why(stopped)
+            if rest is None:
+                self.backfill_error = _failure(stopped)
+                outcome = f"{outcome}; {BACKFILL_FAILED}"
+        report = build_report(self, rest or {}, outcome)
+        await asyncio.to_thread(write_outputs, self, report, rest or {})
         return report
 
     async def _burst_when_flat(self, outcome: str) -> None:
@@ -677,8 +732,9 @@ async def _serve_metrics(h: Harness, port: int) -> asyncio.Server:
 
 
 def _on_signals(h: Harness) -> None:
-    """The first SIGINT/SIGTERM stops between cycles (cleanup and outputs still run); a second
-    one cancels the run outright."""
+    """The first SIGINT/SIGTERM stops between cycles (cleanup and outputs still run); each
+    further one cancels the step in progress. `drive` winds the run down after the first of them
+    (`_after_cancel`); one that cuts that wind-down short aborts the run."""
     main, loop = asyncio.current_task(), asyncio.get_running_loop()
 
     def handler() -> None:
@@ -699,13 +755,33 @@ def outcome_of(h: Harness, error: BaseException | None) -> str:
     else:
         outcome = INTERRUPTED if h.stopping.is_set() else COMPLETED
     if h.cleanup_ok is False:
-        outcome += "; cleanup INCOMPLETE: flatten in the demo UI"
+        outcome += f"; cleanup INCOMPLETE: {_by_hand(h.symbol)}"
     return outcome
+
+
+async def _after_cancel(h: Harness) -> str:
+    """The session was cancelled: a second stop request (`_on_signals`). The cancellation ends
+    here, so the run can wind down. In `orders` the cleanup runs once more, whole, when the cancel
+    cut it short or kept it from running (it reads what is open and flattens what is held, so a
+    repeat is safe); a soak placed nothing and never flattens. The outcome is `interrupted`. A
+    stop request that cuts this second cleanup short aborts the run, and the account may then be
+    left as it is: the log says what to do by hand."""
+    _consume_cancel()
+    h.stopping.set()
+    _log().warning("run_cancelled")
+    if h.cfg.mode == "orders" and h.cleanup_ok is None:
+        try:
+            await h.cleanup()
+        except asyncio.CancelledError:
+            _log().error("run_aborted", by_hand=_by_hand(h.symbol))
+            raise
+    return outcome_of(h, None)
 
 
 async def drive(h: Harness) -> dict[str, Any]:
     """Preflight (a refusal leaves before any order), the session, then the wrap-up, which always
-    writes the run directory and the fixture staging."""
+    writes the run directory and the fixture staging. A session a second stop request cancelled
+    still gets its cleanup and its wrap-up, and reports `interrupted`."""
     try:
         await h.preflight()
         h.started_ms = h.now_ms()
@@ -714,6 +790,8 @@ async def drive(h: Harness) -> dict[str, Any]:
         except Exception as exc:
             outcome = outcome_of(h, exc)
             _log().error("run_stopped_early", reason=outcome)
+        except asyncio.CancelledError:
+            outcome = await _after_cancel(h)
         else:
             outcome = outcome_of(h, None)
         return await h.wrap_up(outcome)

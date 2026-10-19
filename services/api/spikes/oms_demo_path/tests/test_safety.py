@@ -26,6 +26,7 @@ from candleviewer.secrets import Secret
 from spikes.oms_demo_path.safety import (
     DEMO_REST_BASE,
     DEMO_WS_URL,
+    LINK_PREFIX,
     PAIR_VARS,
     EnvCredentials,
     GuardedTransport,
@@ -302,3 +303,11 @@ def test_load_credentials_pops_the_pair_and_refuses_a_missing_part() -> None:
     assert environ == {}
     with pytest.raises(SafetyRefusal):
         load_credentials({PAIR_VARS[0]: DOC_PLACEHOLDER})
+
+
+def test_every_link_the_harness_sends_starts_with_the_prefix_the_cleanup_text_names() -> None:
+    """The owner finds the run's open orders by this prefix when a cleanup did not finish."""
+    account = AccountId(uuid4())
+    assert LINK_PREFIX == "cvd-"
+    assert new_link(account, "entry").startswith(LINK_PREFIX)
+    assert new_link(account, "flatten").startswith(LINK_PREFIX)

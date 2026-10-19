@@ -56,6 +56,9 @@ _FIELD: Final = re.compile(r"[\x21-\x7e]{1,128}")
 ENV_VAR: Final = "CV_SPIKE_BYBIT_ENV"
 #: The demo key pair: key id, then its signing secret.
 PAIR_VARS: Final = ("CV_SPIKE_BYBIT_API_KEY", "CV_SPIKE_BYBIT_API_SECRET")
+#: The start of every `orderLinkId` the harness sends (24 §8.3: `cv`, the demo letter, `-`): what
+#: the owner filters the demo UI's open orders by when a cleanup did not finish.
+LINK_PREFIX: Final = "cvd-"
 
 
 class SafetyRefusal(RuntimeError):

@@ -91,12 +91,17 @@ def build_report(h: Harness, rest: Mapping[str, RestExecution], outcome: str) ->
     p95 = quantiles(s.rtt_ms for s in h.recorder.samples if s.op == "create").p95
     mine = [it for it in h.items if it.symbol == h.symbol]
     live = [(begin, end) for begin, end in stats.live]
-    parity = {}
+    listed = h.backfill_error is None
+    parity: dict[str, dict[str, Any]] = {}
     for topic in EXEC_TOPICS:
         ids = {it.exec_id for it in mine if it.topic == topic and it.exec_id}
-        parity[topic] = {"streamed": len(ids), "rest_only": backfill_only(rest, ids)}
-        parity[topic]["rest_only_when"] = split_rest_only(rest, ids, live)
-        parity[topic]["stream_only"] = len(ids - rest.keys())
+        parity[topic] = {"streamed": len(ids)}
+        if listed:
+            parity[topic]["rest_only"] = backfill_only(rest, ids)
+            parity[topic]["rest_only_when"] = split_rest_only(rest, ids, live)
+            parity[topic]["stream_only"] = len(ids - rest.keys())
+        else:  # no listing: no count that needs one, and none of them may read as zero
+            parity[topic] |= {"rest_only": None, "rest_only_when": None, "stream_only": None}
     cycles = [r for r in rows if r["cycle"] >= 0]
     partial = {it.link_id for it in mine if it.topic == "order" and it.status == "PartiallyFilled"}
     start, end = h.started_ms, h.now_ms()
@@ -110,7 +115,8 @@ def build_report(h: Harness, rest: Mapping[str, RestExecution], outcome: str) ->
         "rest_rtt_ms": {k: _q(quantiles(v)) for k, v in sorted(rtt.items())},
         "order_submit_ms": _q(quantiles(h.submit_ms)),
         "ws_latency_ms": {k: _q(v) for k, v in latencies(h.items).items()},
-        "rest_executions": len(rest),
+        "rest_executions": len(rest) if listed else None,
+        "rest_backfill_error": h.backfill_error,
         "parity": parity,
         "ordering": {t: _ordering(check_ordering(mine, t)) for t in EXEC_TOPICS},
         "stream": {
@@ -236,6 +242,36 @@ def _budget(r: dict[str, Any]) -> list[str]:
     ]
 
 
+def _rest_cells(p: dict[str, Any]) -> list[object]:
+    """The cells of a parity row that need the REST listing: `None` (n/a) when it failed."""
+    if p["rest_only"] is None:
+        return [None] * 4
+    when = p["rest_only_when"]
+    return [p["rest_only"] or 0, when["while_connected"], when["stream_down"], p["stream_only"]]
+
+
+def _parity_head(r: dict[str, Any]) -> list[str]:
+    """The heading of the parity section and how to read it; a failed backfill says so first."""
+    if r["rest_backfill_error"] is not None:
+        return [
+            f"## Execution parity: the REST backfill FAILED ({r['rest_backfill_error']})",
+            "",
+            "No REST-only count was measured: the #843 AC2 number is missing, and every cell "
+            "below that needs the backfill reads n/a, not 0.",
+            "",
+        ]
+    return [
+        f"## Execution parity: the REST backfill listed {r['rest_executions']}",
+        "",
+        "A REST-only execution that happened while the stream was delivering (`connected`) is "
+        "evidence against the stream as the source of truth. One inside a down window "
+        "(`down`: before the first connect, from a drop's last frame to the next connect, "
+        "after the stop) is expected: the harness does not resync. `stream.down_ms` lists the "
+        "windows; `rest_executions.csv` places each execution.",
+        "",
+    ]
+
+
 def _partial(r: dict[str, Any]) -> list[str]:
     """How many cycles saw a partial fill; nothing for a run with no cycles."""
     c = r["cycles"]
@@ -253,9 +289,9 @@ def render(r: dict[str, Any]) -> str:
     start, end = (datetime.fromtimestamp(ms / 1000, UTC).isoformat() for ms in r["window_ms"])
     offset, err = r["clock_offset_ms"]
     subscribed = r["stream"]["subscribed"]
-    parity = [[t, subscribed.get(t), p["streamed"], p["rest_only"] or 0,
-               p["rest_only_when"]["while_connected"], p["rest_only_when"]["stream_down"],
-               p["stream_only"]] for t, p in r["parity"].items()]  # fmt: skip
+    parity = [
+        [t, subscribed.get(t), p["streamed"], *_rest_cells(p)] for t, p in r["parity"].items()
+    ]
     order = [[t, o["executions"], o["violations"], o["unmatched"], o["lag_ms"]["p95"]]
              for t, o in r["ordering"].items()]  # fmt: skip
     errors = [[e["op"], e["call"], e["http"], e["retCode"], e["retMsg"], e.get("adapter"),
@@ -275,14 +311,7 @@ def render(r: dict[str, Any]) -> str:
             "## Private stream: exchange stamp to receipt (ms)",
             "",
             *_quantiles(r["ws_latency_ms"]),
-            f"## Execution parity: the REST backfill listed {r['rest_executions']}",
-            "",
-            "A REST-only execution that happened while the stream was delivering (`connected`) is "
-            "evidence against the stream as the source of truth. One inside a down window "
-            "(`down`: before the first connect, from a drop's last frame to the next connect, "
-            "after the stop) is expected: the harness does not resync. `stream.down_ms` lists the "
-            "windows; `rest_executions.csv` places each execution.",
-            "",
+            *_parity_head(r),
             *_table(head, parity),
             "## Ordering, 23-ws S5: executions received after the order push they caused",
             "",

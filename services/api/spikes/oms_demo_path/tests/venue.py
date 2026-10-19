@@ -112,9 +112,16 @@ class FakeBybit:
         self.fail_lookups: dict[int, int] = {}
         #: Every position read refused with this `(retCode, retMsg)`.
         self.refuse_positions: tuple[int, str] | None = None
+        #: The read of the open orders (the realtime list with no `orderLinkId`) refused.
+        self.refuse_open_orders: tuple[int, str] | None = None
         #: Every cancel refused with this `(retCode, retMsg)`; or, `cancel_raises`, broken.
         self.refuse_cancels: tuple[int, str] | None = None
         self.cancel_raises = False
+        #: The n-th new `orderLinkId` (1-based, counted at its first create request) is refused,
+        #: every request of it, with the `(retCode, retMsg)` this returns for n; `None` accepts.
+        self.refuse_creates: Callable[[int], tuple[int, str] | None] | None = None
+        #: HTTP 503 replies the execution list still gets.
+        self.fail_executions = 0
         self.flatten_fills = True
         #: An opening taker fills in two executions (a partial fill first).
         self.split_fills = False
@@ -122,10 +129,13 @@ class FakeBybit:
         self.drop_on_taker: int | None = None
         #: Called with the number of every accepted create.
         self.on_create: Callable[[int], None] | None = None
+        #: Called with the path of every GET, signed or not, before it is answered.
+        self.on_get: Callable[[str], None] | None = None
         #: Server-time reads after this many get the recorded 10018 reply.
         self.limit_time_reads: int | None = None
         self.time_reads = 0
         self._number: dict[str, int] = {}
+        self._create_no: dict[str, int] = {}
         self._takers = 0
         self._deferred: list[Callable[[], None]] = []
         self._seq = 0
@@ -163,6 +173,8 @@ class FakeBybit:
         else:
             body = dict(request.url.params)
             self.calls.append(("GET", path, body))
+            if self.on_get is not None:
+                self.on_get(path)
         stamp = request.headers.get("X-BAPI-TIMESTAMP")
         if stamp is None:
             return self._get(path, body)
@@ -199,6 +211,8 @@ class FakeBybit:
                 return httpx.Response(200, json=refusal(*self.refuse_positions))
             return httpx.Response(200, json=_ok({"category": "linear", "list": [self._position()]}))
         if path in ("/v5/order/realtime", "/v5/order/history"):
+            if path == "/v5/order/realtime" and link is None and self.refuse_open_orders:
+                return httpx.Response(200, json=refusal(*self.refuse_open_orders))
             number = self._number.get(str(link), 0)
             if self.fail_lookups.get(number, 0) > 0:
                 self.fail_lookups[number] -= 1
@@ -212,6 +226,9 @@ class FakeBybit:
             ]
             return httpx.Response(200, json=_ok({"category": "linear", "list": rows}))
         if path == "/v5/execution/list":
+            if self.fail_executions > 0:
+                self.fail_executions -= 1
+                return httpx.Response(503, content=(_CORPUS / "error_503.json").read_bytes())
             return httpx.Response(200, json=_ok({"category": "linear", "list": self.executions}))
         return httpx.Response(404)
 
@@ -222,6 +239,10 @@ class FakeBybit:
         if path == "/v5/order/create":
             if order is not None:
                 return httpx.Response(200, json=refusal(110072, "OrderLinkedID is duplicate"))
+            number = self._create_no.setdefault(link, len(self._create_no) + 1)
+            refused = self.refuse_creates(number) if self.refuse_creates is not None else None
+            if refused is not None:
+                return httpx.Response(200, json=refusal(*refused))
             return httpx.Response(200, json=self._create(link, body))
         if path == "/v5/order/cancel" and self.cancel_raises:
             raise RuntimeError("the venue broke mid-cancel")
