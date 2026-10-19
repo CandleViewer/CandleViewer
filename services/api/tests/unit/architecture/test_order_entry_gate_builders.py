@@ -9,7 +9,7 @@ at run time; this reads the source, so a gate built anywhere else is a reviewed 
 
 A function builds one where it names the class outside an annotation: a call, a reference kept in
 a variable and a subclass alike. An import that renames the class counts too, since the scan would
-not know the new name.
+not know the new name; `import X as X`, the explicit re-export idiom, renames nothing.
 """
 
 from __future__ import annotations
@@ -52,7 +52,11 @@ def _builders(text: str) -> frozenset[str]:
             )
             if named and id(child) not in annotated:
                 found.add(scope)
-            if isinstance(child, ast.alias) and child.name == GATE and child.asname:
+            if (
+                isinstance(child, ast.alias)
+                and child.name == GATE
+                and child.asname not in (None, GATE)
+            ):
                 found.add("import as")
             inner = scope
             if isinstance(child, _SCOPES):
@@ -83,9 +87,11 @@ def test_only_compose_order_entry_gate_builds_an_order_entry_gate() -> None:
         ("make = order_entry.OrderEntryGate", {"<module>"}),
         ("class Lax(OrderEntryGate): ...", {"Lax"}),  # a class's bases count as its own
         ("from candleviewer.domain.order_entry import OrderEntryGate as Gate", {"import as"}),
+        # the explicit re-export idiom keeps the name, so the scan still knows it
+        ("from candleviewer.domain.order_entry import OrderEntryGate as OrderEntryGate", set()),
         ("def read(g: OrderEntryGate) -> OrderEntryGate | None:\n    h: OrderEntryGate = g", set()),
     ],
-    ids=["call", "reference", "subclass", "renaming-import", "annotations"],
+    ids=["call", "reference", "subclass", "renaming-import", "re-export-idiom", "annotations"],
 )
 def test_the_scan_sees_each_way_to_build_a_gate_and_skips_annotations(
     source: str, builders: set[str]
