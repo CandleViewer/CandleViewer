@@ -48,6 +48,7 @@ _ROWS = [
     for f in FAMILIES.values()
     for shape in f.shapes
     if f.family != "system"  # implicit, never a Subscription (§6.2); see S2 note in the plan
+    and f.served  # an unserved family is refused `unknown_topic` (§6.1; pinned in unit ws)
 ]
 # -- S2 ----------------------------------------------------------------------------------------
 

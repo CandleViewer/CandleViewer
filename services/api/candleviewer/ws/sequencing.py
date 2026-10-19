@@ -146,7 +146,9 @@ COALESCE_FIELDS: Final = frozenset({"book", "bars", "footprint"})
 #: Families whose §14/§15 payload declares them too, set only on a merged frame (a count above 1),
 #: so a frame of one update leaves as it always has (#3268). `machines` merges as well, but its
 #: §15.10 payload declares neither field and allows no other, so it discloses nothing.
-MERGE_DISCLOSED: Final = frozenset({"heatmap", "metrics", "ticker", "positions", "wallet"})
+MERGE_DISCLOSED: Final = frozenset(
+    {"heatmap", "metrics", "ticker", "positions", "wallet", "indicators"}
+)
 
 cv_ws_resync_total = Counter(
     "cv_ws_resync_total", "Server-sent re-snapshots by reason.", labelnames=("reason",)

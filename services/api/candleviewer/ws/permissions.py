@@ -317,6 +317,8 @@ def _bar_spec(sub: Subscription) -> tuple[BarSpec | None, dict[str, Any] | None]
     return spec, None
 
 
+#: `unknown_topic` for a topic in the catalogue that this server does not serve (§6.1, §10.2).
+_UNSERVED: Final = "This topic is not available on this server."
 #: One message per refusal code, whatever the cause: `account_scope_denied` carries §6.2's.
 _REFUSED: Final = {
     "forbidden": "Missing permission for this topic.",
@@ -621,6 +623,7 @@ class ConnectionAuthz:
 
     async def subscribe_upstream(self, sub: Subscription) -> dict[str, Any] | None:
         """Take what a subscription needs upstream, or refuse it (drop it, return the failure). A
+        topic of a family nothing serves yet (`served`) is refused `unknown_topic` first (§6.1). A
         `bars.*` one first passes `_bars_refusal`; a `bars.*` or `footprint.*` spec is bounded
         (`_bar_spec`, SR-E12-03) wherever a builder could serve it, live or replay. Only a live
         public one takes anything, in order: for `bars.*`, once the set's `check` passes, a hold on
@@ -676,6 +679,9 @@ class ConnectionAuthz:
 
     async def _upstream(self, sub: Subscription) -> dict[str, Any] | None:
         family = sub.topic.family.family
+        if not sub.topic.family.served:  # §6.1: the contract lists it, nothing produces it yet
+            self._drop(sub)
+            return _fail(sub.ch, "unknown_topic", _UNSERVED)
         spec: BarSpec | None = None
         if family in {"bars", "footprint"}:
             refused = self._bars_refusal(sub) if family == "bars" else None
@@ -718,7 +724,7 @@ class ConnectionAuthz:
         SR-E12-07's per-connection cap (live and replay `bars.*` count alike). `footprint.*`
         keeps §7.7 until #2197, but its spec is still bounded (`_bar_spec`)."""
         if self.services.bars_off:
-            return _fail(sub.ch, "unknown_topic", "This topic is not available on this server.")
+            return _fail(sub.ch, "unknown_topic", _UNSERVED)
         held = sum(
             1 for s in self.by_id.values() if s is not sub and s.topic.family.family == "bars"
         )

@@ -36,6 +36,11 @@ _UUID = "00000000-0000-4000-8000-0000000000aa"
 _KS = {"machine_kind": "kill_switch", "degraded": False, "machine_hash": "0" * 64,
        "environment": "demo", "updated_at_ms": 1,
        "context_summary": {"scope": "global"}}  # fmt: skip
+#: An `indicators.*` instance (§14.10): bar 0 in warmup (`null`), then bar 1.
+_PTS = [{"generation": 0, "index": i, "t_ms": i, "v": [v]} for i, v in enumerate((None, "1.5"))]
+_EMA: dict[str, Any] = {"key": "ab" * 32, "indicator": "ema", "params": {"n": 2}, "points": _PTS}
+_EMA |= {"outputs": ["ema"], "build_version": 1}
+_SERIES: dict[str, Any] = {"symbol": _SYM, "bar_type": "time", "param": "1"}
 _SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "book": (
         {"symbol": _SYM, "bids": [["100.0", "1.0"]], "asks": [["101.0", "2.0"]]},
@@ -77,6 +82,10 @@ _SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
             "param": "1",
             "bars": [{"generation": 0, "index": 1, "t_ms": 1, "cells": []}],
         },
+    ),
+    "indicators": (
+        {**_SERIES, "instances": [_EMA]},
+        {**_SERIES, "instances": [{**_EMA, "points": [{**_PTS[1], "v": ["2"], "amended": True}]}]},
     ),
     "heatmap": (
         {"symbol": _SYM, "time_bucket_ms": 500, "columns": []},

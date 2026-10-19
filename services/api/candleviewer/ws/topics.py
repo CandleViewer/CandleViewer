@@ -12,6 +12,7 @@ segment-shape check); nothing on the data path ever re-parses them.
 
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from collections.abc import Callable, Mapping
@@ -48,7 +49,9 @@ BAR_TYPES: Final = frozenset(
 )
 PROFILE_KINDS: Final = frozenset({"volume", "delta", "tpo"})
 #: §5.4: options whose change invalidates the state -> `ctl_ok.resnapshot`.
-IDENTITY_OPTIONS: Final = frozenset({"depth", "price_grouping", "metrics", "time_bucket_ms"})
+IDENTITY_OPTIONS: Final = frozenset(
+    {"depth", "price_grouping", "metrics", "time_bucket_ms", "instances"}
+)
 #: §13.6 `ctl` schema keys (universal + identity + the two tunables).
 CTL_KEYS: Final = frozenset({"throttle_ms", "coalesce", "paused", "min_size"} | IDENTITY_OPTIONS)
 #: Options that select WHICH data a subscription may see (accounts, symbols, rules). They are
@@ -58,7 +61,9 @@ SCOPE_OPTIONS: Final = frozenset({"exchange_account_ids", "symbols", "rule_ids"}
 
 #: `state` is the literal suffix of `machines.{entity}.state`; every other segment is a variable.
 Segment = Literal["symbol", "depth", "bar_type", "param", "profile_kind", "entity", "state"]
-OptKind = Literal["int", "number", "bool", "enum", "decimal", "uuids", "symbols", "strings", "str"]
+OptKind = Literal[
+    "int", "number", "bool", "enum", "decimal", "uuids", "symbols", "strings", "str", "instances"
+]
 
 
 def is_topic_name(ch: Any) -> bool:
@@ -135,6 +140,35 @@ def _uuid_ok(v: Any) -> bool:
     return isinstance(v, str)
 
 
+#: §13 `common.schema.json#/$defs/indicatorInstance`: an `IndicatorDescriptor` id (22) and at most
+#: 16 params, each a finite number, a boolean or a string of at most 64 characters.
+_INDICATOR_RE: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
+_INSTANCE_KEYS: Final = frozenset({"indicator", "params"})
+_MAX_INSTANCE_PARAMS: Final = 16
+_MAX_PARAM_TEXT: Final = 64
+
+
+def _param_ok(v: Any) -> bool:
+    if isinstance(v, str):
+        return len(v) <= _MAX_PARAM_TEXT
+    return isinstance(v, int) or (isinstance(v, float) and math.isfinite(v))  # a bool is an int
+
+
+def _instance_ok(v: Any) -> bool:
+    """One `indicators.*` instance, by its §13 shape only: whether the server computes the
+    indicator, and its params' names and bounds, are checked where it is served (§6.1)."""
+    if not isinstance(v, dict) or not set(v) <= _INSTANCE_KEYS:
+        return False
+    name, params = v.get("indicator"), v.get("params", {})
+    return (
+        isinstance(name, str)
+        and _INDICATOR_RE.fullmatch(name) is not None
+        and isinstance(params, dict)
+        and len(params) <= _MAX_INSTANCE_PARAMS
+        and all(isinstance(k, str) and _param_ok(x) for k, x in params.items())
+    )
+
+
 _CHECKS: Final[dict[str, Callable[[Opt, Any], bool]]] = {
     "int": lambda o, v: _is_int(v) and _in_range(o, v),
     "number": lambda o, v: (_is_int(v) or isinstance(v, float)) and _in_range(o, v),
@@ -149,6 +183,7 @@ _CHECKS: Final[dict[str, Callable[[Opt, Any], bool]]] = {
     ),
     "strings": lambda o, v: _items(o, v, lambda s: isinstance(s, str) and 0 < len(s) <= 64),
     "str": lambda o, v: isinstance(v, str) and bool(_PARAM_RE.fullmatch(v)),
+    "instances": lambda o, v: _items(o, v, _instance_ok),
 }
 
 _INT_MS: Final = Opt("int", 0, 60_000)
@@ -180,6 +215,9 @@ class TopicFamily:
     private: bool = False
     never_throttled: bool = False
     required: frozenset[str] = frozenset()
+    #: False for a family the contract lists before its producer exists (C-6.1): every `sub` of
+    #: it is refused `unknown_topic` (§6.1), after the checks decided from the entry itself.
+    served: bool = True
 
     @property
     def patterns(self) -> tuple[str, ...]:
@@ -202,6 +240,8 @@ def _md(
     schema: str,
     options: Mapping[str, Opt] | None = None,
     required: frozenset[str] = frozenset(),
+    *,
+    served: bool = True,
 ) -> TopicFamily:
     return TopicFamily(
         fam,
@@ -213,6 +253,7 @@ def _md(
         schema,
         dict(options or {}),
         required=required,
+        served=served,
     )
 
 
@@ -288,6 +329,18 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
                 "min_imbalance_volume": _DEC,
                 "history": Opt("int", 0, 200),
             },
+        ),
+        _md(  # E13-T02 (#426): the contract only, until its engine is wired
+            "indicators",
+            (("symbol", "bar_type", "param"),),
+            250,
+            False,
+            "IndicatorSeriesBatch",
+            {
+                "instances": Opt("instances", min_items=1, max_items=8),
+                "history": Opt("int", 0, 1000),
+            },
+            served=False,
         ),
         _md(
             "heatmap",

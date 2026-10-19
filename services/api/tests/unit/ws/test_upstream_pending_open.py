@@ -264,11 +264,12 @@ async def test_a_failed_open_frees_its_symbol_label_for_the_next_symbol() -> Non
 
 async def test_the_consumer_series_stay_within_the_catalogue_bound() -> None:
     """(#2227, item a) One series per symbol label and topic family: at most `MAX_SYMBOL_LABELS`
-    symbols plus `other`, times each family whose subscriptions reach `acquire` (the public ones:
-    replay and private subscriptions return before it, `ConnectionAuthz._upstream`). Counted from
-    the registry, so a new public family that breaks the catalogue's `max_series` fails here."""
+    symbols plus `other`, times each family whose subscriptions reach `acquire` (the public ones
+    the server serves: replay, private and unserved subscriptions return before it,
+    `ConnectionAuthz._upstream`). Counted from the registry, so a new public family that breaks
+    the catalogue's `max_series` fails here."""
     (spec,) = [s for s in CATALOGUE if s.name == "cv_ws_upstream_consumers_in_use"]
-    families = [f.family for f in FAMILIES.values() if not f.private]
+    families = [f.family for f in FAMILIES.values() if not f.private and f.served]
     refs = UpstreamRefs()
     for family in families:
         for i in range(MAX_SYMBOL_LABELS + 3):

@@ -666,7 +666,7 @@ x-error-codes-ws:
   - code: unknown_topic
     scope: topic
     retryable: false
-    title: Topic name not in the catalogue, or bars.* while the bars feature is off
+    title: Topic name not in the catalogue, or a bars.* or indicators.* topic not served
     rest_analogue: not_found
   - code: invalid_topic_format
     scope: topic
@@ -11119,9 +11119,9 @@ paths:
       description: >
         Machine-readable descriptor per indicator (id, display name, where it renders,
         parameter JSON Schema, whether it is computed client-side in a worker or
-        server-side from `orderflow_metrics`, and whether it is `estimated`). The chart
-        settings dialogs render their forms from this, so adding an indicator never
-        requires a frontend release.
+        server-side by the backend indicator kernel (ADR-0034), and whether it is
+        `estimated`). The chart settings dialogs render their forms from this, so adding an
+        indicator never requires a frontend release.
       x-rbac: { permissions: [marketdata:read], scope: none }
       responses:
         "200":
@@ -11133,6 +11133,7 @@ paths:
                 properties:
                   items:
                     { type: array, items: { $ref: "#/components/schemas/IndicatorDescriptor" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -18437,8 +18438,12 @@ components:
           type: string
           enum: [client_worker, server]
           description: >
-            `server` indicators are read from `orderflow_metrics` and require recorded
-            history; `client_worker` indicators are computed from bars already in the client.
+            Set by the server from the indicator's rule eligibility (ADR-0034), never taken
+            from a request. `server` indicators are computed by the backend indicator kernel
+            from tape-built bars and delivered on the WS topic
+            `indicators.{symbol}.{bar_type}.{param}` (`23-ws-protocol.md` §6.1);
+            `client_worker` indicators are computed in the chart engine's worker from bars
+            already in the client.
         estimated:
           type: boolean
           default: false
@@ -18448,6 +18453,36 @@ components:
           additionalProperties: true
           description: JSON Schema for this indicator's parameters; the settings form renders from it.
         defaults: { type: object, additionalProperties: true }
+        outputs:
+          type: array
+          minItems: 1
+          description: >
+            The indicator's series, in the order its kernel emits them (the WS `v` of a `server`
+            instance, `23-ws-protocol.md` §14.10). `name` is the label screen readers use.
+          items: { $ref: "#/components/schemas/IndicatorOutput" }
+        warmup_bars:
+          type: integer
+          minimum: 0
+          description: >
+            Closed bars before the first value at `defaults` (`24-internal-schemas.md` §7.4); it
+            grows with period-like parameters. An output is `null` before it, never 0.
+        unit:
+          type: string
+          enum: [price, qty, notional, ratio, pct, bps, count, ms, zscore, enum, bool]
+          description: >
+            Every output's unit (24 §7.1); a client renders one it does not know unitless.
+            **Open-ended for readers:** clients must tolerate values they do not know, so adding a
+            unit is an additive change (C-6.3).
+        nullable_when:
+          type: string
+          description: When an output is `null`, with the bar count and reason, for screen readers.
+
+    IndicatorOutput:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, pattern: "^[a-z][a-z0-9_]{0,31}$" }
+        name: { type: string }
 
     LayoutPreset:
       type: object

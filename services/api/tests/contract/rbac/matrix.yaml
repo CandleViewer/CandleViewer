@@ -1676,7 +1676,8 @@ operations:
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
 # WS topic families (23-ws-protocol.md §6.3). sub_ok = subscription accepted; 401 = frame before
-# `auth`; account_scope_denied / 403 as in §5.2. `system` is implicit (no check).
+# `auth`; account_scope_denied / 403 as in §5.2. `system` is implicit (no check). unknown_topic =
+# a family the contract lists before anything serves it (§6.1).
 # `machines.{kind}`: one row per §6.4 kind (E17-T08). Before each cell the runner publishes the
 # sample entity on account A (granted_accounts) or as the caller's own (self); none: unscoped.
 topics:
@@ -1715,6 +1716,13 @@ topics:
     scope: none
     sample: heatmap.BTCUSDT
     outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
+      unauthenticated: not_authenticated}
+  indicators:  # 23 §6.1: in the contract, served by none until E13-T02 (#426) wires its engine
+    permission: marketdata:read
+    scope: none
+    sample: indicators.BTCUSDT.time.1
+    outcomes: {owner: unknown_topic, manager_with_grant: unknown_topic,
+      manager_without_grant: unknown_topic, viewer: unknown_topic,
       unauthenticated: not_authenticated}
   liquidations:
     permission: marketdata:read

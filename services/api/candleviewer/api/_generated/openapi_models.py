@@ -5023,27 +5023,9 @@ class ScannerRow(BaseModel):
     ]
 
 
-class IndicatorDescriptor(BaseModel):
-    id: str
+class IndicatorOutput(BaseModel):
+    id: Annotated[str, Field(pattern="^[a-z][a-z0-9_]{0,31}$")]
     name: str
-    category: Literal["trend", "momentum", "volatility", "volume", "orderflow"] | None = None
-    pane: Literal["price", "sub", "both"]
-    compute: Annotated[
-        Literal["client_worker", "server"],
-        Field(
-            description="`server` indicators are read from `orderflow_metrics` and require recorded history; `client_worker` indicators are computed from bars already in the client.\n"
-        ),
-    ]
-    estimated: Annotated[
-        bool | None, Field(description="True for heuristic signals that infer unobservable intent.")
-    ] = False
-    params_schema: Annotated[
-        dict[str, Any],
-        Field(
-            description="JSON Schema for this indicator's parameters; the settings form renders from it."
-        ),
-    ]
-    defaults: dict[str, Any] | None = None
 
 
 class ExchangeCall(BaseModel):
@@ -6339,6 +6321,68 @@ class Watchlist(WatchlistInput):
     id: UUID | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+
+
+class IndicatorDescriptor(BaseModel):
+    id: str
+    name: str
+    category: Literal["trend", "momentum", "volatility", "volume", "orderflow"] | None = None
+    pane: Literal["price", "sub", "both"]
+    compute: Annotated[
+        Literal["client_worker", "server"],
+        Field(
+            description="Set by the server from the indicator's rule eligibility (ADR-0034), never taken from a request. `server` indicators are computed by the backend indicator kernel from tape-built bars and delivered on the WS topic `indicators.{symbol}.{bar_type}.{param}` (`23-ws-protocol.md` §6.1); `client_worker` indicators are computed in the chart engine's worker from bars already in the client.\n"
+        ),
+    ]
+    estimated: Annotated[
+        bool | None, Field(description="True for heuristic signals that infer unobservable intent.")
+    ] = False
+    params_schema: Annotated[
+        dict[str, Any],
+        Field(
+            description="JSON Schema for this indicator's parameters; the settings form renders from it."
+        ),
+    ]
+    defaults: dict[str, Any] | None = None
+    outputs: Annotated[
+        list[IndicatorOutput] | None,
+        Field(
+            description="The indicator's series, in the order its kernel emits them (the WS `v` of a `server` instance, `23-ws-protocol.md` §14.10). `name` is the label screen readers use.\n",
+            min_length=1,
+        ),
+    ] = None
+    warmup_bars: Annotated[
+        int | None,
+        Field(
+            description="Closed bars before the first value at `defaults` (`24-internal-schemas.md` §7.4); it grows with period-like parameters. An output is `null` before it, never 0.\n",
+            ge=0,
+        ),
+    ] = None
+    unit: Annotated[
+        Literal[
+            "price",
+            "qty",
+            "notional",
+            "ratio",
+            "pct",
+            "bps",
+            "count",
+            "ms",
+            "zscore",
+            "enum",
+            "bool",
+        ]
+        | None,
+        Field(
+            description="Every output's unit (24 §7.1); a client renders one it does not know unitless. **Open-ended for readers:** clients must tolerate values they do not know, so adding a unit is an additive change (C-6.3).\n"
+        ),
+    ] = None
+    nullable_when: Annotated[
+        str | None,
+        Field(
+            description="When an output is `null`, with the bar count and reason, for screen readers."
+        ),
+    ] = None
 
 
 class CapacityReport(BaseModel):

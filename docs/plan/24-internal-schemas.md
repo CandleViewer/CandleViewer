@@ -1195,6 +1195,33 @@ Heatmap-derived descriptors referenced above and specified in §6: `heatmap_clus
 - Metrics are computed once per cadence per (symbol, params) and memoized; ten rules referencing `atr(14)` cost one computation.
 - `deterministic=True` metrics must produce identical values in replay; a nightly job replays a recorded day and diffs every deterministic metric against the live-recorded values (tolerance 0 for exact, 1e-9 for float).
 
+### 7.4 Indicator kernels (E13-T02, ADR-0034)
+
+The backend kernel in M9 (`services/api/candleviewer/orderflow/indicators/`) computes the `compute: server` indicators of the catalogue (ADR-0034: `sma`, `ema`, `rsi`, `atr`, `adx`, `vwap`, `cvd`, `volume`, `zigzag`) from closed bars (§3). The chart engine's worker mirror (E13-T01) must give the same float64 for every value, so this section is the contract both sides follow. Each kernel's module docstring records its exact operation order and may only add detail to it.
+
+**Identity.** An instance's `spec_hash` is the lowercase hex sha256 of the canonical JSON of `{"v": INDICATOR_SPEC_VERSION, "indicator": <id>, "params": {...}, "bar_spec_hash": <§3.1 spec_hash>, "source": "tape"}`, in §3.1's canonical form: keys sorted at every level, separators `,` and `:` with no whitespace, `ensure_ascii`. `params` holds every parameter of the descriptor, defaults written out. A number is written as a plain decimal from its shortest round-trip digits, with no exponent, no trailing fractional zeros and `-0` as `0`, so `ema(21)` and `ema(21.0)` hash alike; strings and booleans are JSON. `source` is where the bars come from: `tape` (bars built from the recorded trades, §3) is the only value in v1. It is not an indicator's applied-price parameter (E13-S02's `source`), which is a param. `INDICATOR_SPEC_VERSION = 1`, and any change to the canonical form bumps it. The memo, the WS instance `key` (23 §14.10) and the UI instance agree on this one hash; the symbol is not in it, so the memo keys on `(symbol, spec_hash)`. E13-T02 commits vectors for the mirror in `packages/fixtures/golden/indicators/spec_hash_vectors.json`.
+
+**Inputs and gaps.** A kernel reads a `BarInput` of `t, o, h, l, c, v, delta, synthetic`, each value converted from the bar's `Decimal` once at the boundary with `float()` (the same float64 as JavaScript `Number(str)`). A time-bar series is densified before the kernel sees it (`BarSeries.densify()`, §3.3): a filler advances the state but publishes no value, because it shares the previous real bar's index. A non-time series is never densified, and a session-anchored parameter refuses a renko series.
+
+**Operation order (parity, ADR-0034).** IEEE-754 binary64 throughout. The only operations are `+ − × ÷ sqrt min max floor`; `pow`, `exp` and `log` are banned, and so are reassociated forms (prefix sums, pairwise or vectorised sums) and one-pass variance. numpy is used only where it is bit-identical (window max and min). The orders already fixed:
+
+- **SMA:** a running window sum: once the window is full, subtract the value that leaves it, then add the one that enters; the value is `sum / n`.
+- **EMA:** the seed is the sum of the first `n` inputs, added oldest first, divided by `n`; then `(x − prev) × α + prev`, with `α = 2 / (n + 1)`.
+- **Wilder smoothing** (ATR, RSI's average gain and loss, ADX): the seed is the plain mean of the first `n` values, as for EMA; then `(prev × (n − 1) + x) / n`. It is never EMA with `α = 1/n`.
+- **VWAP:** from the anchor, the volume and the typical price `(h + l + c) / 3` times volume are summed; VWAP is the second sum divided by the first. σ is West's weighted incremental variance, never `E[x²] − m²`; the bands are `VWAP ± k × σ`. A zero-volume bar changes nothing. E13-T02 supports the `session` anchor (the series' `session_anchor_utc_min`); E13-S07 adds the others.
+- **CVD:** the running sum of the bar's `delta` from the anchor, `session` or `utc_day`.
+- **ZigZag** (`depth`, `deviation_pct`): confirmed pivots only, which give `swing_high` and `swing_low`; with `deviation_pct = 0` and `depth = n` it is §7.2's swing, a pivot with `n` bars either side. The provisional leg is never published.
+
+Four orders are not fixed here yet, so the worker mirror (E13-T01) must not take them from this section alone: σ's recurrence (whether West's running mean is kept apart from the VWAP quotient, and the update order), how RSI derives its gains, losses and ratio, the ADX chain (+DM, −DM, TR, the DIs, DX, and each smoothing stage with its seed) and ZigZag's confirmation and deviation rule. E13-T02's kernel docstrings and golden vectors fix them, and its implementation PR amends this section as built.
+
+**Warmup and missing values.** Each kernel declares `warmup_bars(params)`, counted on the densified series. Before it, and wherever an operation has no value (a zero divisor), an output is `None`: never `0`, and never NaN on the wire, where it is `null` (23 §14.10). The descriptor's `nullable_when` names the bar count and the reason.
+
+**State.** `snapshot()` returns a versioned orjson blob `{"v": STATE_VERSION, "indicator", "build_version", "state"}` with `STATE_VERSION = 1` and NaN written as `null`; `restore()` refuses another version, indicator or `build_version` with a typed `IndicatorStateError`, as `BuilderState` does (§3.2). Incremental updates and a full recompute are the same fold, so restoring at any bar and going on gives the values an uninterrupted run gives.
+
+**`build_version`.** Each kernel has an integer `build_version`, at least 1. It goes up with any change to the operation order or the semantics, and the golden vectors are regenerated with it. Every read carries it, and so does every WS instance (IR-20).
+
+**Decimal boundary (C3, §1).** `to_decimal(x, quantum)` is `Decimal(str(x)).quantize(quantum)`, with the instrument quantum of §1.5. It is the only path from a kernel value into the OMS, journal or audit. `None` and NaN never cross it: they become a typed unavailable result with its reason.
+
 ---
 
 ## 8. OMS

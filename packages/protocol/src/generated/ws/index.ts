@@ -307,6 +307,24 @@ export interface CandleViewerWSSharedDefinitions {
   [k: string]: unknown;
 }
 /**
+ * indicators.* (§6.1): one server instance a subscription reads.
+ *
+ * This interface was referenced by `CandleViewerWSSharedDefinitions`'s JSON-Schema
+ * via the `definition` "indicatorInstance".
+ */
+export interface IndicatorInstance {
+  /**
+   * The id of a REST listIndicators descriptor whose compute is server.
+   */
+  indicator: string;
+  /**
+   * Values for the descriptor's params_schema; an absent param takes its default. Never clamped (§6.1).
+   */
+  params?: {
+    [k: string]: number | string | boolean;
+  };
+}
+/**
  * This interface was referenced by `CandleViewerWSSharedDefinitions`'s JSON-Schema
  * via the `definition` "error".
  */
@@ -367,6 +385,51 @@ export interface CvWsV1CtlSchemaJson {
   price_grouping?: number;
   metrics?: string[];
   /**
+   * indicators.* only (§6.1); a change triggers `resnapshot: true`.
+   *
+   * @minItems 1
+   * @maxItems 8
+   */
+  instances?:
+    | [IndicatorInstance]
+    | [IndicatorInstance, IndicatorInstance]
+    | [IndicatorInstance, IndicatorInstance, IndicatorInstance]
+    | [IndicatorInstance, IndicatorInstance, IndicatorInstance, IndicatorInstance]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ];
+  /**
    * Arbitrary-precision decimal as a string; never a JSON number.
    */
   min_size?: string;
@@ -378,6 +441,21 @@ export interface CvWsV1CtlSchemaJson {
    * Client-side pause; the server stops emitting but keeps state.
    */
   paused?: boolean;
+}
+/**
+ * indicators.* (§6.1): one server instance a subscription reads.
+ */
+export interface IndicatorInstance {
+  /**
+   * The id of a REST listIndicators descriptor whose compute is server.
+   */
+  indicator: string;
+  /**
+   * Values for the descriptor's params_schema; an absent param takes its default. Never clamped (§6.1).
+   */
+  params?: {
+    [k: string]: number | string | boolean;
+  };
 }
 
 // Source: cv://ws/v1/ctl_ok.schema.json
@@ -700,6 +778,51 @@ export interface CvWsV1HelloSchemaJson {
    * Epoch milliseconds, UTC.
    */
   clock_ms?: number;
+}
+
+// Source: cv://ws/v1/indicators.schema.json
+export interface IndicatorsSymbolBarTypeParam {
+  symbol: string;
+  bar_type: "time" | "tick" | "volume" | "range" | "delta" | "renko" | "pnf" | "heikin_ashi";
+  param: string;
+  /**
+   * A snapshot holds every instance of the subscription (at most 8); a d holds those with a new or amended point.
+   */
+  instances: {
+    key: string;
+    indicator: string;
+    params: {
+      [k: string]: number | string | boolean;
+    };
+    /**
+     * @minItems 1
+     */
+    outputs: [string, ...string[]];
+    build_version: number;
+    /**
+     * @maxItems 1000
+     */
+    points: {
+      /**
+       * The bar's series generation, as on bars.* (§14.3); compare for equality only.
+       */
+      generation: number;
+      index: number;
+      /**
+       * Epoch milliseconds, UTC.
+       */
+      t_ms: number;
+      /**
+       * One value per output, in outputs order (below); null when there is none.
+       *
+       * @minItems 1
+       */
+      v: [string | null, ...(string | null)[]];
+      amended?: boolean;
+    }[];
+  }[];
+  coalesced?: boolean;
+  coalesced_count?: number;
 }
 
 // Source: cv://ws/v1/liquidations.schema.json
@@ -1225,11 +1348,11 @@ export interface CvWsV1SubSchemaJson {
   topics: [
     {
       ch: string;
-      opts?: Options;
+      opts?: Options | IndicatorOptions;
     },
     ...{
       ch: string;
-      opts?: Options;
+      opts?: Options | IndicatorOptions;
     }[],
   ];
   snapshot?: boolean;
@@ -1326,6 +1449,81 @@ export interface Options {
    * Arbitrary-precision decimal as a string; never a JSON number.
    */
   min_notional_usd?: string;
+}
+/**
+ * The options of indicators.* (§6.1): a closed set of its own, because the union above already holds the 32 keys a MessagePack map may (§3.6, SR-185).
+ *
+ * This interface was referenced by `CvWsV1SubSchemaJson`'s JSON-Schema
+ * via the `definition` "indicatorOptions".
+ */
+export interface IndicatorOptions {
+  throttle_ms?: number;
+  encoding?: "binary" | "structured";
+  coalesce?: boolean;
+  from_seq?: number | null;
+  /**
+   * Epoch milliseconds, UTC.
+   */
+  from_ts_ms?: number;
+  /**
+   * @minItems 1
+   * @maxItems 8
+   */
+  instances:
+    | [IndicatorInstance]
+    | [IndicatorInstance, IndicatorInstance]
+    | [IndicatorInstance, IndicatorInstance, IndicatorInstance]
+    | [IndicatorInstance, IndicatorInstance, IndicatorInstance, IndicatorInstance]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ]
+    | [
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+        IndicatorInstance,
+      ];
+  history?: number;
+}
+/**
+ * indicators.* (§6.1): one server instance a subscription reads.
+ */
+export interface IndicatorInstance {
+  /**
+   * The id of a REST listIndicators descriptor whose compute is server.
+   */
+  indicator: string;
+  /**
+   * Values for the descriptor's params_schema; an absent param takes its default. Never clamped (§6.1).
+   */
+  params?: {
+    [k: string]: number | string | boolean;
+  };
 }
 
 // Source: cv://ws/v1/sub_ok.schema.json
@@ -1793,6 +1991,7 @@ export type WsTopicPayloadMap = {
   "trades.{symbol}": TradesSymbol;
   "bars.{symbol}.{bar_type}.{param}": BarsSymbolBarTypeParam;
   "footprint.{symbol}.{bar_type}.{param}": FootprintSymbolBarTypeParam;
+  "indicators.{symbol}.{bar_type}.{param}": IndicatorsSymbolBarTypeParam;
   "heatmap.{symbol}": HeatmapSymbol;
   "profile.{symbol}.{kind}": ProfileSymbolKind;
   "metrics.{symbol}": MetricsSymbol;

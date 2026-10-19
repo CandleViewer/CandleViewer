@@ -2486,7 +2486,7 @@ export interface paths {
     };
     /**
      * Indicator catalogue with parameter schemas
-     * @description Machine-readable descriptor per indicator (id, display name, where it renders, parameter JSON Schema, whether it is computed client-side in a worker or server-side from `orderflow_metrics`, and whether it is `estimated`). The chart settings dialogs render their forms from this, so adding an indicator never requires a frontend release.
+     * @description Machine-readable descriptor per indicator (id, display name, where it renders, parameter JSON Schema, whether it is computed client-side in a worker or server-side by the backend indicator kernel (ADR-0034), and whether it is `estimated`). The chart settings dialogs render their forms from this, so adding an indicator never requires a frontend release.
      */
     get: operations["listIndicators"];
     put?: never;
@@ -6674,7 +6674,7 @@ export interface components {
       /** @enum {string} */
       category?: "trend" | "momentum" | "volatility" | "volume" | "orderflow";
       /**
-       * @description `server` indicators are read from `orderflow_metrics` and require recorded history; `client_worker` indicators are computed from bars already in the client.
+       * @description Set by the server from the indicator's rule eligibility (ADR-0034), never taken from a request. `server` indicators are computed by the backend indicator kernel from tape-built bars and delivered on the WS topic `indicators.{symbol}.{bar_type}.{param}` (`23-ws-protocol.md` §6.1); `client_worker` indicators are computed in the chart engine's worker from bars already in the client.
        * @enum {string}
        */
       compute: "client_worker" | "server";
@@ -6688,12 +6688,38 @@ export interface components {
       estimated: boolean;
       id: string;
       name: string;
+      /** @description When an output is `null`, with the bar count and reason, for screen readers. */
+      nullable_when?: string;
+      /** @description The indicator's series, in the order its kernel emits them (the WS `v` of a `server` instance, `23-ws-protocol.md` §14.10). `name` is the label screen readers use. */
+      outputs?: components["schemas"]["IndicatorOutput"][];
       /** @enum {string} */
       pane: "price" | "sub" | "both";
       /** @description JSON Schema for this indicator's parameters; the settings form renders from it. */
       params_schema: {
         [key: string]: unknown;
       };
+      /**
+       * @description Every output's unit (24 §7.1); a client renders one it does not know unitless. **Open-ended for readers:** clients must tolerate values they do not know, so adding a unit is an additive change (C-6.3).
+       * @enum {string}
+       */
+      unit?:
+        | "price"
+        | "qty"
+        | "notional"
+        | "ratio"
+        | "pct"
+        | "bps"
+        | "count"
+        | "ms"
+        | "zscore"
+        | "enum"
+        | "bool";
+      /** @description Closed bars before the first value at `defaults` (`24-internal-schemas.md` §7.4); it grows with period-like parameters. An output is `null` before it, never 0. */
+      warmup_bars?: number;
+    };
+    IndicatorOutput: {
+      id: string;
+      name: string;
     };
     IndicatorPreset: components["schemas"]["IndicatorPresetInput"] & {
       /** Format: date-time */
@@ -14043,6 +14069,7 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
