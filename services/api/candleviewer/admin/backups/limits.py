@@ -51,3 +51,8 @@ LOST_RUNS_LIMIT: Final = 16  # `running` rows a boot ends; any more wait for the
 #: `ADMIT_WAIT_S`, so an admission waiting meanwhile is refused `503 store_unavailable`, retryable.
 DELETE_RECORD_BUDGET_S: Final = 2.0  # one `backup.deleted` record, as `AUDIT_TIMEOUT_S`
 REMOVE_BUDGET_S: Final = 10.0  # the engine's `remove` of one artefact: a backstop for a hung engine
+#: `downloadBackup` (BK-11): "At most 10 fetches per user per hour", counted at each spend, a
+#: refused fetch's included.
+FETCHES_PER_HOUR: Final = 10
+#: A fetch's reads of its link's session family and its user's permissions, together.
+FETCH_READ_BUDGET_S: Final = 2.0

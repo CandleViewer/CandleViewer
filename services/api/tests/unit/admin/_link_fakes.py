@@ -1,5 +1,5 @@
-"""Download-link test fakes (E42-T05 #966 BK-10): artefacts that count their closes, a reader, and
-`BackupDownloads` over BK-4's catalogue fakes."""
+"""Download-link test fakes (E42-T05 #966 BK-10, BK-11): artefacts that count their closes, a
+reader, and `BackupDownloads` over BK-4's catalogue fakes, its fetch's ports given."""
 
 from __future__ import annotations
 
@@ -9,7 +9,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from candleviewer.admin.backups.catalogue import BackupCatalogue
-from candleviewer.admin.backups.downloads import BackupDownloads, LinkRecord
+from candleviewer.admin.backups.downloads import (
+    BackupDownloads,
+    FetchPorts,
+    LinkRecord,
+    ServeRecord,
+)
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.links import DownloadLinks
 from candleviewer.audit.access import AuditPrincipal
@@ -69,6 +74,14 @@ class World:
 
         return record
 
+    def serve_ahead(self) -> Any:
+        """What the fetch route passes: each record through `audit_serve`."""
+
+        async def record(entry: ServeRecord) -> None:
+            await self.downloads.audit_serve(entry)
+
+        return record
+
 
 def world(
     rows: Sequence[BackupRow] = (),
@@ -78,6 +91,7 @@ def world(
     gate: BackupJobGate | None = None,
     links: DownloadLinks | None = None,
     read_budget_s: float = 2.0,
+    fetch: FetchPorts | None = None,
     **budgets: float,
 ) -> World:
     store = Store(rows) if store is None else store
@@ -85,5 +99,7 @@ def world(
     links = DownloadLinks(now=lambda: NOW) if links is None else links
     gate, audit = BackupJobGate() if gate is None else gate, AuditSpy()
     catalogue = BackupCatalogue(store, now=lambda: NOW, budget_s=read_budget_s)
-    service = BackupDownloads(catalogue, reader, links, gate=gate, audit=audit, **budgets)
+    service = BackupDownloads(
+        catalogue, reader, links, gate=gate, audit=audit, fetch=fetch, **budgets
+    )
     return World(service, store, reader, links, gate, audit)

@@ -24,6 +24,7 @@ from candleviewer.admin.backups.links import (
     DownloadLink,
     DownloadLinks,
     LinkGone,
+    LinkLive,
     LinksFull,
     LinkSpent,
     LinkUnknown,
@@ -180,3 +181,49 @@ def test_a_token_no_codec_can_encode_is_unknown_never_an_error() -> None:
 def test_the_default_clock_is_utc() -> None:
     _, link = _issue(DownloadLinks())
     assert link.issued_at.utcoffset() == link.expires_at.utcoffset() == timedelta(0)
+
+
+def test_a_lookup_spends_nothing_and_matches_only_its_backup_and_user() -> None:
+    """10a code F1: a match is a lookup; the fetch checks its user's hour, then spends."""
+    store = DownloadLinks(now=Clock())
+    token, link = _issue(store)
+    for user in (OWNER, None, OWNER):
+        assert store.lookup(token, backup_id=B1, user_id=user) == LinkLive(link)
+    assert store.lookup(token, backup_id=B2, user_id=None) == LinkUnknown()
+    assert store.lookup(token, backup_id=B1, user_id=OTHER) == LinkUnknown()
+
+
+def test_a_spend_is_once_and_an_expired_or_discarded_link_is_never_spent() -> None:
+    clock = Clock()
+    store = DownloadLinks(now=clock)
+    token, link = _issue(store)
+    spent = store.spend(link.link_id)
+    assert isinstance(spent, LinkSpent) and spent.link.spent_at == T0
+    assert store.spend(link.link_id) == LinkGone(spent.link)
+    assert store.lookup(token, backup_id=B1, user_id=OWNER) == LinkGone(spent.link)
+    _, late = _issue(store)
+    clock.now = T0 + LINK_TTL  # expired between a lookup and its spend: gone, never spent
+    assert store.spend(late.link_id) == LinkGone(late)
+    store.discard(late.link_id)
+    assert store.spend(late.link_id) == LinkUnknown()
+
+
+def test_the_reuse_record_is_claimed_once_and_an_unwritten_one_is_freed() -> None:
+    """SR-BK10A-02 (b): one `link_reused` record per spent link, its place taken only once the
+    record is written; the marker is forgotten with the link."""
+    clock = Clock()
+    store = DownloadLinks(now=clock)
+    token, link = _issue(store)
+    assert store.claim_reuse(link.link_id) is False  # live: nothing to reuse
+    assert isinstance(_fetch(store, token), LinkSpent)
+    assert (store.claim_reuse(link.link_id), store.claim_reuse(link.link_id)) == (True, False)
+    store.settle_reuse(link.link_id, written=False)  # unwritten: the next presentation writes
+    assert store.claim_reuse(link.link_id) is True
+    store.settle_reuse(link.link_id, written=True)
+    assert store.claim_reuse(link.link_id) is False
+    gone = _fetch(store, token)
+    assert isinstance(gone, LinkGone) and gone.link.reuse == "recorded"
+    clock.now = T0 + ENDED_KEPT
+    assert _fetch(store, token) == LinkUnknown() and store.claim_reuse(link.link_id) is False
+    store.settle_reuse(link.link_id, written=True)  # a forgotten link stays forgotten
+    assert store._held == {}

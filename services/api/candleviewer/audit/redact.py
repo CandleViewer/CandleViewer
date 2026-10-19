@@ -9,6 +9,14 @@ never lets an un-recognised nested structure pass through unexamined —
 dicts are walked recursively and lists element-wise, so a field nested three
 levels deep is caught exactly like a top-level one.
 
+One reviewed exception (#966 BK-11): `_ENUM_PASS_THROUGH` names a
+secret-named key whose value is kept when it is exactly one of a closed set
+of fixed words: `bearer` is `matched` or `absent`, the flag `downloadBackup`
+records for whether a fetch carried the issuing user's bearer. A value equal
+to a word the code chose cannot carry a credential: it says only which word.
+Every other value under that key (another string, a dict, a list, None, a
+number) is still replaced, and every other key is untouched by the table.
+
 The field-name registry below is deliberately name-based (not type-based):
 every column comment in `0001_identity_rbac_sessions_mfa.py` marked `SECRET`
 or `PII` names the exact field this list mirrors 1:1
@@ -23,6 +31,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 REDACTION_MARKER = "<redacted:secret>"
@@ -111,6 +121,13 @@ _SECRET_EXACT_NAMES: frozenset[str] = frozenset(
     }
 )
 
+#: Secret-named keys (normalised, exact) whose value passes only when it is exactly
+#: one of these words, case-sensitive and unstripped (the module docstring).
+#: Adding an entry is a security-reviewed edit (C-10.2).
+_ENUM_PASS_THROUGH: Mapping[str, frozenset[str]] = MappingProxyType(
+    {"bearer": frozenset({"matched", "absent"})}  # `downloadBackup` after_state.bearer
+)
+
 #: snake_case suffixes (after camelCase/kebab-case are folded to snake_case)
 #: that mark a field as SECRET: `secret_key`, `webhookSecret`, `csrf-token`.
 _SECRET_SUFFIXES: tuple[str, ...] = ("_key", "_secret", "_token", "_password")
@@ -162,7 +179,8 @@ def redact(state: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a redacted copy of `state` (or `None` if `state` is `None`).
 
     Never mutates the input. SECRET-classified fields (by name, see
-    `_SECRET_FIELD_FRAGMENTS`) become `REDACTION_MARKER`; PII-classified
+    `_SECRET_FIELD_FRAGMENTS`) become `REDACTION_MARKER`, unless the value is
+    one of the key's fixed words in `_ENUM_PASS_THROUGH`; PII-classified
     fields become a SHA-256 digest of their `repr`; everything else is walked
     recursively (nested dicts/lists) so a SECRET value nested under an
     unclassified parent key is still caught.
@@ -198,7 +216,8 @@ def _redact_mapping(mapping: dict[str, Any], depth: int) -> dict[str, Any]:
         if classification is None and otp_context and _normalise(key) == "code":
             classification = "secret"
         if classification == "secret":
-            out[key] = REDACTION_MARKER
+            words = _ENUM_PASS_THROUGH.get(_normalise(key), frozenset())
+            out[key] = value if type(value) is str and value in words else REDACTION_MARKER
         elif classification == "pii":
             out[key] = _hash_pii(value) if value is not None else None
         else:
