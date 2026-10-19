@@ -1327,11 +1327,12 @@ stateDiagram-v2
   [*] --> Draft
   Draft --> Validated: risk + instrument filters pass
   Draft --> Rejected: validation failure (local)
-  Draft --> Untracked: discovered on the exchange with no local row (S9)
+  Draft --> Untracked: reconciliation found an exchange order with no local row (S9, §8.5 step 3c)
   Validated --> Submitting: transport send begins
   Submitting --> Submitted: exchange ack (retCode 0)
-  Submitting --> Submitted: duplicate id, no mismatch found (lookup pending)
+  Submitting --> Submitted: duplicate id, full match with the row (SR-E29-03)
   Submitting --> Held: duplicate id held by an order that does not match the row
+  Submitting --> Unknown: duplicate id not verified (no full match yet, §8.3 rule 3)
   Submitting --> Rejected: business reject (retCode != 0, deterministic)
   Submitting --> Unknown: timeout / connection loss / ambiguous response
   Submitted --> PartiallyFilled: execution, leaves_qty > 0
@@ -1342,8 +1343,6 @@ stateDiagram-v2
   Submitted --> Triggered: conditional order trigger fired
   Submitted --> Cancelled: cancelled on the exchange
   Submitted --> Held: the order under our id does not match the row
-  Submitted --> Unknown: transport fault
-  Submitted --> Quarantined: fault
   Triggered --> PartiallyFilled
   Triggered --> Filled
   Triggered --> CancelPending
@@ -1355,7 +1354,6 @@ stateDiagram-v2
   PartiallyFilled --> AmendPending
   PartiallyFilled --> Expired
   PartiallyFilled --> Cancelled: cancelled on the exchange
-  PartiallyFilled --> Quarantined: fault
   CancelPending --> Cancelled: cancel ack
   CancelPending --> Filled: race - filled before cancel landed
   CancelPending --> PartiallyFilled: partial fill during cancel
@@ -1375,13 +1373,9 @@ stateDiagram-v2
   Unknown --> Cancelled: reconciliation found cancelled
   Unknown --> Rejected: 2 consecutive reconciliation passes found nothing
   Unknown --> Held: the order under our id does not match the row
-  Quarantined --> Submitted: reconciliation found it live
-  Quarantined --> PartiallyFilled: reconciliation found partial
-  Quarantined --> Filled: reconciliation found filled
-  Quarantined --> Cancelled: reconciliation found cancelled
   Untracked --> Submitted: adopted under management (adoption_allowed, D6)
   Untracked --> Cancelled: reconciliation found it cancelled, or 2 passes found nothing
-  Held --> Rejected: operator resolved (the only exit, never an adopt)
+  Held --> Rejected: the Owner resolves it after step-up, audited oms.held_resolved (never an adopt)
   Filled --> [*]
   Cancelled --> [*]
   Rejected --> [*]

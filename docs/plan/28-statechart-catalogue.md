@@ -736,9 +736,17 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               },
               {
                 "target": "#order.lifecycle.submitted",
+                "guard": "is_duplicate_link_id_full_match",
+                "actions": [
+                  "adopt_ack"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.unknown",
                 "guard": "is_duplicate_link_id",
                 "actions": [
-                  "mark_needs_lookup"
+                  "mark_needs_lookup",
+                  "skip_kill_cancel"
                 ]
               },
               {
@@ -1134,6 +1142,12 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "actions": [
                 "adopt_recon"
               ]
+            },
+            "MISMATCH": {
+              "target": "#order.lifecycle.held",
+              "actions": [
+                "record_mismatch"
+              ]
             }
           }
         },
@@ -1181,6 +1195,26 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
             "KILL": {
               "actions": [
                 "audit_kill_ignored_unowned"
+              ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "SEND": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "VALIDATE": {
+              "actions": [
+                "audit_command_refused_unowned"
               ]
             }
           }
@@ -1451,11 +1485,13 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `lifecycle.quarantined` | `RECON_FOUND_PARTIAL` | — | `lifecycle.partially_filled` | `adopt_recon` | — |
 | `lifecycle.quarantined` | `RECON_FOUND_FILLED` | — | `lifecycle.filled` | `adopt_recon` | — |
 | `lifecycle.quarantined` | `RECON_FOUND_CANCELLED` | — | `lifecycle.cancelled` | `adopt_recon` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.quarantined` | `MISMATCH` | — | `lifecycle.held` | `record_mismatch` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.untracked` | `ADOPT` | `adoption_allowed` | `lifecycle.submitted` | `adopt_untracked` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.untracked` | `ADOPT` | — | _(internal)_ | `audit_adoption_denied` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.untracked` | `RECON_FOUND_CANCELLED` | — | `lifecycle.cancelled` | `adopt_recon` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.untracked` | `RECON_MISS` | `second_consecutive_miss` | `lifecycle.cancelled` | `set_cancel_missing_remote` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.untracked` | `RECON_MISS` | — | `lifecycle.untracked` | `bump_recon_misses` *(Corrected 2026-10-19, #847)* | yes |
+| `lifecycle.untracked` | `CANCEL`, `AMEND`, `SEND`, `VALIDATE` | — | _(internal)_ | `audit_command_refused_unowned` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.held` | `OPERATOR_RESOLVED` | — | `lifecycle.rejected` | `audit_operator_resolved` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.held` | `*` | — | _(internal)_ | `defer` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle` | `KILL` | — | `lifecycle.killed` | — (entry of `killed`) | — |
@@ -1479,7 +1515,7 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 
 | In state | `id` | `src` | `onDone` | `onError` |
 |---|---|---|---|---|
-| `lifecycle.submitting` | `place` | `place_order` | `lifecycle.submitted` if `ret_code_ok`; `lifecycle.held` if `is_link_id_mismatch` *(Corrected 2026-10-19, #847)*; `lifecycle.submitted` if `is_duplicate_link_id`; `lifecycle.rejected` | `lifecycle.unknown` |
+| `lifecycle.submitting` | `place` | `place_order` | `lifecycle.submitted` if `ret_code_ok`; `lifecycle.held` if `is_link_id_mismatch`; `lifecycle.submitted` if `is_duplicate_link_id_full_match`; `lifecycle.unknown` if `is_duplicate_link_id` *(Corrected 2026-10-19, #847)*; `lifecycle.rejected` | `lifecycle.unknown` |
 | `lifecycle.cancel_pending` | `cancel` | `cancel_order` | `lifecycle.cancelled` if `ret_code_ok`; `lifecycle.partially_filled` if `has_fills`; `lifecycle.submitted` *(Corrected 2026-10-19, #847)* | `lifecycle.unknown` |
 | `lifecycle.amend_pending` | `amend` | `amend_order` | `lifecycle.partially_filled` if `ret_code_ok_and_has_fills`; `lifecycle.submitted` if `ret_code_ok`; `lifecycle.partially_filled` if `has_fills`; `lifecycle.submitted` *(Corrected 2026-10-19, #847)* | `lifecycle.unknown` |
 | `protection.sl_pending` | `attach_sl` | `attach_native_sl` | `protection.sl_present` | `protection.sl_missing` |
@@ -1488,11 +1524,12 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 
 | Guard | Polarity | Contract |
 |---|---|---|
-| `adoption_allowed` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); denies every adoption until E45-S01 records the Owner's decision D6 |
+| `adoption_allowed` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); denies every adoption until E45-S01 records the Owner's decision D6. It records, never makes, the SR-E29-12 verdict the `ADOPT` payload carries (C-2.21): true only when the validator was re-run, kill switch and live gate included, and a native stop is attached (C-2.6); otherwise the adoption is refused |
 | `exec_new_and_closes` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `exec_new_and_partial` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `has_fills` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `is_duplicate_link_id` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
+| `is_duplicate_link_id_full_match` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); true only when the `place` result is a duplicate-id rejection whose lookup returned the order under our `order_link_id` and every SR-E29-03 field (account, symbol, side, quantity, order type, price or trigger, reduce-only, attached stop) matches the row; a failed, empty or partial lookup is `False`, so the order parks in `unknown` |
 | `is_link_id_mismatch` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); true when the `place` result's lookup found an order under our `order_link_id` that does not fully match the row (SR-E29-03) |
 | `passes_all_gates` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `ret_code_ok` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
@@ -1542,6 +1579,7 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 | `adopt_remote_cancel` *(Corrected 2026-10-19, #847)* |
 | `adopt_untracked` *(Corrected 2026-10-19, #847)* |
 | `audit_adoption_denied` *(Corrected 2026-10-19, #847)* |
+| `audit_command_refused_unowned` *(Corrected 2026-10-19, #847)* |
 | `audit_kill_ignored_unowned` *(Corrected 2026-10-19, #847)* |
 | `audit_operator_resolved` *(Corrected 2026-10-19, #847)* |
 | `record_cancel_refused` *(Corrected 2026-10-19, #847)* |
@@ -1562,13 +1600,13 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 | **INV-B1-d** | A fill beats a pending cancel (S3): `cancel_pending` handles `EXEC` explicitly rather than deferring it. |
 | **INV-B1-e** | `unknown` never resubmits (S1); it may only be resolved by reconciliation: a `RECON_FOUND_*` event, a second `RECON_MISS`, or a `MISMATCH` into `held`. *(Amended 2026-10-19, #847.)* |
 | **INV-B1-f** | The `protection` region reaches `sl_present` only from an exchange read (`SL_OBSERVED`), never from a local assumption. |
-| **INV-B1-h** | *(Corrected 2026-10-09, #1650; reworded #2133; amended 2026-10-19, #847)* **At most one exchange cancel per order, and only if it was submitted.** Root `KILL` from `draft`/`validated` reaches `killed` with audit only (`skip_kill_cancel`, no exchange call); from any other non-terminal lifecycle state except `cancel_pending`, `untracked` and `held` (INV-B1-n) it reaches `killed`, sets `halted_by_kill`, writes `audit_kill` **before** the cancel (write-ahead, C-2.9) and issues one `cancel_order` (same `orderLinkId`, C-2.10) bounded by `CV_KILL_CANCEL_TIMEOUT`; failure or timeout is audited and never rolls the kill back. In `cancel_pending` KILL reuses the in-flight cancel (no second call): it sets `halted_by_kill` and audits, and the existing invoke resolves the order (a refused cancel returns it to its live state, INV-B1-j). Reconciliation re-syncs the true exchange state (C-2.5). `KILL` on a terminal state only audits. |
+| **INV-B1-h** | *(Corrected 2026-10-09, #1650; reworded #2133; amended 2026-10-19, #847)* **At most one exchange cancel per order, and only if it was submitted.** Root `KILL` from `draft`/`validated` reaches `killed` with audit only (`skip_kill_cancel`, no exchange call), and so does a `KILL` in `unknown` after an unverified duplicate, whose arm ran `skip_kill_cancel`: an order we could not verify holds the id, so nothing is cancelled under it until reconciliation binds the order (`adopt_recon` clears the flag, #847 slice 4). From any other non-terminal lifecycle state except `cancel_pending`, `untracked` and `held` (INV-B1-n) it reaches `killed`, sets `halted_by_kill`, writes `audit_kill` **before** the cancel (write-ahead, C-2.9) and issues one `cancel_order` (same `orderLinkId`, C-2.10) bounded by `CV_KILL_CANCEL_TIMEOUT`; failure or timeout is audited and never rolls the kill back. In `cancel_pending` KILL reuses the in-flight cancel (no second call): it sets `halted_by_kill` and audits, and the existing invoke resolves the order. If the exchange refuses that cancel, the order returns to its live state with `halted_by_kill` still set (INV-B1-j) and no second cancel is sent: B18's `cancel_all_working_orders` and reconciliation settle the exchange side. Reconciliation re-syncs the true exchange state (C-2.5). `KILL` on a terminal state only audits. |
 | **INV-B1-i** | *(Corrected 2026-10-09, #1650)* `KILL` never changes the `protection` region (C-2.6, C-4.14): no SL is cancelled or amended; the region only audits. |
 | **INV-B1-g** | A write-ahead `order_events` row exists for every transition before the in-memory state changes (S8, A7, MUST-02). |
 | **INV-B1-j** | *(Added 2026-10-19, #847)* A refused cancel never ends the order: only a `cancel` result that is `ret_code_ok` reaches `cancelled` (`adopt_cancel_ack`); any other result returns to the live state (`partially_filled` if `has_fills`, else `submitted`) with `record_cancel_refused`. A fill still beats the cancel (INV-B1-d). |
-| **INV-B1-k** | *(Added 2026-10-19, #847)* An order the exchange ends without a fill is never stranded: every live state (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`) reaches `cancelled` on `REMOTE_CANCELLED`; `submitted`, `triggered` and `partially_filled` reach `expired` on `EXPIRE`; `quarantined` reaches `cancelled` on `RECON_FOUND_CANCELLED`. |
-| **INV-B1-l** | *(Added 2026-10-19, #847)* `untracked` is never managed (S9, SR-E29-12): it is entered only from `draft` on `DISCOVERED`, and left only by `ADOPT` through `adoption_allowed` (a denial is audited and it stays `untracked`) to `submitted`, or by `RECON_FOUND_CANCELLED` or a second `RECON_MISS` to `cancelled`. No other event moves it or runs a managing action. |
-| **INV-B1-m** | *(Added 2026-10-19, #847)* Verify before adopt (SR-E29-03): a `place` result that `is_link_id_mismatch`, and `MISMATCH` in `submitted` or `unknown`, land in `held`; `held` is left only by the operator's `OPERATOR_RESOLVED` (to `rejected`), never by `adopt_recon` or by any exchange push or lookup. |
+| **INV-B1-k** | *(Added 2026-10-19, #847)* An order the exchange ends without a fill is never stranded: every live state (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`) reaches `cancelled` on `REMOTE_CANCELLED`; `submitted`, `triggered` and `partially_filled` reach `expired` on `EXPIRE`; `quarantined` reaches `cancelled` on `RECON_FOUND_CANCELLED`. Bybit does not order its `order` and `execution` topics against each other, so the facade sends `REMOTE_CANCELLED` or `EXPIRE` only once the push's cumulative executed quantity equals `filled_qty`: an end that outruns its executions waits in the S5 reorder buffer until they are applied, and the terminal record carries every fill (#847 slice 6). |
+| **INV-B1-l** | *(Added 2026-10-19, #847)* `untracked` is never managed (S9, SR-E29-12): it is entered only from `draft` on `DISCOVERED`, and left only by `ADOPT` through `adoption_allowed` (a denial is audited and it stays `untracked`) to `submitted`, or by `RECON_FOUND_CANCELLED` or a second `RECON_MISS` to `cancelled`. The order-path commands `CANCEL`, `AMEND`, `SEND` and `VALIDATE` are consumed and audited there (`audit_command_refused_unowned`), never deferred, so none acts after an adoption; exchange facts may still defer. No other event moves it or runs a managing action. |
+| **INV-B1-m** | *(Added 2026-10-19, #847)* Verify before adopt (SR-E29-03): a duplicate-id `place` result reaches `submitted` only on positive evidence, `is_duplicate_link_id_full_match`; it lands in `held` if `is_link_id_mismatch` (checked first) and otherwise parks in `unknown` (24 §8.3 rule 3), where a KILL cancels nothing (INV-B1-h). `MISMATCH` in `submitted`, `unknown` or `quarantined` lands in `held` too; `held` is left only by the operator's `OPERATOR_RESOLVED` (to `rejected`), never by `adopt_recon` or by any exchange push or lookup. |
 | **INV-B1-n** | *(Added 2026-10-19, #847)* `KILL` never cancels an order the OMS does not own (SR-E29-06): on `untracked` and `held` it only audits (`audit_kill_ignored_unowned`), with no transition and no exchange call. |
 
 ### B1.8 Implementation notes
@@ -1577,7 +1615,7 @@ Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-
 - **Deferral is load-bearing.** `submitting` and `amend_pending` are occupied while an exchange round trip is in flight. Omit the wildcard handler on one of them and a fill is lost with no exception and no log line (LC-03; Study 05 C17 lost three `PARTIAL` fills deterministically across 10 runs). `cancel_pending` deliberately handles `EXEC` explicitly instead of deferring, because S3 says the fill wins the race.
 - **Timing is external.** `sl_deadline_us` and the reconciliation deadline are absolute microsecond timestamps in context, armed by the `MonotonicScheduler` and re-armed on restore (A2).
 - **Restore re-drives invokes.** A crash in `submitting` restores a machine parked in `submitting` with no service running (LC-19); the boot procedure re-sends the triggering event *after* draining `_deferred` (MUST-03).
-- **Corrected 2026-10-19 (#847 slice 1; rulings 1 and 3 on the #847 plan), chart `version: 1`.** (a) G-3 of the E29 threat model (SR-E29-12, SR-E29-03): `untracked` holds an exchange order with no local row; it is entered from `draft` on `DISCOVERED` and left only by `ADOPT` through the deny-by-default `adoption_allowed` (a denial is audited on the ordered unguarded arm), or to `cancelled` by `RECON_FOUND_CANCELLED` or a second `RECON_MISS`. `held` holds a local order whose id is on an exchange order that does not match the row: a `place` result that `is_link_id_mismatch` (checked before the duplicate-id arm) or `MISMATCH` in `submitted` or `unknown`; only the operator's `OPERATOR_RESOLVED` ends it, as `rejected`, and whether to adopt the remote order is a separate `ADOPT` on its own `untracked` row. `KILL` on either only audits: the OMS never cancels an order it does not own (SR-E29-06). (b) Exchange outcomes: the `cancel` and `amend` results are adopted only if `ret_code_ok`; any other result returns the order to its live state, chosen by `has_fills`, with `record_cancel_refused` or the `AMEND_REJECTED` actions, so a refused cancel of a `triggered` order resumes as `submitted`. The live states (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`) handle `REMOTE_CANCELLED`; `triggered` and `partially_filled` also handle `EXPIRE`, and `quarantined` handles `RECON_FOUND_CANCELLED`. (c) The context gains `cum_exec_value` and `fee_paid`, `Decimal` strings like `filled_qty`. **Snapshot migration:** a snapshot sealed at the previous hash (`743dfaada4e3…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no snapshot store exists yet, so no upcaster is registered; B1 recovers from `order_events`.
+- **Corrected 2026-10-19 (#847 slice 1; rulings 1 and 3 on the #847 plan), chart `version: 1`.** (a) G-3 of the E29 threat model (SR-E29-12, SR-E29-03): `untracked` holds an exchange order with no local row. Only reconciliation sends `DISCOVERED` (24 §8.5 step 3c, E29-T06), from `draft`; every one pages the Owner (SR-126) through `oms_untracked_orders`, which E29-T08 registers and SR-E27-19 makes a page, as `held` pages on entry. It is left only by `ADOPT` through the deny-by-default `adoption_allowed` (a denial is audited on the ordered unguarded arm), or to `cancelled` by `RECON_FOUND_CANCELLED` or a second `RECON_MISS`; `CANCEL`, `AMEND`, `SEND` and `VALIDATE` are audited and consumed there, so an adoption never replays one. A duplicate-id `place` result is adopted only on a positive full match (`is_duplicate_link_id_full_match`, which binds `exchange_order_id` through `adopt_ack` as the ack of our own create does); `is_link_id_mismatch` sends it to `held` and anything else to `unknown` (`mark_needs_lookup`, `skip_kill_cancel`), so an errored or missing lookup fails closed. `held` holds a local order whose id is on an exchange order that does not match the row: that `place` result, or `MISMATCH` in `submitted`, `unknown` or `quarantined`. Only `OPERATOR_RESOLVED` ends it, as `rejected`: the route that sends it (E45-T03, for the E45-S01 discrepancy view) admits the Owner alone, after step-up, and writes `oms.held_resolved` ahead; whether to adopt the remote order is a separate `ADOPT` on its own `untracked` row. The `DISCOVERED`, `ADOPT` and `OPERATOR_RESOLVED` schemas stay permissive until #847 slice 5 closes every B1 schema. `KILL` on `untracked` or `held` only audits: the OMS never cancels an order it does not own (SR-E29-06). (b) Exchange outcomes: the `cancel` and `amend` results are adopted only if `ret_code_ok`; any other result returns the order to its live state, chosen by `has_fills`, with `record_cancel_refused` or the `AMEND_REJECTED` actions, so a refused cancel of a `triggered` order resumes as `submitted`. The live states (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`) handle `REMOTE_CANCELLED`; `triggered` and `partially_filled` also handle `EXPIRE`, and `quarantined` handles `RECON_FOUND_CANCELLED`. (c) The context gains `cum_exec_value` and `fee_paid`, `Decimal` strings like `filled_qty`. **Snapshot migration:** a snapshot sealed at the previous hash (`743dfaada4e3…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no snapshot store exists yet, so no upcaster is registered; B1 recovers from `order_events`.
 
 ---
 
@@ -7816,7 +7854,7 @@ There is no runtime switch. Every family runs on the pinned library from its fir
 | `leg` | 12 | `a7d8fb5d8c3e…` |
 | `live_gate` | 3 | `780accfd0086…` |
 | `oco` | 11 | `e09f72c6a367…` |
-| `order` | 2 | `6fe4aa7df630…` |
+| `order` | 2 | `6a88830d46b0…` |
 | `paper_account` | 4 | `401363766fb6…` |
 | `position_protection` | 3 | `d95cda091fac…` |
 | `reconciliation` | 8 | `95c8954fe5e7…` |

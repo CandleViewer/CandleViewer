@@ -109,9 +109,17 @@
               },
               {
                 "target": "#order.lifecycle.submitted",
+                "guard": "is_duplicate_link_id_full_match",
+                "actions": [
+                  "adopt_ack"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.unknown",
                 "guard": "is_duplicate_link_id",
                 "actions": [
-                  "mark_needs_lookup"
+                  "mark_needs_lookup",
+                  "skip_kill_cancel"
                 ]
               },
               {
@@ -507,6 +515,12 @@
               "actions": [
                 "adopt_recon"
               ]
+            },
+            "MISMATCH": {
+              "target": "#order.lifecycle.held",
+              "actions": [
+                "record_mismatch"
+              ]
             }
           }
         },
@@ -554,6 +568,26 @@
             "KILL": {
               "actions": [
                 "audit_kill_ignored_unowned"
+              ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "SEND": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "VALIDATE": {
+              "actions": [
+                "audit_command_refused_unowned"
               ]
             }
           }
