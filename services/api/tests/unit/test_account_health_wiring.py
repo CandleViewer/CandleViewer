@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock
@@ -35,6 +36,7 @@ from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.app import AppContext
 from candleviewer.observability.health import HealthStatus
 from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.redaction import redact_structure
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
 from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
@@ -87,6 +89,18 @@ async def test_the_stand_ins_log_what_is_unbound_and_the_wallet_read_is_unavaila
     ]
     with pytest.raises(WalletUnavailable):
         await UnavailableWalletRest().wallet(ACC)
+
+
+async def test_the_unbound_hook_logs_its_down_time_to_the_second_through_the_redaction() -> None:
+    """A transition's `at` carries microseconds: logged in full, its 6-digit run would read as a
+    TOTP code and the log redaction would replace the whole value (C-12.6)."""
+    at = T0 + timedelta(microseconds=123_456)
+    episode = HealthTransition(ACC, HealthState.DEGRADED, HealthState.DOWN, "no_success", at)
+    with capture_logs() as logs:
+        await LoggingDeadMansSwitch().account_down(episode)
+    [event] = logs
+    assert redact_structure(event) == event
+    assert event["down_at"] == at.isoformat(timespec="seconds")
 
 
 async def test_a_rejected_wallet_read_refuses_at_once_and_only_a_later_pass_clears_it() -> None:

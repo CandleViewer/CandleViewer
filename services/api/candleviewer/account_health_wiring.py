@@ -192,7 +192,9 @@ class LoggingDeadMansSwitch:
             "account.dms_policy_unbound",
             account_id=str(transition.account_id),
             reason=transition.reason,
-            down_at=transition.at.isoformat(),
+            # to the second: a 6-digit run of microseconds reads as a TOTP code to the log
+            # redaction, which would replace the whole value (C-12.6)
+            down_at=transition.at.isoformat(timespec="seconds"),
         )
 
 
