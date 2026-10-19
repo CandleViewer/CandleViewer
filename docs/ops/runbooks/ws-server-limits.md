@@ -57,17 +57,40 @@ proxy its own address where the deployment allows it. Regression tests:
 `uvicorn`, `uvicorn.error` and `uvicorn.access` loggers propagate to the root handler that
 `configure_logging()` sets up: JSON lines on stdout, through the handler-level redaction filter
 (SR-121), at `CV_LOG_LEVEL`. The same records reach the support bundle's log buffer
-(`LogRingBuffer`), which applies the redaction filter on its own. What that looks like:
+(`LogRingBuffer`), which applies the redaction filter on its own and passes each stdlib record's
+rendered message through the same redaction as stdout. What that looks like:
 
-- **Fields.** uvicorn's lines carry `event`, `level` and `ts` only: no `env` and no logger name, as
-  for every stdlib logger.
+- **Fields.** uvicorn's lines carry `event`, `level` and `ts` (and `exception` or `stack` for a
+  record with a traceback or a stack): no `env` and no logger name, as for every stdlib logger.
+- **Labelled values.** In message and exception text, a value labelled with a key name of the
+  redaction list (`token = …`, `"password": "…"`, `Authorization: Bearer …`) shows the key-name
+  marker (#415): a quoted value to its closing quote, a bare one to a space, comma or closing
+  bracket. A format string keeps its placeholders; the line it renders is redacted.
+- **Tracebacks.** A traceback or a stack is rendered first and redacted after (#415), on stdout and
+  in the support bundle's buffer (on one line there), where each value stands: a labelled value
+  shows the key-name marker, and each run of characters that has the shape of a secret shows its
+  marker, so the frames and lines stay readable. A class name on the last line can have such a
+  shape and show as a marker: a CamelCase name of 18 to 36 letters and digits
+  (`ConnectionResetError`), or a dotted name of three parts of 10 or more characters each
+  (`websockets.exceptions.ConnectionClosedOK`). A text longer than 4096 characters and the marker
+  keeps 4096: its start and its last lines (up to 3072), around a `...[truncated:oversize]` marker,
+  so the exception's own line stays. An exception logged as a value or an argument is turned into
+  its text first: with Python's own `__str__`, from its arguments redacted first (a mapping's keys
+  and bytes get their rules); any other gets the text rules only, the labels and the shapes.
+  Passed for `%r`, it shows as its quoted text, not as `ValueError('…')`. A traceback that uvicorn
+  logs as the text of a message, as in a failed start below, is still one marker when a shape
+  matches in it (#2868).
+- **Support bundle.** The bundle's secret scan refuses a bundle (`BUNDLE_SECRET_DETECTED`) for a
+  line that still matches one of its rules, such as a label and its value on two lines. The error
+  names the file and the rule, not the value: find the line on stdout for the same window, follow
+  the `SupportBundleSecretDetected` alert runbook, and choose a window without it meanwhile.
 - **Access lines.** The HTTP access line is off whenever the `/metrics` listener runs
   (`CV_METRICS_ENABLED`, on by default): the listener's `access_log=False` clears the shared
   `uvicorn.access` logger. WebSocket handshake lines (`"WebSocket /ws" [accepted]`) are logged on
   `uvicorn.error` at INFO and stay on. A filter on that logger (`UpgradeLineFilter`) cuts the
   request target in those lines and in the websockets server's DEBUG request line to its path, and
-  shows a marker for the value of a DEBUG header line named as a secret, at every level, on stdout
-  and in the support bundle's buffer; the HTTP access line is unchanged.
+  shows a marker for the value of a DEBUG header line named as a secret, whatever `CV_LOG_LEVEL`
+  is, on stdout and in the support bundle's buffer; the HTTP access line is unchanged.
 - **Process ids.** A six-digit process id turns `Started server process [N]` and
   `Finished server process [N]` into a single `[redacted:totp-shape]` marker, because six digits
   is the shape of a TOTP code. PID 1, as in the container, avoids it.
@@ -81,7 +104,8 @@ proxy its own address where the deployment allows it. Regression tests:
 - The bare `uvicorn` CLI applies uvicorn's own logging config instead, which is one more reason
   not to start a deployment with it.
 
-Regression tests: `tests/unit/observability/test_uvicorn_log_routing.py` and
+Regression tests: `tests/unit/observability/test_uvicorn_log_routing.py`,
+`tests/unit/observability/test_exception_text_redaction.py` and
 `tests/unit/observability/test_logging_exit_flush.py`.
 
 ### A failed start (exit code 3)

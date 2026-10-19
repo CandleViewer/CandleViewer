@@ -47,11 +47,47 @@ _REDACT_KEYS: Final[frozenset[str]] = frozenset(
         "csrf",
         "access_token",
         "token",
+        # the token and header forms the services use (#415)
+        "refresh_token",
+        "session_token",
+        "bearer",
+        "x-api-key",
+        "x-auth-token",
+        "x-access-token",
+        "x-csrf-token",
+        "proxy-authorization",
+        # C-12.6 names signatures: a name is their control, as their hex shape stays readable
+        "sign",
+        "signature",
     }
 )
+#: `_REDACT_KEYS` with `-` read as `_`, as `_is_redact_key` reads a name: the hyphenated and the
+#: underscored twin of each name (`refresh-token`, `x_api_key`) is redacted too (#415).
+_REDACT_KEY_FORMS: Final[frozenset[str]] = frozenset(k.replace("-", "_") for k in _REDACT_KEYS)
 
 #: What the value of a key named in `_REDACT_KEYS` is replaced by.
 _KEY_NAME_MARKER: Final[str] = "[redacted:key-name]"
+#: `_REDACT_KEY_FORMS` as a pattern, each name with `-` and `_` alike; the bundle scan's too.
+_KEY_NAMES: Final = "|".join(sorted(re.escape(k).replace("_", "[-_]") for k in _REDACT_KEY_FORMS))
+#: A labelled value that holds nothing to redact: a marker, the end of a cut text, a placeholder.
+#: The bundle scan reads the same as no value.
+_NO_VALUE: Final = r"(?!\[redacted|\.\.\.\[truncated|<omitted>|\*\*\*|null\b|none\b)"
+#: The first letters of the key names: most words fail this check before any name is tried.
+_KEY_FIRST: Final = "".join(sorted({k[0] for k in _REDACT_KEY_FORMS}))
+#: A part of a value in quotes: to its closing quote (a `\` escapes a character) or the line's end.
+_QUOTED: Final = r"""(?:"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)"""
+#: A value labelled with a key name in text (`token = …`, `"password": "…"`, `Authorization: Bearer
+#: …`): the bundle scan's labelled-secret rule as a substitution (#415). On the label's line, a
+#: quoted value runs to its closing quote, and a bare one, after a `Bearer` or `Basic` scheme, to a
+#: space, comma or closing bracket, with any quoted part in it (`access_token="…"`).
+_LABELLED_VALUE: Final = re.compile(
+    rf"""(?ix)(?P<label>\b(?=[{_KEY_FIRST}])(?:{_KEY_NAMES})["']?[ \t]*[:=][ \t]*)
+    (?:(?P<quote>["']){_NO_VALUE}(?:\\.|(?!(?P=quote))[^\\\n])+
+    |{_NO_VALUE}(?:(?:bearer|basic)[ \t]+)?[^\s"',}}\]](?:[^\s"',}}\]]|{_QUOTED})*)"""
+)
+#: A label's `:` or `=` follows a letter (each key name ends with one), a quote, a space or a tab:
+#: text whose separators all follow something else (a timestamp, an address) is not scanned further.
+_LABEL_SEP: Final = re.compile(r"""[:=](?:(?<=[^\W\d_].)|(?<=["' \t].))""")
 
 #: Maximum string length scanned for value-shape patterns. Longer values are
 #: truncated with a marker *before* scanning so one huge payload cannot stall
@@ -78,12 +114,39 @@ _JWT_RE = r"[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
 _JWT_SCAN_RE = r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{10,}+\.[A-Za-z0-9_-]{10,}+\.[A-Za-z0-9_-]{10,}+"
 _APIKEY_RE = r"\b[A-Za-z0-9]{18,36}\b"
 _TOTP_RE = r"\b\d{6}\b"
-#: `secrets.token_urlsafe(32)` invite token (43 chars; sits in URL path `/invites/<token>`; C-12.6).
-_INVITE_SHAPE_RE = r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
+#: The fewest characters a URL-safe token shape takes: the invite shape's lower bound.
+_TOKEN_MIN = 42
+#: Where a URL-safe value can start: not inside a run of URL-safe characters.
+_URL_SAFE_START = r"(?<![A-Za-z0-9_-])"
+#: Nor where a snake_case identifier starts, a run of `[a-z0-9_]` with an `_` (a log event or a
+#: metric name stays readable; a `token_urlsafe` draw is practically never one; #415). Possessive:
+#: the lookahead reads the run once, so the scan stays linear.
+_NOT_SNAKE_CASE = r"(?![a-z0-9]*+_[a-z0-9_]*+(?![A-Za-z0-9_-]))"
+#: A run shorter than `_TOKEN_MIN` is passed over before the identifier check and the shapes read
+#: it: no match changes, and a scan of ordinary words costs what it did.
+_TOKEN_START = f"{_URL_SAFE_START}(?=[A-Za-z0-9_-]{{{_TOKEN_MIN}}}){_NOT_SNAKE_CASE}"
+#: A `secrets.token_urlsafe` value of 31 to 33 bytes: 42 to 44 URL-safe characters, standalone
+#: (#415). 32 bytes (43 characters) is the invite, access and link token, and an invite token sits
+#: in a URL path (`/invites/<token>`; C-12.6). The range stays tight so that ids stay readable: a
+#: uuid4 (36 characters), a commit id (40) and a sha256 digest (64) are outside it.
+_INVITE_BODY = f"[A-Za-z0-9_-]{{{_TOKEN_MIN},44}}(?![A-Za-z0-9_-])"
+_INVITE_SHAPE_RE = _TOKEN_START + _INVITE_BODY
+#: A `secrets.token_urlsafe(48)` value: 64 URL-safe characters, standalone (#415), the refresh token
+#: of the session service. A run of 64 lowercase hex characters stays readable: it is a digest
+#: (sha256), and also the shape of an HMAC-SHA256 signature and of a `secrets.token_hex(32)` value,
+#: for which a key name (`sign`, `signature`, `x-bapi-sign`, as a field or a label) is the control.
+#: Linear like the others: the start check fails at once inside a run, so the bounded
+#: lookahead and the fixed count run only where a run starts.
+_REFRESH_BODY = r"(?![0-9a-f]{64}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{64}(?![A-Za-z0-9_-])"
+_REFRESH_SHAPE_RE = _TOKEN_START + _REFRESH_BODY
 #: E42-T05 BK-11: a backup fetch's path, whatever its token's shape (defence in depth, AD-I04).
 _DOWNLOAD_PATH_RE = r"/admin/backups/[^/]*/download/[^/\s]"  # an empty backupId too
+#: The two URL-safe shapes share one start check: a position inside a run costs one lookbehind,
+#: not two. It matches as `|(?P<invite>{_INVITE_SHAPE_RE})|(?P<refresh>{_REFRESH_SHAPE_RE})` would
+#: (property-tested).
 _VALUE_PATTERN = re.compile(
-    f"(?P<jwt>{_JWT_SCAN_RE})|(?P<apikey>{_APIKEY_RE})|(?P<invite>{_INVITE_SHAPE_RE})"
+    f"(?P<jwt>{_JWT_SCAN_RE})|(?P<apikey>{_APIKEY_RE})"
+    f"|{_TOKEN_START}(?:(?P<invite>{_INVITE_BODY})|(?P<refresh>{_REFRESH_BODY}))"
     f"|(?P<totp>{_TOTP_RE})|(?P<download>{_DOWNLOAD_PATH_RE})"
 )
 
@@ -92,16 +155,61 @@ _REASON_BY_GROUP: Final[dict[str, str]] = {
     "apikey": "key-shape",
     "totp": "totp-shape",
     "invite": "invite-token-shape",
+    "refresh": "refresh-token-shape",
     "download": "download-path",
 }
 
+#: Where a text cut to `_MAX_SCAN_LEN` (`_cut`) lost characters.
+_TRUNCATED: Final[str] = "...[truncated:oversize]"
+#: The longest text that is not cut: a text cut once is not cut again.
+_CUT_LEN: Final = _MAX_SCAN_LEN + len(_TRUNCATED)
+#: The most of a long text's end that a cut keeps, as whole lines: a traceback names its exception
+#: last (#415). A labelled value sits on its label's line, so no cut parts it from its label.
+_TAIL_MAX: Final = 3072
+
+#: A run of the characters the value shapes are made of: word characters, `.` and `-`. A match of
+#: `_VALUE_PATTERN` lies inside one run, and the pattern matches a run alone exactly as it matches
+#: it inside the text (what borders a run is a boundary to every shape), so `_redact_runs` can
+#: replace a whole run, and no part of a matched value stays beside its marker.
+_RUN: Final = re.compile(r"[\w.-]+")
+#: A run as `_cut` reads it: `_RUN` and an opening `[`, so that no cut leaves a marker's `[` alone.
+_CUT_RUN: Final = re.compile(r"[\w.\[-]+")
+
 
 def _is_redact_key(key: object) -> bool:
-    return isinstance(key, str) and key.strip().lower() in _REDACT_KEYS
+    return isinstance(key, str) and key.strip().lower().replace("-", "_") in _REDACT_KEY_FORMS
 
 
-def _redact_str_value(value: str) -> str:
-    """Scan a string for value-shape secrets; return it redacted if matched.
+def _marker(match: re.Match[str]) -> str:
+    return f"[redacted:{_REASON_BY_GROUP.get(match.lastgroup or '', 'value-shape')}]"
+
+
+def _label_marker(match: re.Match[str]) -> str:
+    """The label and its opening quote stay; the value is the key-name marker."""
+    return f"{match['label']}{match['quote'] or ''}{_KEY_NAME_MARKER}"
+
+
+def _cut(text: str) -> str:
+    """`text`, or, when it is longer than `_CUT_LEN`, its start and its last lines (up to
+    `_TAIL_MAX` characters), `_MAX_SCAN_LEN` characters in all, joined by `_TRUNCATED` (#415).
+
+    The start is cut before a run that the cut would split, so no cut part of a value stays.
+    """
+    if len(text) <= _CUT_LEN:
+        return text
+    line = text.find("\n", len(text) - _TAIL_MAX)
+    tail = text[line:] if line >= 0 else ""
+    end = _MAX_SCAN_LEN - len(tail)
+    if _CUT_RUN.match(text, end) and (split := _CUT_RUN.match(text[end - 1 :: -1])):
+        end -= split.end()
+    return text[:end] + _TRUNCATED + tail
+
+
+def _redact_str_value(value: str, *, labels: bool = True) -> str:
+    """Redact a string: each value labelled with a key name shows the key-name marker, and the
+    whole string is a shape's marker when a value shape matches in it (#415). `labels=False` leaves
+    labelled values to the rendered text, for a format string whose placeholders must stay. A long
+    string is cut first (`_cut`), and bounded again after, as markers can lengthen it.
 
     A 6-digit TOTP is only redacted by shape when found alongside a
     totp-ish neighbour is impractical to detect at this granularity (we do
@@ -110,15 +218,52 @@ def _redact_str_value(value: str) -> str:
     depth catch for TOTP codes appearing inside free-form text (e.g. an
     exception message that echoes user input).
     """
-    if len(value) > _MAX_SCAN_LEN:
-        value = value[:_MAX_SCAN_LEN] + "...[truncated:oversize]"
-
+    if len(value) > _CUT_LEN:
+        value = _cut(value)
+    if labels and ("=" in value or ":" in value) and _LABEL_SEP.search(value):
+        value = _LABELLED_VALUE.sub(_label_marker, value)
+        if len(value) > _CUT_LEN:
+            value = _cut(value)
     match = _VALUE_PATTERN.search(value)
-    if match is None:
-        return value
-    group = match.lastgroup
-    reason = _REASON_BY_GROUP.get(group or "", "value-shape")
-    return f"[redacted:{reason}]"
+    return value if match is None else _marker(match)
+
+
+def _run_marker(run: re.Match[str]) -> str:
+    match = _VALUE_PATTERN.search(run.group())
+    return run.group() if match is None else _marker(match)
+
+
+def _redact_runs(text: str) -> str:
+    """Redact the text of a traceback or a stack where each value stands (#415).
+
+    Each value labelled with a key name shows the key-name marker, and each run (`_RUN`) in which a
+    value shape matches is replaced by that shape's marker; the rest of the text stays, so a
+    traceback keeps its frames and lines. A long text is cut first (`_cut`), and bounded again
+    after, as markers can lengthen it: a second pass changes nothing.
+    """
+    text = _cut(_LABELLED_VALUE.sub(_label_marker, _cut(text)))
+    if _VALUE_PATTERN.search(text) is not None:
+        text = _cut(_RUN.sub(_run_marker, text))
+    return text
+
+
+def _exception_text(exc: BaseException, depth: int) -> str:
+    """The text a renderer writes for an exception logged as a value or an argument (`str`).
+
+    With `BaseException`'s own `__str__`, it is made from the arguments redacted first, so a
+    mapping's keys and bytes get their rules (#415); with any other, it is `str(exc)`, which the
+    text rules read. A broken `__str__` must not break the log call: it gets the `traceback`
+    module's text.
+    """
+    try:
+        if type(exc).__str__ is not BaseException.__str__:
+            return str(exc)
+        args = _redact_value(exc.args, depth)
+        if not isinstance(args, tuple):  # deeper than `_MAX_DEPTH`: its marker
+            return str(args)
+        return str(args[0]) if len(args) == 1 else str(args) if args else ""
+    except Exception:
+        return "<exception str() failed>"
 
 
 def _redact_value(value: Any, depth: int) -> Any:
@@ -135,6 +280,8 @@ def _redact_value(value: Any, depth: int) -> Any:
     if isinstance(value, (list, tuple)):
         redacted = [_redact_value(item, depth + 1) for item in value]
         return type(value)(redacted) if isinstance(value, tuple) else redacted
+    if isinstance(value, BaseException):  # #415: its text is rendered here, then redacted
+        return _redact_str_value(_exception_text(value, depth))
     return value
 
 

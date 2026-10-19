@@ -130,7 +130,7 @@ async def test_title_and_detail_are_redacted_again_and_cut_to_the_contract_lengt
         status=None, cursor=None, limit=10
     )
     first, second, third = page.items
-    assert (first.title, len(first.detail or "")) == ("[redacted:key-shape]", 2000)
+    assert (first.title, len(first.detail or "")) == ("api_key=[redacted:key-name]", 2000)
     assert (len(second.title or ""), second.detail) == (200, "[redacted:key-shape]")
     assert third.detail is None  # a stored NULL stays null: nothing was read, nothing is made up
     assert _KEY not in repr(page)

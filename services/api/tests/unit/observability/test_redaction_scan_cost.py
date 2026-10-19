@@ -20,7 +20,8 @@ from candleviewer.observability.redaction import redact_text
 #: `_VALUE_PATTERN` as it was before #2689: the same alternatives, with the backtracking `_JWT_RE`.
 _REFERENCE = re.compile(
     f"(?P<jwt>{redaction._JWT_RE})|(?P<apikey>{redaction._APIKEY_RE})"
-    f"|(?P<invite>{redaction._INVITE_SHAPE_RE})|(?P<totp>{redaction._TOTP_RE})"
+    f"|(?P<invite>{redaction._INVITE_SHAPE_RE})|(?P<refresh>{redaction._REFRESH_SHAPE_RE})"
+    f"|(?P<totp>{redaction._TOTP_RE})"
 )
 #: Non-ASCII word characters and digits: separators for the JWT segments (ASCII classes), word
 #: characters for the `\b` and `\d` of the API-key and TOTP alternatives.
@@ -41,20 +42,33 @@ _AROUND = st.text(alphabet=_SEGMENT + ". =" + _UNICODE, max_size=6)
 _JWT_IN_TEXT = st.tuples(_AROUND, st.from_regex(redaction._JWT_RE, fullmatch=True), _AROUND)
 #: Alphanumeric runs of API-key and invite-token length (18-36 and 43) in random context.
 _KEY_IN_TEXT = st.tuples(_AROUND, st.text(alphabet="aZ09", min_size=16, max_size=45), _AROUND)
+#: URL-safe, lowercase hex and snake_case runs about the token lengths in random context (#415).
+_LONG_RUN = st.one_of(
+    st.text(alphabet=_SEGMENT, min_size=63, max_size=65),
+    st.text("0a9f", min_size=63, max_size=65),
+    st.text("a0_", min_size=41, max_size=65),
+)
+_LONG_IN_TEXT = st.tuples(_AROUND, _LONG_RUN, _AROUND)
 #: Free text over the characters the alternatives tell apart, runs, and embedded secret shapes.
 _TEXT = st.one_of(
     st.text(alphabet=_SEGMENT + ". 1234567" + _UNICODE, max_size=200),
     _RUNS,
     _JWT_IN_TEXT.map("".join),
     _KEY_IN_TEXT.map("".join),
+    _LONG_IN_TEXT.map("".join),
 )
 _CAP = redaction._MAX_SCAN_LEN
-#: Inputs at the scan cap that made the old JWT alternative backtrack from every offset.
+#: Inputs at the scan cap that made the old JWT alternative backtrack from every offset, and runs
+#: that the token alternatives read to their bounds and reject (#415).
 _PATHOLOGICAL = [
     pytest.param("k" * _CAP, id="letter-run"),
     pytest.param("_-" * (_CAP // 2), id="underscore-dash-run"),
     pytest.param(("aZ09" * _CAP)[:_CAP], id="alnum-run"),
     pytest.param("x" * 12 + "." + "y" * (_CAP - 13), id="one-dot-then-run"),
+    pytest.param(("0123456789abcdef" * 4 + " ") * (_CAP // 65), id="hex-digest-runs"),
+    pytest.param((("aZ09_-" * 11)[:65] + " ") * (_CAP // 66), id="url-safe-65-runs"),
+    pytest.param(("snake_case_" * _CAP)[:_CAP], id="snake-case-run"),
+    pytest.param((("ab_" * 15)[:44] + " ") * (_CAP // 45), id="snake-case-runs"),
 ]
 
 _Found = tuple[str | None, tuple[int, int]] | None

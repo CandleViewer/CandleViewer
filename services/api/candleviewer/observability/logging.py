@@ -12,11 +12,16 @@ entrypoints). Wires:
   notes mandate: `merge_contextvars` -> `add_log_level` -> UTC ISO timestamp
   -> `StackInfoRenderer` -> `format_exc_info` -> **redaction** ->
   `JSONRenderer`. Redaction sits after `format_exc_info` so a traceback is
-  already a string by the time it is scanned.
+  already a string by the time it is scanned. On every path, exception text is
+  rendered before it is redacted (#415): stack and traceback text is redacted
+  where each value stands, so it keeps its frames and lines, and an exception
+  logged as a value or an argument is turned into its text first.
 - A stdlib bridge (`structlog.stdlib.ProcessorFormatter`) *and* a
   `RedactionFilter` attached directly to the handler — the ProcessorFormatter
   path only runs for stdlib records that reach that handler, so the filter is
-  the actual backstop for anything that formats its own message.
+  the actual backstop for anything that formats its own message. The filter
+  renders a record's traceback and stores it redacted, with its stack; the
+  formatter writes both into the line (`_record_text`).
 - An `UpgradeLineFilter` on the `uvicorn.error` logger, ahead of every handler: the log lines of a
   WebSocket upgrade show the path of its request target only, and a header line shows a marker
   for the value of a header named as a secret. `reset_logging()` removes it.
@@ -40,6 +45,8 @@ from candleviewer.observability.redaction import (
     _KEY_NAME_MARKER,
     _is_redact_key,
     _redact_mapping,
+    _redact_runs,
+    _redact_str_value,
     _redact_value,
 )
 
@@ -111,7 +118,11 @@ class RedactionFilter(logging.Filter):
 
     @staticmethod
     def _redact_record(record: logging.LogRecord) -> None:
-        if isinstance(record.msg, str):
+        if isinstance(record.msg, str) and record.args:
+            # A format string keeps its placeholders: no labelled value is replaced in it. The line
+            # it renders gets every rule, on stdout and in the support bundle's buffer (#415).
+            record.msg = _redact_str_value(record.msg, labels=False)
+        elif isinstance(record.msg, (str, BaseException)):
             record.msg = _redact_value(record.msg, depth=0)
         if record.args:
             if isinstance(record.args, dict):
@@ -121,15 +132,18 @@ class RedactionFilter(logging.Filter):
         for key, value in list(record.__dict__.items()):
             if key in ("msg", "args", "exc_info", "exc_text", "stack_info"):
                 continue
-            if isinstance(value, (str, dict, list, tuple)):
+            if isinstance(value, (str, dict, list, tuple, BaseException)):
                 record.__dict__[key] = _redact_value(value, depth=0)
-        if record.exc_info and not record.exc_text:
-            # Materialise the traceback now so the handler's formatter cannot
-            # render the raw exception text after the filter has run.
-            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        exc_info, exc_text = record.exc_info, record.exc_text
+        if exc_info and not exc_text:
+            # Render the traceback here, so that no formatter renders it after the filter ran.
+            exc_text = logging.Formatter().formatException(exc_info)
+        if exc_text:
+            # Stored only once redacted: the handlers of a record share it, across threads.
+            record.exc_text = _redact_runs(exc_text)
             record.exc_info = None
-        if record.exc_text:
-            record.exc_text = _redact_value(record.exc_text, depth=0)
+        if record.stack_info:
+            record.stack_info = _redact_runs(record.stack_info)
 
 
 #: Lines of `uvicorn.error` that name the request target of a WebSocket upgrade, by how their
@@ -178,9 +192,39 @@ _UPGRADE_LOGGER: Final = "uvicorn.error"
 _UPGRADE_FILTER: Final = UpgradeLineFilter()
 
 
+#: Event fields that hold the text of a stack or a traceback: `StackInfoRenderer` and
+#: `format_exc_info` write them, and `_record_text` for a stdlib record.
+_TEXT_FIELDS: Final = ("stack", "exception")
+
+
 def _redaction_processor(logger: object, method_name: str, event_dict: EventDict) -> EventDict:
-    """`structlog` processor form of the same redaction rule set."""
-    return _redact_mapping(dict(event_dict))
+    """`structlog` processor form of the same redaction rule set. The text of a stack or a
+    traceback is redacted where each value stands (`_redact_runs`): its frames and lines stay."""
+    if "exception" not in event_dict and "stack" not in event_dict:
+        return _redact_mapping(dict(event_dict))
+    fields = dict(event_dict)
+    texts = {key: fields.pop(key) for key in _TEXT_FIELDS if isinstance(fields.get(key), str)}
+    redacted = _redact_mapping(fields)
+    for key, text in texts.items():
+        redacted[key] = _redact_runs(text)
+    return redacted
+
+
+def _record_text(logger: object, method_name: str, event_dict: EventDict) -> EventDict:
+    """A stdlib record's traceback and stack, as the handler's `RedactionFilter` stored them.
+
+    The filter renders `exc_info` into `exc_text` and clears it, so `format_exc_info` finds no
+    exception, and `StackInfoRenderer` would replace the record's `stack_info` with the stack of
+    the thread that formats the line. First in the formatter's `foreign_pre_chain` only.
+    """
+    record = event_dict.get("_record")
+    if isinstance(record, logging.LogRecord):
+        if record.exc_text and "exc_info" not in event_dict:
+            event_dict["exception"] = record.exc_text
+        if record.stack_info:
+            event_dict.pop("stack_info", None)
+            event_dict["stack"] = record.stack_info
+    return event_dict
 
 
 def _drop_none_correlation_fields(
@@ -259,7 +303,7 @@ def configure_logging(
     )
 
     formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=shared_processors,
+        foreign_pre_chain=[_record_text, *shared_processors],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             renderer,
