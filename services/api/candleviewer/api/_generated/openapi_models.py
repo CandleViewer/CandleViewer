@@ -4727,7 +4727,7 @@ class Backup(BaseModel):
     error: Annotated[
         str | None,
         Field(
-            description="Why the run or its latest conclusive verification failed, as a stable code such as `checksum_mismatch` (E42-T05), never an exception message, a path or key material. A passing verification clears it and an inconclusive one (`store_unavailable`) leaves it as it was (`verifyBackup`). Stored in `backups.error_message`; `null` when nothing failed.\n"
+            description="Why the run or its latest conclusive verification failed, as a stable code such as `checksum_mismatch` (E42-T05), never an exception message, a path or key material. A passing verification clears it and an inconclusive one (`store_unavailable`, `audit_unavailable` or `internal_error`) leaves it as it was (`verifyBackup`). Stored in `backups.error_message`; `null` when nothing failed.\n"
         ),
     ] = None
     deleted_at: Annotated[

@@ -21,9 +21,15 @@ answers (`backup_engine_invalid`, or `audit_unavailable` when its record cannot 
 costs (a start against the hourly limit), the idempotency exception for every refusal to start,
 the job's audit marker and the client's rule to take a run's outcome from its row (BK-8 rulings,
 SEC-EI-01 to SEC-EI-05), and what a download-link issue answers and records when it is refused
-(SR-BK10A-03, SR-BK10B-04). The contract-C review (wf_2a96af04-e90) added the reason of every
-refusal after a link's spend, the link store's bounds, the ceiling on a link's memory, the issued
-record that cannot be written, the order a run is refused in, and what `Backup.error` holds.
+(SR-BK10A-03, SR-BK10B-04). The contract-C review (security F1 to F4 and F6, code F1 to F7) added
+the reason of every refusal after a link's spend, the link store's bounds, the ceiling on a link's
+memory, the issued record that cannot be written, the order a run is refused in, and what
+`Backup.error` holds. The carries that review and its re-check left settle which verification
+outcomes touch the row (only a conclusive failure does), the outcome's write inside the job under
+the backups lock and what it leaves when the lock, its record or the job's deadline fails, the
+second `backup.deleted` record and a mark that fails once the artefact is gone (the row counts as
+usable until the retry), the `reason` of a delete's lock-wait record, the pre-challenge `503` of a
+link issue and of a delete, and the `Idempotency-Key`'s pointer to the refusal exception.
 """
 
 from __future__ import annotations
@@ -157,12 +163,33 @@ def test_backup_actions_answer_501_before_any_challenge(operation_id: str, claus
     assert clause in _desc(operation_id)
 
 
-def test_unknown_backup_and_the_link_limit_are_decided_before_any_challenge() -> None:
+def test_an_outage_an_unknown_backup_and_the_link_limit_are_decided_before_any_challenge() -> None:
+    """Code F4 of the contract-C re-check (#3781's carries): a catalogue read that fails is answered
+    before the challenge, so `issueBackupDownload` names the `503 store_unavailable` with
+    `Retry-After` beside the `404` and the `429` it decides before any challenge, and says it
+    spends no grant and writes no `backup.downloaded` record."""
     assert "An unknown backup is `404` before any challenge" in _desc("deleteBackup")
     issue = _desc("issueBackupDownload")
-    early = "an unknown backup (`404`) and the hourly limit (`429`) are decided before any"
-    assert early + " challenge" in issue
-    assert "and `backup_not_usable` after the grant is spent, as on `restoreBackup`" in issue
+    early = "Order (E42-T05): a catalogue that cannot be read (`503 store_unavailable` with "
+    early += "`Retry-After`), an unknown backup (`404`) and the hourly limit (`429`) are decided "
+    early += "before any challenge (the `503` spends no grant and writes no `backup.downloaded` "
+    early += "record), and `backup_not_usable` after the grant is spent, as on `restoreBackup`;"
+    assert early in issue
+
+
+def test_a_delete_answers_a_catalogue_outage_503_before_any_challenge_and_records_nothing() -> None:
+    """The same gap as the link issue's (the pin above): a catalogue read that fails before the
+    challenge is `503 store_unavailable` with `Retry-After`, decided beside the `404` that
+    `deleteBackup` already answers before any challenge. It spends no grant and writes no
+    `backup.deleted` record, unlike the refusals after the spend that the sentences after it
+    describe, so a reader does not take the `503` for one of them."""
+    delete = _desc("deleteBackup")
+    early = "An unknown backup is `404` before any challenge, and a catalogue that cannot be read "
+    early += "is `503 store_unavailable` with `Retry-After`, also before any challenge: that "
+    early += "`503` spends no grant and writes no `backup.deleted` record."
+    assert early in delete
+    # It comes ahead of everything that happens once the grant is spent.
+    assert delete.index(early) < delete.index("After the grant is spent, and in this order")
 
 
 def test_run_and_verify_records_name_their_stages_and_bind_the_digest() -> None:
@@ -309,6 +336,16 @@ def test_backup_engine_invalid_is_registered_rest_only_and_not_retryable() -> No
     assert re.search(meta_row, tables, re.MULTILINE)  # `ERROR_META`
 
 
+def test_the_engine_refusal_title_names_the_trigger_not_only_the_word_encrypted() -> None:
+    """Security F6 (1) of the contract-C review: the registry title said the engine "plans a run
+    that is not encrypted", narrower than the trigger, which also refuses a plan with no key alias
+    named (`createBackup`). The title is authored in the registry and generated from it
+    (`tools/errorcodes/generate.py`), so the Python enum carries it too."""
+    (entry,) = [e for e in SPEC["x-error-codes"] if e["code"] == _ENGINE_CODE]
+    assert "plans a run that is not encrypted under a key alias;" in entry["title"]
+    assert ERROR_META[ErrorCode(_ENGINE_CODE)].title == entry["title"]
+
+
 def test_a_succeeded_job_over_an_unwritten_finished_record_carries_the_audit_marker() -> None:
     """BK-8 ruling (READY-30, #966): the row is the truth. A `stage: finished` record that cannot
     be written leaves the row `failed` with `audit_unavailable`, never `ok`; the job is polled
@@ -374,6 +411,18 @@ def test_any_refusal_to_start_is_not_stored_under_the_idempotency_key() -> None:
     assert exception in text(SPEC["info"]["description"])
 
 
+def test_the_idempotency_key_points_to_the_refusal_exception() -> None:
+    """Security F6 (1) of the contract-C review: the parameter says "Replays return the original
+    response", which `createBackup` and `restoreBackup` do not do for a refusal to start, so it
+    names the exception that `info.description` states (pinned above) and points to it."""
+    key = text(SPEC["components"]["parameters"]["IdempotencyKey"]["description"])
+    replays = "Client-generated UUIDv4. Replays return the original response with "
+    replays += "`Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do "
+    replays += "not store a refusal to start under the key (the exception under Idempotency in "
+    replays += "`info.description`)."
+    assert key == replays
+
+
 def test_verify_hashes_before_any_decrypt_and_names_its_codes() -> None:
     verify = _desc("verifyBackup")
     first = "compares its SHA-256 with `checksum_sha256` and with the digest the run's "
@@ -396,8 +445,8 @@ def test_an_unreadable_artefact_fails_the_verification_and_leaves_the_row_unchan
     `ArtefactUnreadable`) is the job's `store_unavailable`. The job ends `failed` and its finished
     record is still written, but the row keeps its `status`, `error` and `verified_at`: an
     unreadable store leaves the verification inconclusive, which is no evidence against the backup.
-    That is the one exception to recording a failure on the row, so the sentence that records it
-    names the exception instead of contradicting it."""
+    It is one of the inconclusive outcomes the Outcome sentence names (see
+    `test_only_a_conclusive_failure_changes_the_row_and_an_inconclusive_one_leaves_it`)."""
     verify = _desc("verifyBackup")
     unreadable = "An artefact that exists but cannot be read (for instance an I/O error on the "
     unreadable += "backup volume) is `store_unavailable`: the job ends `failed` and "
@@ -406,21 +455,92 @@ def test_an_unreadable_artefact_fails_the_verification_and_leaves_the_row_unchan
     unreadable += "`error` and `verified_at`, since an unreadable store makes the verification "
     unreadable += "inconclusive, not evidence against the backup."
     assert unreadable in verify
-    recorded = "records the failed verification on the backup row (`status: failed`, `error`), "
-    assert recorded + "except for `store_unavailable`, which leaves the row unchanged." in verify
 
 
 def test_a_passing_verification_makes_any_status_verified_and_the_latest_outcome_wins() -> None:
     """BK-3 m4 (C-6.1): the contract gave only the failed re-verify. A passing one sets `status:
     verified` and `verified_at` and clears `error` (as BK-3's store does) whatever the status was
     before, a `restored` backup included, as a failing one sets `failed`: the latest outcome
-    wins."""
+    wins. A `running` backup and one whose artefact was deleted never get that far: they are
+    refused first (`409 backup_not_usable`), which the parenthesis says, so "whatever the status
+    was before" is exact (security F6 (5) of the contract-C review)."""
     verify = _desc("verifyBackup")
     passing = "ends `succeeded` and sets `status: verified` and `verified_at` and clears `error`, "
-    passing += "whatever the status was before (`restored` included: the latest outcome wins)"
+    passing += "whatever the status was before (`restored` included: the latest outcome wins; a "
+    passing += "`running` backup, or one whose artefact was deleted, is refused first, "
+    passing += "`409 conflict` with rule `backup_not_usable`)"
     assert passing in verify
     failing = "A failed re-verify leaves `verified_at` at the last successful verification."
     assert failing in verify
+    refusal = "A backup whose `status` is `running`, whose artefact was deleted or that is "
+    refusal += "recorded with `encrypted: false` is `409 conflict` with rule `backup_not_usable`"
+    assert refusal in verify
+
+
+def test_only_a_conclusive_failure_changes_the_row_and_an_inconclusive_one_leaves_it() -> None:
+    """Security F5 (2) of the contract-C review (C-6.1): read literally, "records the failed
+    verification on the row, except for `store_unavailable`" covered `audit_unavailable` and
+    `internal_error` (a job past its deadline) too, so an audit outage or a hung job would flip a
+    verified row to `failed`, which a restore refuses (`backup_not_usable`). A check that could not
+    finish is no evidence against the backup: only a conclusive failure, the four the operation
+    names (a mismatch, no bound digest, a missing artefact, a failed scratch restore), records the
+    failure on the row; every other end of the job leaves `status`, `error` and `verified_at`."""
+    verify = _desc("verifyBackup")
+    conclusive = "Only a conclusive failure (`checksum_mismatch`, `checksum_unbound`, "
+    conclusive += "`artefact_missing` or `verify_failed`) records the failed verification on the "
+    conclusive += "backup row (`status: failed`, `error`); "
+    inconclusive = "an inconclusive one (`store_unavailable`, `audit_unavailable` or "
+    inconclusive += "`internal_error`, for instance a job past its deadline) leaves the row's "
+    inconclusive += "`status`, `error` and `verified_at` as they were, since a check that could "
+    inconclusive += "not finish is no evidence against the backup."
+    failed = "or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored "
+    failed += "digest does not match). "
+    assert failed + conclusive + inconclusive in verify  # it sorts the failure it follows
+    # The old wording named one inconclusive code as the exception, which left the rest to the rule.
+    assert "except for `store_unavailable`" not in verify
+
+
+def test_the_outcome_is_written_under_the_lock_and_an_unwritable_record_leaves_the_row() -> None:
+    """SR-BK3-01 as decided on #966, security F5 (3) of the contract-C review (C-6.1, C-2.9): a
+    delete's count of verified backups and its mark straddle the artefact's removal, so the
+    outcome is written under the backups admission lock too, and inside the job, so that the job's
+    own end says what became of it. A job that cannot take the lock within its wait is
+    inconclusive: `store_unavailable`, the row unchanged, its `finished` record still written. An
+    outcome write that cannot write the `finished` record ends the job `audit_unavailable` and
+    leaves the row, since the record comes first (write-ahead)."""
+    verify = _desc("verifyBackup")
+    locked = "The outcome is written inside the job, under the backups admission lock "
+    locked += "(`deleteBackup`). A job that cannot take it within its wait ends `failed` with "
+    locked += "`store_unavailable` (inconclusive, so the row is unchanged), and `backup.verified` "
+    locked += "(`stage: finished`, `outcome: failure`, `error: store_unavailable`) is still "
+    locked += "written."
+    assert locked in verify
+    unwritten = "When the outcome write cannot write the `finished` record, the job ends `failed` "
+    unwritten += "with `audit_unavailable` and the row is unchanged (write-ahead, C-2.9)."
+    assert unwritten in verify
+    # They follow the sentence that writes the `finished` record before the row, and come ahead of
+    # the refusals; the second reads on from the first, whose `finished` record it speaks of.
+    stages = "when the job ends, before the row changes."
+    refusals = "A backup whose `status` is `running`"
+    assert verify.index(stages) < verify.index(locked) < verify.index(unwritten)
+    assert verify.index(unwritten) < verify.index(refusals)
+
+
+def test_a_job_past_its_deadline_ends_internal_error_and_its_record_follows_the_end() -> None:
+    """The gate's deadline cancels a job's work (`admin/backups/gate.py`) and the job store fixes
+    the job's end before it awaits `on_done` (`api/recorder_admin.py`), so a job past its deadline
+    has already ended `failed` with `internal_error` when its `finished` record is written: the
+    record follows that end and cannot change it, which is why the unwritable-record sentence is
+    scoped to the outcome write inside the job (the pin above). `internal_error` is inconclusive,
+    so the row is unchanged whether or not that record can be written."""
+    verify = _desc("verifyBackup")
+    deadline = "A job past its deadline ends `failed` with `internal_error` instead: its "
+    deadline += "`finished` record follows that end, and the row is unchanged whether or not that "
+    deadline += "record can be written."
+    assert deadline in verify
+    unwritten = "When the outcome write cannot write the `finished` record"
+    refusals = "A backup whose `status` is `running`"
+    assert verify.index(unwritten) < verify.index(deadline) < verify.index(refusals)
 
 
 def test_delete_keeps_the_row_and_names_its_conflicts() -> None:
@@ -520,26 +640,68 @@ def test_an_unwritable_failure_record_after_the_spend_is_a_503_audit_unavailable
     assert "is written first" not in lock_wait
 
 
+def test_the_lock_wait_record_of_a_delete_carries_reason_store_unavailable() -> None:
+    """BK-12 carry from the contract-C review (#3781's "Not in this PR" list): the failure record
+    of a link issue refused for the lock names `reason: store_unavailable`
+    (`issueBackupDownload`), and a delete's, written ahead of the same `503`, does too, so a
+    reader of the audit trail finds one reason for the one cause."""
+    delete = _desc("deleteBackup")
+    reason = "A delete's failure record for this `503` carries `reason: store_unavailable`, like "
+    reason += "the link issue's (`issueBackupDownload`)."
+    assert reason in delete
+    # "this `503`" and "the link issue's" are the lock wait's and the sentence before it.
+    link = "A download-link issue is refused the same way after its grant is spent, with a record "
+    link += "of its own (`issueBackupDownload`)."
+    unwritten = "When a delete's failure record cannot be written"
+    assert delete.index(link) < delete.index(reason) < delete.index(unwritten)
+
+
+def test_a_delete_failing_after_its_record_writes_a_second_and_a_retry_completes_it() -> None:
+    """Security F4 (b) of the contract-C review (C-2.9; #3781's "Not in this PR" list): the second
+    `backup.deleted` record is written ahead of the `503` like the first, so when it cannot be
+    written the answer is `503 audit_unavailable` and the grant stays spent. A mark that fails
+    once the artefact is gone ends as a failed removal does (the second record,
+    `503 store_unavailable`, the row unmarked), and a retry completes the delete, since an
+    artefact already gone counts as removed. Until it does, the unmarked row, `verified` and not
+    deleted, still counts as a usable backup (`last_usable_backup`, `backup_not_usable`)."""
+    delete = _desc("deleteBackup")
+    second = "a second `backup.deleted` record with `outcome: failure` follows, the row is "
+    second += "unchanged, and the answer is `503 store_unavailable`, a code that here also covers "
+    second += "the backup volume."
+    unwritten = "When that second record cannot be written, the answer is `503 audit_unavailable` "
+    unwritten += "and the grant stays spent."
+    marked = "A row that cannot be marked once the artefact is gone ends as a failed removal does "
+    marked += "(the second record, `503 store_unavailable`, the row unmarked), and a retry "
+    marked += "completes the delete, because an artefact already gone counts as removed; until the "
+    marked += "retry completes, the unmarked row still counts as a usable backup."
+    for sentence in (second, unwritten, marked):
+        assert sentence in delete, sentence
+    # "that second record" is the one the removal's sentence writes; the mark's follows both.
+    assert delete.index(second) < delete.index(unwritten) < delete.index(marked)
+    assert delete.index(marked) < delete.index("Until an artefact remover is wired")
+
+
 def test_backup_schema_gains_optional_deleted_at() -> None:
     backup = _SCHEMAS["Backup"]
     deleted_at = backup["properties"]["deleted_at"]
     assert (deleted_at["type"], deleted_at["format"]) == (["string", "null"], "date-time")
     assert "the catalogue row is kept" in text(deleted_at["description"])
     assert "required" not in backup  # every member optional, so adding one is additive (C-6.3)
+    assert not api.Backup.model_fields["deleted_at"].is_required()
+    assert api.Backup.model_validate({"kind": "pg_dump"}).deleted_at is None
 
 
 def test_backup_error_names_the_latest_conclusive_verification() -> None:
-    """Sec F6 (2), code F5 (C-6.1): a verification that cannot read the artefact is inconclusive and
-    leaves `error` as it was, and a passing one clears it, so `Backup.error` holds why the run or
-    its latest conclusive verification failed (`verifyBackup`; BK-3 m4, BK-6b D-1)."""
+    """Sec F6 (2), code F5 (C-6.1): a verification that cannot finish is inconclusive and leaves
+    `error` as it was, and a passing one clears it, so `Backup.error` holds why the run or its
+    latest conclusive verification failed (`verifyBackup`; BK-3 m4, BK-6b D-1). It names the same
+    three inconclusive codes as the Outcome sentence, so the two never disagree on which."""
     error = text(_SCHEMAS["Backup"]["properties"]["error"]["description"])
     lead = "Why the run or its latest conclusive verification failed, as a stable code such as "
     assert error.startswith(lead + "`checksum_mismatch`")
-    cleared = "A passing verification clears it and an inconclusive one (`store_unavailable`) "
-    cleared += "leaves it as it was (`verifyBackup`)."
+    cleared = "A passing verification clears it and an inconclusive one (`store_unavailable`, "
+    cleared += "`audit_unavailable` or `internal_error`) leaves it as it was (`verifyBackup`)."
     assert cleared in error
-    assert not api.Backup.model_fields["deleted_at"].is_required()
-    assert api.Backup.model_validate({"kind": "pg_dump"}).deleted_at is None
 
 
 @pytest.mark.parametrize(

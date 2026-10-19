@@ -600,7 +600,7 @@ x-error-codes:
     retryable: true
   - code: backup_engine_invalid
     status: 503
-    title: The backup engine plans a run that is not encrypted; refused, fail closed, until its configuration is fixed
+    title: The backup engine plans a run that is not encrypted under a key alias; refused, fail closed, until its configuration is fixed
     retryable: false
   - code: degraded_data
     status: 503
@@ -9710,7 +9710,9 @@ paths:
         kept, since the catalogue is kept forever (`21-database-schema.md` section 7): the row
         gains `deleted_at` and records who deleted it (not exposed), its `status` is unchanged,
         and a later verify, link or restore of it is `409 conflict` with rule
-        `backup_not_usable`. An unknown backup is `404` before any challenge. After the grant is
+        `backup_not_usable`. An unknown backup is `404` before any challenge, and a catalogue that
+        cannot be read is `503 store_unavailable` with `Retry-After`, also before any challenge:
+        that `503` spends no grant and writes no `backup.deleted` record. After the grant is
         spent, and in this order, a backup already deleted is `409 conflict` with rule
         `backup_deleted`; one that is `running`, or that a running verification or restore uses,
         is `409 conflict` with rule `backup_in_use`; and the last backup of its `kind` that is
@@ -9727,17 +9729,23 @@ paths:
         or a restore is refused after its grant is spent, so the grant is gone, its failure record
         (`backup.deleted` or `backup.restore`, `outcome: failure`) is written ahead of the `503`,
         and the operator steps up again to retry. A download-link issue is refused the same way
-        after its grant is spent, with a record of its own (`issueBackupDownload`). When a delete's
-        failure record cannot be written, for this `503` or for any `409 conflict` after the grant
-        is spent, the answer is `503 audit_unavailable` and the grant stays spent.
+        after its grant is spent, with a record of its own (`issueBackupDownload`). A delete's
+        failure record for this `503` carries `reason: store_unavailable`, like the link issue's
+        (`issueBackupDownload`). When a delete's failure record cannot be written, for this `503` or
+        for any `409 conflict` after the grant is spent, the answer is `503 audit_unavailable` and
+        the grant stays spent.
         The challenge's `action_summary` template is
         `Delete the artefact of backup '<backupId>' (<kind>)` and `target` is null; the
         `backup.deleted` record names the `challenge_id` of the grant it spent. If the artefact
         cannot be removed after the record is written, a second `backup.deleted` record with
         `outcome: failure` follows, the row is unchanged, and the answer is
-        `503 store_unavailable`, a code that here also covers the backup volume. Until an
-        artefact remover is wired the operation answers `501 not_implemented` before any
-        challenge.
+        `503 store_unavailable`, a code that here also covers the backup volume. When that second
+        record cannot be written, the answer is `503 audit_unavailable` and the grant stays spent. A
+        row that cannot be marked once the artefact is gone ends as a failed removal does (the
+        second record, `503 store_unavailable`, the row unmarked), and a retry completes the delete,
+        because an artefact already gone counts as removed; until the retry completes, the unmarked
+        row still counts as a usable backup. Until an artefact remover is wired the operation
+        answers `501 not_implemented` before any challenge.
       x-rbac: { permissions: [backups:write], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
@@ -9761,10 +9769,15 @@ paths:
         hash-chain verification, migration version) and discards it. Never touches live data.
         Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and
         sets `status: verified` and `verified_at` and clears `error`, whatever the status was
-        before (`restored` included: the latest outcome wins), or ends `failed` with a stable
-        `error` code (`checksum_mismatch` when the stored digest does not match) and records the
-        failed verification on the backup row (`status: failed`, `error`), except for
-        `store_unavailable`, which leaves the row unchanged. A failed re-verify leaves
+        before (`restored` included: the latest outcome wins; a `running` backup, or one whose
+        artefact was deleted, is refused first, `409 conflict` with rule `backup_not_usable`), or
+        ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does
+        not match). Only a conclusive failure (`checksum_mismatch`, `checksum_unbound`,
+        `artefact_missing` or `verify_failed`) records the failed verification on the backup row
+        (`status: failed`, `error`); an inconclusive one (`store_unavailable`, `audit_unavailable`
+        or `internal_error`, for instance a job past its deadline) leaves the row's `status`,
+        `error` and `verified_at` as they were, since a check that could not finish is no evidence
+        against the backup. A failed re-verify leaves
         `verified_at` at the last successful verification. Either outcome is audited as
         `backup.verified`.
         Integrity first (E42-T05): when the backup's kind produces a single-file artefact, the job
@@ -9783,7 +9796,15 @@ paths:
         `backup.verified` is written with `after_state.stage: requested` before the `202` (when
         it cannot be written the answer is `503 audit_unavailable` and nothing is scheduled), and
         with `stage: finished`, the outcome and the `error` code when the job ends, before the row
-        changes. A backup whose `status` is `running`, whose artefact was deleted or that is
+        changes. The outcome is written inside the job, under the backups admission lock
+        (`deleteBackup`). A job that cannot take it within its wait ends `failed` with
+        `store_unavailable` (inconclusive, so the row is unchanged), and `backup.verified`
+        (`stage: finished`, `outcome: failure`, `error: store_unavailable`) is still written. When
+        the outcome write cannot write the `finished` record, the job ends `failed` with
+        `audit_unavailable` and the row is unchanged (write-ahead, C-2.9). A job past its deadline
+        ends `failed` with `internal_error` instead: its `finished` record follows that end, and the
+        row is unchanged whether or not that record can be written. A backup whose `status` is
+        `running`, whose artefact was deleted or that is
         recorded with `encrypted: false` is `409 conflict` with rule `backup_not_usable`. One
         verification runs at a time: while another is running a new one is `409 conflict` with
         rule `verify_running`, and while a restore is running, with rule
@@ -9836,8 +9857,10 @@ paths:
         `verified` or `restored` can be downloaded; any other status is `409 conflict` with rule
         `backup_not_usable`. A user may issue at most 10 links per hour, after which the call is
         `429 rate_limited` with `Retry-After`.
-        Order (E42-T05): an unknown backup (`404`) and the hourly limit (`429`) are decided before
-        any challenge, and `backup_not_usable` after the grant is spent, as on `restoreBackup`; a
+        Order (E42-T05): a catalogue that cannot be read (`503 store_unavailable` with
+        `Retry-After`), an unknown backup (`404`) and the hourly limit (`429`) are decided before
+        any challenge (the `503` spends no grant and writes no `backup.downloaded` record), and
+        `backup_not_usable` after the grant is spent, as on `restoreBackup`; a
         backup whose artefact was deleted, that is recorded with `encrypted: false`, or whose
         artefact is not a single file is not usable. A refusal after the grant is spent is audited
         as `backup.downloaded` with `stage: issued` and `outcome: failure` and a `reason`:
@@ -12721,7 +12744,7 @@ components:
       name: Idempotency-Key
       in: header
       required: false
-      description: "Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`."
+      description: "Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`)."
       schema: { type: string, format: uuid }
     IdempotencyKeyRequired:
       name: Idempotency-Key
@@ -18086,8 +18109,9 @@ components:
           description: >
             Why the run or its latest conclusive verification failed, as a stable code such as
             `checksum_mismatch` (E42-T05), never an exception message, a path or key material. A
-            passing verification clears it and an inconclusive one (`store_unavailable`) leaves it
-            as it was (`verifyBackup`). Stored in `backups.error_message`; `null` when nothing
+            passing verification clears it and an inconclusive one (`store_unavailable`,
+            `audit_unavailable` or `internal_error`) leaves it as it was (`verifyBackup`). Stored in
+            `backups.error_message`; `null` when nothing
             failed.
         deleted_at:
           type: ["string", "null"]
