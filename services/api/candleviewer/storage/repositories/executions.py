@@ -3,7 +3,8 @@
 `executions` keeps the fills the exchange reports, append-only (21 Sec.3.3.6); every source of a
 fill inserts it and `ux_exec_id` keeps one row, so a repeated `exec_id` never counts twice
 (24 Sec.8.2 S4). `executions_sqlalchemy.py` is the Postgres side. Money is a `Decimal` its column
-holds exactly, `fee_rate` at numeric(18,10). `apply_fill` is a fill's write-ahead step (E29-T03).
+holds exactly, `fee_rate` at numeric(18,10). A fill that moves its order's totals is written by
+`apply_fill`, the fill's write-ahead step (E29-T03), never by `insert`.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from uuid import UUID
 
 from candleviewer.storage.repositories.orders import (
     CommittedStep,
+    FillRefused,
     OrderSide,
     OrderTransition,
     check_fields,
@@ -103,13 +105,26 @@ class OrderFill:
         if names != (self.step.account_id, self.step.order_id):
             raise ValueError("the execution names another account or order than its step")
 
+    def check(self, qty: Decimal, is_paper: bool) -> None:
+        """`FillRefused` for what its order, locked with its `qty` and `is_paper`, cannot take: run
+        after the dedupe, as a repeated `exec_id` is no refusal (S4), and before the step."""
+        cum, order_id = self.totals.cum_exec_qty, self.step.order_id
+        if cum > qty:
+            raise FillRefused(order_id, "above_qty")
+        if self.execution.is_paper != is_paper:
+            raise FillRefused(order_id, "paper_mismatch")
+        if (cum == qty) != (self.step.to_state == "filled"):
+            raise FillRefused(order_id, "state_mismatch")
+
 
 class ExecutionStore(Protocol):
     """Insert and account-scoped reads of `executions`."""
 
     async def insert(self, execution: NewExecution) -> bool:
         """Store the fill unless its account holds its `exec_id` already: True when this call
-        stored it. One transaction of its own; `OrderNotFoundError` for another account's order."""
+        stored it. One transaction of its own; `OrderNotFoundError` for another account's order.
+        Only for a fill that moves no order's totals: `apply_fill` then reads its `exec_id` as
+        applied (None)."""
         ...
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None: ...

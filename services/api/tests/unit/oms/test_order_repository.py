@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -251,8 +252,13 @@ class _AnyStore:
         return call
 
 
+_DONE = CommittedStep(_row(), _event_row())  # what a write-ahead step's store returns
+_FILLED = cast(Any, SimpleNamespace(execution=FILL, step=SimpleNamespace(order_id=ORDER)))
+#: Each write by its table (the label it is timed on), and the call where a table has two.
 _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]] = {
     "orders": (lambda s, t: OrderRepository(s, t).create(ORDER_IN, EVENT_IN), _row()),
+    "orders transition": (lambda s, t: OrderRepository(s, t).transition(cast(Any, None)), _DONE),
+    "executions apply_fill": (lambda s, t: ExecutionRepository(s, t).apply_fill(_FILLED), _DONE),
     "order_events": (lambda s, t: OrderEventRepository(s, t).append(ACCOUNT, ORDER, EVENT_IN),
                      _event_row()),
     "executions": (lambda s, t: ExecutionRepository(s, t).insert(FILL), True),
@@ -261,7 +267,7 @@ _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]
 }  # fmt: skip
 
 
-@pytest.mark.parametrize("table", WRITE_TABLES)
+@pytest.mark.parametrize("table", sorted(_WRITES))
 async def test_every_write_is_timed_on_its_table_a_failed_one_too(table: str) -> None:
     """One observation per store call, its clock delta, a refused write included: it held the
     order path as long."""
@@ -275,7 +281,7 @@ async def test_every_write_is_timed_on_its_table_a_failed_one_too(table: str) ->
     assert await write(_AnyStore(result), timer) is result
     with pytest.raises(OrderConstraintError):
         await write(_AnyStore(error=OrderConstraintError("ord_cum")), timer)
-    sample, labels = metrics.registry.get_sample_value, {"env": "dev", "table": table}
+    sample, labels = metrics.registry.get_sample_value, {"env": "dev", "table": table.split()[0]}
     assert sample("oms_db_write_seconds_count", labels) == 2
     assert sample("oms_db_write_seconds_sum", labels) == 2.25
 
@@ -283,7 +289,7 @@ async def test_every_write_is_timed_on_its_table_a_failed_one_too(table: str) ->
 def test_the_catalogue_bounds_the_table_label_by_the_tables_written() -> None:
     (spec,) = (s for s in CATALOGUE if s.name == "oms_db_write_seconds")
     assert (spec.kind, spec.labels, spec.buckets) == ("histogram", ("table",), OMS_WRITE_BUCKETS)
-    assert spec.max_series == len(WRITE_TABLES) == len(_WRITES)
+    assert spec.max_series == len(WRITE_TABLES) == len({table.split()[0] for table in _WRITES})
     cap = OMS_STATEMENT_TIMEOUT_MS / 1000  # a p99 near the store's statement cap shows apart
     assert {cap - 0.5, cap, cap + 0.5} <= set(OMS_WRITE_BUCKETS)
 
@@ -301,6 +307,22 @@ async def test_an_execution_write_logs_its_ids(
     order = {"order_link_id": fill.order_link_id, "order_id": fill.order_id and str(fill.order_id)}
     ids = order | {"account_id": str(ACCOUNT), "exec_id": "E1"}
     assert logs == [{"event": event, "log_level": level, **ids}]
+
+
+@pytest.mark.parametrize(
+    ("repo", "call", "result", "event", "level"),
+    [(OrderRepository, "transition", _DONE, "oms_order_transitioned", "info"),
+     (ExecutionRepository, "apply_fill", _DONE, "oms_order_filled", "info"),
+     (ExecutionRepository, "apply_fill", None, "oms_execution_duplicate", "debug")],
+)  # fmt: skip
+async def test_a_step_logs_its_order_link_id(
+    repo: Any, call: str, result: object, event: str, level: str
+) -> None:
+    """ADR-0006 rule 1: a step's line carries its `order_link_id`, a duplicate fill's too."""
+    with capture_logs() as logs:
+        assert await getattr(repo(_AnyStore(result)), call)(_FILLED) is result
+    seen = [(line["event"], line["log_level"], line["order_link_id"]) for line in logs]
+    assert seen == [(event, level, LINK)]
 
 
 async def test_the_execution_and_position_reads_pass_the_account_through() -> None:

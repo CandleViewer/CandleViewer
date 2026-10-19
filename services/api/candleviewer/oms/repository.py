@@ -181,7 +181,8 @@ class ExecutionRepository:
     async def insert(self, execution: NewExecution) -> bool:
         """Store a fill once whatever source reports it (24 Sec.8.2 S4): True when this call
         stored it, False when its account holds the `exec_id` already; `OrderNotFoundError` when
-        `order_id` is not an order of that account."""
+        `order_id` is not an order of that account. Only for a fill that moves no order's totals
+        (none to apply): one that does goes through `apply_fill`, which then reads it as applied."""
         with self._timer.measure("executions"):
             stored = await self._store.insert(execution)
         ids = {
@@ -202,9 +203,8 @@ class ExecutionRepository:
             done = await self._store.apply_fill(fill)
         exec_id = fill.execution.exec_id
         if done is None:
-            _log().debug(
-                "oms_execution_duplicate", order_id=str(fill.step.order_id), exec_id=exec_id
-            )
+            ids = {"order_link_id": fill.execution.order_link_id, "exec_id": exec_id}
+            _log().debug("oms_execution_duplicate", order_id=str(fill.step.order_id), **ids)
         else:
             _log_step("oms_order_filled", done, exec_id=exec_id)
         return done

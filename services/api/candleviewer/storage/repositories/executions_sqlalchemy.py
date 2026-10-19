@@ -5,8 +5,8 @@ is `INSERT ... ON CONFLICT (exchange_account_id, exec_id) DO NOTHING` (21 Sec.3.
 whether this call stored the row; the id is `gen_random_uuid()`. `order_id` is bound through a
 subquery scoped to the execution's account: another account's order binds NULL, which `RETURNING`
 shows, and the store raises `OrderNotFoundError` before committing. `get` filters on the account
-(C-12.4). `insert` commits alone; `apply_fill` (E29-T03) locks the order, refuses totals above
-`qty`, inserts the fill and, only if it is new, commits the order's step with it (`commit_step`).
+(C-12.4). `insert` commits alone; `apply_fill` (E29-T03) locks the order, inserts the fill and,
+only if it is new, checks it against the order (`OrderFill.check`) and commits the step with it.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from candleviewer.db.models import executions, orders
 from candleviewer.storage.repositories.executions import ExecutionRow, NewExecution, OrderFill
-from candleviewer.storage.repositories.orders import CommittedStep, FillAboveQty, OrderNotFoundError
+from candleviewer.storage.repositories.orders import CommittedStep, OrderNotFoundError
 from candleviewer.storage.repositories.orders_sqlalchemy import CappedStore, commit_step, lock_order
 
 _X = executions.c
@@ -65,10 +65,10 @@ class SqlAlchemyExecutionStore(CappedStore):
     async def apply_fill(self, fill: OrderFill) -> CommittedStep | None:
         step = fill.step
         async with self._unit_of_work() as uow:
-            if fill.totals.cum_exec_qty > await lock_order(uow, step.account_id, step.order_id):
-                raise FillAboveQty(step.order_id)
+            held = await lock_order(uow, step.account_id, step.order_id)
             if (await uow.session.execute(insert_statement(fill.execution))).first() is None:
                 return None  # `ux_exec_id` holds the fill already: nothing is committed
+            fill.check(held["qty"], held["is_paper"])  # a refusal rolls the insert back
             return await commit_step(uow, fill)
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None:

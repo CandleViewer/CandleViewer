@@ -17,8 +17,8 @@ import socket
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
-from dataclasses import fields
+from contextlib import asynccontextmanager, nullcontext
+from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -40,7 +40,7 @@ from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
     OPEN_STATES,
-    FillAboveQty,
+    FillRefused,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
@@ -51,7 +51,7 @@ from candleviewer.storage.repositories.orders import (
     require_aware,
     require_money,
 )
-from tests.unit.oms.write_ahead_contract import fill, step
+from tests.unit.oms.write_ahead_contract import event, fill, step
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
@@ -222,9 +222,9 @@ _SECRET_EVENT = _event(
 )
 #: An order row as the write-ahead step reads it (E29-T03), and a step and a fill from it.
 _HELD = cast(Any, SimpleNamespace(id=ORDER, exchange_account_id=ACCOUNT, state="accepted"))
-_HELD.qty, _HELD.cum_exec_qty, _HELD.cum_exec_value, _HELD.fee_paid = Decimal("0.3"), 0, 0, 0
-_ECHO = f"error sign! origin_string[1760630400000{_KEY}5000]"
-_STEP = step(_HELD, "rejected", reject_code="10004", reject_message=_ECHO)
+_HELD.order_link_id, _HELD.qty = LINK, Decimal("0.3")
+_HELD.cum_exec_qty = _HELD.cum_exec_value = _HELD.fee_paid = 0
+_STEP = step(_HELD, "rejected", reject_code="10004", reject_message=_SECRET_EVENT.ret_msg)
 _FILL = fill(_HELD, "E1", "0.1")
 _STATEMENTS: dict[str, Any] = {
     "create_statement": mod.create_statement(_new_order(), _SECRET_EVENT),
@@ -345,6 +345,63 @@ def test_a_step_is_a_compare_and_set_with_its_reject_redacted() -> None:
     assert held in fill_sql and "cum_exec_value=$3" in fill_sql
 
 
+@pytest.mark.parametrize(
+    ("given", "stored"),
+    [({"reject_code": _KEY}, REDACTED), ({"reject_code": "1" * (MAX_CODE_CHARS + 1)}, OVERSIZE),
+     ({"reject_message": _REJECTED_TEXT}, REDACTED)],
+)  # fmt: skip
+def test_a_reject_is_redacted_like_ret_code_and_ret_msg(given: dict[str, Any], stored: str) -> None:
+    """#845 decision 2: `reject_code` takes the string rule within 64 characters, and
+    `reject_message` the message rule too (its 18 letters alone pass the string rule)."""
+    moved = step(_HELD, "rejected", **given)
+    assert moved.changes() == {"state": "rejected"} | dict.fromkeys(given, stored)
+    assert _bound(mod.transition_statement(moved))[:2] == ["rejected", stored]
+
+
+@pytest.mark.parametrize(
+    ("source", "expect"),
+    [*((s, pytest.raises(ValueError, match="OM-R02")) for s in ("reconcile", "rest", "ws_private")),
+     ("local", nullcontext()), ("paper", nullcontext())],
+)  # fmt: skip
+def test_only_a_step_the_exchange_reported_must_carry_its_message(source: Any, expect: Any) -> None:
+    """OM-R02: a `rest`, `ws_private` or `reconcile` step carries what the exchange said (every
+    source of the column is listed here, not read off `EXCHANGE_SOURCES`)."""
+    with expect:
+        step(_HELD, "accepted", event(source=source, payload={}))
+
+
+_UNWRITABLE: dict[str, tuple[Callable[[], object], type[Exception], str]] = {
+    "unknown_state": (lambda: step(_HELD, cast(Any, "killed")), ValueError, "of their columns"),
+    "unknown_kind": (lambda: step(_HELD, "accepted", event(cast(Any, "kill"))),
+                     ValueError, "of their columns"),
+    "unknown_source": (lambda: step(_HELD, "accepted", event(source=cast(Any, "bybit"))),
+                       ValueError, "of their columns"),
+    "another_order": (lambda: fill(_HELD, "E1", "0.1", order_id=ACCOUNT),
+                      ValueError, "another account or order"),
+    "float_totals": (lambda: replace(_FILL.totals, fee_paid=cast(Any, 0.5)),
+                     TypeError, "^fee_paid "),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("built", sorted(_UNWRITABLE))
+def test_a_step_or_fill_no_column_holds_is_refused_as_it_is_built(built: str) -> None:
+    """OM-T04: every store refuses it alike, before any statement."""
+    build, error, match = _UNWRITABLE[built]
+    with pytest.raises(error, match=match):
+        build()
+
+
+@pytest.mark.parametrize(
+    ("qty", "paper", "reason"),
+    [("0.09", False, "above_qty"), ("0.3", True, "paper_mismatch"),
+     ("0.1", False, "state_mismatch")],
+)  # fmt: skip
+def test_a_fill_its_locked_order_cannot_take_is_refused(qty: str, paper: bool, reason: str) -> None:
+    """OM-T04: `_FILL` takes 0.1 to `partially_filled` on a live order of a held `qty`."""
+    with pytest.raises(FillRefused, match=reason):
+        _FILL.check(Decimal(qty), paper)
+
+
 def test_list_events_pages_by_seq_inside_the_account() -> None:
     sql = _sql(_STATEMENTS["list_events_statement"])
     assert "JOIN orders ON orders.id = order_events.order_id" in sql
@@ -428,9 +485,6 @@ def _event_row(**over: Any) -> dict[str, Any]:
     return row | {"id": 7, "order_id": ORDER, "seq": 1, "kind": "ack", "payload": {}} | over
 
 
-_LOCKED = _Result([{"qty": Decimal("0.1")}])  # `lock_order`: a `qty` that `_FILL` fills exactly
-
-
 async def test_create_maps_the_returned_row_and_commits_once() -> None:
     rel = _Rel(_Result([_order_row(stop_loss=Decimal("62000"), tpsl_mode="Partial")]))
     row = await _store(rel).create(_new_order(), _event())
@@ -468,8 +522,10 @@ async def test_append_returns_the_stored_event_with_its_order_link_id() -> None:
     assert _sql(rel.statements[1]).startswith("INSERT INTO order_events")
 
 
+_LOCKED = _Result([{"qty": Decimal("0.3"), "is_paper": False}])  # `lock_order` reads `_HELD`
 _TAKEN = _Result([SimpleNamespace(order_id=ORDER)])  # a fill's insert took a row
 _CAS, _EVENT = _Result([_order_row()]), _Result([_event_row()])
+_FILL_SCRIPT = [_LOCKED, _TAKEN, _CAS, _EVENT]  # what one `apply_fill` of `_FILL` reads
 _Step = tuple[Callable[[_Rel], Awaitable[Any]], list[_Result], str, str]
 _STEPS: dict[str, _Step] = {  # a step: its call, script, statements it runs, event's `to_state`
     "transition": (lambda r: _store(r).transition(_STEP), [_LOCKED, _CAS], "UPDATE", "rejected"),
@@ -488,6 +544,7 @@ async def test_a_step_locks_its_order_then_writes_and_commits_once(call: str) ->
     done = await run(rel)
     assert (done.order.order_link_id, done.event.order_link_id, rel.commits) == (LINK, LINK, 1)
     assert [_sql(stmt).split()[0] for stmt in rel.statements] == f"SELECT {verbs} INSERT".split()
+    assert _sql(rel.statements[0]).startswith("SELECT orders.order_link_id, orders.qty, orders.is_")
     assert _bound(rel.statements[-1])[6:8] == ["accepted", to_state]
 
 
@@ -496,21 +553,33 @@ async def test_a_step_locks_its_order_then_writes_and_commits_once(call: str) ->
     [
         ("transition", [_Result()], OrderNotFoundError),
         ("transition", [_LOCKED, _Result()], StaleOrderState),
-        ("apply_fill", [_Result([{"qty": Decimal("0.09")}])], FillAboveQty),  # before the insert
+        ("apply_fill", [_Result([{"qty": Decimal(0), "is_paper": False}]), _TAKEN], FillRefused),
         ("apply_fill", [_LOCKED, _TAKEN, _Result()], StaleOrderState),  # the insert rolls back
     ],
 )
-async def test_a_refused_step_commits_nothing(
-    call: str, script: list[_Result], error: type
-) -> None:
+async def test_a_refused_step_writes_nothing(call: str, script: list[_Result], error: type) -> None:
     rel = _Rel(*script)
     with pytest.raises(error):
         await _STEPS[call][0](rel)
     assert (len(rel.statements), rel.commits) == (len(script), 0)
 
 
+@pytest.mark.parametrize(
+    "write",
+    [lambda st: st.transition(step(_HELD, "filled")),  # a fill comes with its execution
+     lambda st: st.transition(step(_HELD, "partially_filled", event("partial_fill"))),
+     lambda st: st.create(_new_order(), _event(source="reconcile"))],  # without its message
+)  # fmt: skip
+async def test_a_write_refused_as_it_starts_opens_no_unit(write: Any) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match=r"apply_fill|OM-R02"):
+        await write(_store(rel))
+    assert rel.units == []
+
+
 async def test_a_duplicate_fill_is_none_and_commits_nothing() -> None:
-    rel = _Rel(_LOCKED, _Result())  # `ON CONFLICT DO NOTHING` returned no row
+    """S4 before OM-T04: a duplicate is no refusal, though its order would refuse it as new."""
+    rel = _Rel(_Result([{"qty": Decimal(0), "is_paper": True}]), _Result())  # no row inserted
     assert await _STEPS["apply_fill"][0](rel) is None
     assert (len(rel.statements), rel.commits) == (2, 0)
 

@@ -40,7 +40,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, fields
-from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID
 
@@ -68,6 +67,7 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
     OrderTransition,
     StaleOrderState,
+    require_exchange_record,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -146,7 +146,7 @@ def link_taken_statement(order_link_id: str) -> sa.Select[Any]:
 
 
 def lock_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
-    stmt = sa.select(_O.order_link_id, _O.qty).where(
+    stmt = sa.select(_O.order_link_id).where(
         _O.exchange_account_id == account_id, _O.id == order_id
     )
     return stmt.with_for_update(key_share=True)  # FOR NO KEY UPDATE: inserts keep their FK check
@@ -196,12 +196,14 @@ def list_events_statement(
     )
 
 
-async def lock_order(uow: SqlAlchemyUnitOfWork, account_id: UUID, order_id: UUID) -> Decimal:
-    """Lock the order row in its account and return its `qty`, or `OrderNotFoundError`."""
-    row = (await uow.session.execute(lock_statement(account_id, order_id))).mappings().first()
+async def lock_order(uow: SqlAlchemyUnitOfWork, account_id: UUID, order_id: UUID) -> sa.RowMapping:
+    """Lock the order row in its account and read what a fill is checked against, `qty` and
+    `is_paper`, or raise `OrderNotFoundError`."""
+    stmt = lock_statement(account_id, order_id).add_columns(_O.qty, _O.is_paper)
+    row = (await uow.session.execute(stmt)).mappings().first()
     if row is None:
         raise OrderNotFoundError
-    return Decimal(row["qty"])
+    return row
 
 
 async def commit_step(
@@ -300,6 +302,7 @@ class SqlAlchemyOrderStore(CappedStore):
     """`OrderStore` and `OrderEventStore` over one relational repository (asyncpg)."""
 
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
+        require_exchange_record(first_event)
         stmt = create_statement(order, first_event)
         async with self._unit_of_work() as uow:
             row = (await uow.session.execute(stmt)).mappings().one()
@@ -307,6 +310,7 @@ class SqlAlchemyOrderStore(CappedStore):
         return _order(row)
 
     async def transition(self, step: OrderTransition) -> CommittedStep:
+        step.require_no_fill()
         async with self._unit_of_work() as uow:
             await lock_order(uow, step.account_id, step.order_id)
             return await commit_step(uow, step)

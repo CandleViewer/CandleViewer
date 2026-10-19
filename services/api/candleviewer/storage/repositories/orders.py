@@ -54,6 +54,7 @@ OrderEventKind = Literal[
     "error",
 ]  # fmt: skip
 OrderEventSource = Literal["local", "rest", "ws_private", "reconcile", "paper"]
+FillRefusal = Literal["above_qty", "paper_mismatch", "state_mismatch"]
 OrderSide = Literal["Buy", "Sell"]
 OrderType = Literal["Market", "Limit"]
 TimeInForce = Literal["GTC", "IOC", "FOK", "PostOnly"]
@@ -74,6 +75,8 @@ OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
 )
 #: The sources of a step the exchange reported, which carries the exchange's message (OM-R02).
 EXCHANGE_SOURCES: Final = frozenset[OrderEventSource]({"rest", "ws_private", "reconcile"})
+#: The values a step's `from_state`, `to_state`, `kind` and `source` may take (OM-T04).
+_LITERALS: Final = tuple(map(get_args, (OrderState, OrderState, OrderEventKind, OrderEventSource)))
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
 UX_ORDERS_LINK: Final = "ux_orders_link"
 #: Upper bound of one `list_for_order` page.
@@ -188,11 +191,19 @@ class NewOrderEvent:
         require_aware("event_ts", self.event_ts)
 
 
+def require_exchange_record(event: NewOrderEvent) -> None:
+    """OM-R02: an event that puts an order in a state, `create`'s first one too, carries the
+    exchange's message as its `payload` when the exchange reported it."""
+    if event.source in EXCHANGE_SOURCES and not event.payload:
+        raise ValueError("a step the exchange reported must carry its message (OM-R02)")
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OrderTransition:
     """A write-ahead step (24 Sec.8.2 S8): `state` moves to `to_state` only while the row holds
     `from_state` (compare-and-set), and `event` is appended with both states, in one transaction.
-    `reject_code` and `reject_message` are set when given."""
+    `reject_code` and `reject_message` are set when given. Built only from the columns' values,
+    so every store refuses anything else alike, before any statement (OM-T04)."""
 
     account_id: UUID
     order_id: UUID
@@ -203,8 +214,16 @@ class OrderTransition:
     reject_message: str | None = None
 
     def __post_init__(self) -> None:
-        if self.event.source in EXCHANGE_SOURCES and not self.event.payload:
-            raise ValueError("a step the exchange reported must carry its message (OM-R02)")
+        require_exchange_record(self.event)
+        given = (self.from_state, self.to_state, self.event.kind, self.event.source)
+        if any(value not in values for value, values in zip(given, _LITERALS, strict=True)):
+            raise ValueError("a step's states, kind and source must be values of their columns")
+
+    def require_no_fill(self) -> None:
+        """A fill, and `filled`, come with the execution that justifies them (OM-R02): only
+        `ExecutionStore.apply_fill` writes them, so `OrderStore.transition` refuses them."""
+        if self.event.kind in {"fill", "partial_fill"} or self.to_state == "filled":
+            raise ValueError("a fill is written by apply_fill, with its execution")
 
     def changes(self) -> dict[str, object]:
         """The columns it sets, the exchange's text redacted like `ret_msg` (#845 decision 2)."""
@@ -322,13 +341,15 @@ class StaleOrderState(OrderStoreError):
         self.expected = expected
 
 
-class FillAboveQty(OrderStoreError):
-    """A fill's new `cum_exec_qty` is above the order's `qty`: hostile or malformed exchange data
-    (OM-T04), refused before any write. Names the order only; quantities are P1."""
+class FillRefused(OrderStoreError):
+    """A fill its locked order refuses as hostile or malformed data (OM-T04), with nothing written:
+    `cum_exec_qty` past `qty` (`above_qty`, INV-1), a paper flag unlike the order's
+    (`paper_mismatch`, C-2.11's separate state), or `filled` reached without filling `qty`, or
+    the reverse (`state_mismatch`). Names the order and the reason only; quantities are P1."""
 
-    def __init__(self, order_id: UUID) -> None:
-        super().__init__(f"a fill would take order {order_id} past its qty: nothing was written")
-        self.order_id = order_id
+    def __init__(self, order_id: UUID, reason: FillRefusal) -> None:
+        super().__init__(f"order {order_id} refuses a fill ({reason}): nothing was written")
+        self.order_id, self.reason = order_id, reason
 
 
 class OrderStore(Protocol):
@@ -341,7 +362,8 @@ class OrderStore(Protocol):
 
     async def transition(self, step: OrderTransition) -> CommittedStep:
         """Commit `step`, or raise with nothing written: `StaleOrderState` when the row no longer
-        holds `step.from_state`, `OrderNotFoundError` outside the account."""
+        holds `step.from_state`, `OrderNotFoundError` outside the account, `ValueError` for a fill
+        (`OrderTransition.require_no_fill`)."""
         ...
 
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None: ...
@@ -361,7 +383,7 @@ class OrderStore(Protocol):
 
 
 class OrderEventStore(Protocol):
-    """Append and account-scoped reads of `order_events`; E29-T03 adds the transition event."""
+    """Append and account-scoped reads of `order_events`; a step's event is `transition`'s."""
 
     async def append(self, account_id: UUID, order_id: UUID, event: NewOrderEvent) -> OrderEventRow:
         """Append with the next `seq`, under a lock on the order row; no state transition

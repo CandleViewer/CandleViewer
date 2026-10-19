@@ -9,7 +9,8 @@ store's statement cap on a lock wait, and a redacted payload, `ret_code` and `re
 for fills and positions, one row per fill whatever reports it, the account-scoped order link of a
 fill, the position upsert with a cleared stop, a stale position write that leaves the newer row, a
 future-dated position time refused and a future-dated row healed, and `list_unprotected` planned
-over `ix_pos_no_sl`. The DDL itself is `test_oms_core_migration.py`'s.
+over `ix_pos_no_sl`. `TestWriteAheadOnPostgres` runs E29-T03's write-ahead contract on real row
+locks, its races and rollbacks. The DDL itself is `test_oms_core_migration.py`'s.
 """
 
 from __future__ import annotations

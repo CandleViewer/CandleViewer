@@ -21,7 +21,8 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
 - The persistence (E29-T01): `OrderRepository`, `OrderEventRepository`,
   `ExecutionRepository`, `PositionRepository` and `PositionSnapshotRepository`
   (`repository`) over the driver-free stores of M10, the `WriteTimer` behind
-  `oms_db_write_seconds{table}`, and `DuplicateOrderLinkId`.
+  `oms_db_write_seconds{table}`, and `DuplicateOrderLinkId`; the write-ahead step (E29-T03):
+  `OrderRepository.transition` and `ExecutionRepository.apply_fill`.
 
 `service.py` (the lifecycle contract) and `models.py` are still the E02-T05 scaffold: the
 supervisor can construct and sequence the module, and `start()` builds the `Validator`, but

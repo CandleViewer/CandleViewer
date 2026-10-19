@@ -1,12 +1,12 @@
 """Behavioural contract of the write-ahead step (E29-T03 #847, slice 3 of 7): 24 Sec.8.2 S8 (a
 state commits with its event), S7 (a refused or failed write changes nothing) and S4's durable
-half (a repeated `exec_id` never counts twice). `test_write_ahead_fake.py` runs it on the fake,
-`tests/integration/storage/test_orders_store_pg.py` on Postgres; subclasses supply `h`."""
+half (a repeated `exec_id` never counts twice). `tests/integration/storage/test_orders_store_pg.py`
+runs it on Postgres, and slice 3b on the stores' in-memory fake; subclasses supply `h`."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -22,7 +22,7 @@ from candleviewer.storage.repositories.executions import FillTotals, NewExecutio
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 QTY, PX, FEE = Decimal("0.3"), Decimal("63000"), Decimal("0.5")
-SHAPE = "Q3w9" * 6  # letters and digits, credential-shaped, built at run time (SR-145)
+SHAPE = "DUMMYKEY_" + "Q3w9" * 6  # synthetic, credential-shaped, built at run time (SR-145)
 Row = port.OrderRow
 Event = port.NewOrderEvent
 Transition = port.OrderTransition
@@ -38,21 +38,24 @@ def step(row: Row, to: port.OrderState, new: Event | None = None, **over: Any) -
     return port.OrderTransition(**(base | {"to_state": to, "event": new or event()} | over))
 
 
-def fill(row: Row, exec_id: str, qty: str, new: Event | None = None) -> OrderFill:
-    """The fill as slice 4's `apply_execution` would compute it from `row`."""
+def fill(row: Row, exec_id: str, qty: str, new: Event | None = None, **over: Any) -> OrderFill:
+    """The fill as slice 4's `apply_execution` would compute it from `row`; `over` changes its
+    execution and, as `to_state`, its step."""
     size = Decimal(qty)
-    execution = NewExecution(
-        exchange_account_id=row.exchange_account_id, order_id=row.id, exec_id=exec_id,
-        symbol="BTCUSDT", side="Buy", exec_qty=size, exec_price=PX, exec_value=size * PX,
-        exec_type="Trade", is_maker=False, exec_ts=T0, exec_fee=FEE,
-    )  # fmt: skip
-    cum, value = row.cum_exec_qty + size, row.cum_exec_value + size * PX
-    fee = row.fee_paid + FEE
+    cum = row.cum_exec_qty + size
+    to: port.OrderState = over.pop("to_state", "filled" if cum == row.qty else "partially_filled")
+    base: dict[str, Any] = {
+        "exchange_account_id": row.exchange_account_id, "order_id": row.id, "exec_id": exec_id,
+        "order_link_id": row.order_link_id, "symbol": "BTCUSDT", "side": "Buy", "exec_qty": size,
+        "exec_price": PX, "exec_value": size * PX, "exec_type": "Trade", "is_maker": False,
+        "exec_ts": T0, "exec_fee": FEE,
+    }  # fmt: skip
+    execution = NewExecution(**(base | over))
+    value, fee = row.cum_exec_value + size * PX, row.fee_paid + FEE
     totals = FillTotals(cum_exec_qty=cum, cum_exec_value=value, avg_price=PX, fee_paid=fee)
-    kind: port.OrderEventKind = "fill" if cum == row.qty else "partial_fill"
-    to: port.OrderState = "filled" if cum == row.qty else "partially_filled"
-    new = new or event(kind, payload={"execId": exec_id})
-    return OrderFill(step=step(row, to, new), execution=execution, totals=totals)
+    new = new or event("fill" if cum == row.qty else "partial_fill", payload={"execId": exec_id})
+    moved = step(row, to, new, account_id=execution.exchange_account_id)
+    return OrderFill(step=moved, execution=execution, totals=totals)
 
 
 @dataclass(frozen=True)
@@ -62,13 +65,13 @@ class Harness:
     executions: ExecutionRepository
     new_account: Callable[[], UUID]
 
-    async def order(self, state: port.OrderState = "accepted") -> Row:
+    async def order(self, state: port.OrderState = "accepted", first: Event | None = None) -> Row:
         new = port.NewOrder(
             id=uuid4(), exchange_account_id=self.new_account(), order_link_id=f"ext-{uuid4().hex}",
             symbol="BTCUSDT", side="Buy", intent="entry", order_type="Limit", qty=QTY, price=PX,
             stop_loss=Decimal("62000"), state=state,
         )  # fmt: skip
-        return await self.orders.create(new, event("local_create", source="local"))
+        return await self.orders.create(new, first or event("local_create", source="local"))
 
     async def stored(self, row: Row) -> tuple[Row | None, list[int]]:
         """The order as stored now, and its events' `seq`s."""
@@ -76,10 +79,33 @@ class Harness:
         return await self.orders.get(row.exchange_account_id, row.id), [e.seq for e in events]
 
 
-_REFUSED_EVENT = {  # a write whose event insert `oe_latency` refuses, after its compare-and-set
-    "step": lambda h, row, bad: h.orders.transition(step(row, "submitted", bad)),
-    "fill": lambda h, row, bad: h.executions.apply_fill(fill(row, "E1", "0.1", bad)),
-}
+_OTHER = uuid4()  # an account that holds none of the orders
+#: Events whose insert `oe_latency` refuses, after the step's update (and a fill's insert).
+_LATE_ACK, _LATE_FILL = event(latency_ms=-1), event("partial_fill", latency_ms=-1)
+_REFUSED: dict[str, tuple[Callable[[Harness, Row], Awaitable[object]], type[Exception], Any]] = {
+    "late_step_event": (lambda h, r: h.orders.transition(step(r, "submitted", _LATE_ACK)),
+                        port.OrderConstraintError, "oe_latency"),
+    "late_fill_event": (lambda h, r: h.executions.apply_fill(fill(r, "E1", "0.1", _LATE_FILL)),
+                        port.OrderConstraintError, "oe_latency"),
+    "step_elsewhere": (lambda h, r: h.orders.transition(step(r, "submitted", account_id=_OTHER)),
+                       port.OrderNotFoundError, None),  # C-12.4
+    "fill_elsewhere": (lambda h, r: h.executions.apply_fill(
+        fill(r, "E1", "0.1", exchange_account_id=_OTHER)), port.OrderNotFoundError, None),
+    "fill_kind": (lambda h, r: h.orders.transition(step(r, "partially_filled", event("fill"))),
+                  ValueError, "apply_fill"),  # a fill comes with its execution (OM-R02)
+    "filled": (lambda h, r: h.orders.transition(step(r, "filled", event("exchange_push"))),
+               ValueError, "apply_fill"),
+    "above_qty": (lambda h, r: h.executions.apply_fill(fill(r, "E1", "0.4")),
+                  port.FillRefused, "above_qty"),  # OM-T04: refused, never clamped
+    "paper_mismatch": (lambda h, r: h.executions.apply_fill(fill(r, "E1", "0.1", is_paper=True)),
+                       port.FillRefused, "paper_mismatch"),
+    "state_mismatch": (lambda h, r: h.executions.apply_fill(
+        fill(r, "E1", "0.1", to_state="filled")), port.FillRefused, "state_mismatch"),
+    "no_qty": (lambda h, r: h.executions.apply_fill(fill(r, "E1", "0.1", exec_qty=Decimal(0))),
+               port.OrderConstraintError, "ex_qty"),
+    "no_price": (lambda h, r: h.executions.apply_fill(fill(r, "E1", "0.1", exec_price=Decimal(0))),
+                 port.OrderConstraintError, "ex_px"),
+}  # fmt: skip
 
 
 class WriteAheadContract:
@@ -87,12 +113,18 @@ class WriteAheadContract:
         """S8: the state and its event (both states, the source, the exchange's message redacted,
         OM-R02) commit together, before the step returns."""
         row = await h.order("pending_submit")
-        said = {"retCode": 0, "headers": {"X-BAPI-SIGN": SHAPE}}
+        said = {"code": 0, "headers": {"signature": SHAPE}}
         done = await h.orders.transition(step(row, "accepted", event(source="rest", payload=said)))
         got = done.event
         assert (got.seq, got.from_state, got.to_state) == (1, "pending_submit", "accepted")
-        assert (got.source, got.payload) == ("rest", {"retCode": 0, "headers": REDACTED})
+        assert (got.source, got.payload) == ("rest", {"code": 0, "headers": REDACTED})
         assert await h.stored(row) == (done.order, [0, 1]) and done.order.state == "accepted"
+
+    async def test_an_exchange_reported_order_is_created_with_its_message(self, h: Harness) -> None:
+        """OM-R02 from the first state: an adopted order's event carries what the exchange said,
+        refused before any statement."""
+        with pytest.raises(ValueError, match="OM-R02"):
+            await h.order("untracked", event("reconcile_diff", source="reconcile", payload={}))
 
     async def test_a_missed_compare_and_set_writes_nothing(self, h: Harness) -> None:
         row = await h.order("accepted")
@@ -111,20 +143,17 @@ class WriteAheadContract:
         assert [type(r) for r in results if r is not won] == [port.StaleOrderState]
         assert await h.stored(row) == (won.order, [0, 1])
 
-    @pytest.mark.parametrize("write", sorted(_REFUSED_EVENT))
-    async def test_a_refused_event_rolls_the_unit_back(self, h: Harness, write: str) -> None:
-        """S7, a rollback mid-unit: the state, a fill's totals and its execution are as before."""
+    @pytest.mark.parametrize("write", sorted(_REFUSED))
+    async def test_a_refused_write_changes_nothing(self, h: Harness, write: str) -> None:
+        """S7, whatever refuses it (a constraint mid-unit, the account, OM-R02, OM-T04): the
+        order, its events and the execution, in either account, stay as they were."""
+        run, error, match = _REFUSED[write]
         row = await h.order("accepted")
-        with pytest.raises(port.OrderConstraintError, match="oe_latency"):
-            await _REFUSED_EVENT[write](h, row, event("partial_fill", latency_ms=-1))
+        with pytest.raises(error, match=match):
+            await run(h, row)
         assert await h.stored(row) == (row, [0])
-        assert await h.executions.get(row.exchange_account_id, "E1") is None
-
-    async def test_a_step_outside_the_account_writes_nothing(self, h: Harness) -> None:
-        row = await h.order("accepted")
-        with pytest.raises(port.OrderNotFoundError):
-            await h.orders.transition(step(row, "pending_cancel", account_id=h.new_account()))
-        assert await h.stored(row) == (row, [0])
+        accounts = (row.exchange_account_id, _OTHER)
+        assert [await h.executions.get(a, "E1") for a in accounts] == [None, None]
 
     async def test_a_fill_commits_with_its_execution_and_event(self, h: Harness) -> None:
         row = await h.order("accepted")
@@ -138,26 +167,32 @@ class WriteAheadContract:
         assert stored is not None and (stored.order_id, stored.exec_qty) == (row.id, q)
         assert await h.stored(row) == (new, [0, 1])
 
-    async def test_duplicate_fill_never_double_counts(self, h: Harness) -> None:
-        """Gherkin "Duplicate fill never double-counts", its durable half (S4): E1 for 0.1 was
-        applied; delivered again, with totals computed after it, it changes nothing (None)."""
+    @pytest.mark.parametrize("qty", ["0.1", "0.3"])  # a partial fill, and the one that fills
+    async def test_duplicate_fill_never_double_counts(self, h: Harness, qty: str) -> None:
+        """Gherkin "Duplicate fill never double-counts", its durable half (S4): E1 was applied;
+        delivered again, with totals computed after it (past `qty` once it filled the order),
+        it changes nothing (None), so a duplicate is never taken for hostile data."""
         row = await h.order("accepted")
-        first = await h.executions.apply_fill(fill(row, "E1", "0.1"))
+        first = await h.executions.apply_fill(fill(row, "E1", qty))
         assert first is not None
-        assert await h.executions.apply_fill(fill(first.order, "E1", "0.1")) is None
+        assert await h.executions.apply_fill(fill(first.order, "E1", qty)) is None
         assert await h.stored(row) == (first.order, [0, 1])
 
-    async def test_a_fill_above_qty_is_refused_before_writing(self, h: Harness) -> None:
-        """OM-T04: totals above `qty` are hostile data, refused, never clamped."""
+    async def test_two_concurrent_deliveries_of_one_fill_apply_it_once(self, h: Harness) -> None:
+        """S4 in a race: `execution` and `execution.fast` deliver E1 at once, from one row."""
         row = await h.order("accepted")
-        with pytest.raises(port.FillAboveQty) as err:
-            await h.executions.apply_fill(fill(row, "E1", "0.4"))
-        assert err.value.order_id == row.id
-        assert await h.executions.get(row.exchange_account_id, "E1") is None
+        same = fill(row, "E1", "0.1")
+        results = await asyncio.gather(*(h.executions.apply_fill(same) for _ in "ab"))
+        (won,) = [r for r in results if r is not None]
+        assert None in results and won.order.cum_exec_qty == Decimal("0.1")
+        assert await h.stored(row) == (won.order, [0, 1])
+
+    async def test_a_fill_stored_by_insert_is_never_applied(self, h: Harness) -> None:
+        """`insert` is for a fill that moves no order: `apply_fill` then reads it as applied."""
+        row = await h.order("accepted")
+        assert await h.executions.insert(fill(row, "E1", "0.1").execution)
+        assert await h.executions.apply_fill(fill(row, "E1", "0.1")) is None
         assert await h.stored(row) == (row, [0])
-        done = await h.executions.apply_fill(fill(row, "E1", "0.3"))  # exactly `qty`: accepted
-        assert done is not None and done.order.state == "filled"
-        assert done.order.leaves_qty == Decimal(0)
 
     @pytest.mark.parametrize("state", ["accepted", "partially_filled"])
     async def test_of_two_concurrent_fills_one_wins(self, h: Harness, state: Any) -> None:
