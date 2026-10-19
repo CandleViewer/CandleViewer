@@ -871,11 +871,21 @@ class _Connection:
         swap or the settle around them raised, so the connection closes `slow_consumer` with
         nothing still queued ahead of its `bye` (#415, §9.5): sealed with the flag off; with it
         on, the step 3 `bye`, which clears both lanes (`retry_after_ms` 3 000 and the generic
-        message, `23-ws-protocol.md` §8.4)."""
+        message, `23-ws-protocol.md` §8.4). With the flag off, a close already under way stays the
+        connection's one close (§8.6): it is sealed, and counted and logged as no second close."""
         if self.pipeline is not None:
             self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
-            return
-        self.close_with("slow_consumer", seal=True)
+        elif self.closing and not self.sealed:
+            dropped = self._seal()
+            _log().info(
+                "ws eviction sealed",
+                connection_id=self.connection_id,
+                dropped=dropped,
+                user_id=str(self.user_id) if self.user_id else None,
+                session_id=self.session_id,
+            )
+        else:
+            self.close_with("slow_consumer", seal=True)
 
     # -- inbound ------------------------------------------------------------
 
@@ -1501,7 +1511,8 @@ def make_ws_router(
         narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). One that
         raises is contained to its subscription (§10.1): flag on, by the pipeline; flag off, as
         the hub contains one (`SequencingHub._snapshot_failed`), left pending with its reason
-        for the next flush and logged, and nothing closes."""
+        for the next flush, and nothing closes. The flag-off `ws snapshot failed` line is the
+        settle's own: one per subscription per change, not throttled as the hub's is (§9.5)."""
         if conn.pipeline is not None:
             conn.pipeline.flush_pending(subs)
         elif (emitter := conn.emitter) is not None:

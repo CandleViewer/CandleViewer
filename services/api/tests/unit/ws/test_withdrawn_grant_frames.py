@@ -14,18 +14,29 @@ import uuid
 from typing import Any, NamedTuple
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant
 from candleviewer.bars.errors import BarsError
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import OUTBOUND_QUEUE_MAX, _Connection
+from candleviewer.ws.metrics import SAMPLE_EVERY
 from candleviewer.ws.outbound import PRIORITY_FAMILIES, QUEUE_FRAMES
 from candleviewer.ws.permissions import ConnectionAuthz, Subscription
 from candleviewer.ws.sequencing import SnapshotBody
 from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, USER
-from tests.unit.ws.test_pipeline_invalidation import _connected, _held
-from tests.unit.ws.test_pipeline_outbound import _BOOK, _JSON, _MSGPACK, _overflow, _Rig, _Wire
+from tests.unit.ws.test_pipeline_invalidation import _RS, _STRUCTURED, _connected, _held
+from tests.unit.ws.test_pipeline_outbound import (
+    _BOOK,
+    _ENCODINGS,
+    _JSON,
+    _MSGPACK,
+    _closes,
+    _overflow,
+    _Rig,
+    _Wire,
+)
 
 _EACH = pytest.mark.parametrize(
     ("flag", "encoding"),
@@ -88,13 +99,14 @@ def _withdraw(rig: _Rig, how: str) -> None:
 
 def _publish(rig: _Rig, plan: Planned, step: float = 0.6) -> Sent:
     """One update per `(family, account)` of `plan`, a book delta for `(_BOOK, None)`, `step`
-    seconds apart, so with the flag on each leaves its window at once (D12): one queued `d` each.
-    Returns them as (`d`, ch), in the order they were queued."""
+    seconds apart (a book delta paces itself, 50 ms after the last), so with the flag on each
+    leaves its window at once (D12): one queued `d` each. Returns them as (`d`, ch), in the order
+    they were queued."""
     for i, (ch, account) in enumerate(plan):
-        rig.clock.now += step
         if account is None:
             assert rig.book_delta(i) == 1
         else:
+            rig.clock.now += step
             assert rig.sequencing.publish(ch, _body(ch, account, at=i + 2), account=account) == 1
     return [("d", ch) for ch, _ in plan]
 
@@ -213,11 +225,14 @@ async def test_withdrawal_revokes_bs_topics_audited_and_routes_nothing_of_b_afte
 async def test_withdrawal_keeps_the_sequence_of_every_kept_channel_unbroken(
     flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S3: A's channels and the book lose no frame and skip no sequence number."""
-    run = await _withdraw_b(flag, encoding, monkeypatch, _ROUND * 2)
+    """S3: A's channels and the book lose no frame and skip no sequence number. The book queues
+    `SAMPLE_EVERY` deltas, so its sampled frame (flag off: a `(received, frame)` pair) is kept."""
+    plan = _ROUND * 2 + [(_BOOK, None)] * (SAMPLE_EVERY - 2)
+    run = await _withdraw_b(flag, encoding, monkeypatch, plan)
     for ch in ("executions", "wallet", _BOOK):
-        n = sum(1 for c, _ in _ROUND * 2 if c == ch)
+        n = sum(1 for c, _ in plan if c == ch)
         assert [f["s"] for f in run.frames if f.get("ch") == ch] == list(range(2, n + 2))
+    assert SAMPLE_EVERY in [f["s"] for f in run.frames if f.get("ch") == _BOOK]
 
 
 @_EACH
@@ -230,6 +245,34 @@ async def test_withdrawal_with_nothing_of_b_queued_drops_nothing(
     run = await _withdraw_b(flag, encoding, monkeypatch, plan)
     assert _sent(run.frames) == [("d", "system"), *_order(flag, run.queued + _CHANGE)]
     assert run.dropped == 0
+
+
+@_EACH
+async def test_a_role_change_drops_a_replay_subscriptions_frames_with_its_live_twins(
+    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Market data removed by a role change revokes a public topic live and replay alike. A live
+    book subscription and a replay one (`rs` set) hold three queued deltas each: the purge keys
+    on `(ch, rs)`, so all six go before `permission_change`."""
+    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    async with _connected(rig, sock) as conn:
+        await rig.sub(sock)
+        entry = {"ch": _BOOK, "opts": _STRUCTURED}
+        sock.feed({"t": "sub", "id": "r", "p": {"topics": [entry], "replay_session_id": _RS}})
+        await sock.next(2)
+        await _held(rig, sock)
+        for i in range(3):
+            assert rig.book_delta(i) == 1
+            assert rig.sequencing.publish(_BOOK, {"bids": [], "asks": []}, replay_session_id=_RS)
+        before = _overflow("withdrawn")
+        rig.perms = rig.perms - {Permission.MARKETDATA_READ}
+        await rig.registry.roles_changed(USER)
+        frames = await _drained(sock, conn)
+    assert [f["t"] for f in frames] == ["d", "permission_change", "revoked", "revoked"]
+    revoked = frames[2:]
+    assert {f.get("rs") for f in revoked} == {None, _RS}
+    assert {f["p"]["reason"] for f in revoked} == {"permission_revoked"}
+    assert _overflow("withdrawn") - before == 6
 
 
 @_EACH
@@ -318,6 +361,29 @@ async def test_narrowing_to_a_drops_the_topics_queued_frames_and_snaps_a_after_r
     assert _overflow("withdrawn") - before == 8
 
 
+@_ENCODINGS
+async def test_flag_off_narrowing_snaps_only_the_topic_whose_frames_were_dropped(
+    encoding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flag off, `orders` and `positions` narrowed from A and B to A, frames queued for `positions`
+    alone: only it is re-pended and gets its `reconfigure` `snap` (`s` 4, after the dropped 2 and
+    3). `orders` goes on in place: its next `d` takes `s` 2, with no `snap`."""
+    rig, sock = _rig(False, monkeypatch), _Wire(encoding)
+    async with _connected(rig, sock) as conn:
+        for family in _OF_B:
+            await rig.sub(sock, family, exchange_account_ids=[str(ACC_A), str(ACC_B)])
+        await _held(rig, sock)
+        _publish(rig, [("positions", ACC_A), ("positions", ACC_B)])
+        rig.grants = _grants(ACC_A)
+        await rig.registry.grants_changed(USER)
+        assert rig.sequencing.publish("orders", _body("orders", ACC_A), account=ACC_A) == 1
+        frames = await _drained(sock, conn)
+    assert _sent(frames) == [("d", "system"), *_CHANGE, ("snap", "positions"), ("d", "orders")]
+    snap, delta = frames[4:]
+    meta = snap["meta"]
+    assert (meta["reason"], snap["s"], meta["previous_seq"], delta["s"]) == ("reconfigure", 4, 3, 2)
+
+
 @_EACH
 async def test_withdrawal_at_the_queue_bound_queues_the_change_and_stays_open(
     flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
@@ -348,29 +414,63 @@ async def test_withdrawal_at_the_queue_bound_queues_the_change_and_stays_open(
     assert sock.closed_with is None and _overflow("withdrawn") - before == bound - 1
 
 
+def _failing_swap(conn: _Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The next swap raises at B's first topic (`_drop` -> `BarsError`), before the purge."""
+    assert conn.authz is not None
+    drop = conn.authz._drop
+
+    def raises(sub: Subscription) -> None:
+        drop(sub)
+        if sub.ch == "orders":
+            raise BarsError("the series was dropped")
+
+    monkeypatch.setattr(conn.authz, "_drop", raises)
+
+
 @_EACH
 async def test_a_swap_that_raises_evicts_the_socket_with_none_of_the_queued_frames(
     flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A swap that raises mid-way (`_drop` -> `BarsError`, for a bar lease that another
-    connection's failed build dropped) never reaches the purge, so the registry evicts the socket.
-    The eviction is sealed whatever the flag: the client gets its `bye`, none of B's queued frames
-    and nothing else that was queued (a stalled consumer cannot flush anyway)."""
+    """A swap that raises mid-way never reaches the purge, so the registry evicts the socket. The
+    eviction is sealed whatever the flag: the client gets its `bye`, none of B's queued frames and
+    nothing else that was queued (a stalled consumer cannot flush anyway)."""
     rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
     async with _connected(rig, sock) as conn:
         await _parked(rig, sock, _ROUND)
-        assert conn.authz is not None
-        drop = conn.authz._drop
-
-        def raises(sub: Subscription) -> None:
-            drop(sub)
-            if sub.ch == "orders":  # B's first, mid-way through the swap's re-evaluation
-                raise BarsError("the series was dropped")
-
-        monkeypatch.setattr(conn.authz, "_drop", raises)
+        _failing_swap(conn, monkeypatch)
         rig.grants = _grants(ACC_A)
         await rig.registry.grants_changed(USER)
         frames = await _drained(sock, conn)
         closed = sock.closed_with
     assert _sent(frames) == [("d", "system"), ("bye", None)]
     assert (frames[1]["p"]["reason"], closed) == ("slow_consumer", 4429)
+
+
+@_ENCODINGS
+@pytest.mark.parametrize("first", ["shutdown", "slow_consumer"])
+async def test_flag_off_eviction_of_a_closing_socket_seals_it_and_counts_no_second_close(
+    encoding: str, first: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A close is under way, its `bye` queued behind B's frames, when a swap that raises evicts
+    the socket. That close stays the connection's one close: counted once, logged once as `ws
+    close`, its `bye` sent next (sealed). The eviction logs `ws eviction sealed`, not a close."""
+    rig, sock = _rig(False, monkeypatch), _Wire(encoding)
+    seen = ("shutdown", "slow_consumer")
+    before = {reason: _closes(reason) for reason in seen}
+    async with _connected(rig, sock) as conn:
+        queued = await _parked(rig, sock, _ROUND)
+        _failing_swap(conn, monkeypatch)
+        rig.grants = _grants(ACC_A)
+        with capture_logs() as logs:
+            conn.close_with(first)
+            await rig.registry.grants_changed(USER)
+        frames = await _drained(sock, conn)
+        closed = sock.closed_with
+    assert _sent(frames) == [("d", "system"), ("bye", None)]
+    assert (frames[1]["p"]["reason"], closed) == (first, frames[1]["p"]["code"])
+    assert {r: _closes(r) - before[r] for r in seen} == {r: int(r == first) for r in seen}
+    assert [(e["event"], e["reason"]) for e in logs if e["event"].startswith("ws close")] == [
+        ("ws close", first)
+    ]
+    (line,) = [e for e in logs if e["event"] == "ws eviction sealed"]
+    assert (line["log_level"], line["dropped"]) == ("info", len(queued))

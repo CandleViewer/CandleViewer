@@ -331,8 +331,9 @@ set, so a withdrawn account cannot be emitted after the synchronous step. The re
   and a queued backlog: WS-E02) and E17-X02's `tests/unit/ws/test_withdrawn_grant_frames.py` (both flags and
   subprotocols: B's grant removed or frozen, its topics' permission removed, or both at once, or B narrowed out of
   [A, B] by a grant change or a re-`auth`, while frames of A, B and a public topic or B's snapshots are queued;
-  nothing of B queued; a queue at its bound; an eviction whose swap raised). AC-13 covers a subscription dropped
-  outright.
+  a replay subscription's frames beside its live twin's; a sampled frame of a kept subscription; two narrowed
+  topics with frames of one; nothing of B queued; a queue at its bound; an eviction whose swap raised, also of
+  a socket already closing). AC-13 covers a subscription dropped outright.
 
 Detection: `ws_revoked_total{reason}`, the `ws.subscription.revoked` and `ws.subscribe.denied` audit actions,
 and a metric for denied cross-account subscribes per identity (§8).
