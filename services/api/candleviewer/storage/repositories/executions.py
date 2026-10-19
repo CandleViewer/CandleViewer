@@ -3,7 +3,7 @@
 `executions` keeps the fills the exchange reports, append-only (21 Sec.3.3.6); every source of a
 fill inserts it and `ux_exec_id` keeps one row, so a repeated `exec_id` never counts twice
 (24 Sec.8.2 S4). `executions_sqlalchemy.py` is the Postgres side. Money is a `Decimal` its column
-holds exactly, `fee_rate` at numeric(18,10).
+holds exactly, `fee_rate` at numeric(18,10). `apply_fill` is a fill's write-ahead step (E29-T03).
 """
 
 from __future__ import annotations
@@ -14,7 +14,13 @@ from decimal import Decimal
 from typing import Final, Literal, Protocol
 from uuid import UUID
 
-from candleviewer.storage.repositories.orders import OrderSide, check_fields, typed_fields
+from candleviewer.storage.repositories.orders import (
+    CommittedStep,
+    OrderSide,
+    OrderTransition,
+    check_fields,
+    typed_fields,
+)
 
 ExecType = Literal["Trade", "AdlTrade", "Funding", "BustTrade", "Settle", "SessionSettlePnl"]
 
@@ -66,6 +72,38 @@ _MONEY: Final = {
 _STAMPS: Final = typed_fields(NewExecution, datetime)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FillTotals:
+    """An order's cumulative columns after a fill (`0029_oms_core`'s names), as the caller computed
+    them in `Decimal` (E29-T03 `apply_execution`): the store writes them and never derives them."""
+
+    cum_exec_qty: Decimal
+    cum_exec_value: Decimal
+    avg_price: Decimal
+    fee_paid: Decimal
+
+    def __post_init__(self) -> None:
+        check_fields(self, _TOTALS, ())
+
+
+_TOTALS: Final = dict.fromkeys(typed_fields(FillTotals, Decimal), (38, 18))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderFill:
+    """A fill, its order's new `totals` and `step`, the compare-and-set of the order's state with
+    the fill event (24 Sec.8.2 S4, S8). The execution names the step's account and order."""
+
+    step: OrderTransition
+    execution: NewExecution
+    totals: FillTotals
+
+    def __post_init__(self) -> None:
+        names = (self.execution.exchange_account_id, self.execution.order_id)
+        if names != (self.step.account_id, self.step.order_id):
+            raise ValueError("the execution names another account or order than its step")
+
+
 class ExecutionStore(Protocol):
     """Insert and account-scoped reads of `executions`."""
 
@@ -75,3 +113,9 @@ class ExecutionStore(Protocol):
         ...
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None: ...
+
+    async def apply_fill(self, fill: OrderFill) -> CommittedStep | None:
+        """The execution and, only if it is new, the order's totals, state and event, in one
+        transaction (None: a stored `exec_id`, nothing changed, S4). The compare-and-set also needs
+        the stored `cum_exec_qty` plus `exec_qty` to be the new one. Any refusal writes nothing."""
+        ...

@@ -39,11 +39,13 @@ from candleviewer.oms.repository import WRITE_TABLES
 from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
+    CommittedStep,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
     OrderEventRow,
     OrderRow,
+    OrderTransition,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
@@ -87,6 +89,9 @@ class _Store:
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
         self._call("create", order, first_event)
         return _row(stop_loss=order.stop_loss)
+
+    async def transition(self, step: OrderTransition) -> CommittedStep:
+        raise NotImplementedError  # the write-ahead step's tests: write_ahead_contract.py
 
     async def get(self, account_id: uuid.UUID, order_id: uuid.UUID) -> OrderRow | None:
         self._call("get", account_id, order_id)

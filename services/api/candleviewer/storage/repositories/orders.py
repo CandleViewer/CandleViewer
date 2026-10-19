@@ -18,8 +18,8 @@ nothing is changed silently.
 
 Writes here are the insert of an order with its first event (`OrderStore.create`) and the append of
 an event without a state transition (`OrderEventStore.append`). Updates of an existing order
-(state, fills, reject fields) and events with `from_state`/`to_state` land with E29-T03/T04, which
-extend these protocols (the B1 write-ahead transition and the 24 Sec.8.4 pipeline).
+(state, fills, reject fields) with events that carry `from_state`/`to_state` are E29-T03's
+write-ahead step (`transition`, `ExecutionStore.apply_fill`); E29-T04 adds the 24 Sec.8.4 columns.
 
 For the OMS (24 Sec.8.2 S7): an exception from any call means its write is not confirmed. The OMS
 does not accept the order and sends nothing under its id; a commit cut off by a lost connection
@@ -37,6 +37,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Final, Literal, Protocol, get_args, get_type_hints
 from uuid import UUID
+
+from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, redact_exchange_text
 
 OrderState = Literal[
     "new", "pending_submit", "submitted", "accepted", "partially_filled", "filled",
@@ -70,6 +72,8 @@ OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
         "pending_amend",
     }
 )
+#: The sources of a step the exchange reported, which carries the exchange's message (OM-R02).
+EXCHANGE_SOURCES: Final = frozenset[OrderEventSource]({"rest", "ws_private", "reconcile"})
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
 UX_ORDERS_LINK: Final = "ux_orders_link"
 #: Upper bound of one `list_for_order` page.
@@ -184,6 +188,34 @@ class NewOrderEvent:
         require_aware("event_ts", self.event_ts)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderTransition:
+    """A write-ahead step (24 Sec.8.2 S8): `state` moves to `to_state` only while the row holds
+    `from_state` (compare-and-set), and `event` is appended with both states, in one transaction.
+    `reject_code` and `reject_message` are set when given."""
+
+    account_id: UUID
+    order_id: UUID
+    from_state: OrderState
+    to_state: OrderState
+    event: NewOrderEvent
+    reject_code: str | None = None
+    reject_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.event.source in EXCHANGE_SOURCES and not self.event.payload:
+            raise ValueError("a step the exchange reported must carry its message (OM-R02)")
+
+    def changes(self) -> dict[str, object]:
+        """The columns it sets, the exchange's text redacted like `ret_msg` (#845 decision 2)."""
+        values: dict[str, object] = {"state": self.to_state}
+        if self.reject_code is not None:
+            values["reject_code"] = redact_exchange_text(self.reject_code, max_chars=MAX_CODE_CHARS)
+        if self.reject_message is not None:
+            values["reject_message"] = redact_exchange_text(self.reject_message, message=True)
+        return values
+
+
 @dataclass(frozen=True, slots=True)
 class OrderRow:
     """One `orders` row, every column (an explicit allow-list, pinned to the table by a test)."""
@@ -254,6 +286,14 @@ class OrderEventRow:
 EVENT_FIELDS: Final = tuple(f.name for f in fields(OrderEventRow) if f.name != "order_link_id")
 
 
+@dataclass(frozen=True, slots=True)
+class CommittedStep:
+    """What a write-ahead step committed: the order row as it now stands, and its event."""
+
+    order: OrderRow
+    event: OrderEventRow
+
+
 class OrderStoreError(Exception):
     """Base for order store errors."""
 
@@ -272,12 +312,36 @@ class OrderNotFoundError(OrderStoreError):
     """No such order in this account; another account's order is indistinguishable."""
 
 
+class StaleOrderState(OrderStoreError):
+    """The compare-and-set missed (another writer moved the order first, or a fill's totals came
+    from an older row): nothing was written. Names the order and state, never a payload."""
+
+    def __init__(self, order_id: UUID, expected: OrderState) -> None:
+        super().__init__(f"order {order_id} is no longer {expected!r}: nothing was written")
+        self.order_id = order_id
+        self.expected = expected
+
+
+class FillAboveQty(OrderStoreError):
+    """A fill's new `cum_exec_qty` is above the order's `qty`: hostile or malformed exchange data
+    (OM-T04), refused before any write. Names the order only; quantities are P1."""
+
+    def __init__(self, order_id: UUID) -> None:
+        super().__init__(f"a fill would take order {order_id} past its qty: nothing was written")
+        self.order_id = order_id
+
+
 class OrderStore(Protocol):
-    """Insert and account-scoped reads of `orders`; E29-T03/T04 add the updates (module docs)."""
+    """Insert, the write-ahead step and account-scoped reads of `orders` (module docs)."""
 
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
         """Insert the order and its first event (`seq` 0, `to_state` the order's state) in one
         statement, so one round trip in one transaction (#845 performance notes)."""
+        ...
+
+    async def transition(self, step: OrderTransition) -> CommittedStep:
+        """Commit `step`, or raise with nothing written: `StaleOrderState` when the row no longer
+        holds `step.from_state`, `OrderNotFoundError` outside the account."""
         ...
 
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None: ...

@@ -32,6 +32,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from candleviewer.db import models
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
+from candleviewer.storage.repositories import executions_sqlalchemy as ex
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories import orders_sqlalchemy as mod
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
@@ -39,15 +40,18 @@ from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
     OPEN_STATES,
+    FillAboveQty,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
     OrderEventRow,
     OrderNotFoundError,
     OrderRow,
+    StaleOrderState,
     require_aware,
     require_money,
 )
+from tests.unit.oms.write_ahead_contract import fill, step
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
@@ -216,6 +220,12 @@ _SECRET_EVENT = _event(
     ret_code="10004",
     ret_msg=f"error sign! origin_string[1760630400000{_KEY}5000]",  # the signed string echoed
 )
+#: An order row as the write-ahead step reads it (E29-T03), and a step and a fill from it.
+_HELD = cast(Any, SimpleNamespace(id=ORDER, exchange_account_id=ACCOUNT, state="accepted"))
+_HELD.qty, _HELD.cum_exec_qty, _HELD.cum_exec_value, _HELD.fee_paid = Decimal("0.3"), 0, 0, 0
+_ECHO = f"error sign! origin_string[1760630400000{_KEY}5000]"
+_STEP = step(_HELD, "rejected", reject_code="10004", reject_message=_ECHO)
+_FILL = fill(_HELD, "E1", "0.1")
 _STATEMENTS: dict[str, Any] = {
     "create_statement": mod.create_statement(_new_order(), _SECRET_EVENT),
     "get_statement": mod.get_statement(ACCOUNT, ORDER),
@@ -225,6 +235,8 @@ _STATEMENTS: dict[str, Any] = {
     "lock_statement": mod.lock_statement(ACCOUNT, ORDER),
     "append_statement": mod.append_statement(ACCOUNT, ORDER, _SECRET_EVENT),
     "list_events_statement": mod.list_events_statement(ACCOUNT, ORDER, 3, 50),
+    "transition_statement": mod.transition_statement(_STEP),
+    "fill_statement": mod.fill_statement(_FILL),
 }
 
 
@@ -321,6 +333,18 @@ def test_append_locks_the_order_and_takes_the_next_seq_of_that_order() -> None:
     assert "local_create" in _bound(_STATEMENTS["append_statement"])
 
 
+def test_a_step_is_a_compare_and_set_with_its_reject_redacted() -> None:
+    """24 Sec.8.2 S7, S8: the UPDATE holds only on the expected state (a fill's, also only on the
+    stored quantity plus its own); the reject echo is never bound (#845 decision 2)."""
+    stmt = _STATEMENTS["transition_statement"]
+    sql, bound, fill_sql = _sql(stmt), _bound(stmt), _sql(_STATEMENTS["fill_statement"])
+    assert sql.startswith("UPDATE orders SET state=$1::order_state, reject_code=$2::VARCHAR, ")
+    assert "orders.id = $5::UUID AND orders.state = $6::order_state RETURNING orders.id, " in sql
+    assert bound[:3] + bound[5:] == ["rejected", "10004", REDACTED, "accepted"]
+    held = "orders.state = $8::order_state AND orders.cum_exec_qty + $9::NUMERIC(38, 18) = $10"
+    assert held in fill_sql and "cum_exec_value=$3" in fill_sql
+
+
 def test_list_events_pages_by_seq_inside_the_account() -> None:
     sql = _sql(_STATEMENTS["list_events_statement"])
     assert "JOIN orders ON orders.id = order_events.order_id" in sql
@@ -404,6 +428,9 @@ def _event_row(**over: Any) -> dict[str, Any]:
     return row | {"id": 7, "order_id": ORDER, "seq": 1, "kind": "ack", "payload": {}} | over
 
 
+_LOCKED = _Result([{"qty": Decimal("0.1")}])  # `lock_order`: a `qty` that `_FILL` fills exactly
+
+
 async def test_create_maps_the_returned_row_and_commits_once() -> None:
     rel = _Rel(_Result([_order_row(stop_loss=Decimal("62000"), tpsl_mode="Partial")]))
     row = await _store(rel).create(_new_order(), _event())
@@ -441,6 +468,53 @@ async def test_append_returns_the_stored_event_with_its_order_link_id() -> None:
     assert _sql(rel.statements[1]).startswith("INSERT INTO order_events")
 
 
+_TAKEN = _Result([SimpleNamespace(order_id=ORDER)])  # a fill's insert took a row
+_CAS, _EVENT = _Result([_order_row()]), _Result([_event_row()])
+_Step = tuple[Callable[[_Rel], Awaitable[Any]], list[_Result], str, str]
+_STEPS: dict[str, _Step] = {  # a step: its call, script, statements it runs, event's `to_state`
+    "transition": (lambda r: _store(r).transition(_STEP), [_LOCKED, _CAS], "UPDATE", "rejected"),
+    "apply_fill": (
+        lambda rel: ex.SqlAlchemyExecutionStore(cast(Any, rel)).apply_fill(_FILL),
+        [_LOCKED, _TAKEN, _CAS], "INSERT UPDATE", "partially_filled",
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("call", sorted(_STEPS))
+async def test_a_step_locks_its_order_then_writes_and_commits_once(call: str) -> None:
+    """24 Sec.8.2 S8: the step's event, with both states, commits with its compare-and-set."""
+    run, script, verbs, to_state = _STEPS[call]
+    rel = _Rel(*script, _EVENT)
+    done = await run(rel)
+    assert (done.order.order_link_id, done.event.order_link_id, rel.commits) == (LINK, LINK, 1)
+    assert [_sql(stmt).split()[0] for stmt in rel.statements] == f"SELECT {verbs} INSERT".split()
+    assert _bound(rel.statements[-1])[6:8] == ["accepted", to_state]
+
+
+@pytest.mark.parametrize(
+    ("call", "script", "error"),
+    [
+        ("transition", [_Result()], OrderNotFoundError),
+        ("transition", [_LOCKED, _Result()], StaleOrderState),
+        ("apply_fill", [_Result([{"qty": Decimal("0.09")}])], FillAboveQty),  # before the insert
+        ("apply_fill", [_LOCKED, _TAKEN, _Result()], StaleOrderState),  # the insert rolls back
+    ],
+)
+async def test_a_refused_step_commits_nothing(
+    call: str, script: list[_Result], error: type
+) -> None:
+    rel = _Rel(*script)
+    with pytest.raises(error):
+        await _STEPS[call][0](rel)
+    assert (len(rel.statements), rel.commits) == (len(script), 0)
+
+
+async def test_a_duplicate_fill_is_none_and_commits_nothing() -> None:
+    rel = _Rel(_LOCKED, _Result())  # `ON CONFLICT DO NOTHING` returned no row
+    assert await _STEPS["apply_fill"][0](rel) is None
+    assert (len(rel.statements), rel.commits) == (2, 0)
+
+
 _CAP = "SELECT set_config('statement_timeout', :timeout, true)"
 #: Every store call, with the script one call consumes.
 _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]], list[_Result]]] = {
@@ -454,6 +528,7 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
         [_Result(scalar=LINK), _Result([_event_row()])],
     ),
     "list_for_order": (lambda st: st.list_for_order(ACCOUNT, ORDER), [_Result()]),
+    "transition": (lambda st: st.transition(_STEP), [_LOCKED, _CAS, _EVENT]),
 }
 
 

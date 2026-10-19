@@ -71,6 +71,7 @@ from candleviewer.storage.repositories.positions_sqlalchemy import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.unit.oms.write_ahead_contract import Harness, WriteAheadContract
 
 pytestmark = pytest.mark.integration
 
@@ -627,3 +628,21 @@ async def test_a_position_snapshot_is_appended_as_given(ledger: Ledger, pg_dsn: 
     assert (snap.size, snap.equity_usd, snap.reason) == (Decimal("0.010"), equity, "minute_tick")
     count = "SELECT count(*) FROM position_snapshots WHERE exchange_account_id = %s"
     assert snap.id > 0 and _sql(pg_dsn, count, account) == [(1,)]
+
+
+@pytest_asyncio.fixture
+async def h(app_dsn: str, pg_dsn: str) -> AsyncIterator[Harness]:
+    """The order and execution stores on one pool, as `cv_app`, each account a new row."""
+    rel = SqlAlchemyRelationalRepository(app_dsn, "write-ahead-it")
+    store = SqlAlchemyOrderStore(rel)
+    fills = ExecutionRepository(SqlAlchemyExecutionStore(rel))
+    try:
+        yield Harness(
+            OrderRepository(store), OrderEventRepository(store), fills, lambda: _account(pg_dsn)
+        )
+    finally:
+        await rel.dispose()
+
+
+class TestWriteAheadOnPostgres(WriteAheadContract):
+    """E29-T03's contract on real row locks: the races are real, so is the rollback."""

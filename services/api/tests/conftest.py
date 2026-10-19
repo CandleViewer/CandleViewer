@@ -25,6 +25,7 @@ from tests._hypothesis_profiles import load_active_profile
 # and a failure would print a bare `AssertionError` with no values (C-13.7). Register them before
 # any test module imports them; the fake and the Postgres suites both subclass this one.
 pytest.register_assert_rewrite("tests.unit.storage.replay_sessions_contract")
+pytest.register_assert_rewrite("tests.unit.oms.write_ahead_contract")
 
 load_active_profile()
 
