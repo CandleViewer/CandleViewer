@@ -9,12 +9,15 @@ name: fuzz-nightly
 #   typescript  both `test:fuzz` projects: @candleviewer/protocol (the CVWB decoders) and
 #               @candleviewer/web (the client codec)
 #
-# Time box (#415, decision D2). CV_FUZZ_BUDGET_SECONDS is how long a job fuzzes for: 30 minutes on
-# a night from Sunday to Friday, 3 hours on Saturday. The Saturday cron, or the `weekend` input of
-# a manual run, picks the long budget and the job timeout that goes with it (setup headroom on
-# top). Each fuzz step splits the budget evenly over its targets and hands the share to the suite
-# as CV_FUZZ_SECONDS, how long EACH target runs; a target stops at the first run that ends past
-# its share, a few seconds late.
+# Time box (#415). Decision D2 set about 30 minutes per suite plus a weekend run, about 60
+# runner-minutes a night. The weekend length (3 hours), its 240-minute job timeout and the weekly
+# total (about 12 runner-hours) are this workflow's choice, not D2's: the one number to lower is
+# CV_FUZZ_BUDGET_SECONDS, how long a job fuzzes for. It is 30 minutes on a night from Sunday to
+# Friday and 3 hours on Saturday. The Saturday cron, or the `weekend` input of a manual run, picks
+# the long budget and the job timeout that goes with it (setup headroom on top). Each fuzz step
+# splits the budget evenly over its targets, 1 s at least, and hands the share to the suite as
+# CV_FUZZ_SECONDS, how long EACH target runs; a target stops at the first run that ends past its
+# share, a few seconds late.
 #   python      the budget / the fuzz-marked tests `pytest --collect-only` finds in the folder: 9 at
 #               this writing (4 decoder, 5 parser), so 200 s each (Saturday 1200 s). A new fuzz
 #               test is counted by the next run; none collected leaves pytest to fail the job
@@ -38,9 +41,12 @@ name: fuzz-nightly
 # to the suite alone. It is never written to $GITHUB_ENV (the runner lists those variables in the
 # env: header of later steps), printed, or taken from the run's context or inputs; it is recorded
 # only in the failure file inside the encrypted archive, and the digest uses all of it. To replay
-# a failure, run the step's own command locally, at the failing run's commit, with
-#   CV_FUZZ_SEED=<seed from the decrypted file> CV_FUZZ_SECONDS=<the job's, or more>
-# (the file holds the failing input too).
+# a failure, run the suite's own command locally, at the failing run's commit, with the seed from
+# the decrypted file (it holds the failing input too):
+#   python      CV_FUZZ_SEED=<the recorded seed>, with no CV_FUZZ_SECONDS: it is the seed of the
+#               run that drew the input, so one run replays it
+#   typescript  CV_FUZZ_SEED=<the recorded seed> CV_FUZZ_SECONDS=<that project's share, or more>,
+#               so the loop runs as far as the input
 
 on:
   schedule:
@@ -88,7 +94,8 @@ jobs:
           [ -n "$CV_FUZZ_SEED" ] || exit 1
           export CV_FUZZ_SEED
           targets=$(uv run pytest tests/unit/ws -m "fuzz and not flaky" --collect-only -q --no-cov -p no:randomly -p no:cacheprovider | grep -c '^tests/.*::' || true)
-          export CV_FUZZ_SECONDS="$((CV_FUZZ_BUDGET_SECONDS / (targets > 0 ? targets : 1)))"
+          share=$((CV_FUZZ_BUDGET_SECONDS / (targets > 0 ? targets : 1)))
+          export CV_FUZZ_SECONDS="$((share > 0 ? share : 1))"
           uv run pytest tests/unit/ws -m "fuzz and not flaky" --no-cov -p no:randomly -p no:cacheprovider
       - name: Encrypt failing inputs
         if: failure()
@@ -130,7 +137,8 @@ jobs:
           [ -n "$CV_FUZZ_SEED" ] || exit 1
           export CV_FUZZ_SEED
           projects=(@candleviewer/protocol @candleviewer/web)
-          export CV_FUZZ_SECONDS="$((CV_FUZZ_BUDGET_SECONDS / ${#projects[@]}))"
+          share=$((CV_FUZZ_BUDGET_SECONDS / ${#projects[@]}))
+          export CV_FUZZ_SECONDS="$((share > 0 ? share : 1))"
           failed=0
           for project in "${projects[@]}"; do
             pnpm --filter "$project" test:fuzz || failed=1

@@ -2,7 +2,7 @@
 of the `cv.v1.msgpack` client-frame decoder (SR-185, #2483) seeded from `msgpack-client.json`.
 
 Deselected from the default lane by `addopts` (`-m "not fuzz and not perf"`); run explicitly with
-``pytest -m fuzz --no-cov``. Default 200 examples; the nightly sets ``CV_FUZZ_EXAMPLES=20000`` and
+``pytest -m fuzz --no-cov``. Default 200 examples; the nightly sets ``CV_FUZZ_SECONDS`` and
 ``CV_FUZZ_SEED`` (derandomised: a failure replays from that seed and example count, `_fuzz.py`).
 Every target runs through `_fuzz.drive`, so ``CV_FUZZ_SECONDS`` time-boxes each target (per target,
 as it does the parser suite's), and each decode is timed (`_fuzz.Watch`).
