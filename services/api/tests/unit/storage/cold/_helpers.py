@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pyarrow as pa
+import pytest
 
+from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore
 from candleviewer.storage.cold.observability import Severity
 from candleviewer.storage.models import StreamKind, TimeRange
 
@@ -67,6 +70,22 @@ class FakeHotSource:
         if self.count_override is not None:
             return self.count_override
         return self.table.num_rows
+
+
+def quarantine_before_next_read(monkeypatch: pytest.MonkeyPatch, file_name: str) -> None:
+    """#3477's race: a scrub (or another read's verification) quarantines `file_name` of the
+    partition the next manifest read lists, just before that read. A reader that looked for the
+    quarantine mark before it read the manifest would serve the shrunk manifest as complete."""
+    real = ManifestStore.read
+    fired: list[bool] = []
+
+    def racing(self: ManifestStore, partition_dir: Path, cold_root: Path) -> list[ManifestEntry]:
+        if not fired:
+            fired.append(True)
+            self.quarantine(partition_dir, cold_root, file_name)
+        return real(self, partition_dir, cold_root)
+
+    monkeypatch.setattr(ManifestStore, "read", racing)
 
 
 class RecordingSink:

@@ -24,6 +24,7 @@ from tests.unit.storage.cold._helpers import (
     FakeHotSource,
     RecordingSink,
     day_range,
+    quarantine_before_next_read,
     trades_table,
 )
 
@@ -145,6 +146,47 @@ async def test_clearing_the_quarantine_after_a_re_export_restores_the_day(tmp_pa
 
     rows = await repo.query("BTCUSDT", StreamKind.TRADES, day_range())
     assert [int(r["ts"].timestamp() * 1_000_000) - DAY_START_US for r in rows] == [0, 1, 2, 3, 4]
+
+
+async def test_a_quarantine_landing_just_before_the_manifest_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _repo(tmp_path, 3).export_partition("BTCUSDT", StreamKind.TRADES, FIRST)
+    await _second_source(tmp_path).export_partition("BTCUSDT", StreamKind.TRADES, SECOND)
+    quarantine_before_next_read(monkeypatch, "part-0001.parquet")
+
+    with pytest.raises(StorageExportVerifyFailed, match="quarantined part"):
+        await _repo(tmp_path).query("BTCUSDT", StreamKind.TRADES, day_range())
+
+
+async def test_a_day_whose_part_went_missing_is_refused_rather_than_read_empty(
+    tmp_path: Path,
+) -> None:
+    """The scrub quarantines a part found missing by its manifest entry alone."""
+    repo = _repo(tmp_path, 2)
+    await repo.export_partition("BTCUSDT", StreamKind.TRADES, day_range())
+    (tmp_path / PART / "part-0000.parquet").unlink()
+    assert await scrub_all(DatasetRegistry(tmp_path), RecordingSink()) == 1
+
+    with pytest.raises(StorageExportVerifyFailed, match="quarantined part"):
+        await repo.query("BTCUSDT", StreamKind.TRADES, day_range())
+
+
+async def test_a_day_that_cannot_be_listed_is_refused_typed_naming_no_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path, 2)
+    await repo.export_partition("BTCUSDT", StreamKind.TRADES, day_range())
+
+    def denied(self: ManifestStore, partition_dir: Path, cold_root: Path) -> object:
+        raise PermissionError(13, "Permission denied", str(partition_dir))
+
+    monkeypatch.setattr(ManifestStore, "read_with_quarantine", denied)
+
+    with pytest.raises(StorageExportVerifyFailed, match="could not be listed") as err:
+        await repo.query("BTCUSDT", StreamKind.TRADES, day_range())
+    assert str(tmp_path) not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
 
 
 async def test_a_quarantine_on_one_day_leaves_the_next_day_served(tmp_path: Path) -> None:

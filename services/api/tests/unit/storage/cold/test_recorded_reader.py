@@ -40,6 +40,7 @@ from candleviewer.storage.repositories.recorded import (
     RecordedTrade,
     event_from_row,
 )
+from tests.unit.storage.cold._helpers import quarantine_before_next_read
 from tests.unit.storage.cold._replay_rows import (
     H0,
     HOUR,
@@ -444,14 +445,31 @@ async def test_an_hour_whose_only_part_went_missing_is_refused_rather_than_read_
         )
 
 
-async def test_coverage_leaves_out_the_quarantined_part_as_before(tmp_path: Path) -> None:
-    """`auto` routing is unchanged: it routes on the manifests, which no longer name the lost
-    part, so the second half is not cold coverage."""
+async def test_coverage_refuses_a_partition_that_lost_a_part(tmp_path: Path) -> None:
+    """`auto` routes on this coverage: a partition that lost every part would cover nothing and
+    route the window to QuestDB, which may no longer hold it (a silent empty replay)."""
     registry = await _lose_the_second_half(tmp_path / "cold")
+    reader = ParquetRecordedReader(registry)
 
-    covered = await ParquetRecordedReader(registry).archived(SYMBOL, StreamKind.TRADES, FIRST_HOUR)
+    with pytest.raises(ColdReplayReadError, match="quarantined part") as err:
+        await reader.archived(SYMBOL, StreamKind.TRADES, FIRST_HOUR)
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    other_day = TimeRange(start_us=H0 + 24 * HOUR, end_us=H0 + 25 * HOUR)
+    assert await reader.archived(SYMBOL, StreamKind.TRADES, other_day) == []
 
-    assert covered == [FIRST_HALF]
+
+async def test_a_quarantine_landing_just_before_the_manifest_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "cold"
+    registry = await _halves(root, generated_rows())
+    second = sorted((root / "trades").rglob("part-*.parquet"))[1]
+    quarantine_before_next_read(monkeypatch, second.name)
+
+    with pytest.raises(ColdReplayReadError, match="quarantined part"):
+        await ParquetRecordedReader(registry).read(
+            SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=1_000
+        )
 
 
 def _count_verifications(monkeypatch: pytest.MonkeyPatch) -> list[ColdPaths]:

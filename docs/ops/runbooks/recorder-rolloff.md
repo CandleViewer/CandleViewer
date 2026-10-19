@@ -41,9 +41,13 @@ no sidecar; a part they found missing leaves an empty directory.
 
 While the partition's quarantine directory exists, every cold read of that partition refuses rather
 than serve the parts that remain as all of it (#3477): `/market/klines` answers 503 for that month,
-a replay over it fails typed and the cold repository raises. Retention never touches `_quarantine/`:
-a partition it deletes keeps its quarantine directory, and reads of that range keep refusing until
-the directory is deleted.
+a replay over it fails typed (also when `auto` routing reads its coverage), and the cold repository
+raises. The directory cannot tell a partition that is still missing a part from one a later run
+re-exported in full, nor whether QuestDB still holds the day, so the reads refuse until an operator
+deletes it (step 4). Retention deletes a partition with its manifest but never touches
+`_quarantine/`: once the manifest is gone the partition no longer refuses, since nothing is left to
+serve partly. Its quarantine directory stays until it is deleted, and refuses the partition again if
+it is ever re-imported.
 
 1. Do **not** move it back. After a roll-off quarantine the hot partition still holds the data.
 2. Inspect: `duckdb -c "SELECT count(*) FROM read_parquet('<file>')"` vs the hot `count()`.
@@ -52,8 +56,10 @@ the directory is deleted.
    quarantine directory (the part and its sidecar) and audit the deletion. That deletion is what
    restores the partition's reads.
 5. If the hot tier no longer holds the day (a scrub or a read found the bad part after the day was
-   dropped), no run can re-export it: restore the part from a backup before step 4. Deleting the
-   directory without a restore serves the partition without that part, as if it were complete.
+   dropped), no run can re-export it, and there is no restore procedure for a cold part yet: a part
+   copied back without its manifest entry is deleted as an orphan by the next export. Leave the
+   directory in place, so the partition stays refused rather than served partly. Deleting it
+   without a restore serves the partition without that part, as if it were complete.
 
 ## Manual compaction
 

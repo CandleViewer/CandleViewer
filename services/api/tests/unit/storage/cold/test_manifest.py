@@ -198,6 +198,21 @@ def test_a_quarantine_marks_its_partition_until_its_mirror_is_removed(tmp_path: 
     assert not store.has_quarantined_part(part, tmp_path)
 
 
+def test_a_partition_retention_removed_is_no_longer_marked(tmp_path: Path) -> None:
+    """Retention deletes the partition and its manifest, never `_quarantine/`: with no manifest
+    left nothing can be served partly, so the stale mark refuses nothing."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry("part-0000.parquet", "0" * 64, 1, "trades", "r", 1)])
+    store.quarantine(part, tmp_path, "part-0000.parquet")
+    assert store.has_quarantined_part(part, tmp_path)
+
+    (tmp_path / "_manifests" / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17.json").unlink()
+
+    assert not store.has_quarantined_part(part, tmp_path)
+    assert store.read_with_quarantine(part, tmp_path) == ([], False)
+
+
 def test_a_part_found_missing_marks_its_partition_too(tmp_path: Path) -> None:
     """An entry whose file is gone is quarantined by its entry alone: nothing moves, and the
     mirror is an empty directory, which marks the partition all the same."""

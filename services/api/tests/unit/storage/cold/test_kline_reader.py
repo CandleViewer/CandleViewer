@@ -29,6 +29,7 @@ from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha
 from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.scrub import scrub_all
 from candleviewer.storage.models import StreamKind
+from tests.unit.storage.cold._helpers import quarantine_before_next_read
 
 MIN = 60_000_000
 H = 60 * MIN
@@ -460,6 +461,7 @@ async def test_a_month_that_lost_a_part_refuses_every_later_read(tmp_path: Path)
         with pytest.raises(kr.ColdKlineReadError, match="quarantined part") as err:
             await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window)
         assert "/" not in str(err.value)
+        assert err.value.__cause__ is None and err.value.__context__ is None
 
 
 async def test_a_reader_that_verified_the_month_refuses_it_once_the_scrub_quarantines_a_part(
@@ -521,6 +523,50 @@ async def test_a_month_whose_only_part_went_missing_refuses_rather_than_reading_
 
     with pytest.raises(kr.ColdKlineReadError, match="quarantined part"):
         await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window)
+
+
+async def test_a_quarantine_landing_just_before_the_manifest_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`quarantine` marks the partition before it shrinks the manifest, and the reader reads the
+    manifest before it looks for the mark, so no interleaving serves the month partly."""
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+    _write(tmp_path, "2026-03", [t0 + H], name="part-0001.parquet")
+    quarantine_before_next_read(monkeypatch, "part-0001.parquet")
+
+    with pytest.raises(kr.ColdKlineReadError, match="quarantined part"):
+        await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", Range(t0, t0 + 3 * H))
+
+
+async def test_a_month_that_cannot_be_listed_is_refused_typed_naming_no_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+
+    def denied(self: ManifestStore, partition_dir: Path, cold_root: Path) -> object:
+        raise PermissionError(13, "Permission denied", str(partition_dir))
+
+    monkeypatch.setattr(ManifestStore, "read_with_quarantine", denied)
+
+    with pytest.raises(kr.ColdKlineReadError, match="could not be listed") as err:
+        await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", Range(t0, t0 + H))
+    assert str(tmp_path) not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+
+
+async def test_a_month_retention_removed_reads_empty_though_its_quarantine_stays(
+    tmp_path: Path,
+) -> None:
+    """Retention deletes a partition and its manifest, never `_quarantine/`: with no manifest
+    left there is nothing to serve partly, so the month reads empty rather than refusing forever."""
+    _, window = await _lose_a_part(tmp_path)
+    shutil.rmtree(tmp_path / "klines" / "symbol=BTCUSDT" / "interval=60" / "ym=2026-03")
+    next((tmp_path / "_manifests" / "klines").rglob("ym=2026-03.json")).unlink()
+    assert _mirror(tmp_path).is_dir()
+
+    assert await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window) == []
 
 
 def test_the_route_answers_503_for_a_month_that_lost_a_part(tmp_path: Path) -> None:

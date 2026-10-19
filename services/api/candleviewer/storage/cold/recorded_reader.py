@@ -352,7 +352,11 @@ class ParquetRecordedReader:
         range that is not a pair of integers is corrupt coverage, refused typed."""
         spans: list[tuple[int, int]] = []
         for paths in self._partitions(symbol, stream, rng.start_us, rng.end_us):
-            for entry in ManifestStore(paths.manifests_dir).read(paths.partition_dir, paths.root):
+            store = ManifestStore(paths.manifests_dir)
+            entries, quarantined = store.read_with_quarantine(paths.partition_dir, paths.root)
+            if quarantined:  # #3477: `auto` routes on this coverage, so it refuses there too
+                raise ColdReplayReadError("a cold partition holds a quarantined part")
+            for entry in entries:
                 lo, hi = entry.range_start_us, entry.range_end_us
                 if type(lo) is not int or type(hi) is not int:  # JSON can hold any value there
                     raise ColdReplayReadError("a cold manifest's coverage range is not integral")
@@ -384,10 +388,11 @@ class ParquetRecordedReader:
 
     async def _partition_files(self, paths: ColdPaths) -> list[str]:
         store = ManifestStore(paths.manifests_dir)
-        if await asyncio.to_thread(store.has_quarantined_part, paths.partition_dir, paths.root):
+        read = store.read_with_quarantine
+        entries, quarantined = await asyncio.to_thread(read, paths.partition_dir, paths.root)
+        if quarantined:
             # #3477: the manifest no longer names that part, so the rest would pass for all of it.
             raise ColdReplayReadError("a cold partition holds a quarantined part")
-        entries = await asyncio.to_thread(store.read, paths.partition_dir, paths.root)
         if not entries:
             return []
         files = await asyncio.to_thread(lambda: [_contained(paths, e.file) for e in entries])
