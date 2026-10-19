@@ -13,7 +13,17 @@ rulings on #966: Q4, Q5, Q8, Q9, Q10, Q11, and on the BK-0 reviews). Every chang
 `test_admin_ops_contract.py` validates every example of these operations.
 
 It also pins what an admission answers when it cannot take the backups admission lock in time, and
-what that costs a delete or a restore (SR-BK7A-03, from the BK-7a review).
+what that costs a delete or a restore (SR-BK7A-03 and SEC-LW-01, from the BK-7a and lock-wait
+reviews), what a verification does to its row when it passes or cannot read the artefact (BK-3 m4,
+BK-6b D-1), and how long a spent or expired download link is remembered (SR-3456-01). It pins the
+run's refusal of a plan that is not encrypted under a key alias, what it records (stage `refused`),
+answers (`backup_engine_invalid`, or `audit_unavailable` when its record cannot be written) and
+costs (a start against the hourly limit), the idempotency exception for every refusal to start,
+the job's audit marker and the client's rule to take a run's outcome from its row (BK-8 rulings,
+SEC-EI-01 to SEC-EI-05), and what a download-link issue answers and records when it is refused
+(SR-BK10A-03, SR-BK10B-04). The contract-C review (wf_2a96af04-e90) added the reason of every
+refusal after a link's spend, the link store's bounds, the ceiling on a link's memory, the issued
+record that cannot be written, the order a run is refused in, and what `Backup.error` holds.
 """
 
 from __future__ import annotations
@@ -33,6 +43,9 @@ _REGISTRY: dict[str, int] = {entry["code"]: entry["status"] for entry in SPEC["x
 #: The dangerous-route registry's sweep (`test_dangerous_route_registry.py`): an operation whose
 #: text matches is read as a step-up candidate, so the ungated ones must never match it.
 _STEP_UP_TEXT = re.compile(r"step[-_ ]up", re.IGNORECASE)
+#: The sweep's pattern plus the inflections a sentence about a spent grant uses ("steps up again"),
+#: which `_STEP_UP_TEXT` misses: the text of an operation that spends no grant never matches it.
+_STEP_UP_ANY = re.compile(r"step(?:s|ped|ping)?[-_ ]up", re.IGNORECASE)
 _FETCH_PATH = "/admin/backups/{backupId}/download/{token}"
 
 #: The statuses each operation declares, exactly (C-6.3: declaring one is additive). A malformed
@@ -181,17 +194,103 @@ _ENGINE_CODE = "backup_engine_invalid"
 
 
 def test_a_run_planned_unencrypted_is_refused_503_backup_engine_invalid() -> None:
-    """BK-8 ruling (READY-30, #966; C-6.1, C-2.9): a plan with `encrypted: false` breaks "always
-    encrypted", so the run is refused fail closed with a code of its own, not the retryable
-    `store_unavailable`: the failure record is written first, nothing starts, and the refusal
-    stands until the configuration is fixed. `createBackup` already declares `503`."""
+    """BK-8 ruling (READY-30, #966; C-6.1, C-2.9; SEC-EI-01): a plan that is not encrypted under a
+    key alias, whether `encrypted: false` or no alias named, breaks "always encrypted", so the run
+    is refused fail closed with a code of its own, not the retryable `store_unavailable`: the
+    failure record (stage `refused`) is written first, nothing starts, and the refusal stands
+    until the configuration is fixed. No alias value is named (class S). `createBackup` already
+    declares `503`. The sentence comes before the hourly-limit one and the `501` one (CR-6a), and
+    it defines the plan it speaks of instead of restating the word (code F4c)."""
     _assert_declared("createBackup")
-    refused = "A run whose backup engine plan has `encrypted: false` breaks the rule that backups "
-    refused += "are always encrypted, so it is refused fail closed: its failure record "
-    refused += "(`backup.run`, `outcome: failure`) is written first, then the answer is "
-    refused += f"`503 {_ENGINE_CODE}`, nothing starts, and runs stay refused this way until the "
-    refused += "engine configuration is fixed."
-    assert refused in _desc("createBackup")
+    refused = "A run whose backup engine plan (what the engine reports for the run: the artefact's "
+    refused += "location, whether it is encrypted and under which key alias) is not encrypted "
+    refused += "under a key alias (`encrypted: false`, or no alias named) breaks the rule that "
+    refused += "backups are always encrypted, so it is refused fail closed: its failure record "
+    refused += "(`backup.run`, `stage: refused`, `outcome: failure`) is written first, then the "
+    refused += f"answer is `503 {_ENGINE_CODE}`, nothing starts, and runs stay refused this way "
+    refused += "until the engine configuration is fixed."
+    create = _desc("createBackup")
+    assert refused in create
+    limit = "A user may start at most 4 runs in a rolling hour"
+    unwired = "Until a backup engine is wired the operation answers `501 not_implemented`"
+    assert create.index(refused) < create.index(limit) < create.index(unwired)
+
+
+def test_an_unwritable_refusal_record_is_a_503_audit_unavailable_and_nothing_starts() -> None:
+    """SEC-EI-02 / CR-1 (C-2.9, as SEC-LW-01 on `deleteBackup`): the refusal's failure record is
+    written first, so when it cannot be written the answer is `503 audit_unavailable`, in place of
+    `503 backup_engine_invalid`, and nothing starts. A run has no grant, so nothing is spent."""
+    create = _desc("createBackup")
+    unwritten = "When that failure record cannot be written, the answer is `503 audit_unavailable` "
+    unwritten += "and nothing starts."
+    assert unwritten in create
+    # "that failure record" is the refusal's, which the sentence before it writes first.
+    refused = "and runs stay refused this way until the engine configuration is fixed."
+    assert create.index(refused) < create.index(unwritten)
+
+
+def test_a_refusal_counts_as_a_start_and_the_limit_is_checked_before_the_plan() -> None:
+    """SEC-EI-04 / CR-2b (BK-8b, `runs.py`: the limit is checked before the plan, and `record_start`
+    follows the refusal's record): a run refused as `backup_engine_invalid` counts toward the hourly
+    limit like a start, once its record is written, so past the limit the answer is
+    `429 rate_limited`, not the engine's `503`, and a retry loop cannot flood the trail."""
+    create = _desc("createBackup")
+    counted = "A run refused as `backup_engine_invalid` counts as a start, once its record is "
+    counted += "written, and the limit is checked before the plan, so past it the answer is "
+    counted += "`429 rate_limited`, not `503 backup_engine_invalid`."
+    assert counted in create
+    # "the limit" is the one the sentence before it states.
+    limit = "A user may start at most 4 runs in a rolling hour, else `429 rate_limited` with "
+    assert create.index(limit + "`Retry-After`.") < create.index(counted)
+
+
+def test_a_refused_run_writes_one_record_with_the_stage_refused() -> None:
+    """CR-2c (BK-8b, `runs.py`: the refusal record's `after_state.stage` is `refused`): `refused`
+    is a third `backup.run` stage, named where the contract names `requested` and `finished`; a
+    refused run writes that one record instead of the other two. The sentence follows the refusal
+    it names and precedes the unwritable-record one (code F4b)."""
+    create = _desc("createBackup")
+    refused = "A run refused as `backup_engine_invalid` writes one record, with `stage: refused`, "
+    refused += "instead of the `requested` and `finished` ones."
+    assert refused in create
+    finished = "carrying the outcome, `size_bytes` and `checksum_sha256`"
+    fixed = "and runs stay refused this way until the engine configuration is fixed."
+    unwritten = "When that failure record cannot be written, the answer is `503 audit_unavailable`"
+    assert create.index(finished) < create.index(fixed) < create.index(refused)
+    assert create.index(refused) < create.index(unwritten)
+
+
+def test_a_run_is_decided_in_the_plans_order() -> None:
+    """Code F3 (BK-8b, `runs.py`, the plan's order; SEC-EI-04): the first refusal that applies
+    answers, so a client and BK-8 can rely on the order: no engine (`501`), the hourly limit
+    (`429`, checked again under the lock, still ahead of the `409`), the admission lock (`503` on a
+    lock wait), a running backup or restore (`409`), the engine's plan (`503 backup_engine_invalid`
+    whatever else it breaks, or `store_unavailable` when it cannot plan), then the `requested`
+    record and the start. Nothing is recorded before the plan."""
+    create = _desc("createBackup")
+    order = "Order (E42-T05): the first of these that applies answers, and no record is written "
+    order += "before the plan: no backup engine wired, `501 not_implemented`; the hourly limit, "
+    order += "`429 rate_limited` (checked before the lock and again once it is held, so it still "
+    order += "comes ahead of the `409`); the backups admission lock, `503 store_unavailable`; a "
+    order += "running backup or restore, `409 conflict`; the engine's plan, "
+    order += "`503 backup_engine_invalid` when it is not encrypted under a key alias, whatever "
+    order += "else it breaks, or `503 store_unavailable` when the engine cannot plan the run; then "
+    order += "the `requested` record and the start."
+    assert order in create
+    steps = (
+        "`501 not_implemented`",
+        "`429 rate_limited`",
+        "the backups admission lock, `503 store_unavailable`",
+        "`409 conflict`",
+        "`503 backup_engine_invalid`",
+        "`503 store_unavailable` when the engine cannot plan",
+        "the `requested` record and the start",
+    )
+    places = [order.index(step) for step in steps]
+    assert places == sorted(places)
+    # It follows the two sentences it orders (the `409` and the lock wait) and precedes the records.
+    assert "before any record, and starts nothing. Order (E42-T05)" in create
+    assert create.index(order) < create.index("Records (E42-T05)")
 
 
 def test_backup_engine_invalid_is_registered_rest_only_and_not_retryable() -> None:
@@ -235,16 +334,43 @@ def test_a_succeeded_job_over_an_unwritten_finished_record_carries_the_audit_mar
     assert api.Job.model_validate(succeeded).model_dump(mode="json", exclude_none=True) == succeeded
 
 
-def test_a_503_refusal_to_start_is_not_stored_under_the_idempotency_key() -> None:
-    """SEC-LW-02 (from the lock-wait contract's review; the cache already stores only a 2xx): the
-    exception to replay names the `503` as well as the `409` with which `createBackup` or
-    `restoreBackup` refuses to start, so a run refused for the lock wait, an unwritten record or an
-    engine plan that is not encrypted is evaluated afresh under the same key once the cause
-    clears, never answered from the cache."""
-    exception = "Exception (E42-T05): a `409` or `503` with which `createBackup` or "
+def test_a_client_takes_a_runs_outcome_from_its_row_and_the_job_names_the_marker() -> None:
+    """SEC-EI-03 / CR-4: the job store sets `succeeded` before the run's end record is written, so
+    a `succeeded` job is not proof of an `ok` row. A client takes a run's outcome from its row
+    (`getBackup`), not from the job's `status`, and a `succeeded` job is final only once the row
+    has left `running`. `Job.result` for a `backup` job and `getJob` name the
+    `audit: "unavailable"` marker the job may carry when the finished record could not be
+    written."""
+    create = _desc("createBackup")
+    outcome = "A client takes a run's outcome from its row (`getBackup`), not from the job's "
+    outcome += "`status`: a `succeeded` job is final only once the row has left `running`."
+    assert outcome in create
+    # It builds on the marker sentence before it and comes ahead of the audit sentence.
+    audited = "The run is audited as `backup.run` ahead of the response."
+    assert create.index("the row is the truth.") < create.index(outcome) < create.index(audited)
+    result = text(_SCHEMAS["Job"]["properties"]["result"]["description"])
+    carried = 'For `kind: backup` it is `{backup_id}`, plus `audit: "unavailable"` when the '
+    carried += "run's `stage: finished` record could not be written (`createBackup`), and for "
+    assert carried in result
+    named = "A `backup` job's `result` carries `audit: \"unavailable\"` when the run's "
+    named += "`stage: finished` record could not be written (`createBackup`), and a run's outcome "
+    named += "is its row's (`getBackup`), not the job's `status`."
+    assert named in _desc("getJob")
+
+
+def test_any_refusal_to_start_is_not_stored_under_the_idempotency_key() -> None:
+    """SEC-EI-05 / CR-2d (from SEC-LW-02; the cache stores only a 2xx, `api/idempotency.py`): the
+    exception to replay covers any answer but a `2xx` with which `createBackup` or `restoreBackup`
+    refuses to start (a `409`, `422`, `429`, `501` or `503`), so a run refused for the lock wait,
+    the hourly limit, an unwired engine, an unwritten record or an engine plan that is not
+    encrypted is evaluated afresh under the same key once the cause clears, never answered from the
+    cache. The engine's refusal is the registered `backup_engine_invalid`, not an unavailable
+    engine."""
+    exception = "Exception (E42-T05): any answer but a `2xx` with which `createBackup` or "
     exception += "`restoreBackup` refuses to start (a precondition, another backup or restore "
-    exception += "still running, or a dependency or the engine unavailable) is not stored under "
-    exception += "the key, so the same key and body are evaluated afresh once the cause clears."
+    exception += "still running, the hourly limit, a dependency that is unavailable, or a backup "
+    exception += "engine that is not wired or is invalid) is not stored under the key, so the same "
+    exception += "key and body are evaluated afresh once the cause clears."
     assert exception in text(SPEC["info"]["description"])
 
 
@@ -263,6 +389,38 @@ def test_verify_hashes_before_any_decrypt_and_names_its_codes() -> None:
         assert f"`409 conflict` with rule `{rule}`" in verify, rule
     # Q6: one admission lock, so a verification never runs beside a restore.
     assert "while a restore is running, with rule `backup_or_restore_running`" in verify
+
+
+def test_an_unreadable_artefact_fails_the_verification_and_leaves_the_row_unchanged() -> None:
+    """BK-6b security lens D-1 (C-6.1): an artefact that exists but cannot be read (BK-6's
+    `ArtefactUnreadable`) is the job's `store_unavailable`. The job ends `failed` and its finished
+    record is still written, but the row keeps its `status`, `error` and `verified_at`: an
+    unreadable store leaves the verification inconclusive, which is no evidence against the backup.
+    That is the one exception to recording a failure on the row, so the sentence that records it
+    names the exception instead of contradicting it."""
+    verify = _desc("verifyBackup")
+    unreadable = "An artefact that exists but cannot be read (for instance an I/O error on the "
+    unreadable += "backup volume) is `store_unavailable`: the job ends `failed` and "
+    unreadable += "`backup.verified` (`stage: finished`, `outcome: failure`, "
+    unreadable += "`error: store_unavailable`) is still written, but the row keeps its `status`, "
+    unreadable += "`error` and `verified_at`, since an unreadable store makes the verification "
+    unreadable += "inconclusive, not evidence against the backup."
+    assert unreadable in verify
+    recorded = "records the failed verification on the backup row (`status: failed`, `error`), "
+    assert recorded + "except for `store_unavailable`, which leaves the row unchanged." in verify
+
+
+def test_a_passing_verification_makes_any_status_verified_and_the_latest_outcome_wins() -> None:
+    """BK-3 m4 (C-6.1): the contract gave only the failed re-verify. A passing one sets `status:
+    verified` and `verified_at` and clears `error` (as BK-3's store does) whatever the status was
+    before, a `restored` backup included, as a failing one sets `failed`: the latest outcome
+    wins."""
+    verify = _desc("verifyBackup")
+    passing = "ends `succeeded` and sets `status: verified` and `verified_at` and clears `error`, "
+    passing += "whatever the status was before (`restored` included: the latest outcome wins)"
+    assert passing in verify
+    failing = "A failed re-verify leaves `verified_at` at the last successful verification."
+    assert failing in verify
 
 
 def test_delete_keeps_the_row_and_names_its_conflicts() -> None:
@@ -296,16 +454,18 @@ def test_delete_keeps_the_row_and_names_its_conflicts() -> None:
     locked = "The three conflicts are evaluated and the row marked under the backups admission "
     assert locked + "lock, one delete at a time." in delete
     lock = "The backups admission lock is the one process-wide lock that admits a run, a "
-    assert lock + "verification, a restore and a delete one at a time" in delete  # R2-06
+    members = "verification, a restore, a delete and a download-link issue one at a time"
+    assert lock + members in delete
 
 
 def test_an_admission_that_cannot_take_the_lock_is_a_503_and_a_spent_grant_stays_spent() -> None:
     """SR-BK7A-03 (C-6.1): an admission waits a bounded time for the backups lock, then is refused
     `503 store_unavailable` with `Retry-After`. A run or a verification has written nothing and
     started nothing; a delete or a restore is refused after its grant is spent, so the grant is
-    gone, its failure record is written first and the operator steps up again. A run spends no
-    grant, so its sentence never speaks of a step-up, which the registry sweep would read as a
-    gated route."""
+    gone, its failure record is written ahead of the `503` and the operator steps up again. A run
+    spends no grant, so its sentence never speaks of a step-up, which the registry sweep would read
+    as a gated route. A download-link issue is refused the same way, and `deleteBackup` points to
+    its sentence, so the lock's classes are not read as the four named here (code F4a, sec F6)."""
     create, delete = _desc("createBackup"), _desc("deleteBackup")
     run = "A run that cannot take the backups admission lock (`deleteBackup`) within its wait is "
     run += "`503 store_unavailable` with `Retry-After`, before any record, and starts nothing."
@@ -314,15 +474,50 @@ def test_an_admission_that_cannot_take_the_lock_is_a_503_and_a_spent_grant_stays
     admission += "`503 store_unavailable` with `Retry-After`. A run or a verification then writes "
     admission += "no record and starts nothing; a delete or a restore is refused after its grant "
     admission += "is spent, so the grant is gone, its failure record (`backup.deleted` or "
-    admission += "`backup.restore`, `outcome: failure`) is written first, and the operator steps "
-    admission += "up again to retry."
+    admission += "`backup.restore`, `outcome: failure`) is written ahead of the `503`, and the "
+    admission += "operator steps up again to retry."
     assert admission in delete
     # "that lock" is the one the sentence before it names.
     named = "The backups admission lock is the one process-wide lock"
     assert delete.index(named) < delete.index(admission)
+    link = "A download-link issue is refused the same way after its grant is spent, with a record "
+    link += "of its own (`issueBackupDownload`)."
+    assert delete.index(admission) < delete.index(link)
     # A run's text, whole, never speaks of a step-up: the sweep's pattern (`_STEP_UP_TEXT`) plus the
     # inflection the delete sentence uses, so that sentence pasted into `createBackup` fails too.
-    assert not re.search(r"step(?:s|ped|ping)?[-_ ]up", create, re.IGNORECASE)
+    assert not _STEP_UP_ANY.search(create)
+
+
+def test_a_verification_that_cannot_take_the_lock_is_a_503_and_schedules_nothing() -> None:
+    """SR-BK7A-03 (C-6.1), mirrored from `createBackup`: a verification waits a bounded time for
+    the backups lock too, then is refused `503 store_unavailable` with `Retry-After`, before any
+    record, and schedules nothing. It spends no grant, so its text, whole, never speaks of a
+    step-up in any inflection, which the registry sweep would read as a gated route."""
+    verify = _desc("verifyBackup")
+    sentence = "A verification that cannot take the backups admission lock (`deleteBackup`) within "
+    sentence += "its wait is `503 store_unavailable` with `Retry-After`, before any record, and "
+    sentence += "schedules nothing."
+    assert sentence in verify
+    assert not _STEP_UP_ANY.search(verify)
+
+
+def test_an_unwritable_failure_record_after_the_spend_is_a_503_audit_unavailable() -> None:
+    """SEC-LW-01 (C-2.9), from the lock-wait review: the failure record of a refusal after the
+    grant is spent is written ahead of the answer, so when it cannot be written the answer is
+    `503 audit_unavailable` and the grant, spent before the service ran, stays spent. One sentence
+    covers the lock-wait `503` and the `409` refusals of a delete, which have the same gap; it says
+    "a delete's" so it is not read as covering a restore, whose own text is #3084's (code F4a)."""
+    delete = _desc("deleteBackup")
+    unwritten = "When a delete's failure record cannot be written, for this `503` or for any "
+    unwritten += "`409 conflict` after the grant is spent, the answer is `503 audit_unavailable` "
+    unwritten += "and the grant stays spent."
+    assert unwritten in delete
+    # "a delete's failure record" is the one the sentences before it write ahead of the `503`.
+    ahead = "is written ahead of the `503`, and the operator steps up again to retry."
+    assert delete.index(ahead) < delete.index(unwritten)
+    # "first of what?": the lock-wait text says ahead of the answer, never "first".
+    lock_wait = _clause(delete, "An admission that cannot take that lock", "The challenge's")
+    assert "is written first" not in lock_wait
 
 
 def test_backup_schema_gains_optional_deleted_at() -> None:
@@ -331,6 +526,18 @@ def test_backup_schema_gains_optional_deleted_at() -> None:
     assert (deleted_at["type"], deleted_at["format"]) == (["string", "null"], "date-time")
     assert "the catalogue row is kept" in text(deleted_at["description"])
     assert "required" not in backup  # every member optional, so adding one is additive (C-6.3)
+
+
+def test_backup_error_names_the_latest_conclusive_verification() -> None:
+    """Sec F6 (2), code F5 (C-6.1): a verification that cannot read the artefact is inconclusive and
+    leaves `error` as it was, and a passing one clears it, so `Backup.error` holds why the run or
+    its latest conclusive verification failed (`verifyBackup`; BK-3 m4, BK-6b D-1)."""
+    error = text(_SCHEMAS["Backup"]["properties"]["error"]["description"])
+    lead = "Why the run or its latest conclusive verification failed, as a stable code such as "
+    assert error.startswith(lead + "`checksum_mismatch`")
+    cleared = "A passing verification clears it and an inconclusive one (`store_unavailable`) "
+    cleared += "leaves it as it was (`verifyBackup`)."
+    assert cleared in error
     assert not api.Backup.model_fields["deleted_at"].is_required()
     assert api.Backup.model_validate({"kind": "pg_dump"}).deleted_at is None
 
@@ -394,9 +601,10 @@ def test_download_is_token_addressed_and_needs_no_bearer() -> None:
         "`422`), and nothing is spent",
         "The user it was issued to must still hold `backups:read`, else `403 forbidden`",
         # SR-BK0-04: a spent token is `410` without a bearer; the 256 bits keep it unguessable.
-        "An expired or already used token is `410 gone` whether or not the request carries a "
-        "bearer token, and `404 not_found` when it carries another user's; an unknown token is "
-        "`404 not_found`",
+        # Sec F3: it is `410` only while the link is remembered.
+        "An expired or already used token is `410 gone` while the link is remembered, whether or "
+        "not the request carries a bearer token, and `404 not_found` when it carries another "
+        "user's; an unknown token is `404 not_found`",
         "Telling a used token from an unknown one discloses nothing, since a token cannot be "
         "guessed (256 bits, `issueBackupDownload`)",
     ):
@@ -520,13 +728,18 @@ def test_a_link_dies_with_its_session_or_its_user() -> None:
 
 def test_a_410_names_no_cause_and_a_replayed_link_is_recorded_once() -> None:
     """R2-02: whatever the cause, a `410` carries the `used` body. R2-03 (confirmed by the
-    coordinator): the first return of a spent link is recorded, by its link id, once per link."""
+    coordinator): the first return of a spent link is recorded, by its link id, once per link.
+    Sec F3: the response, like the operation, says a `410` holds only while the link is
+    remembered; after that its token is unknown."""
     response = _operation("downloadBackup")["responses"]["410"]
     gone = text(response["description"])
     # R3-F2: the expiry and use causes lead the description, and `used` is its only example.
     assert gone.startswith("The link expired or was already used, or it ended with the events")
     assert "Every cause gets the same body, the `used` example; only the record's `reason`" in gone
     assert list(response["content"]["application/problem+json"]["examples"]) == ["used"]
+    remembered = "A link is `410 gone` only while it is remembered (`downloadBackup`); after that "
+    remembered += "its token is unknown and the fetch is `404 not_found`."
+    assert gone.endswith(remembered)
     served = _desc("downloadBackup")
     assert "Every `410` has the same body (the `used` example) whatever its cause" in served
     replay = "the first time a spent token is presented again, a `backup.downloaded` record with "
@@ -561,6 +774,122 @@ def test_a_spent_link_first_presented_after_its_expiry_is_still_recorded_as_reus
     unspent = "The expired link that writes none is one that expired unspent: a token that was "
     unspent += "spent and is first presented again after its 5 minutes writes the record, since "
     assert unspent + "the link was spent first." in _desc("downloadBackup")
+
+
+def test_a_link_is_remembered_for_at_most_an_hour_and_a_restart_forgets_every_link() -> None:
+    """SR-3456-01, BK-10's open question 3 (C-6.1): the `410` answers and the `link_reused` record
+    hold only while a link is remembered, at most 1 hour after its spend (or after its expiry, if it
+    was never spent). After that, and after a restart of the one API process that holds every link,
+    the token is unknown: `404 not_found` and no `link_reused` record, and a link lost to a restart
+    shows as an `issued` record with no `served` record (BK-10 review, Q10). The sentence names the
+    rules it bounds, so the `link_reused` sentence before it reads as holding within that window,
+    and it keeps the rule whole (sec F3): a spent link presented again for the first time is
+    recorded once, as above, so a holder of a spent token cannot write a record per request."""
+    served = _desc("downloadBackup")
+    horizon = "A spent or expired link is remembered for at most 1 hour after its spend, or after "
+    horizon += "its expiry if it was never spent: while it is remembered, an expired or used token "
+    horizon += "is `410 gone` and a spent one presented again for the first time is recorded once "
+    horizon += "as `link_reused`, as above; after that its token is unknown, so a fetch is "
+    horizon += "`404 not_found` and no `link_reused` record is written."
+    assert horizon in served
+    # It follows the rule it bounds, which stays whole (`test_a_410_names_no_cause_...` quotes it).
+    assert served.index("`reason: link_reused`") < served.index(horizon)
+    restart = "Links are held in the memory of the one API process (ADR-0004), as jobs are "
+    restart += "(`getJob`), so a restart forgets every link, live or spent: one issued before it "
+    restart += "is unknown, a fetch is `404 not_found`, and the link shows as an `issued` record "
+    restart += "with no `served` record."
+    assert restart in served
+
+
+def test_a_link_issue_that_cannot_take_the_lock_is_a_503_after_the_spend() -> None:
+    """BK-10 review (SR-BK10A-03, C-6.1): the backups admission lock admits a download-link issue
+    too, so an issue that cannot take it within its wait is `503 store_unavailable` with
+    `Retry-After`, after its grant is spent: the grant is gone, its failure record is written ahead
+    of the `503` and the operator steps up again, in the wording `deleteBackup` settled (SEC-LW-01).
+    When that record cannot be written, for any of these `503`s or for the `409`, the answer is
+    `503 audit_unavailable` and the grant stays spent (sec F1: every `503`, not two of three)."""
+    lock = "admits a run, a verification, a restore, a delete and a download-link issue one at "
+    assert lock + "a time" in _desc("deleteBackup")
+    issue = _desc("issueBackupDownload")
+    wait = "An issue that cannot take the backups admission lock (`deleteBackup`) within its wait "
+    wait += "is `503 store_unavailable` with `Retry-After`, after the grant is spent, so the grant "
+    wait += "is gone, its failure record (`backup.downloaded`, `stage: issued`, "
+    wait += "`outcome: failure`, `reason: store_unavailable`) is written ahead of the `503`, and "
+    wait += "the operator steps up again to retry."
+    assert wait in issue
+    unwritten = "When that failure record cannot be written, for any of these `503`s or for the "
+    unwritten += "`409`, the answer is `503 audit_unavailable` and the grant stays spent."
+    assert unwritten in issue
+    # "that failure record" is the one the lock-wait sentence writes ahead of the `503`.
+    assert issue.index(wait) < issue.index(unwritten)
+
+
+def test_an_issue_failure_record_names_its_reason_and_a_full_link_store_is_a_503() -> None:
+    """BK-10 review (SR-BK10B-04, C-6.1): the failure record of a refused issue carries a `reason`:
+    `backup_not_usable` for the `409`, `links_full` for a full link store, which answers
+    `503 store_unavailable` with `Retry-After` like the lock wait, and `store_unavailable` for any
+    other `503 store_unavailable` after the spend (the lock wait, or a catalogue or artefact store
+    that fails or is too slow), as BK-10a's `_reason` gives it (sec F1, code F1). The store is full
+    at 1024 live links and no other count (sec F2, code F2), stated once, with the link's memory
+    (`downloadBackup`)."""
+    issue = _desc("issueBackupDownload")
+    reasons = "`outcome: failure` and a `reason`: `backup_not_usable` for the `409`, "
+    reasons += "`links_full` for a full link store and `store_unavailable` for any other "
+    reasons += "`503 store_unavailable` after the spend (the lock wait, or a catalogue or artefact "
+    reasons += "store that fails or is too slow);"
+    assert reasons in issue
+    full = "An issue that finds the link store full (1024 links live; `downloadBackup` states the "
+    full += "bounds) is refused the same way: `503 store_unavailable` with `Retry-After`, "
+    full += "`reason: links_full`, a code that here also covers the in-process link store."
+    assert full in issue
+
+
+def test_a_store_that_fails_inside_the_lock_ends_an_issue_like_the_lock_wait() -> None:
+    """Sec F1, code F1 (BK-10a, `downloads.py`: `_usable` makes a catalogue read or an artefact
+    resolve that fails or is too slow an `OpsUnavailable`, and `_reason` gives every one the reason
+    `store_unavailable`): an issue whose catalogue or artefact store fails inside the lock is
+    `503 store_unavailable` after the spend, with the lock wait's failure record, so the reason
+    does not belong to the lock wait alone."""
+    issue = _desc("issueBackupDownload")
+    inside = "A catalogue or artefact store that fails or is too slow once the lock is held ends "
+    inside += "the same way, with the same record."
+    assert inside in issue
+    wait = "and the operator steps up again to retry."
+    full = "An issue that finds the link store full"
+    assert issue.index(wait) < issue.index(inside) < issue.index(full)
+
+
+def test_a_full_link_store_is_1024_live_links_and_the_oldest_ended_are_forgotten_first() -> None:
+    """Sec F2, code F2 (BK-10a, `links.py`: `LinksFull` only at 1024 live links; past 1024 ended
+    links the oldest issued is dropped at the next issue, before its hour): the store is full when
+    1024 links are live, no other count, and the ended links are kept as a history of the newest
+    1024, so a token can be `404` with no record before its hour is up. The memory's hour is a
+    ceiling (`test_a_link_is_remembered_for_at_most_an_hour_and_a_restart_forgets_every_link`)."""
+    served = _desc("downloadBackup")
+    bounds = "At most 1024 links are live at once, every user's together; an issue that finds 1024 "
+    bounds += "live is refused (`issueBackupDownload`). The spent or expired ones are kept as "
+    bounds += "well, the newest 1024 issued, and the oldest issued are forgotten first, so a token "
+    bounds += "can be `404 not_found` with no record before its hour is up."
+    assert bounds in served
+    # It follows the restart sentence, and the issue's own text defers to it for the bounds.
+    assert served.index("with no `served` record.") < served.index(bounds)
+    assert "(1024 links live; `downloadBackup` states the bounds)" in _desc("issueBackupDownload")
+
+
+def test_an_unwritable_issued_record_means_the_link_is_never_sent() -> None:
+    """Sec F4 (c), C-2.9 (BK-10a, `downloads.py`: an `issued` record that is not written discards
+    the link, and the route answers `503 audit_unavailable` with the grant spent): the record is
+    written before the response, so when it cannot be written no link is sent, the answer is
+    `503 audit_unavailable` and the grant stays spent. The failure record's own sentence is pinned
+    by `test_a_link_issue_that_cannot_take_the_lock_is_a_503_after_the_spend`."""
+    issue = _desc("issueBackupDownload")
+    unwritten = "when that record cannot be written, the link is never sent: the answer is "
+    unwritten += "`503 audit_unavailable` and the grant stays spent."
+    assert unwritten in issue
+    # "that record" is the issued record the sentence before it writes before the response.
+    written = "Issuing is audited as `backup.downloaded` with `after_state.stage: issued` at "
+    written += "severity `error` before the response; "
+    assert written + unwritten in issue
 
 
 def test_a_replay_or_source_record_that_cannot_be_written_is_a_503_and_not_used_up() -> None:
