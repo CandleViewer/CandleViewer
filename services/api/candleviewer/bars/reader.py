@@ -172,19 +172,38 @@ def build_tail_query(
     """The newest `limit` builder rows of one series at or after `from_us`, newest first by the
     full bar key (the caller reverses). Kline rows (NULL `index`) carry no bar key and are left
     out. A `from_us` further back from `now_us` than the kind's SR-E12-02 window cap is refused:
-    a check against the caller's clock (`read_tail` passes the one it windows with), not a clamp."""
+    a check against the caller's clock (`read_tail` passes the one it windows with), not a clamp.
+    QuestDB 8.1.1 predates questdb/questdb#5148: this multi-key `DESC ... LIMIT` sorts every row
+    it scans, so `read_tail` starts a non-time read at its nth-newest `ts` (D2-M2, #3688)."""
+    sql = _tail_sql(kind, limit, from_us, now_us, bound=False)
+    return sql, (symbol, bar_param, ts_param(from_us))
+
+
+def build_tail_bound_query(
+    kind: str, symbol: str, bar_param: str, limit: int, from_us: int, *, now_us: int
+) -> tuple[str, tuple[object, ...]]:
+    """`read_tail`'s first statement for a non-time kind (D2-M2, #3688): the `ts` of the newest
+    `limit` builder rows of one series at or after `from_us`, newest first, with the WHERE, binds
+    and refusals of `build_tail_query`. Its one sort key is the designated timestamp, which
+    QuestDB 8.1.1 plans as a backward scan that stops at the limit, with no sort."""
+    sql = _tail_sql(kind, limit, from_us, now_us, bound=True)
+    return sql, (symbol, bar_param, ts_param(from_us))
+
+
+def _tail_sql(kind: str, limit: int, from_us: int, now_us: int, *, bound: bool) -> str:
+    """The text of either tail statement, after the refusals both share (see `build_tail_query`):
+    one WHERE, then the rows by the full bar key, or with `bound` only their `ts` on that key."""
     if kind not in _FAMILIES:
         raise ValueError(f"unknown bar kind {kind!r}")
     if not 1 <= limit <= MAX_TAIL:
         raise ValueError(f"limit must be between 1 and {MAX_TAIL}")
     if from_us < now_us - (MAX_TIME_WINDOW_US if kind == "time" else MAX_NON_TIME_WINDOW_US):
         raise ValueError(f"from_us is older than the {kind} bars window cap (SR-E12-02)")
-    # QuestDB 8.1.1 predates upstream #5148 (a multi-key DESC LIMIT sorts its whole scan): bound ts.
-    sql = (
-        f"SELECT * FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
-        f"AND {_IDX} IS NOT NULL ORDER BY {_ORDER_BY_KEY_DESC} LIMIT {int(limit)}"
+    columns, order = ("ts", "ts DESC") if bound else ("*", _ORDER_BY_KEY_DESC)
+    return (
+        f"SELECT {columns} FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
+        f"AND {_IDX} IS NOT NULL ORDER BY {order} LIMIT {int(limit)}"
     )
-    return sql, (symbol, bar_param, ts_param(from_us))
 
 
 def row_key(row: dict[str, object]) -> BarKey:
@@ -328,19 +347,47 @@ class BarReader:
 
     async def read_tail(self, symbol: str, spec: BarSpec, limit: int) -> BarTail:
         """The newest `limit` closed, tape-built bars of a series inside `tail_window_us`, oldest
-        first (WS `bars` snapshot hydration, #2195): one `build_tail_query` read, reversed.
+        first (WS `bars` snapshot hydration, #2195): a `build_tail_query` read, reversed.
         Untrusted rows are dropped and counted as in `read_bars`; stale `build_version` rows are
         served as-is. A malformed row is skipped, never fatal to the whole tail: one whose
         generation is outside the writer's bound (`check_generation`) too.
+
+        A non-time read is bounded first (D2-M2, #3688): its window, the whole SR-E12-02 cap, can
+        hold far more than `limit` rows of a series, which `build_tail_query` would sort whole.
+        `build_tail_bound_query` takes the `ts` of the newest `limit`; when it returns `limit`
+        rows, `build_tail_query` starts at the oldest of them, else at the window start. That is
+        exact: at least `limit` rows lie at or above the bound and `>=` keeps every row tied with
+        it, so the newest `limit` by the full key all lie there, and the rows and their order are
+        those of a read from the window start. A row written between the two lies at or above the
+        bound (read) or below it (outside the newest `limit`). Both run under the caller's one
+        timeout. A time read keeps one statement: its window spans twice `limit` bars.
+
+        A window with no row ends at the first statement: the empty tail a one-statement read
+        returns, exact as of that statement. A row written after it still reaches the store live,
+        as one written just after a one-statement read does: the router emits each close to the
+        series store before the writer (`wire_bars`, `EmitRouter.emit`); `SeriesStore._hydrate`
+        seeds its replay before it awaits this read; `SeriesStore.emit` keeps every close from
+        then on, and `SeriesStore._fold` keeps those newer than the rows. With some rows but
+        fewer than `limit` the read still starts at the window start: from the oldest `ts`
+        returned it would miss a row written below it.
 
         A `limit` outside 1..`MAX_TAIL` raises. The series store, the one caller, asks for
         `MAX_TAIL` whatever a subscriber's `history` (a 0 too) and bounds every read with a
         timeout, degrading when it expires (SR-E12-01). `BarTail` says what `since_us` and
         `fetched` tell of a tail shorter than `limit`, and what they do not."""
         now = self._now_us()
-        since = now - tail_window_us(spec, limit)
+        since = start = now - tail_window_us(spec, limit)
         bar_param = bar_param_for(spec)
-        sql, params = build_tail_query(spec.kind, symbol, bar_param, limit, since, now_us=now)
+        if spec.kind != "time":
+            sql, params = build_tail_bound_query(
+                spec.kind, symbol, bar_param, limit, since, now_us=now
+            )
+            newest = await self._conn.fetch(sql, *params)
+            if not newest:  # nothing in the window: no second scan of it
+                return BarTail([], since_us=since)
+            if len(newest) == limit:  # newest first: the last is the `limit`-th newest
+                start = max(since, ts_us_from_row(newest[-1]["ts"]))
+        sql, params = build_tail_query(spec.kind, symbol, bar_param, limit, start, now_us=now)
         raw = await self._conn.fetch(sql, *params)
         current = BUILD_VERSIONS[spec.kind]
         bars: list[tuple[int, Bar]] = []

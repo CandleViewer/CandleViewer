@@ -455,9 +455,12 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     by span (the SR-E12-02 window: at most 400 d for time bars, 31 d for the others) and by `MAX_TAIL` (1 000,
     the `history` maximum) on the rows it returns, not by the rows it scans. The read always takes `MAX_TAIL`,
     whatever a subscriber's `history`; `history` only trims what is sent. SR-E12-02's 250 000 figure is REST's
-    estimate gate only. The read scans every row of its kind's table in the window, as `symbol` has no index,
-    and QuestDB 8.1.1 sorts its whole scan (21 §4.8, §9.5). An exact row bound (D2-M2) is open in #2787; the
-    read's cost is measured in D2-G3.
+    estimate gate only. A non-time read first takes the `ts` of the series' newest `MAX_TAIL` rows (D2-M2, #3688;
+    21 §9.5), then sorts only the rows from there, about `MAX_TAIL`. As `symbol` has no index, the filter still
+    reads every row of the kind's table from that `ts` on; a series with fewer rows than `MAX_TAIL` in its window
+    has no such `ts` and is read from the window start, twice (once if it has none). A time read keeps one
+    statement, over at most about twice the bars it asks for (fewer once the 400 d cap applies; 21 §9.5). A scan
+    bound by table rows remains before `bars_enabled` is turned on (#2787); the read's cost is measured in D2-G3.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
