@@ -1,0 +1,39 @@
+rules:
+  # Sequences slow enough that each one times out on slow.py with --timeout 1, and that match
+  # many.py so often that Semgrep drops every finding on it.
+  - id: slow-sequence-a
+    languages: [python]
+    severity: ERROR
+    message: Four assignments in a row.
+    pattern: |
+      $A = $B
+      ...
+      $C = $D
+      ...
+      $E = $F
+      ...
+      $G = $H
+  - id: slow-sequence-b
+    languages: [python]
+    severity: ERROR
+    message: Four assigned calls in a row.
+    pattern: |
+      $A = $B(...)
+      ...
+      $C = $D(...)
+      ...
+      $E = $F(...)
+      ...
+      $G = $H(...)
+  - id: slow-sequence-c
+    languages: [python]
+    severity: ERROR
+    message: Four assigned calls of g in a row.
+    pattern: |
+      $A = g(...)
+      ...
+      $C = g(...)
+      ...
+      $E = g(...)
+      ...
+      $G = g(...)

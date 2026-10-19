@@ -1,0 +1,118 @@
+{
+  "version": "1.181.0",
+  "results": [],
+  "errors": [
+    {
+      "code": 2,
+      "level": "warn",
+      "type": "Too many matches",
+      "rule_id": "slow-sequence-a",
+      "message": "Too many matches when running slow-sequence-a on many.py:\n An error occurred while invoking the Semgrep engine. Please help us fix this by creating an issue at https://github.com/semgrep/semgrep\n\n4 rules result in too many matches, most offending rule has 4845: $A = $B\n...\n$C = $D\n...\n$E = $F\n...\n$G = $H\n",
+      "path": "many.py"
+    },
+    {
+      "code": 2,
+      "level": "warn",
+      "type": "Timeout",
+      "rule_id": "slow-sequence-a",
+      "message": "Timeout when running slow-sequence-a on slow.py:\n ",
+      "path": "slow.py"
+    },
+    {
+      "code": 2,
+      "level": "warn",
+      "type": "Timeout",
+      "rule_id": "slow-sequence-b",
+      "message": "Timeout when running slow-sequence-b on slow.py:\n ",
+      "path": "slow.py"
+    },
+    {
+      "code": 2,
+      "level": "warn",
+      "type": "Timeout",
+      "rule_id": "slow-sequence-c",
+      "message": "Timeout when running slow-sequence-c on slow.py:\n ",
+      "path": "slow.py"
+    },
+    {
+      "code": 3,
+      "level": "warn",
+      "type": [
+        "PartialParsing",
+        [
+          {
+            "path": "workflow.yml",
+            "start": { "line": 7, "col": 15, "offset": 153 },
+            "end": { "line": 9, "col": 13, "offset": 206 }
+          }
+        ]
+      ],
+      "message": "Syntax error at line workflow.yml:7:\n When parsing a snippet as Bash for metavariable-pattern in rule 'workflow-run-echo', `set -eu\ncase \"$1\" in x) echo \"x\" ;; esac\necho \"done\"\n` was unexpected",
+      "path": "workflow.yml",
+      "spans": [
+        {
+          "file": "workflow.yml",
+          "start": { "line": 7, "col": 15, "offset": 153 },
+          "end": { "line": 9, "col": 13, "offset": 206 }
+        }
+      ]
+    }
+  ],
+  "paths": {
+    "scanned": ["many.py", "slow.py", "workflow.yml"],
+    "skipped": [
+      { "path": "many.py", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "slow.py", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "workflow.yml", "reason": "analysis_failed_parser_or_internal_error" }
+    ]
+  },
+  "time": {
+    "rules": [],
+    "rules_parse_time": 0.0008399486541748047,
+    "profiling_times": {
+      "config_time": 0.21277952194213867,
+      "core_time": 3.5334322452545166,
+      "ignores_time": 0.0001342296600341797,
+      "total_time": 3.769446611404419
+    },
+    "parsing_time": {
+      "total_time": 0.01330113410949707,
+      "per_file_time": { "mean": 0.002660226821899414, "std_dev": 1.2716185060526185e-5 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_files": []
+    },
+    "scanning_time": {
+      "total_time": 3.58771014213562,
+      "per_file_time": { "mean": 1.1959033807118735, "std_dev": 2.3664412984162606 },
+      "very_slow_stats": { "time_ratio": 0.938817501151486, "count_ratio": 0.3333333333333333 },
+      "very_slow_files": [{ "fpath": "slow.py", "ftime": 3.3682050704956055 }]
+    },
+    "matching_time": {
+      "total_time": 0.15920710563659668,
+      "per_file_and_rule_time": { "mean": 0.03184142112731934, "std_dev": 0.0006437340622733245 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_rules_on_files": []
+    },
+    "tainting_time": {
+      "total_time": 0.0,
+      "per_def_and_rule_time": { "mean": 0.0, "std_dev": 0.0 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_rules_on_defs": []
+    },
+    "fixpoint_timeouts": [],
+    "prefiltering": {
+      "project_level_time": 0.0,
+      "file_level_time": 0.0,
+      "rules_with_project_prefilters_ratio": 0.0,
+      "rules_with_file_prefilters_ratio": 0.4,
+      "rules_selected_ratio": 1.0,
+      "rules_matched_ratio": 1.0
+    },
+    "targets": [],
+    "total_bytes": 0,
+    "max_memory_bytes": 2019989056
+  },
+  "engine_requested": "OSS",
+  "skipped_rules": [],
+  "profiling_results": []
+}

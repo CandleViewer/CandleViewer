@@ -1,0 +1,10 @@
+# Fixture for #3549: a rule cannot parse this workflow's run script as Bash.
+on: push
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set -eu
+          case "$1" in x) echo "x" ;; esac
+          echo "done"

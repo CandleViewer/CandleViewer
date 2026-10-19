@@ -4,8 +4,10 @@
 # Usage: restore_drill.sh <backup_dir> <scratch_dir>   (env: CV_BACKUP_KEY_FILE)
 set -euo pipefail
 BACKUP_DIR="${1:?backup dir}"; SCRATCH="${2:?scratch dir}"
-: "${CV_BACKUP_KEY_FILE:?backup key file (distinct from runtime KEK)}"
-case "$SCRATCH" in /|"") echo "refusing unsafe scratch dir" >&2; exit 2;; esac
+: "${CV_BACKUP_KEY_FILE:?backup key file, distinct from runtime KEK}"
+case "$SCRATCH" in
+  / | "") echo "refusing unsafe scratch dir" >&2; exit 2 ;;
+esac
 mkdir -p "$SCRATCH/cold" "$SCRATCH/pg"
 # 1. decrypt (must fail without the backup key: SR-092)
 for f in "$BACKUP_DIR"/*.enc; do

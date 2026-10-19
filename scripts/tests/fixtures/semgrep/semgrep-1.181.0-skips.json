@@ -1,0 +1,117 @@
+{
+  "version": "1.181.0",
+  "results": [
+    {
+      "check_id": "python-print",
+      "path": "partial.py",
+      "start": { "line": 10, "col": 1, "offset": 162 },
+      "end": { "line": 10, "col": 20, "offset": 181 },
+      "extra": {
+        "message": "A print call.",
+        "metadata": {},
+        "severity": "ERROR",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "code": 0,
+      "level": "info",
+      "type": [
+        "IncompatibleRule",
+        { "rule_id": "newer-semgrep-only", "this_version": "1.181.0", "min_version": "99.0.0" }
+      ],
+      "rule_id": "newer-semgrep-only",
+      "message": "Incompatible rule newer-semgrep-only:\n This rule requires upgrading Semgrep from version 1.181.0 to at least 99.0.0",
+      "path": "../newer.yml"
+    },
+    {
+      "code": 3,
+      "level": "warn",
+      "type": [
+        "PartialParsing",
+        [
+          {
+            "path": "workflow.yml",
+            "start": { "line": 7, "col": 15, "offset": 153 },
+            "end": { "line": 9, "col": 13, "offset": 206 }
+          }
+        ]
+      ],
+      "message": "Syntax error at line workflow.yml:7:\n When parsing a snippet as Bash for metavariable-pattern in rule 'workflow-run-echo', `set -eu\ncase \"$1\" in x) echo \"x\" ;; esac\necho \"done\"\n` was unexpected",
+      "path": "workflow.yml",
+      "spans": [
+        {
+          "file": "workflow.yml",
+          "start": { "line": 7, "col": 15, "offset": 153 },
+          "end": { "line": 9, "col": 13, "offset": 206 }
+        }
+      ]
+    }
+  ],
+  "paths": {
+    "scanned": ["partial.py", "workflow.yml"],
+    "skipped": [
+      { "path": "../newer.yml", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "slow.py", "reason": "exceeded_size_limit" },
+      { "path": "unparsed.py", "reason": "cli_exclude_flags_match" },
+      { "path": "workflow.yml", "reason": "analysis_failed_parser_or_internal_error" }
+    ]
+  },
+  "time": {
+    "rules": [],
+    "rules_parse_time": 0.0005390644073486328,
+    "profiling_times": {
+      "config_time": 0.23995280265808105,
+      "core_time": 0.23930668830871582,
+      "ignores_time": 7.390975952148438e-5,
+      "total_time": 0.5010831356048584
+    },
+    "parsing_time": {
+      "total_time": 0.009457111358642578,
+      "per_file_time": { "mean": 0.004728555679321289, "std_dev": 2.6520865503698587e-9 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_files": []
+    },
+    "scanning_time": {
+      "total_time": 0.013110160827636719,
+      "per_file_time": { "mean": 0.006555080413818359, "std_dev": 9.416055490873987e-9 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_files": []
+    },
+    "matching_time": {
+      "total_time": 0.0029859542846679688,
+      "per_file_and_rule_time": {
+        "mean": 0.0014929771423339844,
+        "std_dev": 1.6427748050773516e-11
+      },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_rules_on_files": []
+    },
+    "tainting_time": {
+      "total_time": 0.0,
+      "per_def_and_rule_time": { "mean": 0.0, "std_dev": 0.0 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_rules_on_defs": []
+    },
+    "fixpoint_timeouts": [],
+    "prefiltering": {
+      "project_level_time": 0.0,
+      "file_level_time": 0.0,
+      "rules_with_project_prefilters_ratio": 0.0,
+      "rules_with_file_prefilters_ratio": 0.5,
+      "rules_selected_ratio": 1.0,
+      "rules_matched_ratio": 1.0
+    },
+    "targets": [],
+    "total_bytes": 0,
+    "max_memory_bytes": 93420864
+  },
+  "engine_requested": "OSS",
+  "skipped_rules": [],
+  "profiling_results": []
+}

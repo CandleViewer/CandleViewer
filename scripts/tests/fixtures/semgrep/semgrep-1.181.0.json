@@ -1,0 +1,123 @@
+{
+  "version": "1.181.0",
+  "results": [
+    {
+      "check_id": "python-print",
+      "path": "partial.py",
+      "start": { "line": 10, "col": 1, "offset": 162 },
+      "end": { "line": 10, "col": 20, "offset": 181 },
+      "extra": {
+        "message": "A print call.",
+        "metadata": {},
+        "severity": "ERROR",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "python-print",
+      "path": "skipped.py",
+      "start": { "line": 5, "col": 1, "offset": 115 },
+      "end": { "line": 5, "col": 16, "offset": 130 },
+      "extra": {
+        "message": "A print call.",
+        "metadata": {},
+        "severity": "ERROR",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "code": 3,
+      "level": "warn",
+      "type": "Syntax error",
+      "message": "Syntax error at line unparsed.py:11:\n `[` was unexpected",
+      "path": "unparsed.py"
+    },
+    {
+      "code": 3,
+      "level": "warn",
+      "type": [
+        "PartialParsing",
+        [
+          {
+            "path": "drill.sh",
+            "start": { "line": 3, "col": 1, "offset": 0 },
+            "end": { "line": 5, "col": 13, "offset": 53 }
+          }
+        ]
+      ],
+      "message": "Syntax error at line drill.sh:3:\n `set -eu\ncase \"$1\" in x) echo \"x\" ;; esac\necho \"done\"\n` was unexpected",
+      "path": "drill.sh",
+      "spans": [
+        {
+          "file": "drill.sh",
+          "start": { "line": 3, "col": 1, "offset": 0 },
+          "end": { "line": 5, "col": 13, "offset": 53 }
+        }
+      ]
+    }
+  ],
+  "paths": {
+    "scanned": ["drill.sh", "partial.py", "skipped.py", "unparsed.py"],
+    "skipped": [
+      { "path": "drill.sh", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "unparsed.py", "reason": "analysis_failed_parser_or_internal_error" }
+    ]
+  },
+  "time": {
+    "rules": [],
+    "rules_parse_time": 0.0007040500640869141,
+    "profiling_times": {
+      "config_time": 0.13961577415466309,
+      "core_time": 0.16605663299560547,
+      "ignores_time": 0.00014281272888183594,
+      "total_time": 0.34784913063049316
+    },
+    "parsing_time": {
+      "total_time": 0.0190732479095459,
+      "per_file_time": { "mean": 0.006357749303181966, "std_dev": 1.951037436103636e-6 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_files": []
+    },
+    "scanning_time": {
+      "total_time": 0.029787302017211914,
+      "per_file_time": { "mean": 0.0074468255043029785, "std_dev": 1.4096079961944952e-5 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_files": []
+    },
+    "matching_time": {
+      "total_time": 0.009313106536865234,
+      "per_file_and_rule_time": { "mean": 0.0031043688456217446, "std_dev": 1.7622900764359253e-6 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_rules_on_files": []
+    },
+    "tainting_time": {
+      "total_time": 0.0,
+      "per_def_and_rule_time": { "mean": 0.0, "std_dev": 0.0 },
+      "very_slow_stats": { "time_ratio": 0.0, "count_ratio": 0.0 },
+      "very_slow_rules_on_defs": []
+    },
+    "fixpoint_timeouts": [],
+    "prefiltering": {
+      "project_level_time": 0.0,
+      "file_level_time": 0.0,
+      "rules_with_project_prefilters_ratio": 0.0,
+      "rules_with_file_prefilters_ratio": 0.6666666666666666,
+      "rules_selected_ratio": 1.0,
+      "rules_matched_ratio": 1.0
+    },
+    "targets": [],
+    "total_bytes": 0,
+    "max_memory_bytes": 103011008
+  },
+  "engine_requested": "OSS",
+  "skipped_rules": [],
+  "profiling_results": []
+}

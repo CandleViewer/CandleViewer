@@ -85,8 +85,9 @@ def find_fixture(rule_id: str) -> Path:
 def actual_lines(rule_yaml: Path, fixture: Path) -> set[int]:
     # Fixtures live under .semgrepignore'd paths (.semgrep/tests/, .semgrep-fixtures/) so the
     # product scan never reports their intentional violations. Semgrep's ignore handling varies by
-    # version (1.99 in CI ignored the file even with --include), so the checker copies the fixture
-    # into a temp tree with no .semgrepignore and scans that copy; line numbers are unchanged.
+    # version (1.99, CI's pin before #3549, ignored the file even with --include), so the checker
+    # copies the fixture into a temp tree with no .semgrepignore and scans that copy; line
+    # numbers are unchanged.
     # `--no-git-ignore`: the temp tree is not a git checkout, and a fixture name that happens to
     # match a global gitignore pattern must still be scanned.
     with tempfile.TemporaryDirectory(prefix="cv-semgrep-fixture-") as tmp:

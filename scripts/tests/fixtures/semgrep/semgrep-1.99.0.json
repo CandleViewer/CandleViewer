@@ -1,0 +1,144 @@
+{
+  "version": "1.99.0",
+  "results": [
+    {
+      "check_id": "python-print",
+      "path": "partial.py",
+      "start": { "line": 10, "col": 1, "offset": 162 },
+      "end": { "line": 10, "col": 20, "offset": 181 },
+      "extra": {
+        "metavars": {},
+        "message": "A print call.",
+        "metadata": {},
+        "severity": "ERROR",
+        "fingerprint": "e7370605b6a959b48e9c5e52e14da85df7c431bc1e3c51b2b38b4424b67761fe8028484320b57bd9459abc453f2a53e7ee31bef2102af2b8dd7b9fa3d555f960_0",
+        "lines": "print(swap((1, 2)))",
+        "is_ignored": false,
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "python-print",
+      "path": "unparsed.py",
+      "start": { "line": 16, "col": 1, "offset": 245 },
+      "end": { "line": 16, "col": 27, "offset": 271 },
+      "extra": {
+        "metavars": {},
+        "message": "A print call.",
+        "metadata": {},
+        "severity": "ERROR",
+        "fingerprint": "64f04d8efe3a3e0dd95bcda6a568e58d93ff091da924af4479b76eecde6c2a99f7c946f928812338bb497229223cf4f49761294ff698fe322d73f7d370e27f69_0",
+        "lines": "print(Named(\"a\", NAME_RE))",
+        "is_ignored": false,
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "code": 3,
+      "level": "warn",
+      "type": [
+        "PartialParsing",
+        [
+          {
+            "path": "skipped.py",
+            "start": { "line": 1, "col": 1, "offset": 0 },
+            "end": { "line": 12, "col": 16, "offset": 287 }
+          }
+        ]
+      ],
+      "message": "Syntax error at line skipped.py:1:\n `\"\"\"Fixture for #3549: Semgrep 1.99.0 parses no code line of this module.\"\"\"\n\nfrom collections.abc import Callable\n\nprint(\"loaded\")\n\n\ndef first[T](items: list[T], keep: Callable[[T], bool]) -> T | None:\n    for item in items:\n        if keep(item):\n            return item\n    return None` was unexpected",
+      "path": "skipped.py",
+      "spans": [
+        {
+          "file": "skipped.py",
+          "start": { "line": 1, "col": 1, "offset": 0 },
+          "end": { "line": 12, "col": 16, "offset": 287 }
+        }
+      ]
+    },
+    {
+      "code": 3,
+      "level": "warn",
+      "type": [
+        "PartialParsing",
+        [
+          {
+            "path": "unparsed.py",
+            "start": { "line": 11, "col": 12, "offset": 0 },
+            "end": { "line": 11, "col": 15, "offset": 3 }
+          }
+        ]
+      ],
+      "message": "Syntax error at line unparsed.py:11:\n `[T]` was unexpected",
+      "path": "unparsed.py",
+      "spans": [
+        {
+          "file": "unparsed.py",
+          "start": { "line": 11, "col": 12, "offset": 0 },
+          "end": { "line": 11, "col": 15, "offset": 3 }
+        }
+      ]
+    },
+    {
+      "code": 3,
+      "level": "warn",
+      "type": [
+        "PartialParsing",
+        [
+          {
+            "path": "partial.py",
+            "start": { "line": 3, "col": 1, "offset": 0 },
+            "end": { "line": 3, "col": 5, "offset": 4 }
+          }
+        ]
+      ],
+      "message": "Syntax error at line partial.py:3:\n `type` was unexpected",
+      "path": "partial.py",
+      "spans": [
+        {
+          "file": "partial.py",
+          "start": { "line": 3, "col": 1, "offset": 0 },
+          "end": { "line": 3, "col": 5, "offset": 4 }
+        }
+      ]
+    },
+    {
+      "code": 3,
+      "level": "warn",
+      "type": [
+        "PartialParsing",
+        [
+          {
+            "path": "drill.sh",
+            "start": { "line": 3, "col": 1, "offset": 0 },
+            "end": { "line": 5, "col": 13, "offset": 53 }
+          }
+        ]
+      ],
+      "message": "Syntax error at line drill.sh:3:\n `set -eu\ncase \"$1\" in x) echo \"x\" ;; esac\necho \"done\"\n` was unexpected",
+      "path": "drill.sh",
+      "spans": [
+        {
+          "file": "drill.sh",
+          "start": { "line": 3, "col": 1, "offset": 0 },
+          "end": { "line": 5, "col": 13, "offset": 53 }
+        }
+      ]
+    }
+  ],
+  "paths": {
+    "scanned": ["drill.sh", "partial.py", "skipped.py", "unparsed.py"],
+    "skipped": [
+      { "path": "drill.sh", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "partial.py", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "skipped.py", "reason": "analysis_failed_parser_or_internal_error" },
+      { "path": "unparsed.py", "reason": "analysis_failed_parser_or_internal_error" }
+    ]
+  },
+  "interfile_languages_used": [],
+  "skipped_rules": []
+}

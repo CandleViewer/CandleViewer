@@ -1,0 +1,7 @@
+rules:
+  - id: newer-semgrep-only
+    min-version: 99.0.0
+    languages: [python]
+    severity: ERROR
+    message: A print call, for a Semgrep release that does not exist yet.
+    pattern: print(...)

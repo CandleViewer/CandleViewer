@@ -16,6 +16,10 @@ from typing import Any
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.ci.security_gate import SEMGREP_TIMEOUT_THRESHOLD
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 JOBS: dict[str, Any] = yaml.safe_load(
@@ -69,7 +73,10 @@ ACTIONS = {
     "read-only-scans": BASE_ACTIONS | {"actions/setup-node", "actions/upload-artifact"},
     "trivy": BASE_ACTIONS | {"aquasecurity/trivy-action", CODEQL_ACTION + "upload-sarif"},
 }
-SCANNERS = ('"semgrep==', '"pip-audit==', '"bandit[sarif]==')
+# #3549: semgrep installs by hash, from a lock of its own, in both of its venvs.
+SEMGREP_LOCK = "tools/ci/requirements-semgrep.txt"
+SEMGREP_INSTALL = f"pip install --require-hashes --only-binary=:all: -r {SEMGREP_LOCK}"
+SCANNERS = (SEMGREP_INSTALL, '"pip-audit==', '"bandit[sarif]==')
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
 # The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
 CALLER = {
@@ -133,6 +140,108 @@ def test_each_scanner_installs_into_its_own_venv_under_runner_temp(job: str) -> 
             venvs.append(venv)
     assert len(venvs) == len(set(venvs)) == 2
     assert "/tmp/" not in json.dumps(JOBS[job])
+
+
+def test_both_semgrep_steps_install_only_its_hash_pinned_lock() -> None:
+    # #3549: semgrep, its dependencies and the gate's PyYAML, all by hash (C-12.3).
+    steps = [s for job in JOBS for s in _steps(job) if "semgrep scan" in s.get("run", "")]
+    assert sorted(s["id"] for s in steps) == ["security-auth", "semgrep"]
+    for step in steps:
+        installs = [line.strip() for line in step["run"].splitlines() if "pip install" in line]
+        assert installs == [SEMGREP_INSTALL]
+    assert not [p for p in WORKFLOWS.glob("*.yml") if "semgrep==" in p.read_text(encoding="utf-8")]
+
+
+def test_semgrep_lock_pins_each_requirement_by_hash_at_the_ci_versions() -> None:
+    pins: dict[str, str] = {}
+    hashes = 0
+    for line in (ROOT / SEMGREP_LOCK).read_text(encoding="utf-8").splitlines():
+        if line.startswith("    --hash="):
+            assert re.fullmatch(r"    --hash=sha256:[0-9a-f]{64}( \\)?", line), line
+            hashes += 1
+        elif line and not line.lstrip().startswith("#"):
+            # Each requirement line is an exact pin, and the one before it has its hashes.
+            assert len(pins) == 0 or hashes > 0, line
+            pin = re.fullmatch(r"([A-Za-z0-9][\w.-]*)==(\S+) \\", line)
+            assert pin, line
+            pins[pin.group(1).lower()] = pin.group(2)
+            hashes = 0
+    assert hashes > 0
+    assert pins["semgrep"] == "1.181.0"  # parses PEP 695, which 1.99.0 skipped (see its header)
+    ci_pins = (ROOT / "scripts" / "requirements-ci.txt").read_text(encoding="utf-8").splitlines()
+    assert f"PyYAML=={pins['pyyaml']}" in ci_pins
+
+
+def test_semgrep_step_hands_its_json_report_to_the_gate() -> None:
+    # #3549: the SARIF cannot say which files the engine left unparsed; the JSON report can,
+    # and with --verbose it also lists the targets Semgrep skipped (one over the size limit).
+    (step,) = [s for s in _steps("semgrep-bandit") if s.get("id") == "semgrep"]
+    lines = [line.strip() for line in step["run"].splitlines()]
+    scan = "semgrep scan $CONFIG_ARGS --verbose --sarif --output semgrep.sarif"
+    gate = "python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif"
+    assert scan + " --json-output semgrep.json" in lines
+    assert lines[-1] == gate + " --semgrep-json semgrep.json"
+
+
+def test_security_auth_step_hands_its_verbose_json_report_to_the_gate() -> None:
+    # #3549: the auth pack's scan fails on any finding itself (--error); the gate then fails it
+    # on a target or rule it did not analyse, every auth rule counted like a cv-* rule.
+    (step,) = [s for s in _steps("read-only-scans") if s.get("id") == "security-auth"]
+    run = step["run"].replace("\\\n", " ")
+    lines = [" ".join(line.split()) for line in run.splitlines()]
+    report = '"$RUNNER_TEMP/semgrep-auth.json"'
+    scan = "semgrep scan --config security/semgrep/auth --error --metrics=off --verbose"
+    targets = "--exclude fixtures services/api/candleviewer apps packages/ui"
+    assert f"{scan} --json-output {report} {targets}" in lines
+    assert lines[-1] == f"python tools/ci/security_gate.py --tool semgrep-auth --report {report}"
+
+
+def test_every_semgrep_scan_lists_the_targets_it_skipped() -> None:
+    # #3549: only --verbose writes `paths.skipped`, and the gate refuses a report without it.
+    runs = [s["run"] for job in JOBS for s in _steps(job) if "semgrep scan" in s.get("run", "")]
+    local = (ROOT / "tools" / "ci" / "run_security_local.py").read_text(encoding="utf-8")
+    assert len(runs) == 2
+    assert all("--verbose" in text for text in runs)
+    assert '"--verbose",' in local
+
+
+def test_every_custom_semgrep_rule_id_is_one_the_gate_counts_as_its_own() -> None:
+    # #3549: the gate tells the repo's rules from registry ones by the `cv-` id prefix, so a
+    # custom rule's timeout or snippet gap fails the scan instead of printing a warning.
+    ids = [
+        rule["id"]
+        for path in sorted((ROOT / ".semgrep").glob("cv-*.yml"))
+        for rule in yaml.safe_load(path.read_text(encoding="utf-8"))["rules"]
+    ]
+    assert ids  # the glob found the rule files
+    assert [rule for rule in ids if not rule.startswith("cv-")] == []
+
+
+def test_semgrep_scans_keep_the_timeout_threshold_the_gate_counts() -> None:
+    # #3549: at SEMGREP_TIMEOUT_THRESHOLD rule timeouts on a file (Semgrep's default
+    # --timeout-threshold) Semgrep runs no other rule on it, and the gate fails the scan there.
+    runs = [s["run"] for job in JOBS for s in _steps(job) if "semgrep scan" in s.get("run", "")]
+    local = (ROOT / "tools" / "ci" / "run_security_local.py").read_text(encoding="utf-8")
+    assert len(runs) == 2
+    assert not [text for text in [*runs, local] if "timeout-threshold" in text]
+    assert SEMGREP_TIMEOUT_THRESHOLD == 3
+
+
+def test_dependabot_proposes_updates_of_the_semgrep_lock() -> None:
+    # #3549 (C-12.3): CI's pip-audit reads only the services/api export, so Dependabot is how
+    # an advisory or a release for the lock's pins turns into a PR.
+    doc = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    (entry,) = [u for u in doc["updates"] if u["directory"] == "/tools/ci"]
+    assert entry["package-ecosystem"] == "pip"
+    assert entry["directory"] == "/" + Path(SEMGREP_LOCK).parent.as_posix()
+    assert {"dependencies", "security", "security-review", "area/infra-devops"} <= set(
+        entry["labels"]
+    )
+    # Every other .txt in the directory is no lock, and pip would read its lines as packages.
+    listed = {p.name for p in (ROOT / "tools" / "ci").iterdir() if p.suffix in (".txt", ".in")}
+    locks = {name for name in listed if name.startswith("requirements-")}
+    assert Path(SEMGREP_LOCK).name in locks
+    assert sorted(listed - locks) == sorted(entry["exclude-paths"])
 
 
 @pytest.mark.parametrize("job", sorted(SCANS))
