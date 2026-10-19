@@ -1,6 +1,6 @@
 # CandleViewer — Planning Brief (source of truth for the planning phase)
 
-Date: 2026-09-14. Owner: basiltt. Repo: CandleViewer/CandleViewer. GitHub Project: https://github.com/users/basiltt/projects/10 (PenniLogic-style schema: Status Backlog→Ready→In Progress→In Review→In Test→Blocked→Done; fields Kind, Phase, Sprint, Component, Priority, Perspective, Risk, Estimate, Start, Due, Rollup, Forecast*).
+Date: 2026-09-14. Owner: basiltt. Repo: CandleViewer/CandleViewer. GitHub Project: https://github.com/orgs/CandleViewer/projects/3 (PenniLogic-style schema: Status Backlog→Ready→In Progress→In Review→In Test→Blocked→Done; fields Kind, Phase, Sprint, Component, Priority, Perspective, Risk, Estimate, Start, Due, Rollup, Forecast*).
 
 ## Product (from research, docs/research/00-README.md + 24-owner-decisions.md)
 Private, self-hosted trading terminal for one owner + a few account managers: TradingView-grade charting UX + DeepCharts-grade order-flow visibility (footprint, volume/delta profiles, Deep-Stats rows, big trades, CVD, DOM liquidity heatmap, speed of tape, imbalance tracker, iceberg/stop-run *estimated* detectors, market regime, tick replay) + full execution loop (fast order ticket, chart/DOM trading, brackets, scaled orders, emulated OCO/iceberg/TWAP/chase, rule-based stops via a rule engine with BOTH a form editor and a node-graph editor) + paper trading (Bybit demo) + multi-account trade-group fan-out + journal/analytics + admin.
