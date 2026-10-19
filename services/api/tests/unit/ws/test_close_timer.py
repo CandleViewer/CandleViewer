@@ -150,6 +150,27 @@ def _loop_escapes() -> Iterator[list[BaseException]]:
         loop.set_exception_handler(was)
 
 
+def _writer_of(conn: _Conn) -> asyncio.Task[None]:
+    """The connection's writer task, which the handler spawns under this name."""
+    (writer,) = [t for t in asyncio.all_tasks() if t.get_name() == f"{conn.connection_id}-writer"]
+    return writer
+
+
+def _check_fails_once(conn: _Conn, error: BaseException, mp: pytest.MonkeyPatch) -> None:
+    """`conn.watch` raising `error` on its first call and running the real check after it. With the
+    writer parked in a send, the first call is the close timer's."""
+    watch, failed = conn.watch, False
+
+    def failing() -> bool:
+        nonlocal failed
+        if failed:
+            return watch()
+        failed = True
+        raise error
+
+    mp.setattr(conn, "watch", failing)
+
+
 async def _quiet_then_closed(
     rig: _Rig, sock: _Wire, conn: _Conn, mp: pytest.MonkeyPatch, quiet: float, at: float
 ) -> dict[str, Any]:
@@ -453,6 +474,99 @@ async def test_a_fault_inside_the_timers_close_ends_the_socket_as_a_writer_fault
     assert _closes("internal_error") == before + 1
     (fault,) = [e for e in logs if e["event"] == "ws connection fault"]
     assert fault["exc_info"] is error
+
+
+@pytest.mark.parametrize(
+    ("flag_on", "site"),
+    [(False, "bye"), (True, "bye"), (True, "clear")],
+    ids=["flag_off-bye", "flag_on-bye", "flag_on-clear"],
+)
+async def test_a_cancelled_fail_closed_close_still_ends_the_socket_then_reaches_the_loop(
+    flag_on: bool, site: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3516: a check that raises on the timer (`watch`, a `KeyError`) fails closed, and that close
+    is cancelled inside `close_with`, once it has begun: building its `bye` (`bye`), or with the
+    flag on clearing the lanes, so no flush deadline starts (`clear`). The guard on that close
+    takes an `Exception`, not a cancellation, but no close took either way, so the socket ends as
+    on a writer fault: the writer is cancelled, the handler sends `bye internal_error` + `1011`,
+    the row reads `internal_error`, and `timer_fault` is the check's error. The log line is
+    written, and then the cancellation reaches the loop's handler, once: it is never swallowed."""
+    check, cancel = KeyError("down"), asyncio.CancelledError()
+    with _loop_escapes() as escaped, capture_logs() as logs:
+        async with asyncio.timeout(_DEADLINE_S):
+            rig, sock, handler, conn = await _parked(flag_on, _FAR)
+            writer = _writer_of(conn)
+            _check_fails_once(conn, check, monkeypatch)
+            if site == "bye":
+                faulted = _bye_fails("internal_error", cancel, monkeypatch)
+            else:
+                assert conn.pipeline is not None
+                faulted, queue = asyncio.Event(), conn.pipeline.queue
+                clear = queue.clear
+
+                def clear_once(**kw: Any) -> int:
+                    if not faulted.is_set():
+                        faulted.set()
+                        raise cancel
+                    return clear(**kw)
+
+                monkeypatch.setattr(queue, "clear", clear_once)
+            await faulted.wait()  # the timer's turn has no await: it is over once this returns
+            # Its fold is done: the check's error is the fault, no close is left standing, and
+            # the writer is ended.
+            assert conn.timer_fault is check
+            assert conn.bye_frame is None and writer.cancelling() == 1
+            sock.release()  # the handler's own `bye` and `1011` go out
+            (bye,) = await sock.next()
+            await handler
+    assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "internal_error", 1011)
+    assert sock.sent.empty() and writer.cancelled()
+    assert escaped == [cancel]  # once: to the loop, as the check's own cancellation is
+    assert _rows(rig) == [("ws.connection.closed", "internal_error", Severity.WARNING)]
+    (fault,) = [e for e in logs if e["event"] == "ws connection fault"]
+    (failed,) = [e for e in logs if e["event"] == "ws close timer failed"]
+    assert fault["exc_info"] is check and failed["exc_info"] is check
+    assert (failed["connection_id"], failed["error"]) == (conn.connection_id, "KeyError")
+
+
+@_FLAG
+@pytest.mark.parametrize("fault", ["cancel", "oserror"])
+async def test_a_fault_after_the_fail_closed_close_took_leaves_that_close_standing(
+    flag_on: bool, fault: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3516: the fail-closed close took (its `bye` is queued, and with the flag on its flush
+    deadline runs), and then a cancellation (`cancel`) or an `OSError` (`oserror`) is raised after
+    it. Nothing is folded for either: the writer is left to send `bye internal_error` + `1011`,
+    `timer_fault` stays unset and the log line is written. Only the cancellation reaches the loop's
+    handler."""
+    check = KeyError("down")
+    error: BaseException = asyncio.CancelledError() if fault == "cancel" else OSError(fault)
+    with _loop_escapes() as escaped, capture_logs() as logs:
+        async with asyncio.timeout(_DEADLINE_S):
+            rig, sock, handler, conn = await _parked(flag_on, _FAR)
+            writer, close_with, took = _writer_of(conn), conn.close_with, asyncio.Event()
+
+            def close_then_fail(reason: str, **kw: Any) -> None:
+                close_with(reason, **kw)
+                if not took.is_set():
+                    took.set()
+                    raise error
+
+            _check_fails_once(conn, check, monkeypatch)
+            monkeypatch.setattr(conn, "close_with", close_then_fail)
+            await took.wait()
+            assert conn.bye_frame is not None and conn.timer_fault is None
+            assert writer.cancelling() == 0  # not ended: it flushes the `bye`
+            sock.release()  # the writer finishes the send it was parked in, then sends the `bye`
+            frames = await sock.next(2)
+            await handler
+    assert [f["t"] for f in frames] == ["d", "bye"]
+    assert (frames[1]["p"]["reason"], sock.closed_with) == ("internal_error", 1011)
+    assert escaped == ([error] if fault == "cancel" else [])
+    assert _rows(rig) == [("ws.connection.closed", "internal_error", Severity.WARNING)]
+    assert not [e for e in logs if e["event"] == "ws connection fault"]
+    (failed,) = [e for e in logs if e["event"] == "ws close timer failed"]
+    assert (failed["error"], failed["exc_info"]) == ("KeyError", check)
 
 
 # -- the handle itself (no idle tick in these rigs: only the test replaces a handle) ---------------
