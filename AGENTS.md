@@ -414,9 +414,10 @@ and `governance` included: `--auto` waits only for `ci-required`, the one check 
 requires, and the queue re-runs only that, on `main` plus the PR, then squash-merges; a red run
 drops the PR from the queue. Never `--admin` (C-9.1).
 
-A merge train is `train_base`, a commit of `main`, plus each approved PR merged in order with
-`git merge --no-ff`, pushed as `train/<yyyymmdd>-<n>`. On a green `ci-required` squash-merge its PRs
-in that order citing the run id, on a red one none; then delete the branch (01-sdlc §7).
+A merge train is `main`'s tip (`train_base`) plus each approved PR's head, merged cleanly in order
+with `git merge --no-ff`, pushed as `train/<yyyymmdd>-<n>` and deleted after use. On a green
+`ci-required` squash-merge its PRs in that order citing the run id, each on its own green `pr` run
+too; on a red one, or if anything else lands on `main` meanwhile, stop and rebuild (01-sdlc §7).
 
 ---
 

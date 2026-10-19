@@ -1,8 +1,8 @@
 name: pr
 
-# E03-T01: entry-point workflow for every pull request into `main`, (#3433) for every merge
-# group the merge queue builds for `main`, and (#3783) for each merge train the orchestrator
-# dispatches on a `train/*` branch.
+# E03-T01: entry-point workflow for every pull request into `main`, and (#3433) for every merge
+# group the merge queue builds for `main`.
+# #3783: also for each merge train the orchestrator dispatches on a `train/*` branch.
 # ADR-0013-ci-pipeline.md binding rules 1, 2, 5, 6, 7. This workflow only
 # computes the change-path filters, runs the always-on and sub-minute gates
 # as steps of one `gates` job (#3076), calls the (still-stub) reusable per-lane
@@ -44,8 +44,8 @@ permissions:
   contents: read
 
 # A push to a PR branch cancels the branch's last run. A merge group build has a group of its own
-# (its head commit) and is never cancelled: the queue would read that as a failure (#3433). So
-# has a merge train's run (its own commit, never an input, #3783): the orchestrator merges on it.
+# (its head commit) and is never cancelled: the queue would read that as a failure (#3433).
+# Likewise a merge train's run: keyed on its own commit, never an input, never cancelled (#3783).
 concurrency:
   group: pr-${{ github.event.merge_group.head_sha || github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -83,8 +83,8 @@ jobs:
       # a later one that passed, trusting the later run to have checked the combined change.
       # #3783: a merge train is diffed from train_base, so its lanes cover every PR in it. It is
       # refused unless its run tests the train itself: a train/* branch whose head is train_head,
-      # built on train_base, a commit of `main`, by merges alone. A PR merges on its own run, or a
-      # train run holding its head: never on its commit's latest `ci-required` (01-sdlc §7).
+      # no PR's head (its ci-required would be that PR's), built on train_base, a commit of `main`,
+      # by merges alone. A train run adds to a PR's own green run, never replaces it (01-sdlc §7).
       - name: Change under test (pr, base, head)
         id: change
         env:
@@ -108,6 +108,8 @@ jobs:
               [[ "$TRAIN_BASE" =~ $sha && "$TRAIN_HEAD" =~ $sha ]] || refuse "train_base and train_head must be full lowercase SHAs"
               [[ "$RUN_REF" == refs/heads/train/* ]] || refuse "dispatch it on a train/* branch"
               [[ "$TRAIN_HEAD" == "$RUN_SHA" ]] || refuse "train_head is not the dispatched commit $RUN_SHA"
+              heads=$(git ls-remote origin 'refs/pull/*/head') || refuse "the PRs' heads could not be listed"
+              [[ "$heads" != *"$RUN_SHA"* ]] || refuse "the dispatched commit is a PR's head"
               # The checkout is shallow: ancestry needs main's history and the train's.
               deepen=()
               [[ "$(git rev-parse --is-shallow-repository)" == false ]] || deepen=(--unshallow)

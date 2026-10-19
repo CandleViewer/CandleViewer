@@ -296,7 +296,7 @@ def _git(home: Path, cwd: Path, *args: str) -> str:
 def _trains(tmp_path: Path, *, shallow: bool = True) -> tuple[Path, dict[str, str]]:
     """A checkout of train/20261019-1, of depth 1 as actions/checkout makes it unless `shallow` is
     false, and the commits by name. On `origin`, main went c0, c1, c2 and the train is c1 plus
-    PR 1 (p1, on c0) and PR 2 (p2, on c1), each merged with --no-ff (m1, m2)."""
+    PR 1 (p1, on c0) and PR 2 (p2, on c1), each merged with --no-ff (m1, m2); PR 3's head is m1."""
     _needs("bash", "git")
     src, shas, branch = tmp_path / "src", {}, TRAIN_REF.removeprefix("refs/heads/")
 
@@ -323,6 +323,8 @@ def _trains(tmp_path: Path, *, shallow: bool = True) -> tuple[Path, dict[str, st
         shas[merge] = git("rev-parse", "HEAD")
     commit("c2", "main")
     git("clone", "-q", "--bare", str(src), "origin.git", cwd=tmp_path)
+    for pr, head in enumerate(("p1", "p2", "m1"), 1):  # as GitHub keeps refs/pull/<n>/head
+        git("update-ref", f"refs/pull/{pr}/head", shas[head], cwd=tmp_path / "origin.git")
     url, depth = (tmp_path / "origin.git").as_uri(), ["--depth", "1"] if shallow else []
     git("clone", "-q", *depth, "--branch", branch, url, "ws", cwd=tmp_path)
     return tmp_path / "ws", shas
@@ -359,10 +361,13 @@ NOT_A_TRAIN: dict[str, tuple[Callable[[dict[str, str]], dict[str, str]], str]] =
     "not-the-run": (lambda c: {"RUN_SHA": c["m1"]}, "not the dispatched commit"),
     "base-off-main": (lambda c: {"TRAIN_BASE": c["p1"]}, "not a commit of main"),
     "base-after-train": (lambda c: {"TRAIN_BASE": c["c2"]}, "not an ancestor of train_head"),
-    # Only merges on train_base: its ci-required never lands on a PR's head or on main's.
+    # Only merges on train_base, and no PR's head (PR 3's is a merge chain): its ci-required
+    # never lands on a PR's head or on main's. Nor is an origin it cannot read taken as clean.
     "older-base": (lambda c: {"TRAIN_BASE": c["c0"]}, "one git merge --no-ff per PR"),
-    "pr-head": (lambda c: {"TRAIN_HEAD": c["p2"], "RUN_SHA": c["p2"]}, "--no-ff per PR"),
+    "pr-head": (lambda c: {"TRAIN_HEAD": c["p2"], "RUN_SHA": c["p2"]}, "is a PR's head"),
+    "pr-merge-chain": (lambda c: {"TRAIN_HEAD": c["m1"], "RUN_SHA": c["m1"]}, "is a PR's head"),
     "main-head": (lambda c: {"TRAIN_HEAD": c["c1"], "RUN_SHA": c["c1"]}, "--no-ff per PR"),
+    "origin-down": (lambda c: {"GIT_ALLOW_PROTOCOL": "https"}, "heads could not be listed"),
 }
 
 
