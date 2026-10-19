@@ -1,6 +1,6 @@
 # E08 QA sign-off evidence pack (R0 exit)
 
-Ticket: E08-Q06 (#283) for epic E08 (#35, Bybit adapter and ingestion skeleton). Prepared 2026-10-19 by hcl-worker-2 (AI agent) on main `4b5e1b6c` plus this change, and updated after review rounds 1 (main `99564c65`), 2 (main `374ba52d`), 3 (main `ab21750e`, then `6751bf1a`) and 4 (main `6751bf1a`; GitHub state queried again at 16:27 UTC). QA supplies the evidence and a **proposed** verdict (section 12); the verdict line is the owner's, and so is the R0 release decision (`docs/plan/07-release-and-prr.md`). Security is referenced here, not signed off (section 9).
+Ticket: E08-Q06 (#283) for epic E08 (#35, Bybit adapter and ingestion skeleton). Prepared 2026-10-19 by hcl-worker-2 (AI agent) on main `4b5e1b6c` plus this change, and updated after review rounds 1 (main `99564c65`), 2 (main `374ba52d`), 3 (main `ab21750e`, then `6751bf1a`) and 4 (main `6751bf1a`, then `45fbe4c1`; GitHub state queried again at 16:27 UTC). QA supplies the evidence and a **proposed** verdict (section 12); the verdict line is the owner's, and so is the R0 release decision (`docs/plan/07-release-and-prr.md`). Security is referenced here, not signed off (section 9).
 
 Reference note: the ticket points at `docs/plan/30-release-roadmap.md` §5 for the R0 exit criteria; R0's are in §4.3 (§5 is R1). The E08-relevant R0 exit items are #5 (24 h ingestion of three or more symbols, memory flat within ±5 %), #6 (data readable from QuestDB and archivable to Parquet) and #10 (Grafana shows ingestion and a synthetic alert fires).
 
@@ -26,6 +26,7 @@ Command (from `services/api`): `HYPOTHESIS_PROFILE=ci uv run pytest -p no:random
 
 | Run                                                                                               | Result                                             | Time                           |
 | ------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------ |
+| 2026-10-19, `45fbe4c1` + this change, round 4 rebased, `HYPOTHESIS_PROFILE=ci`, loopback-only     | 2123 passed, 7 xfailed, 0 failed, 29877 deselected | 190.1 s tests, 3 min 18 s wall |
 | 2026-10-19, `6751bf1a` + this change after round 4, `HYPOTHESIS_PROFILE=ci`, loopback-only        | 2123 passed, 7 xfailed, 0 failed, 29714 deselected | 170.9 s tests, 2 min 59 s wall |
 | 2026-10-19, `6751bf1a` + this change after round 4, with coverage (section 8), loopback-only      | 2123 passed, 7 xfailed, 0 failed, 29714 deselected | 184.1 s tests, 3 min 13 s wall |
 | 2026-10-19, `6751bf1a` + this change, round 3 rebased, `HYPOTHESIS_PROFILE=ci`, loopback-only     | 2123 passed, 7 xfailed, 0 failed, 29714 deselected | 175.9 s tests, 3 min 5 s wall  |
@@ -117,7 +118,7 @@ Not run. There is no `apps/web/e2e/market-data/` suite, no axe-core result for S
 
 ## 8. Coverage
 
-Measured from the pack alone (`-m e08_regression` with coverage, 2026-10-19, `6751bf1a` + this change after round 4; section 2), an author run on the author's laptop recorded here as text: the floor is 85 % lines and 75 % branches. The independent QA review's own coverage run at the round-3 head, the same code, gave the same E08 totals. The earlier figure, from `c21b2eb3` plus the first three commits, was 96.97 % lines and 91.60 % branches; since then main has gained #3823, which changed `book/` and `orderbook_wiring.py`, and the pack has gained suites. CI's `py` lane measures coverage on every PR; the author adds its run id to the PR once its CI has run.
+Measured from the pack alone (`-m e08_regression` with coverage, 2026-10-19, `6751bf1a` + this change after round 4; section 2), an author run on the author's laptop recorded here as text: the floor is 85 % lines and 75 % branches. Main `45fbe4c1`, the rebase target, changes no E08 module and no pack test, so the figures hold there. The independent QA review's own coverage run at the round-3 head, the same code, gave the same E08 totals. The earlier figure, from `c21b2eb3` plus the first three commits, was 96.97 % lines and 91.60 % branches; since then main has gained #3823, which changed `book/` and `orderbook_wiring.py`, and the pack has gained suites. CI's `py` lane measures coverage on every PR; the author adds its run id to the PR once its CI has run.
 
 | E08 module                         | Lines                   | Branches                |
 | ---------------------------------- | ----------------------- | ----------------------- |
