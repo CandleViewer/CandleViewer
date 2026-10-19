@@ -2099,7 +2099,7 @@ def test_repo_register_key_tag_entry_still_keys_a_random_mac_over_the_api_key() 
 
 
 def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> None:
-    """The weak-hashing entries (login_service.py:75, mfa_service.py:69) are false positives
+    """The weak-hashing entries (login_service.py:75, mfa_service.py:72) are false positives
     only while the hashed value is the MFA challenge token and that token is 256 random bits.
     A result is keyed to its hashing line, so a new hashed value or token source would stay
     accepted there: pin both, so such a change fails here and the entries are re-triaged."""
