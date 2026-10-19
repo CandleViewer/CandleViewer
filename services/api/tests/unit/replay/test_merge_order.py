@@ -15,6 +15,7 @@ from itertools import pairwise
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 
 from candleviewer.replay import ReplayItem, ReplayMemoryCeilingExceeded
 from candleviewer.replay.merge import SEQUENCE_DOMAIN, STREAM_ORDINAL, approx_bytes, row_bytes
@@ -206,8 +207,11 @@ async def test_a_duplicated_row_keeps_the_copy_read_last() -> None:
     assert isinstance(first.payload, RecordedTrade)
     newer = dataclasses.replace(first, payload=dataclasses.replace(first.payload, size=Decimal(2)))
     harness = Harness(cold=[first, newer], archived=True)
+    labels = {"stream": "trades", "tier": "parquet"}
+    before = REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0
 
     assert await harness.read_all() == [newer]
+    assert REGISTRY.get_sample_value("replay_events_read_total", labels) == before + 1  # once
 
 
 async def test_only_events_inside_the_half_open_replay_window_replay() -> None:
@@ -235,11 +239,18 @@ async def test_a_capped_read_keeps_its_complete_instants_and_loses_no_rows() -> 
     """A capped read returns the earliest rows; all but its last instant are complete."""
     dense = [trade(i // 2, trade_id=f"d{i:03}") for i in range(400)]  # two prints per instant
     harness = Harness(hot=dense)
+    labels = {"stream": "trades", "tier": "questdb"}
+    before = REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0
 
     got = events(await harness.read_all(budget_bytes=row_bytes(TRADES, 200) * 51))
 
     assert [e.tiebreak for e in got] == [(f"d{i:03}",) for i in range(400)]
     assert harness.hot.reads >= 400 // 51
+    # The first read is capped at its 26th instant; the next window starts there and spans
+    # what filled the cap (25 µs), so it is not capped again.
+    assert harness.hot.windows[1] == (25, 50)
+    # The capped read's last instant is read twice, but each event is counted once.
+    assert REGISTRY.get_sample_value("replay_events_read_total", labels) == before + 400
 
 
 async def test_an_instant_denser_than_the_row_cap_is_refused_at_its_first_read() -> None:

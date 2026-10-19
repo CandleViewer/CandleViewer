@@ -404,6 +404,12 @@ class RecordedMerge:
                 cursor.fit(last_us - lo_us)
                 hi_us = last_us
             dropped = cursor.load(hi_us, events, self._max_window_us)
+            # Each event counted once: a capped read's last instant is read again by the next
+            # window, and a re-exported copy is dropped by `load`.
+            tier = await self.tier()
+            replay_events_read_total.labels(stream=cursor.stream.value, tier=tier).inc(
+                len(events) - dropped
+            )
             if dropped and not cursor.dup_warned:
                 cursor.dup_warned = True
                 _log().warning(
@@ -444,7 +450,6 @@ class RecordedMerge:
         )
         rows = await self._guarded(read, tier=tier, symbol=cursor.symbol, stream=cursor.stream)
         replay_source_read_seconds.labels(tier=tier).observe(time.perf_counter() - started)
-        replay_events_read_total.labels(stream=cursor.stream.value, tier=tier).inc(len(rows))
         auto_hot = tier == "questdb" and self._request.source_tier == "auto"
         # Roll-off manifests a span before it may drop it: one archived while this session ran
         # may be gone from QuestDB, so it ends the replay instead of reading as a hole.

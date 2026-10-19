@@ -7,10 +7,11 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from candleviewer import replay_wiring
 from candleviewer.app import create_app
+from candleviewer.replay import ReadAheadConfig
 from candleviewer.replay.merge import DEFAULT_IO_TIMEOUT_S
 from candleviewer.replay.metrics import EXPORTED_NAMES
 from candleviewer.replay_wiring import build_replay_wiring, readahead_config
@@ -43,6 +44,11 @@ def test_readahead_bounds_come_from_the_cv_replay_settings(
         8 << 20,
         32 << 20,
     )
+
+
+def test_the_readahead_settings_default_to_the_sources_own_sizing() -> None:
+    """One sizing (E26-K01): a deployment that sets nothing gets `ReadAheadConfig`'s defaults."""
+    assert readahead_config(_settings()) == ReadAheadConfig()
 
 
 def test_a_ceiling_not_above_the_readahead_fails_at_startup() -> None:
@@ -92,6 +98,7 @@ def test_the_real_backend_wires_questdb_parquet_manifest_coverage_and_gaps(
     assert isinstance(tiers.hot, QuestDbRecordedReader)
     assert isinstance(tiers.cold, ParquetRecordedReader)
     assert tiers.cold is wiring.cold
+    assert wiring.cold._registry.root == Path(settings.parquet_root)  # `CV_PARQUET_ROOT`
     assert tiers.coverage is tiers.cold  # `auto` routes on the cold manifests
     assert tiers.gaps is gaps
 
@@ -105,16 +112,20 @@ def test_the_questdb_address_names_the_pgwire_port_or_takes_its_default(
     opened: list[tuple[object, ...]] = []
 
     def wire(*args: object) -> LazyPgWire:
-        opened.append(args[:2])
+        opened.append(args)
         return LazyPgWire(*args)  # type: ignore[arg-type]  # the arguments the wiring passes
 
     monkeypatch.setattr(replay_wiring, "LazyPgWire", wire)
     settings = _settings(
-        storage_backend="real", questdb_pg=address, parquet_root=str(tmp_path / "parquet")
+        storage_backend="real",
+        questdb_pg=address,
+        questdb_pg_user="replay-reader",
+        questdb_pg_password=SecretStr("test-only"),
+        parquet_root=str(tmp_path / "parquet"),
     )
 
     assert build_replay_wiring(settings, StaticGapReader()) is not None
-    assert opened == [("questdb", port)]
+    assert opened == [("questdb", port, "replay-reader", "test-only")]
 
 
 async def test_aclose_releases_the_questdb_connection_and_the_cold_scan_pool(
@@ -139,9 +150,17 @@ async def test_aclose_releases_the_questdb_connection_and_the_cold_scan_pool(
     assert released == ["cold", "questdb"]
 
 
-def test_every_reader_deadline_is_below_the_merge_deadline() -> None:
-    """A slow read fails typed in its own tier before the merge's outer timeout cancels it."""
+def test_every_reader_deadline_is_below_the_merge_deadline(tmp_path: Path) -> None:
+    """A slow read fails typed in its own tier before the merge's outer timeout cancels it: the
+    readers' defaults, and the readers as the wiring builds them."""
     assert max(hot.DEFAULT_TIMEOUT_S, cold.DEFAULT_TIMEOUT_S) < DEFAULT_IO_TIMEOUT_S
+    settings = _settings(storage_backend="real", parquet_root=str(tmp_path / "parquet"))
+    wiring = build_replay_wiring(settings, StaticGapReader())
+    assert wiring is not None
+    tiers = wiring.tiers
+    assert isinstance(tiers.hot, QuestDbRecordedReader)
+    assert isinstance(tiers.cold, ParquetRecordedReader)
+    assert max(tiers.hot._timeout_s, tiers.cold._timeout_s) < DEFAULT_IO_TIMEOUT_S
 
 
 def test_the_app_serves_the_replay_read_path_series_where_prometheus_scrapes() -> None:

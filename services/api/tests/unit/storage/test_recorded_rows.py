@@ -352,6 +352,12 @@ def test_missing_required_column_fails_closed_naming_the_column() -> None:
         event_from_row(StreamKind.TRADES, row)
 
 
+def test_a_numeric_string_in_an_int_column_reads_as_its_value() -> None:
+    """The int fast path takes `int` itself only: text a driver hands back for a LONG still
+    reads exactly, by the slower path."""
+    assert event_from_row(StreamKind.TRADES, _trade(seq="42")).seq == 42
+
+
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), True, "not-a-number", object()])
 def test_unusable_required_price_fails_closed(bad: object) -> None:
     with pytest.raises(StorageRecordInvalid, match="price"):

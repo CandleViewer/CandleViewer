@@ -471,6 +471,19 @@ def test_drawings_rows_catalogue_cap_equals_the_closed_tool_set() -> None:
     assert spec.max_series == len(TOOLS)
 
 
+def test_replay_catalogue_caps_equal_the_closed_label_sets() -> None:
+    """E26-T02: `stream` is a replayable stream and `tier` a `Tier`; each cap is their product."""
+    from typing import get_args
+
+    from candleviewer.replay.merge import Tier
+    from candleviewer.storage.repositories.recorded import REPLAYABLE_STREAMS
+
+    caps = {s.name: s.max_series for s in CATALOGUE}
+    tiers = len(get_args(Tier))
+    assert caps["replay_events_read_total"] == len(REPLAYABLE_STREAMS) * tiers
+    assert caps["replay_source_read_seconds"] == tiers
+
+
 def test_workspaces_catalogue_caps_equal_the_closed_label_sets() -> None:
     """The E15-T01 label sets are closed; app.py derives each cap from the same constants."""
     from candleviewer.api.workspaces import OPERATIONS

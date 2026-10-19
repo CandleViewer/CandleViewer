@@ -1298,8 +1298,12 @@ async def test_a_manifest_with_an_integer_past_the_digit_limit_is_a_typed_error(
     registry = await _export(root, generated_rows())
     doc = '{"layout_version": 1, "entries": [], "x": ' + "9" * 5_000 + "}"
     _trades_manifest(root).write_text(doc, encoding="utf-8")
-
-    await _refusal(registry)
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4_300)  # the default, whatever PYTHONINTMAXSTRDIGITS says
+    try:
+        await _refusal(registry)
+    finally:
+        sys.set_int_max_str_digits(limit)
 
 
 async def test_an_unreadable_listing_is_typed_and_chains_no_cause(
@@ -1409,8 +1413,13 @@ def test_a_huge_window_is_refused_before_any_key_is_built(monkeypatch: pytest.Mo
         recorded_reader._time_keys(("symbol", "dt", "hour"), H0, H0 + 10 * 366 * 24 * HOUR)
 
 
+@pytest.mark.parametrize(
+    "width_us",
+    [100 * 366 * 24 * HOUR, recorded_reader._MAX_PARTITIONS * 31 * 24 * HOUR + 1],
+    ids=["a-century", "one-past-the-month-guard"],
+)
 def test_a_month_window_far_wider_than_one_read_is_refused_before_any_key_is_built(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, width_us: int
 ) -> None:
     def never(_us: int) -> object:
         raise AssertionError("a key was built")
@@ -1418,7 +1427,7 @@ def test_a_month_window_far_wider_than_one_read_is_refused_before_any_key_is_bui
     monkeypatch.setattr(recorded_reader, "_moment", never)
 
     with pytest.raises(ColdReplayReadError):
-        recorded_reader._time_keys(("symbol", "ym"), H0, H0 + 100 * 366 * 24 * HOUR)
+        recorded_reader._time_keys(("symbol", "ym"), H0, H0 + width_us)
 
 
 def test_a_year_window_of_more_than_one_read_is_refused() -> None:

@@ -2,7 +2,7 @@
 
 Turns settings into the `ReplayTiers` a `ReplaySource` reads through and the `ReadAheadConfig`
 that bounds it. QuestDB is read over one lazily opened, lock-serialised PGWire connection, and
-Parquet through the `CV_COLD_ROOT` registry. The Parquet reader is also the manifest coverage
+Parquet through the `CV_PARQUET_ROOT` registry. The Parquet reader is also the manifest coverage
 that `source_tier="auto"` routes on (never the roll-off watermark), and gaps come from
 `recording_gaps`. Each reader's deadline sits below the merge's, so a slow read fails typed in
 its tier first. Only on the `real` storage backend: the replay session service (E26-T01/T05)
