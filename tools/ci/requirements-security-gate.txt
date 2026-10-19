@@ -4,7 +4,7 @@
 # the same Python. Keep the version equal to scripts/requirements-ci.txt (a test in
 # scripts/tests/test_security_lane.py pins both). The hash is PyPI's sha256 of the CPython 3.12
 # manylinux x86_64 wheel that the ubuntu-latest runner selects for PYTHON_VERSION 3.12, from
-# `pip download PyYAML==6.0.2 --only-binary=:all: --no-deps --platform manylinux_2_17_x86_64
+# `pip download PyYAML==6.0.3 --only-binary=:all: --no-deps --platform manylinux_2_17_x86_64
 # --python-version 3.12 --implementation cp --abi cp312 -d <dir>`, then `sha256sum <dir>/*.whl`.
-PyYAML==6.0.2 \
+PyYAML==6.0.3 \
     --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476
