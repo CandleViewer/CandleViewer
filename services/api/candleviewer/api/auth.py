@@ -708,8 +708,7 @@ def make_auth_router(
         """#2295: start a TOTP enrolment for the caller's own user. Earlier pending methods
         are superseded; the response carries the provisioning URI once and never recovery
         codes. `auth.mfa_enroll` is written ahead of any change (C-2.9)."""
-        caller = await _enrolling_caller(request)
-        if isinstance(caller, JSONResponse):
+        if isinstance(caller := await _enrolling_caller(request), JSONResponse):
             return caller
         writer, _ident, record, user = caller
         if body.method is not MfaMethodKind.TOTP:
@@ -744,8 +743,7 @@ def make_auth_router(
         revoked and a full one minted (SR-013). The 10 new codes appear in this response only.
         If that rotation fails after the commit, the method stays active: the answer is a 503
         telling the client to sign in again with it, and an error log names the sessions."""
-        caller = await _enrolling_caller(request)
-        if isinstance(caller, JSONResponse):
+        if isinstance(caller := await _enrolling_caller(request), JSONResponse):
             return caller
         writer, ident, record, user = caller
         uid, method_id, ip = str(user.id), str(body.method_id), _client_ip(request)
