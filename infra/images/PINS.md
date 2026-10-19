@@ -2,8 +2,12 @@
 
 Digests are real registry manifest (index) digests, resolved anonymously over the registry v2 HTTP
 API by `tools/ci/resolve_image_digests.py` (on each row's date) and verified in CI with `--check`
-(#1857, fixes #1538 #1586). Refresh: edit the tag, replace the digest with any placeholder, run the
-script without flags.
+(#1857, fixes #1538 #1586). `--check` also enforces this ledger (#3571, CI-IMG-007..009): each
+row's image, tag and digest must match a pin in the Dockerfiles, compose files or workflows the
+script scans, each of those pins needs exactly one row, and the "All N pins" line must count the
+rows; `--check --offline` checks the ledger alone, with no registry call. Refresh: edit the tag,
+replace the digest with any placeholder, run the script without flags, then copy the new digest
+into its row here.
 
 | Image                      | Tag               | Digest                                                                  | Registry   | Resolved on | Source                                                 |
 | -------------------------- | ----------------- | ----------------------------------------------------------------------- | ---------- | ----------- | ------------------------------------------------------ |

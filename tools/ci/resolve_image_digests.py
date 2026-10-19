@@ -6,13 +6,19 @@ Scans ``infra/docker-compose*.yml``, ``infra/compose/*.yml``, ``infra/images/*``
 
 * default mode: resolve the real manifest digest of ``repo:tag`` from the registry and rewrite
   the reference in place when it differs.
-* ``--check``: HEAD every pinned manifest; fail on placeholder-shaped digests (repeated hex
-  patterns, ``deadbeef``, all zeros) and on digests the registry does not know.
+* ``--check``: first compare the ledger ``infra/images/PINS.md`` with those pins, offline
+  (#3571): each row's image, tag and digest must match a source pin, every source pin needs
+  one row, and the "All N pins" line must count the rows. Its errors print before any registry
+  call, so a registry that cannot be reached never hides them. Then HEAD every pinned
+  manifest; fail on placeholder-shaped digests (repeated hex patterns, ``deadbeef``, all zeros)
+  and on digests the registry does not know. ``--offline`` skips this registry part.
 
 Resolution uses the registry HTTP API with an anonymous bearer token (Docker Hub, ghcr.io,
 quay.io); docker is not required. No credentials are ever used. Stdlib only.
 
-Error code: CI-IMG-002 (placeholder or unresolvable digest).
+Error codes: CI-IMG-002 (placeholder or unresolvable digest), CI-IMG-007 (a ledger row and
+the source pins disagree), CI-IMG-008 (count line wrong or missing), CI-IMG-009 (ledger table
+unreadable; the check fails closed).
 """
 
 from __future__ import annotations
@@ -38,6 +44,11 @@ REF_RE = re.compile(
     r"(?P<repo>[a-z0-9][a-z0-9._/-]*[a-z0-9])(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9._-]*))?"
     r"@sha256:(?P<digest>[0-9a-f]{64})"
 )
+LEDGER = "infra/images/PINS.md"
+COUNT_RE = re.compile(r"^All (\d+) pins\b")
+SEPARATOR_RE = re.compile(r"\|(?:\s*:?-+:?\s*\|)+")
+TABLE_LINE_RE = re.compile(r"\s*(?:\||:?-+:?\s*\|)")  # a row, or a pipe-less separator
+Pin = tuple[str, str, str]  # (repo, tag or "", digest hex)
 ACCEPT = (
     "application/vnd.oci.image.index.v1+json, "
     "application/vnd.docker.distribution.manifest.list.v2+json, "
@@ -167,6 +178,132 @@ def find_refs(text: str) -> list[re.Match[str]]:
     return list(REF_RE.finditer(text))
 
 
+class LedgerError(ValueError):
+    """The ledger table cannot be read (CI-IMG-009)."""
+
+
+def _ref(pin: Pin) -> str:
+    repo, tag, digest = pin
+    return f"{repo}{':' + tag if tag else ''}@sha256:{digest}"
+
+
+def _cells(line: str) -> list[str]:
+    inner = line.strip().removeprefix("|").removesuffix("|")
+    return [c.strip() for c in inner.split("|")]
+
+
+def source_pins(root: Path) -> dict[Pin, list[str]]:
+    """Map each pin found by ``iter_files()`` to the ``file:line`` places that carry it."""
+    pins: dict[Pin, list[str]] = {}
+    for f in iter_files(root):
+        text = f.read_text(encoding="utf-8")
+        for m in find_refs(text):
+            pin = (m.group("repo"), m.group("tag") or "", m.group("digest"))
+            line = text.count("\n", 0, m.start()) + 1
+            pins.setdefault(pin, []).append(f"{f.relative_to(root).as_posix()}:{line}")
+    return pins
+
+
+def read_ledger(
+    root: Path,
+) -> tuple[list[tuple[Pin, int]], int, list[tuple[int, int]]]:
+    """Return the ledger's (pin, line) rows, its header line and each "All N pins" (N, line)."""
+    try:
+        lines = (root / LEDGER).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise LedgerError(f"{LEDGER}: cannot read ({type(exc).__name__})") from exc
+    head = next((n for n, s in enumerate(lines) if s.startswith("|")), None)
+    if head is None:
+        raise LedgerError(f"{LEDGER}: no table")
+    for n, s in enumerate(lines):
+        # A comment hides what it wraps from the rendered page, and an indented or pipe-less
+        # table above this one renders first: either way readers see another table.
+        if "<!--" in s:
+            raise LedgerError(
+                f"{LEDGER}:{n + 1}: an HTML comment (the ledger is read as shown)"
+            )
+        if n < head and TABLE_LINE_RE.match(s):
+            raise LedgerError(f"{LEDGER}:{n + 1}: a table line before the table starts")
+    cols = _cells(lines[head])
+    if any(cols.count(c) != 1 for c in ("Image", "Tag", "Digest")):
+        raise LedgerError(f"{LEDGER}:{head + 1}: header needs one Image, Tag, Digest")
+    sep = lines[head + 1].strip() if head + 1 < len(lines) else ""
+    if not SEPARATOR_RE.fullmatch(sep) or len(_cells(sep)) != len(cols):
+        raise LedgerError(f"{LEDGER}:{head + 2}: no separator row matching the header")
+    rows: list[tuple[Pin, int]] = []
+    for n in range(head + 2, len(lines)):
+        if not lines[n].startswith("|"):
+            break
+        cells = _cells(lines[n])
+        if len(cells) != len(cols):
+            raise LedgerError(
+                f"{LEDGER}:{n + 1}: {len(cells)} cells, header has {len(cols)}"
+            )
+        row = dict(zip(cols, cells, strict=True))
+        tag = f":{row['Tag']}" if row["Tag"] else ""
+        m = REF_RE.fullmatch(f"{row['Image']}{tag}@{row['Digest']}")
+        if m is None:
+            raise LedgerError(f"{LEDGER}:{n + 1}: cannot read the image, tag or digest")
+        rows.append(((m.group("repo"), m.group("tag") or "", m.group("digest")), n + 1))
+    end = head + 2 + len(rows)  # the first line after the table
+    for n in range(end, len(lines)):
+        if TABLE_LINE_RE.match(lines[n]):
+            raise LedgerError(f"{LEDGER}:{n + 1}: a table line after the table ends")
+    if end < len(lines) and lines[end].strip():
+        raise LedgerError(f"{LEDGER}:{end + 1}: no blank line after the table")
+    counts = [
+        (int(c[1]), n + 1) for n, s in enumerate(lines) if (c := COUNT_RE.match(s))
+    ]
+    return rows, head + 1, counts
+
+
+def check_ledger(root: Path) -> list[str]:
+    """Compare ``PINS.md`` with the source pins, one row per pin (CI-IMG-007..009); offline."""
+    try:
+        rows, head, counts = read_ledger(root)
+    except LedgerError as exc:
+        return [f"CI-IMG-009 {exc}"]
+    src = source_pins(root)
+    unrowed = set(src) - {pin for pin, _ in rows}
+    first: dict[Pin, int] = {}
+    errors: list[str] = []
+    for pin, n in rows:
+        where = f"CI-IMG-007 {LEDGER}:{n} {_ref(pin)}"
+        if pin in first:
+            errors.append(f"{where}: duplicate of {LEDGER}:{first[pin]}")
+            continue
+        first[pin] = n
+        if pin in src:
+            continue
+        # Pair the row with a same-image source pin that has no row: same tag first.
+        near = min(
+            ((p[1] != pin[1], p[2] != pin[2], p) for p in unrowed if p[0] == pin[0]),
+            default=None,
+        )
+        if near is None:
+            errors.append(f"{where}: matches no source pin")
+            continue
+        tag_moved, digest_moved, p = near
+        unrowed.discard(p)
+        kind = ("tag and digest" if digest_moved else "tag") if tag_moved else "digest"
+        errors.append(f"{where}: {kind} drift; {', '.join(src[p])} pins {_ref(p)}")
+    errors += [
+        f"CI-IMG-007 {', '.join(src[p])} {_ref(p)}: no row in the table at {LEDGER}:{head}"
+        for p in sorted(unrowed)
+    ]
+    if not counts:
+        errors.append(f"CI-IMG-008 {LEDGER}: no 'All N pins' count line")
+    elif len(counts) > 1:
+        places = ", ".join(f"{LEDGER}:{n}" for _, n in counts)
+        errors.append(f"CI-IMG-008 {places}: more than one 'All N pins' count line")
+    elif counts[0][0] != len(rows):
+        errors.append(
+            f"CI-IMG-008 {LEDGER}:{counts[0][1]}: says All {counts[0][0]} pins; "
+            f"the table at {LEDGER}:{head} lists {len(rows)}"
+        )
+    return errors
+
+
 def check(root: Path, client: RegistryClient) -> list[str]:
     errors: list[str] = []
     for f in iter_files(root):
@@ -214,13 +351,26 @@ def resolve(root: Path, client: RegistryClient) -> list[tuple[str, str, str, str
 def main(argv: list[str] | None = None, client: RegistryClient | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true")
+    ap.add_argument(
+        "--offline",
+        action="store_true",
+        help="with --check: the ledger only, no registry",
+    )
     ap.add_argument("--root", type=Path, default=ROOT)
     args = ap.parse_args(argv)
+    if args.offline and not args.check:
+        ap.error("--offline needs --check")
     cl: RegistryClient = client or HttpRegistry()
     if args.check:
-        errs = check(args.root, cl)
+        # Ledger first: its errors print before the registry part runs (and can raise).
+        errs = check_ledger(args.root)
         for e in errs:
             print(e, file=sys.stderr)
+        if not args.offline:
+            reg = check(args.root, cl)
+            for e in reg:
+                print(e, file=sys.stderr)
+            errs += reg
         print("resolve_image_digests: " + ("FAIL" if errs else "OK"))
         return 1 if errs else 0
     for name, ref, old, new in resolve(args.root, cl):
