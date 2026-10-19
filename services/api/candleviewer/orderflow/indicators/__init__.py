@@ -19,6 +19,7 @@ from candleviewer.orderflow.indicators.catalogue import (
     validate_params,
 )
 from candleviewer.orderflow.indicators.identity import (
+    BAR_SOURCE,
     INDICATOR_SPEC_VERSION,
     IndicatorSpec,
     canonical_json,
@@ -35,6 +36,7 @@ from candleviewer.orderflow.indicators.types import (
 )
 
 __all__ = [
+    "BAR_SOURCE",
     "INDICATOR_SPEC_VERSION",
     "KERNELS",
     "SERVER_DEFINITIONS",

@@ -1,4 +1,4 @@
-"""Kernel declarations, parameter validation and per-kernel semantics (E13-T02 plan §3.3, D11)."""
+"""Kernel declarations, parameter validation and per-kernel semantics (E13-T02, #426; 24 §7.4)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,8 @@ from candleviewer.orderflow.indicators.kernels.volume import SIGMA_FLOOR
 from candleviewer.orderflow.indicators.types import Outputs, ParamValue
 from tests.unit.orderflow.indicators._bars import VALID, bar, highs_lows
 
-#: ADR-0034 §5: the nine `compute: server` indicators, plus the `delta` pass-through (plan D2).
+#: The nine `compute: server` indicators (ADR-0034 decision 1; `docs/plan/spikes/e13-o4.md` §5),
+#: plus the `delta` pass-through (#426).
 SERVER_SET = {"sma", "ema", "rsi", "atr", "adx", "vwap", "cvd", "volume", "zigzag"}
 
 
@@ -54,9 +55,15 @@ def test_an_indicator_without_a_server_kernel_is_refused() -> None:
         build_kernel("bollinger", {"n": 20}, source="close")
 
 
-def test_unknown_and_missing_parameters_are_named() -> None:
-    with pytest.raises(IndicatorParamError, match="no parameter named x"):
-        build_kernel("sma", {"n": 20, "x": 1}, source="close")
+def test_an_undeclared_parameter_is_refused_without_echoing_its_key() -> None:
+    """IR-24: a refusal never names a key the kernel does not declare."""
+    with pytest.raises(IndicatorParamError) as err:
+        build_kernel("sma", {"n": 20, "qqq_zz": 1}, source="close")
+    assert str(err.value) == "sma was given an undeclared parameter."
+    assert "qqq_zz" not in str(err.value)
+
+
+def test_a_missing_declared_parameter_is_named() -> None:
     with pytest.raises(IndicatorParamError, match="needs the parameter n"):
         build_kernel("sma", {}, source="close")
 
@@ -140,10 +147,13 @@ def test_rsi_is_none_on_a_flat_series_and_100_on_a_rising_one() -> None:
 
 
 def test_adx_on_flat_bars_is_zero_after_its_warmup() -> None:
+    """ADX is the one exception to "an output with a zero divisor is None, never 0" (24 §7.4):
+    with no true range the DIs read 0, and so do DX and ADX, as `nullable_when` says."""
     out = compute("adx", [bar(i, 100.0) for i in range(40)], {"n": 5}, source=None)
     assert out[:5] == [(None, None, None)] * 5
     assert out[5:9] == [(None, 0.0, 0.0)] * 4
     assert out[9:] == [(0.0, 0.0, 0.0)] * 31
+    assert "a flat market reads ADX 0" in KERNELS["adx"].nullable_when
 
 
 def test_vwap_restarts_at_the_session_anchor() -> None:
@@ -177,6 +187,34 @@ def test_vwap_band_sigma_stays_none_while_sigma_is_rounding_noise() -> None:
     assert SIGMA_FLOOR == 2.0**-40
 
 
+def test_vwap_band_sigma_floor_scales_with_the_price() -> None:
+    """Near 6e4 one ulp of the typical price is 7.3e-12: a sigma that size is rounding noise
+    although it is above 2**-40, so the floor is relative, `abs(vwap) * 2**-40`."""
+    bars = [bar(0, 60000.3, high=60000.3, low=60000.3), bar(1, 60000.1, high=60000.5, low=60000.3)]
+    out = compute("vwap", bars, {"anchor": "session"}, source="hlc3")
+    vwap, sigma = out[1][0], out[1][1]
+    assert vwap is not None and sigma is not None
+    assert SIGMA_FLOOR < sigma < abs(vwap) * SIGMA_FLOOR
+    assert out[1][8] is None
+
+
+def test_vwap_squared_deviation_sum_is_clamped_at_zero() -> None:
+    """A bar whose volume is 1e17 times the session's, after a more than twofold price move,
+    rounds the running mean past its typical price: the squared-deviation term comes out
+    negative. Without the clamp sigma raised (sqrt of a negative) on that bar and on every later
+    one of the session, and the snapshot did not restore."""
+    bars = [bar(0, 1017.3, volume=0.001), bar(1, 1.4, volume=1e14), bar(2, 1.5, volume=1.0)]
+    out = compute("vwap", bars, {"anchor": "session"}, source="hlc3")
+    assert out[1][1] == 0.0
+    assert out[1][8] is None
+    assert all(row[1] is not None and row[1] >= 0.0 for row in out)
+    first = build_kernel("vwap", {"anchor": "session"}, source="hlc3")
+    first.run(bars[:2])
+    second = build_kernel("vwap", {"anchor": "session"}, source="hlc3")
+    second.restore(first.snapshot())
+    assert second.run(bars[2:]) == out[2:]
+
+
 def test_cvd_restarts_at_its_anchor_period() -> None:
     minutes = (478, 479, 480, 481, 1438, 1439, 1440, 1441)
     bars = [bar(m, 100.0, delta=1.0) for m in minutes]
@@ -208,6 +246,16 @@ def test_zigzag_deviation_drops_swings_too_close_to_the_last_opposite_swing() ->
     points = [(102, 101), (101, 100), (105, 102), (103, 101), (120, 105), (110, 108)]
     out = _zigzag(points, 1, 10.0)
     assert out[2:] == [(None, 100.0), (None, 100.0), (None, 101.0), (120.0, 101.0)]
+
+
+@pytest.mark.parametrize(("deviation", "swing_high"), [(10.0, 110.0), (10.1, None)])
+def test_zigzag_accepts_a_swing_exactly_deviation_pct_away(
+    deviation: float, swing_high: float | None
+) -> None:
+    """`abs(p - other) * 100 >= deviation_pct * other` is inclusive: the pivot high 110 is
+    exactly 10% above the swing low 100 (1000 = 1000 in binary64), so 10 keeps it, 10.1 not."""
+    points = [(102.0, 101.0), (101.0, 100.0), (105.0, 102.0), (110.0, 104.0), (106.0, 103.0)]
+    assert _zigzag(points, 1, deviation)[4] == (swing_high, 100.0)
 
 
 def test_zigzag_tests_an_outside_bar_high_before_its_low() -> None:

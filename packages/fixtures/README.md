@@ -56,7 +56,8 @@ before commit.
   no account data; redaction: derived output of already-redacted fixtures, no identifiers. No
   recorded symbol-day exists yet (exception #1778 A). Regenerate with
   `CV_REGEN_GOLDEN=1 pytest tests/unit/orderflow/indicators/test_golden_vectors.py` and review
-  the diff; a changed kernel output needs that kernel's `build_version` bumped.
+  the diff; a changed kernel output needs that kernel's `build_version` bumped and its output
+  digest re-pinned in that test (`KERNEL_OUTPUT_PINS`), which regeneration does not touch.
 
 ## Scripts
 

@@ -1,4 +1,4 @@
-"""Volatility kernels: `atr`, `adx` (E13-T02; plan §3.3)."""
+"""Volatility kernels: `atr`, `adx` (E13-T02, #426; 24-internal-schemas §7.4)."""
 
 from __future__ import annotations
 
@@ -77,6 +77,10 @@ class AdxKernel(Kernel):
     `plus_di = 100.0 * plus / atr` and `minus_di = 100.0 * minus / atr` when `atr > 0.0`, else
     both `0.0`; `dx = 100.0 * abs(plus_di - minus_di) / (plus_di + minus_di)` when that sum is
     `> 0.0`, else `0.0`; `adx` is a `WilderAverage(n)` of `dx`.
+
+    The two `0.0` branches read "no range" as "no directional movement". They are the one
+    exception to "a value without a defined operation is `None`, never 0" (24 §7.4): a flat
+    market reads ADX 0 after its warmup, not `None`, and `nullable_when` says so.
     """
 
     indicator = "adx"
@@ -86,7 +90,9 @@ class AdxKernel(Kernel):
     sources = (None,)
     nullable_when = (
         "adx is None until 2n bars exist (n+1 bars seed the directional indicators, n-1 more "
-        "complete Wilder's average of DX); plus_di and minus_di are None until n+1 bars exist."
+        "complete Wilder's average of DX); plus_di and minus_di are None until n+1 bars exist. "
+        "After that nothing is None: with no true range plus_di and minus_di read 0, and DX "
+        "reads 0 while both are 0, so a flat market reads ADX 0."
     )
 
     def __init__(

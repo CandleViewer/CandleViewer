@@ -1,4 +1,4 @@
-"""The C3 Decimal boundary for indicator values (24-internal-schemas §1.1 C3, plan §3.3).
+"""The C3 Decimal boundary for indicator values (24-internal-schemas §1.1 C3 and §7.4).
 
 The kernels are float64 inside. A value that reaches the OMS, the journal or audit crosses here,
 as `Decimal(str(x)).quantize(quantum)`: `str(float)` is the shortest round-trip repr, so the

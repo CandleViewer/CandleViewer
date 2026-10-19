@@ -1,4 +1,4 @@
-"""Volume and order-flow kernels: `vwap`, `cvd`, `volume`, `delta` (E13-T02; plan §3.3, D11)."""
+"""Volume and order-flow kernels: `vwap`, `cvd`, `volume`, `delta` (E13-T02, #426; 24 §7.4)."""
 
 from __future__ import annotations
 
@@ -40,10 +40,16 @@ class VwapKernel(Kernel):
     anchor): `w_sum = mean = s = 0.0`. A bar with volume `w > 0.0` updates, with
     `x = (high + low + close) / 3.0`:
     `w_sum = w_sum + w`; `d = x - mean`; `mean = mean + (w / w_sum) * d`;
-    `s = s + w * d * (x - mean)`. A zero-volume bar (a `densify()` filler too) changes nothing.
-    While `w_sum > 0.0`: `vwap = mean`, `sigma = sqrt(s / w_sum)`, `upper_k = vwap + k * sigma`
-    and `lower_k = vwap - k * sigma` for `k` in `1.0, 2.0, 3.0`, and
-    `band_sigma = (close - vwap) / sigma` when `sigma > abs(vwap) * SIGMA_FLOOR`.
+    `s = s + w * d * (x - mean)`, then `s = 0.0` if `s < 0.0`. A zero-volume bar (a `densify()`
+    filler too) changes nothing. While `w_sum > 0.0`: `vwap = mean`, `sigma = sqrt(s / w_sum)`,
+    `upper_k = vwap + k * sigma` and `lower_k = vwap - k * sigma` for `k` in `1.0, 2.0, 3.0`,
+    and `band_sigma = (close - vwap) / sigma` when `sigma > abs(vwap) * SIGMA_FLOOR`.
+
+    VWAP is West's running `mean`, never the quotient of two running sums (the two differ in
+    the last bits). `s` is a sum of non-negative terms, but when one bar's volume dwarfs the
+    session's (a ratio of about 1e16 or more) and the price moves more than twofold, `mean` can
+    round past `x` and the term comes out negative; the clamp keeps `s` a valid variance
+    numerator, so sigma stays defined and a snapshot always restores.
     """
 
     indicator = "vwap"
@@ -95,7 +101,8 @@ class VwapKernel(Kernel):
             self._w_sum = self._w_sum + w
             d = x - self._mean
             self._mean = self._mean + (w / self._w_sum) * d
-            self._s = self._s + w * d * (x - self._mean)
+            s = self._s + w * d * (x - self._mean)
+            self._s = 0.0 if s < 0.0 else s
         if not self._w_sum > 0.0:
             return _NO_VWAP
         vwap = self._mean

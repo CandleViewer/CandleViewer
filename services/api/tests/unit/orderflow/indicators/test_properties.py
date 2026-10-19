@@ -1,10 +1,14 @@
-"""Property tests for the indicator kernels (E13-T02 plan §5; seeded hypothesis, C-13.7).
+"""Property tests for the indicator kernels (E13-T02, #426; seeded hypothesis, C-13.7).
 
 Generated series hold 1 to 60 bars on a 0.1 price grid in [100, 199.9] (so adjacent prices stay
 within a factor of two and their binary64 differences are exact), with flat runs, zero volume
 and session or day boundaries; parameters are small. Properties:
 
-- incremental equals full: the value at every bar equals a full recompute of that prefix;
+- no hidden shared state: a fresh kernel folded over any prefix ends where the running kernel
+  is at that bar. `update()`, `run()` and `compute()` are one fold, so this is no evidence of
+  the arithmetic; the last property is, comparing the incremental kernel with an exact
+  reference that recomputes every window from scratch (SMA, swings) and runs each recurrence
+  exactly;
 - a restore at a random cut equals an uninterrupted run (the BI-5 analogue);
 - feeding in chunks, through a snapshot and a fresh kernel at each boundary, equals one pass;
 - every kernel matches the exact reference within 1e-8, with identical `None` positions.
@@ -82,10 +86,13 @@ def _full(case: Case, bars: list[BarInput]) -> list[tuple[float | None, ...]]:
 @seed(SEED)
 @settings(max_examples=150, deadline=None)
 @given(case=cases(), bars=series())
-def test_incremental_equals_a_full_recompute_at_every_bar(case: Case, bars: list[BarInput]) -> None:
-    incremental = bits(_full(case, bars))
+def test_a_fresh_kernel_on_any_prefix_ends_where_the_running_kernel_is(
+    case: Case, bars: list[BarInput]
+) -> None:
+    """No state is shared between kernel instances, or carried from an earlier run."""
+    running = bits(_full(case, bars))
     for i in range(len(bars)):
-        assert bits(_full(case, bars[: i + 1]))[-1] == incremental[i]
+        assert bits(_full(case, bars[: i + 1]))[-1] == running[i]
 
 
 @seed(SEED)

@@ -1,5 +1,6 @@
-"""The v1 indicator catalogue: one definition per indicator (E13-T02; ADR-0034 §5;
-24-internal-schemas §7.1; 22-api-openapi `IndicatorDescriptor`).
+"""The v1 indicator catalogue: one definition per indicator (E13-T02, #426; ADR-0034 and the
+assignment table of `docs/plan/spikes/e13-o4.md` §5; 24-internal-schemas §7.1; 22-api-openapi
+`IndicatorDescriptor`).
 
 `GET /api/v1/indicators` serves whatever `IndicatorCatalogue` it is given, in its order, so
 registering a definition changes the response with no frontend release. The rule vocabulary
@@ -9,7 +10,7 @@ and the rule vocabulary cannot drift.
 - `compute` is derived, never requested (IR-41): `server` exactly when the definition carries
   its backend kernel. ADR-0034 assigns that set by rule eligibility: `sma`, `ema`, `rsi`, `atr`,
   `adx`, `vwap`, `cvd`, `volume` and `zigzag`. The other 19 v1 indicators are `client_worker`
-  and have no Python kernel (plan D2): E13-S02..S07 build theirs in the chart worker.
+  and have no Python kernel (#426): E13-S02..S07 build theirs in the chart worker.
 - A server definition takes its outputs, `nullable_when` and warmup from its kernel and must
   declare the kernel's parameters, so the descriptor cannot disagree with what is computed.
 - Every parameter has a type, a title and a default; a numeric one also a minimum and a maximum
@@ -22,12 +23,19 @@ and the rule vocabulary cannot drift.
   or off its step is refused, never clamped. The error names a JSON pointer into the public
   `params_schema` and the bound, never the rejected value or an undeclared key (IR-24). The
   step is decimal: it is checked in `Decimal` on the value's shortest repr, so `0.3` is a
-  multiple of `0.1` although `0.3 / 0.1` is not 3 in binary64.
+  multiple of `0.1` although `0.3 / 0.1` is not 3 in binary64. A stock JSON Schema validator
+  divides in binary64 and refuses such legal values (jsonschema does, and so does Ajv without
+  `multipleOfPrecision`), so a client checks `multipleOf` in decimal (24 §7.4) and the server
+  checks parameters only with `validate_params`.
 - `warmup_bars` is the number of closed bars `outputs[0]` needs, as the kernels count it: its
   first value is on bar `warmup_bars` (index `warmup_bars - 1`) at the earliest (24 §7.4).
-- `unit` is the unit of the primary series, `outputs[0]`. Two indicators carry one secondary
-  output in another unit, which its name states: `vwap`'s `band_sigma` (a z-score) and
-  `supertrend`'s `direction` (+1 up, -1 down).
+- `unit` is the unit of every output that does not name its own (`OutputSpec.unit`): `vwap`'s
+  `band_sigma` is a z-score and `supertrend`'s `direction` (+1 up, -1 down) a ratio.
+  `GET /indicators` serves `unit` only when every output shares it, as 22's
+  `IndicatorDescriptor.unit` ("every output's unit") reads, so it omits it for those two; the
+  rule vocabulary takes a kernel-bound metric's unit from the output it reads. `rsi` is `pct`
+  and `adx` `ratio`, the units the rule vocabulary has given them since E35-T03 (a unit change
+  would change which rules validate); the client_worker 0..100 oscillators follow `adx`.
 - Defaults chosen here: `sma` 20 (the Bollinger middle line's period and the spike's control
   kernel) and `ema` 21 (US-IND-001's example and a 21 §10.5 built-in preset); the rest of the
   moving-average family 20. `zigzag` defaults to depth 5 with no deviation, which is exactly
@@ -151,10 +159,11 @@ class ParamSpec:
 @dataclass(frozen=True, slots=True)
 class OutputSpec:
     """One output series: `id` in the order the kernel emits it, `name` the screen-reader
-    label (22 `IndicatorOutput`)."""
+    label (22 `IndicatorOutput`), and `unit` when it differs from its indicator's."""
 
     id: str
     name: str
+    unit: Unit | None = None
 
     def __post_init__(self) -> None:
         if not _NAME.fullmatch(self.id) or not self.name:
@@ -217,6 +226,18 @@ class IndicatorDef:
 
     def json_defaults(self) -> dict[str, JsonValue]:
         return {p.name: p.json_default() for p in self.params}
+
+    def output_unit(self, output: str) -> Unit:
+        """The unit of one output: its own, or the indicator's."""
+        spec = next((o for o in self.outputs if o.id == output), None)
+        if spec is None:
+            raise KeyError(output)
+        return self.unit if spec.unit is None else spec.unit
+
+    def shared_unit(self) -> Unit | None:
+        """The unit every output is in, or `None` when the outputs differ."""
+        units = {self.output_unit(o.id) for o in self.outputs}
+        return self.unit if units == {self.unit} else None
 
     def warmup_bars(self, params: Mapping[str, ParamValue] | None = None) -> int:
         """Closed bars before `outputs[0]` has a value, at `params` (complete) or the defaults."""
@@ -374,16 +395,18 @@ def _server(
     unit: Unit,
     names: Mapping[str, str],
     params: tuple[ParamSpec, ...] = (),
+    units: Mapping[str, Unit] | None = None,
 ) -> IndicatorDef:
     """A server definition: outputs, `nullable_when` and warmup come from its kernel; `names`
-    gives each output its label."""
+    gives each output its label and `units` an output in a unit other than `unit`."""
+    own = units or {}
     return IndicatorDef(
         kernel.indicator,
         title,
         category,
         pane,
         unit,
-        tuple(OutputSpec(output, names[output]) for output in kernel.outputs),
+        tuple(OutputSpec(o, names[o], own.get(o)) for o in kernel.outputs),
         params,
         kernel.nullable_when,
         kernel.warmup_bars,
@@ -452,6 +475,7 @@ VWAP = _server(
         "band_sigma": "Distance of the close from VWAP, in standard deviations",
     },
     (_anchor("session"),),
+    {"band_sigma": "zscore"},
 )  # fmt: skip
 BOLLINGER = IndicatorDef(
     "bollinger", "Bollinger Bands", "volatility", "price", "price", _outputs(*_BANDS),
@@ -519,7 +543,8 @@ WILLIAMS_R = IndicatorDef(
 )  # fmt: skip
 SUPERTREND = IndicatorDef(
     "supertrend", "Supertrend", "trend", "price", "price",
-    _outputs(("supertrend", "Supertrend"), ("direction", "Direction, +1 up or -1 down")),
+    (OutputSpec("supertrend", "Supertrend"),
+     OutputSpec("direction", "Direction, +1 up or -1 down", "ratio")),
     (_period(10, title="ATR period"), _multiplier("3", "ATR multiplier")),
     "None until n bars exist: the bands are the median price plus and minus mult times "
     "Wilder's ATR over n bars.",
@@ -594,8 +619,8 @@ V1_INDICATORS: Final[tuple[IndicatorDef, ...]] = (
 )  # fmt: skip
 
 #: The bar's aggressor delta, which `cvd` sums: a rule metric with a server kernel, but not a v1
-#: chart indicator (ADR-0034 note §5.1), so no catalogue lists it and `GET /indicators` never
-#: serves it (IR-25).
+#: chart indicator (`docs/plan/spikes/e13-o4.md` §5.1), so no catalogue lists it and
+#: `GET /indicators` never serves it (IR-25).
 DELTA: Final = _server(DeltaKernel, "Delta", "orderflow", "sub", "qty", {"delta": "Delta"})
 
 #: Every definition with a server kernel, by id: the rule vocabulary binds metrics to these only

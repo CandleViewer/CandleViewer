@@ -1,4 +1,4 @@
-"""Momentum kernels: `rsi` (E13-T02; plan §3.3)."""
+"""Momentum kernels: `rsi` (E13-T02, #426; 24-internal-schemas §7.4)."""
 
 from __future__ import annotations
 

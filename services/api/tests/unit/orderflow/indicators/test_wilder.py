@@ -1,4 +1,4 @@
-"""Wilder smoothing, not an EMA, for ATR, RSI and ADX (ticket "Technical notes"; plan §5).
+"""Wilder smoothing, not an EMA, for ATR, RSI and ADX (ticket "Technical notes"; #426).
 
 Each kernel equals the exact Wilder reference, and differs by more than 1e-6, at each of the
 `K` bars after its seed (where (b) shares the seed), from the same indicator smoothed by (a) an

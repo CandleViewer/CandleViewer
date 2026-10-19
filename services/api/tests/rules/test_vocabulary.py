@@ -135,27 +135,55 @@ def test_metric_names_match_golden() -> None:
     assert golden == default_registry().names(), "renamed/removed metric needs an IR upcaster"
 
 
-#: E13-T02: the rule metrics an M9 server kernel computes, and the indicator each reads.
+#: E13-T02: the rule metrics an M9 server kernel computes, and the indicator output each reads.
 KERNEL_BOUND = {
-    "delta": "delta", "cvd": "cvd", "bar_volume": "volume", "atr": "atr", "ema": "ema",
-    "sma": "sma", "rsi": "rsi", "swing_high": "zigzag", "swing_low": "zigzag", "adx": "adx",
-    "vwap": "vwap", "vwap_band_sigma": "vwap",
+    "delta": ("delta", "delta"), "cvd": ("cvd", "cvd"), "bar_volume": ("volume", "volume"),
+    "atr": ("atr", "atr"), "ema": ("ema", "ema"), "sma": ("sma", "sma"), "rsi": ("rsi", "rsi"),
+    "swing_high": ("zigzag", "swing_high"), "swing_low": ("zigzag", "swing_low"),
+    "adx": ("adx", "adx"), "vwap": ("vwap", "vwap"), "vwap_band_sigma": ("vwap", "band_sigma"),
 }  # fmt: skip
+#: The kernel-bound metrics read from the order flow or the traded volume of tape-built bars:
+#: they keep the `trades` input, so they need the symbol on the recorded-symbol list, as `delta`,
+#: `cvd`, `vwap` and `vwap_band_sigma` did before E13-T02 (and as the Deep Stats `bar_volume` row
+#: of 24 §7.2 does).
+TAPE_BOUND = {"delta", "cvd", "bar_volume", "vwap", "vwap_band_sigma"}
 
 
 def test_kernel_bound_metrics_take_their_facts_from_the_indicator_catalogue() -> None:
-    """E13-T02: params, warmup, inputs, cadence, nullable_when and confidence come from the
-    indicator catalogue, and the signal's params_schema is the indicator's own."""
+    """E13-T02: unit, params, warmup, inputs, cadence, nullable_when and confidence come from
+    the indicator catalogue, and the signal's params_schema is the indicator's own."""
     signals = {s["id"]: s for s in _vocab()["signals"]}
-    for metric, indicator in KERNEL_BOUND.items():
+    for metric, (indicator, output) in KERNEL_BOUND.items():
         d, definition = default_registry().get(metric), SERVER_DEFINITIONS[indicator]
         assert d is not None
         assert d.params == {k: str(v) for k, v in definition.json_defaults().items()}, metric
+        assert d.unit == definition.output_unit(output), metric
+        inputs = ("bars", "trades") if metric in TAPE_BOUND else ("bars",)
         facts = (d.warmup_bars, d.inputs, d.cadence, d.nullable_when, d.confidence)
-        want = (definition.warmup_bars(), ("bars",), "on_bar_close", definition.nullable_when)
+        want = (definition.warmup_bars(), inputs, "on_bar_close", definition.nullable_when)
         assert facts == (*want, "exact"), metric
         assert signals[metric]["params_schema"] == definition.params_schema(), metric
-        assert signals[metric]["requires_recording"] is False, metric
+        assert signals[metric]["requires_recording"] is (metric in TAPE_BOUND), metric
+
+
+def test_tape_bound_metrics_are_unavailable_for_a_symbol_that_is_not_recorded() -> None:
+    """The order-flow and volume metrics keep their recorded-trades dependency: for a symbol
+    off the recorded-symbol list they are unavailable with the recorder action, as before
+    E13-T02, while the price-only kernel metrics stay available."""
+    by = {s["id"]: s for s in _vocab(symbol="DOGEUSDT", recorded_symbols={"BTCUSDT"})["signals"]}
+    for metric in sorted(TAPE_BOUND):
+        s = by[metric]
+        assert (s["available"], s["requires_recording"]) == (False, True), metric
+        assert s["missing_dependency"] == {
+            "kind": "recording",
+            "symbol": "DOGEUSDT",
+            "inputs": ["trades"],
+        }, metric
+        assert s["recorder_action"]["path"] == "/api/v1/recording/symbols", metric
+    for metric in sorted(set(KERNEL_BOUND) - TAPE_BOUND):
+        assert by[metric]["available"] is True, metric
+    recorded = _vocab(symbol="BTCUSDT", recorded_symbols={"BTCUSDT"})["signals"]
+    assert all(s["available"] for s in recorded if s["id"] in TAPE_BOUND)
 
 
 def test_kernel_bound_metrics_are_exactly_the_bound_set() -> None:
@@ -164,18 +192,20 @@ def test_kernel_bound_metrics_are_exactly_the_bound_set() -> None:
     assert kernel_params_schema("tape_speed") is None
 
 
-def test_kernel_bound_metric_units_are_unchanged_and_agree_with_the_indicator() -> None:
+def test_kernel_bound_metric_units_are_unchanged_and_are_their_outputs_units() -> None:
     units = {m: getattr(default_registry().get(m), "unit", None) for m in KERNEL_BOUND}
     assert units == {
         "delta": "qty", "cvd": "qty", "bar_volume": "qty", "atr": "price", "ema": "price",
         "sma": "price", "rsi": "pct", "swing_high": "price", "swing_low": "price",
         "adx": "ratio", "vwap": "price", "vwap_band_sigma": "zscore",
     }  # fmt: skip
-    from_catalogue = {m: SERVER_DEFINITIONS[i].unit for m, i in KERNEL_BOUND.items()}
-    assert units == {**from_catalogue, "vwap_band_sigma": "zscore"}  # vwap's z-score output
+    from_catalogue = {m: SERVER_DEFINITIONS[i].output_unit(o) for m, (i, o) in KERNEL_BOUND.items()}
+    assert units == from_catalogue
 
 
 def test_swing_metrics_keep_the_24_7_2_swing_and_ema_sma_gain_defaults() -> None:
+    """E13-T02 renames the swing depth from `n` to ZigZag's `depth` and adds `deviation_pct`
+    (default 0, the plain pivot), a vocabulary change no stored rule used (24 §7.2)."""
     reg = default_registry()
     swing_high, swing_low = reg.get("swing_high"), reg.get("swing_low")
     assert swing_high is not None and swing_low is not None
@@ -190,13 +220,13 @@ def test_a_binding_to_an_output_its_indicator_lacks_is_refused_at_import() -> No
     from candleviewer.rules.vocabulary import metrics
 
     with pytest.raises(ValueError, match="atr has no output upper_1"):
-        metrics._bound(("atr_band", "atr", "upper_1", "ATR band", "price", "", ""))
+        metrics._bound(("atr_band", "atr", "upper_1", "ATR band", False, "", ""))
 
 
 def test_rule_eligibility_is_server_placement_and_no_client_worker_name_is_a_metric() -> None:
-    """ADR-0034 rule 2 and decision D3: every server indicator backs a rule metric, and none of
+    """ADR-0034 rule 2 and #426's ruling D3: every server indicator backs a rule metric, and none of
     the 19 client_worker indicators enters the rule vocabulary."""
-    assert set(KERNEL_BOUND.values()) == set(SERVER_DEFINITIONS)
+    assert {i for i, _ in KERNEL_BOUND.values()} == set(SERVER_DEFINITIONS)
     client_worker = {d.id for d in V1_INDICATORS if d.compute == "client_worker"}
     assert len(client_worker) == 19
     assert client_worker & set(default_registry().names()) == set()

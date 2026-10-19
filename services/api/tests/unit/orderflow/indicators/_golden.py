@@ -1,4 +1,4 @@
-"""Golden-vector harness for the indicator kernels (E13-T02 plan §3.9, D6).
+"""Golden-vector harness for the indicator kernels (E13-T02, #426; 24-internal-schemas §7.4).
 
 `packages/fixtures/golden/indicators/` holds, per input set, the densified input bars
 (`inputs_<set>.jsonl`) and one line per case (`vectors_<set>.jsonl`) with the kernel's float64
@@ -31,6 +31,7 @@ from candleviewer.orderflow.indicators import (
     compute,
 )
 from candleviewer.orderflow.indicators.identity import (
+    BAR_SOURCE,
     canonical_json,
     canonical_value,
     compute_spec_hash,
@@ -217,62 +218,48 @@ def load_vectors(name: str) -> list[dict[str, object]]:
 
 ONE_MINUTE: Final = BarSpec(kind="time", interval_ms=60_000)
 FIVE_MINUTES: Final = BarSpec(kind="time", interval_ms=300_000)
-SPEC_HASH_CASES: Final[tuple[tuple[str, str, dict[str, ParamValue], BarSpec, str | None], ...]] = (
-    ("ema(21) on 1m", "ema", {"n": 21}, ONE_MINUTE, "close"),
-    ("ema(21.0): the same identity as ema(21)", "ema", {"n": 21.0}, ONE_MINUTE, "close"),
-    ("ema(21) on 5m: another bar spec", "ema", {"n": 21}, FIVE_MINUTES, "close"),
-    ("sma(20)", "sma", {"n": 20}, ONE_MINUTE, "close"),
-    ("rsi(14)", "rsi", {"n": 14}, ONE_MINUTE, "close"),
-    ("atr(14): fixed fields, source null", "atr", {"n": 14}, ONE_MINUTE, None),
-    ("adx(14)", "adx", {"n": 14}, ONE_MINUTE, None),
-    ("vwap(session)", "vwap", {"anchor": "session"}, ONE_MINUTE, "hlc3"),
-    ("cvd(session)", "cvd", {"anchor": "session"}, ONE_MINUTE, None),
-    ("cvd(utc_day)", "cvd", {"anchor": "utc_day"}, ONE_MINUTE, None),
-    ("volume: no params", "volume", {}, ONE_MINUTE, None),
-    ("delta: no params", "delta", {}, ONE_MINUTE, None),
-    ("zigzag(5, 0)", "zigzag", {"depth": 5, "deviation_pct": 0}, ONE_MINUTE, None),
-    ("zigzag, keys in another order", "zigzag", {"deviation_pct": 0, "depth": 5}, ONE_MINUTE, None),
-    ("zigzag(5, 0.1)", "zigzag", {"depth": 5, "deviation_pct": 0.1}, ONE_MINUTE, None),
-    (
-        "zigzag(5, 1e-7): no exponent",
-        "zigzag",
-        {"depth": 5, "deviation_pct": 1e-07},
-        ONE_MINUTE,
-        None,
-    ),
-    (
-        "zigzag(5, -0.0): negative zero is 0",
-        "zigzag",
-        {"depth": 5, "deviation_pct": -0.0},
-        ONE_MINUTE,
-        None,
-    ),
-)
+#: (note, indicator, params, bar spec): every identity hashes the bar source `tape` (24 §7.4).
+SPEC_HASH_CASES: Final[tuple[tuple[str, str, dict[str, ParamValue], BarSpec], ...]] = (
+    ("ema(21) on 1m", "ema", {"n": 21}, ONE_MINUTE),
+    ("ema(21.0): the same identity as ema(21)", "ema", {"n": 21.0}, ONE_MINUTE),
+    ("ema(21) on 5m: another bar spec", "ema", {"n": 21}, FIVE_MINUTES),
+    ("sma(20)", "sma", {"n": 20}, ONE_MINUTE),
+    ("rsi(14)", "rsi", {"n": 14}, ONE_MINUTE),
+    ("atr(14)", "atr", {"n": 14}, ONE_MINUTE),
+    ("adx(14)", "adx", {"n": 14}, ONE_MINUTE),
+    ("vwap(session)", "vwap", {"anchor": "session"}, ONE_MINUTE),
+    ("cvd(session)", "cvd", {"anchor": "session"}, ONE_MINUTE),
+    ("cvd(utc_day)", "cvd", {"anchor": "utc_day"}, ONE_MINUTE),
+    ("volume: no params", "volume", {}, ONE_MINUTE),
+    ("delta: no params", "delta", {}, ONE_MINUTE),
+    ("zigzag(5, 0)", "zigzag", {"depth": 5, "deviation_pct": 0}, ONE_MINUTE),
+    ("zigzag, keys in another order", "zigzag", {"deviation_pct": 0, "depth": 5}, ONE_MINUTE),
+    ("zigzag(5, 0.1)", "zigzag", {"depth": 5, "deviation_pct": 0.1}, ONE_MINUTE),
+    ("zigzag(5, 1e-7): no exponent", "zigzag", {"depth": 5, "deviation_pct": 1e-07}, ONE_MINUTE),
+    ("zigzag(5, -0.0): -0 is 0", "zigzag", {"depth": 5, "deviation_pct": -0.0}, ONE_MINUTE),
+    ("bollinger(20, 2.5): client_worker", "bollinger", {"n": 20, "mult": 2.5}, ONE_MINUTE),
+)  # fmt: skip
 
 
 def render_spec_hash_vectors() -> str:
     vectors = []
-    for note, indicator, params, spec, source in SPEC_HASH_CASES:
+    for note, indicator, params, spec in SPEC_HASH_CASES:
         bar_spec_hash = spec.spec_hash
         vectors.append(
             {
                 "bar_spec_hash": bar_spec_hash,
-                "canonical_json": canonical_json(
-                    indicator, params, bar_spec_hash=bar_spec_hash, source=source
-                ),
+                "canonical_json": canonical_json(indicator, params, bar_spec_hash=bar_spec_hash),
                 "indicator": indicator,
                 "note": note,
                 "params": params,
-                "source": source,
-                "spec_hash": compute_spec_hash(
-                    indicator, params, bar_spec_hash=bar_spec_hash, source=source
-                ),
+                "spec_hash": compute_spec_hash(indicator, params, bar_spec_hash=bar_spec_hash),
             }
         )
     doc = {
         "$note": f"GENERATED - do not hand-edit. Regenerate with `{REGEN_COMMAND}`. A diff here "
         "moves every indicator instance, cache and metric key: bump INDICATOR_SPEC_VERSION.",
         "indicator_spec_version": INDICATOR_SPEC_VERSION,
+        "source": BAR_SOURCE,
         "vectors": vectors,
     }
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=True) + "\n"

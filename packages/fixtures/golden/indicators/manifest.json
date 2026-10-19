@@ -16,7 +16,7 @@
     "inputs_kline_gap.jsonl": "0c20184746ec19027962266d6798ce026585aa666a25a038cdff5b386a6b76ef",
     "inputs_synthetic_day.jsonl": "fd71dc05acee46b45440da5115428b64f6fbe4a81374aafb20c957593899cde9",
     "inputs_tape_1m.jsonl": "ffa1b1c963dbd183a14aba834f6d3147571301130ea05c848e5dd89b2deaaae0",
-    "spec_hash_vectors.json": "31d50a456f87e162e48035bb5251acabf34192caf0031cbd8e6c7b1b16a497d4",
+    "spec_hash_vectors.json": "86fcec6e5818017140a53b9ad4ff15989a748eaac10bb335a3080c3f65b36285",
     "vectors_kline_gap.jsonl": "519f027fa9d123bc39eb30a8dedfc77ec6bca508f3bbd62812d35d4f413baef0",
     "vectors_synthetic_day.jsonl": "5dc16bdeddb20b9e1d8debf8b26b17f4346ab265bc68554023b627c830e6965f",
     "vectors_tape_1m.jsonl": "34e1b92c706f8a382ad0c9a1564db705efe5758f6689bce8e72e68d64dc61fad"

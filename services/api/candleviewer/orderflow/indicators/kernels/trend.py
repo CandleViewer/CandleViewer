@@ -1,4 +1,4 @@
-"""Trend kernels: `zigzag`, the confirmed swing pivots (E13-T02; plan §3.3, D11)."""
+"""Trend kernels: `zigzag`, the confirmed swing pivots (E13-T02, #426; 24 §7.4)."""
 
 from __future__ import annotations
 

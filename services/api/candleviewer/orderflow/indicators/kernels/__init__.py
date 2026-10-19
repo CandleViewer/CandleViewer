@@ -1,5 +1,6 @@
-"""The server kernels (ADR-0034 §5: the nine `compute: server` indicators) and the `delta`
-pass-through behind the `delta` and `cvd` metrics (plan D2).
+"""The server kernels (the nine `compute: server` indicators of ADR-0034, decision 1, and the
+assignment table of `docs/plan/spikes/e13-o4.md` §5) and the `delta` pass-through behind the
+`delta` and `cvd` metrics (#426).
 
 `compute()` is the full form: a fresh kernel folded over a window, the same code path as
 incremental `update()` calls, so the two cannot disagree.

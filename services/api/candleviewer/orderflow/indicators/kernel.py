@@ -1,4 +1,4 @@
-"""Indicator kernel framework (E13-T02; ADR-0034; plan §3.3).
+"""Indicator kernel framework (E13-T02, #426; ADR-0034; 24-internal-schemas §7.4).
 
 A kernel is one scalar float64 fold over a bar series. `update(bar)` takes the next closed bar
 and returns one value per declared output; `run(bars)` and `kernels.compute()` are the same fold
@@ -13,9 +13,12 @@ Parity contract (ADR-0034 rule 3). The TS worker mirror follows it operation for
 - Each expression is evaluated left to right exactly as its kernel's docstring writes it.
   Integers (`n`, `n - 1`) convert to binary64 exactly.
 - A value is `None` until it is defined, never 0 and never NaN; `nullable_when` says when.
+  ADX is the one exception (`AdxKernel`): with no range its DIs and DX read 0, not `None`.
 - A zero produced by a branch is `+0.0` (never `max(-0.0, 0.0)`), so the sign of zero agrees.
-- Every kernel carries a `build_version`. Changing an operation or its order bumps it and
-  regenerates `packages/fixtures/golden/indicators/`; the golden test fails until both happen.
+- Every kernel carries a `build_version`. Changing an operation or its order bumps it,
+  regenerates `packages/fixtures/golden/indicators/` and re-pins the kernel's output digest
+  beside its `build_version` in `tests/unit/orderflow/indicators/test_golden_vectors.py`. The
+  pin fails on any changed output, so the bump is a reviewed diff (IR-20).
 
 Shared recurrences:
 
@@ -25,8 +28,10 @@ Shared recurrences:
   `v = (x - v) * alpha + v`.
 
 State blob: orjson JSON `{v, indicator, build_version, params, source, context, state}` with
-`v = STATE_VERSION`. `restore()` refuses a blob whose header differs from the kernel in any
-field (`IndicatorStateError`) and replaces the state only once the whole blob has parsed.
+`v = STATE_VERSION`; `params` are canonical (`identity`), `source` is the price the kernel
+reads (`sources`), `context` the `KernelContext`. `restore()` refuses a blob whose header
+differs from the kernel in any field (`IndicatorStateError`) and replaces the state only once
+the whole blob has parsed.
 """
 
 from __future__ import annotations
@@ -196,7 +201,9 @@ class Kernel(ABC):
     outputs: ClassVar[tuple[str, ...]]
     build_version: ClassVar[int]
     param_names: ClassVar[tuple[str, ...]]
-    #: Accepted `source` values; `sources[0]` is the default, `None` means fixed bar fields.
+    #: The price the kernel reads (`close`, `hlc3`), or `None` for fixed bar fields; `sources[0]`
+    #: is the default. A check on the caller, never part of the identity: `spec_hash` hashes the
+    #: bar source `tape` (`identity.BAR_SOURCE`, 24 §7.4).
     sources: ClassVar[tuple[str | None, ...]]
     nullable_when: ClassVar[str]
 
@@ -207,9 +214,8 @@ class Kernel(ABC):
         source: str | None,
         context: KernelContext | None = None,
     ) -> None:
-        unknown = sorted(str(k)[:32] for k in params if k not in self.param_names)
-        if unknown:
-            raise IndicatorParamError(f"{self.indicator} has no parameter named {unknown[0]}.")
+        if any(k not in self.param_names for k in params):  # never echo the key (IR-24)
+            raise IndicatorParamError(f"{self.indicator} was given an undeclared parameter.")
         missing = [k for k in self.param_names if k not in params]
         if missing:
             raise IndicatorParamError(f"{self.indicator} needs the parameter {missing[0]}.")

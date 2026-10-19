@@ -16,7 +16,7 @@ from hypothesis import given, seed, settings
 from hypothesis import strategies as st
 
 from candleviewer.orderflow.errors import IndicatorParamError, InvalidParamsError
-from candleviewer.orderflow.indicators import IndicatorSpec, build_kernel
+from candleviewer.orderflow.indicators import IndicatorSpec, build_kernel, limits
 from candleviewer.orderflow.indicators.catalogue import (
     SERVER_DEFINITIONS,
     V1_INDICATORS,
@@ -56,10 +56,7 @@ def test_params_whole_float_is_the_integer_so_ema_21_and_21_0_are_one_instance()
     whole, floating, decimal = (validate_params(EMA, {"n": n}) for n in (21, 21.0, Decimal("21")))
     assert whole == floating == decimal == {"n": 21}
     assert all(type(p["n"]) is int for p in (whole, floating, decimal))
-    specs = [
-        IndicatorSpec.of("ema", p, bar_spec_hash=BAR_SPEC, source="close")
-        for p in (whole, floating)
-    ]
+    specs = [IndicatorSpec.of("ema", p, bar_spec_hash=BAR_SPEC) for p in (whole, floating)]
     assert specs[0].spec_hash == specs[1].spec_hash
 
 
@@ -173,3 +170,25 @@ def test_params_property_every_period_outside_the_bounds_is_refused(value: int) 
 @given(st.integers(1, 100))
 def test_params_property_every_step_of_the_multiplier_range_is_exact(tenths: int) -> None:
     assert validate_params(BOLLINGER, {"mult": tenths / 10})["mult"] == Decimal(tenths) / 10
+
+
+@pytest.mark.parametrize(
+    ("definition", "name", "family"),
+    [
+        (BOLLINGER, "mult", "MULTIPLIER"),
+        (ZIGZAG, "deviation_pct", "DEVIATION_PCT"),
+        (PSAR, "step", "PSAR_ACCELERATION"),
+    ],
+    ids=["multiplier", "deviation", "acceleration"],
+)
+def test_params_every_value_on_a_fractional_grid_is_accepted_in_decimal(
+    definition: IndicatorDef, name: str, family: str
+) -> None:
+    """Every legal step value, sent as the JSON number a client sends (binary64), is accepted
+    and read back exactly: the step check is decimal, so `validate_params` never refuses the
+    values a binary64 `multipleOf` division does (0.3 for 0.1, 0.007 for 0.001, ...)."""
+    low, high, step = (getattr(limits, f"{family}_{part}") for part in ("MIN", "MAX", "STEP"))
+    grid = [low + k * step for k in range(int((high - low) / step) + 1)]
+    assert grid[-1] == high
+    for exact in grid:
+        assert validate_params(definition, {name: float(exact)})[name] == exact, exact

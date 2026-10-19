@@ -56,6 +56,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
         "bars_symbol_cardinality",
+        "indicator_subscriptions",  # named by the E13-T02 ticket's Observability section (#426)
         "cv_ws_connection_class",
         "cv_ws_coalesced_updates",
         "cv_ws_queue_frames",
@@ -303,6 +304,8 @@ def test_indicator_metrics_are_planned_bounded_and_never_per_user() -> None:
     compute = next(s for s in CATALOGUE if s.name == "indicator_compute_seconds")
     assert compute.buckets is not None and 0.02 in compute.buckets  # budget #6's p95 edge
     assert "user" in DISALLOWED_LABEL_NAMES
+    # They go live with the engine (#426's second PR): each must already pass the live-name rule.
+    assert all(_UNIT_SUFFIX.search(n) or n in _SUFFIX_EXCEPTIONS for n in specs), specs
 
 
 def test_labels_exercised_contain_no_personal_data() -> None:

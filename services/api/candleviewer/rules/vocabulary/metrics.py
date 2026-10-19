@@ -4,7 +4,7 @@
 and valid range shown in the picker. A registry metric with no entry fails the
 completeness test (and logs a startup warning) so the two lists cannot drift.
 The metrics an M9 server kernel computes (`_KERNEL_BOUND`, E13-T02) take their
-params, warmup, inputs and `nullable_when` from the indicator catalogue.
+unit, params, warmup, inputs and `nullable_when` from the indicator catalogue.
 """
 
 # ruff: noqa: E501 - dense data table, one metric per line
@@ -123,39 +123,45 @@ _ACCOUNT: tuple[_Row, ...] = (
 )  # fmt: skip
 _ROWS: tuple[_Row, ...] = _FLOW + _MARKET + _ACCOUNT
 
-# metric, indicator, output, title, unit, description, range
-_Bound = tuple[str, str, str, str, str, str, str]
+# metric, indicator, output, title, tape, description, range
+_Bound = tuple[str, str, str, str, bool, str, str]
+_TAPE, _NO_TAPE = True, False
 #: Rule metrics an M9 server kernel computes (E13-T02): one output of a `SERVER_DEFINITIONS`
-#: entry. Their params (with `params_schema`), warmup, inputs, cadence, `nullable_when` and
-#: confidence come from the indicator catalogue, never from here, so this list and
-#: `GET /indicators` cannot drift. Binding a `client_worker` indicator here would make it
-#: `server` (ADR-0034 rule 2): that needs its kernel first.
+#: entry. Their unit (the output's), params (with `params_schema`), warmup, inputs, cadence,
+#: `nullable_when` and confidence come from the indicator catalogue, never from here, so this
+#: list and `GET /indicators` cannot drift. `tape` adds the `trades` input, as the order-flow
+#: rows above have it: these values come from the aggressor split and the traded volume of bars
+#: built from a symbol's recorded trades, so `requires_recording` stays true and a symbol off the
+#: recorded-symbol list gets them unavailable, with the recorder action (24 §7.2). Binding a
+#: `client_worker` indicator here would make it `server` (ADR-0034 rule 2): that needs its
+#: kernel first.
 _KERNEL_BOUND: tuple[_Bound, ...] = (
-    ("delta", "delta", "delta", "Delta", "qty", "Bar buy_volume - sell_volume", ""),
-    ("cvd", "cvd", "cvd", "CVD", "qty", "Running sum of signed volume from the anchor", ""),
-    ("bar_volume", "volume", "volume", "Bar volume", "qty", "Volume of the last closed bar", ">=0"),
-    ("atr", "atr", "atr", "ATR", "price", "Wilder average true range", ">=0"),
-    ("ema", "ema", "ema", "EMA", "price", "Exponential moving average", ">0"),
-    ("sma", "sma", "sma", "SMA", "price", "Simple moving average", ">0"),
-    ("rsi", "rsi", "rsi", "RSI", "pct", "Relative strength index", "0..100"),
-    ("swing_high", "zigzag", "swing_high", "Swing high", "price", "Most recent confirmed pivot high", ">0"),
-    ("swing_low", "zigzag", "swing_low", "Swing low", "price", "Most recent confirmed pivot low", ">0"),
-    ("adx", "adx", "adx", "ADX", "ratio", "Wilder average directional index", "0..100"),
-    ("vwap", "vwap", "vwap", "VWAP", "price", "Volume-weighted average price", ">0"),
-    ("vwap_band_sigma", "vwap", "band_sigma", "VWAP band sigma", "zscore", "Distance from VWAP in standard deviations", ""),
+    ("delta", "delta", "delta", "Delta", _TAPE, "Bar buy_volume - sell_volume", ""),
+    ("cvd", "cvd", "cvd", "CVD", _TAPE, "Running sum of signed volume from the anchor", ""),
+    ("bar_volume", "volume", "volume", "Bar volume", _TAPE, "Volume of the last closed bar", ">=0"),
+    ("atr", "atr", "atr", "ATR", _NO_TAPE, "Wilder average true range", ">=0"),
+    ("ema", "ema", "ema", "EMA", _NO_TAPE, "Exponential moving average", ">0"),
+    ("sma", "sma", "sma", "SMA", _NO_TAPE, "Simple moving average", ">0"),
+    ("rsi", "rsi", "rsi", "RSI", _NO_TAPE, "Relative strength index", "0..100"),
+    ("swing_high", "zigzag", "swing_high", "Swing high", _NO_TAPE, "Most recent confirmed pivot high", ">0"),
+    ("swing_low", "zigzag", "swing_low", "Swing low", _NO_TAPE, "Most recent confirmed pivot low", ">0"),
+    ("adx", "adx", "adx", "ADX", _NO_TAPE, "Wilder average directional index", "0..100"),
+    ("vwap", "vwap", "vwap", "VWAP", _TAPE, "Volume-weighted average price", ">0"),
+    ("vwap_band_sigma", "vwap", "band_sigma", "VWAP band sigma", _TAPE, "Distance from VWAP in standard deviations", ""),
 )  # fmt: skip
 
 
 def _bound(row: _Bound) -> MetricDescriptor:
     """A kernel-bound metric's descriptor, from its indicator definition."""
-    metric, indicator, output, title, unit, _, _ = row
+    metric, indicator, output, title, tape, _, _ = row
     definition = SERVER_DEFINITIONS[indicator]
     if output not in {o.id for o in definition.outputs}:
         raise ValueError(f"{metric}: {indicator} has no output {output}")
+    inputs = (*definition.inputs, _T) if tape else definition.inputs
     return MetricDescriptor.model_validate(
         {
-            "name": metric, "title": title, "unit": unit, "value_type": definition.value_type,
-            "scope": definition.scope, "inputs": definition.inputs,
+            "name": metric, "title": title, "unit": definition.output_unit(output),
+            "value_type": definition.value_type, "scope": definition.scope, "inputs": inputs,
             "params": {k: str(v) for k, v in definition.json_defaults().items()},
             "warmup_bars": definition.warmup_bars(), "cadence": definition.cadence,
             "nullable_when": definition.nullable_when, "deterministic": definition.deterministic,

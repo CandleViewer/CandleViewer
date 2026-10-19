@@ -1,8 +1,8 @@
 """`orderflow/indicators/limits.py` is pinned value by value (E13 threat model SR-E13-01).
 
-A bound moves only in a reviewed diff of this file and `limits.py` together (CODEOWNER: backend +
-security). The period bound is SCR-035's "Period must be between 1 and 5000.", which the threat
-model's 2026-10-13 sign-off fixed for every period-style parameter.
+A bound moves only in a reviewed diff of this file and `limits.py` together (CODEOWNERS: the
+`orderflow/` owners). The period bound is SCR-035's "Period must be between 1 and 5000.", which
+the threat model's 2026-10-13 sign-off fixed for every period-style parameter.
 """
 
 from __future__ import annotations

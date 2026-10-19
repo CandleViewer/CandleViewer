@@ -89,11 +89,32 @@ def test_indicators_route_serves_every_v1_indicator_in_catalogue_order() -> None
     assert len(items) == 28 and sum(i["compute"] == "server" for i in items) == 9
 
 
+#: The indicators whose outputs differ in unit: `vwap`'s z-score `band_sigma`, `supertrend`'s
+#: +1/-1 `direction`.
+MIXED_UNITS = {"vwap", "supertrend"}
+
+
 def test_indicators_route_items_carry_exactly_the_contract_fields() -> None:
     spec: dict[str, Any] = load_openapi_spec()
     contract = set(spec["components"]["schemas"]["IndicatorDescriptor"]["properties"])
     for item in _items(_client()):
-        assert set(item) == contract, item["id"]
+        expected = contract - {"unit"} if item["id"] in MIXED_UNITS else contract
+        assert set(item) == expected, item["id"]
+
+
+def test_indicators_route_unit_is_every_outputs_unit_or_absent() -> None:
+    """22 `IndicatorDescriptor.unit` is every output's unit: an indicator whose outputs differ
+    in unit has none, rather than one that is wrong for some of its outputs."""
+    by_id = {d.id: d for d in default_catalogue()}
+    for item in _items(_client()):
+        definition = by_id[item["id"]]
+        units = {definition.output_unit(o["id"]) for o in item["outputs"]}
+        if item["id"] in MIXED_UNITS:
+            assert len(units) == 2 and "unit" not in item, item["id"]
+        else:
+            assert units == {item["unit"]} == {definition.unit}, item["id"]
+    assert by_id["vwap"].output_unit("band_sigma") == "zscore"
+    assert by_id["vwap"].output_unit("upper_3") == by_id["vwap"].unit == "price"
 
 
 def test_indicators_route_every_params_schema_is_legal_json_schema_in_the_closed_subset() -> None:

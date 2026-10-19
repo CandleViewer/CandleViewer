@@ -1,4 +1,4 @@
-"""The v1 indicator catalogue (E13-T02; ADR-0034 §5; 24-internal-schemas §7.1).
+"""The v1 indicator catalogue (E13-T02, #426; ADR-0034; 24-internal-schemas §7.1).
 
 Pins `compute` to the ADR-0034 assignment table and `category`/`pane` to the plan's table, checks
 that every server definition says what its kernel computes, and covers the definition-time checks
@@ -31,7 +31,8 @@ from candleviewer.orderflow.indicators.catalogue import (
 from candleviewer.orderflow.indicators.kernels import AtrKernel
 from candleviewer.orderflow.indicators.types import ParamValue
 
-#: ADR-0034 §5 (the spike note's assignment table), verbatim and in its order.
+#: The assignment table of `docs/plan/spikes/e13-o4.md` §5 (ADR-0034 decision 1), verbatim and
+#: in its order.
 ADR_0034 = (
     ("sma", "server"), ("ema", "server"), ("wma", "client_worker"), ("vwma", "client_worker"),
     ("smma", "client_worker"), ("dema", "client_worker"), ("tema", "client_worker"),
@@ -44,7 +45,7 @@ ADR_0034 = (
     ("mfi", "client_worker"), ("cvd", "server"),
 )  # fmt: skip
 
-#: The plan's category and pane per indicator family (#426 plan §3.2).
+#: The category and pane per indicator family (the #426 plan's table, section 3.2).
 PLACEMENT = {
     **dict.fromkeys(("sma", "ema", "wma", "vwma", "smma", "dema", "tema"), ("trend", "price")),
     **dict.fromkeys(("rsi", "macd", "stochastic", "cci", "williams_r"), ("momentum", "sub")),
@@ -143,6 +144,22 @@ def test_catalogue_every_numeric_parameter_is_bounded_and_fractional_ones_steppe
                 continue
             assert p.minimum is not None and p.maximum is not None, (d.id, p.name)
             assert (p.multiple_of is not None) == (p.type == "number"), (d.id, p.name)
+
+
+def test_catalogue_only_vwap_and_supertrend_have_an_output_in_another_unit() -> None:
+    mixed = {d.id: d for d in V1_INDICATORS if d.shared_unit() is None}
+    assert set(mixed) == {"vwap", "supertrend"}
+    assert mixed["vwap"].output_unit("band_sigma") == "zscore"
+    assert mixed["supertrend"].output_unit("direction") == "ratio"
+    for d in V1_INDICATORS:
+        assert d.output_unit(d.outputs[0].id) == d.unit, d.id  # the primary series' unit
+        if d.id not in mixed:
+            assert d.shared_unit() == d.unit, d.id
+
+
+def test_catalogue_output_unit_refuses_an_output_the_indicator_lacks() -> None:
+    with pytest.raises(KeyError):
+        SMA.output_unit("ema")
 
 
 def test_catalogue_json_defaults_are_json_numbers_and_tokens() -> None:

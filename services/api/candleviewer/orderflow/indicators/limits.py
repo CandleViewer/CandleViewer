@@ -1,9 +1,12 @@
 """E13 indicator parameter bounds: the ONE constants module (E13 threat model SR-E13-01).
 
 `catalogue.py` builds every `params_schema` from these values and `validate_params()` enforces
-them, so the form a client renders and the check the server runs cannot drift. Nothing else
-may hold a literal copy. `tests/unit/orderflow/indicators/test_limits.py` asserts every value
-verbatim, so a change is a reviewed diff (CODEOWNER: backend + security).
+them, so the bounds a client renders and the bounds the server checks are the same numbers.
+The step (`multipleOf`) is decimal: a client must check it in decimal too, because a stock JSON
+Schema validator divides in binary64 and refuses legal values such as 0.3 for a step of 0.1
+(`catalogue` docstring, 24-internal-schemas §7.4). Nothing else may hold a literal copy.
+`tests/unit/orderflow/indicators/test_limits.py` asserts every value verbatim, so a change is a
+reviewed diff (CODEOWNERS: the `orderflow/` owners).
 
 - A period-like parameter (a count of bars: a length, a lookback, a smoothing, a displacement)
   is a whole number from `PERIOD_MIN` to `PERIOD_MAX`: the SCR-035 contract ("Period must be

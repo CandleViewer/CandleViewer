@@ -1,4 +1,4 @@
-"""Independent reference for the server indicator kernels (E13-T02 plan §3.9, D7).
+"""Independent reference for the server indicator kernels (E13-T02, #426).
 
 Written from the published definitions, not from the kernels, and offline with no dependency:
 

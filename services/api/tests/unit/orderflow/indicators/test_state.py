@@ -1,4 +1,4 @@
-"""Kernel state: `snapshot()` / `restore()` (E13-T02 plan §3.3 "State", D10).
+"""Kernel state: `snapshot()` / `restore()` (E13-T02, #426; 24-internal-schemas §7.4 "State").
 
 A restore mid-series resumes bit-identically; a blob from another kernel, version, build, params,
 source or context, or a malformed one, raises `IndicatorStateError` and leaves the kernel as it

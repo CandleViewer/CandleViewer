@@ -1,4 +1,4 @@
-"""The C3 Decimal boundary (24-internal-schemas §1.1 C3; plan §3.3; SR-E13-12)."""
+"""The C3 Decimal boundary (24-internal-schemas §1.1 C3 and §7.4; SR-E13-12)."""
 
 from __future__ import annotations
 

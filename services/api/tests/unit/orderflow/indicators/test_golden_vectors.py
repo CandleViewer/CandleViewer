@@ -1,5 +1,5 @@
 """Golden vectors for the server indicator kernels (E13-T02 AC "Values match a reference
-implementation"; plan §3.9, D6, D7).
+implementation"; #426; 24-internal-schemas §7.4).
 
 Inputs, in `packages/fixtures/golden/indicators/` (no recorded symbol-day exists yet, exception
 #1778 A; E13-Q05 swaps one in when E16 records it):
@@ -13,16 +13,20 @@ Inputs, in `packages/fixtures/golden/indicators/` (no recorded symbol-day exists
 Checks: every server kernel matches the exact reference within
 `1e-8 * max(1, |reference|)` with identical `None` positions; its float64 outputs are
 bit-identical to the stored strings the TS mirror is held to; the reference reproduces its
-stored values; the manifest pins every file and kernel `build_version`. Set
+stored values; the manifest pins every file and kernel `build_version`; and this file pins
+each kernel's output digest beside its `build_version` (`KERNEL_OUTPUT_PINS`), outside the
+generated files, so a regenerated golden cannot hide a changed output. Set
 `CV_REGEN_GOLDEN=1` to rewrite the files, then review the diff.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Iterator
 from decimal import Decimal, localcontext
+from typing import Final
 
 import pytest
 
@@ -68,6 +72,23 @@ PROVENANCE = {
 }
 PAIRS = [(name, case) for name in INPUT_SETS for case in cases_for(name)]
 PAIR_IDS = [f"{case.case_id}@{name}" for name, case in PAIRS]
+#: Each server kernel's `(build_version, digest of its outputs)`, the digest a sha256 over every
+#: golden case of that kernel on every input set (`_output_digest`). A changed output fails here
+#: even after `CV_REGEN_GOLDEN=1`: re-pin it in a reviewed diff that bumps the kernel's
+#: `build_version` (IR-20, ADR-0034 rule 3). A new golden case also moves its kernel's digest,
+#: which needs no bump.
+KERNEL_OUTPUT_PINS: Final = {
+    "adx": (1, "f40cd5790c8204629164abdc9459b89c92fd220e1ff726fc8058149825e10dc2"),
+    "atr": (1, "8d18df5e9bebe0aa8a04f518f0e4fd2710b9324f5f0e1401233e4fb0fa5f1b15"),
+    "cvd": (1, "71bc6bc456ffbe665e39538c49f50db0f501b8c13734b1d18a1a615bd892c8ce"),
+    "delta": (1, "7c6e708849f96c0a2427e846ef1a70696c6a64c6412e9a974b98c3abd7caaf3b"),
+    "ema": (1, "59f1660999b6061abe1c90a76189c07e63054490e390e9eb7f85f14b14255729"),
+    "rsi": (1, "203288e9e028bc474247ceab750141b550edb693d5fbfaab4f9b8a365cbb8633"),
+    "sma": (1, "43bc481d9e0490ee294209e7b7ff1b3189515be6ac8f2a51876070dee565bb8c"),
+    "volume": (1, "c3b326510ca3bd407ba0f4feff395caa28c3e290e5629cc595c0a5af933aa62b"),
+    "vwap": (1, "a3b35ef50a9079f34c01d412377541e1974d6efb3bb8c7ff6404b347979c45f8"),
+    "zigzag": (1, "1a5c580db9bce361c293f6a9cf9f34c530229ef79b4b2fb0116f8afdab89abe8"),
+}
 
 
 def _kline_input() -> list[Bar]:
@@ -177,6 +198,26 @@ def test_vectors_file_matches_a_fresh_render(name: str, derived: dict[str, Input
     extra or reordered."""
     stored = (GOLDEN / f"vectors_{name}.jsonl").read_text(encoding="utf-8")
     assert stored == render_vectors(derived[name])
+
+
+def _output_digest(indicator: str) -> str:
+    """sha256 over `[input, case, kernel columns]` of every golden case of `indicator`, computed
+    live on the stored inputs, in `INPUT_SETS` and case order."""
+    digest = hashlib.sha256()
+    for name in INPUT_SETS:
+        ctx, bars = load_inputs(name)
+        for case in cases_for(name):
+            if case.indicator == indicator:
+                row = [name, case.case_id, kernel_columns(case, bars, ctx)]
+                digest.update(json.dumps(row, separators=(",", ":")).encode())
+    return digest.hexdigest()
+
+
+def test_kernel_outputs_are_pinned_beside_their_build_version() -> None:
+    got = {name: (k.build_version, _output_digest(name)) for name, k in sorted(KERNELS.items())}
+    changed = sorted(n for n in got if got[n] != KERNEL_OUTPUT_PINS.get(n))
+    assert not changed, f"{changed}: an output changed; bump build_version and re-pin it"
+    assert set(KERNEL_OUTPUT_PINS) == set(KERNELS)
 
 
 def test_every_server_kernel_has_golden_vectors_on_every_input() -> None:
