@@ -74,6 +74,10 @@ from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
 from candleviewer.ingestion.watchdog import FeedHealthEvent
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.ws.topics import DEPTHS, FAMILIES
+
+# `_Demand` is ws_wiring's private lease protocol (E17-S02) and has no public name. If E17
+# renames it, this module fails at import, not with a contract message: point the lease check
+# (`test_c_e08_streams_take_the_lease_calls_the_ws_gateway_makes`) at the new name.
 from candleviewer.ws_wiring import _Demand, ingestion_streams
 from tests._corpus import rest
 from tests._e08_regression_pack import is_pack_path
@@ -239,6 +243,10 @@ def _is_e08_module(relative: str) -> bool:
 
 
 def test_c_e08_publishes_exactly_the_bus_topics_24_section_2_9_lists_as_shipped() -> None:
+    """Counts E08's modules plus `app.py`, which composes the catalogue refresh and publishes
+    `instruments.{symbol}.updated` for it. Every literal `Topic(...)` in `app.py` with domain md,
+    health or instruments is counted as E08's, and only keyword literals are seen: a topic another
+    epic adds there in those domains fails here, so publish it from that epic's module instead."""
     published = {
         (domain, detail)
         for path in PACKAGE.rglob("*.py")

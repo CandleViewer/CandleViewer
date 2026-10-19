@@ -6,8 +6,9 @@ the fix flips one to a failure and its PR removes the marker. Each xfail is limi
 `AssertionError`, so a probe that a refactor breaks fails loudly instead of passing as expected.
 Debriefs: `docs/qa/charters/` (E08-charter-1, -2, -3 and -4). Under the E08 severity rule
 (`qa/plans/e08-market-data-test-plan.md` section 0.1) wrong or old data with no visible signal is
-P0, so each was reported to the coordinator for filing; the reasons below name the finding until
-an issue number replaces it.
+P0, and the coordinator filed the three as P0 bugs on 2026-10-19: F1 is #3806, F2 is #3807 and F3
+is #3808. Each reason below names its issue. A fix that merges before this module flips its test
+to a strict XPASS, which fails the pack; whichever change lands second removes the marker.
 """
 
 from __future__ import annotations
@@ -64,8 +65,8 @@ def _book_stream(tick: dict[str, Decimal], clock: _Clock, desired: list[set[str]
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="E08-Q06 charter 1 finding F1 (reported for filing): a catalogue tick-size change "
-    "on a live book applies later deltas on a second price grid, silently",
+    reason="#3806 (E08-Q06 charter 1, F1): a catalogue tick-size change on a live book "
+    "applies later deltas on a second price grid, silently",
 )
 async def test_f1_a_tick_size_change_never_puts_two_levels_on_one_price_of_a_live_book() -> None:
     tick = {"BTCUSDT": Decimal("0.1")}
@@ -103,8 +104,8 @@ async def test_f1_a_tick_size_change_never_puts_two_levels_on_one_price_of_a_liv
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="E08-Q06 charter 2 finding F2 (reported for filing): once a released book's grace "
-    "runs out with no sync(), its frames are ignored and the frozen book is served as live",
+    reason="#3807 (E08-Q06 charter 2, F2): once a released book's grace runs out with no "
+    "sync(), its frames are ignored and the frozen book is served as live",
 )
 async def test_f2_a_released_book_is_never_served_frozen_as_live_after_its_grace() -> None:
     clock = _Clock()
@@ -182,14 +183,16 @@ class _Venue:
 
 
 async def _settle(backfill: KlineBackfillService) -> None:
-    await asyncio.gather(*backfill._jobs.values())  # the read schedules the job; let it finish
+    # The read schedules the backfill job and nothing public awaits it, so this reaches into the
+    # private `_jobs`. If that is renamed, F3 fails with AttributeError (outside `raises=`), loudly.
+    await asyncio.gather(*backfill._jobs.values())
 
 
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="E08-Q06 charter 3 finding F3 (reported for filing): a klines window after the "
-    "venue's newest bar is cached as covered, so its bars are never fetched or flagged",
+    reason="#3808 (E08-Q06 charter 3, F3): a klines window after the venue's newest bar is "
+    "cached as covered, so its bars are never fetched or flagged",
 )
 async def test_f3_a_window_read_before_its_bars_exist_is_fetched_once_they_do() -> None:
     hot, venue = _HotTier(), _Venue(latest=99)
