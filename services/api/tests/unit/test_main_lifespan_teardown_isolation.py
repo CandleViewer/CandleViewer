@@ -34,6 +34,7 @@ from candleviewer.settings import TEARDOWN_BUDGET_S
 _STEPS = (
     "ws_runtime",
     "user_disable",
+    "support_bundle",
     "feature_flags",
     "metrics_runtime",
     "health_registry",
@@ -420,5 +421,5 @@ async def test_lifespan_teardown_with_a_held_exception_then_a_generator_exit_rer
     assert raised.value is first
     assert isinstance(raised.value.__context__, GeneratorExit)
     modules = [f"module:{name}" for name in reversed(_SUPERVISOR_ORDER)]
-    assert ran == ["ws_runtime", "user_disable", "feature_flags", *modules]
+    assert ran == ["ws_runtime", "user_disable", "support_bundle", "feature_flags", *modules]
     assert _failed_steps(logs) == [("ws_runtime", "KeyboardInterrupt", "error", True)]

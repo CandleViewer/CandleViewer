@@ -4,6 +4,7 @@ crash-point resume and idempotency (E07-T04 AC 1, 2, 4, 5)."""
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -13,8 +14,10 @@ import pyarrow.parquet as pq
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
-from candleviewer.storage.cold.exporter import ColdExporter
+from candleviewer.storage.cold import exporter as cold_exporter
+from candleviewer.storage.cold.exporter import ColdExporter, _off_loop
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore, SchemaRegistry
 from candleviewer.storage.errors import StorageExportVerifyFailed, StorageSchemaDrift
@@ -280,3 +283,41 @@ async def test_export_timeout_is_enforced(tmp_path: Path) -> None:
         await _exporter(tmp_path, _Hang(trades_table(1)), timeout_s=0.01).export_partition(
             "BTCUSDT", StreamKind.TRADES, day_range()
         )
+
+
+async def test_off_loop_re_raises_the_workers_failure() -> None:
+    def work() -> None:
+        raise OSError("disk full")
+
+    with capture_logs() as logs, pytest.raises(OSError, match="disk full"):
+        await _off_loop(work)
+    assert logs == []  # raised to its caller, so not also logged as an orphan
+
+
+async def test_a_worker_failure_racing_a_cancel_is_logged() -> None:
+    """The caller is cancelled while the worker runs, then the worker fails: the cancellation
+    is what propagates, and the failure, which no one awaits any more, must not be lost."""
+    started, release = threading.Event(), threading.Event()
+
+    def work() -> None:
+        started.set()
+        release.wait(5)  # only bounds the test: the worker is released at once
+        raise OSError("disk full")
+
+    task = asyncio.create_task(_off_loop(work))
+    await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    asyncio.get_running_loop().call_soon(release.set)  # queued after the cancel reached the task
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await task
+    assert [(e["event"], e["log_level"], e["error"]) for e in logs] == [
+        ("cold_export_worker_failed_after_cancel", "error", "OSError")
+    ]
+
+
+async def test_a_cancelled_worker_is_not_logged_as_a_failure() -> None:
+    fut = asyncio.get_running_loop().create_future()
+    fut.cancel()
+    with capture_logs() as logs:
+        cold_exporter._log_worker_failure(fut)  # a cancelled future has no exception to read
+    assert logs == []

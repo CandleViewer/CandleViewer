@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -124,3 +125,16 @@ def test_semgrepignore_fixture_entries_are_anchored_to_the_repo_root() -> None:
     fixture_entries = [e for e in entries if "semgrep-fixtures" in e or "semgrep/tests" in e]
     assert fixture_entries, "the fixture directories must be ignored by the product scan"
     assert all(e.startswith("/") for e in fixture_entries), fixture_entries
+
+
+def test_bare_create_task_rule_excludes_only_tests_and_the_module_that_implements_spawn() -> None:
+    """#1822: `**/observability/**` hid five of the rule's nine first findings; only `context.py`,
+    which implements `spawn()` and the thread offloads (`run_in_thread`, `thread_future`,
+    `executor_future`), is exempt."""
+    text = (REPO_ROOT / ".semgrep" / "cv-bare-create-task.yml").read_text(encoding="utf-8")
+    (rule,) = yaml.safe_load(text)["rules"]
+    assert rule["paths"]["exclude"] == [
+        "**/test_*.py",
+        "**/conftest.py",
+        "**/observability/context.py",
+    ]

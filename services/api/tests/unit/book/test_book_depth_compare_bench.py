@@ -11,7 +11,9 @@ consistently -- the same shape asserted by the bus's own
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -22,7 +24,10 @@ sys.path.insert(0, str(BENCH_DIR))
 from book_depth_compare import (  # noqa: E402
     SYMBOLS,
     TIERS,
+    BookState,
     SymbolTierResult,
+    SyntheticDelta,
+    _measure_one,
     apply_decision_rule,
     build_report,
     run_comparison,
@@ -100,3 +105,25 @@ async def test_build_report_is_json_serialisable_and_complete() -> None:
     assert report["symbols"] == list(SYMBOLS)
     assert set(report["tiers"]) == set(TIERS)
     assert len(report["results"]) == len(results)
+
+
+async def test_a_consumer_that_dies_ends_the_measurement_with_its_error_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consumer stopped, yet the measurement went on publishing, then waited out a 5 s drain
+    deadline that nothing could meet, and only then raised its error."""
+
+    def dies(self: BookState, delta: SyntheticDelta) -> None:
+        raise RuntimeError("apply died")
+
+    monkeypatch.setattr(BookState, "apply", dies)
+    run = asyncio.ensure_future(_measure_one("BTCUSDT", "200@100ms", 0.6, 7))
+    for _ in range(100):  # event-loop turns: no time passes
+        await asyncio.sleep(0)
+    ended = run.done()
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+    tracemalloc.stop()  # the measurement ends without reaching its own stop()
+    assert ended
+    with pytest.raises(RuntimeError, match="apply died"):
+        run.result()

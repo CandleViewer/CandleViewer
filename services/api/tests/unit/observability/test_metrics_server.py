@@ -10,8 +10,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+import uvicorn
 from prometheus_client.parser import text_string_to_metric_families
+from structlog.testing import capture_logs
 
+from candleviewer.observability import metrics_server
 from candleviewer.observability.metrics import Metrics, generate_latest
 from candleviewer.observability.metrics_catalogue import register_r0, registered_specs
 from candleviewer.observability.metrics_server import (
@@ -78,6 +81,83 @@ async def test_runtime_serves_live_metrics_and_stops() -> None:
             assert spec.name.removesuffix("_total") in families, spec.name
     finally:
         await runtime.stop()
+
+
+_SAMPLERS = {
+    "metrics-loop-lag": "run_loop_lag_sampler",
+    "metrics-cardinality": "run_cardinality_check",
+    "metrics-fallback": "run_fallback_snapshots",
+}
+_TASKS = ("metrics-listener", *_SAMPLERS)
+
+
+def _runtime(monkeypatch: pytest.MonkeyPatch, dead: str) -> MetricsRuntime:
+    """A runtime whose four tasks park until `stop()`, except `dead`, which raises at once."""
+
+    async def parked(*_a: object, **_k: object) -> None:
+        await asyncio.Event().wait()
+
+    async def dies(*_a: object, **_k: object) -> None:
+        raise RuntimeError("task died")
+
+    async def serve(self: uvicorn.Server, sockets: object = None) -> None:
+        while dead == "hang" or not self.should_exit:  # until `stop()` asks, unless it hangs
+            if dead == "metrics-listener":
+                raise RuntimeError("task died")
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", serve)
+    for name, attr in _SAMPLERS.items():
+        monkeypatch.setattr(metrics_server, attr, dies if name == dead else parked)
+    return MetricsRuntime(Metrics("dev"), "127.0.0.1:9108")
+
+
+def _task(name: str) -> asyncio.Task[object]:
+    return next(t for t in asyncio.all_tasks() if t.get_name() == name)
+
+
+@pytest.mark.parametrize("dead", _TASKS)
+async def test_a_task_that_dies_is_logged_by_name_and_error_class(
+    monkeypatch: pytest.MonkeyPatch, dead: str
+) -> None:
+    runtime = _runtime(monkeypatch, dead)
+    with capture_logs() as logs:
+        runtime.start()
+        await asyncio.wait({_task(dead)})  # the runtime's callback was added first: it ran
+    assert [(e["event"], e["log_level"], e["task"], e["error"]) for e in logs] == [
+        ("metrics_task_failed", "error", dead, "RuntimeError")
+    ]
+    await runtime.stop()
+
+
+async def test_stop_awaits_every_task_after_one_died_and_logs_only_the_dead_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(monkeypatch, "metrics-listener")
+    unhandled: list[str] = []  # a callback that raises is reported to the loop's handler
+    asyncio.get_running_loop().set_exception_handler(
+        lambda _l, ctx: unhandled.append(ctx["message"])
+    )
+    with capture_logs() as logs:
+        runtime.start()
+        tasks = [_task(name) for name in _TASKS]
+        await asyncio.wait({tasks[0]})
+        await runtime.stop()
+    assert all(t.done() for t in tasks)
+    assert [e["task"] for e in logs] == ["metrics-listener"]  # the cancelled three are no failure
+    assert unhandled == []
+
+
+async def test_stop_does_not_swallow_a_cancellation_of_its_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(monkeypatch, "hang")  # a listener that never ends holds `stop()`
+    runtime.start()
+    stop = asyncio.ensure_future(runtime.stop())
+    await asyncio.sleep(0)  # `stop()` is waiting for the listener
+    stop.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stop
 
 
 @pytest.mark.perf

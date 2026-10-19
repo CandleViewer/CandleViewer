@@ -221,6 +221,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             if key_imports is not None:  # #836: an import in flight writes through audit and M2
                 # bounded; then it releases the import's Postgres pool
                 await teardown.run("key_imports", key_imports.drain)
+            support_bundle = getattr(app.state, "support_bundle", None)
+            if support_bundle is not None:  # E04-S02: a bundle in flight writes its audit record
+                await teardown.run("support_bundle", support_bundle.drain)  # bounded, never cancels
             if feature_flags is not None:  # its maintenance poll, before the audit writer stops
                 await teardown.run("feature_flags", feature_flags.stop)
             if metrics_runtime is not None:

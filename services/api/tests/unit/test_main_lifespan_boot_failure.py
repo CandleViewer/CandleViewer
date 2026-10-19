@@ -69,6 +69,7 @@ _BOOT = (
 _ALWAYS = frozenset(
     {
         "user_disable",
+        "support_bundle",
         "health_pg",
         "kline_boundary_pg",
         "admin_jobs",

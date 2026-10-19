@@ -58,7 +58,8 @@ async def _run_once(events_per_s: int, n_subscribers: int, duration_s: float = 1
             await sub.get()  # type: ignore[attr-defined]
 
     consumer_tasks = [spawn(consume(s), name="bench-consume") for s in subs]
-    try:
+
+    async def publish_all() -> None:
         for _ in range(n_events):
             t0 = time.perf_counter()
             await bus.publish(topic, {"ts": t0})
@@ -66,10 +67,19 @@ async def _run_once(events_per_s: int, n_subscribers: int, duration_s: float = 1
             if interval:
                 await asyncio.sleep(0)
         await asyncio.sleep(0.05)
+
+    publisher = spawn(publish_all(), name="bench-publish")
+    try:
+        # A consumer never returns, so one that ends has failed: its error ends the run at once.
+        done, _ = await asyncio.wait(
+            {publisher, *consumer_tasks}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in done:
+            task.result()
     finally:
-        for t in consumer_tasks:
+        for t in (publisher, *consumer_tasks):
             t.cancel()
-        await asyncio.gather(*consumer_tasks, return_exceptions=True)
+        await asyncio.gather(publisher, *consumer_tasks, return_exceptions=True)
 
     latencies.sort()
     return BenchResult(
