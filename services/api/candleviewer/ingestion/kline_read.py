@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Final, Protocol
 
 from candleviewer.ingestion.kline_backfill import KlineBackfillService
-from candleviewer.ingestion.kline_coverage import Range
+from candleviewer.ingestion.kline_coverage import BAR_WIDTH_US, Range
 
 #: `meta.sources` values (OpenAPI `DataMeta.sources` enum).
 SOURCE_HOT: Final = "questdb"
@@ -85,15 +85,6 @@ class KlineRead:
     recording_started_at_us: int | None
     holes: list[Range]
     backfilling: bool
-
-
-_MIN_US: Final = 60_000_000
-#: Interval code -> bar width (µs). `M` has no fixed width: served from the store, never backfilled.
-_WIDTH_US: Final[dict[str, int]] = {
-    **{c: int(c) * _MIN_US for c in ("1", "3", "5", "15", "30", "60", "120", "240", "360", "720")},
-    "D": 1440 * _MIN_US,
-    "W": 7 * 1440 * _MIN_US,
-}
 
 
 class KlineReadService:
@@ -178,7 +169,7 @@ class KlineReadService:
     async def _schedule_backfill(
         self, symbol: str, interval: str, hot_rng: Range
     ) -> tuple[list[Range], bool]:
-        width = _WIDTH_US.get(interval)
+        width = BAR_WIDTH_US.get(interval)  # `M`: no fixed width, served from the store only
         if self._backfill is None or width is None:
             return [], False
         # Bound how far back one request can page (SR-E12-08, security notes).

@@ -91,6 +91,7 @@ def _client(
     *, perms: frozenset[str] | None = _READ, tape: list[_Tape] | None = None,
     recording_us: int | None = None,
 ) -> TestClient:  # fmt: skip
+
     async def tape_reader(symbol: str, interval: str, rng: Any, limit: int | None) -> list[_Tape]:
         return [t for t in (tape or []) if rng.start_us <= t.ts_us < rng.end_us]
 
@@ -138,6 +139,16 @@ class TestKlinesResponses:
         ts = [b["t"] for b in body["bars"]]
         assert len(ts) == 450 and ts == sorted(ts)
         assert body["meta"]["sources"] == ["questdb"] and body["meta"]["has_more"] is False
+
+    def test_window_after_now_is_an_empty_page_declared_uncovered(self) -> None:
+        """#3808: a window after the server's now (2023-11-16T02:00Z here) is never read or
+        backfilled: a contract-valid 200 with no bars that names the window as a hole."""
+        q = {**_P, "from": "2023-11-16T03:00:00Z", "to": "2023-11-16T04:00:00Z"}
+        body = _client().get("/market/klines", params=q).json()
+        KlineResponse.model_validate(body)
+        assert body["bars"] == [] and body["meta"]["has_more"] is False
+        hole = {"start_us": 1_700_103_600_000_000, "end_us": 1_700_107_200_000_000}
+        assert body["meta"]["coverage_holes"] == [hole]
 
     def test_kline_rows_have_null_not_zero_delta_with_include_delta(self) -> None:
         """Gherkin "Klines degrade honestly": pre-recording kline bars carry null order flow."""

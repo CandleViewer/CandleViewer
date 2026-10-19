@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from candleviewer.domain.klines import KlinePageRejected
 from candleviewer.exchange.base.errors import RateLimitError
@@ -322,3 +324,66 @@ async def test_hostile_numeric_page_ends_page_rejected_with_metric_and_zero_retr
     assert result.partial and result.stop_reason == "page_rejected"
     assert calls == 1 and sleep.calls == []
     assert counter._value.get() == before + 1
+
+
+async def test_empty_page_after_the_newest_bar_records_no_coverage() -> None:
+    """#3808: an empty page proves nothing about bars that may not exist yet; a later job
+    fetches them once the venue has them."""
+    port = _Bybit(10)  # newest bar: 9
+    svc = _svc(port)
+    first = await svc.backfill_range(SYM, IV, Range(20 * W, 30 * W))
+    index = svc.coverage(SYM, IV)
+    assert first.fetched == [] and index is not None and index.covered_ranges() == []
+    port.bars = [_k(i * W) for i in range(30)]  # time passes: bars 10..29 now exist
+    again = await svc.backfill_range(SYM, IV, Range(20 * W, 30 * W))
+    assert [e.start for e in again.fetched] == [i * W for i in range(20, 30)]
+
+
+async def test_short_page_past_the_newest_bar_covers_only_up_to_it() -> None:
+    """#3808 Gherkin: a short page for a window past the venue's newest bar covers up to it."""
+    svc = _svc(_Bybit(10))
+    await svc.backfill_range(SYM, IV, Range(5 * W, 30 * W))
+    index = svc.coverage(SYM, IV)
+    assert index is not None and index.covered_ranges() == [Range(5 * W, 10 * W)]
+
+
+async def test_part_past_the_newest_bar_stays_a_hole_while_older_history_fills() -> None:
+    """A full newest page leaves an older gap and one past the newest bar: the job still pages
+    the older history, and the known newest bar proves the empty span before listing."""
+    port = _Bybit(30)
+    port.bars = port.bars[5:]  # no bars before bar 5 (not listed yet)
+    svc = _svc(port, page_limit=10)
+    await svc.backfill_range(SYM, IV, Range(0, 40 * W))
+    index = svc.coverage(SYM, IV)
+    assert index is not None and index.covered_ranges() == [Range(0, 30 * W)]
+    assert len(port.calls) == 4
+
+
+async def test_backfill_never_covers_the_bar_containing_now_or_later() -> None:
+    """#3808: coverage stops at the open time of the bar containing the injected now, even
+    when the venue serves later bars as closed (clock skew)."""
+    svc = _svc(_Bybit(10), now_us=lambda: 7 * W + W // 2)
+    await svc.backfill_range(SYM, IV, Range(0, 10 * W))
+    index = svc.coverage(SYM, IV)
+    assert index is not None and index.covered_ranges() == [Range(0, 7 * W)]
+
+
+@settings(max_examples=80, deadline=None)
+@given(
+    n=st.integers(0, 40), limit=st.integers(1, 12), start=st.integers(0, 50),
+    span=st.integers(1, 30), now_bar=st.integers(0, 60),
+)  # fmt: skip
+def test_property_coverage_ends_by_newest_bar_and_now_and_hides_no_bar(
+    n: int, limit: int, start: int, span: int, now_bar: int
+) -> None:
+    """#3808 invariant, any window: coverage never passes min(the venue's newest bar, the bar
+    containing now), and every venue bar inside a covered range is cached."""
+    port, cache = _Bybit(n), _Cache()
+    svc = _svc(port, cache, page_limit=limit, now_us=lambda: now_bar * W + W // 2)
+    asyncio.run(svc.backfill_range(SYM, IV, Range(start * W, (start + span) * W)))
+    index = svc.coverage(SYM, IV)
+    assert index is not None
+    covered = index.covered_ranges()
+    assert all(r.end_us <= min(n, now_bar) * W for r in covered)
+    inside = {b.start for b in port.bars for r in covered if r.start_us <= b.start < r.end_us}
+    assert inside <= set(cache.rows)

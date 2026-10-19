@@ -47,6 +47,7 @@ import asyncio
 import functools
 import itertools
 import random
+import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -58,7 +59,7 @@ from candleviewer.exchange.base.errors import RateLimitError
 from candleviewer.exchange.base.models import KlineEvent
 from candleviewer.ingestion._logging import get_logger
 from candleviewer.ingestion.errors import IngestionError
-from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
+from candleviewer.ingestion.kline_coverage import CoverageIndex, Range, bar_open_us
 from candleviewer.ingestion.metrics import (
     kline_backfill_duration_seconds,
     kline_backfill_jobs_total,
@@ -83,6 +84,10 @@ MAX_TRACKED_KEYS = 512
 #: Progress `status` while a rate-limit backoff is pending: the UI shows "loading older bars…"
 #: over the partial result instead of blocking (E12-S05 "Rate limited").
 STATUS_LOADING_OLDER = "loading_older_bars"
+
+
+def _wall_now_us() -> int:
+    return time.time_ns() // 1000
 
 
 class KlineFetcher(Protocol):
@@ -211,10 +216,13 @@ class _Job:
 class KlineBackfillService:
     """Cache-first kline reads with rate-limit-safe, resumable, bounded paging.
 
-    Every dependency (fetcher, cache, sleep, jitter source, progress callback, kline sink) is
-    injected so this class is unit-testable without a network or a database (C-13.2). One
+    Every dependency (fetcher, cache, clock, sleep, jitter source, progress callback, kline sink)
+    is injected so this class is unit-testable without a network or a database (C-13.2). One
     `CoverageIndex` per `(symbol, interval)` is kept in memory; `load_coverage_from_cache`
-    rebuilds it after a restart.
+    rebuilds it after a restart. #3808: each index's horizon is the open time of the bar
+    containing `now_us()` (the host clock, as the adapter's `confirmed` flag uses), and a page
+    proves coverage only up to the newest bar the venue has returned, so no window, whoever
+    requested it, can make the shared index claim bars that do not exist yet.
 
     SR-E12-08 / BR-33: at most `max_pages` pages per job, **one job per (symbol, interval)**
     (a concurrent request joins the running job), at most `max_concurrent_jobs` jobs at once,
@@ -246,6 +254,7 @@ class KlineBackfillService:
         max_concurrent_jobs: int = 2,
         page_limit: int = _PAGE_LIMIT,
         max_tracked_keys: int = MAX_TRACKED_KEYS,
+        now_us: Callable[[], int] = _wall_now_us,
     ) -> None:
         self._fetch_klines = fetch_klines
         self._cache = cache
@@ -260,7 +269,11 @@ class KlineBackfillService:
         self._page_limit = max(1, min(page_limit, _PAGE_LIMIT))
         self._job_slots = asyncio.Semaphore(max(1, max_concurrent_jobs))
         self._max_keys = max(1, max_tracked_keys)
+        self._now_us = now_us
         self._coverage: OrderedDict[tuple[str, str], CoverageIndex] = OrderedDict()
+        #: End (exclusive) of the newest bar the venue has returned per key: it has formed every
+        #: bar before it, so an empty or short page proves nothing past it.
+        self._newest: dict[tuple[str, str], int] = {}
         self._jobs: dict[tuple[str, str], asyncio.Task[BackfillResult]] = {}
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
 
@@ -268,7 +281,9 @@ class KlineBackfillService:
         key = (symbol, interval)
         index = self._coverage.get(key)
         if index is None:
-            index = self._coverage[key] = CoverageIndex()
+            index = self._coverage[key] = CoverageIndex(
+                horizon_us=lambda: bar_open_us(self._now_us(), interval)
+            )
             self._evict()
         self._coverage.move_to_end(key)
         return index
@@ -283,6 +298,7 @@ class KlineBackfillService:
             if self.job_running(*key):
                 continue
             del self._coverage[key]
+            self._newest.pop(key, None)
             lock = self._locks.get(key)
             if lock is not None and not lock.locked():
                 del self._locks[key]
@@ -419,11 +435,16 @@ class KlineBackfillService:
     ) -> None:
         """Fill `hole` page by page, newest sub-hole first. Ordering-agnostic: a full page
         proves coverage only of the span it actually returned (the live port serves the
-        newest `limit` rows of a window, other ports may serve the oldest); a short page
-        proves the whole window. Raises `_Stop` to end the job; everything persisted stays."""
+        newest `limit` rows of a window, other ports may serve the oldest); a short page holds
+        every bar the venue has in its window, so it proves that window up to the newest bar
+        the venue is known to have. Past that bar an empty or short page proves nothing (#3808:
+        those bars may not exist yet), so that part waits for a later job while older
+        sub-holes are still paged. Raises `_Stop` to end the job; everything persisted stays."""
+        key = (symbol, interval)
         index = self._index_for(symbol, interval)
+        ceiling = hole.end_us  # sub-holes at or after it wait for a later job
         while True:
-            pending = index.holes(hole)
+            pending = index.holes(Range(hole.start_us, ceiling))
             if not pending:
                 return
             target = pending[-1]
@@ -442,10 +463,15 @@ class KlineBackfillService:
                 await self._cache.write_klines(rows)
                 if self._kline_sink is not None:
                     await self._kline_sink(symbol, interval, confirmed_events)
+            if page and key in self._coverage:  # an evicted key keeps no frontier (bounded)
+                newest = max(e.end for e in page) + 1
+                self._newest[key] = max(newest, self._newest.get(key, newest))
             if len(page) >= self._page_limit:
                 proven = Range(max(target.start_us, page[0].start), page[-1].end + 1)
             else:
-                proven = target
+                known = min(target.end_us, self._newest.get(key, target.start_us))
+                proven = Range(target.start_us, max(target.start_us, known))
+                ceiling = target.start_us
             if unconfirmed_start is not None:  # forming bar: returned, never covered
                 proven = Range(proven.start_us, min(proven.end_us, unconfirmed_start))
             proven = Range(proven.start_us, min(proven.end_us, target.end_us))
@@ -454,7 +480,8 @@ class KlineBackfillService:
             result.fetched.extend(page)
             result.fetched.sort(key=lambda e: e.start)
             self._progress(symbol, interval, requested, "fetching")
-            if unconfirmed_start is not None or index.holes(hole) == pending:
+            progressed = index.holes(Range(hole.start_us, ceiling)) != pending
+            if unconfirmed_start is not None or not progressed:
                 return  # reached the forming bar (nothing newer exists yet) or no progress
 
     async def _fetch_page_with_retry(

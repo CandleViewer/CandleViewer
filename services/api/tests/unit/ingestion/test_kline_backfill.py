@@ -109,6 +109,9 @@ class TestBackfillRangeHappyPath:
         service = KlineBackfillService(
             fetch_klines=fetcher,
             cache=cache,
+            # #3808: a short page proves only up to its newest bar; 1-row pages are full, so
+            # the job pages twice (a short first page used to "prove" the second bar unseen).
+            page_limit=1,
             on_progress=lambda *, symbol, interval, fraction, status: seen.append(fraction),
         )
 

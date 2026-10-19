@@ -158,6 +158,24 @@ async def test_backfill_window_is_bounded_and_month_interval_never_backfills() -
     assert month.holes == [] and not month.backfilling
 
 
+async def test_window_read_before_its_bars_exist_is_fetched_once_they_do() -> None:
+    """#3808 (E08-Q06 F3, #283): an empty venue page for a window past the venue's newest bar is
+    not coverage, so the window stays a hole and its bars are fetched once they exist (it used
+    to be cached as covered: every later read got no rows and no hole)."""
+    hot, port = _Hot(), _Port(100)  # the venue's newest bar is 99
+    svc, bf = _svc(hot, port)
+    window = Range(120 * W, 130 * W)  # ten bars past it
+    await svc.read(SYM, IV, window)
+    await asyncio.gather(*bf._jobs.values())
+    port.bars = [_k(i * W) for i in range(140)]  # time passes: the venue now has those bars
+    later = await svc.read(SYM, IV, window)
+    assert later.holes == [window] and later.backfilling
+    await asyncio.gather(*bf._jobs.values())
+    again = await svc.read(SYM, IV, window)
+    assert [r.ts_us for r in again.rows] == [i * W for i in range(120, 130)]
+    assert again.holes == [] and not again.backfilling
+
+
 async def test_read_without_backfill_service_is_cache_only() -> None:
     svc = KlineReadService(_Hot({0: _Row(0, source="kline")}))
     read = await svc.read(SYM, IV, Range(0, W))

@@ -19,7 +19,29 @@ repository-backed range table.
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Final
+
+_MIN_US: Final = 60_000_000
+#: Interval code -> fixed bar width (µs). `M` (calendar month) has no fixed width.
+BAR_WIDTH_US: Final[dict[str, int]] = {
+    **{c: int(c) * _MIN_US for c in ("1", "3", "5", "15", "30", "60", "120", "240", "360", "720")},
+    "D": 1440 * _MIN_US,
+    "W": 7 * 1440 * _MIN_US,
+}
+#: Bybit weeks open on Monday 00:00 UTC; the Unix epoch was a Thursday.
+_WEEK_ANCHOR_US: Final = 4 * 1440 * _MIN_US
+
+
+def bar_open_us(ts_us: int, interval: str) -> int:
+    """Open time of the `interval` bar containing `ts_us` on the absolute UTC grid (weeks open
+    on Monday); `ts_us` itself for an interval with no fixed width (`M`)."""
+    width = BAR_WIDTH_US.get(interval)
+    if width is None:
+        return ts_us
+    anchor = _WEEK_ANCHOR_US if interval == "W" else 0
+    return (ts_us - anchor) // width * width + anchor
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,13 +78,24 @@ class CoverageIndex:
     always produces the same merged result (ticket acceptance criterion
     "Interrupted backfill resumes": the index must be safely rebuildable
     from whatever partial history persistence already has).
+
+    #3808: `horizon_us`, when set, is read at every `mark_covered` and bounds the covered set:
+    nothing at or after it is ever covered, since no bar exists there yet.
+    `KlineBackfillService` sets it to the open time of the bar containing now, so neither the
+    forming bar nor a future window can be cached as covered, whatever window was requested.
     """
 
     _ranges: list[Range] = field(default_factory=list)
+    horizon_us: Callable[[], int] | None = field(default=None, repr=False, compare=False)
 
     def mark_covered(self, rng: Range) -> None:
         """Merge `rng` into the covered set, coalescing any range it
-        overlaps or touches."""
+        overlaps or touches. The part at or after the horizon is refused."""
+        if self.horizon_us is not None:
+            end = min(rng.end_us, self.horizon_us())
+            if end <= rng.start_us:
+                return
+            rng = Range(rng.start_us, end)
         merged_start, merged_end = rng.start_us, rng.end_us
         kept: list[Range] = []
         for existing in self._ranges:

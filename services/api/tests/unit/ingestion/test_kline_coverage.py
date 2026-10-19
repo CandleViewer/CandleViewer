@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from candleviewer.ingestion.kline_coverage import CoverageIndex, Range
+from candleviewer.ingestion.kline_coverage import CoverageIndex, Range, bar_open_us
 
 
 def test_range_rejects_end_before_start() -> None:
@@ -128,3 +128,43 @@ class TestHoles:
         index.mark_covered(Range(0, 30))
         index.mark_covered(Range(60, 90))
         assert index.holes(Range(0, 90)) == [Range(30, 60)]
+
+
+class TestHorizon:
+    """#3808: the index refuses coverage at or after its horizon (no bar exists there yet)."""
+
+    def test_range_crossing_the_horizon_is_clipped_at_it(self) -> None:
+        index = CoverageIndex(horizon_us=lambda: 150)
+        index.mark_covered(Range(0, 300))
+        assert index.covered_ranges() == [Range(0, 150)]
+        assert index.holes(Range(0, 300)) == [Range(150, 300)]
+
+    def test_range_wholly_after_the_horizon_is_refused(self) -> None:
+        index = CoverageIndex(horizon_us=lambda: 150)
+        index.mark_covered(Range(150, 300))
+        assert index.covered_ranges() == []
+
+    def test_horizon_is_read_at_every_mark(self) -> None:
+        now = [100]
+        index = CoverageIndex(horizon_us=lambda: now[0])
+        index.mark_covered(Range(0, 300))
+        now[0] = 250
+        index.mark_covered(Range(0, 300))
+        assert index.covered_ranges() == [Range(0, 250)]
+
+
+@pytest.mark.parametrize(
+    ("ts_us", "interval", "open_us"),
+    [
+        (90_000_000, "1", 60_000_000),
+        (60_000_000, "1", 60_000_000),
+        (86_400_000_000 + 5, "D", 86_400_000_000),
+        (5 * 86_400_000_000, "W", 4 * 86_400_000_000),  # Monday 1970-01-05: weeks open Monday
+        (3 * 86_400_000_000, "W", -3 * 86_400_000_000),  # Sunday: its week opened 1969-12-29
+        (123, "M", 123),  # calendar month: no fixed grid, the instant itself
+    ],
+)
+def test_bar_open_us_is_the_open_time_of_the_bar_containing_ts(
+    ts_us: int, interval: str, open_us: int
+) -> None:
+    assert bar_open_us(ts_us, interval) == open_us
