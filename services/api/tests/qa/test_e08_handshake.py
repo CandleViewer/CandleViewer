@@ -7,13 +7,16 @@ of them are in the E08 regression pack as well):
     cd services/api && uv run pytest -p no:randomly --no-cov tests/qa/test_e08_handshake.py \
         tests/unit/exchange/test_market_data_port_spec.py \
         tests/contract/ws/test_ws_topic_registry_as_built.py \
+        tests/contract/ws/test_ws_book_snapshot_contract.py \
         tests/contract/bybit/test_pipeline_read_surface.py \
         tests/contract/test_market_klines_contract.py tests/contract/test_openapi_conformance.py
 
 Each check holds the code to the document that owns the contract. What another suite already pins
 is not repeated here: the port method set (`tests/unit/exchange/test_market_data_port_spec.py`),
 the 23 §6.1 table against the topic registry
-(`tests/contract/ws/test_ws_topic_registry_as_built.py`), the trades, order book, ticker and klines
+(`tests/contract/ws/test_ws_topic_registry_as_built.py`), the `book` snapshots E08's `BookStream`
+serves through the real `/ws` router against 23 §14.1
+(`tests/contract/ws/test_ws_book_snapshot_contract.py`), the trades, order book, ticker and klines
 bodies against the generated OpenAPI models (`tests/contract/bybit/test_pipeline_read_surface.py`,
 `tests/contract/test_market_klines_contract.py`) and served routes against declared operations
 (`tests/contract/test_openapi_conformance.py`). The command above runs every one of them, and
@@ -102,7 +105,8 @@ MARKET_FAMILIES: Final = (
 # Drift D1 (docs/qa/e08-signoff.md): E08 publishes these on the bus without the 24 §1.1 C6
 # envelope (`schema_version`, `event_id`, `ts_event`, `ts_ingest`) that C6 asks of every bus event.
 # Pinned so the record cannot go stale: adding the envelope to one fails the check below, and the
-# fix then removes it here and updates the evidence pack.
+# fix then removes it here and updates the evidence pack. The check covers these three only: it does
+# not find a new bus payload without the envelope.
 UNVERSIONED_CONTROL_PAYLOADS: Final = (BookStatus, GapEvent, FeedHealthEvent)
 # (domain, detail) of every bus topic E08 publishes -> how 24 §2.9 "As shipped" spells it.
 E08_BUS_TOPICS: Final[Mapping[tuple[str, str], str]] = {
@@ -198,7 +202,7 @@ def test_b_every_event_family_e08_emits_is_versioned_frozen_and_closed(
 
 
 @pytest.mark.parametrize("payload", UNVERSIONED_CONTROL_PAYLOADS, ids=lambda p: p.__name__)
-def test_b_the_control_payloads_without_the_c6_envelope_are_exactly_drift_d1(payload: type) -> None:
+def test_b_each_drift_d1_control_payload_still_lacks_the_c6_envelope(payload: type) -> None:
     if issubclass(payload, BaseModel):
         fields = set(payload.model_fields)
     else:

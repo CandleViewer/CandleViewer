@@ -119,6 +119,7 @@ def test_pack_path_exists_so_a_rename_cannot_silently_shrink_the_pack(entry: str
         ("tests/security/ingestion/test_fuzz_parsers.py", {"fuzz"}, False),
         ("tests/unit/ingestion/test_ingestion_soak_bench.py", {"harness"}, False),
         ("tests/unit/bus/test_bus.py", {"flaky"}, False),
+        ("tests/unit/exchange/bybit/test_rest_client.py", {"exchange_smoke"}, False),
         ("tests/integration/storage/test_questdb_hot_tier.py", {"integration"}, False),
     ],
 )

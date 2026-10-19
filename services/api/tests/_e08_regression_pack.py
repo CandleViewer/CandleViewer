@@ -65,6 +65,7 @@ PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/qa/test_e08_charter_findings.py",
     # Cross-epic contract suites the handshake relies on instead of repeating them.
     "tests/contract/ws/test_ws_topic_registry_as_built.py",
+    "tests/contract/ws/test_ws_book_snapshot_contract.py",
     "tests/contract/test_openapi_conformance.py",
 )
 
@@ -73,6 +74,10 @@ PACK_PATHS: Final[tuple[str, ...]] = (
 # default expression, so the marker is withheld from them. The guard fails when this set and that
 # expression differ.
 NIGHTLY_ONLY_MARKERS: Final = frozenset({"flaky", "fuzz", "harness", "perf"})
+# Also withheld: `exchange_smoke`, E08-T05's manual smoke runs against the venue's demo host, which
+# CI's `py` lane deselects too. No pack path holds one; if one lands there, the default lane still
+# selects it, so the guard's whole-tree check reports it as missed by the marker.
+WITHHELD_MARKERS: Final = NIGHTLY_ONLY_MARKERS | {"exchange_smoke"}
 
 
 def is_pack_path(relative: str) -> bool:
@@ -84,7 +89,7 @@ def is_pack_path(relative: str) -> bool:
 
 
 def is_tagged(relative: str, marker_names: Collection[str]) -> bool:
-    return is_pack_path(relative) and NIGHTLY_ONLY_MARKERS.isdisjoint(marker_names)
+    return is_pack_path(relative) and WITHHELD_MARKERS.isdisjoint(marker_names)
 
 
 @cache
