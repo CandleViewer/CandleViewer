@@ -29,6 +29,7 @@ from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import (
     Charts,
     _done,
+    _fail,
     all_events,
     entry_of,
     exits,
@@ -60,7 +61,7 @@ INVARIANTS: dict[str, str] = {
     "INV-B1-c": "test_inv_b1_c_amend_rejected_never_terminal",
     "INV-B1-d": "test_inv_b1_d_cancel_pending_handles_exec",
     "INV-B1-e": "test_inv_b1_e_unknown_resolved_only_by_recon",
-    "INV-B1-f": "test_inv_b1_f_sl_present_only_from_exchange_read",
+    "INV-B1-f": "test_inv_b1_f_sl_present_only_from_the_exchange_property",
     "INV-B1-g": "deferred:E29",
     "INV-B1-h": "test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted",
     "INV-B1-i": "test_inv_b1_i_kill_never_touches_protection_property",
@@ -93,17 +94,6 @@ def test_inv_b1_e_unknown_resolved_only_by_recon() -> None:
     leaving = {e for e, _g, _t in exits(CHART, "lifecycle.unknown")}
     assert leaving - {"MISMATCH"} <= {e for e in leaving if e.startswith("RECON_")}  # #847: held
     assert "SEND" not in leaving
-
-
-def test_inv_b1_f_sl_present_only_from_exchange_read() -> None:
-    into = [
-        (p, e)
-        for p, _n in walk(CHART)
-        if p.startswith("protection.")
-        for e, _g, t in exits(CHART, p)
-        if t == "order.protection.sl_present"
-    ]
-    assert ("protection.sl_missing", "SL_OBSERVED") in into
 
 
 def test_b01_killed_is_final_terminal_with_cancel_and_audit() -> None:
@@ -296,8 +286,9 @@ def _into(state: str) -> set[tuple[str, str]]:
     return {(p, e) for p, _n in walk(CHART) for e, _g, t in exits(CHART, p) if t == state}
 
 
-def _leaf(interp: Any) -> str:
-    return str(next(s for s in interp.current_state_ids if s.startswith("order.lifecycle.")))[16:]
+def _leaf(interp: Any, region: str = "lifecycle") -> str:
+    head = f"order.{region}."
+    return str(next(s for s in interp.current_state_ids if s.startswith(head)))[len(head) :]
 
 
 @contextlib.asynccontextmanager
@@ -309,7 +300,7 @@ async def _at(
         cancels = _restore_real(mp) if real_kill else []
         for name, service in kw.get("service_mode", {}).items():
             mp.setitem(b01.SERVICES, name, service)
-        res = await park("order", CHART, f"lifecycle.{state}", charts)
+        res = await park("order", CHART, state if "." in state else f"lifecycle.{state}", charts)
         try:
             yield res.interpreter, rec, cancels
         finally:
@@ -472,3 +463,59 @@ async def test_inv_b1_n_kill_never_cancels_an_unowned_order_property(
             assert _leaf(i) == before and cancels == []
             assert rec.actions[mark:] == ["audit_kill_ignored_unowned", _PROT]
             assert i.context["halted_by_kill"] is False
+
+
+# --- #847 slice 1b, chart version 2: the protection region's two C-2.6 gaps ----------------------
+
+
+@pytest.mark.parametrize("state", ["submitted", "triggered", "cancel_pending"])
+async def test_b01_one_shot_fill_notifies_the_protection_region(state: str, charts: Charts) -> None:
+    """24 §8.8 rule 2: a first fill straight to `filled` starts the SL deadline, as a partial fill
+    does (version 1 notified only from `partially_filled`'s entry)."""
+    async with _at(state, charts, guards={"exec_new_and_closes": True}) as (i, rec, _c):
+        await i.send("EXEC", wait=True)
+        await settle()
+        assert _leaf(i) == "filled" and rec.actions.count("notify_protection_region") == 1
+
+
+@pytest.mark.parametrize("ok", [True, False])
+async def test_b01_attach_result_is_protected_only_if_confirmed(ok: bool, charts: Charts) -> None:
+    """C-2.6: an attach the exchange rejects but that returns normally lands in `sl_missing`
+    (version 1 marked it `sl_present`, tag `protected`, without reading the result)."""
+    plan, done = {"sl_attach_ok": ok}, {"attach_native_sl": _done}
+    async with _at("protection.sl_pending", charts, guards=plan, service_mode=done) as (i, rec, _c):
+        await settle()
+        assert _leaf(i, "protection") == ("sl_present" if ok else "sl_missing")
+        assert ("sl_attach_ok", ok) in rec.guards and i.has_tag("protected") is ok
+
+
+_INTO_SL_PRESENT = {
+    ("protection.sl_pending", "onDone", "sl_attach_ok"),
+    ("protection.sl_missing", "SL_OBSERVED", None),
+}
+
+
+@_HYP
+@given(
+    attach=st.sampled_from(("confirmed", "rejected", "failed")),
+    events=st.lists(st.sampled_from(_EVENTS), max_size=6),
+)
+async def test_inv_b1_f_sl_present_only_from_the_exchange_property(
+    attach: str, events: list[str], charts: Charts
+) -> None:
+    """Every other guard allowed, whatever follows: until the exchange confirms the stop (a
+    confirmed attach or an `SL_OBSERVED` read), the region is `sl_missing`, never `protected`."""
+    present = "order.protection.sl_present"
+    arms = {(p, e, g) for p, _n in walk(CHART) for e, g, t in exits(CHART, p) if t == present}
+    assert arms == _INTO_SL_PRESENT
+    plan = {**dict.fromkeys(b01.GUARDS, True), "sl_attach_ok": attach == "confirmed"}
+    done = {"attach_native_sl": _fail if attach == "failed" else _done}
+    async with _at("protection.sl_pending", charts, guards=plan, service_mode=done) as (i, _r, _c):
+        await settle()
+        read = attach == "confirmed"
+        assert _leaf(i, "protection") == ("sl_present" if read else "sl_missing")
+        for ev in events:
+            await i.send(ev, wait=True)
+            await settle()
+            read = read or ev == "SL_OBSERVED"
+            assert read or (_leaf(i, "protection") == "sl_missing" and not i.has_tag("protected"))

@@ -241,3 +241,7 @@ register_event_schemas(
         ("ADOPT", "DISCOVERED", "MISMATCH", "OPERATOR_RESOLVED", "REMOTE_CANCELLED"), _ANY_PAYLOAD
     )
 )
+
+# --- #847 slice 1b, chart version 2: an attach result marks the stop present only if the exchange
+# confirmed it (C-2.6, INV-B1-f). Fail-closed: no result is confirmed until slice 5's attach.
+GUARDS["sl_attach_ok"] = _deny_guard
