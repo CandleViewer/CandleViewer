@@ -92,9 +92,13 @@ def _unbuildable(world: WalletWorld) -> WalletSnapshot:
     return snapshot(world.clock.now()).model_copy(update={"equity": Decimal("1E+41")})
 
 
-def test_a_manager_snapshot_holds_only_its_granted_accounts() -> None:
+@pytest.mark.parametrize("wait_s", [0.0, 11.0])
+def test_a_manager_snapshot_holds_only_its_granted_accounts(wait_s: float) -> None:
+    """B was sent fresh, so it owes a turn to stale: not due yet, or due past the 10 s window and
+    unsent because no tick has run. Either way it is not in A's snapshot (W4b review)."""
     world = WalletWorld()
-    world.topic.balance_refreshed(ACC_B)  # B owes a turn to stale: still not in A's snapshot
+    world.topic.balance_refreshed(ACC_B)
+    world.clock.advance(wait_s)
     conn = world.conn(manager(ACC))
     result = conn.sub(ACC, ACC_B)  # B is monitored and has a balance, but is not granted
     [(kind, body)] = conn.take()

@@ -13,6 +13,9 @@ from typing import Any
 import yaml
 
 PROM = Path(__file__).resolve().parents[1] / "prometheus"
+#: The rule files the cases load and the lookups below read: the system set, and #837's account
+#: set, whose cases are here so that the one promtool run CI makes covers them.
+RULE_FILES = ("system_page.yml", "system_ticket.yml", "accounts.yml")
 # #965 R7: a disable whose store raised (`result` `error`; a refusal is another result).
 _ERRORED = 'cv_user_lifecycle_total{action="disable",env="live",result="error"}'
 
@@ -186,6 +189,23 @@ _NO_STEP_FAILED = {
 _LATENCY = 'auth_revocation_latency_seconds_bucket{{env="live",le="{}"}}'
 
 
+def _health(state: str, reason: str, *, moved: bool = False) -> str:
+    """#837: a series of the health gauge, or of the transition counter (`moved`), every pair of
+    which the runtime binds at start (account_health_wiring.py)."""
+    name = "cv_account_health_transitions_total" if moved else "cv_account_health_state"
+    return f'{name}{{env="live",reason="{reason}",state="{state}"}}'
+
+
+_DOWN, _NEVER = _health("down", "no_success"), _health("down", "never_connected")
+_INTO_DOWN, _SILENT = _health("down", "no_success", moved=True), _health("degraded", "ws_silent")
+# Down at 6 min and still down; down from 6 min to 10 min and back at 11 min.
+_STAYS_DOWN, _BACK_UP, _ZERO = "0+0x5 1+0x20", "0+0x5 1+0x4 0+0x15", "0+0x25"
+_WARN = 'cv_key_rotation_notices_total{env="live",state="warn"}'
+_OVERDUE = 'cv_key_rotation_notices_total{env="live",state="overdue"}'
+# One overdue key, counted at 6 min and again a day later.
+_A_DAY_APART = "0+0x5 1+0x1439 2+0x700"
+
+
 def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
     """#3415: revocations at 6 min whose closes were initiated in at most 2.5 s (`fast`), in 2.5 to
     5 s (`under_5`) and in 5 to 10 s (`slow`), as cumulative buckets; lower edges add nothing."""
@@ -247,6 +267,35 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("10m", True, _closes(178, 0, 2)),
         ("10m", False, _closes(0, 0, 0)),
     ),
+    # #837. Pages: down after it was up, and still at 20 min, when the counter's 5 m window has
+    # moved on; a down that recovered between two scrapes (the counter alone). Silent: back up and
+    # the window moved on; never connected since boot; degraded.
+    "AccountDown": (
+        ("10m", True, {_DOWN: _STAYS_DOWN, _INTO_DOWN: _STAYS_DOWN}),
+        ("20m", True, {_DOWN: _STAYS_DOWN, _INTO_DOWN: _STAYS_DOWN}),
+        ("8m", True, {_DOWN: _ZERO, _INTO_DOWN: _STAYS_DOWN}),
+        ("17m", False, {_DOWN: _BACK_UP, _INTO_DOWN: _STAYS_DOWN}),
+        ("10m", False, {_NEVER: "1+0x25", _DOWN: _ZERO, _INTO_DOWN: _ZERO}),
+        ("10m", False, {_SILENT: _STAYS_DOWN, _DOWN: _ZERO, _INTO_DOWN: _ZERO}),
+    ),
+    # #837: the any-event ticket of #3029 above, on one state's notices; the other state's are
+    # silent, as is a flat count.
+    "KeyRotationWarn": (
+        ("6m", True, {_WARN: _RISE}),
+        ("9h49m", True, {_WARN: _RISE}),
+        ("9h52m", False, {_WARN: _RISE}),
+        ("30m", False, {_WARN: _FLAT}),
+        ("6m", False, {_WARN: _ZERO, _OVERDUE: _RISE}),
+    ),
+    # #837: the same; resolved between two daily counts (20 h), fired again by the next (24 h 7 m).
+    "KeyRotationOverdue": (
+        ("6m", True, {_OVERDUE: _RISE}),
+        ("9h49m", True, {_OVERDUE: _RISE}),
+        ("9h52m", False, {_OVERDUE: _RISE}),
+        ("20h", False, {_OVERDUE: _A_DAY_APART}),
+        ("1447m", True, {_OVERDUE: _A_DAY_APART}),
+        ("6m", False, {_OVERDUE: _ZERO, _WARN: _RISE}),
+    ),
 }
 
 _DAILY = 'cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}'
@@ -296,7 +345,7 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
 
 
 def labels_of(name: str) -> dict[str, str]:
-    for f in sorted((PROM / "alerts").glob("system_*.yml")):
+    for f in (PROM / "alerts" / rules for rules in RULE_FILES):
         for g in yaml.safe_load(f.read_text(encoding="utf-8"))["groups"]:
             for r in g["rules"]:
                 if r["alert"] == name:
@@ -305,7 +354,7 @@ def labels_of(name: str) -> dict[str, str]:
 
 
 def annotations_of(name: str) -> dict[str, str]:
-    for f in sorted((PROM / "alerts").glob("system_*.yml")):
+    for f in (PROM / "alerts" / rules for rules in RULE_FILES):
         for g in yaml.safe_load(f.read_text(encoding="utf-8"))["groups"]:
             for r in g["rules"]:
                 if r["alert"] == name:
@@ -383,7 +432,7 @@ def build() -> dict[str, Any]:
                 }
             )
     return {
-        "rule_files": ["../alerts/system_page.yml", "../alerts/system_ticket.yml"],
+        "rule_files": [f"../alerts/{rules}" for rules in RULE_FILES],
         "evaluation_interval": "1m",
         "tests": tests,
     }

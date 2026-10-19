@@ -213,6 +213,11 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_key_verification_total"].labels("failed", "key_expired").inc()
     r["cv_key_selfcheck_runs_total"].labels("failed").inc()
     r["cv_keys_failing_policy"].labels("key_expired").set(1)
+    r["cv_account_health_state"].labels("down", "no_success").set(1)
+    r["cv_account_health_transitions_total"].labels("down", "no_success").inc()
+    r["cv_wallet_reconcile_total"].labels("failed").inc()
+    r["cv_key_rotation_notices_total"].labels("overdue").inc()
+    r["cv_keys_rotation_state"].labels("overdue").set(1)
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():
@@ -252,6 +257,28 @@ def test_wallet_sizing_counter_is_live_and_carries_no_label() -> None:
     period. No account, balance or verdict in a label: the log line says which account."""
     spec = next(s for s in registered_specs() if s.name == "cv_wallet_sizing_old_snapshot_total")
     assert (spec.kind, spec.labels, spec.max_series, spec.owner_epic) == ("counter", (), 1, "E27")
+
+
+def test_account_health_and_key_age_series_are_bounded_by_their_closed_sets() -> None:
+    """E27-T04 (#837 W6): per state, reason and result, never per account (SR-125's allow-list):
+    one series per health reason (each belongs to one state), per reconciliation result and per
+    rotation state the job counts or sets; the oldest wallet age carries no label."""
+    from typing import get_args
+
+    from candleviewer.account_health_wiring import NOTICE_STATES, RECONCILE_RESULTS
+    from candleviewer.accounts.health import HealthReason
+    from candleviewer.accounts.key_age import RotationState
+
+    specs = {s.name: (s.kind, s.labels, s.max_series, s.owner_epic) for s in registered_specs()}
+    pairs = ("state", "reason"), len(get_args(HealthReason)), "E27"
+    assert specs["cv_account_health_state"] == ("gauge", *pairs)
+    assert specs["cv_account_health_transitions_total"] == ("counter", *pairs)
+    assert specs["cv_wallet_snapshot_age_seconds"] == ("gauge", (), 1, "E27")
+    results = ("counter", ("result",), len(RECONCILE_RESULTS), "E27")
+    assert specs["cv_wallet_reconcile_total"] == results
+    notices = ("counter", ("state",), len(NOTICE_STATES), "E27")
+    assert specs["cv_key_rotation_notices_total"] == notices
+    assert specs["cv_keys_rotation_state"] == ("gauge", ("state",), len(RotationState), "E27")
 
 
 def test_labels_exercised_contain_no_personal_data() -> None:
