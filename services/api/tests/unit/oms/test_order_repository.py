@@ -252,13 +252,16 @@ class _AnyStore:
         return call
 
 
-_DONE = CommittedStep(_row(), _event_row())  # what a write-ahead step's store returns
+#: What a write-ahead step's store returns: the order moved from `pending_submit` to `accepted`.
+_DONE = CommittedStep(
+    _row(state="accepted"), _event_row(from_state="pending_submit", source="rest")
+)
 _FILLED = cast(Any, SimpleNamespace(execution=FILL, step=SimpleNamespace(order_id=ORDER)))
 #: Each write by its table (the label it is timed on), and the call where a table has two.
 _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]] = {
     "orders": (lambda s, t: OrderRepository(s, t).create(ORDER_IN, EVENT_IN), _row()),
     "orders transition": (lambda s, t: OrderRepository(s, t).transition(cast(Any, None)), _DONE),
-    "executions apply_fill": (lambda s, t: ExecutionRepository(s, t).apply_fill(_FILLED), _DONE),
+    "executions commit_fill": (lambda s, t: ExecutionRepository(s, t).commit_fill(_FILLED), _DONE),
     "order_events": (lambda s, t: OrderEventRepository(s, t).append(ACCOUNT, ORDER, EVENT_IN),
                      _event_row()),
     "executions": (lambda s, t: ExecutionRepository(s, t).insert(FILL), True),
@@ -309,20 +312,27 @@ async def test_an_execution_write_logs_its_ids(
     assert logs == [{"event": event, "log_level": level, **ids}]
 
 
+_IDS = {"order_link_id": LINK, "order_id": str(ORDER), "account_id": str(ACCOUNT)}
+_STEP = {"state": "accepted", "from_state": "pending_submit", "seq": 1, "source": "rest"}
+_MOVED = {"log_level": "info", **_IDS, **_STEP}
+
+
 @pytest.mark.parametrize(
-    ("repo", "call", "result", "event", "level"),
-    [(OrderRepository, "transition", _DONE, "oms_order_transitioned", "info"),
-     (ExecutionRepository, "apply_fill", _DONE, "oms_order_filled", "info"),
-     (ExecutionRepository, "apply_fill", None, "oms_execution_duplicate", "debug")],
+    ("repo", "call", "result", "line"),
+    [(OrderRepository, "transition", _DONE, {"event": "oms_order_transitioned", **_MOVED}),
+     (ExecutionRepository, "commit_fill", _DONE,
+      {"event": "oms_order_filled", **_MOVED, "exec_id": "E1"}),
+     (ExecutionRepository, "commit_fill", None,
+      {"event": "oms_execution_duplicate", "log_level": "debug", **_IDS, "exec_id": "E1"})],
 )  # fmt: skip
-async def test_a_step_logs_its_order_link_id(
-    repo: Any, call: str, result: object, event: str, level: str
+async def test_a_step_logs_its_ids_and_state(
+    repo: Any, call: str, result: object, line: dict[str, object]
 ) -> None:
-    """ADR-0006 rule 1: a step's line carries its `order_link_id`, a duplicate fill's too."""
+    """ADR-0006 rule 1 and E29-T08's fields: a step's line carries its order's ids, account and
+    state, with the state it left; a duplicate fill's line its ids and account."""
     with capture_logs() as logs:
         assert await getattr(repo(_AnyStore(result)), call)(_FILLED) is result
-    seen = [(line["event"], line["log_level"], line["order_link_id"]) for line in logs]
-    assert seen == [(event, level, LINK)]
+    assert logs == [line]
 
 
 async def test_the_execution_and_position_reads_pass_the_account_through() -> None:

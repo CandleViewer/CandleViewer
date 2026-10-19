@@ -4,7 +4,8 @@
 fill inserts it and `ux_exec_id` keeps one row, so a repeated `exec_id` never counts twice
 (24 Sec.8.2 S4). `executions_sqlalchemy.py` is the Postgres side. Money is a `Decimal` its column
 holds exactly, `fee_rate` at numeric(18,10). A fill that moves its order's totals is written by
-`apply_fill`, the fill's write-ahead step (E29-T03), never by `insert`.
+`commit_fill`, the fill's write-ahead step (E29-T03), never by `insert`; B1's `apply_fill` action
+is the machine's side of that fill.
 """
 
 from __future__ import annotations
@@ -16,9 +17,11 @@ from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from candleviewer.storage.repositories.orders import (
+    FILL_KINDS,
     CommittedStep,
     FillRefused,
     OrderSide,
+    OrderState,
     OrderTransition,
     check_fields,
     typed_fields,
@@ -89,12 +92,15 @@ class FillTotals:
 
 
 _TOTALS: Final = dict.fromkeys(typed_fields(FillTotals, Decimal), (38, 18))
+#: Where a fill's step takes its order: every B1 `EXEC` arm that applies a fill (28 B1.3).
+_FILLED: Final = frozenset[OrderState]({"partially_filled", "filled"})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OrderFill:
     """A fill, its order's new `totals` and `step`, the compare-and-set of the order's state with
-    the fill event (24 Sec.8.2 S4, S8). The execution names the step's account and order."""
+    the fill event (24 Sec.8.2 S4, S8). The execution names the step's account and order, and the
+    step moves the order to `partially_filled` or `filled` with a fill's event."""
 
     step: OrderTransition
     execution: NewExecution
@@ -104,6 +110,8 @@ class OrderFill:
         names = (self.execution.exchange_account_id, self.execution.order_id)
         if names != (self.step.account_id, self.step.order_id):
             raise ValueError("the execution names another account or order than its step")
+        if self.step.to_state not in _FILLED or self.step.event.kind not in FILL_KINDS:
+            raise ValueError("a fill's step is to partially_filled or filled, by a fill event")
 
     def check(self, qty: Decimal, is_paper: bool) -> None:
         """`FillRefused` for what its order, locked with its `qty` and `is_paper`, cannot take: run
@@ -123,13 +131,13 @@ class ExecutionStore(Protocol):
     async def insert(self, execution: NewExecution) -> bool:
         """Store the fill unless its account holds its `exec_id` already: True when this call
         stored it. One transaction of its own; `OrderNotFoundError` for another account's order.
-        Only for a fill that moves no order's totals: `apply_fill` then reads its `exec_id` as
+        Only for a fill that moves no order's totals: `commit_fill` then reads its `exec_id` as
         applied (None)."""
         ...
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None: ...
 
-    async def apply_fill(self, fill: OrderFill) -> CommittedStep | None:
+    async def commit_fill(self, fill: OrderFill) -> CommittedStep | None:
         """The execution and, only if it is new, the order's totals, state and event, in one
         transaction (None: a stored `exec_id`, nothing changed, S4). The compare-and-set also needs
         the stored `cum_exec_qty` plus `exec_qty` to be the new one. Any refusal writes nothing."""

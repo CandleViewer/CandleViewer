@@ -14,9 +14,11 @@ dense and `UNIQUE (order_id, seq)` is only the backstop. Inside the statement bu
 anything is bound, `payload` passes `redact_exchange_payload()` and `ret_msg` and `ret_code` pass
 `redact_exchange_text()`, `ret_msg` with the message rule (21 Sec.3.3.5; the #845 security notes).
 
-A write-ahead step (E29-T03: `transition`; `apply_fill` in `executions_sqlalchemy.py`) locks its
+A write-ahead step (E29-T03: `transition`; `commit_fill` in `executions_sqlalchemy.py`) locks its
 order row in the account, runs the compare-and-set UPDATE, appends the event with both states and
 commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Sec.8.2 S7, S8).
+Before any statement, `transition` refuses a fill's event and `filled`, `append` a fill's event
+(`require_no_fill`): a fill comes with its execution.
 
 Every unit of work first caps each of its statements, lock waits included, at the store's
 `statement_timeout` (`OMS_STATEMENT_TIMEOUT_MS`, the #845 default of `CV_OMS_STATEMENT_TIMEOUT_MS`,
@@ -68,6 +70,7 @@ from candleviewer.storage.repositories.orders import (
     OrderTransition,
     StaleOrderState,
     require_exchange_record,
+    require_no_fill,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -310,7 +313,7 @@ class SqlAlchemyOrderStore(CappedStore):
         return _order(row)
 
     async def transition(self, step: OrderTransition) -> CommittedStep:
-        step.require_no_fill()
+        require_no_fill(step.event, step.to_state)
         async with self._unit_of_work() as uow:
             await lock_order(uow, step.account_id, step.order_id)
             return await commit_step(uow, step)
@@ -334,6 +337,7 @@ class SqlAlchemyOrderStore(CappedStore):
             return bool(result.scalar_one())
 
     async def append(self, account_id: UUID, order_id: UUID, event: NewOrderEvent) -> OrderEventRow:
+        require_no_fill(event)
         async with self._unit_of_work() as uow:
             lock = await uow.session.execute(lock_statement(account_id, order_id))
             order_link_id = lock.scalar_one_or_none()

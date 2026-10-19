@@ -5,7 +5,7 @@ is `INSERT ... ON CONFLICT (exchange_account_id, exec_id) DO NOTHING` (21 Sec.3.
 whether this call stored the row; the id is `gen_random_uuid()`. `order_id` is bound through a
 subquery scoped to the execution's account: another account's order binds NULL, which `RETURNING`
 shows, and the store raises `OrderNotFoundError` before committing. `get` filters on the account
-(C-12.4). `insert` commits alone; `apply_fill` (E29-T03) locks the order, inserts the fill and,
+(C-12.4). `insert` commits alone; `commit_fill` (E29-T03) locks the order, inserts the fill and,
 only if it is new, checks it against the order (`OrderFill.check`) and commits the step with it.
 """
 
@@ -62,7 +62,7 @@ class SqlAlchemyExecutionStore(CappedStore):
             await uow.commit()
         return True
 
-    async def apply_fill(self, fill: OrderFill) -> CommittedStep | None:
+    async def commit_fill(self, fill: OrderFill) -> CommittedStep | None:
         step = fill.step
         async with self._unit_of_work() as uow:
             held = await lock_order(uow, step.account_id, step.order_id)
