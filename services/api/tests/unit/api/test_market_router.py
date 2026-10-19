@@ -400,6 +400,24 @@ class TestGetKlinesFutureWindow:
         assert body["meta"]["coverage_holes"] == [{"start_us": self._NOW, "end_us": 7_200_000_000}]
         assert body["meta"]["has_more"] is False
 
+    def test_cursor_after_now_reads_nothing_and_declares_the_rest_uncovered(self) -> None:
+        """A well-formed cursor past now (it is checked against the requested `to`) reads
+        nothing; the rest of the window is declared uncovered."""
+        from candleviewer.api.market_response import cursor_scope, encode_cursor
+
+        cache, at = _FakeCache(), 1_700_000_100_000_000  # 2023-11-14T22:15Z, a minute after now
+        app = FastAPI()
+        app.include_router(
+            make_market_router(
+                lambda: cache, principal_resolver=_AUTHORIZED, now_us=lambda: at - 60_000_000
+            )
+        )
+        cursor = encode_cursor(cursor_scope("klines", "BTCUSDT", "1"), at)
+        window = {"from": "2023-11-14T22:13:00Z", "to": "2023-11-14T22:16:00Z", "cursor": cursor}
+        body = TestClient(app).get("/market/klines", params={**self._P, **window}).json()
+        assert cache.calls == [] and body["bars"] == [] and body["meta"]["has_more"] is False
+        assert body["meta"]["coverage_holes"] == [{"start_us": at, "end_us": at + 60_000_000}]
+
     def test_future_part_merges_with_the_adjacent_coverage_hole(self) -> None:
         from candleviewer.ingestion.kline_coverage import CoverageIndex
 

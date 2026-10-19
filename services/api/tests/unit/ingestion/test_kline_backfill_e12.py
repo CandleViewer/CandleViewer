@@ -359,6 +359,35 @@ async def test_part_past_the_newest_bar_stays_a_hole_while_older_history_fills()
     assert len(port.calls) == 4
 
 
+async def test_newest_bar_is_a_per_key_maximum_an_older_page_never_lowers() -> None:
+    """#3808: after an older full page, the empty gap below a newer returned bar is proven."""
+    port = _Bybit(30)
+    port.bars = port.bars[:10] + port.bars[20:]  # the venue has no bars in [10W, 20W)
+    svc = _svc(port, page_limit=10)
+    await svc.backfill_range(SYM, IV, Range(0, 30 * W))
+    index = svc.coverage(SYM, IV)
+    assert index is not None and index.covered_ranges() == [Range(0, 30 * W)]
+    assert len(port.calls) == 3
+
+
+async def test_newest_bar_map_is_bounded_with_the_tracked_keys() -> None:
+    """#3808 / SR-E12-08: the newest-bar map is evicted with its key, and a key evicted while its
+    own page was in flight (an untracked read) gets no entry back."""
+    port = _Bybit(2)
+
+    async def fetch(
+        symbol: str, interval: str, start: int, end: int, limit: int = 1000
+    ) -> Sequence[KlineEvent]:
+        if symbol == "AAAUSDT":  # five other keys are read meanwhile: this one is evicted
+            for i in range(5):
+                await svc.read_range(f"S{i}USDT", IV, Range(0, 2 * W))
+        return await port(symbol, interval, start, end, limit)
+
+    svc = _svc(fetch, max_tracked_keys=3)
+    assert len((await svc.read_range("AAAUSDT", IV, Range(0, 2 * W))).fetched) == 2
+    assert svc.tracked_keys == len(svc._newest) == 3 and set(svc._newest) <= set(svc._coverage)
+
+
 async def test_backfill_never_covers_the_bar_containing_now_or_later() -> None:
     """#3808: coverage stops at the open time of the bar containing the injected now, even
     when the venue serves later bars as closed (clock skew)."""
