@@ -4,7 +4,8 @@ NO network: every file is assembled from the Bybit v5 documented shapes already
 recorded in this corpus (`publicTrade`, `tickers`, `orderbook`, `recent-trade`)
 and the field names parsed by `candleviewer.exchange.bybit` (24-internal-schemas
 §2.1-§2.3, §8.6, §14.3). Owner exception #1778 group A: replace with
-`capture_fixture.py` captures when a refresh is recorded. Re-running is
+`capture_fixture.py` captures when a refresh is recorded; the `recorded_*` files
+are the first such captures (#3447), listed here, never rewritten. Re-running is
 byte-identical (seeded RNG, fixed epoch). Run: python tools/fixtures/build_corpus.py
 """
 
@@ -202,6 +203,8 @@ def funding_history(symbol: str, step_h: int) -> dict[str, Any]:
 
 
 _SRC = "documented-shape (exception #1778 A)"
+_RECORDED = {"capture_date": "2026-10-19",
+             "source": "capture_fixture.py, fixture-drift run 39210373369 (redacted)"}  # fmt: skip
 _MAX = 1_500_000  # bytes; the E08-S05 3 h depth-200 book is the only file near it
 
 
@@ -265,6 +268,17 @@ def build() -> list[dict[str, Any]]:
                "snapshot + deltas incl. explicit 0", cap=4_000),
         _entry("rest/recent_trade_BTCUSDT.json", "BTCUSDT", "GET /v5/market/recent-trade",
                "gap backfill page", host=REST_HOST, cap=4_000),
+    ]  # fmt: skip
+    # #3447: frames recorded by capture_fixture.py (redacted) in fixture-drift run 39210373369,
+    # copied here unchanged: the live feed's fields that the documented shapes above lack.
+    m += [
+        _entry("ws/recorded_publicTrade_BTCUSDT.jsonl", "BTCUSDT", "publicTrade.BTCUSDT",
+               "recorded: 20 frames with RPI and seq on each print", cap=16_000) | _RECORDED
+        | {"window_ms": [1_792_391_736_832, 1_792_391_746_173]},
+        _entry("ws/recorded_tickers_BTCUSDT.jsonl", "BTCUSDT", "tickers.BTCUSDT",
+               "recorded: snapshot + 19 deltas, incl. tickDirection, prevPrice1h/24h, "
+               "fundingCap, singleOpenInterest", cap=8_000) | _RECORDED
+        | {"window_ms": [1_792_391_746_229, 1_792_391_748_529]},
     ]  # fmt: skip
     return sorted(m, key=lambda e: str(e["path"]))
 

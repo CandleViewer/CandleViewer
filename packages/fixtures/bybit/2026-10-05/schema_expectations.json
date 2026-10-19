@@ -214,6 +214,12 @@
    ],
    "required": true
   },
+  "data[].RPI": {
+   "types": [
+    "boolean"
+   ],
+   "required": false
+  },
   "data[].S": {
    "types": [
     "string"
@@ -243,6 +249,12 @@
     "string"
    ],
    "required": true
+  },
+  "data[].seq": {
+   "types": [
+    "number"
+   ],
+   "required": false
   },
   "data[].v": {
    "types": [
@@ -858,7 +870,31 @@
    ],
    "required": false
   },
+  "data.curPreListingPhase": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.fundingCap": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.fundingIntervalHour": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
   "data.fundingRate": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.highPrice24h": {
    "types": [
     "string"
    ],
@@ -871,6 +907,12 @@
    "required": false
   },
   "data.lastPrice": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.lowPrice24h": {
    "types": [
     "string"
    ],
@@ -900,7 +942,43 @@
    ],
    "required": false
   },
+  "data.preOpenPrice": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.preQty": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.prevPrice1h": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.prevPrice24h": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
   "data.price24hPcnt": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.singleOpenInterest": {
+   "types": [
+    "string"
+   ],
+   "required": false
+  },
+  "data.singleOpenInterestValue": {
    "types": [
     "string"
    ],
@@ -911,6 +989,12 @@
     "string"
    ],
    "required": true
+  },
+  "data.tickDirection": {
+   "types": [
+    "string"
+   ],
+   "required": false
   },
   "data.turnover24h": {
    "types": [
