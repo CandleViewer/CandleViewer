@@ -504,6 +504,8 @@ measures them with the repo's Electron (`apps/desktop/package.json:29`, `^41.10.
 rely on them (S3 to S7 and S9b) merge. S2 tells a blocked request (A8, A9) apart from a missing or wrong
 `Origin` (A1), so a blocked request is never read as A1 failing.
 
+Amendment 1 (2026-10-19) records what S2 measured.
+
 ### 5. STRIDE for the new paths
 
 | Id    | STRIDE | Threat on a new path                                                                                                                                                                                                                                                                                                                                                                                                                 | Control                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Residual                                                                                                                                                                                                                                                  |
@@ -675,6 +677,90 @@ refusals their own CORS headers, which come from the one shared policy (2c).
 This record moves to `decided` when D1 to D7 are recorded, S0 has merged, and S2 has pinned A1 to A11
 or the fallbacks in the assumptions table have been taken. Each slice's own tests are listed in the slice
 table. The record's end-to-end validation is S9a and S9b.
+
+## Amendment 1 (2026-10-19, #3519 S2: the browser-engine measurements)
+
+Records S2's results; it changes no decision above. The S2 probe PR adds
+`apps/desktop/e2e/backend-connection-probe.spec.ts`, which measured these results and now pins them. It
+launched the shell the default way (the `app://` load path) with the repo's Electron 41.10.7
+(Chrome 146.0.7680.216) on the Linux CI runner (`ubuntu-latest`), against a loopback fixture server on
+`127.0.0.1:8000`, in
+[e2e-nightly run 39186831120](https://github.com/basiltt/CandleViewer/actions/runs/39186831120) (job
+`e2e-electron`). The Windows and macOS builds were not measured. A change, for example from an Electron
+bump, fails the nightly `e2e-electron` job with the assumption's id and its consequence from the table
+above; that job also runs on `release/*` heads (`.github/workflows/_job-e2e.yml:185`), but not on other
+pull requests. The `file:line` references below hold on `main` at `03f06d8aa`.
+
+- **A1 holds.** The page sends `Origin: app://candleviewer` on a simple `GET`, on a preflight and its
+  `POST`, and on a WS upgrade. The page can read the exposed `X-CSRF-Token` response header (3b). A
+  `SharedWorker` started from a `blob:` URL (the page's origin, but not a script served by `app://`)
+  sends the same `Origin` on its WS upgrade and its fetch.
+- **A2 holds.** `SameSite=Strict` and `Lax` cookies from the backend's responses are not stored, and
+  Strict and Lax cookies put into the cookie jar directly are not sent on the page's requests.
+- **A3 holds.** `SameSite=None; Secure` cookies from `http://127.0.0.1`, a `__Host-` one included, are
+  stored and sent on the page's credentialed `GET` and preflighted `POST`.
+- **A4 holds.** A `Partitioned` cookie is stored and sent on the page's requests. A main-process request,
+  which has no `app://` top-level site, sends the unpartitioned `SameSite=None` cookie but not that one.
+- **A5 holds.** `document.cookie` on the page shows none of the backend's cookies.
+- **A6 holds.** A `BroadcastChannel` message reaches a second window on `app://candleviewer/`. The probe
+  opens that window from the main process with the shell's web preferences, since the shell denies
+  `window.open`.
+- **A7 holds.** A cross-site expiry with the same `SameSite=None; Secure` removes the cookie, and an expiry
+  that carries `Partitioned` removes a partitioned cookie. A `SameSite=Strict` expiry leaves the cookie in
+  place, and so does an expiry without `Partitioned` for a partitioned cookie.
+- **A8 holds.** The page's fetch of `http://127.0.0.1` and its `ws://127.0.0.1` upgrade both reach the
+  server, with no mixed-content message.
+- **A9 holds, as far as it was observed.** No private-network preflight is sent, and the shell's
+  permission request handler is never called. A preflight answered with
+  `Access-Control-Allow-Private-Network: true` works as well. That handler is `installPermissionHandler`,
+  now at `apps/desktop/src/main/index.ts:282-286`; the `main/index.ts:243-247` cited in the A9 and D7 rows
+  above now points at `installCspHeader`. The shell installs no permission-check handler, so Electron
+  answers permission checks itself and the probe cannot see them (D7 below).
+- **A10 holds.** The keep-alive JSON `POST` is preflighted, then sent with the backend's cookies.
+- **A11, and A1 for a worker served by `app://`: not measured.** The built web app ships no worker the
+  page can start (`lib/ws` is not reachable from `main.tsx` yet), and S2 ships no asset. #413 owns them
+  (below). The spec records when a worker chunk appears, without failing.
+- The page's own WS URL, `ws://candleviewer/api/v1/ws` (derived from the page's origin,
+  `apps/web/src/main.tsx:18-20`), is refused by `connect-src`; 1e and S6b move it to the backend origin.
+
+Consequences:
+
+- **D3 is not required by A3, A7 or A8.** TLS on loopback stays an owner choice for BC-S3's server
+  authentication only.
+- **D7 needs no permission, and S3 needs no private-network answer (A9),** for what S2 measured:
+  Electron 41.10.7 (Chrome 146.0.7680.216) on the Linux CI runner, the shell's deny-all permission
+  request handler, and no permission-check handler. With none installed, Electron answers permission
+  checks itself, so a check that it granted by default cannot be told apart here from no check at all.
+  The nightly `e2e-electron` pins re-measure this. An Electron bump, or any new permission-check handler
+  (S5, D7), gets an `e2e-nightly` dispatch on its head before it merges: that workflow is the only caller
+  that sets the lane's `electron` input (`.github/workflows/_job-e2e.yml:35-38`), and the PR lane runs no
+  `e2e-electron`.
+- **4c is taken.** `Partitioned` is honoured for the `app://` top-level site (A4), so 4c adds `Partitioned`
+  to both desktop cookies (S4). An expiry of a `Partitioned` cookie must also carry `Partitioned`, or it
+  leaves the cookie in place (A7); 4b's single attribute function, which expiries use too, gives that.
+- **#413 (E17-T04) owns A11 and A1's served-worker case.** Its wiring slice measures them before it
+  merges. Until then A11's fallback applies: that slice opens the desktop's socket without a worker served
+  by `app://`, unless its measurement shows such a worker runs under the frozen `app:` privileges and
+  sends `Origin: app://candleviewer`. So Validation's `decided` does not wait on #413: S2 pins A1 (the
+  page and `blob:` worker cases) and A2 to A10, and A11's fallback is taken. Why not wait instead: the
+  record must be decided before S0 or S1 merges, while the worker ships only with E17-T04's last slice;
+  until then nothing ships such a worker, so the fallback restricts nothing; and the `blob:` result
+  already shows that a worker with the page's origin sends that `Origin`, which leaves only A11's
+  question, whether `app://` serves the worker script under the frozen privileges.
+
+A requirement S2 found, outside A1 to A11:
+
+- `apps/web/index.html:14-17` carries a `<meta>` CSP fallback whose `connect-src` admits only
+  `http://127.0.0.1:8000` and `ws://127.0.0.1:8000`. The browser engine enforces it together with the
+  shell's header, so with any other backend origin the page's requests are blocked, even though
+  `CV_BACKEND_ORIGIN` names that origin and the header admits it (4f). The S2 probe uses port 8000 for
+  this reason.
+- The two policies must admit the same backend origin for every endpoint 1b accepts, in both load paths
+  (`app://` and the dev server). The electron-hardening gate requires the header and the `<meta>` to be
+  equal (SR-112, `tools/ci/electron_hardening_checks.py:856-859`), which today holds only for the default
+  origin.
+- Proposed owner: S5, which owns the resolved endpoint, the CSP built from it and the hardening gate's
+  rules. S6a's web side changes only if the approach S5 takes edits `index.html`.
 
 ## Follow-ups (not this ticket's scope)
 
