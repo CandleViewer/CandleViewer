@@ -135,7 +135,7 @@ def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_i
 ) -> None:
     """#2911: the mint refuses a user disabled after the password check. Login's answer for a
     disabled account, never a 500; nothing is minted, and the refusal is audited and counted
-    (SR-125) like login's."""
+    (SR-125) like login's, its row voiding the session announced ahead (C-2.9)."""
     uid = _must_enrol(stack, "alice")
     fails = stack.scraped("auth_login_failures_total", method="password")
 
@@ -150,6 +150,9 @@ def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_i
     assert stack.call(stack.auth.sessions.list_sessions, str(uid)) == ()
     (refused,) = stack.audit.of("auth.login_failed")
     assert (refused["reason"], refused["actor_user_id"]) == ("user_disabled", uid)
+    (announced,) = [row["session_id"] for row in stack.audit.of("auth.session_created")]
+    assert refused["session_id"] == announced
+    assert refused["after_state"] == {"voids_session_created": str(announced)}
     assert stack.scraped("auth_login_failures_total", method="password") == fails + 1
 
 
