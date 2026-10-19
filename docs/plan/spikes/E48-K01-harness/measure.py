@@ -12,7 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 
-# == infra/images/Dockerfile.api
+# the Dockerfile.api pin at the time of E48-K01; the results were measured on this image
 PY = "python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f"
 # Docker Hub index digest for node:24-slim, verified via registry API 2026-10-04
 NODE = "node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6"

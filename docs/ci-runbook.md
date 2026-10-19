@@ -30,7 +30,7 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │  │                last, as their installs run PR scripts: commitlint*, then gen (generated-code
 │  │                freshness, CI-GEN-001..006)
 │  │                (* pull requests only: they read PR metadata, so a merge group skips them, #3433)
-│  ├─ infra filter: pin-check (SR-132)                               (CI-GATE-003, CI-IMG-002)
+│  ├─ infra filter: pin-check (SR-132)            (CI-GATE-003, CI-IMG-002, CI-IMG-007..009)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
 ├─ security-review-label (always, #2892) → adds `security-review` when a C-10.2 path is touched,
@@ -575,6 +575,20 @@ index alone, removing nothing.
   refusal means the boot never reached the fence: check the image's `ENV`
   (a `CV_BYBIT_API_*` or `CV_TEST_CLOCK`) and the gate in `settings.py`. The
   step log shows the last lines of the boot.
+- **CI-IMG-007** (pin ledger drift, #3571; PR `pin-check`): a row of
+  `infra/images/PINS.md` and the image pins scanned by
+  `tools/ci/resolve_image_digests.py --check` (Dockerfiles, compose files,
+  workflows) disagree. The message names both sides by file:line: a digest or
+  tag drift, a duplicate row, a row that matches no source pin, or a source
+  pin with no row. The source pin is what gets built and what the registry
+  part verifies, so make the row match it (add or delete rows as needed)
+  unless the source pin itself is the mistake. `--check --offline` re-runs
+  the ledger part without registry calls.
+- **CI-IMG-008** (pin ledger count, #3571): the "All N pins" line of `PINS.md`
+  is missing or does not count the table's rows. Fix the number.
+- **CI-IMG-009** (pin ledger unreadable, #3571): `PINS.md` is missing, its
+  table lacks an Image, Tag or Digest column or the separator row, or a row's
+  cells cannot be read. The check fails closed; restore the table's shape.
 
 ### CI-SPIKE-* — spike containment (`tools/ci/check_spike_containment.py`)
 
