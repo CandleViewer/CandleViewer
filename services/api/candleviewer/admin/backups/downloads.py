@@ -10,14 +10,17 @@ never the token or its hash, or forgotten unsent. Records go through the handler
 (it calls `audit_issue`) within `LINK_RECORD_BUDGET_S`; unwritten, `OpsAuditUnavailable` (503).
 
 `downloadBackup` (BK-11), in the contract's order, under no lock. A token matching no link, or a
-malformed one, is `LinkMissed` (404). A spent or expired link is `LinkEnded` (410), counted
-nowhere; a spent one's first presentation again is recorded once (`link_reused`). A live link
-meets its user's hour (`FetchLimited`, 429: nothing spent or recorded) and is spent, with no await
-since the lookup; the spend counts in that hour. Then, each refusal recorded first: an event that
-ended the grant that minted it (`grant_ended`, `LinkEnded`), its user without `backups:read`
-(`LinkForbidden`, 403), the backup as for an issue. Last the `served` record; the open artefact
-goes to the route, which streams it. Its records go through `audit_serve` the same way; an
-unwritten one leaves a spent link spent.
+malformed one, is a miss: it counts against its source address (`SourceMisses`), `LinkMissed`
+(404), and past the minute's budget `FetchLimited` (429), counted in
+`cv_backup_download_source_rate_limited_total` whatever the answer, its first refusal per address
+and minute recorded (`denied`, `rate_limited`: the address, no object). A spent or expired link
+is `LinkEnded` (410), counted nowhere; a spent one's first presentation again is recorded once
+(`link_reused`). A live link meets its user's hour (`FetchLimited`, 429: nothing spent or
+recorded) and is spent, with no await since the lookup; the spend counts in that hour. Then, each
+refusal recorded first: an event that ended the grant that minted it (`grant_ended`,
+`LinkEnded`), its user without `backups:read` (`LinkForbidden`, 403), the backup as for an issue.
+Last the `served` record; the open artefact goes to the route, which streams it. Its records go
+through `audit_serve` the same way; an unwritten one leaves a spent link spent.
 """
 
 from __future__ import annotations
@@ -47,8 +50,9 @@ from candleviewer.admin.backups.links import (
     LinksFull,
     LinkSpent,
 )
+from candleviewer.admin.backups.metrics import source_rate_limited_total
+from candleviewer.admin.backups.misses import SourceMisses
 from candleviewer.admin.errors import AdminError, OpsAuditUnavailable, OpsNotWired, OpsUnavailable
-from candleviewer.admin.http import AuditEmitter
 from candleviewer.admin.overview.fanout import utc_now
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -87,6 +91,28 @@ class FetchLimited(AdminError):
     def __init__(self, retry_after_s: int) -> None:
         super().__init__("backups: rate limited")
         self.retry_after_s = retry_after_s
+
+
+class DownloadsAudit(Protocol):
+    """`AuditWriter.emit`'s keywords these records use; a per-source refusal names no object, and
+    no user unless a bearer came."""
+
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: UUID | None,
+        actor_ip: str | None,
+        session_id: UUID | None,
+        object_kind: str | None,
+        object_id: str | None,
+        outcome: AuditOutcome,
+        severity: Severity,
+        reason: str | None,
+        after_state: dict[str, Any],
+        request_id: UUID | None,
+    ) -> None: ...
 
 
 class FamilyRows(Protocol):  # `auth.session_repository.SessionRepository`'s two reads
@@ -130,10 +156,11 @@ class Fetch:
 
 @dataclass(frozen=True, slots=True)
 class ServeRecord:
-    """One `backup.downloaded` record of a fetch with a matching token (`stage: served`)."""
+    """One `backup.downloaded` record of a fetch (`stage: served`): of a matching token's link, or
+    with none, of a per-source refusal."""
 
     ask: Fetch
-    link: DownloadLink
+    link: DownloadLink | None
     outcome: AuditOutcome
     reason: str | None = None
 
@@ -211,23 +238,26 @@ class BackupDownloads:
         links: DownloadLinks,
         *,
         gate: BackupJobGate,
-        audit: AuditEmitter,
+        audit: DownloadsAudit,
         resolve_budget_s: float = RESOLVE_BUDGET_S,
         record_budget_s: float = LINK_RECORD_BUDGET_S,
         fetch: FetchPorts | None = None,
         fetch_budget_s: float = FETCH_READ_BUDGET_S,
+        misses: SourceMisses | None = None,
     ) -> None:
         self._catalogue, self._reader, self._links = catalogue, reader, links
         self._gate, self._audit = gate, audit
         self._resolve_budget_s, self._record_budget_s = resolve_budget_s, record_budget_s
         self._fetch, self._fetch_budget_s = fetch, fetch_budget_s
+        self._misses = SourceMisses() if misses is None else misses
 
     def with_fetch(self, fetch: FetchPorts) -> BackupDownloads:
-        """This service with the fetch's ports: the links, catalogue and artefacts shared."""
+        """This service with the fetch's ports: the links, catalogue, artefacts, budgets and the
+        per-source misses shared, so an injected one (its clock) carries through."""
         return BackupDownloads(
             self._catalogue, self._reader, self._links, gate=self._gate, audit=self._audit,
             resolve_budget_s=self._resolve_budget_s, record_budget_s=self._record_budget_s,
-            fetch=fetch, fetch_budget_s=self._fetch_budget_s,
+            fetch=fetch, fetch_budget_s=self._fetch_budget_s, misses=self._misses,
         )  # fmt: skip
 
     async def issue(
@@ -269,13 +299,13 @@ class BackupDownloads:
         if ports is None:
             raise OpsNotWired("backups: the fetch is not wired")
         if ask.backup_id is None or ask.token is None:
-            raise LinkMissed("backups: no such link")
+            raise await self._missed(ask, write_ahead)
         bearer = None if ask.bearer is None else ask.bearer.user_id
         found = self._links.lookup(ask.token, backup_id=ask.backup_id, user_id=bearer)
         if isinstance(found, LinkGone):
             raise await self._gone(ask, found.link, write_ahead)
         if not isinstance(found, LinkLive):
-            raise LinkMissed("backups: no such link")
+            raise await self._missed(ask, write_ahead)
         user = str(found.link.user_id)
         if (wait := ports.hourly.retry_after(user)) is not None:
             raise FetchLimited(wait)  # nothing spent, nothing recorded
@@ -287,17 +317,42 @@ class BackupDownloads:
 
     async def audit_serve(self, record: ServeRecord) -> None:
         """`backup.downloaded` at `stage: served`, severity `error`: the `link_id`, and `bearer`
-        `matched` (the issuing user's bearer came: its session and name) or `absent`."""
+        `matched` (the issuing user's bearer came: its session and name) or `absent`; with no
+        link, the address alone (the per-source refusal), and a bearer's user if one came."""
         ask, link, who = record.ask, record.link, record.ask.bearer
-        bearer = "absent" if who is None else "matched"
-        state: dict[str, Any] = {"stage": "served", "link_id": str(link.link_id), "bearer": bearer}
+        state: dict[str, Any] = {"stage": "served"}
+        user, session = (None, None) if who is None else (who.user_id, who.session_id)
+        kind = target = None
+        if link is not None:
+            bearer = "absent" if who is None else "matched"
+            state |= {"link_id": str(link.link_id), "bearer": bearer}
+            user, kind, target = link.user_id, "backup", str(link.backup_id)
+            session = link.session_id if who is None else session
+        label = str(user or "anonymous") if who is None else who.username
         await self._audit.emit(
-            "backup.downloaded", actor_label=str(link.user_id) if who is None else who.username,
-            actor_user_id=link.user_id, actor_ip=ask.source,
-            session_id=link.session_id if who is None else who.session_id, object_kind="backup",
-            object_id=str(link.backup_id), outcome=record.outcome, severity=Severity.ERROR,
-            reason=record.reason, after_state=state, request_id=ask.request_id,
+            "backup.downloaded", actor_label=label, actor_user_id=user, actor_ip=ask.source,
+            session_id=session, object_kind=kind, object_id=target, outcome=record.outcome,
+            severity=Severity.ERROR, reason=record.reason, after_state=state,
+            request_id=ask.request_id,
         )  # fmt: skip
+
+    async def _missed(self, ask: Fetch, write_ahead: ServeWriteAhead) -> AdminError:
+        """A miss counts against its source; past its minute's budget it is refused and counted,
+        and its first refusal per address and minute recorded, taken once written (SR-3456-02)."""
+        source = ask.source or ""
+        wait = self._misses.miss(source)
+        if wait is None:
+            return LinkMissed("backups: no such link")
+        source_rate_limited_total.inc()  # #3544 F3: also when the record cannot be written
+        if self._misses.claim_record(source):
+            written = False
+            try:
+                refused = ServeRecord(ask, None, AuditOutcome.DENIED, "rate_limited")
+                await self._record(write_ahead, refused)
+                written = True
+            finally:
+                self._misses.settle_record(source, written=written)
+        return FetchLimited(wait)
 
     async def _gone(
         self, ask: Fetch, link: DownloadLink, write_ahead: ServeWriteAhead

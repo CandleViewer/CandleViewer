@@ -2628,6 +2628,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_backup_download_source_rate_limited_total",
+        "counter",
+        "fetches",
+        (),
+        "Backup download fetches refused because their source address missed (a token or backup id "
+        "that is malformed or matches no link) more than 10 times in a minute.",
+        "dashboard only; a scanner shows here, counted also when its refusal could not be "
+        "recorded (#966 BK-11); no address or user label",
+        _L,
+        "E42",
+        max_series=1,
+        exported=True,
+    ),
+    _s(
         "cv_restore_jobs_total",
         "counter",
         "restores",

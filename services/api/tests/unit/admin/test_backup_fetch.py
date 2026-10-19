@@ -17,7 +17,7 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.admin.backups import limits
+from candleviewer.admin.backups import limits, metrics
 from candleviewer.admin.backups.downloads import (
     BackupDownloads,
     Fetch,
@@ -39,6 +39,7 @@ from candleviewer.admin.backups.links import (
     LinkGone,
     LinkLive,
 )
+from candleviewer.admin.backups.misses import SourceMisses
 from candleviewer.admin.errors import OpsAuditUnavailable, OpsNotWired, OpsUnavailable
 from candleviewer.api.audit_limiter import AuditVerifyLimiter
 from candleviewer.audit.access import AuditPrincipal
@@ -129,7 +130,8 @@ async def _fx(
     for _ in range(fetched):
         hourly.record_start(str(WHO.user_id))
     ports = FetchPorts(sessions, Identity(*permissions), hourly, now=clock)
-    w = world(rows or [row(1)], links=DownloadLinks(now=clock), fetch=ports, **kw)
+    misses = SourceMisses(clock=lambda: 0.0)  # one instant: every miss in the same minute
+    w = world(rows or [row(1)], links=DownloadLinks(now=clock), fetch=ports, misses=misses, **kw)
     return Fx(w, sessions, hourly, clock)
 
 
@@ -246,17 +248,86 @@ async def test_a_link_expiring_between_its_lookup_and_its_spend_is_410_and_never
     assert fx.hourly.retry_after(str(WHO.user_id)) is None  # not counted
 
 
-async def test_another_users_or_backups_or_a_malformed_token_is_404_and_spends_nothing() -> None:
-    fx = await _fx()
-    token, link = await fx.issue()
+async def _ten_misses(fx: Fx, token: str) -> None:
+    """Ten misses from one address, every kind: a malformed token or `backupId`, another backup's
+    path, another user's bearer, a token that matches no link."""
     asks = [Fetch(BID, None, None, SOURCE, None), Fetch(None, token, None, SOURCE, None),
             Fetch(UUID(int=2), token, None, SOURCE, None),
             Fetch(BID, token, principal("manager"), SOURCE, None)]  # fmt: skip
-    for ask in asks:
+    for ask in asks + [Fetch(BID, "A" * 43, None, SOURCE, None)] * 6:
         with pytest.raises(LinkMissed):
             await fx.w.downloads.fetch(ask, _down)
+
+
+async def test_every_kind_of_miss_counts_against_its_source_and_spends_nothing() -> None:
+    fx = await _fx()
+    token, link = await fx.issue()
+    await _ten_misses(fx, token)
+    with pytest.raises(FetchLimited):
+        await fx.fetch("A" * 43)
     assert fx.w.links.lookup(token, backup_id=BID, user_id=None) == LinkLive(link)
-    assert (await fx.fetch(token)).backup_id == BID
+
+
+async def test_past_ten_misses_a_minute_each_is_429_with_its_wait_and_counted() -> None:
+    fx = await _fx()
+    token, _ = await fx.issue()
+    await _ten_misses(fx, token)
+    counted = metrics.source_rate_limited_total._value.get()
+    for _ in range(2):
+        with pytest.raises(FetchLimited) as limited:
+            await fx.fetch("A" * 43)
+        assert limited.value.retry_after_s == 60
+    assert metrics.source_rate_limited_total._value.get() - counted == 2
+
+
+async def test_one_record_per_source_and_minute_names_the_address_and_a_token_still_serves() -> (
+    None
+):
+    fx = await _fx()
+    token, _ = await fx.issue()
+    await _ten_misses(fx, token)
+    for _ in range(2):
+        with pytest.raises(FetchLimited):
+            await fx.fetch("A" * 43)
+    assert fx.served() == [{
+        "action": "backup.downloaded", "actor_label": "anonymous", "actor_user_id": None,
+        "actor_ip": SOURCE, "session_id": None, "object_kind": None, "object_id": None,
+        "outcome": AuditOutcome.DENIED, "severity": Severity.ERROR, "reason": "rate_limited",
+        "after_state": {"stage": "served"}, "request_id": WHO.request_id,
+    }]  # fmt: skip
+    assert (await fx.fetch(token)).backup_id == BID  # no source limit on a matching token
+
+
+async def test_requests_with_no_known_source_share_one_bucket() -> None:
+    fx = await _fx()
+    asks = [Fetch(BID, "A" * 43, None, None, UUID(int=n)) for n in range(11)]
+    for ask in asks[:10]:
+        with pytest.raises(LinkMissed):
+            await fx.w.downloads.fetch(ask, _down)
+    with pytest.raises(FetchLimited):
+        await fx.w.downloads.fetch(asks[10], fx.w.serve_ahead())
+
+
+async def test_an_unwritten_rate_limited_record_is_503_still_counted_and_written_next() -> None:
+    """SR-3456-02 and #3544 F3: counted whatever the answer; its place taken once written. A
+    bearer's refusal names its user."""
+    fx = await _fx()
+    for _ in range(10):
+        with pytest.raises(LinkMissed):
+            await fx.fetch("A" * 43)
+    counted = metrics.source_rate_limited_total._value.get()
+    with pytest.raises(OpsAuditUnavailable):
+        await fx.fetch("A" * 43, ahead=_down)
+    for _ in range(2):
+        with pytest.raises(FetchLimited):
+            await fx.fetch("A" * 43, WHO)
+    assert metrics.source_rate_limited_total._value.get() - counted == 3
+    (record,) = fx.served()
+    assert (record["reason"], record["actor_user_id"], record["session_id"]) == (
+        "rate_limited",
+        WHO.user_id,
+        SID,
+    )
 
 
 async def test_the_eleventh_fetch_in_an_hour_is_429_and_only_a_spend_counts() -> None:
@@ -490,3 +561,15 @@ async def test_a_cancelled_family_read_is_a_cancellation_not_a_503(
     monkeypatch.setattr(fx.sessions, "walk_rotation_family", _hang(started))
     await _cancel_when_started(fx.fetch(token), started)
     assert fx.spent(token) and fx.served() == []
+
+
+async def test_a_cancelled_rate_limited_write_leaves_the_record_to_the_next_refusal() -> None:
+    fx = await _fx()
+    for _ in range(10):
+        with pytest.raises(LinkMissed):
+            await fx.fetch("A" * 43)
+    started = asyncio.Event()
+    await _cancel_when_started(fx.fetch("A" * 43, ahead=_hang(started)), started)
+    with pytest.raises(FetchLimited):
+        await fx.fetch("A" * 43)
+    assert [r["reason"] for r in fx.served()] == ["rate_limited"]

@@ -41,6 +41,7 @@ from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.deletion import BackupDeletion, DeleteAudit
 from candleviewer.admin.backups.downloads import (
     BackupDownloads,
+    DownloadsAudit,
     FetchPorts,
     UserPermissions,
 )
@@ -53,7 +54,6 @@ from candleviewer.admin.backups.rows import LostCount, LostRuns, RunAudit, RunRo
 from candleviewer.admin.backups.runs import BackupRuns
 from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.service import DEFAULT_READ_BUDGET_MS
-from candleviewer.admin.http import AuditEmitter
 from candleviewer.api.audit_limiter import AuditVerifyLimiter
 from candleviewer.api.recorder_admin import AdminJobStore, Job
 from candleviewer.auth.models import SessionRecord
@@ -215,7 +215,7 @@ def build_backup_runs(
 
 
 def build_backup_downloads(
-    settings: Settings, catalogue: BackupCatalogue, *, gate: BackupJobGate, audit: AuditEmitter
+    settings: Settings, catalogue: BackupCatalogue, *, gate: BackupJobGate, audit: DownloadsAudit
 ) -> BackupDownloads | None:
     """The link issue on the catalogue the reads serve, under the one admission lock; None until
     `BACKUPS_CATALOGUED` and `CV_BACKUP_ROOT` are both set."""

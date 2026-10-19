@@ -394,7 +394,8 @@ def test_the_fetch_is_wired_over_the_issue_on_the_real_backend_with_an_identity(
         )
     fetch = wiring.build_backup_fetch(real, issue, identity=identity, system_settings=None)
     assert fetch is not None and fetch._fetch is not None
-    assert (fetch._links, fetch._catalogue) == (issue._links, issue._catalogue)
+    shared = (fetch._links, fetch._catalogue, fetch._misses)
+    assert shared == (issue._links, issue._catalogue, issue._misses)  # CR-01: misses too
     assert (fetch._fetch.sessions, fetch._fetch.identity, built) == (rows, identity, ["admin"])
     assert isinstance(fetch._fetch.hourly, AuditVerifyLimiter)
     assert fetch._fetch.hourly._rate == limits.FETCHES_PER_HOUR

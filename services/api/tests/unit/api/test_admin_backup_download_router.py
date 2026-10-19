@@ -174,7 +174,7 @@ async def test_the_records_name_the_address_mesh_only_admitted_not_the_socket_pe
 @pytest.mark.parametrize(
     ("setup", "status", "code"),
     [("unmounted", 501, "not_implemented"), ("unwired", 501, "not_implemented"),
-     ("hour", 429, "rate_limited"),
+     ("hour", 429, "rate_limited"), ("misses", 429, "rate_limited"),
      ("forbidden", 403, "forbidden"), ("deleted", 409, "conflict"),
      ("volume", 503, "store_unavailable"), ("audit", 503, "audit_unavailable")],
 )  # fmt: skip
@@ -194,9 +194,11 @@ async def test_each_refusal_is_its_registered_problem(
         fx.w.reader.error = ArtefactUnreadable()
     elif setup == "audit":
         monkeypatch.setattr(fx.w.downloads, "audit_serve", _unwritten)
-    response = await _get(app, token)
+    for _ in range(11 if setup == "misses" else 0):
+        await _get(app, "B" * 43)
+    response = await _get(app, "B" * 43 if setup == "misses" else token)
     body = _refused(response, status, code)
-    retry = {"hour": 3600, "volume": 5, "audit": 5}.get(setup)
+    retry = {"hour": 3600, "misses": 60, "volume": 5, "audit": 5}.get(setup)
     assert body.get("retry_after_seconds") == retry
     assert response.headers.get("retry-after") == (None if retry is None else str(retry))
     rule = {"field": "", "rule": "backup_not_usable", "message": body["detail"]}

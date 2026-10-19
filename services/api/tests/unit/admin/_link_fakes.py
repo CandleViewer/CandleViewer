@@ -17,6 +17,7 @@ from candleviewer.admin.backups.downloads import (
 )
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.links import DownloadLinks
+from candleviewer.admin.backups.misses import SourceMisses
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.storage.repositories.backups import BackupRow
 from tests.unit.admin._admin_fakes import AuditSpy
@@ -92,6 +93,7 @@ def world(
     links: DownloadLinks | None = None,
     read_budget_s: float = 2.0,
     fetch: FetchPorts | None = None,
+    misses: SourceMisses | None = None,
     **budgets: float,
 ) -> World:
     store = Store(rows) if store is None else store
@@ -100,6 +102,6 @@ def world(
     gate, audit = BackupJobGate() if gate is None else gate, AuditSpy()
     catalogue = BackupCatalogue(store, now=lambda: NOW, budget_s=read_budget_s)
     service = BackupDownloads(
-        catalogue, reader, links, gate=gate, audit=audit, fetch=fetch, **budgets
+        catalogue, reader, links, gate=gate, audit=audit, fetch=fetch, misses=misses, **budgets
     )
     return World(service, store, reader, links, gate, audit)
