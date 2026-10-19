@@ -27,8 +27,8 @@
     "contrast:gate": "node ../../tools/contrast/generate.mjs && node ../../tools/contrast/data-ink.mjs --check && node ../../tools/contrast/no-hue-alone.mjs",
     "contrast:data-ink": "node ../../tools/contrast/data-ink.mjs",
     "size": "echo \"@candleviewer/ui: size-limit wired alongside E05 components\"",
-    "storybook": "storybook dev -p 6006 -c .storybook",
-    "storybook:build": "storybook build -c .storybook -o storybook-static",
+    "storybook": "storybook dev -p 6006 -c .storybook --disable-telemetry --no-version-updates",
+    "storybook:build": "storybook build -c .storybook -o storybook-static --disable-telemetry",
     "storybook:test": "vitest run --project storybook"
   },
   "devDependencies": {

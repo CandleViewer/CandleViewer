@@ -160,7 +160,7 @@ function Reflow(): JSX.Element {
   );
 }
 
-// `withMountCount` (also a global decorator, which then defers to this one) counts story mounts.
+// The preview's global `withMountCount` wraps this one and counts; this one counts only without it.
 const meta: Meta = {
   title: "Foundations/Theme runtime",
   parameters: { layout: "fullscreen" },

@@ -11,6 +11,7 @@
         "eslint-rules/**",
         ".storybook/**",
         "vitest.config.mjs",
+        "package.json",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
@@ -29,6 +30,7 @@
         "eslint-rules/**",
         ".storybook/**",
         "vitest.config.mjs",
+        "package.json",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
@@ -51,6 +53,7 @@
       "inputs": [
         "$TURBO_EXTENDS$",
         "eslint-rules/*.d.mts",
+        "package.json",
         "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"
       ]
     }

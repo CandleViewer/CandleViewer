@@ -14,8 +14,8 @@ const config: StorybookConfig = {
     options: {},
   },
   core: {
-    // No usage telemetry or update notification leaves the dev server, the build, the Vitest
-    // plugin or a CLI that reads this file.
+    // Telemetry and what's-new notices are off once this file loads; the scripts also pass
+    // --disable-telemetry (errors before it loads) and dev's --no-version-updates (update check).
     disableTelemetry: true,
     disableWhatsNewNotifications: true,
   },

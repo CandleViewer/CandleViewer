@@ -61,4 +61,9 @@ describe("Storybook preview", () => {
     }
     expect(mounts).toBe(1);
   });
+
+  it("fails a story on serious and critical axe violations, never on moderate or minor", () => {
+    const gate = { test: "error", options: { impactLevels: ["critical", "serious"] } };
+    expect(preview.parameters?.["a11y"]).toEqual(gate);
+  });
 });

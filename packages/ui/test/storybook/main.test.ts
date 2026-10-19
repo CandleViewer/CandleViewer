@@ -18,5 +18,8 @@ describe("Storybook main config", () => {
       features: { backgrounds: false },
       core: { disableTelemetry: true, disableWhatsNewNotifications: true },
     });
+    const { scripts } = (await import("../../package.json")).default;
+    expect(scripts.storybook).toMatch(/ --disable-telemetry --no-version-updates$/);
+    expect(scripts["storybook:build"]).toMatch(/ --disable-telemetry$/);
   });
 });
