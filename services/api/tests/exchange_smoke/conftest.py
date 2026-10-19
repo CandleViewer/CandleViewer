@@ -48,6 +48,7 @@ def _demo_only_session() -> Iterator[None]:
             "resolved at import). No test dialled; see tests/exchange_smoke/README.md.",
             pytrace=False,
         )
+    # Unreachable under the repo's allow-list; kept for when the clients dial the pinned IPs.
     previous = os.environ.get("CV_CI_ALLOWED_HOSTS", "")
     os.environ["CV_CI_ALLOWED_HOSTS"] = ",".join(sorted(DEMO_IPS | ({previous} - {""})))
     try:

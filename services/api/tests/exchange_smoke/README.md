@@ -23,8 +23,10 @@ CV_EXCHANGE_SMOKE=1 uv run pytest tests/exchange_smoke -m exchange_smoke --no-co
 - **Network guard.** The test network guard refuses a name lookup outside its allow-list
   (#3826). So `conftest.py` resolves `api-demo.bybit.com` and `stream.bybit.com` when it is
   imported, after the demo-only guard passes and before the network guard installs at the first
-  test. Only the resolved IPs are added to the allow-list; no exchange hostname is ever added.
-  Demo has no public stream of its own (C-2.11).
+  test. With `CV_EXCHANGE_SMOKE=1` exported, any run that collects this directory does these two
+  lookups, even when `-m "not exchange_smoke"` deselects every test. Only the resolved IPs are
+  added to the allow-list; no exchange hostname is ever added. Demo has no public stream of its
+  own (C-2.11).
 - **Fails closed for now.** The REST and WS clients look the hostnames up again when they
   connect, and the network guard refuses those lookups. So an opted-in run errors at session
   setup with an explicit message, before any test dials. It stays that way until the clients

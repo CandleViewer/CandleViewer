@@ -36,9 +36,9 @@ is refused too, so `socket.getfqdn()` and an `http.server.HTTPServer` bound to
 
 Boundary: the guard replaces attributes of the Python `socket` module, so it
 does not see a resolver inside a C extension (libpq, uvloop), a reference to a
-resolver taken before the session installs the wrappers, or datagram egress:
-`sendto`/`sendmsg` with a destination address are not wrapped (the suite sends
-no datagrams), and CPython resolves a hostname given there inside C.
+resolver taken before the session installs the wrappers, or a hostname given to
+`bind`, `sendto` or `sendmsg`, which CPython resolves inside C (none is wrapped:
+the suite binds only loopback literals and sends no datagrams).
 
 This module contains no test collection itself; `tests/conftest.py` imports its
 two autouse fixtures (the session guard and the per-test verdict), so every
