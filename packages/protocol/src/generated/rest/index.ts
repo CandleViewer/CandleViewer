@@ -312,7 +312,10 @@ export interface paths {
      *     without the KEK cannot trade. `verify: true` (the default) schedules an automatic
      *     restore-into-scratch verification after the dump completes.
      *     A run is a `backup` job whose id is the `Backup.id` of the `202` body (E42-T05): poll
-     *     `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. The run is audited as
+     *     `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. When the run's
+     *     `stage: finished` record cannot be written, the row ends `failed` with
+     *     `error: audit_unavailable`, and the job may read `succeeded` only if its `result` then also
+     *     carries `audit: "unavailable"`: the row is the truth. The run is audited as
      *     `backup.run` ahead of the response. While a backup or a restore is running, a new run is
      *     `409 conflict` with rule `backup_or_restore_running` and starts nothing. A run that
      *     cannot take the backups admission lock (`deleteBackup`) within its wait is
@@ -324,7 +327,11 @@ export interface paths {
      *     is written, so the digest of every single-file artefact is bound in the append-only log,
      *     and `verifyBackup` and `restoreBackup` check the artefact against it. `note` is kept in
      *     the `requested` record's `reason` and nowhere else; the row records
-     *     `triggered_by: manual` and the caller. A user may start at most 4 runs in a rolling hour,
+     *     `triggered_by: manual` and the caller. A run whose backup engine plan has
+     *     `encrypted: false` breaks the rule that backups are always encrypted, so it is refused
+     *     fail closed: its failure record (`backup.run`, `outcome: failure`) is written first, then
+     *     the answer is `503 backup_engine_invalid`, nothing starts, and runs stay refused this way
+     *     until the engine configuration is fixed. A user may start at most 4 runs in a rolling hour,
      *     else `429 rate_limited` with `Retry-After`. Until a backup engine is wired the operation
      *     answers `501 not_implemented`, writes no record and starts nothing.
      */
