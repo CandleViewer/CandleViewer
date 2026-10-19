@@ -1109,8 +1109,7 @@ def make_session_router(
             ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
             _log().warning("auth.enrolment_only.expired", path="/auth/session", **ids)
             return _unauthorized()
-        enrolment_only = verdict is not SessionClass.FULL
-        at = now()
+        enrolment_only, at = verdict is not SessionClass.FULL, now()
         response = JSONResponse(
             await _session_info(identity, record, at, enrolment_only=enrolment_only)
         )

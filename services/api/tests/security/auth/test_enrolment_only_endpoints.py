@@ -156,9 +156,7 @@ def test_sign_in_of_a_user_disabled_since_the_password_check_mints_nothing_and_i
     assert stack.scraped("auth_login_failures_total", method="password") == fails + 1
 
 
-def test_sign_in_without_mfa_required_and_without_a_method_still_fails_closed(
-    stack: Stack,
-) -> None:
+def test_sign_in_without_mfa_required_and_without_a_method_still_fails_closed(stack: Stack) -> None:
     uid = _must_enrol(stack, "alice")
     stack.users.add(stack.users.users[str(uid)].model_copy(update={"mfa_required": False}))
 
