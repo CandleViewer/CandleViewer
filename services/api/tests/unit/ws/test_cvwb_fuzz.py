@@ -11,7 +11,9 @@ msgpack decoder returns a JSON-like value within ``MAX_MSGPACK_DEPTH`` or raises
 array and map headers (claims up to 2^32 - 1, nesting past 1 024, padding to the inbound cap),
 which byte mutation of small seeds cannot reach; its third builds open levels, each holding up to
 its cap of children before opening the next (distinct or duplicate map keys).
-Failing inputs are written to ``CV_FUZZ_ARTIFACT_DIR`` (uploaded as a CI artefact, never the repo).
+A failure reports only its target and a sha256 digest of (seed, input): the tests take one redacted
+`_Input`, and Hypothesis reports nothing (no failing-case report, blob or explanation). The pair is
+written to ``CV_FUZZ_ARTIFACT_DIR``, which CI uploads only encrypted (fuzz-nightly.yml).
 """
 
 from __future__ import annotations
@@ -23,11 +25,12 @@ import os
 import random
 import struct
 import tracemalloc
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
 import pytest
-from hypothesis import HealthCheck, given, seed, settings
+from hypothesis import HealthCheck, Phase, Verbosity, given, seed, settings
 from hypothesis import strategies as st
 
 from candleviewer.ws.binary import FrameMalformedError, decode
@@ -86,42 +89,52 @@ SEED: Final[int] = int(os.environ.get("CV_FUZZ_SEED", "12648430"))
 random.seed(SEED)
 
 
-def _save_failure(data: bytes, kind: str = "cvwb") -> str:
-    """Dumps the input under CV_FUZZ_ARTIFACT_DIR by sha256; returns the replay string."""
-    out = os.environ.get("CV_FUZZ_ARTIFACT_DIR")
-    if out:
-        Path(out).mkdir(parents=True, exist_ok=True)
-        (Path(out) / f"{kind}-fail-{hashlib.sha256(data).hexdigest()}.bin").write_bytes(data)
-    return f"seed={SEED} b64={base64.b64encode(data).decode()}"
+def _digest(data: bytes) -> str:
+    """How a failure names its input without printing it: sha256 over the seed and the input."""
+    return hashlib.sha256(f"{SEED}:".encode() + data).hexdigest()
 
 
-@pytest.mark.fuzz
-@seed(SEED)
-@settings(
-    max_examples=EXAMPLES,
-    deadline=None,
-    suppress_health_check=list(HealthCheck),
-    database=None,
-    print_blob=True,
-)
-@given(i=st.integers(0, len(SEEDS) - 1), ops=st.lists(_op, min_size=1, max_size=6))
-def test_decode_mutated_corpus_raises_only_the_typed_error(
-    i: int, ops: list[tuple[str, int, int]]
-) -> None:
-    data = mutate(SEEDS[i], ops)
-    tracemalloc.start()
+class _Input:
+    """One fuzz input, built on demand. Its `repr` is its target and digest alone, so a traceback
+    that prints the test's arguments shows no more than a failure message does."""
+
+    __slots__ = ("_build", "target")
+
+    def __init__(self, target: str, build: Callable[[], bytes]) -> None:
+        self.target = target
+        self._build = build
+
+    @property
+    def data(self) -> bytes:
+        return self._build()
+
+    def __repr__(self) -> str:
+        return f"{self.target} sha256={_digest(self.data)}"
+
+
+def _write_record(case: _Input, path: Path) -> str:
+    """Writes {seed, target, input} to `path`, the seed as a decimal string (a reader that parses
+    numbers as doubles would round a 64-bit one). Returns "" when it did, else the class of the
+    error that stopped it: the error is dropped here, with the frames that held the input."""
+    b64 = base64.b64encode(case.data).decode()
+    record = {"seed": str(SEED), "target": case.target, "input": b64}
     try:
-        try:
-            decode(data)
-        except FrameMalformedError:
-            pass
-        except BaseException as exc:
-            raise AssertionError(f"untyped {exc!r}: {_save_failure(data)}") from exc
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    if peak > MAX_PEAK_BYTES:
-        pytest.fail(f"decode peaked at {peak} B: {_save_failure(data)}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+    except OSError as exc:
+        return type(exc).__name__
+    return ""
+
+
+def _save_failure(case: _Input) -> str:
+    """Writes the failure's file under CV_FUZZ_ARTIFACT_DIR; returns the only text a failure may
+    carry: the target and the digest, and the class of the error if the file was not written."""
+    digest = _digest(case.data)
+    label = f"{case.target} sha256={digest}"
+    if out := os.environ.get("CV_FUZZ_ARTIFACT_DIR"):
+        if failed := _write_record(case, Path(out) / f"{case.target}-{digest}.json"):
+            label += f" (not saved: {failed})"
+    return label
 
 
 def _json_like_depth(value: object) -> int:
@@ -149,42 +162,82 @@ def _json_like_depth(value: object) -> int:
     return deepest
 
 
-def _check_msgpack(data: bytes) -> None:
-    """The SR-185 invariant for one input: a typed refusal or a bounded JSON-like value."""
+def _check(
+    case: _Input,
+    decoder: Callable[[bytes], object],
+    typed: type[Exception],
+    peak_cap: Callable[[], int],
+    depth_cap: int | None = None,
+) -> None:
+    """One input against a decoder's invariant: it returns or raises only `typed`, never nests
+    past `depth_cap` (when set) and never peaks above `peak_cap()`. A violation, or a check that
+    raises, fails with the target and the digest, raised where no exception is in flight."""
+    data = case.data  # built before tracing starts: the peak is the decoder's alone
+    why = ""
+    value: object = None
     tracemalloc.start()
     try:
         try:
-            value, refused = decode_client_frame(data), False
-        except MsgpackFrameError:
-            value, refused = None, True
+            value = decoder(data)
+        except typed:
+            pass
         except BaseException as exc:
-            raise AssertionError(f"untyped {exc!r}: {_save_failure(data, 'msgpack')}") from exc
-        _, peak = tracemalloc.get_traced_memory()
+            why = f"untyped {type(exc).__name__}"
+        peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
-    if not refused and not 0 <= _json_like_depth(value) <= MAX_MSGPACK_DEPTH:
-        pytest.fail(f"decoded beyond the SR-185 bounds: {_save_failure(data, 'msgpack')}")
-    if peak > peak_bound():  # derived in `_msgpack_bounds.py`
-        pytest.fail(f"msgpack decode peaked at {peak} B: {_save_failure(data, 'msgpack')}")
+    try:  # the peak first: a value that broke it may be too big to walk
+        if not why and peak > peak_cap():
+            why = "decode peaked above its cap"
+        if not why and depth_cap is not None and not 0 <= _json_like_depth(value) <= depth_cap:
+            why = "decoded beyond the SR-185 bounds"
+    except Exception as exc:
+        why = f"bounds check raised {type(exc).__name__}"
+    finally:
+        del data, value  # nothing derived from the input stays in the frame that fails
+    if why:
+        raise AssertionError(f"{why}: {_save_failure(case)}") from None
 
 
+def _check_msgpack(case: _Input) -> None:
+    """The SR-185 invariant for one input: a typed refusal or a bounded JSON-like value."""
+    _check(case, decode_client_frame, MsgpackFrameError, peak_bound, MAX_MSGPACK_DEPTH)
+
+
+# print_blob: the blob encodes the input. verbosity: the failing-case report names the generated
+# arguments. phases: the explanation names the code only failing inputs reach.
 _FUZZ_SETTINGS = settings(
     max_examples=EXAMPLES,
     deadline=None,
     suppress_health_check=list(HealthCheck),
     database=None,
-    print_blob=True,
+    print_blob=False,
+    verbosity=Verbosity.quiet,
+    phases=[p for p in Phase if p is not Phase.explain],
 )
+
+
+@st.composite
+def _mutated(draw: st.DrawFn, target: str, seeds: list[bytes]) -> _Input:
+    i = draw(st.integers(0, len(seeds) - 1))
+    ops = draw(st.lists(_op, min_size=1, max_size=6))
+    return _Input(target, lambda: mutate(seeds[i], ops))
 
 
 @pytest.mark.fuzz
 @seed(SEED)
 @_FUZZ_SETTINGS
-@given(i=st.integers(0, len(MSGPACK_SEEDS) - 1), ops=st.lists(_op, min_size=1, max_size=6))
-def test_msgpack_client_decode_mutated_corpus_raises_only_the_typed_error(
-    i: int, ops: list[tuple[str, int, int]]
-) -> None:
-    _check_msgpack(mutate(MSGPACK_SEEDS[i], ops))
+@given(case=_mutated("cvwb", SEEDS))
+def test_decode_mutated_corpus_raises_only_the_typed_error(case: _Input) -> None:
+    _check(case, decode, FrameMalformedError, lambda: MAX_PEAK_BYTES)
+
+
+@pytest.mark.fuzz
+@seed(SEED)
+@_FUZZ_SETTINGS
+@given(case=_mutated("msgpack", MSGPACK_SEEDS))
+def test_msgpack_client_decode_mutated_corpus_raises_only_the_typed_error(case: _Input) -> None:
+    _check_msgpack(case)
 
 
 _CLAIMS: Final[tuple[int, ...]] = (0, 1, 2, 15, 16, 63, 64, 65, 255, 0xFFFF, 1 << 31, 0xFFFFFFFF)
@@ -206,10 +259,18 @@ _token = st.one_of(
 )
 
 
-@pytest.mark.fuzz
-@seed(SEED)
-@_FUZZ_SETTINGS
-@given(
+def _structured(
+    nest: int, claim: int, kind: str, body: list[bytes], repeat: int, pad: int
+) -> _Input:
+    def build() -> bytes:
+        frame = _header(kind, claim) * nest + b"".join(body) * repeat + b"\xc0" * pad
+        return frame[:MAX_INBOUND_FRAME_BYTES]
+
+    return _Input("msgpack", build)
+
+
+_STRUCTURED = st.builds(
+    _structured,
     nest=st.integers(0, 1_100),
     claim=st.sampled_from(_CLAIMS),
     kind=st.sampled_from(["array", "map"]),
@@ -217,11 +278,14 @@ _token = st.one_of(
     repeat=st.integers(1, 4_096),
     pad=st.integers(0, MAX_INBOUND_FRAME_BYTES),
 )
-def test_msgpack_client_decode_structured_frames_stay_bounded(
-    nest: int, claim: int, kind: str, body: list[bytes], repeat: int, pad: int
-) -> None:
-    frame = _header(kind, claim) * nest + b"".join(body) * repeat + b"\xc0" * pad
-    _check_msgpack(frame[:MAX_INBOUND_FRAME_BYTES])
+
+
+@pytest.mark.fuzz
+@seed(SEED)
+@_FUZZ_SETTINGS
+@given(case=_STRUCTURED)
+def test_msgpack_client_decode_structured_frames_stay_bounded(case: _Input) -> None:
+    _check_msgpack(case)
 
 
 # SR-128 (targeted): every count field that cannot fit is rejected up front by `_fits`. Removing
@@ -286,10 +350,16 @@ def _level(kind: str, width: int, child: bytes, distinct: bool, level: int) -> b
 _ONE_ENTRY_MAP: Final = b"\x81\xa0\xe0"  # a completed one-entry map
 
 
-@pytest.mark.fuzz
-@seed(SEED)
-@_FUZZ_SETTINGS
-@given(
+def _open_levels(kind: str, width: int, child: bytes, levels: int, distinct: bool) -> _Input:
+    def build() -> bytes:
+        frame = b"".join(_level(kind, width, child, distinct, n) for n in range(levels))
+        return frame[:MAX_INBOUND_FRAME_BYTES]
+
+    return _Input("msgpack", build)
+
+
+_OPEN_LEVELS = st.builds(
+    _open_levels,
     kind=st.sampled_from(["array", "map"]),
     width=st.integers(0, MAX_MSGPACK_ARRAY_LEN),
     child=st.sampled_from(
@@ -308,9 +378,12 @@ _ONE_ENTRY_MAP: Final = b"\x81\xa0\xe0"  # a completed one-entry map
     levels=st.integers(1, 1_100),
     distinct=st.booleans(),
 )
-def test_msgpack_client_decode_open_levels_stay_bounded(
-    kind: str, width: int, child: bytes, levels: int, distinct: bool
-) -> None:
+
+
+@pytest.mark.fuzz
+@seed(SEED)
+@_FUZZ_SETTINGS
+@given(case=_OPEN_LEVELS)
+def test_msgpack_client_decode_open_levels_stay_bounded(case: _Input) -> None:
     """#2509 review: values held in containers that never complete are charged late."""
-    frame = b"".join(_level(kind, width, child, distinct, n) for n in range(levels))
-    _check_msgpack(frame[:MAX_INBOUND_FRAME_BYTES])
+    _check_msgpack(case)

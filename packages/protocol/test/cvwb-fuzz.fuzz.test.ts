@@ -1,7 +1,8 @@
 // E17-T02 part B: nightly mutation fuzz of the TS CVWB decoders (SR-155), seeded from
 // tests/fuzz/ws-frames/corpus.json. Invariant: every decoder returns or throws ONLY
 // BinaryFrameError. N via CV_FUZZ_EXAMPLES (default 20 000), seed via CV_FUZZ_SEED.
-// Failing inputs go to CV_FUZZ_ARTIFACT_DIR (CI artefact, never the repo).
+// A failure reports only its target and a sha256 digest of (seed, input), as the Python suite does:
+// the pair goes to CV_FUZZ_ARTIFACT_DIR, which CI uploads only encrypted (fuzz-nightly.yml).
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -24,7 +25,7 @@ const corpus = JSON.parse(
 ) as { name: string; hex: string }[];
 const SEEDS = corpus.map((s) => Uint8Array.from(Buffer.from(s.hex, "hex")));
 const N = Number(process.env["CV_FUZZ_EXAMPLES"] ?? 20_000);
-const SEED = Number(process.env["CV_FUZZ_SEED"] ?? 0xc0ffee);
+const SEED = BigInt(process.env["CV_FUZZ_SEED"] ?? 0xc0ffee); // up to 64 bits
 // Per-decode sanity bounds (not perf asserts): inputs are <= ~300 B, so 16 MiB of heap growth or
 // 50 ms is a count sizing an allocation/loop. GC is not forced (no --expose-gc in the vitest pool),
 // hence the loose heap bound; the targeted SR-128 test below is the precise check.
@@ -74,23 +75,37 @@ function mutate(seed: Uint8Array, rnd: () => number): Uint8Array {
   return buf;
 }
 
-function save(data: Uint8Array): void {
-  const dir = process.env["CV_FUZZ_ARTIFACT_DIR"];
-  if (!dir) return;
-  mkdirSync(dir, { recursive: true });
-  const name = createHash("sha256").update(data).digest("hex");
-  writeFileSync(join(dir, `cvwb-ts-fail-${name}.bin`), data);
+/** What a failure may say about a thrown value: its class, never its message. */
+function kindOf(e: unknown): string {
+  return e instanceof Error ? e.constructor.name : typeof e;
 }
 
-function fail(what: string, decode: { name: string }, data: Uint8Array, i: number): never {
-  save(data);
-  throw new Error(
-    `${what}: ${decode.name} seed=${SEED} iteration=${i} input=${Buffer.from(data).toString("hex")}`,
-  );
+/** Why a case failed: a fixed phrase, or a thrown value, of which only the class is said. */
+type Reason =
+  | "decode exceeded time cap"
+  | "decode exceeded heap cap"
+  | "count not rejected up front"
+  | { thrown: unknown };
+
+/** Fails with the target and the digest alone; the (seed, input) pair goes to the artefact dir. */
+function fail(reason: Reason, decode: { name: string }, data: Uint8Array): never {
+  const what = typeof reason === "string" ? reason : `non-typed throw (${kindOf(reason.thrown)})`;
+  const digest = createHash("sha256").update(`${SEED}:`).update(data).digest("hex");
+  const dir = process.env["CV_FUZZ_ARTIFACT_DIR"];
+  if (dir) {
+    mkdirSync(dir, { recursive: true });
+    const input = Buffer.from(data).toString("base64");
+    writeFileSync(
+      join(dir, `${decode.name}-${digest}.json`),
+      JSON.stringify({ seed: String(SEED), target: decode.name, input }),
+    );
+  }
+  throw new Error(`${what}: ${decode.name} sha256=${digest}`);
 }
 
 it(`decoders throw only BinaryFrameError over ${N} mutated corpus inputs`, () => {
-  const rnd = prng(SEED);
+  // the digest takes the whole seed; the PRNG state is folded from it
+  const rnd = prng(Number(BigInt.asUintN(32, SEED ^ (SEED >> 32n))));
   for (let i = 0; i < N; i++) {
     const data = mutate(SEEDS[Math.floor(rnd() * SEEDS.length)] ?? new Uint8Array(0), rnd);
     for (const decode of DECODERS) {
@@ -99,11 +114,11 @@ it(`decoders throw only BinaryFrameError over ${N} mutated corpus inputs`, () =>
       try {
         decode(data);
       } catch (e) {
-        if (!(e instanceof BinaryFrameError)) fail(`non-typed throw ${String(e)}`, decode, data, i);
+        if (!(e instanceof BinaryFrameError)) fail({ thrown: e }, decode, data);
       }
-      if (performance.now() - t0 > MAX_DECODE_MS) fail("decode exceeded time cap", decode, data, i);
+      if (performance.now() - t0 > MAX_DECODE_MS) fail("decode exceeded time cap", decode, data);
       if (process.memoryUsage().heapUsed - heap0 > MAX_DECODE_HEAP) {
-        fail("decode exceeded heap cap", decode, data, i);
+        fail("decode exceeded heap cap", decode, data);
       }
     }
   }
@@ -153,9 +168,10 @@ it("every wire count that cannot fit is rejected up front (SR-128), per site and
         try {
           site.decode(data);
         } catch (e) {
-          msg = e instanceof BinaryFrameError ? e.message : `UNTYPED ${String(e)}`;
+          if (!(e instanceof BinaryFrameError)) fail({ thrown: e }, site.decode, data);
+          msg = e.message;
         }
-        expect(msg, `${site.decode.name}@${site.offset} count=${value}`).toMatch(/exceeds/);
+        if (!/exceeds/.test(msg)) fail("count not rejected up front", site.decode, data);
       }
     }
   }
