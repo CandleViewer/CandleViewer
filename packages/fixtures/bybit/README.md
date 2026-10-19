@@ -5,14 +5,16 @@ C-13.5). Tests load it only through `services/api/tests/_corpus.py`.
 
 ## Layout
 
-`<capture-date>/` (today `2026-10-05/`). A refresh adds a new dated directory, so it is
-additive and an old test can pin an old corpus (`corpus_path(..., capture_date=...)`).
+`<capture-date>/` (today `2026-10-05/`). A full refresh adds a new dated directory, so it is
+additive and an old test can pin an old corpus (`corpus_path(..., capture_date=...)`). Frames
+recorded later for fields the corpus lacks join the current directory instead, each with its
+own `capture_date` (the `recorded_*` files below).
 
 - `ws/*.jsonl` - raw public WS frames, one per line, exactly as received.
 - `rest/*.json` - REST response bodies (`http_status` is recorded in the manifest).
 - `manifest.json` - one entry per file: `path`, `symbol`, `stream`, `host`, `capture_date`,
-  `source`, `notable_event`, `http_status`, `size_cap_bytes`. A unit test fails if a file
-  is unlisted or over its cap.
+  `source`, `notable_event`, `http_status`, `size_cap_bytes`, and `window_ms` (first and last
+  frame `ts`) for a recorded capture. A unit test fails if a file is unlisted or over its cap.
 - `schema_expectations.json` - field path to JSON-type expectations used by the drift check.
 - `README.tickers.md`, `README.trades.md` - provenance notes from E08-S03/S04.
 
@@ -39,10 +41,11 @@ Refresh with `tools/fixtures/capture_fixture.py` (public stream only, redacts ev
 aborts on a leftover secret pattern, enforces a size cap).
 
 The two `recorded_*` files are such captures, copied unchanged. They are 20 frames each of
-`publicTrade.BTCUSDT` and `tickers.BTCUSDT`, from `fixture-drift.yml` run 39210373369 on
-2026-10-19 (#3447). They carry the live fields the documented shapes lacked. Each red
-`fixture-drift` run keeps its redacted sample as the `fixture-drift-sample` artifact for 14
-days, so a refresh can start from it when the recording machine cannot reach the public
+`publicTrade.BTCUSDT` and `tickers.BTCUSDT`, from Bybit's mainnet public stream
+(`stream.bybit.com`, env live, public data only), recorded by `fixture-drift.yml` run 39210373369
+on 2026-10-19 (#3447). They carry the live fields the documented shapes lacked. Each
+`fixture-drift` run that is not cancelled keeps its redacted sample as the
+`fixture-drift-sample` artifact for 14 days, so a refresh can start from it when the recording machine cannot reach the public
 stream (`gh run download <run> -n fixture-drift-sample`, into a new empty directory). After
 adding frames: list them in `build_corpus.py`, rebuild the manifest
 (`python tools/fixtures/build_corpus.py`), refresh the expectations

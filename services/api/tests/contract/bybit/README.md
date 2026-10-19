@@ -46,8 +46,9 @@ recorded payload differs from `packages/fixtures/bybit/<date>/schema_expectation
 
 1. **Read the diff.** It names the stream and the exact field path.
 2. **Decide: venue change or fixture defect?** Re-capture with
-   `tools/fixtures/capture_fixture.py` against demo; if the fresh capture shows the same change,
-   Bybit changed the feed. A red nightly run also keeps its redacted capture as the
+   `tools/fixtures/capture_fixture.py` (it records the mainnet public stream; demo has no public
+   feed of its own); if the fresh capture shows the same change, Bybit changed the feed. Each
+   nightly run that is not cancelled also keeps its redacted capture as the
    `fixture-drift-sample` artifact (#3447).
 3. **Venue change (usual case).** Update the adapter parser in `exchange/bybit/` and its unit tests,
    then refresh the corpus and manifest (`python tools/fixtures/drift_check.py --write-expectations`).
