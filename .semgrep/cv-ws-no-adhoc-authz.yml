@@ -1,0 +1,69 @@
+rules:
+  - id: cv-ws-no-adhoc-authz
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Permission, role and account-scope tests in the WS gateway go through the RBAC helpers only:
+      `auth.scopes.decide`, `PrincipalSnapshot.is_owner` and the helpers `ws/permissions.py` uses.
+      An inline test of a principal's `permissions`, `roles`, `account_grants` (or `role`, `scopes`)
+      can drift from `decide()`, so a deny added there would not apply (SR-017, 23-ws-protocol.md
+      6.3, E17-X02). A filter that has to mirror `decide()` inline needs a test that pins it and a
+      reasoned `nosemgrep: cv-ws-no-adhoc-authz reason=<token> owner=@<team> review=<date>`. The
+      auth pack's `no-adhoc-authz` (SR-017) also matches `x in P.roles`, `x in P.permissions` and
+      `P.role ==`, `!=`, `in`, `is`: for those forms the marker lists both ids
+      (`nosemgrep: cv-ws-no-adhoc-authz,no-adhoc-authz reason=...`).
+    metadata:
+      rule-id: cv-ws-no-adhoc-authz
+      sr: SR-017
+    patterns:
+      - pattern-either:
+          # membership
+          - pattern: $X in $P.$A
+          - pattern: $X not in $P.$A
+          - pattern: $P.$A in $X
+          - pattern: $P.$A not in $X
+          # equality, either way round
+          - pattern: $P.$A == $X
+          - pattern: $P.$A != $X
+          - pattern: $X == $P.$A
+          - pattern: $X != $P.$A
+          - pattern: $P.$A is $X
+          - pattern: $P.$A is not $X
+          # set methods, the attribute as the receiver or as the argument
+          - pattern: $P.$A.isdisjoint(...)
+          - pattern: $P.$A.issubset(...)
+          - pattern: $P.$A.issuperset(...)
+          - pattern: $P.$A.intersection(...)
+          - pattern: $P.$A.difference(...)
+          - pattern: $X.isdisjoint($P.$A)
+          - pattern: $X.issubset($P.$A)
+          - pattern: $X.issuperset($P.$A)
+          - pattern: $X.intersection($P.$A)
+          - pattern: $X.difference($P.$A)
+          # set operators (`&` matches either way round)
+          - pattern: $P.$A & $X
+          - pattern: $X - $P.$A
+          - pattern: $P.$A - $X
+          - pattern: $X <= $P.$A
+          - pattern: $P.$A <= $X
+          - pattern: $X >= $P.$A
+          - pattern: $P.$A >= $X
+          - pattern: $X < $P.$A
+          - pattern: $P.$A < $X
+          - pattern: $X > $P.$A
+          - pattern: $P.$A > $X
+          # an iteration that tests, a lookup that reads the grant, and a reflective read (a plain
+          # `getattr(principal, "roles")` counts: nothing in ws/ reads a typed attribute that way)
+          - pattern: any($E for $R in $P.$A)
+          - pattern: all($E for $R in $P.$A)
+          - pattern: $P.$A(...)
+          - pattern: getattr($P, "$A", ...)
+      - metavariable-regex:
+          metavariable: $A
+          regex: "^(permissions|roles|role|scopes|account_grants|grant_for)$"
+    paths:
+      include:
+        - "services/api/candleviewer/ws/**"
+        - "**/cv-ws-no-adhoc-authz*"
+      exclude:
+        - "**/test_*.py"

@@ -5,12 +5,32 @@ rules:
     message: >-
       Ad hoc WS error frame. Build `err` frames only via
       `candleviewer.ws.errors.build_ws_error` so the code is validated against the
-      generated registry (E17-T05, 23-ws-protocol.md 10.2).
+      generated registry (E17-T05, 23-ws-protocol.md 10.2). The rule matches a dict
+      literal, any call that takes `t="err"` or `type="err"` (`dict(...)`, `update`,
+      the gateway's `_reply`), `_reply("err", ...)`, an item assignment or `setdefault`
+      on a frame, and a frame written as JSON text or as msgpack bytes (E17-X02).
     metadata:
       rule-id: cv-ad-hoc-ws-error-frame
     pattern-either:
+      # dict literals: key order does not matter, a `**` spread ahead of the key needs its own row
       - pattern: '{"t": "err", ...}'
       - pattern: '{"type": "err", ...}'
+      - pattern: '{**$X, "t": "err", ...}'
+      - pattern: '{**$X, "type": "err", ...}'
+      # any call that takes the type as a keyword: dict(t="err"), frame.update(t="err"), _reply(t="err")
+      - pattern: $FN(..., t="err", ...)
+      - pattern: $FN(..., type="err", ...)
+      # the gateway's reply helper takes the type as its first argument
+      - pattern: _reply("err", ...)
+      # a frame built up key by key
+      - pattern: $F["t"] = "err"
+      - pattern: $F["type"] = "err"
+      - pattern: $F.setdefault("t", "err")
+      - pattern: $F.setdefault("type", "err")
+      # a frame written straight to JSON text: a quote, `{` (`{{` in an f-string), then the pair
+      - pattern-regex: '["'']\s*\{+[^\n]{0,200}?"(?:t|type)\\?"\s*:\s*\\?"err\\?"'
+      # ... or straight to msgpack bytes (fixstr "t" or "type" with the fixstr "err"; hex in either case)
+      - pattern-regex: '\bb(?:"|'')[^"'']*\\x[aA](?:1t|4type)\\x[aA]3err'
     paths:
       exclude:
         - "**/test_*.py"
