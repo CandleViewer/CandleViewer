@@ -58,6 +58,10 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      (CI-BEN-001, stub pending E03-T14)
 └─ ci-required resolver (always)     → final merge gate                 (CI-GATE-001/002)
 
+PR into main opened/edited/pushed/reopened/ready/(un)labeled (.github/workflows/pr-metadata.yml)
+└─ pr-metadata  (one job, #3751)   → main's checker: size, title, body, rule refs (C-9.1 #20);
+                                     then main's regression guard, non-required (CI-REG-001/002)
+
 merge to main (.github/workflows/main.yml)
 ├─ dockerfile-pins        → digest-pin check                            (CI-IMG-001)
 ├─ build-scan-sign        → non-root hardening, Trivy, SBOM, cosign      (CI-IMG-002..006)
@@ -89,10 +93,12 @@ release tag (.github/workflows/release.yml)
 PR's superseded run, so a body edit or a push replaces the previous run instead of queueing
 behind it; scheduled, dispatched and `main` runs are never cancelled by a PR run.
 `scripts/tests/test_workflow_concurrency.py` fails a new `pull_request` workflow without its group.
-The auxiliary workflows also start fewer runs: `regression-guard` skips PR label events, which
-change nothing it reads, and `board-automation.yml` runs no job unless the repository variable
-`GOVERNANCE_ENFORCE` is `true` (observe-only runs enforced nothing); when it does, one
-`close-guards` job runs the QA, security and a11y close guards.
+The auxiliary workflows also start fewer runs: the regression guard is a step of the `pr-metadata`
+job, so one runner per PR event serves both (it had a workflow of its own; CI-REG-* below); only
+`pr-metadata`, which reads the PR body, runs on a body edit (`edited`); and `board-automation.yml`
+runs no job unless the repository variable `GOVERNANCE_ENFORCE` is `true` (observe-only runs
+enforced nothing); when it does, one `close-guards` job runs the QA, security and a11y close
+guards.
 
 **Dependency-only PRs (#3182).** A PR that changes only `pnpm-lock.yaml`, the root `package.json`
 or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts `js`, `security`
@@ -694,6 +700,23 @@ index alone, removing nothing.
   looks like a table row or separator (the ledger holds one table), or it holds
   an HTML comment (the ledger is read as it renders). The check fails closed;
   restore the table's shape.
+
+### CI-REG-* — regression guard (`tools/triage`, a non-required step of `pr-metadata`)
+
+The guard (E49-T01, `docs/plan/03-testing-strategy.md` §11.3) runs main's `tools/triage`, never
+the PR's, as the last step of the `pr-metadata` job on every PR event. It is not a required check
+(C-9.1), so its finding never turns `pr-metadata` red: the step is marked failed, the check run
+carries a warning annotation titled `regression-guard (non-required)`, and the job summary a line.
+`gh run view <run id>` lists the annotation under ANNOTATIONS.
+
+- **CI-REG-001** (a Bug closed without a regression test): the PR body closes a `type/bug` issue
+  (`Closes #N`, `Fixes #N`, `Resolves #N`), the PR changes no test file, and the issue lacks
+  `p3-cosmetic-exempt` with its "Cosmetic exemption reason" filled in. Add the test that fails
+  without the fix, or, for a cosmetic P3, apply the label and state the reason in the issue; the
+  next PR event (a push or an edit) re-runs the guard.
+- **CI-REG-002** (no verdict): the guard did not finish: `origin/main` has no regular
+  `tools/triage/run.py` (the step never runs the PR's copy), an `E_TRIAGE_*` API error, or the
+  step's 100-second limit. The step log says which; re-run the job once the cause is gone.
 
 ### CI-SPIKE-* — spike containment (`tools/ci/check_spike_containment.py`)
 

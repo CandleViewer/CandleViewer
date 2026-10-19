@@ -3,11 +3,20 @@ name: pr-metadata
 # #2249 / CONSTITUTION C-9.1 #20: PR size (C-4.8), conventional title (C-4.10), `Closes #N` (C-4.7),
 # dangling `C-x.y` references in the PR text (C-16.4).
 #
-# Its own workflow (precedent: regression-guard.yml) so that title/body/label edits re-run it and,
-# with its own concurrency group, never cancel the main `pr` pipeline. The script reads the LIVE
-# title, body, labels and label events from the API, so a manual re-run never replays a stale payload.
+# Its own workflow so that title/body/label edits re-run it and, with its own concurrency group,
+# never cancel the main `pr` pipeline. The script reads the LIVE title, body, labels and label
+# events from the API, so a manual re-run never replays a stale payload.
 # The required-check context is `pr-metadata` (job name). Branch protection must list it; only the
 # repo owner can change that.
+#
+# #3751: the job also runs the E49-T01 regression guard (03-testing-strategy.md §11.3: a PR that
+# closes a Bug issue changes a test file, or the issue carries p3-cosmetic-exempt with a stated
+# reason), which had a workflow, and a runner per PR event, of its own. The guard is not a
+# required check (C-9.1 does not list it; listing it is a C-16 amendment), so its step is
+# `continue-on-error` within the job's time budget and never decides the job's result: a finding
+# is a warning annotation and a job-summary line (CI-REG-001/002, docs/ci-runbook.md §4). It reads
+# the live PR's files and body and each closed issue's labels and body, and runs on every event:
+# a label event's run cancels a push's in the group below, so it must judge the push.
 #
 # Trust model: runs on `pull_request` (never pull_request_target, SR-132). The checker, its
 # commitlint.config.cjs, scripts/check_rule_refs.py, .gitattributes and CODEOWNERS are taken from a
@@ -15,13 +24,16 @@ name: pr-metadata
 # PR cannot rewrite the gate that judges it; the head CONSTITUTION.md is read via `git show` as
 # data only. There is no fallback: if the checker is not a regular file on origin/main the job fails
 # and never runs PR code. Changing the gate's own files needs `large-pr-approved` (PR-SIZE-006).
+# The guard's tools/triage is likewise extracted from origin/main, never the PR's copy (a change to
+# it takes effect once merged; its unit tests run on the PR), and nothing is installed for it.
 # REMAINING GAP: under `pull_request` this workflow file is itself PR-controlled, so editing
 # pr-metadata.yml is still a bypass; only the C-10.2 workflow security review catches it.
 #
 # `issues: read` (#2920): for a `Partial:` PR the checker reads GraphQL `closingIssuesReferences`
 # (PR-BODY-003). A read-only precaution whose need is UNVERIFIED: the report of that list coming
 # back silently empty without issues access (cli/cli issue 11841) was for a private repo, and
-# this repo is public. The offline body scan does not depend on it.
+# this repo is public. The offline body scan does not depend on it. The guard reads each issue the
+# PR closes with it.
 
 on:
   pull_request:
@@ -41,7 +53,9 @@ jobs:
   pr-metadata:
     name: pr-metadata
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The checker job's old 5 minutes plus the guard step's 2 (#3751): the guard does not eat into
+    # the checker's time.
+    timeout-minutes: 7
     permissions:
       contents: read
       pull-requests: read
@@ -51,7 +65,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
       - name: Check PR size, title, body and rule references (live PR data)
@@ -72,3 +87,47 @@ jobs:
             echo "::error title=pr-metadata::main has no valid tools/ci/check_pr_metadata.py (entry='$ENTRY'); refusing to run PR code"
             exit 1
           fi
+      # E49-T01 / #3751: non-required, so it fails only its own step. After the checker whatever
+      # its outcome, so neither hides the other's finding.
+      - name: Regression guard (non-required; a Bug closed without a test change)
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set +e # the runner's `bash -e` would end the step before it reports the guard's result
+          set -uo pipefail
+          dir="$RUNNER_TEMP/regression-guard"
+          log="$RUNNER_TEMP/regression-guard.log"
+          # main's guard, never the PR's: anchored on this job's own fetch of main, as above
+          gate="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+          entry="$(git ls-tree "$gate" -- tools/triage/run.py | cut -d' ' -f1)"
+          if [ "$entry" = "100644" ] || [ "$entry" = "100755" ]; then
+            {
+              mkdir -p "$dir" && git archive "$gate" tools/triage | tar -x -C "$dir" &&
+                (cd "$dir" && timeout 100 python -E -s -m tools.triage.run guard --number "$PR_NUMBER")
+            } >"$log" 2>&1
+            rc=$?
+          else
+            echo "main has no regular tools/triage/run.py (entry '$entry'); the PR's is never run" >"$log"
+            rc=2
+          fi
+          # The log can quote an issue's text (an exemption reason): print it with workflow
+          # commands off, so none of its lines acts as one.
+          stop="$(python -I -c 'import secrets; print(secrets.token_hex(16))')"
+          echo "::stop-commands::$stop"
+          cat "$log"
+          echo "::$stop::"
+          [ "$rc" -ne 0 ] || exit 0
+          bugs="$(grep -oE '^#[0-9]+: FAIL' "$log" | cut -d: -f1 | paste -sd ' ' -)"
+          if [ -n "$bugs" ]; then
+            msg="CI-REG-001: closes Bug issue(s) $bugs without a test change or a stated p3-cosmetic-exempt reason (03-testing-strategy.md §11.3)"
+          else
+            msg="CI-REG-002: no verdict (exit $rc); this step's log says why"
+          fi
+          echo "::warning title=regression-guard (non-required)::$msg"
+          echo "**regression-guard** (non-required): $msg. Recipe: docs/ci-runbook.md §4." >>"$GITHUB_STEP_SUMMARY"
+          exit "$rc"
