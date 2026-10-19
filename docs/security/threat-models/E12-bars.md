@@ -279,7 +279,7 @@ SR-E12-nn are epic-local requirement ids (convention of `SR-E22-nn`, `E16-FR-nn`
 | ID        | Requirement                                                                                                                                                                                                     | Rows                | Verify              |
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------- |
 | SR-E12-01 | `limit` <= 5000 (default 1000); 2 MiB response ceiling; reject, never truncate; 2 s timeout per query (non-time: estimate count, then read) up to 4 s; #3287 adds the timeout to the recording-start read       | BR-27               | contract, load      |
-| SR-E12-02 | Window caps validated before any bar read: time bars <= 250 000 bars and <= 400 d; non-time <= 31 d and <= 250 000 estimated bars (built, #2089, #2093); `bar_window_too_large` 422; WS: span caps so far, §12  | BR-28               | contract, fuzz      |
+| SR-E12-02 | Window caps validated before any bar read: time bars <= 250 000 bars and <= 400 d; non-time <= 31 d and <= 250 000 estimated bars (built, #2089, #2093); `bar_window_too_large` 422; WS: span, scan caps, §12   | BR-28               | contract, fuzz      |
 | SR-E12-03 | Param floors and ceilings in one module: `tick` 100..1 000 000; `volume`/`delta` >= 10 qty steps and <= 10^12; `range`/`renko` 2..100 000 ticks; reject, never clamp                                            | BR-29               | unit, fuzz          |
 | SR-E12-04 | Spec caps: 8 per user, 32 per symbol, 512 process-wide; cap check precedes registration; ref-counted with 30 s grace                                                                                            | BR-30, BR-37, BR-38 | unit, load          |
 | SR-E12-05 | Rebuild limits: 1 concurrent per user (new cancels old), 6 starts per 10 min per user, 2 process-wide on the bounded executor, 250 000 bars (ADR-0033, Accepted)                                                | BR-31               | load, chaos         |
@@ -453,14 +453,19 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     cost is unmeasured. #3279 replaces the print count with a count of the stored bars.
   - SR-E12-02 on the WS path (BR-28, BR-38; E12-T06, #2787): the tail read behind a `bars` snapshot is bounded
     by span (the SR-E12-02 window: at most 400 d for time bars, 31 d for the others) and by `MAX_TAIL` (1 000,
-    the `history` maximum) on the rows it returns, not by the rows it scans. The read always takes `MAX_TAIL`,
-    whatever a subscriber's `history`; `history` only trims what is sent. SR-E12-02's 250 000 figure is REST's
-    estimate gate only. A non-time read first takes the `ts` of the series' newest `MAX_TAIL` rows (D2-M2, #3688;
-    21 §9.5), then sorts only the rows from there, about `MAX_TAIL`. As `symbol` has no index, the filter still
-    reads every row of the kind's table from that `ts` on; a series with fewer rows than `MAX_TAIL` in its window
-    has no such `ts` and is read from the window start, twice (once if it has none). A time read keeps one
-    statement, over at most about twice the bars it asks for (fewer once the 400 d cap applies; 21 §9.5). A scan
-    bound by table rows remains before `bars_enabled` is turned on (#2787); the read's cost is measured in D2-G3.
+    the `history` maximum) on the rows it returns. The read always takes `MAX_TAIL`, whatever a subscriber's
+    `history`; `history` only trims what is sent. SR-E12-02's 250 000 figure is REST's estimate gate only. As
+    `symbol` has no index, each statement of a read filters every row of its kind's table from where it starts,
+    so a non-time read is also bounded by table rows (D2-M4, #2787; 21 §9.5): it first takes the `ts` of the
+    table's `MAX_TAIL_SCAN_ROWS`-th newest row in the window (500 000, of any series), a backward scan that stops
+    there, then the `ts` of the series' newest `MAX_TAIL` rows from the later of that `ts` and its window start
+    (D2-M2, #3688), then sorts only the rows from there, about `MAX_TAIL`. No statement visits more than
+    `MAX_TAIL_SCAN_ROWS` rows and those tied with the last; a sparse series' snapshot may start later than its
+    window, or be empty (23 §6.1). A time read keeps one statement, over at most about twice the bars it asks for
+    (fewer once the 400 d cap applies; 21 §9.5): bounded by span, not by rows, a residual, as `bars_time` also
+    holds kline rows and no row estimate of it exists. REST `/market/bars` reads are bounded by the window caps,
+    the estimate gate and the 2 s timeout, not by rows. The read's cost is measured in D2-G3;
+    `MAX_TAIL_SCAN_ROWS` is re-sized on the target host with the D2-M4 bench.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
@@ -491,3 +496,4 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
 | 2026-10-18 | author (E12-T06, #399)                                  | SR-E12-07 50 % share built, flag on (D8)                 |
 | 2026-10-18 | code + security review r1 (#399 D8)                     | APPROVE ×2; minors folded                                |
 | 2026-10-18 | author (SR-E12-07, #3476)                               | SR-E12-07 subscribe rate per user built                  |
+| 2026-10-19 | author (SR-E12-02, #2787 D2-M4)                         | WS non-time scan bounded by table rows                   |

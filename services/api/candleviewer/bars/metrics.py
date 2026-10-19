@@ -240,6 +240,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_checksum_mismatch_total",  # bars.reader (E12-T02, #1998)
         "bars_rebuild_scheduled_total",
         "bars_stale_build_version_total",
+        "bars_tail_scan_bounded_total",  # its table-row bound (#2787 D2-M4)
         # Every `LazyPgWire`'s, the bars sink's and the store's among them (#2787 D2-G2).
         "questdb_pgwire_discards_total",
         "questdb_pgwire_abandoned_total",

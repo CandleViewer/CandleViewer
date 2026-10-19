@@ -217,6 +217,8 @@ async def _reads(wire: LazyPgWire, spec: BarSpec, case: str) -> tuple[list[Row],
     tail = await BarReader(rec, _no_rebuild, now_us=lambda: NOW_US).read_tail(
         _symbol(case), spec, MAX_TAIL
     )
+    bound = rec.calls.pop(0)  # D2-M4's table-row bound: these tables hold fewer than its rows
+    assert (bound.rows, tail.bounded, tail.since_us) == ([], False, SINCE), bound.sql
     assert (tail.fetched, tail.dropped, tail.skipped, len(tail.bars)) == (len(one), 0, 0, len(one))
     return one, rec, one_ms
 

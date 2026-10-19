@@ -1232,6 +1232,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_tail_scan_bounded_total",
+        "counter",
+        "reads",
+        (),
+        "Non-time WS tail reads the table-row bound started later than their window: the"
+        " series' snapshot holds only its bars among its kind's newest MAX_TAIL_SCAN_ROWS rows.",
+        "rising with most first reads = sparse series get shallow snapshots: re-size the bound on"
+        " the target host (the D2-M4 bench); none = slack",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
         "bars_rebuild_scheduled_total",
         "counter",
         "rebuilds",

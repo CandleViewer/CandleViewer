@@ -58,6 +58,7 @@
 ["bars_spec_cap_rejected_total", "counter", ["reason"], "live", "E12"]
 ["bars_stale_build_version_total", "counter", [], "live", "E12"]
 ["bars_symbol_cardinality", "gauge", ["table"], "live", "E12"]
+["bars_tail_scan_bounded_total", "counter", [], "live", "E12"]
 ["bars_tape_read_degraded_total", "counter", ["reason"], "live", "E12"]
 ["bars_write_failed_total", "counter", ["reason"], "live", "E12"]
 ["bars_write_latency_seconds", "histogram", [], "live", "E12"]

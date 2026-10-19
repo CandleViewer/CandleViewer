@@ -21,7 +21,12 @@ from typing import Any, Final, Protocol
 
 import structlog
 
-from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TAIL, MAX_TIME_WINDOW_US
+from candleviewer.bars.limits import (
+    MAX_NON_TIME_WINDOW_US,
+    MAX_TAIL,
+    MAX_TAIL_SCAN_ROWS,
+    MAX_TIME_WINDOW_US,
+)
 from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import (
@@ -50,6 +55,10 @@ bars_checksum_mismatch_total = Counter(
     "bars_checksum_mismatch_total",
     "Rows treated as an integrity event on read (reason: mismatch | missing).",
     ["table", "reason"],
+)
+bars_tail_scan_bounded_total = Counter(
+    "bars_tail_scan_bounded_total",
+    "Non-time WS tail reads the table-row bound started later than their window (D2-M4).",
 )
 bars_rebuild_scheduled_total = Counter(
     "bars_rebuild_scheduled_total", "Background rebuilds requested (post single-flight/dedup)."
@@ -182,12 +191,41 @@ def build_tail_query(
 def build_tail_bound_query(
     kind: str, symbol: str, bar_param: str, limit: int, from_us: int, *, now_us: int
 ) -> tuple[str, tuple[object, ...]]:
-    """`read_tail`'s first statement for a non-time kind (D2-M2, #3688): the `ts` of the newest
+    """`read_tail`'s second statement for a non-time kind (D2-M2, #3688): the `ts` of the newest
     `limit` builder rows of one series at or after `from_us`, newest first, with the WHERE, binds
     and refusals of `build_tail_query`. Its one sort key is the designated timestamp, which
     QuestDB 8.1.1 plans as a backward scan that stops at the limit, with no sort."""
     sql = _tail_sql(kind, limit, from_us, now_us, bound=True)
     return sql, (symbol, bar_param, ts_param(from_us))
+
+
+def build_tail_scan_bound_query(
+    kind: str, from_us: int, *, now_us: int, rows: int = MAX_TAIL_SCAN_ROWS
+) -> tuple[str, tuple[object, ...]]:
+    """`read_tail`'s first statement for a non-time kind (D2-M4, #2787): the `ts` of the `rows`-th
+    newest row of the kind's table at or after `from_us`, of any series, or no row when the table
+    holds fewer. It names no symbol, so it counts table rows, the rows every later statement
+    filters; and it reads nothing but `ts`. QuestDB 8.1.1 plans it as `Limit lo hi` over a
+    backward scan of the designated timestamp, which stops after `rows` rows. Its window check is
+    the tail statements'."""
+    if kind not in _FAMILIES:  # the closed allow-list the table name comes from
+        raise ValueError(f"unknown bar kind {kind!r}")
+    if kind == "time":
+        raise ValueError("no table-row bound for bar kind 'time': its window bounds its scan")
+    if rows < 1:
+        raise ValueError("rows must be at least 1")
+    _check_window(kind, from_us, now_us)
+    sql = (
+        f"SELECT ts FROM bars_{kind} WHERE ts >= $1 ORDER BY ts DESC LIMIT {int(rows) - 1}, "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
+        f"{int(rows)}"
+    )
+    return sql, (ts_param(from_us),)
+
+
+def _check_window(kind: str, from_us: int, now_us: int) -> None:
+    """SR-E12-02, where the SQL is built: no statement starts before its kind's window cap."""
+    if from_us < now_us - (MAX_TIME_WINDOW_US if kind == "time" else MAX_NON_TIME_WINDOW_US):
+        raise ValueError(f"from_us is older than the {kind} bars window cap (SR-E12-02)")
 
 
 def _tail_sql(kind: str, limit: int, from_us: int, now_us: int, *, bound: bool) -> str:
@@ -197,8 +235,7 @@ def _tail_sql(kind: str, limit: int, from_us: int, now_us: int, *, bound: bool) 
         raise ValueError(f"unknown bar kind {kind!r}")
     if not 1 <= limit <= MAX_TAIL:
         raise ValueError(f"limit must be between 1 and {MAX_TAIL}")
-    if from_us < now_us - (MAX_TIME_WINDOW_US if kind == "time" else MAX_NON_TIME_WINDOW_US):
-        raise ValueError(f"from_us is older than the {kind} bars window cap (SR-E12-02)")
+    _check_window(kind, from_us, now_us)
     columns, order = ("ts", "ts DESC") if bound else ("*", _ORDER_BY_KEY_DESC)
     return (
         f"SELECT {columns} FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
@@ -311,8 +348,10 @@ class BarReader:
         clock: Callable[[], float] = time.monotonic,
         *,
         now_us: Callable[[], int] = _wall_us,
+        tail_scan_rows: int = MAX_TAIL_SCAN_ROWS,
     ) -> None:
         self._conn = conn
+        self._scan_rows = tail_scan_rows
         self._rebuilds = RebuildRegistry(schedule_rebuild, clock)
         self._now_us = now_us
 
@@ -352,24 +391,36 @@ class BarReader:
         served as-is. A malformed row is skipped, never fatal to the whole tail: one whose
         generation is outside the writer's bound (`check_generation`) too.
 
-        A non-time read is bounded first (D2-M2, #3688): its window, the whole SR-E12-02 cap, can
+        A non-time read first takes its table-row bound (D2-M4, #2787): `symbol` has no index, so
+        each statement below filters every row of the kind's table from where it starts.
+        `build_tail_scan_bound_query` takes the `ts` of the table's `MAX_TAIL_SCAN_ROWS`-th newest
+        row in the window, of any series, and the read starts there when that is later than its
+        window start (`BarTail.bounded`, counted in `bars_tail_scan_bounded_total`), else at its
+        window start: no statement visits more than that many rows and the rows tied with the
+        last. Not exact, by design: the tail is the exact one restricted to the bars that opened
+        from that start (`since_us`) on. A dense series (`limit` rows there) gets the exact tail,
+        a sparse one only its rows there, perhaps none; older bars come over REST. A table with
+        fewer rows in the window has no such row, and the read is the exact one.
+
+        A non-time read is bounded next (D2-M2, #3688): its window, the whole SR-E12-02 cap, can
         hold far more than `limit` rows of a series, which `build_tail_query` would sort whole.
         `build_tail_bound_query` takes the `ts` of the newest `limit`; when it returns `limit`
-        rows, `build_tail_query` starts at the oldest of them, else at the window start. That is
+        rows, `build_tail_query` starts at the oldest of them, else at `since_us`. That is
         exact: at least `limit` rows lie at or above the bound and `>=` keeps every row tied with
         it, so the newest `limit` by the full key all lie there, and the rows and their order are
-        those of a read from the window start. A row written between the two lies at or above the
-        bound (read) or below it (outside the newest `limit`). Both run under the caller's one
+        those of one statement from `since_us`. A row written between the two lies at or above the
+        bound (read) or below it (outside the newest `limit`). All run under the caller's one
         timeout. A time read keeps one statement: its window spans twice `limit` bars.
 
-        A window with no row ends at the first statement: the empty tail a one-statement read
-        returns, exact as of that statement. A row written after it still reaches the store live,
+        A read with no row from `since_us` on ends at the series bound: the empty tail one
+        statement from there returns, exact as of that statement. A row written after it, or
+        after the table-row bound and below it, still reaches the store live,
         as one written just after a one-statement read does: the router emits each close to the
         series store before the writer (`wire_bars`, `EmitRouter.emit`); `SeriesStore._hydrate`
         seeds its replay before it awaits this read; `SeriesStore.emit` keeps every close from
         then on, and `SeriesStore._fold` keeps those newer than the rows. With some rows but
-        fewer than `limit` the read still starts at the window start: from the oldest `ts`
-        returned it would miss a row written below it.
+        fewer than `limit` the read still starts at `since_us`: from the oldest `ts` returned it
+        would miss a row written below it.
 
         A `limit` outside 1..`MAX_TAIL` raises. The series store, the one caller, asks for
         `MAX_TAIL` whatever a subscriber's `history` (a 0 too) and bounds every read with a
@@ -378,13 +429,22 @@ class BarReader:
         now = self._now_us()
         since = start = now - tail_window_us(spec, limit)
         bar_param = bar_param_for(spec)
+        bounded = False
         if spec.kind != "time":
+            sql, params = build_tail_scan_bound_query(
+                spec.kind, since, now_us=now, rows=self._scan_rows
+            )
+            kth = await self._conn.fetch(sql, *params)  # the table's newest-rows bound
+            if kth and ts_us_from_row(kth[0]["ts"]) > since:
+                since = start = ts_us_from_row(kth[0]["ts"])
+                bounded = True
+                bars_tail_scan_bounded_total.inc()
             sql, params = build_tail_bound_query(
                 spec.kind, symbol, bar_param, limit, since, now_us=now
             )
             newest = await self._conn.fetch(sql, *params)
-            if not newest:  # nothing in the window: no second scan of it
-                return BarTail([], since_us=since)
+            if not newest:  # nothing from `since` on: no second scan of it
+                return BarTail([], since_us=since, bounded=bounded)
             if len(newest) == limit:  # newest first: the last is the `limit`-th newest
                 start = max(since, ts_us_from_row(newest[-1]["ts"]))
         sql, params = build_tail_query(spec.kind, symbol, bar_param, limit, start, now_us=now)
@@ -420,7 +480,7 @@ class BarReader:
             )  # fmt: skip
         return BarTail(
             bars, skipped=skipped + malformed, builds=builds, dropped=dropped, since_us=since,
-            fetched=len(raw),
+            fetched=len(raw), bounded=bounded,
         )  # fmt: skip
 
 
@@ -438,7 +498,7 @@ class BarTail:
     `bars` can hold fewer, since rows are dropped, skipped or malformed. They do not say whether
     older bars exist below `since_us`, nor why a short tail is short: the series' first bar, or
     the window ending the read (`tail_window_us`: for a time kind `TAIL_SPAN_FACTOR` times the
-    span of `limit` bars, within the SR-E12-02 cap; for any other kind the cap itself). Telling
+    span of `limit` bars, within the SR-E12-02 cap; for other kinds the cap, or `bounded`). Telling
     an exhausted series apart needs its recording start (REST `meta.recording_started_at`)
     compared with `since_us`.
     """
@@ -449,14 +509,18 @@ class BarTail:
     #: `meta.build_version` is the lowest among the bars a snapshot sends).
     builds: dict[BuildKey, int] = field(default_factory=dict)
     dropped: int = 0
-    #: Where the read stopped: its window start (µs) and the rows the query returned, before
+    #: Where the read stopped: its start (µs, see `bounded`) and the rows the query returned, before
     #: drops and skips. `fetched` below the limit: every builder row from `since_us` on was
     #: taken. Not whether older bars exist, nor why the tail is short (see the class docstring).
     #: `read_tail` always sets both. A `BarTail` built by hand leaves both at 0, which is not a
-    #: measurement: its `since_us` is no window start of 1970 (a real read's is now minus its
-    #: window), and its `fetched` is no empty read (a real read of a tapeless series reports 0).
+    #: measurement: its `since_us` is no start of 1970 (a real read's is now minus its window, or
+    #: later), and its `fetched` is no empty read (a real read of a tapeless series reports 0).
     since_us: int = 0
     fetched: int = 0
+    #: The table-row bound (D2-M4) put `since_us` after the window start: the series may have
+    #: rows below it, so an empty read says only that none lies from `since_us` on, and the
+    #: series store judges no first close above index 0 against it (D2-H1a).
+    bounded: bool = False
 
     @property
     def integrity_degraded(self) -> bool:

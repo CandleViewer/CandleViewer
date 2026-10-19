@@ -98,6 +98,7 @@ def test_limits_are_the_threat_model_numbers() -> None:
     assert limits.RENKO_TICKS_RANGE == (2, 100_000) and limits.MAX_REVERSAL_BRICKS == 10
     assert limits.MAX_BRICKS_PER_TRADE == 1_000
     assert limits.MAX_TAIL == 1_000  # SR-E12-07: the WS `bars` `history` maximum
+    assert limits.MAX_TAIL_SCAN_ROWS == 500_000  # SR-E12-02: the WS tail read's table-row bound
 
 
 def test_decode_cursor_rejects_position_before_from() -> None:
