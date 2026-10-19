@@ -175,6 +175,8 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run play functions and axe on every story (CI-A11Y-002)
+        # bash adds pipefail: a summary that cannot read the report fails the step.
+        shell: bash
         run: |
           report="$GITHUB_WORKSPACE/reports/storybook-a11y"
           set +e
@@ -184,7 +186,7 @@ jobs:
           set -e
           node packages/ui/scripts/storybook-a11y.mjs summary "$report/results.json" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$rc" -ne 0 ]; then
-            echo "::error::CI-A11Y-002 a play function failed or a story has a serious or critical axe violation; the log names the story, the rule and the element (docs/ci-runbook.md)"
+            echo "::error::CI-A11Y-002 a play function failed or a story has a serious or critical axe violation (the log names the story, the rule and the element), or, with no story counted, the run broke before any story (docs/ci-runbook.md)"
             exit 1
           fi
 

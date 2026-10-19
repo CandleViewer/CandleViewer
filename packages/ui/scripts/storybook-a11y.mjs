@@ -1,6 +1,6 @@
-// E05-T03: the Storybook a11y gate's CI reports, read from the storybook Vitest project's JSON report
-// (`--reporter=json`), whose story tests carry axe's results in `meta.reports`.
-//   summary <results.json>              story counts and axe violations by impact
+// E05-T03: the Storybook a11y gate's CI reports, from the storybook Vitest project's JSON report
+// (`--reporter=json`), where a passed story test carries axe's results in `meta.reports`.
+//   summary <results.json>              story counts, axe violations by impact, failing rules
 //   selftest <fixtures.json> <status>   exit 0 only if the run on `.storybook/__fixtures__/`
 //                                       (CV_STORYBOOK_A11Y_FIXTURES=1) failed closed
 
@@ -20,16 +20,24 @@ const tests = JSON.parse(readFileSync(file, "utf-8")).testResults.flatMap((resul
   })),
 );
 const count = (...states) => tests.filter((test) => states.includes(test.status)).length;
+/** A failed story has no axe report; its failure names each rule as `"<help> (<rule id>)"`. */
+const RULE = /Received:\s+"[^"\n]*\(([\w-]+)\)"/g;
 
 if (command === "summary") {
   const found = tests.flatMap((test) => test.violations);
   const impacts = ["critical", "serious", "moderate", "minor"].map(
     (impact) => `${impact} ${found.filter((v) => v.impact === impact).length}`,
   );
+  // Each failed story's rules, once per story: the violations that failed the gate.
+  const blocking = tests.flatMap((test) => [
+    ...new Set(Array.from(test.message.matchAll(RULE), ([, rule]) => rule)),
+  ]);
   console.log(
     `- Storybook stories: ${tests.length} (${count("passed")} passed, ${count("failed")} failed, ` +
       `${count("skipped", "pending", "todo")} skipped)\n` +
-      `- axe violations by impact: ${impacts.join(", ")} (a failed story's are in its failure)`,
+      `- axe violations by impact in passed stories: ${impacts.join(", ")}\n` +
+      `- blocking axe violations in failed stories: ${blocking.length}` +
+      (blocking.length > 0 ? ` (${[...new Set(blocking)].join(", ")})` : ""),
   );
 } else if (command === "selftest") {
   // The gate failed closed if the 2:1-contrast button failed it naming the rule and the element.

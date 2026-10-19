@@ -111,6 +111,9 @@ on every bump. The accepted controls are two nightlies on `main`, each a named a
 release checklist (`docs/plan/07-release-and-prr.md` §4.1): the `a11y-nightly.yml` sweep and
 `e2e-nightly.yml`, which runs the `e2e` lane's own jobs (next paragraph). So a bump that breaks the
 Playwright suite turns a nightly red within a day, and a release cut needs both green on its tip.
+`_job-a11y.yml`'s `storybook` job (#269) runs in neither nightly, so a lockfile-only bump in its
+tree (a transitive `axe-core` under `@storybook/addon-a11y`, say) meets that gate only on the next
+PR on the `e2e` filter: an open gap with no decision recorded yet, not an accepted control.
 The decision covers those three files only. A backend manifest (`services/api/uv.lock`,
 `pyproject.toml`) skips `migrations`, `contract` and `rule-roundtrip`. The nightly
 `cold-cache.yml` runs the `services/api` pytest, `tests/contract` included (the contract job's
@@ -391,9 +394,11 @@ index alone, removing nothing.
   rule repo-wide to unblock one PR.
 - **CI-A11Y-002** (Storybook stories failed, `_job-a11y.yml`'s `storybook` job): a story's play
   function threw, or axe found a serious or critical violation in it. The log names the story, the
-  rule and the element; the job summary lists every violation by impact and the
-  `storybook-a11y-report` artifact holds each story's axe results. Reproduce: `build:tokens`, then
-  `storybook:test` in `packages/ui` (its README). Fix the component, not the gate.
+  rule and the element; the job summary counts passed stories' violations by impact and names the
+  rules failed stories broke, and the `storybook-a11y-report` artifact holds the Vitest JSON
+  reports. No story counted, or a step stopped at its summary line, means the run broke before any
+  story (install, browser launch, config): read the log's first error. Reproduce: `build:tokens`,
+  then `storybook:test` in `packages/ui` (its README). Fix the component, not the gate.
 - **CI-A11Y-003** (the gate self-test): run on `packages/ui/.storybook/__fixtures__/` alone
   (`CV_STORYBOOK_A11Y_FIXTURES=1`), the gate did not fail the 2:1-contrast button naming
   `color-contrast` and `#a11y-gate-fixture`, so it cannot be trusted. Check `parameters.a11y` in

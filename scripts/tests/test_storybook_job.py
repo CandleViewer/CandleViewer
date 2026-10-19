@@ -59,6 +59,9 @@ def test_storybook_job_runs_beside_a11y_hardened_and_uploads_only_the_a11y_repor
     assert not {"needs", "if", "continue-on-error", "env"} & set(job)
     assert (job["permissions"], job["timeout-minutes"]) == ({"contents": "read"}, 15)
     steps = job["steps"]
+    # Nor at step level: only the report upload has a condition (always()), none fails softly.
+    assert [s.get("if") for s in steps if "if" in s] == ["always()"] == [steps[-1].get("if")]
+    assert not any("continue-on-error" in step for step in steps)
     uses = [step["uses"] for step in steps if "uses" in step]
     assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", use) for use in uses), uses
     checkouts = [s["with"] for s in steps if "checkout@" in s.get("uses", "")]
@@ -80,6 +83,8 @@ def test_storybook_job_runs_beside_a11y_hardened_and_uploads_only_the_a11y_repor
 
 def test_run_and_budget_steps_fail_with_their_codes() -> None:
     run = _run("run")
+    (shell,) = [s.get("shell") for s in _job()["steps"] if s.get("name") == STEPS["run"]]
+    assert shell == "bash"  # pipefail: a summary that cannot read the report fails the step
     assert "storybook:test --reporter=default --reporter=json" in run
     assert re.search(r'rc=\$\?\n.*\n.*storybook-a11y\.mjs summary "\$report/results\.json"', run)
     assert re.search(r'if \[ "\$rc" -ne 0 \]; then\n.*CI-A11Y-002.*\n\s+exit 1', run)
@@ -130,15 +135,17 @@ def _report(tmp_path: Path, command: str, *tests: Any, status: str = "1") -> tup
     return proc.returncode, proc.stdout + proc.stderr
 
 
+#: A failed axe check's text: the element, then each rule as `"<help> (<rule id>)"`, in colour.
+NAMED = "$('#a11y-gate-fixture')\nReceived:\n\x1b[31m\"Elements ... (color-contrast)\"\x1b[39m"
+
+
 def test_summary_counts_the_stories_and_axe_violations_by_impact(tmp_path: Path) -> None:
-    tests = [("a--1", "passed", ["serious", "minor"], ""), ("a--2", "failed", [], "x")]
+    tests = [("a--1", "passed", ["serious", "minor"], ""), ("a--2", "failed", [], NAMED * 2)]
     rc, out = _report(tmp_path, "summary", *tests, ("perf", "skipped", [], ""))
-    stories, impacts = out.splitlines()
+    stories, impacts, blocking = out.splitlines()
     assert (rc, stories) == (0, "- Storybook stories: 3 (1 passed, 1 failed, 1 skipped)")
-    assert "critical 0, serious 1, moderate 0, minor 1 (" in impacts
-
-
-NAMED = "$('#a11y-gate-fixture') ... \x1b[31m\"Elements must meet ... (color-contrast)\"\x1b[39m"
+    assert impacts.endswith(" in passed stories: critical 0, serious 1, moderate 0, minor 1")
+    assert blocking == "- blocking axe violations in failed stories: 1 (color-contrast)"
 
 
 @pytest.mark.parametrize(
