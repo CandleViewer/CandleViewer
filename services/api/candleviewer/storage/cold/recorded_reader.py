@@ -11,7 +11,8 @@ whenever a file's size, mtime or ctime changes (ctime: a rewrite that restores s
 still shows). A failure fails the read with a typed error, never a silently partial window, and
 a window spanning more partitions than one read may open is refused before any is listed.
 `archived` reports the manifests' coverage, which `source_tier="auto"` routes on: roll-off
-writes a manifest before it may drop the hot day (21 Sec.5.3).
+writes a manifest before it may drop the hot day (21 Sec.5.3). A partition that lost a part to
+quarantine is refused there and on every read until the quarantine is cleared (#3477).
 
 DuckDB runs on the reader's own pool of `max_concurrency` threads, under a semaphore with as
 many slots (C-2.18), with a memory limit; the worker opens and closes its connection, so the

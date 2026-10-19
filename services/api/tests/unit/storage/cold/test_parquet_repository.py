@@ -181,7 +181,7 @@ async def test_a_day_that_cannot_be_listed_is_refused_typed_naming_no_path(
     def denied(self: ManifestStore, partition_dir: Path, cold_root: Path) -> object:
         raise PermissionError(13, "Permission denied", str(partition_dir))
 
-    monkeypatch.setattr(ManifestStore, "read_with_quarantine", denied)
+    monkeypatch.setattr(ManifestStore, "read", denied)
 
     with pytest.raises(StorageExportVerifyFailed, match="could not be listed") as err:
         await repo.query("BTCUSDT", StreamKind.TRADES, day_range())
