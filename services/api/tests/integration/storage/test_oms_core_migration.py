@@ -179,7 +179,7 @@ _CATALOG = (
 
 def _doc_ddl() -> str:
     """Sec.3.3.4-3.3.7's ```sql blocks, to their fences, minus the deferred leg FK clause, then
-    Sec.3.3.4's second block (`0033_order_vocabulary`), so the doc is compared with the head."""
+    Sec.3.3.4's second block (`0034_order_vocabulary`), so the doc is compared with the head."""
     sections = [_DOC.read_text(encoding="utf-8").split(f"#### {h}", 1)[1] for h in _BLOCKS]
     blocks = [s.split("```sql", 1)[1].split("```", 1)[0] for s in sections]
     blocks.append(sections[0].split("```sql", 2)[2].split("```", 1)[0])

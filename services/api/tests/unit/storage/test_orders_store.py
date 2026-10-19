@@ -409,8 +409,8 @@ def test_a_step_or_fill_no_column_holds_is_refused_as_it_is_built(built: str) ->
 
 
 @pytest.mark.parametrize("state", ["triggered", "unknown", "quarantined", "killed", "held"])
-def test_a_step_may_enter_each_state_0033_adds(state: Any) -> None:
-    """OM-T04 reads `OrderState`, so each value `0033_order_vocabulary` adds is a step's new state
+def test_a_step_may_enter_each_state_0034_adds(state: Any) -> None:
+    """OM-T04 reads `OrderState`, so each value `0034_order_vocabulary` adds is a step's new state
     like any other (the store checks vocabulary; legality is B1's)."""
     into = _bound(mod.transition_statement(step(_HELD, state)))
     assert (into[0], into[-1]) == (state, "accepted")
@@ -421,7 +421,7 @@ def test_a_step_may_enter_each_state_0033_adds(state: Any) -> None:
     [("triggered", "cancelled"), ("unknown", "cancelled"), ("quarantined", "cancelled"),
      ("held", "rejected")],
 )  # fmt: skip
-def test_a_step_may_leave_each_non_final_state_0033_adds(state: Any, to_state: Any) -> None:
+def test_a_step_may_leave_each_non_final_state_0034_adds(state: Any, to_state: Any) -> None:
     """Each of them but `killed` is also a step's compare-and-set state, left as B1 leaves it
     (`REMOTE_CANCELLED`, `RECON_FOUND_CANCELLED`, `OPERATOR_RESOLVED`). `killed` is final in B1,
     so no step leaves it (INV-2; 24 Sec.8.2 S6)."""
@@ -441,7 +441,7 @@ def test_a_fill_may_leave_triggered_the_one_added_state_with_an_exec_arm() -> No
     [("kill", "local", "pending_submit", "killed"),
      ("adopt", "reconcile", "untracked", "accepted")],
 )  # fmt: skip
-def test_a_step_may_carry_each_event_kind_0033_adds(
+def test_a_step_may_carry_each_event_kind_0034_adds(
     kind: Any, source: Any, from_state: str, to_state: Any
 ) -> None:
     """B1's `KILL` from `validated` and `ADOPT` from `untracked`, in their persisted states."""

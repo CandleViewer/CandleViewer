@@ -162,10 +162,10 @@
       "sha256": "17a80ba0cdf4478cfe7bef3dc158521a2e199048e7290b7d8dc3e225fcdb8f17",
       "down_revision": "0032_backups_write_once"
     },
-    "0033_order_vocabulary": {
-      "path": "services/api/candleviewer/migrations/versions/0033_order_vocabulary.py",
-      "sha256": "b82a833ab2624de3a75ae6590922020554b2e6ea1995fde455e8fcb7bc73f8d1",
-      "down_revision": "0032_backups_write_once"
+    "0034_order_vocabulary": {
+      "path": "services/api/candleviewer/migrations/versions/0034_order_vocabulary.py",
+      "sha256": "0ab7c4a4a306df923d2d701fb8ef7fbe2783d06cb03a9bba5e091d73aeb730d6",
+      "down_revision": "0033_machine_persistence"
     }
   }
 }

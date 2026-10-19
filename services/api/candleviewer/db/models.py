@@ -1873,7 +1873,7 @@ backups = Table(
 #: OMS core (E29-T01, revision 0029_oms_core): Sec.1.2 enums and Sec.3.3.4-3.3.7. Both
 #: `trade_group_leg_id` columns carry no FK until E28-T01 (#905) creates `trade_group_legs`; the
 #: append-only triggers and the C-5.7 revocations are asserted by the 0029 tests, not autogenerate.
-#: 0033_order_vocabulary (E29-T03) appends to `order_state` and `order_event_kind`, adds
+#: 0034_order_vocabulary (E29-T03) appends to `order_state` and `order_event_kind`, adds
 #: `order_lifecycle_state` (the B1 chart's states verbatim), `orders.lifecycle_state` and the
 #: `ord_lifecycle` CHECK that pairs it with `state` (`ORDER_STATE_OF`).
 ORDER_INTENTS = (

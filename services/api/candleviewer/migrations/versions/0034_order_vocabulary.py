@@ -1,7 +1,7 @@
 """order_state and order_event_kind grow; orders.lifecycle_state keeps the B1 state (E29-T03 #847)
 
-Revision ID: 0033_order_vocabulary
-Revises: 0032_backups_write_once
+Revision ID: 0034_order_vocabulary
+Revises: 0033_machine_persistence
 Create Date: 2026-10-19
 
 Slice 2 of the #847 plan, main-orchestrator's ruling 2 (2026-10-19): the persisted order
@@ -45,8 +45,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0033_order_vocabulary"
-down_revision: str | None = "0032_backups_write_once"
+revision: str = "0034_order_vocabulary"
+down_revision: str | None = "0033_machine_persistence"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -123,7 +123,7 @@ BEGIN
      OR EXISTS (SELECT 1 FROM order_events WHERE kind IN ('kill','adopt')
                OR from_state IN ('triggered','unknown','quarantined','killed','held')
                OR to_state IN ('triggered','unknown','quarantined','killed','held')) THEN
-    RAISE EXCEPTION '0033_order_vocabulary downgrade refused: a row holds an order state, an event kind or a lifecycle_state that 0032 has no value for, so the order would lose its state or its history. Fix forward with a new revision instead (C-5.2)';
+    RAISE EXCEPTION '0034_order_vocabulary downgrade refused: a row holds an order state, an event kind or a lifecycle_state that 0033_machine_persistence has no value for, so the order would lose its state or its history. Fix forward with a new revision instead (C-5.2)';
   END IF;
 END $BODY$;
 """
@@ -134,7 +134,7 @@ DROP INDEX ix_orders_open;
 DROP INDEX ix_orders_untracked;
 ALTER TABLE orders DROP COLUMN lifecycle_state;
 DROP TYPE order_lifecycle_state;
-ALTER TYPE order_state RENAME TO order_state_0033;
+ALTER TYPE order_state RENAME TO order_state_0034;
 CREATE TYPE order_state AS ENUM ('new','pending_submit','submitted','accepted','partially_filled','filled','pending_cancel','cancelled','pending_amend','rejected','expired','untracked');
 ALTER TABLE orders ALTER COLUMN state DROP DEFAULT;
 ALTER TABLE orders ALTER COLUMN state TYPE order_state USING state::text::order_state;
@@ -142,11 +142,11 @@ ALTER TABLE orders ALTER COLUMN state SET DEFAULT 'new';
 ALTER TABLE order_events
   ALTER COLUMN from_state TYPE order_state USING from_state::text::order_state,
   ALTER COLUMN to_state TYPE order_state USING to_state::text::order_state;
-DROP TYPE order_state_0033;
-ALTER TYPE order_event_kind RENAME TO order_event_kind_0033;
+DROP TYPE order_state_0034;
+ALTER TYPE order_event_kind RENAME TO order_event_kind_0034;
 CREATE TYPE order_event_kind AS ENUM ('local_create','submit_attempt','ack','reject','fill','partial_fill','amend_request','amend_ack','cancel_request','cancel_ack','expire','exchange_push','reconcile_diff','error');
 ALTER TABLE order_events ALTER COLUMN kind TYPE order_event_kind USING kind::text::order_event_kind;
-DROP TYPE order_event_kind_0033;
+DROP TYPE order_event_kind_0034;
 CREATE INDEX ix_orders_open      ON orders (exchange_account_id, symbol)
   WHERE state IN ('pending_submit','submitted','accepted','partially_filled','pending_cancel','pending_amend');
 CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = 'untracked';

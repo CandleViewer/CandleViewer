@@ -1,4 +1,4 @@
-"""Integration: `0033_order_vocabulary` on real Postgres 16 (E29-T03 #847, slice 2): the head and
+"""Integration: `0034_order_vocabulary` on real Postgres 16 (E29-T03 #847, slice 2): the head and
 its `ord_lifecycle` CHECK, a rerun after the committed `ADD VALUE`s, the round trip on an empty and
 a seeded database, and the refused downgrade. `testcontainers` in CI; run before the PR on a
 scratch PostgreSQL 16.2 (no docker on the laptop)."""
@@ -26,7 +26,7 @@ from candleviewer.storage.repositories.orders import OPEN_STATES, ORDER_STATE_OF
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
-_PREV = "0032_backups_write_once"
+_PREV = "0033_machine_persistence"
 _TEMPLATE = "vocabulary_head_template"
 _LABELS = (
     "SELECT t.typname, e.enumlabel FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid "
@@ -134,8 +134,8 @@ def test_ord_lifecycle_refuses_a_pair_the_mapping_does_not_name(
 
 @pytest.mark.parametrize("n", [2, 7], ids=["cut-off", "all-seven"])
 def test_a_rerun_completes_after_the_autocommit_block_committed(pg_dsn: str, n: int) -> None:
-    """A failure after the `ADD VALUE`s leaves them at 0032 (none can be dropped); the rerun skips
-    those, adds the rest and builds the head a clean run builds."""
+    """A failure after the `ADD VALUE`s leaves them at 0033_machine_persistence (none can be
+    dropped); the rerun skips those, adds the rest and builds the head a clean run builds."""
     dsn = _clone(pg_dsn, _TEMPLATE)
     with _conn(dsn) as c:
         head = _catalog(c)
@@ -191,7 +191,7 @@ def test_downgrade_refuses_while_a_row_holds_what_the_revision_added(
         before = c.execute("SELECT version_num FROM alembic_version").fetchone(), _catalog(c)
     refused = _alembic(dsn, "downgrade", _PREV)
     assert refused.returncode != 0
-    assert "0033_order_vocabulary downgrade refused: a row holds" in refused.stderr
+    assert "0034_order_vocabulary downgrade refused: a row holds" in refused.stderr
     with _conn(dsn) as c:
         after = c.execute("SELECT version_num FROM alembic_version").fetchone(), _catalog(c)
     assert after == before

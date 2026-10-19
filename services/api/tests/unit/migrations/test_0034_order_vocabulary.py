@@ -1,4 +1,4 @@
-"""`0033_order_vocabulary` (E29-T03 #847, slice 2): offline render, plan-doc parity, the model
+"""`0034_order_vocabulary` (E29-T03 #847, slice 2): offline render, plan-doc parity, the model
 mirror, the online rerun's skip over a fake `op`, and a downgrade that restores 0029's types and
 indexes exactly. Real Postgres: `tests/integration/storage/test_order_vocabulary_migration.py`."""
 
@@ -24,7 +24,7 @@ from candleviewer.storage.repositories.orders import ORDER_STATE_OF
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_REV, _PREV = "0033_order_vocabulary", "0032_backups_write_once"
+_REV, _PREV = "0034_order_vocabulary", "0033_machine_persistence"
 _ADDED_STATES = ("triggered", "unknown", "quarantined", "killed", "held")
 _ADDED_KINDS = ("kill", "adopt")
 _ADDS = [f"ALTER TYPE order_state ADD VALUE '{v}';" for v in _ADDED_STATES]
@@ -77,7 +77,7 @@ def _in_order(sql: str, steps: list[str]) -> bool:
     return positions == sorted(positions)
 
 
-def test_revision_chains_onto_0032() -> None:
+def test_revision_chains_onto_0033_machine_persistence() -> None:
     assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", f"{_PREV}:{_REV}")
 
 
@@ -108,7 +108,7 @@ def test_the_values_are_committed_before_the_transaction_that_uses_them() -> Non
 def _load() -> ModuleType:
     """The revision module, to run `upgrade()` over a fake `op` (as `test_0003_audit_log.py`)."""
     path = _ROOT / "candleviewer" / "migrations" / "versions" / f"{_REV}.py"
-    spec = importlib.util.spec_from_file_location("_0033_under_test", path)
+    spec = importlib.util.spec_from_file_location("_0034_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -173,8 +173,8 @@ def test_the_ddl_is_the_plan_doc_verbatim_and_touches_nothing_else() -> None:
     column and the index. Nothing is granted, written, commented or built CONCURRENTLY."""
     enums = _sql_blocks("### 1.2 Enum types")[0]
     assert all(statement in enums for statement in [*_ADDS, _LIFECYCLE])
-    orders_0029, orders_0033 = _sql_blocks("#### 3.3.4 `orders`")
-    assert orders_0033 in _up() and "lifecycle_state" not in orders_0029
+    orders_0029, orders_0034 = _sql_blocks("#### 3.3.4 `orders`")
+    assert orders_0034 in _up() and "lifecycle_state" not in orders_0029
     for absent in ("CONCURRENTLY", "INSERT INTO", "GRANT ", "REVOKE ", "COMMENT ON", "NOT EXISTS"):
         assert absent not in _up()
     assert set(re.findall(r"\b(?:TABLE|ON) (\w+)", _up())) == {"orders"}
@@ -235,7 +235,7 @@ def test_the_downgrade_restores_the_types_and_indexes_0029_created() -> None:
                           ("to_state", "order_state"), ("kind", "order_event_kind"))
     ]  # fmt: skip
     assert len(types) == len(indexes) == 2
-    assert _in_order(_down(), ["RENAME TO order_state_0033;", types[0], *casts[:3]])
-    assert _in_order(_down(), ["RENAME TO order_event_kind_0033;", types[1], casts[3], *indexes])
+    assert _in_order(_down(), ["RENAME TO order_state_0034;", types[0], *casts[:3]])
+    assert _in_order(_down(), ["RENAME TO order_event_kind_0034;", types[1], casts[3], *indexes])
     for name in ("order_state", "order_event_kind"):
-        assert _in_order(_down(), [f"RENAME TO {name}_0033;", f"DROP TYPE {name}_0033;"])
+        assert _in_order(_down(), [f"RENAME TO {name}_0034;", f"DROP TYPE {name}_0034;"])

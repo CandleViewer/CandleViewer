@@ -21,7 +21,7 @@ an event without a state transition (`OrderEventStore.append`). Updates of an ex
 (state, fills, reject fields) with events that carry `from_state`/`to_state` are E29-T03's
 write-ahead step (`transition`, `ExecutionStore.commit_fill`); E29-T04 adds the 24 Sec.8.4 columns.
 `state` is the persisted form of the B1 chart's state (`ORDER_STATE_OF`), and `lifecycle_state`
-(`0033`) the chart state verbatim. No write path sets `lifecycle_state` yet: `create` and every
+(`0034`) the chart state verbatim. No write path sets `lifecycle_state` yet: `create` and every
 step leave it NULL. #847's remaining implementation PR sets it, beside `state`, on every path.
 
 For the OMS (24 Sec.8.2 S7): an exception from any call means its write is not confirmed. The OMS
