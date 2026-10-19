@@ -171,13 +171,15 @@ class Journal:
     """The episode journal (`system_events` in production), rows by id. A step (`record`,
     `resolve`, `read`) in `fail` raises; one in `hold` waits for the event first, and holds its
     cancellation until then too (a stuck server, which the driver's cleanup also waits for), then
-    raises its `fail`, if any, in the cancellation's place."""
+    raises its `fail`, if any, in the cancellation's place. `cancelled` names each held step that
+    was cancelled, in order."""
 
     def __init__(self, *episodes: Episode) -> None:
         self.rows = {n: replace(e) for n, e in enumerate(episodes, start=1)}  # its own copies
         self.fail: dict[str, BaseException] = {}
         self.hold: dict[str, asyncio.Event] = {}
         self.limits: list[int] = []
+        self.cancelled: list[str] = []
 
     def open(self) -> list[UUID]:
         return [e.account_id for e in self.rows.values() if not e.resolved]
@@ -187,6 +189,7 @@ class Journal:
             try:
                 await hold.wait()
             except asyncio.CancelledError:
+                self.cancelled.append(name)
                 await hold.wait()
                 raise self.fail.get(name, asyncio.CancelledError()) from None
         if (error := self.fail.get(name)) is not None:
