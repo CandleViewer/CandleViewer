@@ -63,15 +63,21 @@ rendered message through the same redaction as stdout. What that looks like:
 - **Fields.** uvicorn's lines carry `event`, `level` and `ts` (and `exception` or `stack` for a
   record with a traceback or a stack): no `env` and no logger name, as for every stdlib logger.
 - **Labelled values.** In message and exception text, a value labelled with a key name of the
-  redaction list (`token = …`, `"password": "…"`, `Authorization: Bearer …`) shows the key-name
-  marker (#415): a quoted value to its closing quote, a bare one to a space, comma or closing
-  bracket. A format string keeps its placeholders; the line it renders is redacted.
+  redaction list (`token = …`, `"password": "…"`, `Authorization: Bearer …`, pydantic's
+  `input_value=…`) shows the key-name marker (#415): a quoted value to its closing quote, a
+  `Cookie` or `Set-Cookie` header's and pydantic's input to the line's end, and any other bare one
+  to a space, comma or closing bracket, so a list or a dict is read only as far, and a quote that
+  closes an enclosing string is taken as part of the value, to the line's end. A placeholder
+  (`***`, `null`, `<omitted>`, a marker) is no value only as the whole value. The last part of a
+  dotted name is no label: a WS machine topic such as `machines.session:<id>.state` stays
+  readable. A format string is left as it is, so `%` formatting works; the line it renders is
+  redacted.
 - **Tracebacks.** A traceback or a stack is rendered first and redacted after (#415), on stdout and
   in the support bundle's buffer (on one line there), where each value stands: a labelled value
   shows the key-name marker, and each run of characters that has the shape of a secret shows its
-  marker, so the frames and lines stay readable. A class name on the last line can have such a
-  shape and show as a marker: a CamelCase name of 18 to 36 letters and digits
-  (`ConnectionResetError`), or a dotted name of three parts of 10 or more characters each
+  marker, so the frames and lines stay readable. On the last line, most exception classes with a
+  name of 18 or more letters show as a marker (`ConnectionResetError: …` shows
+  `[redacted:key-shape]: …`), as does a dotted name of three parts of 10 or more characters each
   (`websockets.exceptions.ConnectionClosedOK`). A text longer than 4096 characters and the marker
   keeps 4096: its start and its last lines (up to 3072), around a `...[truncated:oversize]` marker,
   so the exception's own line stays. An exception logged as a value or an argument is turned into
@@ -80,10 +86,12 @@ rendered message through the same redaction as stdout. What that looks like:
   Passed for `%r`, it shows as its quoted text, not as `ValueError('…')`. A traceback that uvicorn
   logs as the text of a message, as in a failed start below, is still one marker when a shape
   matches in it (#2868).
-- **Support bundle.** The bundle's secret scan refuses a bundle (`BUNDLE_SECRET_DETECTED`) for a
-  line that still matches one of its rules, such as a label and its value on two lines. The error
-  names the file and the rule, not the value: find the line on stdout for the same window, follow
-  the `SupportBundleSecretDetected` alert runbook, and choose a window without it meanwhile.
+- **Support bundle.** The buffer writes each record on one line, a line break as `\n`, as in a
+  traceback. The bundle's secret scan refuses a bundle (`BUNDLE_SECRET_DETECTED`) for a line that
+  still matches one of its rules, such as a label and its value on two lines of a message, a
+  traceback or a stack. The error names the file and the rule, not the value: find the line on
+  stdout for the same window, follow the `SupportBundleSecretDetected` alert runbook, and choose a
+  window without it meanwhile.
 - **Access lines.** The HTTP access line is off whenever the `/metrics` listener runs
   (`CV_METRICS_ENABLED`, on by default): the listener's `access_log=False` clears the shared
   `uvicorn.access` logger. WebSocket handshake lines (`"WebSocket /ws" [accepted]`) are logged on

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 
 import pytest
 from hypothesis import event, given, settings
@@ -128,3 +129,18 @@ def test_perf_redact_text_scans_a_capped_pathological_string_within_budget(text:
         redact_text(text)
         best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
     assert best_ms < 2.0, f"{best_ms:.3f} ms (about 10 ms before #2689)"
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize(
+    "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
+)
+def test_perf_a_5_mb_run_is_cut_within_budget(redact: Callable[[str], str]) -> None:
+    text = "k" * 5_000_000  # one run: the cut reads the character at its end, not the run (#415)
+    best_ms = float("inf")
+    for _ in range(5):
+        start = time.perf_counter()
+        out = redact(text)
+        best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
+    assert out == redaction._TRUNCATED  # the run is dropped whole
+    assert best_ms < 1.0, f"{best_ms:.3f} ms (the whole run was read: about 30 ms)"

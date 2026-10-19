@@ -46,7 +46,6 @@ from candleviewer.observability.redaction import (
     _is_redact_key,
     _redact_mapping,
     _redact_runs,
-    _redact_str_value,
     _redact_value,
 )
 
@@ -118,11 +117,11 @@ class RedactionFilter(logging.Filter):
 
     @staticmethod
     def _redact_record(record: logging.LogRecord) -> None:
-        if isinstance(record.msg, str) and record.args:
-            # A format string keeps its placeholders: no labelled value is replaced in it. The line
-            # it renders gets every rule, on stdout and in the support bundle's buffer (#415).
-            record.msg = _redact_str_value(record.msg, labels=False)
-        elif isinstance(record.msg, (str, BaseException)):
+        # A format string stays as it is, so that `%` formatting keeps working: the line it renders
+        # gets every rule, on stdout and in the support bundle's buffer (#415).
+        if isinstance(record.msg, BaseException) or (
+            isinstance(record.msg, str) and not record.args
+        ):
             record.msg = _redact_value(record.msg, depth=0)
         if record.args:
             if isinstance(record.args, dict):

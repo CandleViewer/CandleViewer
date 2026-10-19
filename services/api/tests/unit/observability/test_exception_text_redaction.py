@@ -8,13 +8,16 @@ a 64-character token shape keeps hex digests readable, and neither takes the ids
 The redaction key list names the token, header and signature forms the services use: a field or a
 header line of each is redacted by name, and so is a value labelled with a key name in message or
 exception text (`token = …`), so such a line passes the support bundle's scan. A long text keeps
-its start and its last lines, and a second pass changes nothing.
+its start and its last lines, and a second pass changes nothing. A placeholder is no value only as
+the whole value, the last part of a dotted name is no label, a format string is left to format,
+and the buffer writes each record on one line, so a label and its value on two lines are refused.
 
 Values are assembled at runtime, so no secret-shaped literal sits in the repo.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import io
@@ -26,13 +29,16 @@ import threading
 import types
 import uuid
 from collections.abc import Callable
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pydantic
 import pytest
 import structlog
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 
 from candleviewer.domain.primitives import GroupId
 from candleviewer.observability import redaction
@@ -44,7 +50,7 @@ from candleviewer.observability.logging import (
     reset_logging,
 )
 from candleviewer.observability.redaction import redact_text
-from candleviewer.observability.support_bundle import BundleSources, build_bundle
+from candleviewer.observability.support_bundle import BundleError, BundleSources, build_bundle
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
 from candleviewer.oms.order_link import OrderLinkIdParts
 
@@ -65,6 +71,7 @@ _MARK = "[redacted:invite-token-shape]"
 #: Shaped like `secrets.token_urlsafe(48)`, a refresh token: 64 characters.
 REFRESH = _url_safe(64)
 _REFRESH_MARK = "[redacted:refresh-token-shape]"
+_KEY_MARK = "[redacted:key-name]"
 _EPOCH = datetime.fromtimestamp(0, UTC)
 
 
@@ -307,9 +314,10 @@ def test_the_filter_turns_an_exception_as_the_message_or_an_argument_into_redact
         (ValueError({"password": ["ab", "cd"]}), "{'password': '[redacted:key-name]'}"),
         (ValueError(b"\x00\x01"), "[redacted:bytes]"),
         (ValueError("op", b"\x00\x01"), "('op', '[redacted:bytes]')"),
+        (ValueError(), ""),
         (KeyError("token"), "'token'"),  # its own `__str__`: the text rules only
     ],
-    ids=["mapping", "bytes", "arguments", "own-str"],
+    ids=["mapping", "bytes", "arguments", "no-arguments", "own-str"],
 )
 def test_an_exception_logged_as_a_value_has_its_arguments_redacted_first(
     exc: BaseException, text: str
@@ -339,15 +347,8 @@ def _log_issue(path: str) -> Callable[[], None]:
     return emit
 
 
-@pytest.mark.parametrize("path", ["structlog", "stdlib"])
-def test_a_frame_line_that_labels_a_value_shows_the_marker_and_passes_the_bundle_scan(
-    path: str, tmp_path: Path
-) -> None:
-    lines, ring = _capture(_log_issue(path))
-
-    frame = f"line {_issue.__code__.co_firstlineno + 1}, in _issue\n"
-    assert f"{frame}    token = [redacted:key-name]\n" in lines[0]["exception"]
-    assert list(scan_text(ring[0])) == []
+def _build(ring: list[str], tmp_path: Path) -> Path:
+    """Build a support bundle of the buffer's lines, as the service does; its scan is the gate."""
     now = datetime.now(UTC)
     sources = BundleSources(
         logs=lambda start, end: ring,
@@ -359,7 +360,19 @@ def test_a_frame_line_that_labels_a_value_shows_the_marker_and_passes_the_bundle
         config=lambda: {},
     )
     window = (now - timedelta(hours=1), now)
-    assert build_bundle(sources, tmp_path, *window, free_bytes=lambda _: 1 << 40).path.is_file()
+    return build_bundle(sources, tmp_path, *window, free_bytes=lambda _: 1 << 40).path
+
+
+@pytest.mark.parametrize("path", ["structlog", "stdlib"])
+def test_a_frame_line_that_labels_a_value_shows_the_marker_and_passes_the_bundle_scan(
+    path: str, tmp_path: Path
+) -> None:
+    lines, ring = _capture(_log_issue(path))
+
+    frame = f"line {_issue.__code__.co_firstlineno + 1}, in _issue\n"
+    assert f"{frame}    token = [redacted:key-name]\n" in lines[0]["exception"]
+    assert list(scan_text(ring[0])) == []
+    assert _build(ring, tmp_path).is_file()
 
 
 #: Short and of no value shape: only its label can hide it.
@@ -401,6 +414,10 @@ def test_a_value_labelled_with_a_key_name_is_redacted_on_stdout_and_in_the_buffe
     assert "password=[redacted:key-name]" in entry
 
 
+#: Shaped like HTTP Basic credentials, assembled at runtime.
+_BASIC = base64.b64encode(b"user:pass").decode()
+
+
 @pytest.mark.parametrize(
     ("text", "shown"),
     [
@@ -408,11 +425,22 @@ def test_a_value_labelled_with_a_key_name_is_redacted_on_stdout_and_in_the_buffe
         ("token: ab", "token: [redacted:key-name]"),  # short and of no value shape
         ("{'password': 'ab cd'}", "{'password': '[redacted:key-name]'}"),  # to its closing quote
         ('{"token": "a\\"b c"}', '{"token": "[redacted:key-name]"}'),  # past an escaped quote
+        ("token=b'ab cd' ok", "token=[redacted:key-name] ok"),  # a bare value's quoted part
+        ('password: "ab\nValueError: x', 'password: "[redacted:key-name]\nValueError: x'),  # 1 line
         ("Authorization: Bearer ab.cd", "Authorization: [redacted:key-name]"),  # with its scheme
-        ('Set-Cookie: session="ab cd"; Path=/', "Set-Cookie: [redacted:key-name] Path=/"),
+        (f"Authorization: Basic {_BASIC}", "Authorization: [redacted:key-name]"),
+        ('Set-Cookie: session="ab cd"; Path=/', "Set-Cookie: [redacted:key-name]"),  # its line
+        ("Cookie: cv_refresh=ab; cv_csrf=cd\nok", "Cookie: [redacted:key-name]\nok"),
+        ("?access_token=ab&x=1 ok", "?access_token=[redacted:key-name] ok"),  # a query string
+        ("/cb?state=1&token=ab#top", "/cb?state=1&token=[redacted:key-name]"),
+        ("Login(password='ab')", "Login(password='[redacted:key-name]')"),
+        ("<token: ab> ok", "<token: [redacted:key-name] ok"),
+        ("x-bapi-sign: ab", "x-bapi-sign: [redacted:key-name]"),
         ("Refresh-Token=ab", "Refresh-Token=[redacted:key-name]"),  # in any case, either twin
         ("token = None", "token = None"),  # a placeholder
         ("tokens=3 my_token=4 token_type=bearer", "tokens=3 my_token=4 token_type=bearer"),
+        # a stated over-redaction: a key name that labels no secret
+        ("sign = 1 if diff > 0 else -1", "sign = [redacted:key-name] if diff > 0 else -1"),
     ],
 )
 def test_a_value_labelled_with_a_key_name_shows_the_key_name_marker(text: str, shown: str) -> None:
@@ -423,6 +451,112 @@ def test_a_value_labelled_with_a_key_name_shows_the_key_name_marker(text: str, s
 def test_each_key_name_ends_with_a_letter() -> None:
     # text whose `:` and `=` all follow something else than a letter, quote or space holds no label
     assert all(name[-1].isalpha() for name in redaction._REDACT_KEY_FORMS)
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        *[(text, text) for text in ("token=***", "token=null, x=1", "password='***'")],
+        *[(f"token={mark}", f"token={mark}") for mark in (redaction._TRUNCATED, _KEY_MARK)],
+        *[
+            (f"password={value}{_PASSWORD}", f"password={_KEY_MARK}")
+            for value in ("***", "null-", "<omitted>", "[redacted")
+        ],
+        (f"password='***{_PASSWORD}'", f"password='{_KEY_MARK}'"),
+    ],
+)
+def test_a_placeholder_is_no_value_only_as_the_whole_value(text: str, shown: str) -> None:
+    assert redact_text(text) == shown
+    assert redaction._redact_runs(text) == shown
+    assert ("labelled-secret" in set(scan_text(text))) is (shown != text)  # the scan reads alike
+
+
+@pytest.mark.parametrize(
+    "text", [f"ch='machines.session:{uuid.UUID(int=1)}.state'", "    self.token = mint(32)"]
+)
+def test_the_last_part_of_a_dotted_name_is_no_label_to_the_redaction_or_the_scan(text: str) -> None:
+    assert redact_text(text) == text
+    assert redaction._redact_runs(text) == text
+    assert list(scan_text(text)) == []
+
+
+def test_the_filter_leaves_a_format_string_of_a_value_shape_so_that_it_formats() -> None:
+    msg, args = "ConnectionResetErrorX %s=%d", ("n", 3)  # the key shape takes the first word
+    record = logging.LogRecord("t.lib", logging.WARNING, __file__, 1, msg, args, None)
+
+    assert RedactionFilter().filter(record) is True
+    assert record.getMessage() == "ConnectionResetErrorX n=3"
+
+
+def test_a_format_string_of_a_value_shape_renders_redacted_and_writes_nothing_to_stderr() -> None:
+    err = io.StringIO()  # `handleError` writes a line that fails to format there, with its args
+    with redirect_stderr(err):
+        lines, ring = _capture(
+            lambda: logging.getLogger("t.lib").warning("ConnectionResetErrorX password=%s", "ab")
+        )
+
+    assert err.getvalue() == ""
+    [line], [entry] = lines, ring
+    assert line["event"] == "[redacted:key-shape]"  # the rendered line gets every rule
+    assert entry == "WARNING t.lib [redacted:key-shape]"
+
+
+def _log_raised(text: str) -> Callable[[], None]:
+    def emit() -> None:
+        try:
+            raise ValueError(text)
+        except ValueError:
+            logging.getLogger("t.lib").error("op failed", exc_info=True)
+
+    return emit
+
+
+@pytest.mark.parametrize(
+    "text", [f"token =\t{_PASSWORD}", f"token=\n{TOKEN}"], ids=["tab", "line-break"]
+)
+def test_a_marker_after_a_label_and_an_escaped_space_passes_the_bundle_scan(text: str) -> None:
+    _, [entry] = _capture(_log_raised(text))
+
+    assert re.search(r"token ?=\\[tn]\[redacted:", entry)  # the buffer writes it as an escape
+    assert list(scan_text(entry)) == []
+
+
+def _two_line_message() -> None:
+    logging.getLogger("t.lib").warning("password:\n%s", _PASSWORD)
+
+
+@pytest.mark.parametrize(
+    "emit",
+    [_two_line_message, _log_raised(f"config:\ntoken=\n{_PASSWORD}")],
+    ids=["message", "traceback"],
+)
+def test_a_label_and_its_value_on_two_lines_are_one_buffer_line_that_refuses_the_bundle(
+    emit: Callable[[], None], tmp_path: Path
+) -> None:
+    _, ring = _capture(emit)  # the label pass reads a line: the value stays (stated)
+
+    [entry] = ring
+    assert "\n" not in entry  # logs.ndjson keeps one record per line
+    with pytest.raises(BundleError) as refused:
+        _build(ring, tmp_path)
+    assert refused.value.code == "BUNDLE_SECRET_DETECTED"
+
+
+class _Login(pydantic.BaseModel):
+    password: str = pydantic.Field(min_length=12)
+    user: str
+
+
+def test_the_input_that_pydantic_writes_in_a_validation_error_is_redacted_by_its_label() -> None:
+    with pytest.raises(pydantic.ValidationError) as caught:
+        _Login.model_validate({"password": _PASSWORD})  # too short, and no user
+    texts = (redaction._redact_runs(str(caught.value)), redact_text(str(caught.value)))
+
+    for out in (*texts, redaction.redact_structure({"error": caught.value})["error"]):
+        assert _PASSWORD not in out
+        assert f"input_value='{_KEY_MARK}', input_type=str]" in out  # quoted: to its quote
+        assert f"[type=missing, input_value={_KEY_MARK}\n" in out  # a mapping: to the line's end
+    assert redaction.redact_structure({"input_value": "ab"}) == {"input_value": _KEY_MARK}
 
 
 #: 32 letters and digits.
@@ -493,6 +627,38 @@ def test_a_second_pass_changes_nothing_and_the_text_stays_within_the_cap(
 
     assert len(out) <= _CAP
     assert redact(out) == out
+
+
+#: Key names (one as the last part of a dotted name), separators, quotes, placeholders, digits,
+#: spaces and line breaks; six digits are a TOTP shape, whose marker is longer: a pass grows a text.
+_PIECES = (
+    *("token", "password", "Cookie", "input_value", "machines.session", "x"),
+    *("=", ": ", " = ", '"', "'", ",", "}", "]", "123456", " ", "\n"),
+    *(_KEY_MARK, redaction._TRUNCATED, "<omitted>", "***", "null", "None"),
+)
+#: Text of those pieces, where the run of TOTP shapes before them moves them across the cut.
+_LABEL_HEAVY = st.builds(
+    lambda pad, before, pieces, after: "x" * pad + " " + "123456 " * before + pieces + after,
+    st.integers(0, 21),
+    st.integers(0, 400),
+    st.lists(st.sampled_from(_PIECES), max_size=40).map("".join),
+    st.sampled_from(["", "123456 " * 300, "\n123456" * 300]),
+)
+
+
+@settings(max_examples=300, deadline=None)
+@given(_LABEL_HEAVY)
+@example("p" * 8 + " " + "123456 " * 185 + 'session: "<omitted> ok\n' + "123456 " * 300)
+@example("x " * 2030 + "y" * 11 + " token=ab " + "z " * 300)
+def test_a_label_heavy_text_stays_within_the_cap_and_a_second_pass_changes_nothing(
+    text: str,
+) -> None:
+    # the examples: a cut inside a placeholder, and the second cut inside a key-name marker
+    for redact in _REDACTIONS.values():
+        out = redact(text)
+
+        assert len(out) <= _CAP
+        assert redact(out) == out
 
 
 def test_a_label_whose_value_the_cut_dropped_passes_the_bundle_scan() -> None:
@@ -596,6 +762,7 @@ _READABLE_IDS = {
     "commit-id": _SHA256[:40],  # `git_sha`: 40 hex characters
     "ws-connection-id": f"ws_{_UUID.hex[:12]}",
     "symbol": "1000PEPEUSDT",
+    "session-topic": f"machines.session:{_UUID}.state",  # a WS machine topic (`ch=`)
 }
 #: Ids that the key shape takes already; the access-token shape must not take them either.
 _KEY_SHAPED_IDS = {

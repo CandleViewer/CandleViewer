@@ -59,6 +59,8 @@ _REDACT_KEYS: Final[frozenset[str]] = frozenset(
         # C-12.6 names signatures: a name is their control, as their hex shape stays readable
         "sign",
         "signature",
+        # pydantic writes the input it refuses in a ValidationError's text by this name (#415)
+        "input_value",
     }
 )
 #: `_REDACT_KEYS` with `-` read as `_`, as `_is_redact_key` reads a name: the hyphenated and the
@@ -69,21 +71,36 @@ _REDACT_KEY_FORMS: Final[frozenset[str]] = frozenset(k.replace("-", "_") for k i
 _KEY_NAME_MARKER: Final[str] = "[redacted:key-name]"
 #: `_REDACT_KEY_FORMS` as a pattern, each name with `-` and `_` alike; the bundle scan's too.
 _KEY_NAMES: Final = "|".join(sorted(re.escape(k).replace("_", "[-_]") for k in _REDACT_KEY_FORMS))
-#: A labelled value that holds nothing to redact: a marker, the end of a cut text, a placeholder.
-#: The bundle scan reads the same as no value.
-_NO_VALUE: Final = r"(?!\[redacted|\.\.\.\[truncated|<omitted>|\*\*\*|null\b|none\b)"
+#: A name after a `.` is the last part of a dotted name, not a label: a WS machine topic such as
+#: `machines.session:<id>.state` stays readable (#415). The bundle scan's too.
+_NOT_DOTTED: Final = r"(?<!\.)"
+#: A labelled value that holds nothing to redact: a marker, the end of a cut text or a placeholder,
+#: as the whole value, so `password=***x` holds a value (#415). What follows it ends a value: a
+#: space, a quote, a comma, a closing bracket, the end, or a `\`, as the bundle's buffer writes a
+#: line break or a quote (`\n`, `\'`). The bundle scan reads the same as no value.
+_NO_VALUE: Final = (
+    r"(?!(?:\[redacted:[a-z-]+\]|\.\.\.\[truncated:oversize\]|<omitted>|\*\*\*|null|none)"
+    r"""(?=[\s"',}\]\\]|\Z))"""
+)
 #: The first letters of the key names: most words fail this check before any name is tried.
 _KEY_FIRST: Final = "".join(sorted({k[0] for k in _REDACT_KEY_FORMS}))
 #: A part of a value in quotes: to its closing quote (a `\` escapes a character) or the line's end.
 _QUOTED: Final = r"""(?:"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)"""
+#: Names whose value, when it is not quoted, runs to the line's end (#415): a header's value is the
+#: rest of its line (`Cookie: a=…; b=…`), and pydantic writes an input of any type (`{…}`, `[…]`).
+#: Read as the end of the name just matched, so the other names cost nothing more.
+_TO_LINE_END: Final = r"(?<=cookie)|(?<=input[-_]value)"
 #: A value labelled with a key name in text (`token = …`, `"password": "…"`, `Authorization: Bearer
 #: …`): the bundle scan's labelled-secret rule as a substitution (#415). On the label's line, a
-#: quoted value runs to its closing quote, and a bare one, after a `Bearer` or `Basic` scheme, to a
-#: space, comma or closing bracket, with any quoted part in it (`access_token="…"`).
+#: quoted value runs to its closing quote, a `_TO_LINE_END` name's to the line's end, and any other
+#: bare one, after a `Bearer` or `Basic` scheme, to a space, comma or closing bracket, with any
+#: quoted part in it (`access_token="…"`).
 _LABELLED_VALUE: Final = re.compile(
-    rf"""(?ix)(?P<label>\b(?=[{_KEY_FIRST}])(?:{_KEY_NAMES})["']?[ \t]*[:=][ \t]*)
+    rf"""(?ix)(?P<label>\b(?=[{_KEY_FIRST}]){_NOT_DOTTED}(?:{_KEY_NAMES})(?P<line>{_TO_LINE_END})?
+    ["']?[ \t]*[:=][ \t]*)
     (?:(?P<quote>["']){_NO_VALUE}(?:\\.|(?!(?P=quote))[^\\\n])+
-    |{_NO_VALUE}(?:(?:bearer|basic)[ \t]+)?[^\s"',}}\]](?:[^\s"',}}\]]|{_QUOTED})*)"""
+    |{_NO_VALUE}(?(line)[^\s"'][^\n]*
+    |(?:(?:bearer|basic)[ \t]+)?[^\s"',}}\]](?:[^\s"',}}\]]|{_QUOTED})*))"""
 )
 #: A label's `:` or `=` follows a letter (each key name ends with one), a quote, a space or a tab:
 #: text whose separators all follow something else (a timestamp, an address) is not scanned further.
@@ -172,8 +189,11 @@ _TAIL_MAX: Final = 3072
 #: it inside the text (what borders a run is a boundary to every shape), so `_redact_runs` can
 #: replace a whole run, and no part of a matched value stays beside its marker.
 _RUN: Final = re.compile(r"[\w.-]+")
-#: A run as `_cut` reads it: `_RUN` and an opening `[`, so that no cut leaves a marker's `[` alone.
-_CUT_RUN: Final = re.compile(r"[\w.\[-]+")
+#: A run as `_cut` reads it: `_RUN` and the other characters of a marker and a placeholder (`[`,
+#: `]`, `:`, `<`, `>`, `*`), so that a cut drops a marker or a placeholder whole: a part of one
+#: after a label would read as a value (`_NO_VALUE`), and a second pass would change the text
+#: (#415).
+_CUT_RUN: Final = re.compile(r"[\w.\[\]:<>*-]+")
 
 
 def _is_redact_key(key: object) -> bool:
@@ -193,23 +213,23 @@ def _cut(text: str) -> str:
     """`text`, or, when it is longer than `_CUT_LEN`, its start and its last lines (up to
     `_TAIL_MAX` characters), `_MAX_SCAN_LEN` characters in all, joined by `_TRUNCATED` (#415).
 
-    The start is cut before a run that the cut would split, so no cut part of a value stays.
+    The start is cut before a run that the cut would split, so no cut part of a value stays. Only
+    the character at the cut is read forward, so a cut costs the same for a run of any length.
     """
     if len(text) <= _CUT_LEN:
         return text
     line = text.find("\n", len(text) - _TAIL_MAX)
     tail = text[line:] if line >= 0 else ""
     end = _MAX_SCAN_LEN - len(tail)
-    if _CUT_RUN.match(text, end) and (split := _CUT_RUN.match(text[end - 1 :: -1])):
+    if _CUT_RUN.match(text, end, end + 1) and (split := _CUT_RUN.match(text[end - 1 :: -1])):
         end -= split.end()
     return text[:end] + _TRUNCATED + tail
 
 
-def _redact_str_value(value: str, *, labels: bool = True) -> str:
+def _redact_str_value(value: str) -> str:
     """Redact a string: each value labelled with a key name shows the key-name marker, and the
-    whole string is a shape's marker when a value shape matches in it (#415). `labels=False` leaves
-    labelled values to the rendered text, for a format string whose placeholders must stay. A long
-    string is cut first (`_cut`), and bounded again after, as markers can lengthen it.
+    whole string is a shape's marker when a value shape matches in it (#415). A long string is cut
+    first (`_cut`), and bounded again after, as markers can lengthen it.
 
     A 6-digit TOTP is only redacted by shape when found alongside a
     totp-ish neighbour is impractical to detect at this granularity (we do
@@ -220,7 +240,7 @@ def _redact_str_value(value: str, *, labels: bool = True) -> str:
     """
     if len(value) > _CUT_LEN:
         value = _cut(value)
-    if labels and ("=" in value or ":" in value) and _LABEL_SEP.search(value):
+    if ("=" in value or ":" in value) and _LABEL_SEP.search(value):
         value = _LABELLED_VALUE.sub(_label_marker, value)
         if len(value) > _CUT_LEN:
             value = _cut(value)
@@ -259,8 +279,6 @@ def _exception_text(exc: BaseException, depth: int) -> str:
         if type(exc).__str__ is not BaseException.__str__:
             return str(exc)
         args = _redact_value(exc.args, depth)
-        if not isinstance(args, tuple):  # deeper than `_MAX_DEPTH`: its marker
-            return str(args)
         return str(args[0]) if len(args) == 1 else str(args) if args else ""
     except Exception:
         return "<exception str() failed>"

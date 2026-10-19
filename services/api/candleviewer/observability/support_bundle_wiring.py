@@ -36,7 +36,8 @@ class LogRingBuffer(logging.Handler):
     A stdlib record's message is rendered here, after the filter ran (an argument that is not a
     `str`, such as a websockets frame, is turned into text only now), so the rendered message
     passes the same redaction as stdout's `event` (#415). A structlog record's message is its
-    event dict, which the processor chain has redacted already, as on stdout.
+    event dict, which the processor chain has redacted already, as on stdout. Each record is one
+    line, a line break written as `\\n`, as in its traceback (#415).
     """
 
     def __init__(self, maxlen: int = _RING_MAX) -> None:
@@ -55,7 +56,9 @@ class LogRingBuffer(logging.Handler):
                 line += f" exception={record.exc_text!r}"
             if record.stack_info:
                 line += f" stack={record.stack_info!r}"
-            self._buf.append((record.created, line))
+            # one physical line: the bundle's logs.ndjson keeps a record per line, and its scan
+            # reads a label and its value on two lines of a message together (#415)
+            self._buf.append((record.created, line.replace("\r", "\\r").replace("\n", "\\n")))
         except Exception:
             return
 
