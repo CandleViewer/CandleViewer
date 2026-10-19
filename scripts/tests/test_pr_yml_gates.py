@@ -458,9 +458,10 @@ def test_secret_scan_reads_the_prs_commits_with_the_security_lanes_scanners() ->
         assert image in lane and re.fullmatch(r"sha256:[0-9a-f]{64}", digest), name
     assert step["env"]["TRUFFLEHOG_IMAGE"] in lane
     # The range commitlint reads, from the event and through env only; on a merge group, the
-    # group's own commit (#3433).
-    event = "${{ github.event.pull_request.%s.sha || github.event.merge_group.%s_sha }}"
-    base, head = event % ("base", "base"), event % ("head", "head")
+    # group's own commit (#3433); on a merge train, train_base..train_head (#3783).
+    event = "${{ github.event.pull_request.%s.sha || github.event.merge_group.%s_sha"
+    event += " || inputs.train_%s }}"
+    base, head = event % ("base", "base", "base"), event % ("head", "head", "head")
     assert (step["env"]["BASE_SHA"], step["env"]["HEAD_SHA"]) == (base, head)
     assert "${{" not in step["run"]
 
@@ -529,7 +530,7 @@ def test_secret_scan_fails_on_any_finding_or_scanner_failure(
 @pytest.mark.parametrize(
     ("base", "fake", "message"),
     [
-        ("", {}, "CI-SEC-005: no PR commit range"),
+        ("", {}, "CI-SEC-005: no PR commit range - scanner infrastructure"),
         ("0" * 40, {}, "CI-SEC-005: the checkout lacks the PR's commits"),
         (None, {"SEEN": "0"}, "CI-SEC-005: the gitleaks image reads '0' of the PR's 1 commit(s)"),
     ],

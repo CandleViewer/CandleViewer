@@ -19,7 +19,7 @@ measuring it and periodically breaking it on purpose.
 ## 2. Pipeline job map
 
 ```
-PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
+PR opened/updated, merge group queued for main, or merge train dispatched (.github/workflows/pr.yml)
 ├─ changed-paths            → path filters feeding every conditional lane
 ├─ gates          (one job, #3076)   → one step per gate below; each reports under its own lane
 │  ├─ always:       secret-scan first (gitleaks + trufflehog over the PR's commits, a merge
@@ -172,6 +172,13 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   enqueues it again. The workflows that run on `pull_request` only do not run in the queue, so
   protection must require `ci-required` alone: a required check that never reports on a merge
   group stalls the queue. Do not apply `.github/branch-protection.json` until #3103 reconciles it.
+- A merge train's run (#3783; `workflow_dispatch` on a `train/*` branch, see 01-sdlc §7) reads as
+  a merge group's: the filters compare the train with `train_base`, the PR-metadata gates read
+  `false`/`skipped`, `secret-scan` scans `train_base..train_head`, and it is never cancelled. It
+  adds to each PR's own green `pr` run, never replaces it. A red `changed-paths` saying
+  `merge train refused` names the check the dispatch failed: rebuild the train, dispatch it again.
+  Its red `ci-required` stays on the commit it ran on: on a PR's head, re-run the PR's own `pr` run;
+  on `main` (the UI's default ref) it does not mean `main` is broken and goes when `main` moves.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`

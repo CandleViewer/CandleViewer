@@ -14,9 +14,11 @@ import { execFileSync } from "node:child_process";
 // `release/*` are protected/automation-only branches and are always allowed
 // through this check (nobody pushes directly to them via a dev workstation
 // hook in the first place; CI branch-protection is the real gate there).
+// `train/*` is the orchestrator's merge train (§7, #3783): pushed only to be
+// validated by one dispatched `pr.yml` run, never a PR head.
 const ALLOWED_PREFIXES = ["feat/", "fix/", "chore/", "design/", "spike/", "hotfix/"];
 const ALWAYS_ALLOWED = new Set(["main"]);
-const ALWAYS_ALLOWED_PREFIXES = ["release/"];
+const ALWAYS_ALLOWED_PREFIXES = ["release/", "train/"];
 
 export function isValidBranchName(name) {
   if (typeof name !== "string" || name.length === 0) return false;

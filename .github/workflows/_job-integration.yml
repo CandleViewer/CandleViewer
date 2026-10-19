@@ -206,11 +206,12 @@ jobs:
   # E42-K01 (#888) audit query-plan spike: 10 M synthetic audit_log rows on a
   # testcontainers Postgres 16, EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) per index
   # candidate, 10k-row write batches, GIN CREATE INDEX CONCURRENTLY. Long-running,
-  # so it is opt-in: only on PRs labelled `run-audit-spike` (or manual dispatch).
+  # so it is opt-in: only on PRs labelled `run-audit-spike`. No dispatch arm: pr.yml's one
+  # dispatch is a merge train (#3783), which must not start a 200-minute spike.
   # Not a required check; it publishes the numbers the spike/ADR-0025 cite.
   audit-query-plan:
     name: audit-query-plan
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-audit-spike') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'run-audit-spike') }}
     runs-on: ubuntu-latest
     timeout-minutes: 200
     steps:

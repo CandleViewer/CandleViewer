@@ -10,6 +10,7 @@ describe("isValidBranchName", () => {
     "spike/webgl-footprint-bench",
     "hotfix/oms-77-fanout-race",
     "release/1.4.0",
+    "train/20261019-1",
     "main",
   ];
 

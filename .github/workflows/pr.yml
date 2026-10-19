@@ -2,6 +2,7 @@ name: pr
 
 # E03-T01: entry-point workflow for every pull request into `main`, and (#3433) for every merge
 # group the merge queue builds for `main`.
+# #3783: also for each merge train the orchestrator dispatches on a `train/*` branch.
 # ADR-0013-ci-pipeline.md binding rules 1, 2, 5, 6, 7. This workflow only
 # computes the change-path filters, runs the always-on and sub-minute gates
 # as steps of one `gates` job (#3076), calls the (still-stub) reusable per-lane
@@ -25,14 +26,28 @@ on:
   merge_group:
     types: [checks_requested]
     branches: [main]
+  # #3783: the merge train, the queue's stand-in while GitHub offers the queue to organisations
+  # only: `main` plus approved PRs, each merged with `git merge --no-ff`, on a train/* branch the
+  # orchestrator pushes. `changed-paths` fails any other dispatch (01-sdlc-and-branching.md §7).
+  workflow_dispatch:
+    inputs:
+      train_base:
+        description: The commit of main the train was built on (full SHA)
+        required: true
+        type: string
+      train_head:
+        description: The train's head commit, the dispatched branch's head (full SHA)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 # A push to a PR branch cancels the branch's last run. A merge group build has a group of its own
 # (its head commit) and is never cancelled: the queue would read that as a failure (#3433).
+# Likewise a merge train's run: keyed on its own commit, never an input, never cancelled (#3783).
 concurrency:
-  group: pr-${{ github.event.merge_group.head_sha || github.head_ref }}
+  group: pr-${{ github.event.merge_group.head_sha || github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -52,7 +67,7 @@ jobs:
       migrations: ${{ steps.filter.outputs.migrations }}
       rules: ${{ steps.filter.outputs.rules }}
       semgrep: ${{ steps.filter.outputs.semgrep }}
-      # Not a path filter: false on a merge group, where the PR-metadata gates do not apply.
+      # Not a path filter: false on a merge group or train, where PR-metadata gates do not apply.
       pr: ${{ steps.change.outputs.pr }}
     permissions:
       contents: read
@@ -66,12 +81,20 @@ jobs:
       # lanes cover every entry ahead of it too, never just its own base_sha: with grouping
       # HEADGREEN (.github/branch-protection.json) the queue merges a failed entry together with
       # a later one that passed, trusting the later run to have checked the combined change.
+      # #3783: a merge train is diffed from train_base, so its lanes cover every PR in it. It is
+      # refused unless its run tests the train itself: a train/* branch whose head is train_head,
+      # no PR's head (its ci-required would be that PR's), built on train_base, a commit of `main`,
+      # by merges alone. A train run adds to a PR's own green run, never replaces it (01-sdlc §7).
       - name: Change under test (pr, base, head)
         id: change
         env:
           EVENT: ${{ github.event_name }}
           GROUP_BASE_REF: ${{ github.event.merge_group.base_ref }}
           GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
+          TRAIN_BASE: ${{ inputs.train_base }}
+          TRAIN_HEAD: ${{ inputs.train_head }}
+          RUN_REF: ${{ github.ref }}
+          RUN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           sha='^[0-9a-f]{40}$'
@@ -80,7 +103,25 @@ jobs:
             merge_group)
               [[ "$GROUP_BASE_REF" == "refs/heads/main" && "$GROUP_HEAD" =~ $sha ]] || { echo "::error::merge group not for main or without a head SHA"; exit 1; }
               printf 'pr=false\nbase=main\nhead=%s\n' "$GROUP_HEAD" >> "$GITHUB_OUTPUT" ;;
-            *) echo "::error::pr.yml runs on pull_request and merge_group, not $EVENT"; exit 1 ;;
+            workflow_dispatch)
+              refuse() { echo "::error::merge train refused: $*"; exit 1; }
+              [[ "$TRAIN_BASE" =~ $sha && "$TRAIN_HEAD" =~ $sha ]] || refuse "train_base and train_head must be full lowercase SHAs"
+              [[ "$RUN_REF" == refs/heads/train/* ]] || refuse "dispatch it on a train/* branch"
+              [[ "$TRAIN_HEAD" == "$RUN_SHA" ]] || refuse "train_head is not the dispatched commit $RUN_SHA"
+              heads=$(git ls-remote origin 'refs/pull/*/head') || refuse "the PRs' heads could not be listed"
+              [[ "$heads" != *"$RUN_SHA"* ]] || refuse "the dispatched commit is a PR's head"
+              # The checkout is shallow: ancestry needs main's history and the train's.
+              deepen=()
+              [[ "$(git rev-parse --is-shallow-repository)" == false ]] || deepen=(--unshallow)
+              git fetch --quiet --no-tags "${deepen[@]}" origin +refs/heads/main:refs/remotes/origin/main ||
+                refuse "main could not be fetched"
+              git merge-base --is-ancestor "$TRAIN_BASE" refs/remotes/origin/main || refuse "train_base is not a commit of main"
+              git merge-base --is-ancestor "$TRAIN_BASE" "$TRAIN_HEAD" || refuse "train_base is not an ancestor of train_head"
+              merges=$(git rev-list --count --first-parent --merges "$TRAIN_BASE..$TRAIN_HEAD")
+              others=$(git rev-list --count --first-parent --no-merges "$TRAIN_BASE..$TRAIN_HEAD")
+              [[ "$merges" -gt 0 && "$others" == 0 ]] || refuse "the train is not train_base plus one git merge --no-ff per PR"
+              printf 'pr=false\nbase=%s\nhead=%s\n' "$TRAIN_BASE" "$TRAIN_HEAD" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::pr.yml runs on pull_request, merge_group and workflow_dispatch, not $EVENT"; exit 1 ;;
           esac
 
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -264,7 +305,8 @@ jobs:
   # `ci-required` lane and `gates` exports its outcome under it, so each gate is judged as its
   # old job was. Tree-reading gates run first; installers (PR build/lifecycle scripts) last.
   # changelog-fragment and commitlint read PR metadata (the title, the body, the PR's own commits):
-  # they run on pull requests only, since a queue's squash commit is not the PR's commits (#3433).
+  # they run on pull requests only, since a queue's squash commit is not the PR's commits (#3433),
+  # nor are a merge train's merges (#3783).
   gates:
     name: gates
     needs: changed-paths
@@ -314,16 +356,17 @@ jobs:
         env:
           # A merge group (#3433): its own commit, base_sha..head_sha, the queue's squash of the
           # PR. A content scan needs no more: every entry ahead had its commits scanned on its own
-          # PR's run, which is green before the PR can be enqueued.
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          # PR's run, which is green before the PR can be enqueued. A merge train (#3783):
+          # train_base..train_head, its PRs' commits and the merges that join them.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || inputs.train_base }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || inputs.train_head }}
           GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
           TRUFFLEHOG_IMAGE: trufflesecurity/trufflehog:3.97.9@sha256:52e67fef4d054ecff5c2ce4b4ae376626d1ef54aa0898b53cac19c25e92e14db
         run: |
           set -euo pipefail
           fail() { echo "CI-SEC-005: $* - scanner infrastructure failure, never a clean scan" >&2; exit 1; }
           range="$BASE_SHA..$HEAD_SHA"
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "no PR commit range ('$range')"
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "no PR commit range"
           count=$(git rev-list --count "$range") || fail "the checkout lacks the PR's commits ($range)"
           { docker pull --quiet "$GITLEAKS_IMAGE" && docker pull --quiet "$TRUFFLEHOG_IMAGE"; } || fail "image pull"
           # security_gate.py's PyYAML, in its own venv as `gen` keeps its own.
@@ -549,8 +592,8 @@ jobs:
   # adds and judges: a label added with GITHUB_TOKEN starts no other run. It can write to the PR,
   # so it checks out `main` and runs main's script, never the PR's code (SR-132). Until main has
   # the script (the PR adding it), it labels every PR: never fewer reviews.
-  # It never removes a label. A merge group has no PR to label (its PR's own run labelled it before
-  # it could be enqueued), so the step runs on pull requests only and the job passes there (#3433).
+  # It never removes a label. A merge group or train has no PR to label (each PR's own run labelled
+  # it first), so the step runs on pull requests only and the job passes there (#3433, #3783).
   security-review-label:
     name: security-review-label
     runs-on: ubuntu-latest
@@ -581,7 +624,7 @@ jobs:
           fi
 
   # --- C-9.1 #11's Dependabot alert gate (#3558). An open High or Critical alert on `main` blocks
-  # every PR and merge group, a docs-only one too, unless its tree fixes the alert since its merge
+  # every PR, merge group and train, docs-only too, unless its tree fixes the alert since its merge
   # base with main or a dated entry accepts it (High only): docs/ci-runbook.md, CI-SEC-001/005.
   # Its own job, as only it may read the alerts; it installs nothing but the gate's PyYAML wheel,
   # pinned by hash. A fix changes the package's versions in the root pnpm-lock.yaml or
@@ -780,7 +823,7 @@ jobs:
           FILTER_ENGINE: ${{ needs.changed-paths.outputs.engine }}
           FILTER_RULES: ${{ needs.changed-paths.outputs.rules }}
           FILTER_SEMGREP: ${{ needs.changed-paths.outputs.semgrep }}
-          FILTER_PR: ${{ needs.changed-paths.outputs.pr }} # false on a merge group only (#3433)
+          FILTER_PR: ${{ needs.changed-paths.outputs.pr }} # false on a merge group or train (#3433)
           RESULT_CHANGED_PATHS: ${{ needs.changed-paths.result }}
           RESULT_GATES: ${{ needs.gates.result }}
           RESULT_SECRET_SCAN: ${{ needs.gates.outputs.secret-scan }}

@@ -170,6 +170,7 @@ gitGraph
 | `spike/<short>`                  | Spike output, may never merge to main as-is                                   | `spike/webgl-footprint-bench` |
 | `release/<semver>`               | Cut at release-train time, stabilization only                                 | `release/1.4.0`               |
 | `hotfix/<area>-<ticket>-<short>` | Emergency fix branched from a release tag / main                              | `hotfix/oms-77-fanout-race`   |
+| `train/<yyyymmdd>-<n>`           | Merge train (§7): pushed and deleted by the orchestrator only, not a PR head  | `train/20261019-1`            |
 
 `main` is protected: no direct pushes, required status checks, required reviews, required linear history (squash or rebase merge only — no merge commits from feature branches), required conversation resolution.
 
@@ -221,6 +222,7 @@ Rules:
   - `pr.yml` listens to `merge_group` (#3433): the queue tests the exact `main`+PR tree and waits for `ci-required`, the one check protection requires. A group's lanes follow its diff from `main`, so they also re-check the entries ahead of it, which the queue may merge together with it. The PR-metadata gates (commitlint, changelog-fragment) and the workflows that run on `pull_request` only already ran on the PR and do not run in the queue.
   - The queue squash-merges. Nobody uses GitHub's **Update branch** (it merges `main` into the branch, C-4.12): rebase and push with `--force-with-lease` as before.
   - Until the owner turns on **Require merge queue** for `main`, the trigger is inert and merges stay as they are today. The orchestrator's enqueue command is in `AGENTS.md` §4.
+  - **Merge train, until the repository moves to an organisation (#3783).** GitHub offers the queue only to organisation-owned repositories, so the orchestrator validates approved PRs whose runs went stale as one train: `main`'s tip (`train_base`) plus each PR's current head, merged cleanly in order with `git merge --no-ff` and nothing else, pushed as `train/<yyyymmdd>-<n>` and checked by one dispatched `pr.yml` run (`AGENTS.md` §4) whose lanes follow the train's diff, as a merge group's do. On a green `ci-required` it squash-merges the PRs in train order, citing the run id, each while `main` is still `train_base` plus the train's earlier PRs and the PR's head is still the one in the train; on a red run, or once any of that fails, it merges no more and rebuilds the train. `train/*` branches are orchestrator-owned, never a PR head, and deleted after the merges; `changed-paths` fails any dispatch that is not such a train. A train run adds to a PR's own run, never replaces it: outside the queue a PR merges only on its own green `pull_request` run of `pr.yml` at its head and, when that run is stale, also on a green train run that holds that head; never on its commit's latest `ci-required` alone, which a dispatch may have posted.
 - Draft PRs are used for early feedback / interface-first stubs (§10) and do not count against review SLA.
 - Stale PR policy: no activity for 5 working days → auto-comment ping; 10 working days → auto-labeled `stale`, owner escalation at standup.
 

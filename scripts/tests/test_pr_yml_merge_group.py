@@ -8,7 +8,12 @@ PR's own diff stays on the API path); the PR-metadata gates, not applicable on a
 while every other lane resolves as before; every pull-request read in pr.yml and the lanes it
 calls, guarded to pull_request or given a merge_group fallback, and every condition or value there
 that reads the event; the migrations lane's base; and the `workflow_run` consumers of `pr`, and the
-coverage ratchet whatever it follows, which ignore a queue run."""
+coverage ratchet whatever it follows, which ignore a queue run.
+
+#3783: no merge queue on a user-owned repository, so the orchestrator dispatches `pr.yml` on a
+merge train (`main` plus approved PRs merged with `--no-ff` on a `train/*` branch), judged as a
+merge group: the same pins cover it, the `change` step's refusals run on real repositories, plus
+where the inputs are read and every job's permissions, which no event changes."""
 
 from __future__ import annotations
 
@@ -17,7 +22,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -40,9 +45,10 @@ PR_READ = re.compile(
     r"|\bcontext\.(?:payload|issue)\b"
 )
 #: The event in any form: a condition or value that reads it can skip or weaken a queue run's check.
+#: A merge train's inputs are its event's payload (#3783).
 EVENT_READ = re.compile(
-    PR_READ.pattern + r"|github\.(?:event|event_name|actor|triggering_actor|ref|ref_name)\b"
-    r"|\bGITHUB_(?:EVENT_NAME|REF|REF_NAME|ACTOR)\b|\boutputs\.pr\b"
+    PR_READ.pattern + r"|github\.(?:event|event_name|actor|triggering_actor|ref|ref_name|sha)\b"
+    r"|\bGITHUB_(?:EVENT_NAME|REF|REF_NAME|ACTOR|SHA)\b|\boutputs\.pr\b|\binputs\.train_\w+"
 )
 #: A condition is false on a merge group when one of its top-level `&&` terms is one of these.
 PR_GUARDS = ("github.event_name == 'pull_request'", "needs.changed-paths.outputs.pr != 'false'")
@@ -74,9 +80,9 @@ EVENT_CONDITIONS = {
     "_job-coverage.yml:coverage-thresholds:Post PR summary comment": (
         "always() && github.event_name == 'pull_request'"
     ),
-    # False on a merge group by construction (no labels, no head branch), as on an unlabelled PR
-    # from a non-release branch. The opt-in audit query-plan spike, not a lane of its own:
-    "_job-integration.yml:audit-query-plan": "${{ github.event_name == 'workflow_dispatch' || "
+    # False on a merge group or train by construction (no labels, no head branch), as on an
+    # unlabelled PR from a non-release branch. The opt-in audit query-plan spike, not a lane:
+    "_job-integration.yml:audit-query-plan": "${{ "
     "contains(github.event.pull_request.labels.*.name, 'run-audit-spike') }}",
     # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
     FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
@@ -97,20 +103,26 @@ FALSE_ON_A_MERGE_GROUP = {
         "_job-e2e.yml:e2e-electron",
     )
 }
+#: The secret-scan range's ends: a PR's, a merge group's, else a merge train's (#3783).
+SCAN = "github.event.pull_request.%s.sha || github.event.merge_group.%s_sha || inputs.train_%s"
+#: A merge train's base branch in a lane pr.yml calls, which sees its own inputs only (#3783).
+MIGRATIONS_BASE = "github.base_ref || github.event.merge_group.base_ref || 'main'"
 #: Every other value that reads the event where a merge group runs it (any key, `run:` text too),
 #: by job: a value can weaken a check there as a condition can (a `continue-on-error`, a lane's
 #: input, a shell test of the event), so a new or changed one is reviewed here first.
 EVENT_VALUES = [
-    ("pr.yml", "github.event.merge_group.head_sha || github.head_ref"),
+    ("pr.yml", "github.event.merge_group.head_sha || github.head_ref || github.sha"),
     ("pr.yml", "github.event_name == 'pull_request'"),
     ("pr.yml:changed-paths", "steps.change.outputs.pr"),
     ("pr.yml:changed-paths", "github.event_name"),
     ("pr.yml:changed-paths", "github.event.merge_group.base_ref"),
     ("pr.yml:changed-paths", "github.event.merge_group.head_sha"),
-    ("pr.yml:gates", "github.event.pull_request.base.sha || github.event.merge_group.base_sha"),
-    ("pr.yml:gates", "github.event.pull_request.head.sha || github.event.merge_group.head_sha"),
+    *[("pr.yml:changed-paths", read) for read in ("inputs.train_base", "inputs.train_head")],
+    *[("pr.yml:changed-paths", read) for read in ("github.ref", "github.sha")],
+    ("pr.yml:gates", SCAN % ("base", "base", "base")),
+    ("pr.yml:gates", SCAN % ("head", "head", "head")),
     ("pr.yml:ci-required", "needs.changed-paths.outputs.pr"),
-    ("_job-migrations.yml:migrations", "github.base_ref || github.event.merge_group.base_ref"),
+    ("_job-migrations.yml:migrations", MIGRATIONS_BASE),
 ]
 LANE = r'^\s*"?([\w-]+)"?:\s*\{\s*applicable:\s*(.+?),\s*result:\s*process\.env\.(RESULT_\w+)'
 SKIP = "CI-GATE-002: gate misconfiguration: %s applicable but skipped"
@@ -158,8 +170,9 @@ def _render(template: object, context: dict[str, str]) -> str:
         if equal:
             return "true" if context.get(equal[1], "") == equal[2] else "false"
         terms = [term.strip() for term in expression.split("||")]
-        assert all(re.fullmatch(r"[\w.]+", term) for term in terms), expression
-        return next((context[term] for term in terms if context.get(term)), "")
+        assert all(re.fullmatch(r"[\w.]+|'[^']*'", term) for term in terms), expression
+        values = (term.strip("'") if term[0] == "'" else context.get(term, "") for term in terms)
+        return next((value for value in values if value), "")
 
     return EXPRESSION.sub(evaluate, str(template))
 
@@ -171,19 +184,33 @@ def _queue(pr: int, head: str) -> dict[str, str]:
     return {"github.event_name": "merge_group", f"{group}.head_ref": ref, f"{group}.head_sha": head}
 
 
+TRAIN_REF = "refs/heads/train/20261019-1"
+
+
+def _train(head: str) -> dict[str, str]:
+    """A merge train's dispatch context (#3783): no head_ref; its train/* ref and its inputs."""
+    run = {"github.event_name": "workflow_dispatch", "github.ref": TRAIN_REF, "github.sha": head}
+    return run | {"inputs.train_base": BASE, "inputs.train_head": head}
+
+
 PULL = {"github.event_name": "pull_request", "github.head_ref": "chore/e03-x"}
 
 
-def test_pr_yml_runs_on_pull_requests_and_on_main_merge_groups_only() -> None:
-    # No workflow_dispatch: a dispatch names its own tree, so it could post a green `ci-required`
-    # on a commit whose lanes never ran. No push, no pull_request_target (CI-GATE-003).
-    assert PR[True] == {
+def test_pr_yml_runs_on_pull_requests_main_merge_groups_and_merge_trains_only() -> None:
+    # A dispatch names its own tree, so pr.yml takes one only as a merge train (#3783), both inputs
+    # required: `changed-paths` fails any other, so `ci-required` cannot pass on a commit whose
+    # lanes did not run on it. No push, no pull_request_target (CI-GATE-003).
+    on = dict(PR[True])
+    inputs = on.pop("workflow_dispatch")["inputs"]
+    assert on == {
         "pull_request": {
             "types": ["opened", "synchronize", "reopened", "ready_for_review"],
             "branches": ["main"],
         },
         "merge_group": {"types": ["checks_requested"], "branches": ["main"]},
     }
+    train = {name: (spec["required"], spec["type"]) for name, spec in inputs.items()}
+    assert train == dict.fromkeys(["train_base", "train_head"], (True, "string"))
 
 
 def test_concurrency_cancels_superseded_pr_runs_and_never_a_queue_run() -> None:
@@ -192,10 +219,12 @@ def test_concurrency_cancels_superseded_pr_runs_and_never_a_queue_run() -> None:
     assert (_render(group, PULL), _render(cancel, PULL)) == ("pr-chore/e03-x", "true")
     # Each merge group build runs in its own group (an empty head_ref would put every queue run in
     # `pr-`), even a PR enqueued again on the same base, whose queue ref is the same, and is never
-    # cancelled: the queue would read the cancelled check as a failure.
+    # cancelled: the queue would read the cancelled check as a failure. So does each merge train,
+    # keyed on its own commit (#3783), never an input, which might name a PR's branch.
     builds = [_queue(7, "3" * 40), _queue(7, "4" * 40), _queue(8, "5" * 40)]
+    builds += [_train("6" * 40), _train("7" * 40) | {"inputs.train_head": "chore/e03-x"}]
     groups = {_render(group, build) for build in builds}
-    assert len(groups) == 3 and not {"pr-", "pr-chore/e03-x"} & groups
+    assert len(groups) == 5 and not {"pr-", "pr-chore/e03-x"} & groups
     assert {_render(cancel, build) for build in builds} == {"false"}
 
 
@@ -203,6 +232,20 @@ def _change_step() -> dict[str, Any]:
     steps = [step for step in JOBS["changed-paths"]["steps"] if step.get("id") == "change"]
     assert len(steps) == 1, "changed-paths has one `change` step"
     return steps[0]
+
+
+def _change(home: Path, cwd: Path | None = None, **values: str) -> tuple[int, dict[str, str], str]:
+    """The `change` step's script as the runner runs it, each env key set (empty unless given):
+    its exit code, what it wrote to GITHUB_OUTPUT and its stdout."""
+    _needs("bash")
+    output = home / "github-output"
+    output.write_text("", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1"}
+    env |= {"GITHUB_OUTPUT": str(output)} | dict.fromkeys(_change_step()["env"], "") | values
+    run = ["bash", "-c", _change_step()["run"]]
+    proc = subprocess.run(run, cwd=cwd or home, env=env, capture_output=True, text=True, timeout=60)
+    written = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    return proc.returncode, written, proc.stdout
 
 
 MAIN = "refs/heads/main"
@@ -217,32 +260,124 @@ MAIN = "refs/heads/main"
         ("merge_group", "refs/heads/release/v1", HEAD, None),  # the queue is main's only
         ("merge_group", MAIN, "main", None),  # a ref, not the group's head commit
         ("push", "", "", None),
-        ("workflow_dispatch", MAIN, HEAD, None),
+        ("workflow_dispatch", MAIN, HEAD, None),  # a train's inputs, not a group's
     ],
     ids=["pull-request", "merge-group", "no-base", "not-main", "bad-head", "push", "dispatch"],
 )
 def test_change_step_maps_the_event_to_the_change_under_test(
     event: str, base_ref: str, head: str, expected: dict[str, str] | None, tmp_path: Path
 ) -> None:
-    step = _change_step()
-    # Never the group's base_sha: that is the entry ahead, so the diff would miss its change.
-    assert step["env"] == {
+    # Never the group's base_sha: that is the entry ahead, so the diff would miss its change. A
+    # train's inputs come with the run's own ref and commit, which they must match (#3783).
+    assert _change_step()["env"] == {
         "EVENT": "${{ github.event_name }}",
         "GROUP_BASE_REF": "${{ github.event.merge_group.base_ref }}",
         "GROUP_HEAD": "${{ github.event.merge_group.head_sha }}",
+        "TRAIN_BASE": "${{ inputs.train_base }}",
+        "TRAIN_HEAD": "${{ inputs.train_head }}",
+        "RUN_REF": "${{ github.ref }}",
+        "RUN_SHA": "${{ github.sha }}",
     }
-    _needs("bash")
-    output = tmp_path / "github-output"
-    output.write_text("", encoding="utf-8")
-    env = {"PATH": os.environ.get("PATH", ""), "GITHUB_OUTPUT": str(output)}
-    env |= {"EVENT": event, "GROUP_BASE_REF": base_ref, "GROUP_HEAD": head}
-    run = ["bash", "-c", step["run"]]
-    proc = subprocess.run(run, env=env, capture_output=True, text=True, timeout=30)
-    written = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    code, written, out = _change(tmp_path, EVENT=event, GROUP_BASE_REF=base_ref, GROUP_HEAD=head)
     if expected is None:
-        assert (proc.returncode, written, "::error::" in proc.stdout) == (1, {}, True)
+        assert (code, written, "::error::" in out) == (1, {}, True)
     else:
-        assert (proc.returncode, written) == (0, expected)
+        assert (code, written) == (0, expected)
+
+
+def _git(home: Path, cwd: Path, *args: str) -> str:
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1"}
+    run = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args]
+    done = subprocess.run(run, cwd=cwd, env=env, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    return done.stdout.strip()
+
+
+def _trains(tmp_path: Path, *, shallow: bool = True) -> tuple[Path, dict[str, str]]:
+    """A checkout of train/20261019-1, of depth 1 as actions/checkout makes it unless `shallow` is
+    false, and the commits by name. On `origin`, main went c0, c1, c2 and the train is c1 plus
+    PR 1 (p1, on c0) and PR 2 (p2, on c1), each merged with --no-ff (m1, m2); PR 3's head is m1."""
+    _needs("bash", "git")
+    src, shas, branch = tmp_path / "src", {}, TRAIN_REF.removeprefix("refs/heads/")
+
+    def git(*args: str, cwd: Path = src) -> str:
+        return _git(tmp_path, cwd, *args)
+
+    def commit(name: str, *switch: str, path: str = "") -> None:
+        if switch:
+            git("switch", "-q", *switch)
+        if path:
+            (src / path).write_text(f"{name}\n", encoding="utf-8")
+            git("add", path)
+        git("commit", "-q", "--allow-empty", "-m", name)
+        shas[name] = git("rev-parse", "HEAD")
+
+    git("init", "-q", "-b", "main", str(src), cwd=tmp_path)
+    commit("c0")
+    commit("p1", "-c", "pr1", path="a.py")
+    commit("c1", "main")
+    commit("p2", "-c", "pr2", path="docs.md")
+    git("switch", "-q", "-c", branch, shas["c1"])
+    for pr, merge in (("pr1", "m1"), ("pr2", "m2")):
+        git("merge", "-q", "--no-ff", "-m", merge, pr)
+        shas[merge] = git("rev-parse", "HEAD")
+    commit("c2", "main")
+    git("clone", "-q", "--bare", str(src), "origin.git", cwd=tmp_path)
+    for pr, head in enumerate(("p1", "p2", "m1"), 1):  # as GitHub keeps refs/pull/<n>/head
+        git("update-ref", f"refs/pull/{pr}/head", shas[head], cwd=tmp_path / "origin.git")
+    url, depth = (tmp_path / "origin.git").as_uri(), ["--depth", "1"] if shallow else []
+    git("clone", "-q", *depth, "--branch", branch, url, "ws", cwd=tmp_path)
+    return tmp_path / "ws", shas
+
+
+def _dispatch(c: dict[str, str]) -> dict[str, str]:
+    """The env of the train's dispatch: run on its branch, with its base and head as inputs."""
+    run = {"EVENT": "workflow_dispatch", "RUN_REF": TRAIN_REF, "RUN_SHA": c["m2"]}
+    return run | {"TRAIN_BASE": c["c1"], "TRAIN_HEAD": c["m2"]}
+
+
+@pytest.mark.parametrize("shallow", [True, False], ids=["depth-1", "full"])
+def test_change_step_hands_a_train_to_paths_filter_as_a_merge_group(
+    shallow: bool, tmp_path: Path
+) -> None:
+    ws, c = _trains(tmp_path, shallow=shallow)
+    code, written, out = _change(tmp_path, ws, **_dispatch(c))
+    assert (code, written) == (0, {"pr": "false", "base": c["c1"], "head": c["m2"]}), out
+    assert _git(tmp_path, ws, "rev-parse", "--is-shallow-repository") == "false"
+    # The pinned paths-filter diffs a SHA base with the head directly (v4.0.3 src/git.ts
+    # getChanges): the union of the train's PRs' files, its lanes chosen for both.
+    diff = _git(tmp_path, ws, "diff", "--no-renames", "--name-only", f"{c['c1']}..{c['m2']}")
+    assert diff.split() == ["a.py", "docs.md"]
+
+
+#: Dispatches that are not the train, as changes to its env, and the refusal each gets: nothing is
+#: written, so paths-filter has no base or head and `changed-paths` fails, and `ci-required` too.
+NOT_A_TRAIN: dict[str, tuple[Callable[[dict[str, str]], dict[str, str]], str]] = {
+    "short-sha": (lambda c: {"TRAIN_BASE": c["c1"][:39]}, "full lowercase SHAs"),
+    "upper-case": (lambda c: {"TRAIN_HEAD": c["m2"].upper()}, "full lowercase SHAs"),
+    "branch-name": (lambda c: {"TRAIN_HEAD": TRAIN_REF}, "full lowercase SHAs"),
+    "other-branch": (lambda c: {"RUN_REF": "refs/heads/chore/e03-x"}, "on a train/* branch"),
+    "train-tag": (lambda c: {"RUN_REF": "refs/tags/train/20261019-1"}, "on a train/* branch"),
+    "not-the-run": (lambda c: {"RUN_SHA": c["m1"]}, "not the dispatched commit"),
+    "base-off-main": (lambda c: {"TRAIN_BASE": c["p1"]}, "not a commit of main"),
+    "base-after-train": (lambda c: {"TRAIN_BASE": c["c2"]}, "not an ancestor of train_head"),
+    # Only merges on train_base, and no PR's head (PR 3's is a merge chain): its ci-required
+    # never lands on a PR's head or on main's. Nor is an origin it cannot read taken as clean.
+    "older-base": (lambda c: {"TRAIN_BASE": c["c0"]}, "one git merge --no-ff per PR"),
+    "pr-head": (lambda c: {"TRAIN_HEAD": c["p2"], "RUN_SHA": c["p2"]}, "is a PR's head"),
+    "pr-merge-chain": (lambda c: {"TRAIN_HEAD": c["m1"], "RUN_SHA": c["m1"]}, "is a PR's head"),
+    "main-head": (lambda c: {"TRAIN_HEAD": c["c1"], "RUN_SHA": c["c1"]}, "--no-ff per PR"),
+    "origin-down": (lambda c: {"GIT_ALLOW_PROTOCOL": "https"}, "heads could not be listed"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(NOT_A_TRAIN))
+def test_change_step_refuses_any_dispatch_but_the_train(case: str, tmp_path: Path) -> None:
+    ws, c = _trains(tmp_path)
+    change, reason = NOT_A_TRAIN[case]
+    code, written, out = _change(tmp_path, ws, **_dispatch(c) | change(c))
+    assert (code, written, "::error::merge train refused: " in out) == (1, {}, True), out
+    assert reason in out
 
 
 def test_paths_filter_diffs_a_merge_group_against_main_from_their_merge_base() -> None:
@@ -346,10 +481,15 @@ def _guards(condition: object) -> bool:
 
 
 def _has_fallback(read: str) -> bool:
-    """`a || b` of two context paths, one of them under `github.event.merge_group`."""
+    """`a || b || c` of context paths: one under `github.event.merge_group`, one a merge train's
+    input (#3783) or, last as never empty, `'main'` (a train's base in a lane pr.yml calls, which
+    sees its own inputs only) or `github.sha` (the train's head, which `changed-paths` checks)."""
     terms = [term.strip() for term in read.split("||")]
-    group = [term.startswith("github.event.merge_group.") for term in terms]
-    return len(terms) == 2 and all(re.fullmatch(r"[\w.]+", term) for term in terms) and any(group)
+    last = {"'main'": "inputs.train_base", "github.sha": "inputs.train_head"}
+    terms[-1] = last.get(terms[-1], terms[-1])
+    group = any(term.startswith("github.event.merge_group.") for term in terms)
+    train = any(re.fullmatch(r"inputs\.train_(?:base|head)", term) for term in terms)
+    return len(terms) == 3 and all(re.fullmatch(r"[\w.]+", t) for t in terms) and group and train
 
 
 def _places(name: str) -> Iterator[tuple[str, dict[str, Any], dict[str, Any]]]:
@@ -380,7 +520,7 @@ def _parts(node: object) -> Iterator[str]:
 
 def _unguarded_reads() -> set[tuple[str, str]]:
     """(place, read) for each pull-request read in pr.yml or a lane it calls with neither a PR
-    guard on its step or job nor a merge_group fallback in the same `a || b`."""
+    guard on its step or job nor merge_group and merge train fallbacks in the same `a || b || c`."""
     return {
         (where, part)
         for name in dict.fromkeys(_called("pr.yml"))
@@ -420,9 +560,9 @@ def test_the_scan_finds_pull_request_context_in_any_form(read: str) -> None:
 
 
 def test_every_pull_request_read_is_guarded_or_has_a_merge_group_fallback() -> None:
-    # On a merge group these reads are empty: unguarded, one fails, hangs or skips a check that
-    # matters for the queued tree. Guard it to pull_request, give it a merge_group fallback in the
-    # same `a || b`, or, if it is false on a merge group by construction, review the exact read
+    # On a merge group or train these reads are empty: unguarded, one fails, hangs or skips a check
+    # that matters for the tree. Guard it to pull_request, give it merge_group and train fallbacks
+    # in the same `a || b || c`, or, if it is false on both by construction, review the exact read
     # into EVENT_CONDITIONS and FALSE_ON_A_MERGE_GROUP with the reason.
     assert _unguarded_reads() == FALSE_ON_A_MERGE_GROUP
 
@@ -442,20 +582,25 @@ def test_every_condition_and_value_that_reads_the_event_is_reviewed() -> None:
     assert sorted(values) == sorted(EVENT_VALUES)
 
 
-@pytest.mark.parametrize("base_ref", ["main", "refs/heads/main"], ids=["pr", "merge-group"])
-def test_migration_lockfile_check_compares_both_events_with_origin_main(
-    base_ref: str, tmp_path: Path
+@pytest.mark.parametrize(
+    "context",
+    [{"github.base_ref": "main"}, {"github.event.merge_group.base_ref": MAIN}, _train(HEAD)],
+    ids=["pr", "merge-group", "train"],
+)
+def test_migration_lockfile_check_compares_every_event_with_origin_main(
+    context: dict[str, str], tmp_path: Path
 ) -> None:
     steps = _load("_job-migrations.yml")["jobs"]["migrations"]["steps"]
     (step,) = [s for s in steps if "verify_migration_lockfile.py" in str(s.get("run"))]
     # A merge group has no base_ref; its target branch is merge_group.base_ref, a full ref.
-    fallback = "${{ github.base_ref || github.event.merge_group.base_ref }}"
+    fallback = "${{ " + MIGRATIONS_BASE + " }}"
     assert step["env"] == {"BASE_REF": fallback}
     _needs("bash")
     uv = tmp_path / "uv"  # prints its arguments, one per line
     uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
     uv.chmod(0o755)
-    env = {"PATH": f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}", "BASE_REF": base_ref}
+    env = {"PATH": f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}"}
+    env["BASE_REF"] = _render(fallback, context)
     run = ["bash", "-c", step["run"]]
     proc = subprocess.run(run, env=env, capture_output=True, text=True, timeout=30)
     args = proc.stdout.splitlines()
@@ -463,9 +608,11 @@ def test_migration_lockfile_check_compares_both_events_with_origin_main(
 
 
 def test_workflow_run_consumers_of_pr_ignore_merge_group_runs() -> None:
-    # A queue run's tree may never land (the queue can still drop its PR), so nothing that follows
-    # `pr` may write on one: a baseline, a comment, a branch.
-    event = re.compile(r"github\.event\.workflow_run\.event (?:!= 'merge_group'|== '\w+')")
+    # A queue or train run's tree may never land (the queue can drop its PR; a red train merges
+    # none, #3783), so nothing that follows `pr` may write on one: a baseline, a comment, a branch.
+    event = re.compile(
+        r"github\.event\.workflow_run\.event == '(?!merge_group'|workflow_dispatch')\w+'"
+    )
     for path in sorted(WORKFLOWS.glob("*.yml")):
         on = _load(path.name).get(True)
         if isinstance(on, dict) and "pr" in (on.get("workflow_run") or {}).get("workflows", []):
@@ -477,3 +624,44 @@ def test_workflow_run_consumers_of_pr_ignore_merge_group_runs() -> None:
     for job_id, job in _load("coverage-ratchet.yml")["jobs"].items():
         condition = str(job.get("if", ""))
         assert event.search(condition) and "== 'merge_group'" not in condition, job_id
+
+
+def test_the_train_inputs_reach_no_script_but_through_the_change_step() -> None:
+    # #3783: a dispatch's inputs are free text until the `change` step checks them, so they reach
+    # its env and the secret-scan range (which checks them again, as env, and never prints them):
+    # never a `run:` script, a `with:`, a condition, the concurrency group or a lane pr.yml calls.
+    reads = {
+        f"{where}:{key}.{sub}"
+        for name in dict.fromkeys(_called("pr.yml"))
+        for where, own, _ in _owned(name)
+        for key, value in own.items()
+        for sub, text in (value.items() if isinstance(value, dict) else [("", value)])
+        if re.search(r"\binputs\.train_|github\.event\.inputs\b", str(text))
+    }
+    assert reads == {
+        "pr.yml:changed-paths:change:env.TRAIN_BASE",
+        "pr.yml:changed-paths:change:env.TRAIN_HEAD",
+        "pr.yml:gates:secret-scan:env.BASE_SHA",
+        "pr.yml:gates:secret-scan:env.HEAD_SHA",
+    }
+
+
+#: Every job's permissions, as they were before the train: none depends on the event, so a train's
+#: run holds exactly a same-repository PR run's (#3783). The other lanes keep the read-only default.
+PERMISSIONS = dict.fromkeys(["gates", "architecture", "ci-required"], {"contents": "read"}) | {
+    "changed-paths": {"contents": "read", "pull-requests": "read"},
+    "security-review-label": {"contents": "read", "pull-requests": "write"},
+    "dependabot-alerts": {"contents": "read", "vulnerability-alerts": "read"},
+    "security": {"contents": "read", "security-events": "write"},
+    "coverage-thresholds": {"contents": "read", "pull-requests": "write"},
+}
+
+
+def test_a_train_runs_with_a_pull_requests_permissions_and_no_secret() -> None:
+    # Gherkin (#3783): the dispatch cannot run PR code with elevated rights. No job is given a
+    # secret or reads one, so a lane holds GITHUB_TOKEN alone, as on a PR (ADR-0013 rule 6).
+    jobs = {job: spec["permissions"] for job, spec in JOBS.items() if "permissions" in spec}
+    assert (PR["permissions"], jobs) == ({"contents": "read"}, PERMISSIONS)
+    assert not [job for job, spec in JOBS.items() if "secrets" in spec]
+    text = (WORKFLOWS / "pr.yml").read_text(encoding="utf-8")
+    assert not [expr for expr in EXPRESSION.findall(text) if re.search(r"\bsecrets\b", expr)]
