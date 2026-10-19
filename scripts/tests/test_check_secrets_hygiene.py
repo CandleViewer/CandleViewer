@@ -676,10 +676,10 @@ NOT_TRACED = [
     "'$X'bash -x ci.sh",
     "b${X}ash -x ci.sh",
     # #3400: listed beside _SET_X as not reported, though they trace (bash 5.3): an escape in
-    # $'...', a command as an expansion's `-` default, a file BASH_ENV names (not followed).
+    # $'...', a command as an expansion's `-` default. (A file BASH_ENV names is followed since
+    # #3525: the BASH_ENV rows below.)
     "set $'\\x2dx'",
     "${X:-set -x}",
-    "BASH_ENV=tools/env.sh bash ci.sh",
     # #3400: listed beside _SET_X as not reported, though they trace (bash 5.3): an expansion
     # before the tracing word or in a command or signal word, a quoted word with a space in it
     # before the tracing word.
@@ -797,6 +797,144 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, entry: str) -> None:
     assert h.check_workflows(tmp_path) == ["w.yml:4: 'set -x' tracing (SR-146)"]
 
 
+# #3525: bash reads the file BASH_ENV names before each `run:` script (GitHub's default shell is
+# `bash --noprofile --norc -eo pipefail {0}`), an interactive sh the file ENV names: a script the
+# workflow runs, set in a workflow's, a job's or a step's `env:` or on a shell line.
+LEVELS = {
+    "workflow": "env:\n  {}\njobs:\n  a:\n    steps:\n      - run: make\n",
+    "job": "jobs:\n  a:\n    env:\n      {}\n    steps:\n      - run: make\n",
+    "step": "jobs:\n  a:\n    steps:\n      - run: make\n        env:\n          {}\n",
+}
+ENV_TRACED = "tools/env.sh:1: 'set -x' tracing (SR-146); run by w.yml"
+
+
+@pytest.mark.parametrize("name", ["BASH_ENV", "ENV"])
+@pytest.mark.parametrize("level", LEVELS)
+def test_workflow_env_file_is_scanned(tmp_path: Path, level: str, name: str) -> None:
+    _write(tmp_path, WF, LEVELS[level].format(f"{name}: tools/env.sh"))
+    _write(tmp_path, "tools/env.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == [ENV_TRACED]
+    _write(tmp_path, "tools/env.sh", "set -eu\n")
+    assert h.check_workflows(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        LEVELS["job"].format("BASH_ENV: ./tools/env.sh"),
+        LEVELS["job"].format('"BASH_ENV": "tools/env.sh"  # every step'),
+        LEVELS["job"].format("BASH_ENV : ${{ github.workspace }}/tools/env.sh"),
+        LEVELS["job"].format("BASH_ENV: $GITHUB_WORKSPACE/tools/env.sh"),
+        "jobs:\n  a:\n    env: { CI: 1, BASH_ENV: tools/env.sh }\n    steps:\n      - run: make\n",
+        "defaults:\n  run:\n    shell: env BASH_ENV=tools/env.sh bash {0}\n",
+        (
+            "jobs:\n  a:\n    steps:\n      - working-directory: tools\n"
+            "        env:\n          ENV: ./env.sh\n        run: sh -i ci.sh\n"
+        ),
+        _runs("BASH_ENV=tools/env.sh bash ci.sh"),
+        _runs("export ENV=./tools/env.sh; sh -i ci.sh"),
+        _runs('echo "BASH_ENV=$GITHUB_WORKSPACE/tools/env.sh" >> "$GITHUB_ENV"'),
+    ],
+)
+def test_workflow_env_file_forms_are_followed(tmp_path: Path, workflow: str) -> None:
+    _write(tmp_path, WF, workflow)
+    _write(tmp_path, "tools/env.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == [ENV_TRACED]
+
+
+@pytest.mark.parametrize("name", ["BASH_ENV", "ENV"])
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        *(
+            LEVELS["job"].format(entry)
+            for entry in (
+                "NAME: ${{ inputs.env-file }}",
+                "NAME: ${{ runner.temp }}/env.sh",
+                "NAME: /etc/profile",
+                "NAME: ~/.bashrc",
+                "NAME: $HOME/env.sh",
+                "NAME: tools/missing.sh",
+                "NAME: ../env.sh",
+                "NAME: tools",
+                "NAME: >-\n        tools/env.sh",
+                "NAME:\n        tools/env.sh",
+            )
+        ),
+        _runs('NAME="$RUNNER_TEMP/env.sh" bash ci.sh'),
+        _runs("export NAME=/etc/bash.bashrc"),
+        _runs('echo "NAME<<EOF" >> "$GITHUB_ENV"'),
+    ],
+)
+def test_workflow_env_file_that_does_not_resolve_is_reported(
+    tmp_path: Path, workflow: str, name: str
+) -> None:
+    # #3525: another expression, a path outside the repository (absolute, `~`, `..`), a missing
+    # file, a directory, or a value YAML goes on with on the next line (each line is read alone):
+    # reported, as an unreadable script is.
+    repo = tmp_path / "repo"
+    _write(tmp_path, "env.sh", "set -eu\n")
+    _write(repo, "tools/env.sh", "set -eu\n")
+    _write(repo, WF, workflow.replace("NAME", name))
+    assert h.check_workflows(repo) == [f"w.yml:4: unresolvable {name} file (SR-146 scan)"]
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        LEVELS["job"].format('BASH_ENV: ""'),
+        LEVELS["job"].format("ENV: ''"),
+        LEVELS["job"].format("# BASH_ENV: /etc/profile"),
+        LEVELS["job"].format("NODE_ENV: production"),
+        _runs("BASH_ENV= bash ci.sh"),
+        _runs('ENV="" sh -i ci.sh'),
+        _runs("unset BASH_ENV ENV; env -u BASH_ENV bash ci.sh"),
+        _runs('echo "$BASH_ENV ${ENV:-none} ${{ env.BASH_ENV }}" >> "$GITHUB_ENV"'),
+        _runs('echo "ENV: demo"; CV_ENV=demo make  # BASH_ENV=/etc/profile'),
+    ],
+)
+def test_workflow_env_set_empty_or_only_read_names_no_file(tmp_path: Path, workflow: str) -> None:
+    _write(tmp_path, WF, workflow)
+    assert h.check_workflows(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("job", "step"),
+    [("tools/ok.sh", "tools/env.sh"), ("tools/env.sh", "tools/ok.sh"), ("tools/env.sh", '""')],
+)
+def test_workflow_env_file_is_followed_whichever_level_sets_it(
+    tmp_path: Path, job: str, step: str
+) -> None:
+    # #3525: the scan does not model the env each step sees, so it follows every value set: a
+    # step's BASH_ENV overriding the job's, and the job's that the step overrides (the safe side).
+    steps = f"    steps:\n      - run: make\n        env:\n          BASH_ENV: {step}\n"
+    _write(tmp_path, WF, f"jobs:\n  a:\n    env:\n      BASH_ENV: {job}\n{steps}")
+    _write(tmp_path, "tools/env.sh", "set -x\n")
+    _write(tmp_path, "tools/ok.sh", "set -eu\n")
+    assert h.check_workflows(tmp_path) == [ENV_TRACED]
+
+
+def test_env_file_set_in_a_script_a_workflow_runs_is_followed(tmp_path: Path) -> None:
+    # #3525: a script sets it for the shells it starts; the scripts the file runs are followed.
+    _write(tmp_path, WF, _runs("bash tools/a.sh"))
+    _write(tmp_path, "tools/a.sh", "export BASH_ENV=tools/env.sh\nENV=/etc/shrc sh -i\n")
+    _write(tmp_path, "tools/env.sh", ". tools/lib.sh\n")
+    _write(tmp_path, "tools/lib.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == [
+        "tools/a.sh:2: unresolvable ENV file (SR-146 scan); run by w.yml",
+        "tools/lib.sh:1: 'set -x' tracing (SR-146); run by w.yml via tools/env.sh",
+    ]
+
+
+def test_env_file_symlink_loop_fails_closed(tmp_path: Path) -> None:
+    _write(tmp_path, WF, LEVELS["job"].format("BASH_ENV: tools/loop.sh"))
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools/loop.sh").symlink_to("loop.sh")
+    assert h.check_workflows(tmp_path) == [
+        "tools/loop.sh: unreadable script (SR-146 scan); run by w.yml"
+    ]
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -874,6 +1012,13 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, entry: str) -> None:
         # #3400: names braced before a quote, a $ and a quote, or an escape; a long name.
         "$A$'" * 24000,
         "$" + "A" * 96000,
+        # #3525: BASH_ENV and ENV settings: shell assignments and $GITHUB_ENV's `<<` form, YAML
+        # keys after a `,`, the spaces after a `{` or a key, each read once.
+        "ENV=" * 24000,
+        "ENV<<" * 19000,
+        ", ENV " * 16000,
+        "{" + " " * 96000,
+        "ENV" + " " * 96000 + "x",
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
@@ -886,7 +1031,8 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, entry: str) -> None:
     + ["shell-vars", "shell-defaults", "shell-default-runs", "shell-assign-defaults"]
     + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
     + ["value-words", "shell-prefixes", "quoted-names", "nested-escapes", "signal-quoting"]
-    + ["signal-letters", "name-quotes", "long-name"],
+    + ["signal-letters", "name-quotes", "long-name"]
+    + ["env-assignments", "env-heredocs", "env-keys", "flow-spaces", "env-key-spaces"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time
@@ -894,6 +1040,7 @@ def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     start = time.process_time()
     h._sr146_hits(line)
     h._SHEBANG_X.match(h._unquoted(f"#!/bin/sh {line}"))
+    list(h._env_settings(line))
     assert time.process_time() - start < 1.0
 
 

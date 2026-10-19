@@ -6,8 +6,8 @@ Subcommands (all offline, deterministic, exit 1 on violation):
   and no file of the accounts fault-injection pack holds a bare key-shaped token (E27-Q01)
 * ``dev-env``   - ``.env`` gitignored, ``.env.example`` free of secret values (SR-144)
 * ``workflows`` - no command tracing (``set -x``, ``set -v``, a ``DEBUG`` trap) / environment dump
-  in workflows or the repository shell scripts their steps run, directly or through other scripts
-  (``workflow_scripts``; SR-146)
+  in workflows or the repository shell scripts their steps run, directly, through other scripts or
+  as the file a ``BASH_ENV``/``ENV`` setting names (``workflow_scripts``; SR-146)
 * ``inventory`` - a secret-name list (JSON array) holds no live key / KEK (SR-140)
 * ``logs``      - scan log/artefact files for secret shapes (SR-146)
 
@@ -423,8 +423,6 @@ _TRAPDEBUG = re.compile(_WORD_START + r"(?P<on>TRAPDEBUG)(?![\w-])")
 #:   ``-``, as in ``x-set``)
 #: - a command, shell or option word built by brace expansion or command substitution (#3583):
 #:   ``{set,} -x``, ``bash -{x,} ci.sh``, ``set -o xt{race,}``, ``$(echo bash) -x ci.sh``
-#: - a file the shell reads first through ``BASH_ENV`` or ``ENV``, which ``workflow_scripts`` does
-#:   not follow (#3525): ``BASH_ENV=tools/env.sh bash ci.sh`` (also in a job's ``env:``)
 #: - a shell named through another variable or expansion: ``$SH -x``, ``${SHELL:+sh} -x``, or
 #:   with an expansion inside its name that no name follows: ``b${X}ash -x`` (but ``ba${X}sh``)
 #: - a shell ``_SHELL_ON`` does not name, though each takes POSIX sh(1)'s ``-x``: ``ash -x``,
@@ -491,6 +489,23 @@ _SHEBANG_X = re.compile(r"#!.*\s" + _TRACE_WORD)
 _NOT_SHELL = re.compile(
     r"\.(?:md|markdown|txt|rst|py|json|ya?ml|toml|[cm]?js|tsx?|css|html|xml|csv|lock|cfg|ini|sql)"
 )
+#: A file the shell reads before a script (#3525): bash reads the one ``BASH_ENV`` names before
+#: each script it runs (a ``run:`` step's ``bash -e {0}``), an interactive sh the one ``ENV``
+#: names. Set by a YAML key at a line's start or in a flow mapping (a workflow's, a job's or a
+#: step's ``env:``: ``BASH_ENV: tools/env.sh``, ``env: { BASH_ENV: x.sh }``) or by a shell
+#: assignment (``BASH_ENV=x.sh bash ci.sh``, ``export ENV=x.sh``, ``echo "BASH_ENV=x.sh" >>
+#: "$GITHUB_ENV"``), read with its quotes off; one set empty (``BASH_ENV=``, ``ENV: ""``) names
+#: no file. ``workflow_scripts`` follows each value set in a workflow or a script it runs,
+#: whichever steps it reaches (a step's and the job's it overrides), and reports one naming no
+#: repository file. Not read: ``${BASH_ENV:=x}``, ``read BASH_ENV``, ``printf -v BASH_ENV``, a
+#: name built from an expansion (``BASH${X}_ENV=x``). Reported though no file is read: a key
+#: outside ``env:`` (``with: {ENV: prod}``), an ``ENV`` no interactive sh reads, a value on the
+#: next line (``BASH_ENV: >-``, ``BASH_ENV=\``, ``$GITHUB_ENV``'s ``BASH_ENV<<EOF``), as each
+#: line is read alone.
+_SHELL_ENV = re.compile(
+    r"(?:^|(?<!\$)\{|,)\s*(?:-\s+)?(?P<key>(?:BASH_)?ENV)\s*:(?!\S)\s*(?P<entry>[^\s,}]*)"
+    r"|" + _WORD_START + r"(?<![${])(?P<name>(?:BASH_)?ENV)(?:=|<<)(?P<value>[^\s;&|()<>`]*)"
+)
 
 
 def _sr146_hits(text: str) -> list[tuple[int, str]]:
@@ -542,6 +557,16 @@ def _run_lines(text: str) -> list[str]:
     return lines
 
 
+def _env_settings(text: str) -> Iterator[tuple[int, str, str]]:
+    """(line, name, value) per ``BASH_ENV`` or ``ENV`` that ``text`` sets (``_SHELL_ENV``) outside
+    comments, but one set empty; a YAML key whose value starts on a later line gives ``""``."""
+    for n, line in enumerate(text.splitlines(), 1):
+        for m in _SHELL_ENV.finditer(_unquoted(_code(line))):
+            value = m["entry"] if m["key"] else m["value"]
+            if value not in ('""', "''") and (value or m["key"]):
+                yield n, m["key"] or m["name"], value
+
+
 def _read(path: Path, size: int = -1) -> str | None:
     """``path``'s first ``size`` characters (all by default), or None if it cannot be read."""
     try:
@@ -565,6 +590,11 @@ def _repo_file(root: Path, rel: PurePosixPath) -> Path | None:
     return path if path.is_relative_to(root) and regular else None
 
 
+def _in_repo(root: Path, bases: list[PurePosixPath], rel: str) -> list[Path]:
+    """``rel`` tried from each base: the repository files it names (``_repo_file``)."""
+    return [path for base in bases if (path := _repo_file(root, base / rel))]
+
+
 def _is_shell(path: Path, interpreter: str) -> bool:
     """Run by ``bash|sh``: any file; by ``source|.``: any without a ``_NOT_SHELL`` suffix; run
     directly: a ``.sh``/``.bash`` file or one with a sh/bash shebang (an unreadable one counts)."""
@@ -579,15 +609,15 @@ def _invoked(root: Path, bases: list[PurePosixPath], line: str) -> Iterator[str]
     for interpreter, rel in _INVOKES.findall(line):
         if not interpreter and "/" not in rel:
             continue  # a bare command name is a PATH lookup, not a repository file
-        for base in bases:
-            script = _repo_file(root, base / rel)
-            if script and _is_shell(script, interpreter):
+        for script in _in_repo(root, bases, rel):
+            if _is_shell(script, interpreter):
                 yield script.relative_to(root).as_posix()
 
 
-def workflow_scripts(root: Path) -> dict[str, set[str]]:
+def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, int, str]]]:
     """Each repository shell script a workflow step runs, directly or through the scripts it runs
-    (root-relative) -> its runners: ``w.yml``, or ``w.yml via <the script that runs it>`` (#3274).
+    (root-relative) -> its runners: ``w.yml``, or ``w.yml via <the script that runs it>`` (#3274);
+    and each ``BASH_ENV`` or ``ENV`` setting naming no repository file: (its file, line, name).
 
     A command counts at a line start or after ``;``, ``&``, ``|``, ``(``, ``)``, ``{`` or a
     backtick, past ``VAR=x``, ``!``, ``if then elif else do while until`` and the wrappers ``exec
@@ -607,24 +637,38 @@ def workflow_scripts(root: Path) -> dict[str, set[str]]:
     non-script command in a ``bash -c`` string (judged as a direct command), ``cd <dir> &&
     ./x.sh`` (not tried from ``<dir>``), stdin and pipes (``cat x | bash``, ``bash < x``,
     ``xargs bash x``), a wrapper option taking a word (``timeout -s KILL``), other interpreters.
+    The file a ``BASH_ENV`` or ``ENV`` setting names (``_SHELL_ENV``) in a workflow or a script it
+    runs is a script it runs, whatever its suffix, tried from the same paths (#3525); a setting
+    naming no repository file (another expression, a path outside the root, a missing file) fails
+    the scan, as an unreadable script does.
     """
     root = root.resolve()
     found: dict[str, set[str]] = {}
+    unresolved: set[tuple[str, int, str]] = set()
     wf = root / ".github" / "workflows"
     for path in sorted(wf.glob("*.y*ml")) if wf.is_dir() else []:
         text = _WORKSPACE.sub("", path.read_text(encoding="utf-8"))
         bases = [PurePosixPath(), *map(PurePosixPath, _WORKDIR.findall(text))]
-        todo = [(path.name, line) for line in _run_lines(text)]
+        # (a file, its text, its shell lines, the runner of what they run): the workflow, then
+        # each script it reaches, once.
+        todo = [(path.name, text, _run_lines(text), path.name)]
         seen: set[str] = set()
         while todo:
-            runner, line = todo.pop()
-            for key in _invoked(root, bases, line):
+            where, body, lines, runner = todo.pop()
+            keys = [key for line in lines for key in _invoked(root, bases, line)]
+            for n, name, value in _env_settings(body):
+                files = _in_repo(root, bases, value)
+                keys += [file.relative_to(root).as_posix() for file in files]
+                if not files:
+                    unresolved.add((where, n, name))
+            for key in keys:
                 found.setdefault(key, set()).add(runner)
                 if key not in seen:
                     seen.add(key)
-                    nested = _WORKSPACE.sub("", _read(root / key) or "").splitlines()
-                    todo += [(f"{path.name} via {key}", _code(ln)) for ln in nested]
-    return found
+                    nested = _WORKSPACE.sub("", _read(root / key) or "")
+                    shell = [_code(ln) for ln in nested.splitlines()]
+                    todo.append((key, nested, shell, f"{path.name} via {key}"))
+    return found, unresolved
 
 
 def check_workflows(root: Path) -> list[str]:
@@ -633,7 +677,11 @@ def check_workflows(root: Path) -> list[str]:
     for path in sorted(wf.glob("*.y*ml")) if wf.is_dir() else []:
         for n, what in _sr146_hits(path.read_text(encoding="utf-8")):
             errors.append(f"{path.name}:{n}: {what} (SR-146)")
-    for rel, runners in sorted(workflow_scripts(root).items()):
+    scripts, unresolved = workflow_scripts(root)
+    for where, n, name in sorted(unresolved):
+        by = f"; run by {', '.join(sorted(scripts[where]))}" if where in scripts else ""
+        errors.append(f"{where}:{n}: unresolvable {name} file (SR-146 scan){by}")
+    for rel, runners in sorted(scripts.items()):
         by = f"run by {', '.join(sorted(runners))}"
         text = _read(root / rel)
         if text is None:
