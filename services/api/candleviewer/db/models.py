@@ -2168,3 +2168,150 @@ position_snapshots = Table(
     Index("ix_psnap_acct_time", "exchange_account_id", text("snap_ts DESC")),
     Index("ix_psnap_sym_time", "symbol", text("snap_ts DESC")),
 )
+
+
+#: `machine_snapshots`, `machine_drain_journal`, `machine_events` (E50-T61, revision
+#: 0033_machine_persistence): 24-internal-schemas.md Sec.17.6, the statechart runtime's persistence.
+#: C-5.9 / 21 Sec.12: every column is classified in its comment, `PII:` on the three P1 columns and
+#: `P0:` with its meaning on every other one. Byte-identical to the 0033 COMMENT statements
+#: (`alembic check` diffs column comments); no quote, as each sits in a SQL string literal. The 0033
+#: tests pin the CHECK bodies, the stamp-once trigger and the grants, which `alembic check` ignores.
+_MACHINE_KEY = {
+    "machine_kind": "P0: catalogue machine kind (28 B1-B20); part of the machine key",
+    "entity_id": (
+        "P0: MachineKey.entity_id, the owning module canonical id; part of the machine key"
+    ),
+    "env": "P0: environment, live, demo or testnet; part of the machine key",
+}
+_MACHINE_P1 = (
+    "PII: financial personal data (21 Sec.12, class P1): {}; holds no credential, token or key; "
+    "never logged"
+)
+_EVENT_TYPE = "P0: event name"
+_MS = _MACHINE_KEY | {
+    "cv_schema_version": "P0: persistence.SEAL_LAYOUT_V at write time; diagnostic only",
+    "lib_snapshot_ver": (
+        "P0: SealedSnapshot.version, the library snapshot version (CV-C52, 3 or more)"
+    ),
+    "machine_hash": "P0: sha256 of the canonical chart JSON; equals machine_hashes.lock",
+    "snapshot": _MACHINE_P1.format("machine context, HMAC-sealed (CV-C53)"),
+    "hmac_key_id": "P0: Seal.key_id, a reference to the HMAC key, never key material",
+    "hmac_tag": "P0: the 32 raw bytes of the HMAC-SHA256 seal tag (CV-C53); an integrity tag",
+    "state_ids": "P0: active state ids, denormalised from the sealed blob for query only",
+    "chain_trips": (
+        "P0: chain-trip count, denormalised; above 0 latches the machine degraded (CV-C63)"
+    ),
+    "updated_at": "P0: time of the last snapshot write; outside the seal",
+}
+_MDJ = _MACHINE_KEY | {
+    "send_id": "P0: stable send id, 32 hex of sha256; de-dup key for re-submits (R14-02)",
+    "lane": "P0: drain lane, priority or inbox",
+    "ordinal": "P0: position in the drain output, priority lane first; the replay order",
+    "event_type": _EVENT_TYPE,
+    "payload": _MACHINE_P1.format("a drained event replayed once after restore"),
+    "receipt_error": "P0: Receipt.error class name when the drain failed a waiter",
+    "replayed_at": "P0: set once, when replay_once re-enqueued the event",
+}
+_ME = _MACHINE_KEY | {
+    "seq": "P0: insertion order; the chain order within one machine",
+    "event_type": _EVENT_TYPE,
+    "payload": _MACHINE_P1.format("event data, hash-chained (row_hash)"),
+    "from_states": "P0: active state ids before the transition",
+    "to_states": "P0: active state ids after the transition",
+    "actions_run": "P0: names of the actions actually executed (MUST-02)",
+    "fault": (
+        "P0: action names, exception class names and refusal reasons; "
+        "never a payload or context value"
+    ),
+    "occurred_at": "P0: transition time (UTC), as the plugin emitted it",
+    "phase": "P0: ahead (write-ahead), commit or fault",
+    "prev_hash": "P0: row_hash of the previous row of the same machine; 64 zeros first",
+    "row_hash": (
+        "P0: sha256 over the canonical JSON of the other fields; the WAL-replay idempotency key"
+    ),
+}
+_UTC = TIMESTAMP(timezone=True)
+
+machine_snapshots = Table(
+    "machine_snapshots",
+    metadata,
+    Column("machine_kind", Text, nullable=False, comment=_MS["machine_kind"]),
+    Column("entity_id", Text, nullable=False, comment=_MS["entity_id"]),
+    Column("env", Text, nullable=False, comment=_MS["env"]),
+    Column("cv_schema_version", Integer, nullable=False, comment=_MS["cv_schema_version"]),
+    Column("lib_snapshot_ver", Integer, nullable=False, comment=_MS["lib_snapshot_ver"]),
+    Column("machine_hash", _sha256_hex, nullable=False, comment=_MS["machine_hash"]),
+    Column("snapshot", JSONB, nullable=False, comment=_MS["snapshot"]),
+    Column("hmac_key_id", Text, nullable=False, comment=_MS["hmac_key_id"]),
+    Column("hmac_tag", BYTEA, nullable=False, comment=_MS["hmac_tag"]),
+    Column("state_ids", ARRAY(Text), nullable=False, comment=_MS["state_ids"]),
+    Column(
+        "chain_trips",
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+        comment=_MS["chain_trips"],
+    ),
+    Column("updated_at", _UTC, nullable=False, comment=_MS["updated_at"]),
+    PrimaryKeyConstraint("machine_kind", "entity_id", "env", name="machine_snapshots_pkey"),
+    CheckConstraint("entity_id <> ''", name="ms_entity"),
+    CheckConstraint("env IN ('live','demo','testnet')", name="ms_env"),
+    CheckConstraint("cv_schema_version >= 1", name="ms_schema"),
+    CheckConstraint("lib_snapshot_ver >= 3", name="ms_lib_ver"),
+    CheckConstraint("octet_length(hmac_tag) = 32", name="ms_tag_len"),
+    CheckConstraint("chain_trips >= 0", name="ms_trips"),
+)
+machine_drain_journal = Table(
+    "machine_drain_journal",
+    metadata,
+    Column("machine_kind", Text, nullable=False, comment=_MDJ["machine_kind"]),
+    Column("entity_id", Text, nullable=False, comment=_MDJ["entity_id"]),
+    Column("env", Text, nullable=False, comment=_MDJ["env"]),
+    Column("send_id", Text, nullable=False, comment=_MDJ["send_id"]),
+    Column("lane", Text, nullable=False, comment=_MDJ["lane"]),
+    Column("ordinal", Integer, nullable=False, comment=_MDJ["ordinal"]),
+    Column("event_type", Text, nullable=False, comment=_MDJ["event_type"]),
+    Column("payload", JSONB, nullable=False, comment=_MDJ["payload"]),
+    Column("receipt_error", Text, comment=_MDJ["receipt_error"]),
+    Column("replayed_at", _UTC, comment=_MDJ["replayed_at"]),
+    PrimaryKeyConstraint(
+        "machine_kind", "entity_id", "env", "send_id", name="machine_drain_journal_pkey"
+    ),
+    CheckConstraint("entity_id <> ''", name="mdj_entity"),
+    CheckConstraint("env IN ('live','demo','testnet')", name="mdj_env"),
+    CheckConstraint("send_id ~ '^[0-9a-f]{32}$'", name="mdj_send_id"),
+    CheckConstraint("lane IN ('priority','inbox')", name="mdj_lane"),
+    CheckConstraint("ordinal >= 0", name="mdj_ordinal"),
+    Index(
+        "ix_mdj_pending",
+        "machine_kind",
+        "entity_id",
+        "env",
+        "ordinal",
+        postgresql_where=text("replayed_at IS NULL"),
+    ),
+)
+machine_events = Table(
+    "machine_events",
+    metadata,
+    Column("seq", BigInteger, primary_key=True, comment=_ME["seq"]),
+    Column("machine_kind", Text, nullable=False, comment=_ME["machine_kind"]),
+    Column("entity_id", Text, nullable=False, comment=_ME["entity_id"]),
+    Column("env", Text, nullable=False, comment=_ME["env"]),
+    Column("event_type", Text, nullable=False, comment=_ME["event_type"]),
+    Column("payload", JSONB, nullable=False, comment=_ME["payload"]),
+    Column("from_states", ARRAY(Text), nullable=False, comment=_ME["from_states"]),
+    Column("to_states", ARRAY(Text), nullable=False, comment=_ME["to_states"]),
+    Column("actions_run", ARRAY(Text), nullable=False, comment=_ME["actions_run"]),
+    Column("fault", JSONB, comment=_ME["fault"]),
+    Column("occurred_at", _UTC, nullable=False, comment=_ME["occurred_at"]),
+    Column("phase", Text, nullable=False, comment=_ME["phase"]),
+    Column("prev_hash", _sha256_hex, nullable=False, comment=_ME["prev_hash"]),
+    Column("row_hash", _sha256_hex, nullable=False, comment=_ME["row_hash"]),
+    CheckConstraint("entity_id <> ''", name="me_entity"),
+    CheckConstraint("env IN ('live','demo','testnet')", name="me_env"),
+    CheckConstraint("phase IN ('ahead','commit','fault')", name="me_phase"),
+    CheckConstraint("(phase = 'fault') = (fault IS NOT NULL)", name="me_fault_phase"),
+    UniqueConstraint("row_hash", name="machine_events_row_hash_key"),
+    Index("ix_me_machine_seq", "machine_kind", "entity_id", "env", "seq"),
+)
