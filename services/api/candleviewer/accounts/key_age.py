@@ -6,16 +6,33 @@ nothing is stored, so a policy change recomputes every key on the same call. `ro
 reports: nothing here disables a key, and the order-entry gate never reads it. The column
 `api_keys.rotation_due_at` is never written and stays NULL (21-database-schema.md), so serve both
 fields from `KeyRotationPolicy.evaluate`, never from `ApiKeyMetadata.rotation_due_at`.
+
+`KeyAgeNotices` is the key-age job that the KeyRotationWarn and KeyRotationOverdue tickets read
+(#837 W6); it too only reports.
 """
 
 from __future__ import annotations
 
+import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import TYPE_CHECKING, Final
+from uuid import UUID
 
+import structlog
+
+from candleviewer.accounts.health import Clock
 from candleviewer.accounts.models import KeyStatus
 from candleviewer.settings import Settings
+
+if TYPE_CHECKING:
+    from candleviewer.observability.metrics import BoundedMetric
+
+#: An overdue key is counted again this long after its last notice, on the boot-time clock: the
+#: daily alert of US-ACCT-005 while it stays overdue.
+OVERDUE_EVERY_S: Final = 86_400.0
 
 
 class RotationState(StrEnum):
@@ -61,3 +78,77 @@ class KeyRotationPolicy:
         if now >= due - timedelta(days=self.warn_days):
             return KeyRotation(due, RotationState.WARN)
         return KeyRotation(due, RotationState.OK)
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredKey:
+    """A stored key as the key-age job reads it: its id, its account, when it was registered and
+    its status."""
+
+    key_id: UUID
+    account_id: UUID
+    created_at: datetime
+    status: KeyStatus
+
+
+class KeyAgeNotices:
+    """The key-age job: `observe` evaluates every key it is given, which the account health runtime
+    does at boot and at each read of the stored keys after it. It sets `cv_keys_rotation_state` per
+    state and counts a notice in `cv_key_rotation_notices_total` once per key as it enters `warn`
+    and once a day per `overdue` key, each logged as `account.key_rotation_notice`. It never
+    disables a key, writes nothing, and the order-entry gate never reads it (US-ACCT-005). What it
+    counted is held in memory, so a restart counts the keys already in `warn` or `overdue` again
+    at its first read. For one event loop; no I/O."""
+
+    def __init__(
+        self,
+        policy: KeyRotationPolicy,
+        clock: Clock,
+        *,
+        notices: BoundedMetric,
+        states: BoundedMetric,
+    ) -> None:
+        self._policy, self._clock = policy, clock
+        self._notices, self._states = notices, states
+        self._warned: set[UUID] = set()  # the keys in `warn` at the last read
+        self._overdue: dict[UUID, float] = {}  # each overdue key's last notice, monotonic
+
+    def observe(self, keys: Iterable[RegisteredKey]) -> None:
+        """Evaluate `keys`, the whole of one read: a key missing from it is forgotten, so one
+        that comes back in `warn` or `overdue` is counted again."""
+        now, mono = self._clock.now(), self._clock.monotonic()
+        held = dict.fromkeys(RotationState, 0)
+        warned: set[UUID] = set()
+        overdue: dict[UUID, float] = {}
+        for key in keys:
+            rotation = self._policy.evaluate(key.created_at, key.status, now=now)
+            state, due = rotation.rotation_state, rotation.rotation_due_at
+            if state is None or due is None:
+                continue
+            held[state] += 1
+            if state is RotationState.WARN:
+                warned.add(key.key_id)
+                if key.key_id not in self._warned:
+                    self._notice(key, state, due)
+            elif state is RotationState.OVERDUE:
+                last = self._overdue.get(key.key_id, -math.inf)
+                if mono - last >= OVERDUE_EVERY_S:
+                    self._notice(key, state, due)
+                    last = mono
+                overdue[key.key_id] = last
+        self._warned, self._overdue = warned, overdue
+        for rotation_state, count in held.items():
+            self._states.labels(rotation_state).set(count)
+
+    def _notice(self, key: RegisteredKey, state: RotationState, due: datetime) -> None:
+        """Count and log one notice. The due date is logged to the second: a stored
+        `created_at` carries microseconds, and a 6-digit run reads as a TOTP code to the log
+        redaction, which would replace the whole value (C-12.6)."""
+        self._notices.labels(state).inc()
+        structlog.get_logger(__name__).warning(
+            "account.key_rotation_notice",
+            key_id=str(key.key_id),
+            account_id=str(key.account_id),
+            state=state.value,
+            rotation_due_at=due.isoformat(timespec="seconds"),
+        )

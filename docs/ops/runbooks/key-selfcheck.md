@@ -15,7 +15,7 @@ the API serves nothing, `/healthz` included, until it ends, and a healthy pass o
 A failing `accounts` check whose detail names an account-health loop (`the account-health-tick loop
 ended`, `the account-health-reconcile loop fails: 10 passes in a row`) is not this job but the
 account health runtime (#837): its `account_health.loop_ended` and `account_health.step_failed` log lines name
-the loop and the error type. Restart cv-api via the launcher until that runtime has a runbook of its own.
+the loop and the error type: see [`account-health.md`](account-health.md).
 
 ## Symptom: read-only with `accounts.key_selfcheck_failed`
 

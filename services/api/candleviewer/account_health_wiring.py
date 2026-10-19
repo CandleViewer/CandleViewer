@@ -15,7 +15,9 @@ read the boot-time clock, and the loops sleep on the event loop's: a wall-clock 
   `TRACKING_REFRESH_S`: the enabled accounts of the process environment that hold a signable key.
   A read that fails keeps the set and is a failed pass. An untracked account has no state
   (`current()` is `None`, which the order-entry gate refuses). The same read feeds the key
-  standing. The fake backend has no repository, so it runs no such loop and tracks none.
+  standing and the key-age job (`KeyAgeNotices`), so the job runs at boot and every interval
+  after; the job only reports, so one that raises is logged and the read still tracks. The fake
+  backend has no repository, so it runs no such loop and tracks none.
 - Dead-man's-switch episodes outlive the process (#837 W5): the monitor journals each before its
   hook call (`system_events`). The tracking loop's first pass that works is the boot: it replays the
   open ones once and tracks `at_boot`, so an account with no evidence for `down_s` is owed one.
@@ -64,8 +66,14 @@ from candleviewer.accounts.health import (
     HealthTransition,
     SystemClock,
 )
-from candleviewer.accounts.key_age import RotationState
+from candleviewer.accounts.key_age import (
+    KeyAgeNotices,
+    KeyRotationPolicy,
+    RegisteredKey,
+    RotationState,
+)
 from candleviewer.accounts.key_standing import KeyStandings, SelfCheckResults
+from candleviewer.accounts.models import KeyStatus
 from candleviewer.accounts.order_gate import AccountHealthCheck
 from candleviewer.accounts.wallet import (
     WalletCache,
@@ -561,13 +569,16 @@ class _UsableKeys(Protocol):
 
 
 def _repository_source(
-    settings: Settings, standings: KeyStandings
+    settings: Settings, standings: KeyStandings, key_ages: KeyAgeNotices
 ) -> tuple[MonitoredAccounts | None, Release | None, EpisodeStore | None]:
     """The real backend's tracking source: the usable-key read of the stored-key self-check, on a
     store of its own bound to the process environment (C-2.11), reduced to the ids of the enabled
     accounts. The key standing takes the same read's rows of that environment and keeps none of
-    them; the runtime never holds a row, and the store is typed as the read alone. The fake
-    backend has none. The dead-man's-switch episode journal shares its pool and environment."""
+    them. The key-age job evaluates the same read's keys of that environment, each by its
+    registration time and status, after the standing and the ids are taken: it only reports, so a
+    job that raises is logged by its error type, once per change, and never keeps an account from
+    being tracked. The runtime never holds a row, and the store is typed as the read alone. The
+    fake backend has none. The dead-man's-switch episode journal shares its pool and environment."""
     if settings.storage_backend != "real":
         return None, None, None
     env = settings.environment.value
@@ -576,9 +587,10 @@ def _repository_source(
     )
     store: _UsableKeys = SqlAlchemyKeySelfCheckStore(relational, env=env)
     foreign_said = 0  # the rows of another environment the last read said it found
+    age_failed_said: str | None = None  # the error the key-age job last raised, if it did
 
     async def monitored() -> frozenset[UUID]:
-        nonlocal foreign_said
+        nonlocal foreign_said, age_failed_said
         rows = await store.targets()
         foreign = sum(row.account.env != env for row in rows)
         if foreign and foreign != foreign_said:
@@ -588,7 +600,21 @@ def _repository_source(
         foreign_said = foreign
         own = [row for row in rows if row.account.env == env]
         standings.observe(own)
-        return frozenset(row.account.id for row in own if row.account.is_enabled)
+        enabled = frozenset(row.account.id for row in own if row.account.is_enabled)
+        try:
+            key_ages.observe(
+                RegisteredKey(row.key_id, row.account.id, row.created_at, KeyStatus(row.status))
+                for row in own
+                if row.created_at is not None
+            )
+        except Exception as exc:  # it only reports: never the gate's input; cancel propagates
+            failed = type(exc).__name__  # the type only: a message may echo a stored value
+            if failed != age_failed_said:
+                logger().error("account_health.key_age_failed", error=failed)
+            age_failed_said = failed
+        else:
+            age_failed_said = None
+        return enabled
 
     return monitored, relational.dispose, SqlAlchemyDmsEpisodeJournal(relational, env=env)
 
@@ -618,6 +644,13 @@ def wire_account_health(
     also feeds the standing). A `release` or a `journal` without the `monitored` it goes with is
     refused. No I/O."""
     clock = clock or SystemClock()
+    r0 = register_r0(metrics)
+    key_ages = KeyAgeNotices(
+        KeyRotationPolicy.from_settings(settings),
+        clock,
+        notices=r0["cv_key_rotation_notices_total"],
+        states=r0["cv_keys_rotation_state"],
+    )
     standings = KeyStandings(
         selfcheck,
         interval_s=settings.selfcheck_interval_s,
@@ -627,7 +660,7 @@ def wire_account_health(
     if monitored is None:
         if release is not None or journal is not None:
             raise ValueError("a release or a journal goes with the `monitored` read: pass it too")
-        monitored, release, journal = _repository_source(settings, standings)
+        monitored, release, journal = _repository_source(settings, standings, key_ages)
     thresholds = HealthThresholds.from_settings(settings)
     monitor = AccountHealthMonitor(
         clock, dms or LoggingDeadMansSwitch(), thresholds, journal=journal
@@ -635,7 +668,7 @@ def wire_account_health(
     wallets = WalletCache(
         clock,
         WalletThresholds.from_settings(settings),
-        old_snapshot_decisions=register_r0(metrics)[OLD_SNAPSHOT_DECISIONS],
+        old_snapshot_decisions=r0[OLD_SNAPSHOT_DECISIONS],
     )
     runtime = AccountHealthRuntime(
         monitor,

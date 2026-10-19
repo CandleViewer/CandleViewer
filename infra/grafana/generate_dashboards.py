@@ -398,6 +398,59 @@ def trading() -> Board:
         "short",
         legend="{{state}}",
     )
+    # #837 (E27-T04): per state, never per account (SR-125); the log lines name the account.
+    b.ts(
+        "Accounts by health state and reason",
+        f"sum by (state, reason) (cv_account_health_state{{{E}}})",
+        "short",
+        legend="{{state}} {{reason}}",
+    )
+    _describe(
+        b,
+        "Monitored accounts, set at each health tick. down with no_success went down after it was "
+        "up and pages AccountDown. down with never_connected has not connected since boot, which "
+        "every account reads until the private WS (#848) and the wallet read (E29) land; it does "
+        "not page.",
+    )
+    b.ts(
+        "Health transitions in the range, by state entered",
+        "round(sum by (state, reason) "
+        f"(increase(cv_account_health_transitions_total{{{E}}}[$__range])))",
+        "short",
+        legend="{{state}} {{reason}}",
+    )
+    b.ts(
+        "Oldest wallet snapshot (lines: 10 s stale, 60 s REST read)",
+        f"max(cv_wallet_snapshot_age_seconds{{{E}}})",
+        "s",
+        10,
+        60,
+    )
+    _describe(
+        b,
+        "Seconds since the oldest monitored account's last wallet refresh. Past the stale window "
+        "(CV_WALLET_STALE_S, 10 s by default) its balance shows stale; past the reconciliation "
+        "period (CV_WALLET_RECONCILE_S, 60 s) a REST read is due and risk-based sizing will not "
+        "use it.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "Wallet reconciliation reads/s by result",
+        rate("cv_wallet_reconcile_total", "result"),
+        "ops",
+        legend="{{result}}",
+    )
+    b.ts(
+        "Sizing decisions/s on a snapshot a period old (refused)",
+        f"sum(rate(cv_wallet_sizing_old_snapshot_total{{{E}}}[{RI}]))",
+        "ops",
+    )
+    b.ts(
+        "API keys by rotation state (never disabled for age)",
+        f"max by (state) (cv_keys_rotation_state{{{E}}})",
+        "short",
+        legend="{{state}}",
+    )
     b.flush()
     return b
 

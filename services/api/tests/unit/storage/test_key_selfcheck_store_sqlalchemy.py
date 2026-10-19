@@ -30,7 +30,7 @@ T = datetime(2026, 10, 16, tzinfo=UTC)
 KEY, ACCT = UUID(int=11), UUID(int=1)
 ROW = {
     "key_id": str(KEY), "read_only": False, "verified_at": T, "last_error_code": "key_expired",
-    "expires_at": T, "id": str(ACCT),
+    "expires_at": T, "key_status": "rotating", "key_created_at": T, "id": str(ACCT),
     "exchange": "bybit", "env": "live", "kind": "main", "exchange_uid": "1",
     "parent_account_id": None, "label": "a", "colour_token": "c", "is_enabled": True,
     "trading_enabled": True, "position_mode": "one_way", "margin_mode": "cross",
@@ -74,6 +74,8 @@ async def test_targets_are_read_for_the_bound_environment_only() -> None:
     first, second = await _store(rel, "live").targets()
     assert (first.key_id, first.read_only, first.verified_at) == (KEY, False, T)
     assert (first.last_error_code, first.expires_at) == ("key_expired", T)  # decision 3, SR-034
+    assert (first.status, first.created_at) == ("rotating", T)  # key age (#837)
+    assert "k.status::text AS key_status, k.created_at AS key_created_at" in mod._TARGETS.text
     assert (first.account.id, first.account.trading_enabled, second.account.parent_account_id) == (
         ACCT, True, ACCT,
     )  # fmt: skip

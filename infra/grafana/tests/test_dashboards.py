@@ -186,3 +186,28 @@ def test_trading_board_shows_the_account_and_api_key_row_gauges() -> None:
     for metric in ("cv_accounts_rows", "cv_api_keys_rows"):
         assert any(metric in e and 'env="$env"' in e for e in exprs), metric
         assert metric in lint.catalogue_names()
+
+
+def test_trading_board_shows_account_health_wallet_freshness_and_key_age() -> None:
+    """#837 (E27-T04): its series are on the trading board, env-filtered, and each panel of
+    theirs with a threshold draws it as a dashed line: colour is never the only signal."""
+    d = json.loads((G / "dashboards" / "trading.json").read_text("utf-8"))
+    names = (
+        "cv_account_health_state",
+        "cv_account_health_transitions_total",
+        "cv_wallet_snapshot_age_seconds",
+        "cv_wallet_reconcile_total",
+        "cv_wallet_sizing_old_snapshot_total",
+        "cv_keys_rotation_state",
+    )
+    ours = [
+        p
+        for p in d["panels"]
+        if any(n in t["expr"] for t in p.get("targets", []) for n in names)
+    ]
+    exprs = [t["expr"] for p in ours for t in p["targets"]]
+    for metric in names:
+        assert any(metric in e and 'env="$env"' in e for e in exprs), metric
+    lined = [p for p in ours if len(p["fieldConfig"]["defaults"]["thresholds"]["steps"]) > 1]
+    styles = [p["fieldConfig"]["defaults"]["custom"]["thresholdsStyle"] for p in lined]
+    assert styles and all(style == {"mode": "dashed"} for style in styles)

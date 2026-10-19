@@ -41,7 +41,7 @@ MAX_TARGETS: Final = 500
 _TARGETS = sa.text(
     "SELECT k.id::text AS key_id, k.read_only AS read_only, "
     "k.permission_snapshot_at AS verified_at, k.last_error_code AS last_error_code, "
-    "k.expires_at AS expires_at, "
+    "k.expires_at AS expires_at, k.status::text AS key_status, k.created_at AS key_created_at, "
     "ea.id::text AS id, ea.exchange::text AS exchange, ea.env::text AS env, "
     "ea.kind::text AS kind, ea.exchange_uid AS exchange_uid, "
     "ea.parent_account_id::text AS parent_account_id, ea.label AS label, "
@@ -92,10 +92,14 @@ def _target(m: Any) -> SelfCheckTargetRow:
     d = dict(m)
     key, read_only, verified_at = UUID(d.pop("key_id")), d.pop("read_only"), d.pop("verified_at")
     error, expires = d.pop("last_error_code"), d.pop("expires_at")
+    status, registered = d.pop("key_status"), d.pop("key_created_at")
     d["id"] = UUID(d["id"])
     parent = d["parent_account_id"]
     d["parent_account_id"] = None if parent is None else UUID(parent)
-    return SelfCheckTargetRow(key, read_only, verified_at, ExchangeAccountRow(**d), error, expires)
+    account = ExchangeAccountRow(**d)
+    return SelfCheckTargetRow(
+        key, read_only, verified_at, account, error, expires, status, registered
+    )
 
 
 class SqlAlchemyKeySelfCheckStore:
