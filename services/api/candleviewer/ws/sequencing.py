@@ -775,6 +775,8 @@ class TopicEmitter:
             "client_reason": reason,
             "server_seq": sub.seq,
         }
+        if sub.replay_session_id is not None:  # a replay stream shares its `ch` with its live twin
+            fields["rs"] = sub.replay_session_id  # canonical, the server's own: never the frame's
         if (seen := _logged_seq(last_seq)) is not None:
             fields["client_last_seq"] = seen
         # Of a client's reasons only `sequence_gap` is an incident (23 §7.1); §7.4 names no other.

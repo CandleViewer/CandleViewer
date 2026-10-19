@@ -3,9 +3,10 @@
 `ws resync` (every `snap` but `initial`) is a `warning` for the two incidents 23 §7.4 names and
 `info` for the rest; the incident set is written out below, not read from the module, so widening
 or narrowing it fails here. `ws client resync` records what a client said (its reason, and its
-`last_seq` only when a log line can carry it) beside the server's own `server_seq`, and
-`ws resync rate limited` marks the resync that revokes. Each field set is asserted whole, so a
-token, a payload or other client text cannot join a line unnoticed.
+`last_seq` only when a log line can carry it) beside the server's own `server_seq`, and names the
+stream both numbers belong to: `ch`, and `rs` when it is a replay session's, as the server spells
+it (#3371). `ws resync rate limited` marks the resync that revokes. Each field set is asserted
+whole, so a token, a payload or other client text cannot join a line unnoticed.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from candleviewer.ws.sequencing import (
     SnapReason,
 )
 from tests.unit.ws._seq_support import Conn
-from tests.unit.ws.test_sequencing import _book_source, _resync
+from tests.unit.ws.test_sequencing import RS, _book_source, _resync
 
 _CH = "book.BTCUSDT.50"
 _CONN = "ws_test"  # `Conn`'s connection id
@@ -41,6 +42,25 @@ def _attached() -> tuple[Conn, Subscription]:
 
 def _lines(logs: Iterable[Mapping[str, Any]], event: str) -> list[Mapping[str, Any]]:
     return [e for e in logs if e["event"] == event]
+
+
+def _twinned() -> tuple[Conn, Subscription]:
+    """`_CH` held live and in replay session `RS` by one connection: two streams, two sequences.
+    The live stream's numbers go on to 3 (two deltas) while its replay twin's stays at 1."""
+    conn = Conn(_book_source())
+    _, live = conn.sub(_CH)
+    _, twin = conn.sub(_CH, replay_session_id=RS)
+    for i in range(2):
+        delta = {"symbol": "BTCUSDT", "bids": [[f"{i}.5", "1"]], "asks": []}
+        assert conn.emitter.delta(live, delta)
+    conn.take()
+    return conn, twin
+
+
+def _resync_in(conn: Conn, rs: str, **p: Any) -> None:
+    """A `resync` of `_CH` naming the replay session `rs`, spelled as the client wrote it."""
+    frame = {"t": "resync", "id": "c-91", "ch": _CH, "rs": rs, "p": {"reason": "manual", **p}}
+    conn.emitter.client_resync(conn.authz, frame)
 
 
 @pytest.mark.parametrize("reason", COUNTED_SNAP_REASONS)
@@ -101,6 +121,64 @@ def test_client_resync_after_deltas_logs_the_servers_current_sequence_number() -
     assert (line["client_last_seq"], line["server_seq"]) == (2, 4)  # not the one snapshot built
     (answer,) = _lines(logs, "ws resync")
     assert answer["previous_seq"] == line["server_seq"]  # the two lines name the same number
+
+
+@pytest.mark.parametrize("client_reason", sorted(CLIENT_RESYNC_REASONS))
+def test_a_replay_streams_resync_logs_its_rs_and_its_own_server_seq(client_reason: str) -> None:
+    conn, _ = _twinned()
+    with capture_logs() as logs:
+        _resync_in(conn, RS, reason=client_reason, last_seq=1)
+    assert _lines(logs, "ws client resync") == [
+        {
+            "event": "ws client resync",
+            "log_level": "warning" if client_reason == "sequence_gap" else "info",
+            "connection_id": _CONN,
+            "ch": _CH,
+            "rs": RS,
+            "client_reason": client_reason,
+            "client_last_seq": 1,
+            "server_seq": 1,  # the replay twin's own number, not the live stream's 3
+        }
+    ]
+
+
+@pytest.mark.parametrize("live_rs", [{}, {"rs": None}], ids=["no-rs", "rs-null"])
+def test_the_lines_of_a_live_stream_and_its_replay_twin_differ_only_by_rs_and_the_numbers(
+    live_rs: dict[str, None],
+) -> None:
+    conn, _ = _twinned()
+    p = {"reason": "manual", "last_seq": 3}
+    live_frame = {"t": "resync", "id": "c-90", "ch": _CH, **live_rs, "p": p}
+    with capture_logs() as logs:
+        conn.emitter.client_resync(conn.authz, live_frame)
+        _resync_in(conn, RS, reason="manual", last_seq=1)
+    live_line, twin_line = _lines(logs, "ws client resync")
+    assert (live_line["server_seq"], twin_line["server_seq"]) == (3, 1)
+    assert "rs" not in live_line  # no key at all, not a null one
+    assert twin_line["rs"] == RS
+    assert set(twin_line) == set(live_line) | {"rs"}
+    unlike = {"rs", "server_seq", "client_last_seq"}
+    assert {k: v for k, v in twin_line.items() if k not in unlike} == {
+        k: v for k, v in live_line.items() if k not in unlike
+    }
+
+
+@pytest.mark.parametrize(
+    "spelled",
+    [RS.upper(), "Bb000000-0000-4000-8000-000000000001"],
+    ids=["upper-case", "mixed-case"],
+)
+def test_a_resync_naming_its_session_in_another_letter_case_logs_the_canonical_rs(
+    spelled: str,
+) -> None:
+    conn, twin = _twinned()
+    assert spelled != RS and spelled.lower() == RS == twin.replay_session_id
+    with capture_logs() as logs:
+        _resync_in(conn, spelled)
+    (line,) = _lines(logs, "ws client resync")
+    assert line["rs"] == RS  # the server's own form, however the client spelled it
+    assert spelled not in repr(logs)
+    assert [f["rs"] for f in conn.take() if f["t"] == "snap"] == [RS]  # and it named the twin
 
 
 @pytest.mark.parametrize(
