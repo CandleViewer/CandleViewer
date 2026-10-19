@@ -4,6 +4,7 @@ crash-point resume and idempotency (E07-T04 AC 1, 2, 4, 5)."""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pyarrow as pa
@@ -17,8 +18,9 @@ from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore, SchemaRegistry
 from candleviewer.storage.errors import StorageExportVerifyFailed, StorageSchemaDrift
-from candleviewer.storage.models import StreamKind
+from candleviewer.storage.models import StreamKind, TimeRange
 from tests.unit.storage.cold._helpers import (
+    DAY_START_US,
     FakeHotSource,
     RecordingSink,
     SimulatedKill,
@@ -75,6 +77,41 @@ async def test_manifest_records_sha256_row_count_and_source_equal_to_count(
         day_range().start_us,
         day_range().end_us,
     )
+
+
+@pytest.mark.parametrize(
+    ("name", "next_part"),
+    [
+        ("part-0007.parquet", "part-0008.parquet"),
+        ("part-0007.parquet\n", "part-0001.parquet"),
+        ("part-0007.parquet\r\n", "part-0001.parquet"),
+    ],
+    ids=["legal", "lf", "crlf"],
+)
+async def test_a_manifest_name_ending_in_a_newline_is_no_part_name(
+    tmp_path: Path, name: str, next_part: str
+) -> None:
+    """#3555: `$` also matches before a final newline, so `match` counted `part-0007.parquet\\n`
+    as part 7 and the next export took 8. Outside the pattern it is not a part name: the new
+    part's name is free, never an existing one, and the first part is untouched."""
+    table = trades_table(5)
+    await _exporter(tmp_path, FakeHotSource(table)).export_partition(
+        "BTCUSDT", StreamKind.TRADES, day_range()
+    )
+    store, part = _manifest(tmp_path), tmp_path / PART
+    [first] = store.read(part, tmp_path)
+    before = (part / first.file).read_bytes()
+    other = replace(first, file=name, range_start_us=0, range_end_us=1)
+    store.write(part, tmp_path, [first, other])
+    hour = TimeRange(start_us=DAY_START_US, end_us=DAY_START_US + 3_600_000_000)
+    await _exporter(tmp_path, FakeHotSource(table)).export_partition(
+        "BTCUSDT", StreamKind.TRADES, hour
+    )
+    assert sorted(e.file for e in store.read(part, tmp_path)) == sorted(
+        ["part-0000.parquet", name, next_part]
+    )
+    assert (part / "part-0000.parquet").read_bytes() == before
+    assert pq.ParquetFile(part / next_part).metadata.num_rows == 5
 
 
 async def test_verify_mismatch_raises_emits_critical_and_writes_nothing(tmp_path: Path) -> None:

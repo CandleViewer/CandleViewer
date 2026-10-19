@@ -149,7 +149,7 @@ class _Walker:
             self.condition(o["conditions"], "conditions", 1, None)
         if "variables" in o:
             for name, op in self.obj(o["variables"], "variables", "an object", None).items():
-                if not isinstance(name, str) or not _VARIABLE_NAME.match(name):
+                if not isinstance(name, str) or not _VARIABLE_NAME.fullmatch(name):
                     _not_permitted(f"variables.{name}", "Variable names use lowercase letters, "
                                    "digits and underscores.", None)  # fmt: skip
                 self.operand(op, f"variables.{name}", 1, None)
@@ -213,7 +213,7 @@ def _cron_ok(expr: str) -> bool:
         return False
     for f, (lo, hi) in zip(fields, _CRON_FIELDS, strict=True):
         for atom in f.split(","):
-            if not _CRON_ATOM.match(atom):
+            if not _CRON_ATOM.fullmatch(atom):
                 return False
             nums = [int(n) for n in re.findall(r"[0-9]+", atom.split("/")[0])]
             step = atom.split("/")[1] if "/" in atom else "1"
@@ -279,7 +279,7 @@ def _schema_issues(exc: ValidationError) -> list[AlertIssue]:
 
 def _placeholder_ok(name: str, metrics: frozenset[str]) -> bool:
     ns, dot, leaf = name.partition(".")
-    if not dot or ns not in TEMPLATE_FIELDS or not _SEGMENT.match(leaf):
+    if not dot or ns not in TEMPLATE_FIELDS or not _SEGMENT.fullmatch(leaf):
         return False  # exactly <namespace>.<leaf>: no deeper paths, no unicode, no whitespace
     # Context derived from the condition: metrics it references are available as market/footprint.
     return leaf in TEMPLATE_FIELDS[ns] or (ns in ("market", "footprint") and leaf in metrics)

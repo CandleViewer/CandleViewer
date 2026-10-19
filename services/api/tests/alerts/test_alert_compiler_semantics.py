@@ -174,3 +174,13 @@ def test_template_context_derived_from_condition_metrics() -> None:
         assert validate_template("{{market." + name + "}}")
     for name in ("side", "size", "entry", "unrealised_pnl", "leverage", "liquidation_price"):
         assert validate_template("{{position." + name + "}}")
+
+
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_template_leaf_ending_in_a_newline_is_refused_even_as_a_named_metric(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took the leaf, and a metric name
+    given with that newline then passed the membership check behind it."""
+    assert validate_template("{{market.some_metric}}", ("some_metric",)) == ("market.some_metric",)
+    with pytest.raises(AlertIrInvalid) as exc:
+        validate_template("{{market.some_metric" + tail + "}}", ("some_metric" + tail,))
+    assert exc.value.reason == "bad_template"

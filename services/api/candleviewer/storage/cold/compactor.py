@@ -171,7 +171,7 @@ class Compactor:
         plan: list[ManifestEntry],
     ) -> CompactionResult:
         entries = store.read(partition_dir, cold_root)
-        used = [int(m.group(1)) for e in entries if (m := _PART_RE.match(e.file))]
+        used = [int(m.group(1)) for e in entries if (m := _PART_RE.fullmatch(e.file))]
         staged = partition_dir / f"part-{max(used, default=0) + 1:04d}.parquet"
 
         tables = [pq.read_table(partition_dir / e.file) for e in plan]

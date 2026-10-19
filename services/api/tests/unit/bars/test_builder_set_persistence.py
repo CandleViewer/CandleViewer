@@ -226,6 +226,20 @@ async def test_store_rejects_unsafe_path_components(tmp_path: Path) -> None:
             store.path(sym, h)
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+@pytest.mark.parametrize("part", ["symbol", "spec_hash"])
+def test_store_rejects_a_path_component_ending_in_a_newline(
+    tmp_path: Path, part: str, tail: str
+) -> None:
+    """#3555: `$` also matches before a final newline, so `match` built a path with the newline
+    in a directory or file name. Each of the two components is read."""
+    legal = {"symbol": SYM, "spec_hash": "a" * 64}
+    store = StateStore(tmp_path)
+    assert store.path(**legal) == tmp_path / SYM / f"{'a' * 64}.state.json"
+    with pytest.raises(BarsError):
+        store.path(**{**legal, part: legal[part] + tail})
+
+
 async def test_store_missing_unreadable_and_delete(tmp_path: Path) -> None:
     store = StateStore(tmp_path)
     assert await store.load(SYM, "a" * 64) == (None, "missing")

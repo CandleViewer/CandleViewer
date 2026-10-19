@@ -75,6 +75,9 @@ def test_wire_param_with_dot_rejected(param: str) -> None:
         ("volume", "1e3", "positive whole number"),
         ("range", "1" * 25, "at most 24"),
         ("tick", "1:2", "positive whole number"),
+        # #3555: `$` also matches before a final newline, so `match` took the first one as 5
+        ("tick", "5\n", "positive whole number"),
+        ("tick", "5\r\n", "positive whole number"),
     ],
 )
 def test_wire_invalid_pairs_rejected_with_sentence(bar_type: str, param: str, match: str) -> None:

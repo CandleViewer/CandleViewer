@@ -71,6 +71,16 @@ def test_compile_action_nested_in_variables_rejected() -> None:
     assert err.reason == "action_node" and err.issues[0].node_id == "a9"
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_compile_a_variable_name_ending_in_a_newline_is_rejected(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took the name."""
+    out = COMPILER.compile(price_cross(variables={"v": {"const": 1}}))
+    assert out.condition_ir["variables"] == {"v": {"const": 1}}
+    err = reject(price_cross(variables={"v" + tail: {"const": 1}}))
+    assert (err.reason, err.issues[0].rule) == ("action_node", "not_permitted")
+    assert err.issues[0].field == f"variables.v{tail}"
+
+
 def test_compile_action_as_operand_rejected_with_node_id() -> None:
     raw = price_cross()
     raw["conditions"]["right"] = {"node_id": "a2", "type": "flatten_all_positions", "params": {}}
@@ -249,3 +259,13 @@ def test_compile_valid_triggers(trigger: dict[str, Any]) -> None:
 )
 def test_compile_invalid_triggers(trigger: dict[str, Any], reason: str) -> None:
     assert reject(price_cross(trigger=trigger)).reason == reason
+
+
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+@pytest.mark.parametrize("cron", ["0 9 * * 1-5{}", "0{} 9 * * 1-5", "*/15 0-23 1,15{} * *"])
+def test_compile_a_cron_atom_ending_in_a_newline_is_rejected(cron: str, tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took an atom that ends in one
+    (the last field's, or one in the middle of the expression, or one of a comma list)."""
+    COMPILER.compile(price_cross(trigger={"type": "on_schedule", "cron": cron.format("")}))
+    trigger = {"type": "on_schedule", "cron": cron.format(tail)}
+    assert reject(price_cross(trigger=trigger)).reason == "bad_trigger"
