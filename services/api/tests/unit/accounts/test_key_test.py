@@ -8,6 +8,7 @@ fakes, and a hang ends at a bound cut to zero, never a sleep. No network.
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -197,9 +198,8 @@ async def test_without_include_ws_the_socket_half_does_not_run() -> None:
     [
         (Reads(env="live"), KEY, AccountNotFoundError, "not found"),  # no oracle: as a missing one
         (Reads(), OTHER, AccountNotFoundError, "not found"),
-        (Reads("revoked"), KEY, KeyTestRefused, "conflict"),  # its 409's detail: the route's tests
     ],
-    ids=["other-env", "other-key", "revoked"],
+    ids=["other-env", "other-key"],
 )
 async def test_a_key_that_cannot_be_tested_is_refused_before_anything_is_signed(
     reads: Reads, key_id: UUID, error: type[Exception], code: str
@@ -208,6 +208,20 @@ async def test_a_key_that_cannot_be_tested_is_refused_before_anything_is_signed(
     with pytest.raises(error, match=f"^{code}$"):
         await flow_of(w, reads).run(ACCT, key_id, ACTOR)
     assert w.built == [] and w.events == []
+
+
+@pytest.mark.parametrize(
+    ("status", "signed"),
+    [("active", True), ("rotating", True)]  # rotating: the old key through a rotation's overlap
+    + [(status, False) for status in ("pending", "revoked", "invalid", "expired")],
+)
+async def test_only_an_active_or_rotating_key_is_signed_with(status: str, signed: bool) -> None:
+    """The contract's `Not signable`: any other key is a `409 conflict` (its detail: the route's
+    tests), and nothing is signed."""
+    w = World(target())
+    with nullcontext() if signed else pytest.raises(KeyTestRefused, match=r"^conflict$"):
+        await run(flow_of(w, Reads(status)))
+    assert bool(w.built) is signed
 
 
 @pytest.mark.parametrize("error", [RuntimeError("store down"), "hang"])
