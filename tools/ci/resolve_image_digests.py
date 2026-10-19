@@ -215,6 +215,15 @@ def read_ledger(
     head = next((n for n, s in enumerate(lines) if s.startswith("|")), None)
     if head is None:
         raise LedgerError(f"{LEDGER}: no table")
+    for n, s in enumerate(lines):
+        # A comment hides what it wraps from the rendered page, and an indented or pipe-less
+        # table above this one renders first: either way readers see another table.
+        if "<!--" in s:
+            raise LedgerError(
+                f"{LEDGER}:{n + 1}: an HTML comment (the ledger is read as shown)"
+            )
+        if n < head and TABLE_LINE_RE.match(s):
+            raise LedgerError(f"{LEDGER}:{n + 1}: a table line before the table starts")
     cols = _cells(lines[head])
     if any(cols.count(c) != 1 for c in ("Image", "Tag", "Digest")):
         raise LedgerError(f"{LEDGER}:{head + 1}: header needs one Image, Tag, Digest")

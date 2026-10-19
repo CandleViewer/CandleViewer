@@ -590,8 +590,9 @@ index alone, removing nothing.
 - **CI-IMG-009** (pin ledger unreadable, #3571): `PINS.md` is missing or not
   UTF-8, its header lacks an Image, Tag or Digest column or names one twice,
   its separator row is missing or has a different cell count, a row's cells
-  cannot be read, no blank line ends the table, or a later line looks like a
-  table row or separator (the ledger holds one table). The check fails closed;
+  cannot be read, no blank line ends the table, a line before or after it
+  looks like a table row or separator (the ledger holds one table), or it holds
+  an HTML comment (the ledger is read as it renders). The check fails closed;
   restore the table's shape.
 
 ### CI-SPIKE-* — spike containment (`tools/ci/check_spike_containment.py`)

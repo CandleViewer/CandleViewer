@@ -245,6 +245,13 @@ def _two_digest_columns(s: str) -> str:
         lambda s: s.replace("Hub |\n\n", f"Hub |\n\n  | {BARE} |\n"),
         lambda s: s.replace("Hub |\n\n", f"Hub |\n{BARE}\n\n"),
         lambda s: s + f"\nImage | Tag | Digest\n--- | --- | ---\n{BARE}\n",
+        lambda s: s.replace("# Pins\n\n", f"# Pins\n\n  | {BARE} |\n  | --- |\n\n"),
+        lambda s: s.replace(
+            "# Pins\n\n", f"# Pins\n\nImage | Tag | Digest\n--- | --- | ---\n{BARE}\n\n"
+        ),
+        lambda s: s.replace("# Pins\n\n", "# Pins\n\n<!--\n").replace(
+            "Hub |\n\n", "Hub |\n\n-->\n\n"
+        ),
     ],
     ids=[
         "no-digest-column",
@@ -260,6 +267,9 @@ def _two_digest_columns(s: str) -> str:
         "row-after-blank-line",
         "pipeless-row-under-table",
         "pipeless-second-table",
+        "indented-table-above",
+        "pipeless-table-above",
+        "table-in-html-comment",
     ],
 )
 def test_ledger_unreadable_table_fails_closed(
