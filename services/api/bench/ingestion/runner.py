@@ -27,7 +27,6 @@ from bench.ingestion.engine import (
     run_lanes,
     symbols_for,
 )
-from bench.ingestion.ratelimit import run_headroom
 
 PREFERRED = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 
@@ -45,6 +44,8 @@ def _lane_cfg(sc: Scenario, **over: Any) -> LaneConfig:
         inbound_queue=int(p.get("inbound_queue", 64)),
         sample_every_s=float(p.get("sample_every_s", 60.0)),
         seed=int(p.get("seed", 7)),
+        warmup_s=float(p.get("warmup_s", 0.0)),
+        warmup_wall_s=float(p.get("warmup_wall_s", 0.0)),
         loads=loads,
         realtime=bool(p.get("realtime", False)),
     )
@@ -59,18 +60,16 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
     v = budgets.Verdict(sc.name)
     v.add(budgets.check_loss(res.injected, res.ingested, res.detected_gap))
     base_at = float(sc.p("flatness_baseline_fraction")) * cfg.duration_s
+    n_sym, pre = len(cfg.symbols), res.rss_pre_lanes_bytes
     v.checks.extend(
-        budgets.check_soak(
-            res.samples, len(cfg.symbols), base_at, float(sc.p("flatness_tolerance"))
-        )
+        budgets.check_soak(res.samples, n_sym, base_at, float(sc.p("flatness_tolerance")), pre)
     )
     lags = [x for per in res.lag_ms.values() for x in per["steady"]]
     v.metrics = {
         "ingest_lag_ms": budgets.summary(lags),
-        "rss_mb_per_symbol": budgets.summary(
-            budgets.rss_per_symbol_mb(res.samples, len(cfg.symbols))
-        ),
-        "vcpu_per_symbol": budgets.summary(budgets.vcpu_per_symbol(res.samples, len(cfg.symbols))),
+        "rss_mb_per_symbol": budgets.summary(budgets.rss_per_symbol_mb(res.samples, n_sym, pre)),
+        "rss_mb_process": budgets.summary(budgets.rss_process_mb(res.samples)),
+        "vcpu_per_symbol": budgets.summary(budgets.vcpu_per_symbol(res.samples, n_sym)),
         "event_loop_lag_ms": budgets.summary([s.loop_lag_ms for s in res.samples]),
         "queue_depth": budgets.summary([float(s.queue_depth) for s in res.samples]),
         "sampling_cost_ms": {
@@ -135,6 +134,8 @@ async def run_latency(sc: Scenario, sampler: ProcSampler) -> budgets.Verdict:
 
 
 async def run_ratelimit(sc: Scenario) -> budgets.Verdict:
+    from bench.ingestion.ratelimit import run_headroom
+
     p = sc.params
     res = await run_headroom(
         duration_s=float(p["duration_s"]),
@@ -159,8 +160,8 @@ async def run_ratelimit(sc: Scenario) -> budgets.Verdict:
 
 
 async def run_scenario(sc: Scenario, sampler: ProcSampler | None = None) -> budgets.Verdict:
-    from bench.ingestion.rest_load import run_rest
-
+    # The REST and rate-limit drivers import the API routers and storage (`fixture_app`): load them
+    # only for their own scenarios, so a soak's process holds what the soak runs (`rss_mb_process`).
     smp = sampler or PsutilProcSampler()
     if sc.kind == "soak":
         return await run_soak(sc, smp)
@@ -169,6 +170,8 @@ async def run_scenario(sc: Scenario, sampler: ProcSampler | None = None) -> budg
     if sc.kind == "latency":
         return await run_latency(sc, smp)
     if sc.kind == "rest":
+        from bench.ingestion.rest_load import run_rest
+
         return await run_rest(sc)
     if sc.kind == "ratelimit":
         return await run_ratelimit(sc)

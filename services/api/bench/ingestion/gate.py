@@ -3,8 +3,10 @@
 Shape copied from `bench/bar_determinism/run.py`: per-metric WARN / FAIL bands. Metrics are
 "lower is better" (latency, RSS, CPU, backlog, recovery) unless listed in `higher_is_better`.
 A baseline recorded on another `machine_profile`, or flagged `gate: "warn-only"`, never FAILs —
-it only WARNs until a same-profile (CI-runner) baseline is recorded. The gate never rewrites a
-baseline; `--record-baseline` is a deliberate, reviewed local action and is refused under CI.
+it only WARNs until a same-profile (CI-runner) baseline is recorded. One recorded by another
+`HARNESS_VERSION` is not compared at all (a metric may have changed meaning). The gate never
+rewrites a baseline; `--record-baseline` is a deliberate, reviewed local action and is refused
+under CI.
 """
 
 from __future__ import annotations
@@ -68,6 +70,14 @@ def compare(
     g = GateResult()
     if baseline is None:
         g.gated, g.reason = False, "no baseline recorded"
+        return g
+    if baseline.get("harness_version", HARNESS_VERSION) != HARNESS_VERSION:
+        g.gated = False
+        g.reason = (
+            f"baseline recorded by harness {baseline['harness_version']!r}, this is "
+            f"{HARNESS_VERSION!r}: a metric may be defined differently, so none is compared "
+            "until a baseline is recorded again"
+        )
         return g
     if baseline.get("run_profile", "smoke") != run_profile:
         g.gated = False

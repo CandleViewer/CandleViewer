@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from bench.ingestion import gate, report
+from bench.ingestion import HARNESS_VERSION, gate, report
 from bench.ingestion.budgets import Check, Verdict
 from bench.ingestion.config import SCENARIOS, load
 
@@ -50,6 +50,27 @@ def test_gate_per_metric_tolerance_tightens_the_band() -> None:
     assert gate.compare(_verdict(11.5), _baseline(), "ci-ubuntu", {M: 0.05}).status == "FAIL"
 
 
+def test_process_footprint_warns_at_10_pct_and_fails_at_50_pct_of_a_recorded_baseline() -> None:
+    def rss(p95: float) -> dict[str, float]:
+        return {"p50": p95, "p95": p95, "max": p95, "count": 1.0}
+
+    base = {
+        "machine_profile": "ci-ubuntu",
+        "gate": "gated",
+        "run_profile": "smoke",
+        "metrics": {"rss_mb_process": rss(100.0)},
+    }
+
+    def status(p95: float, tolerances: dict[str, float] | None = None) -> str:
+        v = Verdict("soak_steady")
+        v.metrics = {"rss_mb_process": rss(p95)}
+        return gate.compare(v, base, "ci-ubuntu", tolerances).status
+
+    band = load("soak_steady").tolerances
+    assert status(140.0) == "FAIL"  # +40 % at the default band
+    assert [status(p, band) for p in (105, 112, 140, 170)] == ["PASS", "WARN", "WARN", "FAIL"]
+
+
 def test_gate_foreign_profile_or_warn_only_never_fails() -> None:
     for base in (_baseline("laptop-i7-8550U"), _baseline("ci-ubuntu", "warn-only")):
         g = gate.compare(_verdict(14.0), base, "ci-ubuntu")
@@ -59,6 +80,14 @@ def test_gate_foreign_profile_or_warn_only_never_fails() -> None:
 def test_gate_smoke_baseline_not_compared_to_full_run() -> None:
     g = gate.compare(_verdict(99.0), _baseline(), "ci-ubuntu", run_profile="full")
     assert g.status == "PASS" and not g.gated
+
+
+def test_gate_compares_no_baseline_recorded_by_another_harness_version() -> None:
+    old = {**_baseline(), "harness_version": "e08-q04/1"}  # a metric may have changed meaning
+    g = gate.compare(_verdict(14.0), old, "ci-ubuntu")  # +40 %: FAIL if it were compared
+    assert g.status == "PASS" and not g.gated and not g.diff and "e08-q04/1" in g.reason
+    same = {**_baseline(), "harness_version": HARNESS_VERSION}
+    assert gate.compare(_verdict(14.0), same, "ci-ubuntu").status == "FAIL"
 
 
 def test_gate_missing_baseline_is_not_gated() -> None:
@@ -76,7 +105,8 @@ def test_record_writes_the_74_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     path = gate.record(_verdict(3.0), "lap", "s", "smoke", tmp_path)
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["machine_profile"] == "lap" and data["gate"] == "warn-only"
-    assert data["harness_version"] and {"p50", "p95", "max"} <= set(data["metrics"][M])
+    assert data["harness_version"] == HARNESS_VERSION  # what `compare` reads back
+    assert {"p50", "p95", "max"} <= set(data["metrics"][M])
 
 
 def test_committed_baselines_are_laptop_warn_only_and_cover_every_scenario() -> None:
