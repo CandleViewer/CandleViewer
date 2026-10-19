@@ -732,8 +732,9 @@ Consequences:
   request handler, and no permission-check handler. With none installed, Electron answers permission
   checks itself, so a check that it granted by default cannot be told apart here from no check at all.
   The nightly `e2e-electron` pins re-measure this. An Electron bump, or any new permission-check handler
-  (S5, D7), runs `e2e-electron` through the lane's `electron` input (`.github/workflows/_job-e2e.yml:35-38`)
-  before it merges.
+  (S5, D7), gets an `e2e-nightly` dispatch on its head before it merges: that workflow is the only caller
+  that sets the lane's `electron` input (`.github/workflows/_job-e2e.yml:35-38`), and the PR lane runs no
+  `e2e-electron`.
 - **4c is taken.** `Partitioned` is honoured for the `app://` top-level site (A4), so 4c adds `Partitioned`
   to both desktop cookies (S4). An expiry of a `Partitioned` cookie must also carry `Partitioned`, or it
   leaves the cookie in place (A7); 4b's single attribute function, which expiries use too, gives that.
