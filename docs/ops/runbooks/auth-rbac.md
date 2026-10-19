@@ -711,6 +711,32 @@ waits logs `auth.session_revoke_denied.audit_slow` (the row may still land); if 
 fails after the client hung up, `auth.session_revoke_denied.audit_failed_late` follows. Those lines
 have no series of their own, so count the lines to bound the probes with no row.
 
+**Enrolment-only refusals (#2295).** `auth_enrolment_refused_total{transport,reason}` (`transport`
+is `http` or `ws`, the `channel` of the log lines and audit rows) counts each refusal of an
+enrolment-only session; no alert rule reads it yet (#2746). By `reason`:
+
+- `enrolment_only`: an operation outside the five enrolment operations was answered
+  `403 mfa_enrollment_required`, or the WebSocket `auth` got `bye mfa_enrollment_required`
+  (4403). The audit row is `auth.mfa_enrollment_required` (denied, warning; `after_state` names
+  the channel, method and route template, and the row has the source address), at most 20 a
+  minute per user. The log line is `auth.enrolment_only.refused`, with `session_id` and `user_id`.
+- `expired`: the session was not minted enrolment-only (its expiry lies more than 15 minutes
+  ahead, or it proved a second factor its user no longer has): 401, or a failed WS `auth`, and no
+  audit row (log `auth.enrolment_only.expired`). A session past its expiry is refused before it is
+  classified (401, revoked as `expired`) and is not counted here, except by a `POST /auth/refresh`
+  that is the first request to present it after its expiry.
+- `unclassified`: the session or its user could not be read, or a session store is wired without
+  the user store: `503 store_unavailable`, or a failed WS `auth`. The error line
+  `auth.enrolment_only.unclassified` names the exception type, and the `session_id` and `user_id`
+  when the session was read but its user's state was not; check the auth database first.
+- `audit_throttled`, `audit_slow`, `audit_unavailable`: an `enrolment_only` refusal whose row was
+  skipped on purpose (the per-user budget or the in-flight cap; log
+  `auth.enrolment_only.refused_unaudited`), was still running after the 2-second wait (it may
+  still land; `auth.enrolment_only.audit_slow`), or failed
+  (`auth.enrolment_only.audit_unavailable`, or `auth.enrolment_only.audit_failed_late` once
+  nobody waits for it). A WebSocket refusal's slow or lost row (not one skipped on purpose) also
+  counts once in `cv_ws_audit_failures_total`, so `WsAuditWriteFailed` raises a ticket (SR-186).
+
 Deliberately not served on the metrics listener: `auth_sessions_active` (a process-local gauge that
 drifts: it never drops on expiry or rotation, and a restarted process drives it negative; the database
 is the truth for live sessions) and `cv_ws_errors_total{code}` (its label name is not on the Semgrep
@@ -901,6 +927,7 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
+| No alert rule reads the enrolment-only refusal series (section 7)         | #2746                |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747                |
 | No durable retry of a lost audit outcome record                           | EX-07, #3009         |
 | No durable retry of a lost backstop audit record                          | EX-08, #3009         |

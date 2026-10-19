@@ -7,6 +7,7 @@ answer and that no handler logic ran. The composed app is covered by
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -46,6 +47,8 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import SessionClass
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.ws.metrics import AUDIT_FAILURE_REASONS as _REASONS
+from candleviewer.ws.metrics import cv_ws_audit_failures_total
 
 _NOW = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
 _CODE = "mfa_enrollment_required"
@@ -240,6 +243,30 @@ def test_guard_allow_list_matches_method_and_exact_path(world: _World, request_l
     assert world.hits == []
 
 
+@pytest.mark.parametrize(
+    "request_line", ["HEAD /auth/session", "HEAD /auth/sessions", "OPTIONS /auth/mfa/enroll"]
+)
+def test_guard_allow_list_never_widens_a_method(world: _World, request_line: str) -> None:
+    """HEAD is not GET and OPTIONS is no pass: only the exact (method, path) pair is allowed."""
+    resp = world.call(*request_line.split(" "))
+
+    assert resp.status_code == 403  # a HEAD answer has no body to read the code from
+    assert world.hits == []
+
+
+async def test_guard_allow_list_never_matches_a_lower_case_method() -> None:
+    hits: list[str] = []
+
+    async def handler(request: Request) -> Response:
+        hits.append(request.method)
+        return Response(status_code=204)
+
+    request = _request("Bearer tok-enrolling", method="get", path="/auth/session")
+    resp = await _guard(_Auth(), _refusals(_Audit()))(request, handler)
+
+    assert (resp.status_code, hits) == (403, [])
+
+
 def test_guard_matches_the_routed_path_under_a_root_path() -> None:
     """#2752 parity: the path the router matches, not the raw URL path."""
     world = _World(root_path="/api/v1")
@@ -299,6 +326,22 @@ def test_guard_cross_user_a_full_session_is_never_restricted(
     assert world.auth.classified == [_USERS[who]]  # its own user, nobody else's
 
 
+def test_guard_serves_a_full_verdict_only(world: _World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deny by default (C-12.4), as the WS authenticator: a verdict the guard does not know (a
+    later class, or a fake's plain string) gets the allow-list only, never every route."""
+
+    async def unknown(_session: SessionRecord) -> Any:
+        return "full"  # equal to `SessionClass.FULL`, yet not that member
+
+    monkeypatch.setattr(world.auth, "classify", unknown)
+
+    refused = world.call("GET", "/auth/sessions", "full")
+    allowed = world.call("GET", "/auth/session", "full")
+
+    assert _refused(refused) and allowed.status_code == 200
+    assert world.hits == [("GET", "/auth/session")]
+
+
 @pytest.mark.parametrize("header", ["", "Basic dG9r", "Bearer ", "tok-enrolling"])
 def test_guard_without_a_bearer_token_leaves_the_answer_to_the_route(
     world: _World, header: str
@@ -324,10 +367,9 @@ class _TokenRecorder:
         raise SessionNotFound("recorded only")
 
 
-def _request(header: str) -> Request:
+def _request(header: str, method: str = "GET", path: str = "/auth/sessions") -> Request:
     headers = [(b"authorization", header.encode())] if header else []
-    scope = {"type": "http", "method": "GET", "path": "/auth/sessions", "headers": headers}
-    return Request(scope)
+    return Request({"type": "http", "method": method, "path": path, "headers": headers})
 
 
 async def _ok(request: Request) -> Response:
@@ -530,6 +572,148 @@ def test_guard_counts_a_session_it_cannot_check_as_unclassified(world: _World) -
         "OSError",
         "/auth/sessions",
     )
+    session = uuid.uuid5(_USERS["full"], "session")  # read, then not classified: named (C-12.6)
+    assert (line["session_id"], line["user_id"]) == (str(session), str(_USERS["full"]))
+
+
+async def test_refusal_audit_budget_is_shared_by_every_session_of_a_user() -> None:
+    """Minting sessions on one stolen password buys no audit rows: the budget is per user."""
+    audit = _Audit()
+    refusals = _refusals(audit, budget=1)
+    first, second = (
+        SessionRecord.model_construct(id=uuid.uuid5(_OTHER, sid), user_id=_OTHER) for sid in "ab"
+    )
+    before = _count("http", "audit_throttled")
+
+    for record in (first, second):
+        await refusals.refused(record, channel="http", method="GET", path="/x", ip=None)
+
+    assert [r["session_id"] for r in audit.records] == [first.id]
+    assert _count("http", "audit_throttled") == before + 1
+
+
+class _Writer:
+    """An audit writer held at `release`, then failing with *error* (or writing nothing)."""
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.started, self.release, self.error = asyncio.Event(), asyncio.Event(), error
+
+    async def emit(self, action: str, **_kw: Any) -> None:
+        self.started.set()
+        await self.release.wait()
+        if self.error is not None:
+            raise self.error
+
+
+def _record() -> SessionRecord:
+    return SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
+
+
+async def test_refusal_audit_whose_writer_raises_timeout_itself_is_unavailable() -> None:
+    """The write's own outcome decides, not the clock (as the CSRF guard's `_emit_audit`)."""
+    writer = _Writer(TimeoutError())
+    writer.release.set()
+    refusals = EnrolmentRefusals(writer, tracker=RefusalAuditTracker())
+    slow, lost = _count("ws", "audit_slow"), _count("ws", "audit_unavailable")
+
+    await refusals.refused(_record(), channel="ws", method="GET", path="/ws", ip=None)
+
+    assert (_count("ws", "audit_slow"), _count("ws", "audit_unavailable")) == (slow, lost + 1)
+
+
+async def test_refusal_audit_failing_after_the_wait_is_counted_under_its_own_event() -> None:
+    writer, tracker = _Writer(OSError("audit store down")), RefusalAuditTracker()
+    refusals = EnrolmentRefusals(writer, tracker=tracker, audit_timeout_s=0.01)
+    slow, lost = _count("ws", "audit_slow"), _count("ws", "audit_unavailable")
+    await refusals.refused(_record(), channel="ws", method="GET", path="/ws", ip=None)
+
+    with capture_logs() as logs:
+        writer.release.set()
+        assert await tracker.drain() == 0
+
+    assert (_count("ws", "audit_slow"), _count("ws", "audit_unavailable")) == (slow + 1, lost + 1)
+    assert [e["event"] for e in logs] == ["auth.enrolment_only.audit_failed_late"]
+
+
+async def test_refusal_audit_of_a_cancelled_caller_is_still_counted_when_it_fails() -> None:
+    """A cancelled request or WS `auth` hands its write to the tracker before re-raising."""
+    writer, tracker = _Writer(OSError("audit store down")), RefusalAuditTracker()
+    refusals = EnrolmentRefusals(writer, tracker=tracker, audit_timeout_s=60.0)
+    lost = _count("http", "audit_unavailable")
+    caller = asyncio.create_task(
+        refusals.refused(_record(), channel="http", method="GET", path="/x", ip=None)
+    )
+    await writer.started.wait()
+
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    writer.release.set()
+
+    assert await tracker.drain() == 0
+    assert _count("http", "audit_unavailable") == lost + 1
+
+
+async def test_refusal_audit_still_running_when_the_tracker_drains_is_counted_lost() -> None:
+    writer, tracker = _Writer(), RefusalAuditTracker()
+    refusals = EnrolmentRefusals(writer, tracker=tracker, audit_timeout_s=0.01)
+    lost = _count("ws", "audit_unavailable")
+    await refusals.refused(_record(), channel="ws", method="GET", path="/ws", ip=None)
+
+    assert await tracker.drain(timeout_s=0.01) == 1
+    assert _count("ws", "audit_unavailable") == lost + 1
+    writer.release.set()  # let it end; a write the drain gave up on is never counted twice
+    assert await tracker.drain() == 0
+    assert _count("ws", "audit_unavailable") == lost + 1
+
+
+def _ws_unwritten() -> dict[str, float]:
+    """`cv_ws_audit_failures_total{reason}` (SR-186), which `WsAuditWriteFailed` reads."""
+    return {r: float(cv_ws_audit_failures_total.labels(reason=r)._value.get()) for r in _REASONS}
+
+
+def _moved(before: dict[str, float]) -> dict[str, float]:
+    return {r: v - before[r] for r, v in _ws_unwritten().items() if v != before[r]}
+
+
+async def _refuse(writer: _Writer, tracker: RefusalAuditTracker, channel: Any, **kw: Any) -> None:
+    refusals = EnrolmentRefusals(writer, tracker=tracker, **kw)
+    await refusals.refused(_record(), channel=channel, method="GET", path="/ws", ip=None)
+
+
+async def test_ws_refusal_row_not_written_counts_once_where_its_alert_reads() -> None:
+    """SR-186: a lost WS refusal row counts once in `cv_ws_audit_failures_total`, as every other
+    WS audit row: `error` for a failed write, `timeout` for a wait that ended first (never again
+    when that write then fails, or the drain gives up on it). An HTTP refusal's row never does."""
+    failed, late, stuck = (_Writer(OSError("audit store down")) for _ in range(3))
+    tracker, before = RefusalAuditTracker(), _ws_unwritten()
+    failed.release.set()
+
+    await _refuse(failed, tracker, "http")
+    assert _moved(before) == {}
+    await _refuse(failed, tracker, "ws")
+    await _refuse(late, tracker, "ws", audit_timeout_s=0.01)
+    await _refuse(stuck, tracker, "ws", audit_timeout_s=0.01)
+    late.release.set()
+    assert await tracker.drain(timeout_s=0.01) == 1  # `late` fails; `stuck` is given up on
+
+    assert _moved(before) == {"error": 1, "timeout": 2}
+
+
+async def test_ws_refusal_row_of_a_cancelled_auth_counts_error_once_it_fails() -> None:
+    writer, tracker = _Writer(OSError("audit store down")), RefusalAuditTracker()
+    before = _ws_unwritten()
+    caller = asyncio.create_task(_refuse(writer, tracker, "ws", audit_timeout_s=60.0))
+    await writer.started.wait()
+
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert _moved(before) == {}  # it runs on and may still land
+    writer.release.set()
+    assert await tracker.drain() == 0
+
+    assert _moved(before) == {"error": 1}
 
 
 # -- its slot in the composed app --------------------------------------------------------------

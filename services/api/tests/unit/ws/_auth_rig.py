@@ -23,7 +23,7 @@ from starlette.websockets import WebSocketDisconnect
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.context import spawn
-from candleviewer.ws.gateway import GatewayHub, make_ws_router
+from candleviewer.ws.gateway import AuthRefused, GatewayHub, make_ws_router
 from candleviewer.ws.limits import AUTH_CALL_TIMEOUT_S
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
@@ -103,6 +103,8 @@ class Rig:
                 await asyncio.Event().wait()  # never set: only the bound ends it
             if presented == "raises-timeout":
                 raise TimeoutError("the session store's own timeout")
+            if presented == "enrolling":  # #2295: an enrolment-only session, refused at once
+                raise AuthRefused("mfa_enrollment_required")
             if presented == "naive":
                 return "sess-naive", user_of(presented), LATER.replace(tzinfo=None)
             if not presented.startswith("good-"):
@@ -192,6 +194,7 @@ _ENDS = {
     "fault": ("naive", ("bye", "internal_error", 1011)),
     "call_timeout": ("hang", ("bye", "internal_error", 1011)),
     "rate_refused": ("good-dup", ("bye", "client_rate_limited", 4429)),
+    "enrolment_refused": ("enrolling", ("bye", "mfa_enrollment_required", 4403)),
 }
 
 

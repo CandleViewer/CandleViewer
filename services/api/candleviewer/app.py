@@ -151,7 +151,11 @@ from candleviewer.auth.models import (
 from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
-from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, access_token_expires_at
+from candleviewer.auth.session_service import (
+    ACCESS_TOKEN_TTL,
+    SessionClass,
+    access_token_expires_at,
+)
 from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
 from candleviewer.backups_wiring import (
     build_admin_backups,
@@ -344,7 +348,7 @@ from candleviewer.user_cascade_wiring import build_user_disable_service
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
-from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
+from candleviewer.ws.gateway import Authenticate, AuthRefused, GatewayHub, make_ws_router
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.origin_audit import OriginRefusalAudit
@@ -910,15 +914,47 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _session_authenticator(ctx: AppContext) -> Authenticate:
+def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Authenticate:
     """Opaque bearer token -> (session_id, user_id, token expiry) via the session
     service. The expiry is the first instant the service refuses the token on
     time grounds; the gateway ends the socket's identity there (#2259). Raises
-    (fail closed) while no session repository is wired."""
+    (fail closed) while no session repository is wired.
+
+    #2295: only a full session is served. An enrolment-only one is refused with `AuthRefused`
+    (`bye mfa_enrollment_required`, 4403), counted and audited through *refusals*, with the
+    source address the gateway supplies, as the HTTP guard's 403 is. One not minted as such
+    (overlong, Q7, or it proved a second factor), any other verdict (deny by default, C-12.4)
+    and a classification that fails raise like any failed `auth` (as an expired token does,
+    `23-ws-protocol.md` §4.3), so HTTP (401) and the socket (`auth_failed`) both lead to a new
+    sign-in; one past its expiry fails the lookup first. A user disabled or deleted since
+    `require_active` read the session (`USER_INACTIVE`, a race with the disable) is refused as
+    the gateway refuses a late registration (`bye user_disabled`, 4403, #3413), uncounted here:
+    #2911's refusal, not an enrolment one."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)
+        if ctx.auth.enrolment_gate_is_active:
+            await _refuse_unless_full(record)
         return str(record.id), record.user_id, access_token_expires_at(record)
+
+    async def _refuse_unless_full(record: SessionRecord) -> None:
+        try:
+            verdict = await ctx.auth.classify(record)
+        except Exception as exc:
+            refusals.unclassified(exc, channel="ws", method="GET", path="/ws", record=record)
+            raise
+        if verdict is SessionClass.FULL:
+            return
+        if verdict is SessionClass.ENROLMENT_ONLY:
+
+            async def _audit(ip: str | None) -> None:
+                await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=ip)
+
+            raise AuthRefused("mfa_enrollment_required", audit=_audit)
+        if verdict is SessionClass.USER_INACTIVE:  # disabled or gone since the lookup (#2911)
+            raise AuthRefused("user_disabled")  # as a late registration is closed (#3413)
+        refusals.expired(record, channel="ws", method="GET", path="/ws")
+        raise PermissionError("not a live enrolment-only session")
 
     return _authenticate
 
@@ -1394,7 +1430,7 @@ def create_app(
     )
     app.include_router(
         make_ws_router(
-            authenticate=ws_authenticate or _session_authenticator(ctx),
+            authenticate=ws_authenticate or _session_authenticator(ctx, enrolment_refusals),
             registry=ws_registry,
             revocation_hub=revocation_hub,
             allowed_origins=resolved.allowed_origin_set,  # SR-042/SR-183 upgrade check (#2239)
