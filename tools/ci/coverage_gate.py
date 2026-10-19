@@ -10,12 +10,18 @@ Each package is judged only on its own report, `<artifact>/<package-slug>/<repor
 file>` (`own_report_path`), where `flatten_coverage_artifacts.py` copies it from
 the lane's upload, so packages that share an artifact never share a report (#3562).
 
+A package with a `branch_floor` (services/api and the chart engine: CONSTITUTION
+§9 #3, C-13.1) is judged on its branch coverage too, the same way, once its lines
+pass (#3691).
+
 Error codes (ticket "Technical notes / design"):
-    CI-COV-001  measured < floor
+    CI-COV-001  measured < floor (lines, or a package's judged branches)
     CI-COV-002  measured < baseline - tolerance (regression, even if above
                 floor)
     CI-COV-003  missing or unreadable coverage artifact for an applicable
-                package (a silently-absent report must never pass)
+                package (a silently-absent report must never pass), or a
+                report that records no branches for a package with a
+                branch floor
     CI-COV-004  coverage artifact refused (#3508): artifacts are untrusted
                 input (read_artifact_bytes, check_artifact_entry_count)
 
@@ -23,6 +29,7 @@ Ratchet mode (``--ratchet``, used only on merges to `main`): when a
 package's measured coverage exceeds its recorded baseline by >=1.0 pp, the
 gate emits a baseline-raise proposal (new baselines JSON) instead of
 mutating the file itself — the caller workflow uses that to open a bot PR.
+Proposals cover line baselines only; a `branch_baseline` moves by a reviewed edit.
 Baselines only ever move up here; lowering is a manual, CODEOWNER-gated
 edit to the JSON file (see the file's own header comment). Proposals are
 written only when no applicable artifact is missing or unreadable.
@@ -39,7 +46,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from xml.parsers import expat
 
 RATCHET_STEP_PP = 1.0
@@ -105,6 +112,16 @@ class PackageConfig:
     baseline: float
     artifact: str
     report_format: str
+    # Branch coverage is judged only when both are set (#3691).
+    branch_floor: float | None = None
+    branch_baseline: float | None = None
+
+
+class Measured(NamedTuple):
+    """A report's coverage in percent: lines, and branches (None: it records none)."""
+
+    lines: float
+    branches: float | None
 
 
 REPORT_FILENAMES: dict[str, str] = {"coverage-xml": "coverage.xml", "lcov": "lcov.info"}
@@ -137,6 +154,9 @@ class PackageResult:
     verdict: str  # "PASS" | "FAIL" | "N/A" (producing lane did not run)
     code: str | None
     reason: str | None
+    branch_floor: float | None = None
+    branch_baseline: float | None = None
+    branches: float | None = None
 
 
 @dataclass(frozen=True)
@@ -178,12 +198,15 @@ def load_config(path: Path) -> tuple[float, dict[str, PackageConfig]]:
     slugs: dict[str, str] = {}
     for name, cfg in packages_raw.items():
         try:
+            branched = "branch_floor" in cfg or "branch_baseline" in cfg
             packages[name] = PackageConfig(
                 name=name,
                 floor=float(cfg["floor"]),
                 baseline=float(cfg["baseline"]),
                 artifact=str(cfg["artifact"]),
                 report_format=str(cfg["report_format"]),
+                branch_floor=float(cfg["branch_floor"]) if branched else None,
+                branch_baseline=float(cfg["branch_baseline"]) if branched else None,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise CoverageGateError(f"malformed package entry {name!r}: {exc}") from exc
@@ -204,16 +227,34 @@ def _excerpt(value: str, limit: int = 40) -> str:
     return repr(value[:limit]) + ("..." if len(value) > limit else "")
 
 
+_DECIMAL = r"[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?"
+
+
 def _no_doctype(*_: object) -> None:
     raise CoverageGateError("malformed coverage.xml: it declares a document type")
 
 
-def parse_coverage_xml(text: str) -> float:
+def _branch_percent(attrs: dict[str, str]) -> float | None:
+    """The coverage.xml root's branch-rate as a percentage, or None when it
+    counts no branch (`branches-valid` absent or 0): coverage.py writes
+    branch-rate "0" when it measured none and "1" when it found none."""
+    counted, rate = attrs.get("branches-valid", "0"), attrs.get("branch-rate", "")
+    if not re.fullmatch(r"[0-9]{1,15}", counted):
+        raise CoverageGateError(f"bad coverage.xml branches-valid {_excerpt(counted)}")
+    if int(counted) == 0:
+        return None
+    if not re.fullmatch(_DECIMAL, rate) or float(rate) > 1:
+        raise CoverageGateError(f"bad coverage.xml branch-rate {_excerpt(rate)}")
+    return float(rate) * 100.0
+
+
+def parse_coverage_xml(text: str) -> Measured:
     """Parse a Cobertura-style `coverage.xml` (pytest-cov / coverage.py
-    `--cov-report=xml`) and return the overall line-rate as a percentage.
+    `--cov-report=xml`) and return the overall line-rate and branch-rate
+    (`_branch_percent`) as percentages.
     Raises CoverageGateError unless it is well-formed XML with no document
     type declaration (coverage.py writes none), a `<coverage>` root and a
-    decimal line-rate in [0, 1]."""
+    decimal line-rate in [0, 1] (and branch-rate, when it counts branches)."""
     roots: list[tuple[str, dict[str, str]]] = []
 
     def start(name: str, attrs: dict[str, str]) -> None:
@@ -235,7 +276,7 @@ def parse_coverage_xml(text: str) -> float:
         raise CoverageGateError(
             "coverage.xml root element missing 'line-rate' attribute"
         )
-    if not re.fullmatch(r"[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?", line_rate):
+    if not re.fullmatch(_DECIMAL, line_rate):
         raise CoverageGateError(
             f"coverage.xml has non-numeric line-rate {_excerpt(line_rate)}"
         )
@@ -243,7 +284,7 @@ def parse_coverage_xml(text: str) -> float:
         raise CoverageGateError(
             f"coverage.xml line-rate {_excerpt(line_rate)} is outside [0, 1]"
         )
-    return float(line_rate) * 100.0
+    return Measured(float(line_rate) * 100.0, _branch_percent(attrs))
 
 
 # Every line of an lcov tracefile is one of these records; counts are integers.
@@ -253,14 +294,16 @@ _LCOV_RECORD = re.compile(
 )
 
 
-def parse_lcov(text: str) -> float:
+def parse_lcov(text: str) -> Measured:
     """Parse an lcov `lcov.info` file (Vitest `--coverage`) and return the
     aggregate line-coverage percentage across every `SF:` record
-    (lines hit / lines found * 100). Raises CoverageGateError when a line
-    is not an lcov record, more lines are hit than found, or the file has
-    no `LF:`/`LH:` records at all (malformed / empty report)."""
+    (lines hit / lines found * 100) and branch percentage (BRH / BRF * 100,
+    None when BRF totals 0). Raises CoverageGateError when a line
+    is not an lcov record, more lines (or branches) are hit than found, or
+    the file has no `LF:`/`LH:` records at all (malformed / empty report)."""
     lines_found = 0
     lines_hit = 0
+    branch = {"BRF": 0, "BRH": 0}
     seen_any_record = False
     for number, line in enumerate(text.splitlines(), start=1):
         record = _LCOV_RECORD.fullmatch(line.strip())
@@ -272,6 +315,8 @@ def parse_lcov(text: str) -> float:
                 lines_found += int(record[2])
             else:
                 lines_hit += int(record[2])
+        elif record is not None and record[1] in branch:
+            branch[record[1]] += int(record[2])
 
     if not seen_any_record:
         raise CoverageGateError(
@@ -279,14 +324,17 @@ def parse_lcov(text: str) -> float:
         )
     if lines_hit > lines_found:
         raise CoverageGateError("malformed or empty lcov.info: LH above LF")
+    if branch["BRH"] > branch["BRF"]:
+        raise CoverageGateError("malformed or empty lcov.info: BRH above BRF")
+    branches = branch["BRH"] / branch["BRF"] * 100.0 if branch["BRF"] else None
     if lines_found == 0:
-        return 0.0
-    return (lines_hit / lines_found) * 100.0
+        return Measured(0.0, branches)
+    return Measured((lines_hit / lines_found) * 100.0, branches)
 
 
 def read_measured_coverage(
     report_path: Path, report_format: str, root: Path | None = None
-) -> float:
+) -> Measured:
     """Read and parse a coverage report file. Raises CoverageGateError if
     the file is absent (caller maps that to CI-COV-003, not this
     exception's own message, so the reason stays distinguishable) or
@@ -304,13 +352,71 @@ def read_measured_coverage(
     return parse_report(text, report_format)
 
 
-def parse_report(text: str, report_format: str) -> float:
+def parse_report(text: str, report_format: str) -> Measured:
     """Parse a report of `report_format` (raises CoverageGateError for any other)."""
     if report_format == "coverage-xml":
         return parse_coverage_xml(text)
     if report_format == "lcov":
         return parse_lcov(text)
     raise CoverageGateError(f"unknown report_format {report_format!r}")
+
+
+def _judge(
+    label: str, measured: float, floor: float, baseline: float, tolerance_pp: float
+) -> tuple[str, str] | None:
+    """One coverage number against its floor (CI-COV-001), then against its
+    baseline less the tolerance (CI-COV-002): the (code, reason) of the first
+    it fails, or None."""
+    if measured < floor:
+        return "CI-COV-001", f"{label} {measured:.1f}% < floor {floor:.1f}%"
+    regression = baseline - measured
+    if regression > tolerance_pp:
+        return "CI-COV-002", (
+            f"regression {regression:.1f}pp beyond {tolerance_pp:.1f}pp tolerance "
+            f"({label} baseline {baseline:.1f}% -> measured {measured:.1f}%)"
+        )
+    return None
+
+
+def _judge_branches(
+    pkg: PackageConfig, branches: float | None, tolerance_pp: float
+) -> tuple[str, str] | None:
+    """`_judge` for the branches of a package with a branch floor (#3691). Its
+    report must record branches (CI-COV-003): a ratio over zero branches is no
+    measurement, so a floor on it is a configuration error, never a pass."""
+    if pkg.branch_floor is None or pkg.branch_baseline is None:
+        return None
+    if branches is None:
+        return "CI-COV-003", (
+            f"{pkg.name}'s report records no branches, so its {pkg.branch_floor:.1f}% "
+            "branch floor cannot be judged"
+        )
+    label = f"{pkg.name} branches"
+    return _judge(label, branches, pkg.branch_floor, pkg.branch_baseline, tolerance_pp)
+
+
+def _result(
+    pkg: PackageConfig,
+    verdict: str,
+    code: str | None = None,
+    reason: str | None = None,
+    measured: Measured | None = None,
+) -> PackageResult:
+    """`pkg`'s result; `measured` is None when its report was not read."""
+    lines = None if measured is None else measured.lines
+    return PackageResult(
+        name=pkg.name,
+        floor=pkg.floor,
+        baseline=pkg.baseline,
+        measured=lines,
+        delta=None if lines is None else lines - pkg.baseline,
+        verdict=verdict,
+        code=code,
+        reason=reason,
+        branch_floor=pkg.branch_floor,
+        branch_baseline=pkg.branch_baseline,
+        branches=None if measured is None else measured.branches,
+    )
 
 
 def evaluate_package(
@@ -327,73 +433,25 @@ def evaluate_package(
     both are independently reported-worthy, but floor takes precedence in
     the single `code`/`reason` surfaced per scenario, matching the ticket's
     Gherkin (a below-floor package reports the floor failure even though it
-    is trivially also below any baseline at/above the floor).
+    is trivially also below any baseline at/above the floor). Lines come
+    first; only a package whose lines pass has its branches judged
+    (`_judge_branches`).
     """
     if not report_path.is_file():
-        return PackageResult(
-            name=pkg.name,
-            floor=pkg.floor,
-            baseline=pkg.baseline,
-            measured=None,
-            delta=None,
-            verdict="FAIL",
-            code="CI-COV-003",
-            reason=f"missing coverage artifact for {pkg.name} (expected {report_path})",
-        )
+        reason = f"missing coverage artifact for {pkg.name} (expected {report_path})"
+        return _result(pkg, "FAIL", "CI-COV-003", reason)
 
     try:
         measured = read_measured_coverage(report_path, pkg.report_format, root)
     except CoverageGateError as exc:
-        return PackageResult(
-            name=pkg.name,
-            floor=pkg.floor,
-            baseline=pkg.baseline,
-            measured=None,
-            delta=None,
-            verdict="FAIL",
-            code="CI-COV-003",
-            reason=f"missing coverage artifact for {pkg.name}: {exc}",
-        )
+        reason = f"missing coverage artifact for {pkg.name}: {exc}"
+        return _result(pkg, "FAIL", "CI-COV-003", reason)
 
-    delta = measured - pkg.baseline
-    if measured < pkg.floor:
-        return PackageResult(
-            name=pkg.name,
-            floor=pkg.floor,
-            baseline=pkg.baseline,
-            measured=measured,
-            delta=delta,
-            verdict="FAIL",
-            code="CI-COV-001",
-            reason=f"{pkg.name} {measured:.1f}% < floor {pkg.floor:.1f}%",
-        )
-
-    regression = pkg.baseline - measured
-    if regression > tolerance_pp:
-        return PackageResult(
-            name=pkg.name,
-            floor=pkg.floor,
-            baseline=pkg.baseline,
-            measured=measured,
-            delta=delta,
-            verdict="FAIL",
-            code="CI-COV-002",
-            reason=(
-                f"regression {regression:.1f}pp beyond {tolerance_pp:.1f}pp tolerance "
-                f"({pkg.name} baseline {pkg.baseline:.1f}% -> measured {measured:.1f}%)"
-            ),
-        )
-
-    return PackageResult(
-        name=pkg.name,
-        floor=pkg.floor,
-        baseline=pkg.baseline,
-        measured=measured,
-        delta=delta,
-        verdict="PASS",
-        code=None,
-        reason=None,
-    )
+    failure = _judge(pkg.name, measured.lines, pkg.floor, pkg.baseline, tolerance_pp)
+    failure = failure or _judge_branches(pkg, measured.branches, tolerance_pp)
+    if failure is None:
+        return _result(pkg, "PASS", measured=measured)
+    return _result(pkg, "FAIL", *failure, measured=measured)
 
 
 AFFECTED_MANIFEST = "affected-packages.txt"
@@ -440,32 +498,14 @@ def evaluate_all(
     for name, pkg in packages.items():
         lane = ARTIFACT_LANE.get(pkg.artifact)
         if ran_lanes is not None and lane is not None and lane not in ran_lanes:
-            results.append(
-                PackageResult(
-                    name=name,
-                    floor=pkg.floor,
-                    baseline=pkg.baseline,
-                    measured=None,
-                    delta=None,
-                    verdict="N/A",
-                    code=None,
-                    reason=f"{lane} lane did not run for this change set",
-                )
-            )
+            reason = f"{lane} lane did not run for this change set"
+            results.append(_result(pkg, "N/A", reason=reason))
             continue
         if not _affected_by_change_set(name, report_dir / pkg.artifact, report_dir):
-            results.append(
-                PackageResult(
-                    name=name,
-                    floor=pkg.floor,
-                    baseline=pkg.baseline,
-                    measured=None,
-                    delta=None,
-                    verdict="N/A",
-                    code=None,
-                    reason="package not in the lane's turbo affected graph for this change set",
-                )
+            reason = (
+                "package not in the lane's turbo affected graph for this change set"
             )
+            results.append(_result(pkg, "N/A", reason=reason))
             continue
         report_path = own_report_path(report_dir, pkg)
         results.append(evaluate_package(pkg, report_path, tolerance_pp, report_dir))
@@ -488,16 +528,28 @@ def compute_ratchet_proposals(report: GateReport) -> dict[str, float]:
 
 def render_summary_table(report: GateReport) -> str:
     """PR-comment summary table: package, floor, baseline, measured, delta,
-    verdict — words (PASS/FAIL) not colours, per the accessibility note."""
-    header = "| package | floor | baseline | measured | delta | verdict |"
-    sep = "| --- | --- | --- | --- | --- | --- |"
+    branch floor, branch baseline, branches (n/a where branches are not
+    judged), verdict — words (PASS/FAIL) not colours, per the accessibility
+    note."""
+    header = (
+        "| package | floor | baseline | measured | delta | branch floor | branch baseline "
+        "| branches | verdict |"
+    )
+    sep = "|" + " --- |" * 9
     rows = [header, sep]
     for r in report.results:
         measured_s = f"{r.measured:.1f}%" if r.measured is not None else "MISSING"
         delta_s = f"{r.delta:+.1f}pp" if r.delta is not None else "n/a"
+        branch_s = "n/a | n/a | n/a"
+        if r.branch_floor is not None and r.branch_baseline is not None:
+            branches_s = f"{r.branches:.1f}%" if r.branches is not None else "MISSING"
+            branch_s = (
+                f"{r.branch_floor:.1f}% | {r.branch_baseline:.1f}% | {branches_s}"
+            )
         verdict_s = f"{r.verdict}" + (f" ({r.code})" if r.code else "")
         rows.append(
-            f"| {r.name} | {r.floor:.1f}% | {r.baseline:.1f}% | {measured_s} | {delta_s} | {verdict_s} |"
+            f"| {r.name} | {r.floor:.1f}% | {r.baseline:.1f}% | {measured_s} | {delta_s} "
+            f"| {branch_s} | {verdict_s} |"
         )
     return "\n".join(rows)
 

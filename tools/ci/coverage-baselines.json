@@ -1,16 +1,20 @@
 {
-  "_comment": "E03-T04: per-package coverage floors and ratchet baselines. Floors are the hard, never-lowered standard from docs/plan/30-release-roadmap.md §4.4 / docs/plan/03-testing-strategy.md §2. Baselines start equal to the floor and only ratchet upward (never down) via the baseline-raise bot PR. Lowering a baseline requires a hand-edited commit with a 'Reason:' line and CODEOWNER (QA lead) approval — see CODEOWNERS entry for this file.",
+  "_comment": "E03-T04: per-package coverage floors and ratchet baselines. Floors are the hard, never-lowered standard from docs/plan/30-release-roadmap.md §4.4 / docs/plan/03-testing-strategy.md §2. Baselines start equal to the floor and only ratchet upward (never down) via the baseline-raise bot PR. Lowering a baseline requires a hand-edited commit with a 'Reason:' line and CODEOWNER (QA lead) approval — see CODEOWNERS entry for this file. branch_floor/branch_baseline (#3691) judge branch coverage the same way for the packages CONSTITUTION §9 #3 and C-13.1 give a 75% branch floor; the ratchet raises line baselines only.",
   "tolerance_pp": 0.5,
   "packages": {
     "services/api": {
       "floor": 85.0,
       "baseline": 85.0,
+      "branch_floor": 75.0,
+      "branch_baseline": 75.0,
       "artifact": "py-coverage",
       "report_format": "coverage-xml"
     },
     "packages/chart-engine": {
       "floor": 85.0,
       "baseline": 85.0,
+      "branch_floor": 75.0,
+      "branch_baseline": 75.0,
       "artifact": "coverage-unit-engine",
       "report_format": "lcov"
     },

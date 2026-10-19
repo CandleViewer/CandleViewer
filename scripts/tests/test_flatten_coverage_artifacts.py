@@ -223,7 +223,8 @@ def _upload(report_dir: Path, artifact: str, hits: dict[str, int]) -> None:
     for repo_dir, hit in hits.items():
         source = report_dir / artifact / repo_dir / "coverage" / "lcov.info"
         source.parent.mkdir(parents=True)
-        source.write_text(f"SF:x.ts\nLF:100\nLH:{hit}\nend_of_record\n", "utf-8")
+        record = f"SF:x.ts\nLF:100\nLH:{hit}\nBRF:100\nBRH:{hit}\nend_of_record\n"
+        source.write_text(record, "utf-8")
 
 
 def _judged(
@@ -234,7 +235,7 @@ def _judged(
     capsys.readouterr()
     coverage_gate.main(["--report-dir", str(report_dir), "--ran-lanes", "js"])
     rows = [row.split("|") for row in capsys.readouterr().out.splitlines()[2:]]
-    return {cells[1].strip(): (cells[4].strip(), cells[6].strip()) for cells in rows}
+    return {cells[1].strip(): (cells[4].strip(), cells[-2].strip()) for cells in rows}
 
 
 def test_packages_sharing_an_artifact_are_each_judged_on_their_own_report(

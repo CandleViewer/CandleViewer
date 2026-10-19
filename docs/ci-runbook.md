@@ -490,15 +490,20 @@ index alone, removing nothing.
 
 ### CI-COV-* — coverage gate (`tools/ci/coverage_gate.py`)
 
-- **CI-COV-001** (below floor): measured coverage for a package is below its
-  floor in `tools/ci/coverage-baselines.json` (services/api ≥85%/75% branch,
-  chart-engine ≥85%, apps/web & packages/ui ≥80% — CONSTITUTION §9 #3). Add
-  tests; floors are never lowered to pass (C-9.4).
+- **CI-COV-001** (below floor): a package's line coverage is below its `floor` in
+  `tools/ci/coverage-baselines.json` (services/api, chart-engine & protocol ≥85%, the frontend
+  packages ≥80%), or its branch coverage is below its `branch_floor`. Only services/api and
+  chart-engine have a branch floor, 75% (CONSTITUTION §9 #3, C-13.1); the gate reads the
+  Cobertura root's `branch-rate` and the lcov `BRH`/`BRF` totals, and judges branches once lines
+  pass. Other packages' branches are not judged here. Add tests; floors are never lowered to
+  pass (C-9.4).
 - **CI-COV-002** (baseline regression): coverage dropped below the recorded
-  baseline minus tolerance even though it is still above the hard floor.
+  baseline (`baseline`, or `branch_baseline` for branches) minus tolerance even though it is
+  still above the hard floor.
   Add tests to recover the baseline, or — only when the drop is a deliberate,
   reviewed removal of dead/duplicated tests — lower it by hand in a CODEOWNER-reviewed
-  edit with a `Reason:` line (`tools/ci/coverage-baselines.json`); the ratchet only raises.
+  edit with a `Reason:` line (`tools/ci/coverage-baselines.json`); the ratchet only raises,
+  and only line baselines: a `branch_baseline` moves by a reviewed edit.
 - **CI-COV-003** (missing coverage artifact): a lane that should have
   produced a coverage report for an applicable package left none. Check
   that lane's upload step; a silently-missing report must never pass.
@@ -514,6 +519,11 @@ index alone, removing nothing.
   reader takes only the record types it lists (`_LCOV_RECORD` in `tools/ci/coverage_gate.py`,
   every record the Vitest lanes write today), so a reporter upgrade that writes a new record
   type reads as CI-COV-003 until a reviewed change adds that type.
+  A package with a branch floor fails here when its report records no branches: coverage.py
+  run without `--cov-branch` (`branches-valid="0"`), or an lcov report with no `BRF` records or
+  a `BRF` total of 0. A ratio over zero branches is no measurement, so a branch floor on such a
+  report is a configuration error that must never pass: restore the lane's branch coverage
+  setting.
 - **CI-COV-004** (coverage artifact refused): artifacts are untrusted input, so the coverage
   scripts refuse a path that resolves outside the download directory or is not a regular file, a
   report over 32 MiB (`affected-packages.txt` and the ratchet proposals: 64 KiB), a download of
