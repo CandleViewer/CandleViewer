@@ -4,6 +4,9 @@ version: 2
 # bumps are GROUPED (one PR per ecosystem per week) and labelled `dependencies`; the
 # read-only-scans CI job then publishes the regenerated manifest as a proposal for the reviewer.
 # Majors on pinned-runtime-sensitive packages are ignored until the runtime moves (§2.1.3).
+# Every entry waits 7 days after a release before proposing it (`cooldown`), so a version
+# pulled or found malicious soon after publishing is not proposed; security updates are
+# not delayed by it.
 updates:
   # SR-132/SR-134: keep pinned GitHub Actions SHAs current. Dependabot opens
   # a PR bumping `uses: owner/repo@<sha> # vX.Y.Z` to the latest release;
@@ -14,6 +17,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
@@ -38,6 +43,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       crypto:
         patterns: ["argon2-cffi", "cryptography", "pyotp", "starlette", "itsdangerous"]
@@ -61,6 +68,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       npm-minor-patch:
         patterns: ["*"]
@@ -87,6 +96,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       docker:
         patterns: ["*"]
@@ -109,8 +120,11 @@ updates:
 
   # #3549: the security lane's hash locks in tools/ci (requirements-semgrep.txt: Semgrep and
   # every dependency; requirements-security-gate.txt: the gate's PyYAML). CI's pip-audit reads
-  # only the services/api export, so these PRs are how a Semgrep advisory or release shows up.
-  # A bump whose new pins need other dependencies: regenerate with the command in the lock.
+  # only the services/api export, so these PRs are how a Semgrep release shows up.
+  # Only the two real inputs are proposed (#3672): Dependabot reads every pinned line as
+  # top-level, and Semgrep's own pins decide the rest, so a transitive bump alone (#3701,
+  # #3704) cannot install. Adopting a Semgrep bump re-locks the rest with the command in the
+  # lock; a transitive advisory still shows as a Dependabot alert.
   - package-ecosystem: "pip"
     directory: "/tools/ci"
     exclude-paths:
@@ -118,6 +132,11 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: "semgrep"
+      - dependency-name: "PyYAML"
     groups:
       security-lane:
         patterns: ["*"]

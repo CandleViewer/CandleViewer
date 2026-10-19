@@ -237,6 +237,9 @@ def test_dependabot_proposes_updates_of_the_semgrep_lock() -> None:
     assert {"dependencies", "security", "security-review", "area/infra-devops"} <= set(
         entry["labels"]
     )
+    # #3672: only the lock's two inputs. Semgrep's own pins decide the rest, so a transitive
+    # bump alone cannot install (#3701, #3704); a Semgrep bump is adopted with a full re-lock.
+    assert entry["allow"] == [{"dependency-name": "semgrep"}, {"dependency-name": "PyYAML"}]
     # Every other .txt in the directory is no lock, and pip would read its lines as packages.
     listed = {p.name for p in (ROOT / "tools" / "ci").iterdir() if p.suffix in (".txt", ".in")}
     locks = {name for name in listed if name.startswith("requirements-")}
