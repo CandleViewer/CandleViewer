@@ -1,8 +1,7 @@
-"""Behavioural contract of the write-ahead step (E29-T03 #847, slice 3 of 7): 24 Sec.8.2 S8 (a
-state commits with its event), S7 (a refused or failed write changes nothing) and S4's durable
-half (a repeated `exec_id` never counts twice). `tests/integration/storage/test_orders_store_pg.py`
-runs it on Postgres; the stores' in-memory fake, which lands with slice 3b, is to run it too.
-Subclasses supply `h`."""
+"""Behavioural contract of the write-ahead step (E29-T03 #847): 24 Sec.8.2 S8 (a state commits
+with its event), S7 (a refused or failed write changes nothing) and S4's durable half (a repeated
+`exec_id` never counts twice). `test_write_ahead_fake.py` runs it on the fake,
+`tests/integration/storage/test_orders_store_pg.py` on Postgres; subclasses supply `h`."""
 
 from __future__ import annotations
 
@@ -18,7 +17,7 @@ import pytest
 
 from candleviewer.oms import ExecutionRepository, OrderEventRepository, OrderRepository
 from candleviewer.storage.repositories import orders as port
-from candleviewer.storage.repositories.exchange_payload import REDACTED
+from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
 from candleviewer.storage.repositories.executions import FillTotals, NewExecution, OrderFill
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
@@ -40,7 +39,7 @@ def step(row: Row, to: port.OrderState, new: Event | None = None, **over: Any) -
 
 
 def fill(row: Row, exec_id: str, qty: str, new: Event | None = None, **over: Any) -> OrderFill:
-    """The fill as slice 4's `apply_execution` would compute it from `row`; `over` changes its
+    """The fill as E29-T03's `apply_execution` would compute it from `row`; `over` changes its
     execution and, as `to_state`, its step."""
     size = Decimal(qty)
     cum = row.cum_exec_qty + size
@@ -92,12 +91,20 @@ _REFUSED: dict[str, tuple[Callable[[Harness, Row], Awaitable[object]], type[Exce
                        port.OrderNotFoundError, None),  # C-12.4
     "fill_elsewhere": (lambda h, r: h.executions.commit_fill(
         fill(r, "E1", "0.1", exchange_account_id=_OTHER)), port.OrderNotFoundError, None),
+    "fill_elsewhere_no_qty": (lambda h, r: h.executions.commit_fill(fill(  # locked before a CHECK
+        r, "E1", "0.1", exchange_account_id=_OTHER, exec_qty=Decimal(0))),
+        port.OrderNotFoundError, None),
     "fill_kind": (lambda h, r: h.orders.transition(step(r, "partially_filled", event("fill"))),
                   ValueError, "commit_fill"),  # a fill comes with its execution (OM-R02)
     "filled": (lambda h, r: h.orders.transition(step(r, "filled", event("exchange_push"))),
                ValueError, "commit_fill"),
     "fill_appended": (lambda h, r: h.events.append(r.exchange_account_id, r.id, event("fill")),
                       ValueError, "commit_fill"),
+    # refused before any statement (`require_no_fill`), so before the account is looked at
+    "fill_appended_elsewhere": (lambda h, r: h.events.append(_OTHER, r.id, event("fill")),
+                                ValueError, "commit_fill"),
+    "filled_elsewhere": (lambda h, r: h.orders.transition(
+        step(r, "filled", event("exchange_push"), account_id=_OTHER)), ValueError, "commit_fill"),
     "above_qty": (lambda h, r: h.executions.commit_fill(fill(r, "E1", "0.4")),
                   port.FillRefused, "above_qty"),  # OM-T04: refused, never clamped
     "paper_mismatch": (lambda h, r: h.executions.commit_fill(fill(r, "E1", "0.1", is_paper=True)),
@@ -109,6 +116,10 @@ _REFUSED: dict[str, tuple[Callable[[Harness, Row], Awaitable[object]], type[Exce
     "no_price": (lambda h, r: h.executions.commit_fill(fill(r, "E1", "0.1", exec_price=Decimal(0))),
                  port.OrderConstraintError, "ex_px"),
 }  # fmt: skip
+_REDELIVER: dict[str, Callable[[Harness, OrderFill], Awaitable[object]]] = {
+    "insert": lambda h, f: h.executions.insert(f.execution),
+    "commit_fill": lambda h, f: h.executions.commit_fill(f),
+}
 
 
 class WriteAheadContract:
@@ -122,6 +133,19 @@ class WriteAheadContract:
         assert (got.seq, got.from_state, got.to_state) == (1, "pending_submit", "accepted")
         assert (got.source, got.payload) == ("rest", {"code": 0, "headers": REDACTED})
         assert await h.stored(row) == (done.order, [0, 1]) and done.order.state == "accepted"
+
+    async def test_a_reject_is_stored_redacted(self, h: Harness) -> None:
+        """#845 decision 2 on every store: `reject_code` and `ret_code` take the string rule within
+        64 characters, `reject_message` and `ret_msg` the message rule too (18 letters alone pass
+        the string rule)."""
+        row = await h.order("pending_submit")
+        code, text = "1" * (MAX_CODE_CHARS + 1), "bad " + "Qx" * 9
+        said = event("reject", source="rest", payload={"code": 1}, ret_code=code, ret_msg=text)
+        moved = step(row, "rejected", said, reject_code=code, reject_message=text)
+        done = await h.orders.transition(moved)
+        assert (done.order.reject_code, done.order.reject_message) == (OVERSIZE, REDACTED)
+        assert (done.event.ret_code, done.event.ret_msg) == (OVERSIZE, REDACTED)
+        assert await h.stored(row) == (done.order, [0, 1])
 
     async def test_an_exchange_reported_order_is_created_with_its_message(self, h: Harness) -> None:
         """OM-R02 from the first state: an adopted order's event carries what the exchange said,
@@ -190,6 +214,14 @@ class WriteAheadContract:
         assert None in results and won.order.cum_exec_qty == Decimal("0.1")
         assert await h.stored(row) == (won.order, [0, 1])
 
+    @pytest.mark.parametrize("write", sorted(_REDELIVER))
+    async def test_a_redelivered_fill_meets_its_checks_first(self, h: Harness, write: str) -> None:
+        """Postgres checks a row's CHECKs before its `exec_id` conflict; so does the fake."""
+        row = await h.order("accepted")
+        assert await h.executions.commit_fill(fill(row, "E1", "0.1")) is not None
+        with pytest.raises(port.OrderConstraintError, match="ex_qty"):
+            await _REDELIVER[write](h, fill(row, "E1", "0.1", exec_qty=Decimal(0)))
+
     async def test_a_fill_stored_by_insert_is_never_applied(self, h: Harness) -> None:
         """`insert` is for a fill that moves no order: `commit_fill` then reads it as applied."""
         row = await h.order("accepted")
@@ -206,9 +238,9 @@ class WriteAheadContract:
         commit = h.executions.commit_fill
         results = await asyncio.gather(*map(commit, fills), return_exceptions=True)
         (i,) = [i for i, r in enumerate(results) if isinstance(r, port.CommittedStep)]
-        won, lost = results[i], fills[1 - i].execution.exec_id
-        assert isinstance(won, port.CommittedStep)
-        assert isinstance(results[1 - i], port.StaleOrderState)
+        won, stale, lost = results[i], results[1 - i], fills[1 - i].execution.exec_id
+        assert isinstance(won, port.CommittedStep) and isinstance(stale, port.StaleOrderState)
+        assert (stale.order_id, stale.expected) == (row.id, state)  # the state it was built on
         assert await h.executions.get(row.exchange_account_id, lost) is None
         again = await h.executions.commit_fill(fill(won.order, lost, "0.1"))
         assert again is not None and again.order.cum_exec_qty == Decimal("0.2")
