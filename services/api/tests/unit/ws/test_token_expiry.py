@@ -423,6 +423,33 @@ def test_an_enrolment_refused_re_auth_drops_the_queued_backlog_and_sends_bye_nex
         assert _closed(ws) == 4403
 
 
+def test_a_refusal_whose_ids_name_the_lines_own_fields_still_closes_and_audits() -> None:
+    """C-12.6, C-2.9: of `AuthRefused.ids` only `session_id` and `user_id` join the `ws auth
+    refused` line, so no key can collide with the line's own fields and raise in the refusal's
+    arm, before its sealed close and its audit."""
+    clock, audited = _Clock(), list[str | None]()
+
+    async def audit(source_ip: str | None) -> None:
+        audited.append(source_ip)
+
+    async def authenticate(token: str) -> Any:
+        ids = {"event": "x", "reason": "x", "connection_id": "x", "session_id": "sess"}
+        raise gateway.AuthRefused("mfa_enrollment_required", audit=audit, ids=ids)
+
+    gw = _bare_gateway(authenticate, clock, tick_s=_NO_IDLE_TICK_S)
+    with (
+        capture_logs() as logs,
+        gw.client,
+        gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws,
+    ):
+        bye = _open(ws, "password-only")
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "mfa_enrollment_required"), bye
+        assert _closed(ws) == 4403
+    (line,) = [e for e in logs if e["event"] == "ws auth refused"]
+    assert (line["reason"], line["session_id"]) == ("mfa_enrollment_required", "sess")
+    assert len(audited) == 1
+
+
 def test_expiry_during_a_close_under_way_still_drops_the_backlog() -> None:
     clock = _Clock()
     expiry = _T0 + timedelta(minutes=1)
