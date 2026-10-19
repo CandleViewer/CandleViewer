@@ -861,6 +861,9 @@ export interface Orders {
       | "flatten"
       | "reverse"
       | "algo_child";
+    /**
+     * The persisted order state (`order_state`); the chart-to-database mapping is in 24-internal-schemas.md §8.2 (added by E29-T03's implementation). Open-ended for readers: a client must not reject the frame or drop the order for a state it does not know; it shows the order as live (non-terminal) until its id arrives in `removed`. Adding a state is an additive change (C-6.3).
+     */
     state:
       | "new"
       | "pending_submit"
@@ -873,7 +876,34 @@ export interface Orders {
       | "pending_amend"
       | "rejected"
       | "expired"
-      | "untracked";
+      | "untracked"
+      | "triggered"
+      | "unknown"
+      | "quarantined"
+      | "killed"
+      | "held";
+    /**
+     * The B1 chart state of the order, verbatim (`OrderLifecycleState`); null until the OMS records it. Open-ended for readers, as `state` is: an unknown value reads as live, and adding one is an additive change (C-6.3).
+     */
+    lifecycle_state?:
+      | "draft"
+      | "validated"
+      | "submitting"
+      | "submitted"
+      | "triggered"
+      | "partially_filled"
+      | "cancel_pending"
+      | "amend_pending"
+      | "unknown"
+      | "quarantined"
+      | "untracked"
+      | "held"
+      | "filled"
+      | "cancelled"
+      | "rejected"
+      | "expired"
+      | "killed"
+      | null;
     /**
      * Arbitrary-precision decimal as a string; never a JSON number.
      */

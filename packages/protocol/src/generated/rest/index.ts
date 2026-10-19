@@ -7546,6 +7546,8 @@ export interface components {
        * @default false
        */
       is_paper: boolean;
+      /** @description The B1 chart state of the order, verbatim; null until the OMS records it. */
+      lifecycle_state?: components["schemas"]["OrderLifecycleState"] | null;
       /** @description Deterministic, derived from the Idempotency-Key. */
       order_link_id?: string;
       order_type: components["schemas"]["OrderType"];
@@ -7644,6 +7646,8 @@ export interface components {
      * @description Append-only OMS event taxonomy. Exact 1:1 mirror of the Postgres type
      *     `order_event_kind` (`21-database-schema.md`, table `order_events`) — no supersets,
      *     no omissions; contract test `enum_parity_order_event_kind` asserts set equality.
+     *     **Open-ended for readers:** clients must tolerate values they do not know, so adding a
+     *     kind is an additive change (C-6.3).
      * @enum {string}
      */
     OrderEventKind:
@@ -7660,7 +7664,9 @@ export interface components {
       | "expire"
       | "exchange_push"
       | "reconcile_diff"
-      | "error";
+      | "error"
+      | "kill"
+      | "adopt";
     /** @enum {string} */
     OrderIntent:
       | "entry"
@@ -7671,9 +7677,41 @@ export interface components {
       | "flatten"
       | "reverse"
       | "algo_child";
+    /**
+     * @description The B1 order chart's `lifecycle` state, verbatim (`28-statechart-catalogue.md` B1). The order
+     *     stores it as `lifecycle_state` beside `state`, its persisted `OrderState`; the mapping of one
+     *     onto the other is in `24-internal-schemas.md` section 8.2 (added by E29-T03's
+     *     implementation). Exact 1:1 mirror of the Postgres type `order_lifecycle_state` (added by
+     *     E29-T03's implementation).
+     *     **Open-ended for readers:** clients must tolerate values they do not know, so adding a state
+     *     is an additive change (C-6.3); an unknown state reads as live (non-terminal), as for
+     *     `OrderState`.
+     * @enum {string}
+     */
+    OrderLifecycleState:
+      | "draft"
+      | "validated"
+      | "submitting"
+      | "submitted"
+      | "triggered"
+      | "partially_filled"
+      | "cancel_pending"
+      | "amend_pending"
+      | "unknown"
+      | "quarantined"
+      | "untracked"
+      | "held"
+      | "filled"
+      | "cancelled"
+      | "rejected"
+      | "expired"
+      | "killed";
     /** @enum {string} */
     OrderSide: "buy" | "sell";
-    /** @enum {string} */
+    /**
+     * @description The persisted order state (`order_state`). Its `submitted` is the chart's `submitting` and its `accepted` the chart's `submitted`: read `lifecycle_state` for the chart state. The chart-to-database mapping is in 24-internal-schemas.md section 8.2 (added by E29-T03's implementation). **Open-ended for readers:** clients must tolerate values they do not know, so adding a state is an additive change (C-6.3). A client shows an order in a state it does not know as live (non-terminal), never as closed or gone: it ends on a known terminal state or when its id arrives in the WS `orders` frame's `removed` (23-ws-protocol.md section 15.1).
+     * @enum {string}
+     */
     OrderState:
       | "new"
       | "pending_submit"
@@ -7686,7 +7724,12 @@ export interface components {
       | "pending_amend"
       | "rejected"
       | "expired"
-      | "untracked";
+      | "untracked"
+      | "triggered"
+      | "unknown"
+      | "quarantined"
+      | "killed"
+      | "held";
     /** @enum {string} */
     OrderType: "market" | "limit";
     OrderWithEvents: components["schemas"]["Order"] & {

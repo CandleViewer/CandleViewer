@@ -2352,20 +2352,55 @@ class Order(BaseModel):
         ]
         | None
     ) = None
-    state: Literal[
-        "new",
-        "pending_submit",
-        "submitted",
-        "accepted",
-        "partially_filled",
-        "filled",
-        "pending_cancel",
-        "cancelled",
-        "pending_amend",
-        "rejected",
-        "expired",
-        "untracked",
+    state: Annotated[
+        Literal[
+            "new",
+            "pending_submit",
+            "submitted",
+            "accepted",
+            "partially_filled",
+            "filled",
+            "pending_cancel",
+            "cancelled",
+            "pending_amend",
+            "rejected",
+            "expired",
+            "untracked",
+            "triggered",
+            "unknown",
+            "quarantined",
+            "killed",
+            "held",
+        ],
+        Field(
+            description="The persisted order state (`order_state`). Its `submitted` is the chart's `submitting` and its `accepted` the chart's `submitted`: read `lifecycle_state` for the chart state. The chart-to-database mapping is in 24-internal-schemas.md section 8.2 (added by E29-T03's implementation). **Open-ended for readers:** clients must tolerate values they do not know, so adding a state is an additive change (C-6.3). A client shows an order in a state it does not know as live (non-terminal), never as closed or gone: it ends on a known terminal state or when its id arrives in the WS `orders` frame's `removed` (23-ws-protocol.md section 15.1)."
+        ),
     ]
+    lifecycle_state: Annotated[
+        Literal[
+            "draft",
+            "validated",
+            "submitting",
+            "submitted",
+            "triggered",
+            "partially_filled",
+            "cancel_pending",
+            "amend_pending",
+            "unknown",
+            "quarantined",
+            "untracked",
+            "held",
+            "filled",
+            "cancelled",
+            "rejected",
+            "expired",
+            "killed",
+        ]
+        | None,
+        Field(
+            description="The B1 chart state of the order, verbatim; null until the OMS records it."
+        ),
+    ] = None
     qty: Annotated[
         str,
         Field(
@@ -2432,10 +2467,12 @@ class OrderEvent(BaseModel):
             "exchange_push",
             "reconcile_diff",
             "error",
+            "kill",
+            "adopt",
         ]
         | None,
         Field(
-            description="Append-only OMS event taxonomy. Exact 1:1 mirror of the Postgres type\n`order_event_kind` (`21-database-schema.md`, table `order_events`) — no supersets,\nno omissions; contract test `enum_parity_order_event_kind` asserts set equality.\n"
+            description="Append-only OMS event taxonomy. Exact 1:1 mirror of the Postgres type\n`order_event_kind` (`21-database-schema.md`, table `order_events`) — no supersets,\nno omissions; contract test `enum_parity_order_event_kind` asserts set equality.\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a\nkind is an additive change (C-6.3).\n"
         ),
     ] = None
     event_ts: AwareDatetime | None = None

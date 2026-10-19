@@ -811,6 +811,7 @@ x-contract-validation:
         - { schema: OrderIntent, pg_type: order_intent }
         - { schema: OrderState, pg_type: order_state }
         - { schema: OrderEventKind, pg_type: order_event_kind }
+        - { schema: OrderLifecycleState, pg_type: order_lifecycle_state }
         - { schema: AlgoKind, pg_type: algo_kind }
         - { schema: RuleScope, pg_type: rule_scope }
         - { schema: RuleMode, pg_type: rule_mode }
@@ -14174,9 +14175,47 @@ components:
             rejected,
             expired,
             untracked,
+            triggered,
+            unknown,
+            quarantined,
+            killed,
+            held,
           ],
         x-db-enum: order_state,
+        description: "The persisted order state (`order_state`). Its `submitted` is the chart's `submitting` and its `accepted` the chart's `submitted`: read `lifecycle_state` for the chart state. The chart-to-database mapping is in 24-internal-schemas.md section 8.2 (added by E29-T03's implementation). **Open-ended for readers:** clients must tolerate values they do not know, so adding a state is an additive change (C-6.3). A client shows an order in a state it does not know as live (non-terminal), never as closed or gone: it ends on a known terminal state or when its id arrives in the WS `orders` frame's `removed` (23-ws-protocol.md section 15.1).",
       }
+    OrderLifecycleState:
+      type: string
+      enum:
+        [
+          draft,
+          validated,
+          submitting,
+          submitted,
+          triggered,
+          partially_filled,
+          cancel_pending,
+          amend_pending,
+          unknown,
+          quarantined,
+          untracked,
+          held,
+          filled,
+          cancelled,
+          rejected,
+          expired,
+          killed,
+        ]
+      x-db-enum: order_lifecycle_state
+      description: |
+        The B1 order chart's `lifecycle` state, verbatim (`28-statechart-catalogue.md` B1). The order
+        stores it as `lifecycle_state` beside `state`, its persisted `OrderState`; the mapping of one
+        onto the other is in `24-internal-schemas.md` section 8.2 (added by E29-T03's
+        implementation). Exact 1:1 mirror of the Postgres type `order_lifecycle_state` (added by
+        E29-T03's implementation).
+        **Open-ended for readers:** clients must tolerate values they do not know, so adding a state
+        is an additive change (C-6.3); an unknown state reads as live (non-terminal), as for
+        `OrderState`.
     OrderType: { type: string, enum: [market, limit] }
     OrderSide: { type: string, enum: [buy, sell] }
     TimeInForce: { type: string, enum: [GTC, IOC, FOK, PostOnly] }
@@ -15909,6 +15948,9 @@ components:
         order_type: { $ref: "#/components/schemas/OrderType" }
         intent: { $ref: "#/components/schemas/OrderIntent" }
         state: { $ref: "#/components/schemas/OrderState" }
+        lifecycle_state:
+          oneOf: [{ $ref: "#/components/schemas/OrderLifecycleState" }, { type: "null" }]
+          description: The B1 chart state of the order, verbatim; null until the OMS records it.
         qty: { $ref: "#/components/schemas/Decimal" }
         filled_qty: { $ref: "#/components/schemas/Decimal" }
         remaining_qty: { $ref: "#/components/schemas/Decimal" }
@@ -15947,12 +15989,16 @@ components:
           exchange_push,
           reconcile_diff,
           error,
+          kill,
+          adopt,
         ]
       x-db-enum: order_event_kind
       description: |
         Append-only OMS event taxonomy. Exact 1:1 mirror of the Postgres type
         `order_event_kind` (`21-database-schema.md`, table `order_events`) — no supersets,
         no omissions; contract test `enum_parity_order_event_kind` asserts set equality.
+        **Open-ended for readers:** clients must tolerate values they do not know, so adding a
+        kind is an additive change (C-6.3).
     OrderEvent:
       type: object
       properties:
