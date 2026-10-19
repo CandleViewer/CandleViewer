@@ -14,6 +14,7 @@ from candleviewer.oms.execution import Fill, OrderFills, apply_execution
 
 D = Decimal
 MAX = "99999999999999999999.999999999999999999"  # numeric(38,18)'s largest value
+_QTY = st.decimals(min_value=D("0.001"), max_value=D("5"), places=3)
 
 
 def _fill(qty: str, price: str, fee: str = "0", rate: str = "") -> Fill:
@@ -54,7 +55,9 @@ def test_apply_execution_divides_once_rounding_half_even_to_18_places() -> None:
         (OrderFills(D("1")), _fill("1", "1", "NaN")),
         (OrderFills(D("1")), _fill("1", "1E+21")),
         (OrderFills(D("1")), _fill("1", "1", "-0.02")),  # a rebate past MAX_FEE_RATE
+        (OrderFills(D("1")), _fill("1", "100", "1.000000000000000001")),  # a fee past it
         (OrderFills(D("1")), _fill("1", "100", "-0.5", "0.0002")),  # a rebate at a positive rate
+        (OrderFills(D("1")), _fill("1", "100", "0.5", "-0.0001")),  # a fee at a negative rate
         (OrderFills(D(MAX)), _fill(MAX, MAX)),  # cum_exec_value past numeric(38,18), not Inexact
         (OrderFills(D("1")), Fill(cast(Decimal, 1.0), D("1"), D("0"), D("0"))),  # a float
     ],
@@ -64,15 +67,17 @@ def test_apply_execution_refuses_hostile_input(order: OrderFills, fill: Fill) ->
         apply_execution(order, fill)
 
 
+@pytest.mark.parametrize("fee", ["1", "-1"])
+def test_apply_execution_takes_a_fee_or_rebate_of_exactly_max_fee_rate(fee: str) -> None:
+    assert apply_execution(OrderFills(D("1")), _fill("1", "100", fee)).fee_paid == D(fee)
+
+
 def _filled(order: OrderFills, fill: Fill) -> Decimal | None:
     """`filled_qty` after *fill*, or None when `apply_execution` refuses it."""
     try:
         return apply_execution(order, fill).filled_qty
     except ExecutionRefused:
         return None
-
-
-_QTY = st.decimals(min_value=D("0.001"), max_value=D("5"), places=3)
 
 
 @settings(max_examples=60, deadline=None, derandomize=True)

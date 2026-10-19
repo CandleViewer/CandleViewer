@@ -56,8 +56,8 @@ def set_audit_hook(hook: AuditHook | None) -> None:
     _hook = hook or _no_hook
 
 
-#: `oms.execution.apply_fields`, set by the OMS like the audit hook, as the statechart package
-#: imports no `oms` module (C-3.1). It refuses a fill with `ValueError`, and so does its absence.
+#: `oms.execution.apply_fields`, which the OMS facade sets like the audit hook, as the statechart
+#: package imports no `oms` module (C-3.1). It refuses fills with `ValueError`, as does its absence.
 FillCore = Callable[[Mapping[str, Decimal], Mapping[str, Decimal]], Mapping[str, Decimal | None]]
 _core: FillCore | None = None
 
@@ -119,8 +119,7 @@ def _money(raw: object) -> Decimal:
 def _text(value: Decimal) -> str:
     """Canonical decimal text: fixed point, no exponent, no trailing zeros."""
     out = format(value, "f")
-    if "." in out:
-        out = out.rstrip("0").rstrip(".")
+    out = out.rstrip("0").rstrip(".") if "." in out else out
     return "0" if out == "-0" else out
 
 
@@ -148,10 +147,8 @@ def _validated(event: Any) -> dict[str, str | None] | None:
     terms = _positives(order, ("qty", *TERMS))
     if "qty" not in terms or None in facts.values():
         raise ValueError("the order has no qty, or a malformed identity")
-    stamped: dict[str, str | None] = {**facts, **dict.fromkeys(TERMS)}
-    stamped.update({key: _text(value) for key, value in terms.items()})
-    stamped["leaves_qty"] = stamped["qty"]
-    return stamped
+    stamped = {**facts, **dict.fromkeys(TERMS), **{key: _text(v) for key, v in terms.items()}}
+    return stamped | {"leaves_qty": stamped["qty"]}
 
 
 def _admit(context: Mapping[str, Any], event: Any) -> tuple[str, Mapping[str, Decimal | None]]:
@@ -227,8 +224,7 @@ def passes_all_gates(context: dict[str, Any], event: Any) -> bool:
 
 async def stamp_validated(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """Pin the validated order (identity, `qty`, `TERMS`) into context; nothing is filled yet."""
-    validated = _validated(event)
-    if validated is None:  # unreachable behind `passes_all_gates`
+    if (validated := _validated(event)) is None:  # unreachable behind `passes_all_gates`
         logger().error("b01_stamp_refused")
         return
     context.update(validated)
@@ -253,18 +249,14 @@ async def apply_fill(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> N
     )
 
 
-def _adopt_exchange_id(context: dict[str, Any], fields: Mapping[str, Any]) -> None:
-    """The exchange's order id, recorded once; a different one later is logged, never adopted."""
-    new, known = _id(fields.get("exchange_order_id")), context.get("exchange_order_id")
+async def adopt_ack(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """A place or cancel ack (`adopt_ack`, `adopt_cancel_ack`): the exchange's order id, recorded
+    once; a different one later is logged, never adopted."""
+    new, known = _id(_fields(event).get("exchange_order_id")), context.get("exchange_order_id")
     if new is not None and known is None:
         context["exchange_order_id"] = new
     elif new is not None and new != known:
         logger().error("b01_exchange_order_id_mismatch", order_link_id=context.get("order_link_id"))
-
-
-async def adopt_ack(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """A place or cancel ack (`adopt_ack`, `adopt_cancel_ack`): adopt the exchange's order id."""
-    _adopt_exchange_id(context, _fields(event))
 
 
 async def adopt_amend(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:

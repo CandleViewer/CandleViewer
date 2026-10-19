@@ -23,8 +23,8 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
   (`repository`) over the driver-free stores of M10, the `WriteTimer` behind
   `oms_db_write_seconds{table}`, and `DuplicateOrderLinkId`; the write-ahead step (E29-T03):
   `OrderRepository.transition` and `ExecutionRepository.commit_fill`.
-- The fill arithmetic (E29-T03): `apply_execution` (`execution`), set into the B1 binding as
-  `apply_fields`; it refuses hostile exchange data with `ExecutionRefused` (`errors`).
+- The fill arithmetic (E29-T03): `apply_execution` (`execution`), whose `apply_fields` the OMS
+  facade sets into the B1 binding; hostile exchange data raises `ExecutionRefused` (`errors`).
 
 `service.py` (the lifecycle contract) and `models.py` are still the E02-T05 scaffold: the
 supervisor can construct and sequence the module, and `start()` builds the `Validator`, but

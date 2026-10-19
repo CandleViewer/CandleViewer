@@ -1,12 +1,13 @@
 """B1 `order` binding core (E29-T03 #847), a member of the contract gate beside test_b01_order.py:
 guards pure, total and deny-by-default (A6), each context action's effect on `context`, INV-B1-a
-and INV-B1-b, and S2, S3 and S4 at the binding and on the library."""
+and INV-B1-b, and S2, S3, S4 and the native-SL invariant at the binding and on the library."""
 
 from __future__ import annotations
 
 import asyncio
 import copy
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock
@@ -22,14 +23,20 @@ from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import Charts, park, settle
 
 _CHART = Registry().get("order")
-FACTS = {"order_id": "o1", "order_link_id": "cvd-link-1", "account_id": "a1", "symbol": "BTCUSDT"}
-FACTS |= {"side": "buy"}
+PAIRING = ("exchange_order_id", "order_id", "order_link_id", "account_id", "symbol", "side")
+FACTS = dict(zip(PAIRING[1:], ("o1", "cvd-link-1", "a1", "BTCUSDT", "buy"), strict=True))
 ORDER = FACTS | {"qty": "1", "price": "63000", "stop_loss": "62000"}
 GATES = ("risk", "rate", "kill_switch", "live_gate", "native_stop")
+REJECT_CODES = dict.fromkeys(GATES) | {"native_stop": "NATIVE_STOP_REQUIRED"}  # per failed verdict
 HOSTILE: tuple[str, ...] = ("1" * 21, "0." + "0" * 18 + "1", "1E+100", "1E+100000", "1E+999999999")
 HOSTILE += (" 1", "1_0", "\u0661")  # past numeric(38,18), or not C6 text: space, `_`, non-ASCII
 MAX = "99999999999999999999.999999999999999999"  # numeric(38,18)'s largest value
 MAX_LEAVES = "99999999999999999999.749999999999999999"  # MAX - 0.25
+_STAMPED = ORDER | {"trigger_price": None, "take_profit": None, "qty": "0.5", "leaves_qty": "0.5"}
+_X1 = {"ok": True, "exchange_order_id": "x1"}  # the place ack
+_KEPT = ("63000", "1", "0.75", 1)  # price, qty, leaves_qty and one ERROR log: not adopted
+_RATES = st.sampled_from([Decimal("-0.0001"), Decimal("0.0002"), Decimal("0.00055")])
+_FILL = st.tuples(st.decimals(1, 9, places=2), st.decimals(1, 99, places=1), _RATES)
 
 
 class _Ev:  # an `Event`: its fields ride on `payload`
@@ -48,10 +55,12 @@ class _Hostile(dict[str, Any]):
 
 
 @pytest.fixture(autouse=True)
-def _fill_core() -> Iterator[None]:
-    b01.set_fill_core(apply_fields)
-    yield
-    b01.set_fill_core(None)
+def place(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """B1 as the OMS facade wires it (its fill core): an ok place ack, and a cancel in flight."""
+    monkeypatch.setattr(b01, "_core", apply_fields)
+    monkeypatch.setitem(b01.SERVICES, "cancel_order", _hang)
+    monkeypatch.setitem(b01.SERVICES, "place_order", placed := AsyncMock(return_value=_X1))
+    return placed
 
 
 def _ctx(**over: object) -> dict[str, Any]:
@@ -105,7 +114,7 @@ def test_a_guard_reads_its_event_and_context(
         ({}, _exec("e1", 0.1)),  # a float
         *[({}, _exec("e1", qty)) for qty in HOSTILE],
         ({}, _exec("x" * 65, "0.1")),
-        *[({}, _exec("e1", "0.1", **{key: "zz"})) for key in (*b01.PAIRING, "exec_type")],
+        *[({}, _exec("e1", "0.1", **{key: "zz"})) for key in (*PAIRING, "exec_type")],
         ({"exchange_order_id": None}, _exec("e1", "0.1", exchange_order_id=None)),  # unbound
         ({"seen_exec_ids": [str(i) for i in range(b01.MAX_FILLS)]}, _exec("e1", "0.1")),
         ({"filled_qty": "junk"}, _exec("e1", "0.1")),
@@ -138,8 +147,9 @@ async def test_a_denied_exec_is_logged_and_audited_once_with_its_exec_id_and_why
     assert (name, audited["denied"]) == ("guard_denied", {"exec_id": "e1", "reason": log["reason"]})
 
 
-def test_gates_are_the_five_synchronous_verdicts() -> None:
-    assert b01.GATES == ("risk", "rate", "kill_switch", "live_gate", "native_stop")
+def test_gates_identity_pairing_and_fill_bound_are_pinned_literally() -> None:
+    assert (b01.GATES, b01.FACTS) == (GATES, PAIRING[1:])
+    assert (b01.PAIRING, b01.MAX_FILLS) == (PAIRING, 10_000)
 
 
 @pytest.mark.parametrize(
@@ -161,15 +171,21 @@ def test_passes_all_gates_needs_every_verdict_pass_and_a_well_formed_order(
     assert b01.passes_all_gates({}, event) is passes
 
 
+@pytest.mark.parametrize(("gate", "code"), REJECT_CODES.items())
+async def test_native_sl_invariant_no_order_is_placed_unless_every_verdict_passes(
+    gate: str, code: str | None, charts: Charts, place: AsyncMock
+) -> None:
+    """C-2.6 on the library: one verdict `fail` at VALIDATE rejects the order with nothing stamped,
+    SEND then places nothing, and only the native-stop verdict records `NATIVE_STOP_REQUIRED`."""
+    async with _sent(charts, {gate: "fail"}) as interp:
+        assert "order.lifecycle.rejected" in interp.current_state_ids
+        assert (place.await_count, interp.context) == (0, _CHART["context"] | {"reject_code": code})
+
+
 def test_guards_are_total_and_deny_on_hostile_input() -> None:
     for name, guard in b01.GUARDS.items():
         for event in (None, _Ev(order=_Hostile(), gates=_Hostile()), _Done(_Hostile())):
             assert guard(_Hostile(), event) is False, name
-
-
-_STAMPED = ORDER | {"trigger_price": None, "take_profit": None, "qty": "0.5", "leaves_qty": "0.5"}
-_X1, _X2 = {"ok": True, "exchange_order_id": "x1"}, _Done({"ok": True, "exchange_order_id": "x2"})
-_NATIVE = {"reject_code": "NATIVE_STOP_REQUIRED"}
 
 
 @pytest.mark.parametrize(
@@ -177,10 +193,8 @@ _NATIVE = {"reject_code": "NATIVE_STOP_REQUIRED"}
     [
         ("stamp_validated", _validate(qty="0.50", stop_loss="62000.0"), _STAMPED),
         ("stamp_validated", _validate({"risk": "fail"}), {}),
-        ("set_local_reject", _validate({"native_stop": "fail"}), _NATIVE),
-        ("set_local_reject", _validate({"risk": "fail"}), {"reject_code": None}),
-        ("apply_fill", _exec("e1", "0.4"), {}),  # refused: changes nothing (INV-B1-b)
-        ("adopt_ack", _X2, {}),  # the bound id is never replaced
+        ("apply_fill", _exec("e1", "0.4"), {}),  # refused: the order has no `seen_exec_ids`
+        ("adopt_ack", _Done({"ok": True, "exchange_order_id": "x2"}), {}),  # never replaces x1
         ("adopt_cancel_ack", _Done(), {}),  # an ack without an id
         ("map_reject_code", _Done({"error_code": "RATE_LIMITED"}), {"reject_code": "RATE_LIMITED"}),
         ("map_reject_code", _Done({"error_code": "110007"}), {"reject_code": "EXCHANGE_UNKNOWN"}),
@@ -192,9 +206,6 @@ async def test_a_context_action_writes_only_its_fields(
 ) -> None:
     start = {"exchange_order_id": "x1"}
     assert await _run(action, dict(start), event) == start | expected
-
-
-_KEPT = ("63000", "1", "0.75", 1)  # price, qty, leaves_qty and one ERROR log: not adopted
 
 
 @pytest.mark.parametrize(
@@ -218,10 +229,6 @@ async def test_adopt_amend_adopts_only_an_accepted_well_formed_amend(
     assert (ctx["price"], ctx["qty"], ctx["leaves_qty"], len(logs)) == expected
 
 
-_RATES = st.sampled_from([Decimal("-0.0001"), Decimal("0.0002"), Decimal("0.00055")])
-_FILL = st.tuples(st.decimals(1, 9, places=2), st.decimals(1, 99, places=1), _RATES)
-
-
 @settings(max_examples=40, deadline=None, derandomize=True)
 @given(fills=st.lists(_FILL, min_size=1, max_size=5), data=st.data())
 async def test_inv_b1_a_fills_in_any_order_give_the_same_totals(
@@ -232,7 +239,7 @@ async def test_inv_b1_a_fills_in_any_order_give_the_same_totals(
         for i, (q, p, r) in enumerate(fills)
     ]
     totals = []
-    for order in (events, data.draw(st.permutations(events))):
+    for order in (events, data.draw(st.permutations(events * 2))):  # the second: each one twice
         ctx = _ctx(qty="50")
         for event in order:
             await _run("apply_fill", ctx, event)
@@ -244,62 +251,67 @@ async def _hang(*_a: object) -> None:
     await asyncio.Event().wait()
 
 
-async def _hostile_amend(*_a: object) -> dict[str, object]:
-    return {"ok": True, "terms": {"qty": "1E+80"}}
-
-
-async def _submitted(
-    charts: Charts, monkeypatch: pytest.MonkeyPatch, amend: Callable[..., Awaitable[Any]] = _hang
-) -> Any:
-    """B1 on the library with the real guards and context actions, in `submitted` after VALIDATE,
-    SEND and an ok place ack; a cancel, and an amend unless *amend* answers it, stay in flight."""
-    monkeypatch.setitem(b01.SERVICES, "place_order", AsyncMock(return_value=_X1))
-    monkeypatch.setitem(b01.SERVICES, "cancel_order", _hang)
-    monkeypatch.setitem(b01.SERVICES, "amend_order", amend)
+@asynccontextmanager
+async def _sent(charts: Charts, gates: dict[str, object] | None = None) -> AsyncIterator[Any]:
+    """B1 on the library with the real guards and context actions after VALIDATE (every verdict
+    `pass` but *gates*), SEND and the ok place ack: `submitted` if all pass. Stopped on exit."""
     interp = (await park("order", _CHART, "lifecycle.draft", charts)).interpreter
-    await interp.send("VALIDATE", wait=True, **_validate().payload)
-    await interp.send("SEND", wait=True)
-    await settle()
-    return interp
+    try:
+        await interp.send("VALIDATE", wait=True, **_validate(gates).payload)
+        await interp.send("SEND", wait=True)
+        await settle()
+        yield interp
+    finally:
+        await interp.stop()
+
+
+@pytest.mark.parametrize("applied", [["e1"], ["e0", "e1"]])  # E1 first, or after E0
+async def test_duplicate_fill_never_double_counts(applied: list[str], charts: Charts) -> None:
+    """Gherkin "Duplicate fill never double-counts" (INV-B1-b) on the library: E1 for 0.1 applied
+    in `submitted` or `partially_filled`, then repeated, leaves the context and the state as is."""
+    async with _sent(charts) as interp:
+        for exec_id in applied:
+            await interp.send("EXEC", wait=True, **_exec(exec_id, "0.1").payload)
+        before = copy.deepcopy(interp.context)
+        await interp.send("EXEC", wait=True, **_exec("e1", "0.1").payload)
+        await settle()
+        assert "order.lifecycle.partially_filled" in interp.current_state_ids
+        assert (interp.context, before["seen_exec_ids"]) == (before, applied)
 
 
 @pytest.mark.parametrize(
-    ("exec_id", "qty", "state", "leaves"),
+    ("exec_id", "qty", "state", "leaves", "seen"),
     [
-        ("e3", "0.4", "filled", "0"),
-        ("e3", "0.1", "partially_filled", "0.3"),
-        ("e2", "0.2", "cancel_pending", "0.4"),
+        ("e3", "0.4", "filled", "0", ["e1", "e2", "e3"]),
+        ("e3", "0.1", "partially_filled", "0.3", ["e1", "e2", "e3"]),
+        ("e2", "0.2", "cancel_pending", "0.4", ["e1", "e2"]),  # a repeat: nothing changes
     ],
 )
 async def test_cancel_loses_the_race_to_a_fill_not_to_a_repeat(
-    exec_id: str, qty: str, state: str, leaves: str, charts: Charts, monkeypatch: pytest.MonkeyPatch
+    exec_id: str, qty: str, state: str, leaves: str, seen: list[str], charts: Charts
 ) -> None:
     """Gherkin "Cancel loses the race to a fill" (S3) on the library: a closing or a partial EXEC in
     `cancel_pending` applies, and a repeat changes nothing (S4). The lost-race record and the quiet
     UI are the facade's (slice 6)."""
-    interp = await _submitted(charts, monkeypatch)
-    try:
+    async with _sent(charts) as interp:
         for event in (_exec("e1", "0.4"), _exec("e2", "0.2", "63100")):
             await interp.send("EXEC", wait=True, **event.payload)
         await interp.send("CANCEL", wait=True)
         await interp.send("EXEC", wait=True, **_exec(exec_id, qty, "63200").payload)
         await settle()
-        seen = list(dict.fromkeys(["e1", "e2", exec_id]))
         assert f"order.lifecycle.{state}" in interp.current_state_ids
         assert (interp.context["leaves_qty"], interp.context["seen_exec_ids"]) == (leaves, seen)
-    finally:
-        await interp.stop()
 
 
-@pytest.mark.parametrize("amend", [_hang, _hostile_amend])
+@pytest.mark.parametrize("amend", [_hang, [{"ok": True, "terms": {"qty": "1E+80"}}]])
 async def test_amend_rejection_does_not_move_the_stop(
-    amend: Callable[..., Awaitable[Any]], charts: Charts, monkeypatch: pytest.MonkeyPatch
+    amend: object, charts: Charts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gherkin "Amend rejection does not move the stop" (S2) on the library: an amend rejected, or
     acked ok with terms that cannot apply, is sent once and leaves the order live with price 63000,
     its qty and its stop. `notify_amend_rejected` emits `amend_rejected` in slice 5."""
-    interp = await _submitted(charts, monkeypatch, sent := AsyncMock(side_effect=amend))
-    try:
+    monkeypatch.setitem(b01.SERVICES, "amend_order", sent := AsyncMock(side_effect=amend))
+    async with _sent(charts) as interp:
         await interp.send("EXEC", wait=True, **_exec("e1", "0.25").payload)
         before = copy.deepcopy(interp.context)
         for event in ("AMEND", "AMEND_REJECTED"):  # unhandled once the ack has landed: deferred
@@ -307,5 +319,3 @@ async def test_amend_rejection_does_not_move_the_stop(
             await settle()
         assert "order.lifecycle.partially_filled" in interp.current_state_ids
         assert (sent.await_count, interp.context["price"], interp.context) == (1, "63000", before)
-    finally:
-        await interp.stop()

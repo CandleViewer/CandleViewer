@@ -7,14 +7,13 @@ product is exact under `_EXACT`, a local context with `Inexact` trapped; the thr
 never used. `avg_price` is the one division, of the exact totals, rounded once (half-even) to 18
 places, so fills in any order give the same result (INV-B1-a). A fill the order cannot absorb
 raises `ExecutionRefused` (OM-T04) and is never clamped (INV-1). The `exec_id` dedupe (24 Sec.8.2
-S4) is the caller's. The OMS sets `apply_fields` into the B1 binding (`set_fill_core`).
-"""
+S4) is the caller's. The OMS facade sets `apply_fields` into the B1 binding (`set_fill_core`)."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields
-from decimal import ROUND_HALF_EVEN, Context, Decimal, Inexact, InvalidOperation, Overflow
+from decimal import Context, Decimal, Inexact, InvalidOperation, Overflow
 from fractions import Fraction
 from typing import Final
 
@@ -24,17 +23,14 @@ from .errors import ExecutionRefused
 
 #: numeric(38,18) keeps 18 places; two such values multiply to at most 76 digits.
 _SCALE: Final = 18
-_EXACT: Final = Context(
-    prec=80, rounding=ROUND_HALF_EVEN, traps=[InvalidOperation, Overflow, Inexact]
-)
+_EXACT: Final = Context(prec=80, traps=[InvalidOperation, Overflow, Inexact])
 #: A bound on hostile data (OM-T04), not a fee model: no fee or rebate passes 1% of the value.
 MAX_FEE_RATE: Final = Decimal("0.01")
 
 
 @dataclass(frozen=True, slots=True)
 class Fill:
-    """One execution of an order (24 Sec.8.1 `Execution`): `qty` at `price`, charged `fee` at
-    `fee_rate`. A negative fee is a maker rebate, so its `fee_rate` is negative too."""
+    """One execution (24 Sec.8.1): `qty` at `price`, `fee` at `fee_rate`; both < 0 for a rebate."""
 
     qty: Decimal
     price: Decimal
