@@ -17,7 +17,7 @@ PR-controlled, so editing pr-metadata.yml is still a bypass that only the C-10.2
 review catches; and every agent session currently acts as the repo owner account, so label
 provenance (PR-SIZE-004/005) is not independent of the PR author until agents use a separate
 machine user / GitHub App (#2280). `@org/team` CODEOWNERS entries are not resolvable
-with a read-only token (only `@user` entries and the repo owner count).
+with a read-only token (only `@user` entries, the catch-all `*` users and the repo owner count).
 
 Rules
   C-4.8  changed LOC, excluding lockfiles and paths whose `linguist-generated` attribute is set in
@@ -266,6 +266,11 @@ def attr_lines(text: str) -> list[str]:
             if line.strip() and not line.strip().startswith("#")]
 
 
+def _users(owners: list[str]) -> set[str]:
+    """The `@user` entries, lower-cased; `@org/team` is unresolvable with a read-only token."""
+    return {o[1:].lower() for o in owners if o.startswith("@") and "/" not in o}
+
+
 def owners_for(codeowners: str, paths: list[str]) -> set[str]:
     """`@user` owners common to EVERY path (last matching CODEOWNERS rule wins; teams unresolvable)."""
     rules = []
@@ -279,9 +284,19 @@ def owners_for(codeowners: str, paths: list[str]) -> set[str]:
         for pat, own in rules:
             if pat.match(path):
                 hit = own
-        users = {o[1:].lower() for o in hit if o.startswith("@") and "/" not in o}
+        users = _users(hit)
         common = users if common is None else common & users
     return common or set()
+
+
+def catch_all_owners(codeowners: str) -> set[str]:
+    """`@user` owners of the catch-all `*` rule, who own every path (the last `*` rule wins)."""
+    hit: list[str] = []
+    for line in codeowners.splitlines():
+        parts = line.split("#", 1)[0].split()
+        if len(parts) >= 2 and parts[0] == "*":
+            hit = parts[1:]
+    return _users(hit)
 
 
 def strip_markup(body: str) -> str:
@@ -414,6 +429,8 @@ def check(
             scoped = [owners_for(base_codeowners, tp) for tp in trigger_paths if tp]
             allowed = set.intersection(*scoped) if scoped else set()
             allowed |= {repo_owner.lower()} - {""}
+            # an org login is not the human owner and @org/team needs an org token: add the * owners
+            allowed |= catch_all_owners(base_codeowners)
             errors += check_label_provenance(events, comments, allowed)
             warnings += [f"{m} (approved by label)" for m in needs_approval]
 

@@ -24,6 +24,12 @@ ATTRS = (ROOT / ".gitattributes").read_text(encoding="utf-8")
 RR = m._load_rule_refs(ROOT)
 DECLARED = RR.load_declared_ids(str(ROOT))
 OWNERS = "* @alice\n/services/ @bob @org/team\n"
+# the live shape after the org move: a human on the catch-all, only teams on the specific rules
+ORG_OWNERS = (
+    "* @basiltt @CandleViewer/architecture\n"
+    "/tools/ @CandleViewer/devsecops @CandleViewer/security\n"
+    "/services/api/ @CandleViewer/backend\n"
+)
 
 
 GEN = ("set", "unset", "unspecified")  # real protocol dirs: generated AND -diff
@@ -126,6 +132,48 @@ def test_repo_owner_may_apply_label():
 def test_owners_exclude_teams_and_use_last_match():
     assert m.owners_for(OWNERS, ["services/api/x.py"]) == {"bob"}
     assert m.owners_for(OWNERS, ["docs/x.md"]) == {"alice"}
+
+
+def test_catch_all_owners_are_the_users_of_the_star_rule_only():
+    text = (
+        "# * @in-a-comment\n"
+        "*.py @py\n"
+        "/* @top-level-only\n"
+        "/docs/ @docs\n"
+        "*  @Basiltt @org/arch  # owner of last resort\n"
+    )
+    assert m.catch_all_owners(text) == {"basiltt"}  # exact `*`, users only, lower-cased
+    assert m.catch_all_owners("* @old\n/x/ @x\n* @new\n") == {"new"}  # the last `*` rule wins
+    assert m.catch_all_owners("/x/ @x\n* @org/only-teams\n") == set()
+    assert m.catch_all_owners("*.py @py\n/* @t\n** @x\n") == set()  # decoys: glob, top level, `**`
+    assert m.catch_all_owners("* @alice # @ghost\n") == {"alice"}  # an inline comment owns nothing
+    assert m.catch_all_owners("") == set()
+
+
+def test_real_codeowners_catch_all_is_the_owner_of_last_resort():
+    # C-8.3: @basiltt is the owner of last resort and the org-move fix rests on the `*` rule naming
+    # exactly them. Teams only there would lock the owner's label out again; one more user there
+    # may apply `large-pr-approved` on every path, so changing this set must be a deliberate edit.
+    codeowners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")
+    assert m.catch_all_owners(codeowners) == {"basiltt"}
+
+
+@pytest.mark.parametrize("path", ["services/api/a.py", "tools/ci/check_pr_metadata.py"])
+def test_catch_all_codeowner_may_apply_label_when_specific_rules_name_only_teams(path):
+    """PR #3831: after the org move `repo_owner` is the org login and the last rule has no @user."""
+    assert m.owners_for(ORG_OWNERS, [path]) == set()
+    errs, warns = run(pr(labels=[m.LABEL]), rows(("900", "0", path)), events=labeled("basiltt"),
+                      comments=comment("basiltt"), base_codeowners=ORG_OWNERS,
+                      repo_owner="CandleViewer")
+    assert errs == [] and warns
+
+
+def test_label_by_neither_path_owner_nor_catch_all_user_still_fails_size_004():
+    errs, _ = run(pr(labels=[m.LABEL]), rows(("900", "0", "services/api/a.py")),
+                  events=labeled("mallory"), comments=comment("mallory"),
+                  base_codeowners=ORG_OWNERS, repo_owner="CandleViewer")
+    assert codes(errs) == ["PR-SIZE-004"]
+    assert "last applied by 'mallory', allowed: ['basiltt', 'candleviewer']" in errs[0]
 
 
 def test_generated_and_lockfiles_excluded_from_base_attrs():
