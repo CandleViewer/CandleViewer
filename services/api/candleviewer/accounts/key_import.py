@@ -15,7 +15,10 @@ C-3.2, C-3.4); `key_import_wiring` binds its ports. For the acting Owner (SR-E27
    material (decision 12). It is written ahead: a pass before M2 stores the key, every other
    outcome (an unexpected error or a cancellation too) before it leaves; after a pass's record,
    whatever fails gets a closing `failure` record naming the same key. A record that cannot be
-   written refuses the import (`audit_unavailable`, C-2.9).
+   written refuses the import (`audit_unavailable`, C-2.9). A key a verdict refuses also gets
+   `security.key_policy_violation` after that record, naming the account, since no key is stored
+   (decision 12 on #836): critical for a right that moves funds, as the self-check's. A refused
+   or cut violation record is logged and never changes the answer.
 4. After the store M2 runs the activation: the verified columns, then the promotion from `pending`
    to `active`, `transition_key_status`'s one production caller (SR-E27-01, AC-34). If it fails, M2
    destroys the key (audited, revoked): nothing usable stays and its label is free, so the import
@@ -41,7 +44,13 @@ from candleviewer.accounts.errors import (
 )
 from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount, KeyStatus
 from candleviewer.accounts.repository import AccountsRepository
-from candleviewer.accounts.selfcheck import AuditEmitter, SelfCheckCalls, _facts
+from candleviewer.accounts.selfcheck import (
+    POLICY_VIOLATION,
+    AuditEmitter,
+    SelfCheckCalls,
+    _facts,
+    policy_violation,
+)
 from candleviewer.accounts.verification import (
     VerificationInconclusive,
     VerificationPolicy,
@@ -178,7 +187,8 @@ class KeyImport:
     async def run(self, request: KeyImportRequest, actor: Importer) -> KeyImported:
         """The imported key, or the refusal (`KeyImportFailed`, `AccountNotFoundError`,
         `AccountScopeDeniedError`, `AccountConflictError`), recorded before it is raised; any
-        other error or a cancellation is recorded too and goes on as it is."""
+        other error or a cancellation is recorded too and goes on as it is. A key a verdict
+        refuses is also a `security.key_policy_violation`, written after the import's record."""
         passed: dict[str, object] = {}  # the key id of a pass's record, once it is written
         try:
             return await self._run(request, actor, passed)
@@ -192,11 +202,15 @@ class KeyImport:
                 after = {"code": code, "error": type(exc).__name__}
             reason = code if result is None else result.failures[0].rule.value
             outcome = "denied" if code in _DENIED and not passed else "failure"
+            lost: KeyImportFailed | None = None
             try:  # a closing record names the key the pass's record named
                 await self._audit_row(actor, request.account_id, outcome, reason, after | passed)
-            except KeyImportFailed:
-                if isinstance(exc, AccountsError):
-                    raise  # a refusal whose record is lost is `audit_unavailable`
+            except KeyImportFailed as unwritten:
+                lost = unwritten
+            if result is not None:  # tried even when the import's record is lost
+                await self._violation(actor, request.account_id, result)
+            if lost is not None and isinstance(exc, AccountsError):
+                raise lost from None  # a refusal whose record is lost is `audit_unavailable`
             raise
 
     async def _run(
@@ -288,21 +302,41 @@ class KeyImport:
             _log().error("key_import_store_failed", error=type(exc).__name__, sqlstate=sqlstate)
             raise KeyImportFailed(STORE, "The relational store is unavailable.") from None
 
+    async def _emit(self, action: str, actor: Importer, **fields: Any) -> None:
+        """One audit record naming the acting Owner and their request, bounded."""
+        async with asyncio.timeout(self._timeout_s):
+            await self._audit.emit(
+                action, actor_label=f"user:{actor.role}", actor_user_id=actor.user_id,
+                actor_ip=actor.ip, request_id=actor.request_id, env=self._env, **fields,
+            )  # fmt: skip
+
     async def _audit_row(
         self, actor: Importer, account_id: UUID, outcome: str, reason: str | None,
         after: dict[str, object],
     ) -> None:  # fmt: skip
         """`api_key.import`, durable before what it covers is done or answered (C-2.9)."""
         try:
-            async with asyncio.timeout(self._timeout_s):
-                await self._audit.emit(
-                    ACTION, actor_label=f"user:{actor.role}", actor_user_id=actor.user_id,
-                    actor_ip=actor.ip, object_kind="exchange_account",
-                    object_id=str(account_id), outcome=outcome, reason=reason, after_state=after,
-                    severity="info" if outcome == "success" else "warning",
-                    request_id=actor.request_id, env=self._env,
-                )  # fmt: skip
+            await self._emit(
+                ACTION, actor, object_kind="exchange_account", object_id=str(account_id),
+                outcome=outcome, reason=reason, after_state=after,
+                severity="info" if outcome == "success" else "warning",
+            )  # fmt: skip
         except Exception as exc:  # TimeoutError included; cancellation propagates
             _log().error("key_import_audit_failed", error=type(exc).__name__)
             detail = "The audit record of the import could not be written; nothing was stored."
             raise KeyImportFailed(AUDIT, detail) from None
+
+    async def _violation(
+        self, actor: Importer, account_id: UUID, verdict: VerificationResult
+    ) -> None:
+        """`security.key_policy_violation` for a key a verdict refused (decision 12 on #836). It
+        names the account, as no key is stored. A refused or cut record is logged and never
+        raised: the refusal and the import's own record stand. Never key material."""
+        record = policy_violation(verdict, key_id=None, account_id=account_id)
+        try:
+            await self._emit(POLICY_VIOLATION, actor, **record)
+        except Exception as exc:  # TimeoutError included; cancellation propagates
+            _log().error(
+                "key_import_violation_failed", account_id=str(account_id),
+                rule=record["reason"], error=type(exc).__name__,
+            )  # fmt: skip

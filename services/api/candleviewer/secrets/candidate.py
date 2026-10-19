@@ -15,6 +15,9 @@ ciphertext: 0024 takes DELETE away, so a destroyed row would keep the refused ke
   when the hold started, which the calls were signed under (#2336: no caller chooses it).
 - A refusal, an error, a cancellation or the end of the hold's bound (`CANDIDATE_HOLD_S`) drops the
   pair: nothing is stored, the signer refuses from then on and the pair's wrappers are invalidated.
+- After the store M2 runs the caller's activation of the key (key import: the verified columns and
+  the promotion from `pending`). If it fails, M2 destroys that key (`destroy()`: fenced, audited
+  with the Owner, revoked), so nothing usable stays and its label is free (#836 slice 2b4).
 
 The pair never leaves M2: no return value, log, repr, exception or audit record carries it
 (C-12.6). Only the key id goes back, for the request header, as for a stored key.
@@ -53,6 +56,8 @@ _BORROWED: Final = "security.credential_borrowed"
 #: The caller's check: given the candidate's signer, the verified key-info snapshot on a pass and
 #: `None` on a refusal.
 CandidateCheck = Callable[["CandidateSigner"], Awaitable[Mapping[str, Any] | None]]
+#: The caller's activation of the key a pass stored; if it raises, M2 destroys that key.
+CandidateActivation = Callable[[StoredCredential], Awaitable[None]]
 _SignFn = Callable[[UUID, SigningMessage, Purpose], Awaitable[RequestSignature]]
 
 
@@ -121,13 +126,16 @@ class CandidateKeys:
         *,
         actor_user_id: str,
         actor_role: str,
+        activate: CandidateActivation | None = None,
     ) -> StoredCredential | None:
         """Hold the pair for `check`; store it only if `check` returns a snapshot. Returns the
         stored metadata on a pass and `None` on a refusal. Anything else stores nothing and
         raises: the check's own error, `credential_shape_invalid`, `environment_mismatch`,
-        `candidate_timeout` at the hold's bound, or a `store()` refusal (C-2.8)."""
+        `candidate_timeout` at the hold's bound, or a `store()` refusal (C-2.8). `activate` then
+        runs on the stored key; if it raises, the key is destroyed and its error goes on, or
+        `candidate_not_removed` if the key could not be destroyed either."""
         return await self.__run(
-            env, account_id, label, api_key, api_secret, check, actor_user_id, actor_role
+            env, account_id, label, api_key, api_secret, check, actor_user_id, actor_role, activate
         )
 
 
@@ -143,6 +151,7 @@ async def hold_candidate(
     check: CandidateCheck,
     actor_user_id: str,
     actor_role: str,
+    activate: CandidateActivation | None = None,
 ) -> StoredCredential | None:
     """The one hold behind `CandidateKeys.store_if_verified` (module docstring)."""
     if not actor_role or not isinstance(actor_user_id, str) or not actor_user_id:
@@ -200,7 +209,30 @@ async def hold_candidate(
         if not isinstance(snapshot, Mapping):
             raise SnapshotInvalid("snapshot_invalid")
         actor = ("user", actor_role, actor_user_id)
-        return await broker._seal_new(key_id, env, account_id, label, *pair, snapshot, actor)
+        stored = await broker._seal_new(key_id, env, account_id, label, *pair, snapshot, actor)
     finally:
         for held in pair:
             held.invalidate()
+    if activate is not None:
+        await _activated(broker, stored, activate, actor)
+    return stored
+
+
+async def _activated(
+    broker: CredentialBroker,
+    stored: StoredCredential,
+    activate: CandidateActivation,
+    actor: tuple[str, str, str | None],
+) -> None:
+    """`activate` on the key just stored. If it raises, the key is destroyed, so it signs nothing
+    and frees its label; the activation's error goes on, or `candidate_not_removed` when the
+    destroy fails too (it records its own failure). A cancellation always goes on as it is."""
+    try:
+        await activate(stored)
+    except BaseException as exc:
+        try:
+            await broker.destroy(stored.key_id, actor=actor)
+        except Exception:
+            if isinstance(exc, Exception):
+                raise CredentialUnavailable("candidate_not_removed") from None
+        raise

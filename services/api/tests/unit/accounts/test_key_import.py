@@ -40,9 +40,11 @@ from candleviewer.storage.repositories.accounts import (
     ApiKeyRow,
     ExchangeAccountRow,
 )
+from tests.unit.accounts._permission_cases import BASE
 from tests.unit.accounts.test_key_selfcheck import EGRESS, NOW, WITHDRAW, T, facts, load, probed
 
 ACCT, KEY, OTHER, OWNER = UUID(int=1), UUID(int=11), UUID(int=12), UUID(int=99)
+VIOLATION = "security.key_policy_violation"
 #: Low-entropy markers for the leak checks, never a real credential.
 MARK_ID, MARK_SECRET = "importkey" + "0" * 9, "importsecret-" + "z" * 19
 
@@ -62,6 +64,11 @@ def key_row(key_id: UUID, status: str, label: str = "other", read_only: bool = F
     )  # fmt: skip
 
 
+def kind_of(record: dict[str, Any]) -> str:
+    """An audit record in the event log: the import's by its outcome, any other by its action."""
+    return str(record["outcome"] if record["action"] == "api_key.import" else record["action"])
+
+
 class World:
     """The accounts store, M2's hold, the candidate's calls, the verified columns and the audit
     sink at once, in one event log. The store keeps what M2 stored and the flow wrote."""
@@ -79,6 +86,8 @@ class World:
         self.transition_error: Exception | None = None
         self.verified: Any = None
         self.audit_down, self.written, self.stored = False, True, None
+        self.refused: set[str] = set()  # actions the audit sink refuses
+        self.stall: set[str] = set()  # actions whose record is never answered
         self.gate, self.entered = asyncio.Event(), asyncio.Event()
         self.gate.set()
         self.flow = KeyImport(
@@ -94,7 +103,7 @@ class World:
             return await self.flow.run(KeyImportRequest(**{**fields, **request}), actor)
 
     def kinds(self) -> list[Any]:
-        return [e[0] if e[0] != "audit" else ("audit", e[1]["outcome"]) for e in self.events]
+        return [e[0] if e[0] != "audit" else ("audit", kind_of(e[1])) for e in self.events]
 
     def audit(self) -> list[dict[str, Any]]:
         return [e[1] for e in self.events if e[0] == "audit"]
@@ -162,8 +171,10 @@ class World:
         validate_action(action)  # what `AuditWriter.emit` refuses, the double refuses
         inspect.signature(AuditWriter.emit).bind(None, action, **fields)
         AuditEmission(record_id=UUID(int=0), action=action, event_ts=NOW, **fields)
-        if self.audit_down:
-            raise RuntimeError("audit unavailable")
+        if self.audit_down or action in self.refused:
+            raise RuntimeError(f"audit unavailable DETAIL {MARK_SECRET}")  # text never logged
+        if action in self.stall:
+            await asyncio.Event().wait()
         self.events.append(("audit", {"action": action, **fields}))
 
 
@@ -191,6 +202,7 @@ async def test_a_compliant_key_is_recorded_stored_verified_and_promoted_in_that_
     assert plain.events[1][1] == "fx"  # without a label, the key takes the account's
 
 
+FIAT = {**BASE, "FiatP2P": ["FiatP2POrder"]}
 _WITHDRAW = ("key_withdraw_permission", "permissions.Wallet contains 'Withdraw'")
 _UNKNOWN = ("key_wrong_environment", "key does not belong to this environment")
 
@@ -213,8 +225,34 @@ async def test_a_verdict_refusing_the_key_stores_nothing(
         "validation_failed", (("api_key", rule, message),),
     )  # fmt: skip
     assert refused.value.result is not None and refused.value.result.failures[0].rule == rule
-    assert w.kinds() == ["list", "hold", "key_info", ("audit", "denied")] and w.stored is None
+    assert w.kinds() == ["list", "hold", "key_info", ("audit", "denied"), ("audit", VIOLATION)]
+    assert w.stored is None  # the import's record, then the violation's: both after the refusal
     assert (w.audit()[0]["reason"], w.audit()[0]["after_state"]["failures"]) == (rule, [rule])
+
+
+@pytest.mark.parametrize(
+    ("info", "rule", "severity"),
+    [
+        (facts(permissions=WITHDRAW), "key_withdraw_permission", "critical"),
+        (facts(permissions=FIAT), "key_permission_not_allowed", "critical"),  # moves funds too
+        (KeyRefused(Refusal.UNKNOWN_KEY, 10003), "key_wrong_environment", "error"),
+        (facts(ips=["198.51.100.9"]), "key_ip_whitelist_mismatch", "error"),
+    ],
+    ids=["withdraw", "fiat", "unknown_key", "whitelist"],
+)
+async def test_a_refused_key_is_a_policy_violation_naming_the_account_and_the_owner(
+    info: Any, rule: str, severity: str
+) -> None:
+    w = World(info=info)  # decision 12 on #836: no key is stored, so the account stands in
+    with pytest.raises(KeyImportFailed):
+        await w.run()
+    assert w.audit()[1] == {
+        "action": VIOLATION, "actor_label": "user:owner", "actor_user_id": OWNER,
+        "actor_ip": "198.51.100.4", "request_id": UUID(int=8), "env": "demo",
+        "object_kind": "exchange_account", "object_id": str(ACCT), "outcome": "denied",
+        "severity": severity, "reason": rule,
+        "after_state": {"rule": rule, "account_id": str(ACCT)},
+    }  # fmt: skip
 
 
 async def test_a_pass_carries_the_clock_skew_it_measured() -> None:
@@ -297,6 +335,33 @@ async def test_an_import_whose_record_is_lost_is_audit_unavailable(state: Any, s
     with pytest.raises(KeyImportFailed) as failed:
         await w.run()
     assert (failed.value.code, w.stored, w.kinds()) == ("audit_unavailable", None, seen)
+
+
+@pytest.mark.parametrize(
+    ("fault", "error"), [("refused", "RuntimeError"), ("stall", "TimeoutError")]
+)
+async def test_a_violation_record_the_sink_refuses_or_cuts_never_changes_the_refusal(
+    fault: str, error: str
+) -> None:
+    w = World(info=facts(permissions=WITHDRAW), timeout_s=0.01)  # a record that hangs is cut
+    getattr(w, fault).add(VIOLATION)
+    reset_logging()
+    with capture_logs() as logs, pytest.raises(KeyImportFailed) as refused:
+        await w.run()
+    assert (refused.value.code, w.kinds()[-1]) == ("validation_failed", ("audit", "denied"))
+    seen = {"event": "key_import_violation_failed", "account_id": str(ACCT)}
+    seen |= {"rule": "key_withdraw_permission", "error": error, "log_level": "error"}
+    assert seen in logs and "DETAIL" not in repr(logs)  # the sink's text is never logged
+
+
+async def test_a_refusal_whose_import_record_is_lost_still_gets_its_violation_record() -> None:
+    w = World(info=facts(permissions=WITHDRAW))
+    w.refused.add("api_key.import")  # the answer is `audit_unavailable`, the violation is tried
+    with pytest.raises(KeyImportFailed) as failed:
+        await w.run()
+    assert (failed.value.code, w.kinds()) == (
+        "audit_unavailable", ["list", "hold", "key_info", ("audit", VIOLATION)],
+    )  # fmt: skip
 
 
 @pytest.mark.parametrize(
