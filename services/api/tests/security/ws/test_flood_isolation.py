@@ -1,34 +1,48 @@
 """E17-X02 flood isolation (#415 slice d2; threat model `E17-ws-gateway.md` §7, AC-19; budget #6).
 
-One user hits every limit of `23-ws-protocol.md` §16.2 at once on a real uvicorn gateway (the
-E17-Q02 chaos rig, flag on) while another user's `book.BTCUSDT.50` stream is timed: the same N
-updates on fresh stacks, that user alone, then beside the flood.
+AC-19's isolation clause (no other client sees a sequence gap or a latency regression), at a
+sustained pace. One user hits the five limits the test drives, all at once, on a real uvicorn
+gateway (the E17-Q02 chaos rig, flag on): 200 subscriptions and 40 symbols per connection, 8
+connections per user, 30 frames a second inbound and 5 resyncs a minute per topic
+(`23-ws-protocol.md` §16.2). Another user's `book.BTCUSDT.50` stream is timed meanwhile: the same
+N updates on fresh stacks, that user alone, then beside the flood. Scope: sustained pace (about
+the 300-a-minute limit), refusals only, flag on, JSON, no audit sink; other rates and shapes are
+not measured here. AC-19's own action (8 sockets x 40 symbols of `book.*.200` and a heatmap)
+stays with E17-Q03 (#568, k6).
 
 The flood is eight sockets of one user. Three hold 200 subscriptions and two hold 40 symbols, and
 each sends a 50-topic `sub` that its cap refuses whole on every third update (5.3 frames a second
-of gateway time, about the pace of its 300-a-minute limit). One loops `resync` until its stream
-is revoked, one sends 40 `ping`s in one go, one stays silent; three more connections come in,
-each the ninth. Each refusal is checked whole (frame, close code, metric). The second user must
-see every update, in order, with no `revoked`, inside the budget. The rig has no audit sink: the
-audit rows of these refusals are slice d1's.
+of gateway time, about the pace of its 300-a-minute limit; that limit caps N). One loops `resync`
+until its stream is revoked, one sends 40 `ping`s in one go, one stays silent; three more
+connections come in, each the ninth. Each refusal is checked whole (frame, close code, metric).
+The second user must see every update, in order, with no `revoked`, inside the budget.
+
+The rig passes the gateway no audit sink, so no audit write is in the timing. The rows exist: the
+four closes write `ws.connection.closed` (asserted by slice d1) and the revocation writes
+`ws.subscription.revoked` (`tests/unit/ws/test_ws_audit_trail.py`). The cap and resync refusals
+on these public topics write no `ws.subscribe.denied` row, by design: only authorisation refusals
+and refusals of private topics are audited.
 
 Timing is on the loop clock, from `book_step()` to the frame's arrival at the rig's client
 through its proxy, with the flood's sockets in the same loop. That is more than budget #6's span
 (book update to outbound frame emitted), so a pass here is a pass there; the gateway's own
 `cv_ws_fanout_seconds` reads the rig's virtual clock and cannot show wall time. The gateway's
-clock is virtual, so 16 updates take a few milliseconds of real time and the flood arrives about
-20 times faster than a client could sustain it. N = 400: the p95 is the 380th sample with 20
-above it, so the ten or so ticks with a one-off event and a few scheduler stalls cannot move it,
-while a cost on every update does. The tolerance is 8 ms on the median: about three times what the
-flood costs here (2 to 2.7 ms), 40 % of the budget. A flood that makes the typical update wait
-that much longer is a regression even where the p95 stays under 20 ms. The median, not the p95,
-because a loaded runner moves a p95 by a scheduler time slice (several ms), the median by little.
+clock is virtual too: a second of it (16 updates) takes about 50 ms of real time, and what an
+update waits behind is the flood's frames sent ahead of it (one or two refused `sub`s on each
+tick, the other legs' frames on theirs, the 40 `ping`s once). N = 400: the p95 is the 380th
+sample with 20 above it, so the ten or so ticks with a one-off event and a few scheduler stalls
+cannot move it, while a cost on every update does. Those ticks have a loose bound of their own,
+`STALL_MS` on the slowest update: 5 times the budget and 3.7 times the slowest update seen when
+it was chosen, with the loop's CPUs shared with two busy loops (27 ms): a stall, not noise. The
+tolerance is 8 ms on the median: about three times what the flood costs here (2 to 2.7 ms), 40 %
+of the budget. A flood that makes the typical update wait that much longer is a regression even
+where the p95 stays under 20 ms. The median, not the p95, because a loaded runner moves a p95 by
+a scheduler time slice (several ms), the median by little.
 
 `TCP_NODELAY`: the rig binds its own listening socket (`socket.create_server`), so the sockets it
 accepts lack the option asyncio sets on the ones uvicorn binds by host and port. With Nagle on,
 more than one update in twenty waits about 40 ms for the client's delayed ACK, which nothing here
-causes, so `nodelay_stack` sets it. AC-19 at load scale (8 sockets x 40 symbols of `book.*.200`
-and a heatmap) stays with E17-Q03 (#568, k6). `perf`: this runs in `py-perf` (C-13.9).
+causes, so `nodelay_stack` sets it. `perf`: this runs in `py-perf` (C-13.9).
 """
 
 from __future__ import annotations
@@ -54,6 +68,7 @@ from websockets.typing import Origin, Subprotocol
 
 from candleviewer.observability.context import spawn
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.ws.lifecycle import RATE_PER_MINUTE
 from tests.chaos.ws._proxy import HOST
 from tests.chaos.ws._server import BOOK, SEED, Stack, flag_on
 from tests.contract.ws._support import ORIGIN
@@ -61,10 +76,11 @@ from tests.security.ws._raw import delta
 
 pytestmark = pytest.mark.perf
 
-N = 400  # updates timed in each run
+N = 400  # updates timed in each run; the cap sockets' own minute limit caps it (`SETUP_FRAMES`)
 TICK_S = 1 / 16  # gateway time per update: 16 a second, over the 50 ms minimum of `throttle_ms`
 BUDGET_MS = 20.0  # budget #6 (06-performance-and-load-standard.md §2): p95 of the fan-out
 TOLERANCE_MS = 8.0  # what the flood may add to that user's median: about 3 x its cost, 40 % of 20
+STALL_MS = 100.0  # the slowest of the N updates: 5 x the budget, a stall bound, not a latency one
 TIMEOUT_S = 5.0  # a hang guard on every wait, never a latency bound
 LEGIT, FLOODER = uuid.UUID(int=0x2D01), uuid.UUID(int=0x2D02)
 CAPS, SYMS, EVERY = 3, 2, 3  # sockets at each cap; each sends on every EVERY-th update
@@ -74,6 +90,7 @@ HELD_SUBS = [f"footprint.BTCUSDT.tick.{n}" for n in range(1, 201)]  # 200: the c
 OVER_SUBS = [f"footprint.BTCUSDT.tick.{n}" for n in range(201, 251)]  # 50: the most a `sub` holds
 HELD_SYMS = [f"trades.S{n:02d}USDT" for n in range(40)]  # 40 symbols: the cap
 OVER_SYMS = [f"trades.S{n:02d}USDT" for n in range(40, 90)]
+SETUP_FRAMES = 2 + len(HELD_SUBS) // 50  # what a cap socket sent before the run: hello, auth, subs
 
 
 def p95(ms: list[float]) -> float:
@@ -103,7 +120,8 @@ def holds(xs: list[float], n: int) -> Callable[[], bool]:
 
 
 def whole(f: dict[str, Any]) -> dict[str, Any]:
-    """A received frame as documented: its `ts` is the gateway's clock, so only its presence."""
+    """A received frame as documented, `ts` aside: the gateway's clock, an int where the frame has
+    one (an `err` has none, §3.1), so that is all that is checked of it."""
     assert isinstance(f.pop("ts", 0), int)
     return f
 
@@ -155,9 +173,15 @@ class Raw:
         parsed = [json.loads(text) for text in self.texts]
         return [f for f in parsed if of in (None, f["t"]) and id in (None, f.get("id"))]
 
+    async def close(self) -> None:
+        with contextlib.suppress(ConnectionClosed):
+            await self.ws.close()
+        await asyncio.gather(self.task, return_exceptions=True)
+
 
 async def dial(stack: Stack, token: str) -> Raw:
-    """A socket that has said `hello` and `auth` and holds its `auth_ok`."""
+    """A socket that has said `hello` and `auth` and holds its `auth_ok`; one that fails on the
+    way is closed, not left to the teardown."""
     ws = await connect(
         f"ws://{HOST}:{stack.port}/ws",
         origin=Origin(ORIGIN),
@@ -168,11 +192,23 @@ async def dial(stack: Stack, token: str) -> Raw:
         max_size=4 * 1024 * 1024,
     )
     raw = Raw(ws)
-    await ws.send(frame("hello", "h", {"client": "flood", "protocol": "cv.v1"}))
-    await raw.until(lambda: raw.count("welcome") == 1, "welcome")
-    await ws.send(frame("auth", "a", {"access_token": token}))
-    await raw.until(lambda: raw.count("auth_ok") == 1, "auth_ok")
+    try:
+        await ws.send(frame("hello", "h", {"client": "flood", "protocol": "cv.v1"}))
+        await raw.until(lambda: raw.count("welcome") == 1, "welcome")
+        await ws.send(frame("auth", "a", {"access_token": token}))
+        await raw.until(lambda: raw.count("auth_ok") == 1, "auth_ok")
+    except BaseException:
+        await raw.close()
+        raise
     return raw
+
+
+async def send(raw: Raw, text: str) -> bool:
+    """Send `text`; False if the gateway had closed the socket (the end of the run checks which)."""
+    with contextlib.suppress(ConnectionClosed):
+        await raw.ws.send(text)
+        return True
+    return False
 
 
 async def fill(raw: Raw, topics: list[str]) -> Raw:
@@ -202,12 +238,21 @@ class Flood:
     @classmethod
     async def open(cls, stack: Stack) -> Flood:
         token = (await stack.sessions.mint(str(FLOODER))).access_token
-        idle = await dial(stack, token)
-        await stack.clock.advance(TICK_S)  # the rest are heard from later: this is the oldest idle
-        caps = [await fill(await dial(stack, token), HELD_SUBS) for _ in range(CAPS)]
-        syms = [await fill(await dial(stack, token), HELD_SYMS) for _ in range(SYMS)]
-        resync = await fill(await dial(stack, token), [STREAM])
-        return cls(stack, token, idle, caps, syms, resync, await dial(stack, token))
+        async with contextlib.AsyncExitStack() as dialled:  # a dial that fails closes the earlier
+
+            async def new(topics: list[str] | None = None) -> Raw:
+                raw = await dial(stack, token)
+                dialled.push_async_callback(raw.close)
+                return raw if topics is None else await fill(raw, topics)
+
+            idle = await new()
+            await stack.clock.advance(TICK_S)  # the rest are heard from later: this is the oldest
+            caps = [await new(HELD_SUBS) for _ in range(CAPS)]
+            syms = [await new(HELD_SYMS) for _ in range(SYMS)]
+            resync = await new([STREAM])
+            flood = cls(stack, token, idle, caps, syms, resync, await new())
+            dialled.pop_all()  # the flood owns them now: `close`
+        return flood
 
     def sockets(self) -> list[Raw]:
         return [self.idle, *self.caps, *self.syms, self.resync, self.burst, *self.extra]
@@ -215,30 +260,31 @@ class Flood:
     async def close(self) -> None:
         if self.dialing is not None:
             self.dialing.cancel()
+            (late,) = await asyncio.gather(self.dialing, return_exceptions=True)
+            if isinstance(late, Raw):  # it finished before the cancel: closed with the others
+                self.extra.append(late)
         for raw in self.sockets():
-            with contextlib.suppress(ConnectionClosed):
-                await raw.ws.close()
-        await asyncio.gather(*(raw.task for raw in self.sockets()), return_exceptions=True)
+            await raw.close()
 
     async def tick(self, i: int) -> None:
         """What the flood sends ahead of update `i`, and the start of a connection."""
         for k, raw in enumerate([*self.caps, *self.syms]):
-            if i % EVERY == k % EVERY:
-                await raw.ws.send(OVER_SUBS_FRAME if k < CAPS else OVER_SYMS_FRAME)
+            over = OVER_SUBS_FRAME if k < CAPS else OVER_SYMS_FRAME
+            if i % EVERY == k % EVERY and await send(raw, over):
                 self.sent[raw] += 1
         if RESYNC_AT <= i < RESYNC_AT + 6:  # the sixth in a minute is a loop
-            await self.resync.ws.send(frame("resync", f"r{i}", {"reason": "manual"}, ch=STREAM))
+            await send(self.resync, frame("resync", f"r{i}", {"reason": "manual"}, ch=STREAM))
         elif i > RESYNC_AT + 5 and i % 4 == 0:  # the revoked stream's five are spent for a minute
-            await self.resync.ws.send(sub([STREAM], "again"))
-            self.again += 1
+            if await send(self.resync, sub([STREAM], "again")):
+                self.again += 1
         if i % 4 == 2 and i < BURST_AT:  # heard from, so never the oldest idle
-            await self.burst.ws.send(frame("ping", "k"))
+            await send(self.burst, frame("ping", "k"))
         if i in CONNECT_AT:
             self.dialing = spawn(dial(self.stack, self.token), name="flood-dial")
         if i == BURST_AT:
-            with contextlib.suppress(ConnectionClosed):  # the second refusal closes the socket
-                for n in range(BURST):
-                    await self.burst.ws.send(frame("ping", f"b{n}"))
+            for n in range(BURST):  # the second refusal closes the socket: the rest are moot
+                if not await send(self.burst, frame("ping", f"b{n}")):
+                    break
 
     async def settle(self) -> None:
         if self.dialing is not None:
@@ -248,7 +294,9 @@ class Flood:
 
 @contextlib.asynccontextmanager
 async def nodelay_stack() -> AsyncIterator[Stack]:
-    """The rig's flag-on stack, its accepted sockets with `TCP_NODELAY` (module doc)."""
+    """The rig's flag-on stack, its accepted sockets with `TCP_NODELAY` (module doc). The rig has
+    no accessor for its listening socket and is not edited here, so this reaches `_sock`: one
+    line in `Stack._boot` would make it unnecessary."""
     async with flag_on() as stack:
         stack._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         yield stack
@@ -363,7 +411,11 @@ def figures(ms: list[float]) -> str:
     return f"p50 {p50:.2f}, p95 {p95(ms):.2f}, p99 {p99:.2f}, max {s[-1]:.2f} ms"
 
 
-async def test_x02_ac_19_a_flood_of_every_limit_leaves_anothers_book_stream_in_budget() -> None:
+async def test_x02_ac_19_isolation_clause_at_sustained_pace_book_stream_stays_in_budget() -> None:
+    # N is capped by the cap sockets' own limit: a frame every EVERY updates is 320 a minute at
+    # TICK_S, over RATE_PER_MINUTE, so a run long enough to send that many of them is refused.
+    sent = math.ceil(N / EVERY) + SETUP_FRAMES
+    assert sent <= RATE_PER_MINUTE, f"N = {N}: {sent} frames from a socket, over {RATE_PER_MINUTE}"
     async with nodelay_stack() as quiet:
         alone, bodies = await measure(quiet, None)
     moved, closes, revokes = marks(), total("cv_ws_closes_total"), total("cv_ws_revoked_total")
@@ -371,6 +423,7 @@ async def test_x02_ac_19_a_flood_of_every_limit_leaves_anothers_book_stream_in_b
         flood = await Flood.open(loud)
         try:
             beside, same = await measure(loud, flood)
+            print(f"#415 d2: alone {figures(alone)}; beside the flood {figures(beside)}")
             check_flood(flood, {key: read() for key, read in moved.items()})
             # Nothing but the flood's own sockets was closed or revoked: not the second user.
             assert total("cv_ws_closes_total") - closes == 4  # three evictions and the burst
@@ -378,7 +431,7 @@ async def test_x02_ac_19_a_flood_of_every_limit_leaves_anothers_book_stream_in_b
         finally:
             await flood.close()
     assert same == bodies  # the same bodies, in the same order, as without the flood
-    print(f"#415 d2: alone {figures(alone)}; beside the flood {figures(beside)}")
     assert p95(beside) <= BUDGET_MS, f"p95 {p95(beside):.2f} ms past budget #6 ({BUDGET_MS} ms)"
     added = statistics.median(beside) - statistics.median(alone)
     assert added <= TOLERANCE_MS, f"the flood added {added:.2f} ms to the median"
+    assert max(beside) <= STALL_MS, f"an update took {max(beside):.2f} ms, past {STALL_MS} ms"
