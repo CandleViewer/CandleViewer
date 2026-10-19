@@ -287,6 +287,16 @@ that owner into an empty volume: run everything that touches it as the image's u
   docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint ls api -ldn /var/lib/candleviewer/audit
   ```
 
+**The audit lane key (ADR-0037 decision 6, #3009).** The key is a compose file secret, never on
+the audit volume: `CV_AUDIT_LANE_MAC_SOURCE` in `infra/compose/.env` names the host file, which
+compose mounts as it is at `/run/secrets/cv_audit_lane_key`, so the file itself must hold 64 hex
+digits, mode `0400`, owner and group 10001 (`install -m 0400 -o 10001 -g 10001`). Keep it in a
+root-owned `0700` directory outside the checkout and outside every path a compose file bind-mounts
+(the dev overlay mounts `services/api/candleviewer`), and give uid 10001 no login on the host:
+whoever runs as it can read the key. Unset, the source is `/dev/null`, which a real backend refuses;
+compose runs the fake backend today, which never reads it. Rotation and `_PREVIOUS_` retirement
+are S4a's rows.
+
 The CLI will run as a one-off container of the `api` service, so only with cv-api stopped: that is
 also the CLI's own rule, since it takes `instance.lock` exclusively and cv-api holds it shared.
 `docker compose run` gives that container the service's own volume, `CV_AUDIT_WAL_PATH`, user and

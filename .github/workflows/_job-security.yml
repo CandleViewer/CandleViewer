@@ -567,6 +567,48 @@ jobs:
           -c 'import candleviewer.server, candleviewer.main as m;
           print("boot smoke OK:", len(m.app.routes), "routes")'
 
+      # #3285 item 3, the image half: Docker copies a mount point's owner and mode into an empty
+      # named volume, so the audit volume's mount point must be the runtime user's, mode 0700.
+      - name: Image - the audit volume's mount point is 10001:10001, mode 0700
+        timeout-minutes: 2
+        run: |
+          got="$(docker run --rm --pull never --network none --entrypoint stat candleviewer-api:ci \
+            -c '%u:%g %a' /var/lib/candleviewer/audit)"
+          echo "audit volume mount point: ${got}"
+          test "${got}" = "10001:10001 700"
+
+      # ADR-0037 decision 6 (#3009): a lane key provisioned as infra/compose/docker-compose.yml says
+      # (64 hex digits, mode 0400, owner 10001) and bind-mounted read-only at the loader's default
+      # path, as compose does without Swarm, loads in the image as its runtime user on the read-only
+      # root; compose's /dev/null default is refused on a real backend. The key is generated here
+      # and never printed or kept; only its one-way id is.
+      - name: Image - a provisioned audit lane key loads, the /dev/null default is refused
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          key_dir="$(mktemp -d)"
+          trap 'rm -rf "${key_dir}"' EXIT
+          (umask 077 && openssl rand -hex 32 > "${key_dir}/cv_audit_lane_key")
+          chmod 0400 "${key_dir}/cv_audit_lane_key"
+          sudo chown 10001:10001 "${key_dir}/cv_audit_lane_key"
+          load='from candleviewer.audit_lane_wiring import load_lane_keys
+          from candleviewer.settings import Settings
+          wal = "/var/lib/candleviewer/audit/audit.wal"
+          keys = load_lane_keys(Settings(storage_backend="real", audit_wal_path=wal))
+          assert keys is not None
+          print("audit lane key loaded, kid", keys.kid)'
+          load_from() {
+            docker run --rm --pull never --network none --read-only --tmpfs /tmp \
+              --mount "type=bind,source=$1,target=/run/secrets/cv_audit_lane_key,readonly" \
+              --entrypoint python candleviewer-api:ci -c "${load}"
+          }
+          load_from "${key_dir}/cv_audit_lane_key"
+          if refused="$(load_from /dev/null 2>&1)"; then
+            echo "::error::a real backend loaded /dev/null as its audit lane key"
+            exit 1
+          fi
+          grep -F "CV_AUDIT_LANE_KEY_FILE must name a regular file" <<< "${refused}"
+
       # #2893 (ADR-0036): the same image, run the same way: `cvdev` cannot be imported, and a boot
       # with CV_ACCOUNT_FIXTURE set stops with the package-absent refusal. A PR-time early
       # warning; main.yml runs the binding copy before every image push.

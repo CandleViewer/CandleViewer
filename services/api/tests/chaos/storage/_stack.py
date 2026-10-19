@@ -2,7 +2,8 @@
 
 The CI `integration` job brings up `postgres` + `questdb` from
 `infra/compose/docker-compose.yml`, mounts a fixed-size loopback image on
-the runner for scenario 3b, and runs Alembic before selecting
+the runner for scenario 3b and the audit lane's scenario 13 (`tests/chaos/audit`),
+and runs Alembic before selecting
 `-m "chaos and integration"`. Faults are injected with `docker compose
 stop/start`; every wait is bounded and polls a condition (no bare sleeps).
 The app side runs in-process with the production wiring: the E04-T04
@@ -36,7 +37,8 @@ HOST = "127.0.0.1"
 PG_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
 QDB_PG_PORT = int(os.environ.get("QUESTDB_PG_PORT", "8812"))
 QDB_ILP_PORT = int(os.environ.get("QUESTDB_ILP_PORT", "9009"))
-#: Loopback-image mount for scenario 3b (created by the CI step, never a real volume).
+#: Loopback-image mount for scenario 3b and audit scenario 13 (created by the CI step, never a
+#: real volume).
 LOOP_DIR = Path(os.environ.get("CV_CHAOS_LOOPBACK_DIR", "/mnt/cv-chaos-cold"))
 LOOP_MAX_BYTES = 128 * 1024 * 1024
 #: A `docker compose` call that has not exited within this long is killed and fails loudly.
