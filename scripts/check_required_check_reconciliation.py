@@ -132,21 +132,17 @@ def load_json(path: str) -> dict:
 
 def load_constitution_check_names(path: str) -> list[str]:
     names: list[str] = []
-    try:
-        with open(path, encoding="utf-8") as fh:
-            in_table = False
-            for line in fh:
-                if line.strip().startswith("| # | Check name"):
-                    in_table = True
-                    continue
-                if in_table:
-                    if not line.strip().startswith("|"):
-                        break
-                    match = CHECK_ROW_RE.match(line.strip())
-                    if match:
-                        names.append(match.group(1))
-    except FileNotFoundError as exc:
-        raise ReconciliationError(f"file not found: {path}") from exc
+    in_table = False
+    for line in _read(path).splitlines():
+        if line.strip().startswith("| # | Check name"):
+            in_table = True
+            continue
+        if in_table:
+            if not line.strip().startswith("|"):
+                break
+            match = CHECK_ROW_RE.match(line.strip())
+            if match:
+                names.append(match.group(1))
     if not names:
         raise ReconciliationError(
             f"no §9 check rows found in {path} — table heading may have moved"

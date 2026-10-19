@@ -555,3 +555,16 @@ def test_a_file_over_the_read_bound_is_refused(
         recon.load_json(str(over))
     with pytest.raises(recon.ReconciliationError, match="file not found"):
         recon.load_json(str(tmp_path / "missing.json"))
+
+
+def test_a_constitution_over_the_read_bound_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #3716: load_constitution_check_names reads through _read's bound too.
+    monkeypatch.setattr(recon, "MAX_READ_CHARS", 8)
+    over = tmp_path / "CONSTITUTION.md"
+    over.write_text("x" * 9, encoding="utf-8")
+    with pytest.raises(recon.ReconciliationError, match="over 8 characters"):
+        recon.load_constitution_check_names(str(over))
+    with pytest.raises(recon.ReconciliationError, match="file not found"):
+        recon.load_constitution_check_names(str(tmp_path / "missing.md"))
