@@ -24,6 +24,16 @@ the bar takes the remaining quota and closes, and the remainder opens the next b
 same price, timestamp and side, so BI-1 holds. A print spanning N thresholds closes N
 identical flat bars. Both emissions of a split carry `split_from_trade_id`. A split trade
 counts once in `trade_count` of every bar that holds a part of it.
+
+SR-E12-15: one print closes at most `MAX_BRICKS_PER_TRADE` bars (the remainder that opens the next
+bar is not a close). The check comes before any state changes, and a print over it raises
+`BarsError`, as the renko builder does: the builder is left as if the print never arrived, and on
+the live path `BarBuilderSet` quarantines, counts and logs the series. Tick, delta and range bars
+never split a trade, so each emits one update per print and needs no such check.
+
+The bound is exact for thresholds of at most 25 significant digits (the wire takes whole numbers up
+to 10^12); a 26 to 28 digit threshold built directly can close one bar more or fewer, and can
+refuse a print that closes exactly 1 000.
 """
 
 from __future__ import annotations
@@ -36,6 +46,7 @@ import orjson
 import structlog
 
 from candleviewer.bars.errors import BarsError, BarSpecError
+from candleviewer.bars.limits import MAX_BRICKS_PER_TRADE
 from candleviewer.bars.models import BarSpec, BarUpdate, BuilderState
 from candleviewer.bars.time_builder import _NONE, _Draft, bars_built_total
 from candleviewer.domain.primitives import TsUs
@@ -100,9 +111,15 @@ class _ActivityBuilder:
         self._last_seq: int | None = None
         self._built = bars_built_total.labels(symbol=symbol, kind=self._kind)
 
-    def _guard(self, t: TradeEvent) -> None:
+    def _check_symbol(self, t: TradeEvent) -> None:
+        # `VolumeBarBuilder.on_trade` calls this directly (the cap check must come before the
+        # last-seq write); keep it in step with `_guard`.
         if t.symbol != self.symbol:
             raise BarsError(f"Trade for {t.symbol} sent to the {self.symbol} {self._kind} builder.")
+
+    def _guard(self, t: TradeEvent) -> None:
+        # Not called by `VolumeBarBuilder.on_trade` (see `_check_symbol`): keep the two in step.
+        self._check_symbol(t)
         self._last_seq = t.seq
 
     def _draft(self, t: TradeEvent) -> _Draft:
@@ -173,22 +190,30 @@ class VolumeBarBuilder(_ActivityBuilder):
     def __init__(self, spec: BarSpec, symbol: str) -> None:
         super().__init__(spec, symbol)
         self._quota = Decimal(spec.param_value)
+        self._cap_qty = MAX_BRICKS_PER_TRADE * self._quota  # SR-E12-15: the overshoot it refuses
         self._splits = bar_volume_splits_total.labels(symbol=symbol)
         self._n_trades = self._n_splits = 0
         self._warned = False
 
     def on_trade(self, t: TradeEvent) -> Sequence[BarUpdate]:
-        self._guard(t)
+        self._check_symbol(t)
         px, ts, seq, buy, rem = t.price, t.ts_event, t.seq, t.side == "buy", t.qty
+        cur = self._cur
+        room = self._quota if cur is None else self._quota - cur.buy - cur.sell
+        # SR-E12-15: a print that reaches the room closes 1 + (rem - room) // quota bars, more than
+        # the cap iff rem - room >= `_cap_qty`. Refused before any state changes, so the builder is
+        # left as if it never arrived. `rem >= room` first: the common path skips the subtraction.
+        if rem >= room and rem - room >= self._cap_qty:
+            raise self._refusal(rem - room)
+        self._last_seq = seq
         self._n_trades += 1
         d = self._draft(t)
-        room = self._quota - d.buy - d.sell
         if rem < room:  # common path: no close, no split
             d.fold(px, rem, ts, seq, buy)
             return (self._emit(d, closed=False),)
         split = t.trade_id if rem > room else None
         out: list[BarUpdate] = []
-        while True:  # bounded: ceil(qty / volume_threshold) iterations, one Bar each
+        while True:  # bounded: one iteration per close (at most the cap), plus one for a remainder
             take = room if rem > room else rem
             d.fold(px, take, ts, seq, buy)
             rem -= take
@@ -203,6 +228,15 @@ class VolumeBarBuilder(_ActivityBuilder):
         if split is not None:
             self._split_seen()
         return out
+
+    def _refusal(self, over: Decimal) -> BarsError:
+        """The refusal of a print that overshoots the open bar's room by `over`. The count is for
+        the message only: a quotient past the Decimal context reads "over 1000", never raises."""
+        try:
+            count = f"{1 + int(over // self._quota)}"
+        except ArithmeticError:
+            count = f"over {MAX_BRICKS_PER_TRADE}"
+        return BarsError(f"One trade would close {count} volume bars (cap {MAX_BRICKS_PER_TRADE}).")
 
     def _split_seen(self) -> None:
         self._splits.inc()

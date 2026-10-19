@@ -50,7 +50,8 @@ RANGE_TICKS_RANGE: Final = (2, 100_000)
 #: Renko shares the range bound (a tiny brick emits bricks per trade); reversal cost <= 10 bricks.
 RENKO_TICKS_RANGE: Final = RANGE_TICKS_RANGE
 MAX_REVERSAL_BRICKS: Final = 10
-#: SR on #2125: one trade may complete at most this many bricks; beyond it the builder raises.
+#: SR-E12-15 (#2125, #2770): one trade may complete (renko bricks) or close (volume bars) at most
+#: this many; beyond it the builder raises, and on the live path the set quarantines the series.
 MAX_BRICKS_PER_TRADE: Final = 1_000
 QTY_PARAM_MAX: Final = 10**12
 
