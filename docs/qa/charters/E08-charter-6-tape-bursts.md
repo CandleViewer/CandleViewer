@@ -2,7 +2,7 @@
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
 - Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** no live burst, no staging and no 90-minute human time box. The session was in-process: the trade stream, dispatch-lane, bus and chaos suites re-run, and a throwaway probe pushed synthetic bursts through the production `TradeStream` (`TradeHarness` from the contract pack) on a fake clock. The recorded corpus holds at most two prints per frame, so burst shapes were synthetic.
-- No credentials used; no network.
+- No credentials used; no network: in-process only, and none of the suites re-run is one of the two pack tests that resolve a venue host name until #3826 lands (`docs/qa/e08-signoff.md` section 11).
 
 ## Charter
 

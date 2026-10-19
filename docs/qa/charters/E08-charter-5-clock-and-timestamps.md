@@ -2,7 +2,7 @@
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
 - Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** no real host sleep or resume, no WSL clock jump, no staging and no 90-minute human time box. The session was in-process: the clock and event-window suites and chaos s08 re-run on a virtual clock, E08 modules searched for local or naive time, and a throwaway probe of event timestamps, including an instant on a DST transition.
-- No credentials used; no network.
+- No credentials used; no network: in-process only, and none of the suites re-run is one of the two pack tests that resolve a venue host name until #3826 lands (`docs/qa/e08-signoff.md` section 11).
 
 ## Charter
 

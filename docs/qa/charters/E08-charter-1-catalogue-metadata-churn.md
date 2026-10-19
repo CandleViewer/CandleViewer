@@ -2,7 +2,7 @@
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
 - Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** no staging build, no browser, no docker stack and no 90-minute human time box. The session was in-process: the oracles below were checked by re-running the existing fakes-backed suites, reading the catalogue, policy and book code paths, and running throwaway probes against production classes with the recorded corpus (`packages/fixtures/bybit/2026-10-05`). Nothing was observed in a running app or a browser. Items that need a human or staging are under "Not probed" with the issue that owns them.
-- No credentials used; no network.
+- No credentials used; no network: in-process only, and none of the suites re-run is one of the two pack tests that resolve a venue host name until #3826 lands (`docs/qa/e08-signoff.md` section 11).
 
 ## Charter
 
