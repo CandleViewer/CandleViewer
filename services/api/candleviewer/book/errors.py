@@ -12,7 +12,7 @@ class BookPayloadError(BookError):
 
 
 class BookInvariantError(BookError):
-    """Applying a delta broke a book invariant (crossed, unbounded)."""
+    """Applying a delta broke a book invariant (crossed, unbounded, grid)."""
 
     def __init__(self, kind: str) -> None:
         super().__init__(kind)

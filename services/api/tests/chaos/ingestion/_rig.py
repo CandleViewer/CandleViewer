@@ -274,6 +274,7 @@ class Rig:
             rand=self.rng.random,
             write_sleep=self.clock.sleep,
             sleep=self.clock.sleep,  # the SNAPSHOT_TIMEOUT tick on virtual time
+            tick_size=self._tick_size,  # #3806, as `wire_public_ws` passes it
         )
         self.svc.attach_books(self.books)
         self.tickers = TickerStream(

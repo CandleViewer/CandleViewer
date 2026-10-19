@@ -17,6 +17,15 @@ from candleviewer.exchange.base.models import BookLevel
 
 
 class _Side:
+    """One side, in one price order: its prices rise strictly with its ticks (#3806).
+
+    Each write checks only its own level, against its slot and the slot's neighbours (O(1) past
+    the bisect, no scan): found ticks must hold the level's price; an insert, or a delete that
+    finds nothing, must fall strictly between the neighbours' prices. Else the level is off the
+    book's grid: `BookInvariantError("grid")`, before any write. By induction levels == distinct
+    prices always holds, and a held price is only ever reached at its own ticks.
+    """
+
     __slots__ = ("price", "qty", "ticks")
 
     def __init__(self) -> None:
@@ -25,19 +34,28 @@ class _Side:
         self.price: list[Decimal] = []
 
     def upsert(self, lvl: BookLevel) -> None:
-        i = bisect_left(self.ticks, lvl.price_ticks)
-        if i < len(self.ticks) and self.ticks[i] == lvl.price_ticks:
+        ticks, price = self.ticks, self.price
+        i = bisect_left(ticks, lvl.price_ticks)
+        if i < len(ticks) and ticks[i] == lvl.price_ticks:
+            if price[i] != lvl.price:
+                raise BookInvariantError("grid")
             self.qty[i] = lvl.qty
-            self.price[i] = lvl.price
+        elif (i and price[i - 1] >= lvl.price) or (i < len(ticks) and price[i] <= lvl.price):
+            raise BookInvariantError("grid")
         else:
-            self.ticks.insert(i, lvl.price_ticks)
+            ticks.insert(i, lvl.price_ticks)
             self.qty.insert(i, lvl.qty)
-            self.price.insert(i, lvl.price)
+            price.insert(i, lvl.price)
 
-    def delete(self, ticks: int) -> None:
-        i = bisect_left(self.ticks, ticks)
-        if i < len(self.ticks) and self.ticks[i] == ticks:
-            del self.ticks[i], self.qty[i], self.price[i]
+    def delete(self, lvl: BookLevel) -> None:
+        ticks, price = self.ticks, self.price
+        i = bisect_left(ticks, lvl.price_ticks)
+        if i < len(ticks) and ticks[i] == lvl.price_ticks:
+            if price[i] != lvl.price:
+                raise BookInvariantError("grid")
+            del ticks[i], self.qty[i], price[i]
+        elif (i and price[i - 1] >= lvl.price) or (i < len(ticks) and price[i] <= lvl.price):
+            raise BookInvariantError("grid")  # a no-op could leave a deleted level held
 
     def __len__(self) -> int:
         return len(self.ticks)
@@ -87,14 +105,16 @@ class BookState:
         for side, levels in ((self._bids, bids), (self._asks, asks)):
             for lvl in levels:
                 if lvl.qty == 0:
-                    side.delete(lvl.price_ticks)
+                    side.delete(lvl)
                 else:
                     side.upsert(lvl)
         self.check()
 
     def check(self) -> None:
-        """No crossed book; size bound per tier (sorting is structural)."""
-        if self._bids.ticks and self._asks.ticks and self._bids.ticks[-1] >= self._asks.ticks[0]:
+        """No crossed book, by price so that it holds on any grid (with each side's order, no
+        price is then on both sides, #3806); size bound per tier (sorting is structural)."""
+        bids, asks = self._bids.price, self._asks.price
+        if bids and asks and bids[-1] >= asks[0]:
             raise BookInvariantError("crossed")
         if len(self._bids) > 2 * self.depth or len(self._asks) > 2 * self.depth:
             raise BookInvariantError("unbounded")

@@ -17,7 +17,7 @@ import pytest
 
 from candleviewer.book import state as book_state
 from candleviewer.book.resync import BookEngine
-from candleviewer.exchange.base.models import BookDelta
+from candleviewer.exchange.base.models import BookDelta, BookLevel
 
 from ._builders import delta, lvl, snap
 
@@ -86,9 +86,9 @@ async def test_book_engine_per_delta_work_is_constant_in_stream_length(
         ops["n"] += 1
         real_up(self, lv)  # type: ignore[arg-type]
 
-    def dl(self: book_state._Side, t: int) -> None:
+    def dl(self: book_state._Side, lv: BookLevel) -> None:
         ops["n"] += 1
-        real_del(self, t)
+        real_del(self, lv)
 
     monkeypatch.setattr(book_state._Side, "upsert", up)
     monkeypatch.setattr(book_state._Side, "delete", dl)
