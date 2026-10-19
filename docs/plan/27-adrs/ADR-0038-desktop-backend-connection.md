@@ -685,7 +685,7 @@ Records S2's results; it changes no decision above. The S2 probe PR adds
 launched the shell the default way (the `app://` load path) with the repo's Electron 41.10.7
 (Chrome 146.0.7680.216) on the Linux CI runner (`ubuntu-latest`), against a loopback fixture server on
 `127.0.0.1:8000`, in
-[e2e-nightly run 39186831120](https://github.com/basiltt/CandleViewer/actions/runs/39186831120) (job
+[e2e-nightly run 39186831120](https://github.com/CandleViewer/CandleViewer/actions/runs/39186831120) (job
 `e2e-electron`). The Windows and macOS builds were not measured. A change, for example from an Electron
 bump, fails the nightly `e2e-electron` job with the assumption's id and its consequence from the table
 above; that job also runs on `release/*` heads (`.github/workflows/_job-e2e.yml:185`), but not on other

@@ -771,13 +771,13 @@ documentation alone.
 | #914  | E29-T06 reconciliation loop: its supported manual dashboard orders conflict with SR-E27-19's no-intent freeze (Owner decision D8, #1778 2026-10-14)      | KV-E11                                 |
 
 The four requests in the #848, #913, #916 and #1274 rows were posted on 2026-10-16:
-[#848](https://github.com/basiltt/CandleViewer/issues/848#issuecomment-6210959367) (SR-E27-17, SR-E27-19),
-[#913](https://github.com/basiltt/CandleViewer/issues/913#issuecomment-6210959867) (SR-E27-21),
-[#916](https://github.com/basiltt/CandleViewer/issues/916#issuecomment-6210960332) (SR-E27-19) and
-[#1274](https://github.com/basiltt/CandleViewer/issues/1274#issuecomment-6210960885) (SR-E27-19). The hand-offs to
-E27-X02 ([#901](https://github.com/basiltt/CandleViewer/issues/901#issuecomment-6210962862): abuse-case seeds, §10.1
+[#848](https://github.com/CandleViewer/CandleViewer/issues/848#issuecomment-6210959367) (SR-E27-17, SR-E27-19),
+[#913](https://github.com/CandleViewer/CandleViewer/issues/913#issuecomment-6210959867) (SR-E27-21),
+[#916](https://github.com/CandleViewer/CandleViewer/issues/916#issuecomment-6210960332) (SR-E27-19) and
+[#1274](https://github.com/CandleViewer/CandleViewer/issues/1274#issuecomment-6210960885) (SR-E27-19). The hand-offs to
+E27-X02 ([#901](https://github.com/CandleViewer/CandleViewer/issues/901#issuecomment-6210962862): abuse-case seeds, §10.1
 checklist, SR-E27-11 and SR-E27-12) and E27-X03
-([#902](https://github.com/basiltt/CandleViewer/issues/902#issuecomment-6210963344): the scope matrix, KV-E02 and
+([#902](https://github.com/CandleViewer/CandleViewer/issues/902#issuecomment-6210963344): the scope matrix, KV-E02 and
 SR-E27-02) were posted the same day. How SR-E27-19's no-intent freeze treats manual dashboard orders (#914) is an open
 Owner decision (D8); the model does not decide it.
 

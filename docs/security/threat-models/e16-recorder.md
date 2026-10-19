@@ -158,12 +158,12 @@ Every threat with no adequate existing control became a ticket against the ownin
 
 | Finding | Threats | Owning task | Issue |
 | --- | --- | --- | --- |
-| E16-FR-01 | R-S1, R-D2 | E16-T02 | https://github.com/basiltt/CandleViewer/issues/1738 |
-| E16-FR-03 | R-T1 | E16-T04 | https://github.com/basiltt/CandleViewer/issues/1739 |
-| E16-FR-05, -09, -10 | R-R2, R-D5, R-E2 | E16-T06 | https://github.com/basiltt/CandleViewer/issues/1740 |
-| E16-FR-11 | R-E3 | E16-T07 | https://github.com/basiltt/CandleViewer/issues/1741 |
-| E16-FR-06, -07 | R-I1, R-I2 | E16-T08 | https://github.com/basiltt/CandleViewer/issues/1742 |
-| E16-FR-02, -04, -08 | R-S3, R-T2, R-D3, R-E4 | E16-T10 | https://github.com/basiltt/CandleViewer/issues/1743 |
+| E16-FR-01 | R-S1, R-D2 | E16-T02 | https://github.com/CandleViewer/CandleViewer/issues/1738 |
+| E16-FR-03 | R-T1 | E16-T04 | https://github.com/CandleViewer/CandleViewer/issues/1739 |
+| E16-FR-05, -09, -10 | R-R2, R-D5, R-E2 | E16-T06 | https://github.com/CandleViewer/CandleViewer/issues/1740 |
+| E16-FR-11 | R-E3 | E16-T07 | https://github.com/CandleViewer/CandleViewer/issues/1741 |
+| E16-FR-06, -07 | R-I1, R-I2 | E16-T08 | https://github.com/CandleViewer/CandleViewer/issues/1742 |
+| E16-FR-02, -04, -08 | R-S3, R-T2, R-D3, R-E4 | E16-T10 | https://github.com/CandleViewer/CandleViewer/issues/1743 |
 
 Threats with a control but no detection: R-I1, R-I2, R-I4, R-E5 (test-only or none; accepted, see section 8).
 

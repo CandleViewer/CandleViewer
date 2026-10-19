@@ -68,6 +68,11 @@ def is_na(section_content: str | None) -> bool:
     return section_content is not None and section_content.strip() == "N/A"
 
 
+# Repository transferred to the CandleViewer organisation on 2026-10-19; GitHub redirects the old
+# path. Evidence links written before the transfer still name the old owner, so they count for the
+# same repository name (the repository name must still match).
+LEGACY_OWNERS: tuple[str, ...] = ("basiltt",)
+
 _ACTIONS_RUN_URL_RE = re.compile(
     r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/actions/runs/\d+(?:/jobs/\d+)?/?$"
 )
@@ -76,7 +81,10 @@ _ACTIONS_RUN_URL_RE = re.compile(
 def find_repo_actions_run_urls(text: str, owner: str, repo: str) -> list[str]:
     """Return every URL in ``text`` that points at an Actions run for
     ``owner/repo`` specifically (not an arbitrary external link, and not an
-    Actions run belonging to a different repository)."""
+    Actions run belonging to a different repository).
+
+    ``LEGACY_OWNERS`` are aliases of ``owner`` for the same ``repo`` name, so run
+    links written before the 2026-10-19 transfer stay valid."""
     if not text:
         return []
     candidates = re.findall(r"https?://\S+", text)
@@ -84,7 +92,7 @@ def find_repo_actions_run_urls(text: str, owner: str, repo: str) -> list[str]:
     for candidate in candidates:
         candidate = candidate.rstrip(").,]>\"'")
         m = _ACTIONS_RUN_URL_RE.match(candidate)
-        if m and m.group("owner") == owner and m.group("repo") == repo:
+        if m and m.group("repo") == repo and m.group("owner") in (owner, *LEGACY_OWNERS):
             matches.append(candidate)
     return matches
 
@@ -93,7 +101,7 @@ def find_repo_actions_run_urls(text: str, owner: str, repo: str) -> list[str]:
 
 QA_SIGNOFF_MARKER_RE = re.compile(r"QA sign-off:\s*(pass|fail)\b", re.IGNORECASE)
 QA_DEVIATION_MARKER_RE = re.compile(r"QA capacity deviation", re.IGNORECASE)
-# CandleViewer is a single-owner, user-level repo (`basiltt/CandleViewer`,
+# CandleViewer is a single-owner, user-level repo (`CandleViewer/CandleViewer`,
 # ADR-0017) -- there is no GitHub org and so no `@CandleViewer/security` team
 # to check membership of. A security sign-off must therefore carry this
 # explicit marker (mirroring QA_SIGNOFF_MARKER_RE) so *any* comment from

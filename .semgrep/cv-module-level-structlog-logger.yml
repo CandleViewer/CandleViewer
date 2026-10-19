@@ -16,7 +16,7 @@ rules:
       rule-id: cv-module-level-structlog-logger
       category: security
       references:
-        - https://github.com/basiltt/CandleViewer/issues/2008
+        - https://github.com/CandleViewer/CandleViewer/issues/2008
     patterns:
       - pattern-either:
           - pattern: $X = structlog.get_logger(...)

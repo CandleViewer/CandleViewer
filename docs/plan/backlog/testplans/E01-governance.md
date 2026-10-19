@@ -8,7 +8,7 @@ and issue/PR templates (E01-T05).
 
 ## 0. Environment constraints (read first)
 
-This is a private, single-owner, free-tier GitHub repository (`basiltt/CandleViewer`, ADR-0017 Q1):
+This is a private, single-owner, free-tier GitHub repository (`CandleViewer/CandleViewer`, ADR-0017 Q1):
 
 - `GET /repos/{repo}/branches/main/protection` and the repository-rulesets endpoints return
   `403 Upgrade to GitHub Pro` — **live branch-protection state cannot be read or mutated from this
@@ -153,8 +153,8 @@ See `docs/plan/backlog/testplans/E01-governance-charter.md` (separate file per `
 |---|---|---|---|---|
 | QA-BUG-E01-001 | P2 — Medium | R0 exit-criterion-1 evidence pack (screenshots of a refused live merge) cannot be produced on the current GitHub Free plan without admin/rulesets API access; not a control defect — a sandboxed-session/plan-tier gap. Owner action: run one real merge attempt against a single-approval PR post-`scripts/apply_branch_protection.py`, capture the refusal screenshot. | recorded here only (owner action, not a code bug) | No (P2, workaround exists: owner performs the one live check manually; the automatable half is fully green) |
 | QA-BUG-E01-002 | P2 — Medium | Cold-read usability verification of `CONTRIBUTING.md` (feeding E01-T02) requires a genuinely uninformed second engineer; not available in this agent session. Structural proxy found no issues but does not satisfy the acceptance criterion on its own. | recorded here only (owner action, not a code bug) | No (P2, scheduled next: hand to a real engineer before E01-T02 is declared Done) |
-| QA-BUG-E01-003 | P2 — Medium | `docs/plan/backlog/_tools/validate.py` rewrites `all-tickets.json` on every invocation (even validate-only mode per its own docstring: "no writes to E*.json" — the merged file is not an `E*.json` file, so this is arguably intended, but it is easy for a QA/agent session to accidentally leave a diff if they forget to `git checkout --` afterwards, as observed in this pass). Recommend: `validate.py` (no `--fix`) should not touch `all-tickets.json` either, or the docstring should say so explicitly. | [#1442](https://github.com/basiltt/CandleViewer/issues/1442) | No — cosmetic/process-friction only |
-| QA-BUG-E01-004 | P2 — Medium | `scripts/gh/guard_a11y.py` accepts any repo-scoped Actions run link as evidence, not necessarily the run relevant to the closing issue (charter finding 4). | [#1443](https://github.com/basiltt/CandleViewer/issues/1443) | No — workaround exists (human review of the linked run) |
+| QA-BUG-E01-003 | P2 — Medium | `docs/plan/backlog/_tools/validate.py` rewrites `all-tickets.json` on every invocation (even validate-only mode per its own docstring: "no writes to E*.json" — the merged file is not an `E*.json` file, so this is arguably intended, but it is easy for a QA/agent session to accidentally leave a diff if they forget to `git checkout --` afterwards, as observed in this pass). Recommend: `validate.py` (no `--fix`) should not touch `all-tickets.json` either, or the docstring should say so explicitly. | [#1442](https://github.com/CandleViewer/CandleViewer/issues/1442) | No — cosmetic/process-friction only |
+| QA-BUG-E01-004 | P2 — Medium | `scripts/gh/guard_a11y.py` accepts any repo-scoped Actions run link as evidence, not necessarily the run relevant to the closing issue (charter finding 4). | [#1443](https://github.com/CandleViewer/CandleViewer/issues/1443) | No — workaround exists (human review of the linked run) |
 
 No P0/P1 bugs found. All governance controls proven from the outside behave as declared; the gaps
 found are execution-environment limits (free-tier API access, no second human in this session), not

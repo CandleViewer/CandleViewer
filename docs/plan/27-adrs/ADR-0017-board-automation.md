@@ -64,7 +64,7 @@ stating a PAT or GitHub App installation token is required).
   constraint: the PAT's blast radius is "all of this user's projects", not just CandleViewer's board).
   No repository permissions are required beyond what `GITHUB_TOKEN` already grants for issue/comment
   operations (`issues: write` suffices there, verified in Q2/Q3 below).
-- **Storage**: Actions secret `PROJECTS_PAT` at the repository level (`basiltt/CandleViewer`), never
+- **Storage**: Actions secret `PROJECTS_PAT` at the repository level (`CandleViewer/CandleViewer`), never
   logged, never echoed (C-12.2, C-12.6).
 - **Rotation owner**: Owner (basiltt); rotation interval 90 days, tracked as a recurring chore ticket
   filed by this spike (see Follow-ups).

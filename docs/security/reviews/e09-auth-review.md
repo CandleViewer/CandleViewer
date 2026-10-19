@@ -83,7 +83,7 @@ An accepted risk needs a dated Owner signature. Only F-2 carries one (Owner reco
 
 Rows R-1 to R-7 and D-1/D-2 come from this review. Each is now tracked: R-1 #2101, R-2 #2108,
 R-3 #2109, R-4 #2110, R-5 #2111, R-7 #965. Owner decisions are on #1778
-([items AB–AE](https://github.com/basiltt/CandleViewer/issues/1778#issuecomment-6079001525)): AB is the R-6 break-glass CLI, which has no owning ticket and is proposed as
+([items AB–AE](https://github.com/CandleViewer/CandleViewer/issues/1778#issuecomment-6079001525)): AB is the R-6 break-glass CLI, which has no owning ticket and is proposed as
 a new E09 Story; AC is R-3; AD is D-1; AE is D-2. The sign-off is item U.
 
 ## 3. Break-glass drill (SR-023): NOT EXECUTED
@@ -179,4 +179,4 @@ calls.
 ## 7. Sign-off
 
 Pending: break-glass drill, security-engineer sign-off, Owner sign-off (#1778 item U; owner
-decisions AB–AE: https://github.com/basiltt/CandleViewer/issues/1778#issuecomment-6079001525). No reviewer signature and no gate statement are recorded here.
+decisions AB–AE: https://github.com/CandleViewer/CandleViewer/issues/1778#issuecomment-6079001525). No reviewer signature and no gate statement are recorded here.

@@ -408,7 +408,7 @@ it (login refuses `disabled` only):
   counter's increase over it (a disable's own transaction and sweep add rows of their own).
   Before #3029 the count came first, so a cancel there over-counted instead of losing the signal.
   Shielding the bookkeeping after the `UPDATE` is not built: it is the follow-up #3332 (P2), filed
-  with the ruling of 2026-10-18 ([comment](https://github.com/basiltt/CandleViewer/issues/3120#issuecomment-6243898535)).
+  with the ruling of 2026-10-18 ([comment](https://github.com/CandleViewer/CandleViewer/issues/3120#issuecomment-6243898535)).
 - When the audit sink is down the record is dropped, not queued (C-2.18; exception EX-08,
   `04-security-program.md` section 16.2), and the log says so:
   `auth.disabled_user_session_audit_failed` (ERROR, with `session_id`, `user_id` and `error`, the
@@ -493,7 +493,7 @@ it (login refuses `disabled` only):
   (`docs/security/threat-models/e09-auth-rbac.md`, U45; it is UL1-E2's in `e42-user-lifecycle.md`):
   a socket has no write path, since orders are REST only, and #965's disable cascade, now that it
   is routed, closes sockets within 5 s. The live row and the silent counter are accepted too: the
-  main-orchestrator confirmed them on 2026-10-18 ([ruling](https://github.com/basiltt/CandleViewer/issues/3120#issuecomment-6243898535)).
+  main-orchestrator confirmed them on 2026-10-18 ([ruling](https://github.com/CandleViewer/CandleViewer/issues/3120#issuecomment-6243898535)).
   A refused refresh that revokes the row and counts it is not built: it is the follow-up #3331
   (P1), filed with that ruling, next to #3332 (P2), which shields the bookkeeping (above).
 

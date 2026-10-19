@@ -1,7 +1,7 @@
 # GitHub Project Board Publish — Verification Report
 
 Run date: 2026-09-24
-Repo: `basiltt/CandleViewer` (node `R_kgDOUZDklw`)
+Repo: `CandleViewer/CandleViewer` (node `R_kgDOUZDklw`)
 Project: `#10` owner `basiltt` (`PVT_kwHOAzoHns4BjW_b`)
 
 ## Summary

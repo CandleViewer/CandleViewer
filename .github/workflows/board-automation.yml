@@ -12,7 +12,7 @@ name: Board automation
 # three jobs per issue event (about 500 runs in 10 hours on 2026-10-19) that
 # only logged would-have decisions while PR CI waited for runners.
 #
-# Credentials: `basiltt/CandleViewer` is a single-owner, user-level repo with
+# Credentials: `CandleViewer/CandleViewer` is a single-owner, user-level repo with
 # no GitHub organization (ADR-0017 Q1) -- org-team-membership endpoints
 # (`orgs/{org}/teams/{team}/memberships/{login}`) always 404 unconditionally,
 # since the org itself does not exist, so no PAT could make them work. The

@@ -951,7 +951,7 @@ previous entry.
   8x `docs/plan/{14,22,23}-*` = documentation examples (truncated JWT `eyJ...`, `mfa_`/`arm_` sample ids).
   No rotation required (IR-02 not triggered). The `gitleaks` CI job now also runs a full-history gitleaks sweep,
   `trufflehog filesystem` and `trufflehog git` (image pinned by digest; output is detector, file:line, commit,
-  verified only). First CI run triage ([run 37080326323](https://github.com/basiltt/CandleViewer/actions/runs/37080326323)),
+  verified only). First CI run triage ([run 37080326323](https://github.com/CandleViewer/CandleViewer/actions/runs/37080326323)),
   all `verified=false`, no rotation:
 
   | Detector         | Location (mode)                                                   | Hits | Disposition                                                  |

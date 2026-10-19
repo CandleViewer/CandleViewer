@@ -29,7 +29,7 @@ def test_an_absent_url_breaks_no_rule_and_is_recorded_as_is(url: str | None) -> 
     "url",
     [
         "javascript:alert(1)",
-        "http://github.com/basiltt/CandleViewer/issues/412",
+        "http://github.com/CandleViewer/CandleViewer/issues/412",
         "https:///issues/412",
         "https://github.com/a b",
         "https://github.com/a\x07b",  # not printable

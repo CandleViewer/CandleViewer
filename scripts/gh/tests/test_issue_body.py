@@ -42,19 +42,36 @@ def test_is_na_case_sensitive() -> None:
 
 
 def test_find_repo_actions_run_urls_accepts_matching_repo() -> None:
-    text = "See https://github.com/basiltt/CandleViewer/actions/runs/12345 for the axe run."
-    urls = find_repo_actions_run_urls(text, "basiltt", "CandleViewer")
-    assert urls == ["https://github.com/basiltt/CandleViewer/actions/runs/12345"]
+    text = "See https://github.com/CandleViewer/CandleViewer/actions/runs/12345 for the axe run."
+    urls = find_repo_actions_run_urls(text, "CandleViewer", "CandleViewer")
+    assert urls == ["https://github.com/CandleViewer/CandleViewer/actions/runs/12345"]
 
 
 def test_find_repo_actions_run_urls_rejects_foreign_link() -> None:
     text = "See https://example.com/axe-report for evidence."
-    assert find_repo_actions_run_urls(text, "basiltt", "CandleViewer") == []
+    assert find_repo_actions_run_urls(text, "CandleViewer", "CandleViewer") == []
 
 
 def test_find_repo_actions_run_urls_rejects_other_repo_actions_run() -> None:
     text = "https://github.com/other-org/other-repo/actions/runs/999"
-    assert find_repo_actions_run_urls(text, "basiltt", "CandleViewer") == []
+    assert find_repo_actions_run_urls(text, "CandleViewer", "CandleViewer") == []
+
+
+def test_find_repo_actions_run_urls_accepts_pre_transfer_owner_alias() -> None:
+    # Run links written before the 2026-10-19 transfer name the old owner `basiltt`.
+    text = "See https://github.com/basiltt/CandleViewer/actions/runs/12345 for the axe run."
+    urls = find_repo_actions_run_urls(text, "CandleViewer", "CandleViewer")
+    assert urls == ["https://github.com/basiltt/CandleViewer/actions/runs/12345"]
+
+
+def test_find_repo_actions_run_urls_rejects_unrelated_owner_with_same_repo_name() -> None:
+    text = "See https://github.com/someone-else/CandleViewer/actions/runs/12345 for the axe run."
+    assert find_repo_actions_run_urls(text, "CandleViewer", "CandleViewer") == []
+
+
+def test_find_repo_actions_run_urls_rejects_legacy_owner_with_other_repo_name() -> None:
+    text = "https://github.com/basiltt/other-repo/actions/runs/999"
+    assert find_repo_actions_run_urls(text, "CandleViewer", "CandleViewer") == []
 
 
 def test_qa_signoff_marker_matches_pass_case_insensitively() -> None:

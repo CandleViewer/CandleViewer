@@ -8,7 +8,7 @@
   (`Security sign-off: pass`) from someone who independently holds repo
   write access.
 
-CandleViewer is a single-owner, user-level repo (`basiltt/CandleViewer`,
+CandleViewer is a single-owner, user-level repo (`CandleViewer/CandleViewer`,
 ADR-0017 Q1) -- there is no GitHub organization and so no
 `@CandleViewer/security` team whose membership can be queried
 (`GET /orgs/{org}/teams/{team}/...` always 404s: the org does not exist).
