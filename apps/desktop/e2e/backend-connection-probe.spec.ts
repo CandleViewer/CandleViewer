@@ -9,10 +9,11 @@ import { _electron as electron, test, expect } from "@playwright/test";
 import type { ElectronApplication, Page } from "@playwright/test";
 import type { HardeningFlags } from "../src/main/shellPort.js";
 
-// #3519 S2, phase 1 (measure): what the repo's Electron does when the app:// page talks to a
-// loopback backend, for the browser-engine assumptions A1 to A11 of ADR-0038. Each measurement is
-// one `CV-PROBE {json}` line on stdout. The test passes whatever it observes and asserts only that
-// its harness worked; phase 2 pins the measured behaviour. Loopback only (C-13.5).
+// #3519 S2: what the repo's Electron does when the app:// page talks to a loopback backend, for the
+// browser-engine assumptions A1 to A11 of ADR-0038. Each measurement is logged as one
+// `CV-PROBE {json}` line, then pinned as S2 measured it (ADR-0038 Amendment 1): a change, for
+// example from an Electron bump, fails with the assumption's id and the record's consequence.
+// Loopback only (C-13.5).
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = path.join(__dirname, "../dist/main/index.js");
 const SHELL_PORT_MODULE = path.join(__dirname, "../dist/main/shellPort.js");
@@ -25,6 +26,9 @@ const PROBE_MS = 5_000;
 // RFC 6455 fixes SHA-1 and this GUID for the handshake's accept value; nothing here is a secret.
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const PROBE_COOKIE = /^(__Host-)?cvprobe-/;
+const STRICT_LAX = ["cvprobe-lax", "cvprobe-strict"];
+const PLANTED = ["cvprobe-lax-jar", "cvprobe-strict-jar"];
+const NONE_SECURE = ["__Host-cvprobe-host", "cvprobe-none"];
 const EXPIRY_NAMES = [
   "cvprobe-exp-same",
   "cvprobe-exp-strict",
@@ -72,7 +76,44 @@ const COOKIE_SETS: Readonly<Record<string, readonly string[]>> = {
     "cvprobe-exp-part=; Max-Age=0; Path=/; Secure; SameSite=None; Partitioned",
     "cvprobe-exp-unpart=; Max-Age=0; Path=/; Secure; SameSite=None",
   ],
+  a10: ["cvprobe-a10=1; Path=/; Secure; SameSite=None"],
 };
+
+/** ADR-0038's "if it does not hold" consequence per pinned assumption (3b: the token header). */
+const IF_NOT = {
+  A1: "the record is void (SR-042 never lists null); re-open it",
+  A2: "re-check 4b; it may become unnecessary",
+  A3: "owner decision D3 (TLS on loopback)",
+  A4: "leave Partitioned out (4c)",
+  A5: "no design change (the header path still works); update the S2 amendment",
+  A6: "windows fall back to the recovery path (3d)",
+  A7: "D3; until then a leftover cookie names a revoked session (4b)",
+  A8: "owner decision D3 (TLS on loopback); a local-network console line means A9 instead",
+  A9: "a preflight: S3 answers it (allow_private_network); a permission: owner decision D7",
+  A10: "on the desktop, S6b sends the telemetry POST without keepalive",
+  "3b": "the page cannot read the X-CSRF-Token response header; re-open 3b and 3c",
+} as const;
+
+/**
+ * Logs and soft-asserts S2's measurements for one assumption (what -> [actual, expected]), so every
+ * changed assumption shows up in the same run with ADR-0038's consequence.
+ */
+function pin(
+  id: keyof typeof IF_NOT,
+  checks: Readonly<Record<string, readonly [actual: unknown, expected: unknown]>>,
+): void {
+  for (const [what, [actual, expected]] of Object.entries(checks)) {
+    probe(id, what, actual);
+    const message = `ADR-0038 ${id} no longer holds: ${what}. Consequence: ${IF_NOT[id]}`;
+    expect.soft(actual, message).toEqual(expected);
+  }
+}
+
+/** Logs and soft-asserts one precondition of the pinned measurements. */
+function harness(what: string, actual: unknown, expected: unknown): void {
+  probe("harness", what, actual);
+  expect.soft(actual, `harness: ${what}`).toEqual(expected);
+}
 
 function probe(id: string, testCase: string, observed: unknown): void {
   console.log(`CV-PROBE ${JSON.stringify({ id, case: testCase, observed })}`);
@@ -106,6 +147,22 @@ function pick<T extends string | { readonly name: string }>(
   return (
     list?.filter((item) => names.includes(typeof item === "string" ? item : item.name)) ?? null
   );
+}
+
+/** The listed cookie names present in a list, sorted, so a pin never depends on other probes. */
+function own(list: readonly string[] | null, names: readonly string[]): string[] | null {
+  return pick(list, names)?.sort() ?? null;
+}
+
+/** The listed cookies in the jar as "name sameSite secure|not-secure", sorted. */
+function stored(
+  jar: readonly { name: string; sameSite: string; secure: boolean }[] | null,
+  names: readonly string[],
+): string[] | null {
+  const shown = pick(jar, names)?.map(
+    (e) => `${e.name} ${e.sameSite} ${e.secure ? "secure" : "not-secure"}`,
+  );
+  return shown?.sort() ?? null;
 }
 
 /** One request as the fixture saw it: probe cookie names only, never a cookie value. */
@@ -423,8 +480,8 @@ async function broadcastBetweenWindows(app: ElectronApplication, win: Page): Pro
   }
 }
 
-test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to A11)", () => {
-  test("logs what the app:// page does against a loopback backend", async () => {
+test.describe("Backend connection probe (#3519 S2): ADR-0038 A1 to A11 as measured", () => {
+  test("the app:// page reaches a loopback backend as S2 measured it", async () => {
     test.setTimeout(150_000);
     const configHome = test.info().outputPath("xdg-config");
     await fs.mkdir(configHome, { recursive: true });
@@ -440,6 +497,10 @@ test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to 
         probe("harness", "cleanup-error", { step, error: String(error).slice(0, 200) });
       }
     };
+    /** Origins other than the app's on the requests of one probe that reached the fixture. */
+    const foreign = (id: string) =>
+      fixture.forProbe(id).flatMap((entry) => (entry.origin === APP_ORIGIN ? [] : [entry.origin]));
+    const response200 = expect.objectContaining({ outcome: "response", status: 200 });
     try {
       expect(fixture.port).toBeGreaterThan(0);
       const { port, preferredPortBusy } = fixture;
@@ -448,6 +509,10 @@ test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to 
         preferredPortBusy,
         metaCspAdmits: port === PREFERRED_PORT,
       });
+      expect(
+        preferredPortBusy,
+        "harness: 127.0.0.1:8000 is taken; the meta CSP admits no other port",
+      ).toBe(false);
 
       const shell = await electron.launch({ args: [MAIN_ENTRY], env: launchEnv(base, configHome) });
       app = shell;
@@ -506,40 +571,45 @@ test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to 
         return { page, server: fixture.forProbe(id) };
       };
 
-      // A1, A8, A9: a simple credentialed GET, before any cookie exists.
-      probe("A1", "fetch-get", await run("a1-get", "/echo"));
-      // A2, A3, A4: one response sets a cookie per form; then the jar and what the page sends.
+      // A1, A8, A9, 3b: cookie-free requests from the page. A1 checks the Origin of what arrived;
+      // whether it arrived is A8's or A9's, so a blocked request never reads as a wrong Origin.
+      const get = await run("a1-get", "/echo");
+      probe("A1", "fetch-get", get);
+      const post = await run("a1-post", "/echo", CSRF_POST);
+      probe("A1", "fetch-preflighted-post", post);
+      const pna = await run("a9-pna", "/echo?pna=1", CSRF_POST);
+      probe("A9", "preflight-allows-private-network", pna);
+      const socket = await measure(() => pageSocket(win, `${wsBase}/ws?probe=a1-ws`));
+      probe("A1", "websocket", { page: socket, server: fixture.forProbe("a1-ws") });
+      pin("A8", {
+        "the fetch of http://127.0.0.1 gets its response": [get.page, response200],
+        "the preflighted POST gets its response": [post.page, response200],
+        "the ws://127.0.0.1 upgrade opens": [socket, { outcome: "open" }],
+      });
+      const origins = ["a1-get", "a1-post", "a1-ws"].flatMap(foreign);
+      pin("A1", { "Origin is app://candleviewer on GET, preflight, POST, WS": [origins, []] });
+      const readable = [get.page, post.page].map((page) =>
+        "csrfHeaderReadable" in page ? page.csrfHeaderReadable : "no response (see A8)",
+      );
+      pin("3b", { "the page reads X-CSRF-Token on the GET and POST": [readable, [true, true]] });
+      pin("A9", {
+        "a preflight answering Allow-Private-Network works too": [pna.page, response200],
+      });
+
+      // A2, A3, A4: one cross-site response sets a cookie per form; then the jar and what is sent.
       const set = await run("a2-set", "/set?cookies=samesite");
       const jar = await readJar(shell);
       // A2's other half: Strict and Lax cookies put in the jar directly; does the page send them?
-      const planted = ["cvprobe-strict-planted", "cvprobe-lax-planted"];
       const plant = await measure(() =>
         shell.evaluate(async ({ session }, url) => {
-          await session.defaultSession.cookies.set({
-            url,
-            name: "cvprobe-strict-planted",
-            value: "1",
-            sameSite: "strict",
-          });
-          await session.defaultSession.cookies.set({
-            url,
-            name: "cvprobe-lax-planted",
-            value: "1",
-            sameSite: "lax",
-          });
+          const { cookies } = session.defaultSession;
+          await cookies.set({ url, name: "cvprobe-strict-jar", value: "1", sameSite: "strict" });
+          await cookies.set({ url, name: "cvprobe-lax-jar", value: "1", sameSite: "lax" });
           return "planted";
         }, `${base}/`),
       );
       const echo = await run("a2-echo", "/echo");
-      const sentOnGet = fixture.cookiesSent("a2-echo", "GET");
-      const strictLax = ["cvprobe-strict", "cvprobe-lax"];
-      probe("A2", "samesite-strict-lax", {
-        pages: { set: set.page, echo: echo.page },
-        stored: pick(jar, strictLax),
-        sent: pick(sentOnGet, strictLax),
-        plant,
-        sentPlanted: pick(sentOnGet, planted),
-      });
+      const ownPost = await run("a3-post", "/echo", CSRF_POST);
       // A4: sent from the page (top-level site app://candleviewer) and from the main process.
       const mainFetch = await measure(() =>
         shell.evaluate(async ({ session }, url) => {
@@ -550,44 +620,72 @@ test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to 
           }
         }, `${base}/echo?probe=a4-main`),
       );
-      probe("A4", "partitioned", {
-        stored: pick(jar, ["cvprobe-chips"]),
-        sentFromPage: pick(sentOnGet, ["cvprobe-chips"]),
-        mainProcess: { fetch: mainFetch, sent: fixture.cookiesSent("a4-main", "GET") },
+      const ran = [set.page, echo.page, ownPost.page, plant, mainFetch, jar === null];
+      const ranOk = [response200, response200, response200, "planted", 200, false];
+      harness("the cookie probes ran", ran, ranOk);
+      const sentOnGet = fixture.cookiesSent("a2-echo", "GET");
+      const strictLax = [...STRICT_LAX, ...PLANTED];
+      pin("A2", {
+        "Strict/Lax cookies from a cross-site response: not stored": [stored(jar, STRICT_LAX), []],
+        "Strict/Lax cookies in the jar: not sent": [own(sentOnGet ?? [], strictLax), []],
       });
-      probe("A1", "fetch-preflighted-post", await run("a1-post", "/echo", CSRF_POST));
-      const noneSecure = ["cvprobe-none", "__Host-cvprobe-host"];
-      probe("A3", "samesite-none-secure", {
-        stored: pick(jar, noneSecure),
-        sentOnGet: pick(sentOnGet, noneSecure),
-        sentOnPost: pick(fixture.cookiesSent("a1-post", "POST"), noneSecure),
+      const noneStored = NONE_SECURE.map((name) => `${name} no_restriction secure`);
+      const noneSent = [
+        own(sentOnGet, NONE_SECURE),
+        own(fixture.cookiesSent("a3-post", "POST"), NONE_SECURE),
+      ];
+      pin("A3", {
+        "None/__Host- cookies over http: stored": [stored(jar, NONE_SECURE), noneStored],
+        "and sent on the page's GET and POST": [noneSent, [NONE_SECURE, NONE_SECURE]],
       });
-      probe(
-        "A9",
-        "preflight-allows-private-network",
-        await run("a9-pna", "/echo?pna=1", CSRF_POST),
-      );
-      // A10: the telemetry transport's request shape (lib/telemetry/aggregator.ts fetchTransport).
-      const keepalive: Init = { ...JSON_POST, keepalive: true };
-      probe("A10", "keepalive-json-post", await run("a10-keepalive", "/echo", keepalive));
-      // A1, A8: the WS upgrade from the page.
-      const socket = await measure(() => pageSocket(win, `${wsBase}/ws?probe=a1-ws`));
-      probe("A1", "websocket", { page: socket, server: fixture.forProbe("a1-ws") });
+      const chips = ["cvprobe-chips"];
+      const mainChips = own(fixture.cookiesSent("a4-main", "GET"), [
+        "cvprobe-chips",
+        "cvprobe-none",
+      ]);
+      pin("A4", {
+        "a Partitioned cookie is stored": [
+          stored(jar, chips),
+          ["cvprobe-chips no_restriction secure"],
+        ],
+        "and sent from the page (top-level app://candleviewer)": [own(sentOnGet, chips), chips],
+        "a main-process fetch sends only the unpartitioned one": [mainChips, ["cvprobe-none"]],
+      });
+
+      // A10: the telemetry transport's request shape, with a cookie of its own.
+      await run("a10-set", "/set?cookies=a10");
+      const keepalive = await run("a10-keepalive", "/echo", { ...JSON_POST, keepalive: true });
+      probe("A10", "keepalive-json-post", keepalive);
+      const keptMethods = fixture.forProbe("a10-keepalive").map((entry) => entry.method);
+      const keptCookie = own(fixture.cookiesSent("a10-keepalive", "POST"), ["cvprobe-a10"]);
+      pin("A10", {
+        "the keep-alive JSON POST is preflighted, then sent": [keptMethods, ["OPTIONS", "POST"]],
+        "with its cookie": [keptCookie, ["cvprobe-a10"]],
+        "and the page gets the response": [keepalive.page, response200],
+      });
 
       // A7: set four cookies, expire them four ways, then the jar and what the page still sends.
-      const expirySet = await run("a7-set", "/set?cookies=expiry-targets");
+      await run("a7-set", "/set?cookies=expiry-targets");
       const jarBefore = await readJar(shell);
       await run("a7-before", "/echo");
       const expiry = await run("a7-expire", "/set?cookies=expire");
       const jarAfter = await readJar(shell);
       await run("a7-echo", "/echo");
-      probe("A7", "expiry", {
-        pages: { set: expirySet.page, expire: expiry.page },
-        storedBefore: pick(jarBefore, EXPIRY_NAMES)?.map((entry) => entry.name) ?? null,
-        storedAfter: pick(jarAfter, EXPIRY_NAMES)?.map((entry) => entry.name) ?? null,
-        sentBefore: pick(fixture.cookiesSent("a7-before", "GET"), EXPIRY_NAMES),
-        sentAfter: pick(fixture.cookiesSent("a7-echo", "GET"), EXPIRY_NAMES),
-      });
+      const names = (list: typeof jar) => list?.map((entry) => entry.name) ?? null;
+      const sentBefore = fixture.cookiesSent("a7-before", "GET");
+      const before = [own(names(jarBefore), EXPIRY_NAMES), own(sentBefore, EXPIRY_NAMES)];
+      const after = [
+        own(names(jarAfter), EXPIRY_NAMES),
+        own(fixture.cookiesSent("a7-echo", "GET"), EXPIRY_NAMES),
+      ];
+      const all = [...EXPIRY_NAMES].sort();
+      harness("the four expiry targets were stored and sent", before, [all, all]);
+      harness("the expiry response arrived", expiry.page, response200);
+      const kept = ["cvprobe-exp-strict", "cvprobe-exp-unpart"];
+      const expiries =
+        "an expiry with the same attributes (Partitioned too) removes its cookie; a " +
+        "SameSite=Strict expiry or one without Partitioned does not (jar, then sent)";
+      pin("A7", { [expiries]: [after, [kept, kept]] });
 
       // A5: the page's document.cookie (names only).
       const documentCookie = await measure(() =>
@@ -600,28 +698,47 @@ test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to 
           }
         }),
       );
-      probe("A5", "document-cookie", documentCookie);
-      // A6: BroadcastChannel between two app windows.
-      probe("A6", "broadcast-channel", await measure(() => broadcastBetweenWindows(shell, win)));
+      const visible = Array.isArray(documentCookie)
+        ? documentCookie.filter((name) => PROBE_COOKIE.test(name))
+        : documentCookie;
+      pin("A5", { "document.cookie shows none of the backend's cookies": [visible, []] });
 
-      // A11 and A1's worker part need a worker script served by app:// that the page can start.
+      // A6: BroadcastChannel between two app windows.
+      const channel = await measure(() => broadcastBetweenWindows(shell, win));
+      const heard = { secondWindowOrigin: APP_ORIGIN, heard: "from-main-window" };
+      pin("A6", { "a BroadcastChannel message reaches a second app window": [channel, heard] });
+
+      // A11 and A1's served-worker case need a worker script served by app:// that the page can
+      // start. The build ships none yet; when one appears, E17-T04's wiring slice measures them.
       const assets = await fs.readdir(WEB_ASSETS_DIR).catch(() => [] as string[]);
-      const reason =
-        "the built web app ships no worker the page can start (lib/ws is not reachable from " +
-        "main.tsx yet), and S2 adds no shipped asset";
       const workerChunks = assets.filter((file) => /worker/i.test(file));
-      probe("A11", "shared-worker-served-by-app", { measurable: false, reason, workerChunks });
-      probe("A1", "worker-websocket-served-by-app", { measurable: false, reason });
+      const measurable = workerChunks.length > 0;
+      const reason = "no worker served by app:// that the page can start; E17-T04 measures it";
+      probe("A11", "shared-worker-served-by-app", { measurable, reason, workerChunks });
+      probe("A1", "worker-websocket-served-by-app", { measurable, reason });
+      if (measurable) {
+        const description =
+          `A11 and A1's served-worker case became measurable (${workerChunks.join(", ")}); ` +
+          "E17-T04's wiring slice measures them";
+        test.info().annotations.push({ type: "measurable", description });
+      }
       // Supplementary: a blob: SharedWorker has the page's origin but is not served by app://.
       const blob = await measure(() =>
         pageBlobWorker(win, `${wsBase}/ws?probe=a1-blob-ws`, `${base}/echo?probe=a1-blob-fetch`),
       );
       const blobServer = [...fixture.forProbe("a1-blob-ws"), ...fixture.forProbe("a1-blob-fetch")];
       probe("A1", "blob-shared-worker", { page: blob, server: blobServer });
+      const blobResult = { outcome: "reported", result: { ws: "open", fetch: 200 } };
+      pin("A1", {
+        "a blob: SharedWorker (supplementary) opens its socket and fetches": [blob, blobResult],
+        "with Origin app://candleviewer": [
+          [...foreign("a1-blob-ws"), ...foreign("a1-blob-fetch")],
+          [],
+        ],
+      });
 
-      // A8, A9: what reached the server, network preflights, permission requests, and the console
-      // lines on loopback, mixed content or local-network blocking. Together with the CSP
-      // violations they tell a blocked request apart from a missing or wrong Origin (A1).
+      // A8, A9: network preflights, permission requests and the console lines that tell mixed
+      // content (A8) from local-network blocking (A9), plus the CSP violations seen on the page.
       const asked = await measure(() =>
         shell.evaluate(
           () => (globalThis as unknown as { cvProbeAsked?: unknown }).cvProbeAsked ?? null,
@@ -638,20 +755,6 @@ test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to 
           line.includes(`127.0.0.1:${fixture.port}`) ||
           /mixed content|private network|local network|address space|loopback/i.test(line),
       );
-      probe("A8", "loopback-from-secure-page", {
-        fetchReached: fixture.cookiesSent("a1-get", "GET") !== null,
-        websocketReached: fixture.forProbe("a1-ws").some((entry) => entry.upgrade),
-        messages: relevant.filter((line) => /mixed content|insecure/i.test(line)).slice(0, 10),
-      });
-      probe("A9", "local-network", {
-        networkPreflights: fixture.seen
-          .filter((entry) => "private-network" in entry.acr || "local-network" in entry.acr)
-          .map((entry) => ({ probe: entry.probe, acr: entry.acr })),
-        permissionRequests: asked,
-        messages: relevant
-          .filter((line) => /private network|local network|address space|permission/i.test(line))
-          .slice(0, 10),
-      });
       probe("context", "console", relevant.slice(0, 30));
       probe("context", "csp-violations", violations);
       const unattributed = fixture.seen.filter((entry) => entry.probe === "");
@@ -660,6 +763,16 @@ test.describe("Backend connection probe, measure mode (#3519 S2, ADR-0038 A1 to 
         "unattributed-requests",
         unattributed.map((e) => `${e.method} ${e.path}`),
       );
+      const networkPreflights = fixture.seen
+        .filter((entry) => "private-network" in entry.acr || "local-network" in entry.acr)
+        .map((entry) => ({ probe: entry.probe, acr: entry.acr }));
+      pin("A8", {
+        "no mixed-content console line": [relevant.filter((l) => /mixed content/i.test(l)), []],
+      });
+      pin("A9", {
+        "no private-network preflight": [networkPreflights, []],
+        "no permission request": [asked, []],
+      });
     } finally {
       const shell = app;
       if (shell !== undefined && !isolated) {
