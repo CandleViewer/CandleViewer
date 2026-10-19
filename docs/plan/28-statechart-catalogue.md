@@ -619,7 +619,7 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | **Schema owner** | 24-internal-schemas.md §8.2 (order state machine), §8.8 (native-SL invariant), ADR-0006 |
 | **Fit (research)** | Good |
 | **Event rate** | per-order exchange events; bursty on fills, otherwise low |
-| **States / leaves / finals** | 21 / 19 / 5 |
+| **States / leaves / finals** | 23 / 21 / 5 |
 
 **Purpose.** The canonical lifecycle of a single exchange order, from local draft to a terminal state, plus the independent native-stop-loss protection invariant for the position that order opens.
 
@@ -647,6 +647,8 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
     "filled_qty": "0",
     "leaves_qty": "0",
     "avg_price": null,
+    "cum_exec_value": "0",
+    "fee_paid": "0",
     "seen_exec_ids": [],
     "last_exchange_update": 0,
     "recon_misses": 0,
@@ -679,6 +681,12 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
                 ]
               }
             ],
+            "DISCOVERED": {
+              "target": "#order.lifecycle.untracked",
+              "actions": [
+                "record_discovered"
+              ]
+            },
             "KILL": {
               "target": "#order.lifecycle.killed",
               "actions": [
@@ -717,6 +725,13 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
                 "guard": "ret_code_ok",
                 "actions": [
                   "adopt_ack"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.held",
+                "guard": "is_link_id_mismatch",
+                "actions": [
+                  "record_mismatch"
                 ]
               },
               {
@@ -780,6 +795,18 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
             "EXPIRE": {
               "target": "#order.lifecycle.expired"
             },
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
+            },
+            "MISMATCH": {
+              "target": "#order.lifecycle.held",
+              "actions": [
+                "record_mismatch"
+              ]
+            },
             "TRANSPORT_FAULT": {
               "target": "#order.lifecycle.unknown"
             },
@@ -816,6 +843,15 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
             ],
             "CANCEL": {
               "target": "#order.lifecycle.cancel_pending"
+            },
+            "EXPIRE": {
+              "target": "#order.lifecycle.expired"
+            },
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
             }
           }
         },
@@ -855,6 +891,15 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
             },
             "FAULT": {
               "target": "#order.lifecycle.quarantined"
+            },
+            "EXPIRE": {
+              "target": "#order.lifecycle.expired"
+            },
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
             }
           }
         },
@@ -865,12 +910,28 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
           "invoke": {
             "id": "cancel",
             "src": "cancel_order",
-            "onDone": {
-              "target": "#order.lifecycle.cancelled",
-              "actions": [
-                "adopt_cancel_ack"
-              ]
-            },
+            "onDone": [
+              {
+                "target": "#order.lifecycle.cancelled",
+                "guard": "ret_code_ok",
+                "actions": [
+                  "adopt_cancel_ack"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.partially_filled",
+                "guard": "has_fills",
+                "actions": [
+                  "record_cancel_refused"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.submitted",
+                "actions": [
+                  "record_cancel_refused"
+                ]
+              }
+            ],
             "onError": {
               "target": "#order.lifecycle.unknown",
               "actions": [
@@ -900,6 +961,12 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
                 ]
               }
             ],
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
+            },
             "KILL": {
               "actions": [
                 "mark_halted_by_kill",
@@ -918,15 +985,31 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
             "onDone": [
               {
                 "target": "#order.lifecycle.partially_filled",
-                "guard": "has_fills",
+                "guard": "ret_code_ok_and_has_fills",
                 "actions": [
                   "adopt_amend"
                 ]
               },
               {
                 "target": "#order.lifecycle.submitted",
+                "guard": "ret_code_ok",
                 "actions": [
                   "adopt_amend"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.partially_filled",
+                "guard": "has_fills",
+                "actions": [
+                  "keep_prior_order_live",
+                  "notify_amend_rejected"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.submitted",
+                "actions": [
+                  "keep_prior_order_live",
+                  "notify_amend_rejected"
                 ]
               }
             ],
@@ -954,7 +1037,13 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
                   "notify_amend_rejected"
                 ]
               }
-            ]
+            ],
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
+            }
           }
         },
         "unknown": {
@@ -1003,7 +1092,13 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
                   "bump_recon_misses"
                 ]
               }
-            ]
+            ],
+            "MISMATCH": {
+              "target": "#order.lifecycle.held",
+              "actions": [
+                "record_mismatch"
+              ]
+            }
           }
         },
         "quarantined": {
@@ -1032,6 +1127,79 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
               "target": "#order.lifecycle.filled",
               "actions": [
                 "adopt_recon"
+              ]
+            },
+            "RECON_FOUND_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_recon"
+              ]
+            }
+          }
+        },
+        "untracked": {
+          "entry": [
+            "persist_event"
+          ],
+          "on": {
+            "ADOPT": [
+              {
+                "target": "#order.lifecycle.submitted",
+                "guard": "adoption_allowed",
+                "actions": [
+                  "adopt_untracked"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_adoption_denied"
+                ]
+              }
+            ],
+            "RECON_FOUND_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_recon"
+              ]
+            },
+            "RECON_MISS": [
+              {
+                "target": "#order.lifecycle.cancelled",
+                "guard": "second_consecutive_miss",
+                "actions": [
+                  "set_cancel_missing_remote"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.untracked",
+                "reenter": true,
+                "actions": [
+                  "bump_recon_misses"
+                ]
+              }
+            ],
+            "KILL": {
+              "actions": [
+                "audit_kill_ignored_unowned"
+              ]
+            }
+          }
+        },
+        "held": {
+          "entry": [
+            "persist_event",
+            "raise_critical_alert"
+          ],
+          "on": {
+            "OPERATOR_RESOLVED": {
+              "target": "#order.lifecycle.rejected",
+              "actions": [
+                "audit_operator_resolved"
+              ]
+            },
+            "KILL": {
+              "actions": [
+                "audit_kill_ignored_unowned"
               ]
             }
           }
@@ -1214,6 +1382,8 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `lifecycle.amend_pending` | atomic | — | `persist_event` | — | yes |
 | `lifecycle.unknown` | atomic | — | `persist_event`, `raise_unknown_alert`, `arm_recon_deadline` | — | — |
 | `lifecycle.quarantined` | atomic | `untrusted` | `persist_event`, `raise_critical_alert`, `request_reconciliation` | — | — |
+| `lifecycle.untracked` *(Corrected 2026-10-19, #847)* | atomic | — | `persist_event` | — | — |
+| `lifecycle.held` *(Corrected 2026-10-19, #847)* | atomic | — | `persist_event`, `raise_critical_alert` | — | yes |
 | `lifecycle.filled` | final | `terminal` | `persist_event`, `emit_terminal` | — | — |
 | `lifecycle.cancelled` | final | `terminal` | `persist_event`, `emit_terminal` | — | — |
 | `lifecycle.rejected` | final | `terminal` | `persist_event`, `emit_terminal` | — | — |
@@ -1231,6 +1401,7 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 |---|---|---|---|---|---|
 | `lifecycle.draft` | `VALIDATE` | `passes_all_gates` | `lifecycle.validated` | `stamp_validated` | — |
 | `lifecycle.draft` | `VALIDATE` | — | `lifecycle.rejected` | `set_local_reject` | — |
+| `lifecycle.draft` | `DISCOVERED` | — | `lifecycle.untracked` | `record_discovered` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.draft` | `*` | — | _(internal)_ | `defer` | — |
 | `lifecycle.validated` | `SEND` | — | `lifecycle.submitting` | — | — |
 | `lifecycle.validated` | `*` | — | _(internal)_ | `defer` | — |
@@ -1242,24 +1413,32 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `lifecycle.submitted` | `CANCEL` | — | `lifecycle.cancel_pending` | — | — |
 | `lifecycle.submitted` | `AMEND` | — | `lifecycle.amend_pending` | — | — |
 | `lifecycle.submitted` | `EXPIRE` | — | `lifecycle.expired` | — | — |
+| `lifecycle.submitted` | `REMOTE_CANCELLED` | — | `lifecycle.cancelled` | `adopt_remote_cancel` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.submitted` | `MISMATCH` | — | `lifecycle.held` | `record_mismatch` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.submitted` | `TRANSPORT_FAULT` | — | `lifecycle.unknown` | — | — |
 | `lifecycle.submitted` | `FAULT` | — | `lifecycle.quarantined` | — | — |
 | `lifecycle.triggered` | `EXEC` | `exec_new_and_closes` | `lifecycle.filled` | `apply_fill` | — |
 | `lifecycle.triggered` | `EXEC` | `exec_new_and_partial` | `lifecycle.partially_filled` | `apply_fill` | — |
 | `lifecycle.triggered` | `EXEC` | — | _(internal)_ | `audit_guard_denied` | — |
 | `lifecycle.triggered` | `CANCEL` | — | `lifecycle.cancel_pending` | — | — |
+| `lifecycle.triggered` | `EXPIRE` | — | `lifecycle.expired` | — *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.triggered` | `REMOTE_CANCELLED` | — | `lifecycle.cancelled` | `adopt_remote_cancel` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.partially_filled` | `EXEC` | `exec_new_and_closes` | `lifecycle.filled` | `apply_fill` | — |
 | `lifecycle.partially_filled` | `EXEC` | `exec_new_and_partial` | `lifecycle.partially_filled` | `apply_fill` | yes |
 | `lifecycle.partially_filled` | `EXEC` | — | _(internal)_ | `audit_guard_denied` | — |
 | `lifecycle.partially_filled` | `CANCEL` | — | `lifecycle.cancel_pending` | — | — |
 | `lifecycle.partially_filled` | `AMEND` | — | `lifecycle.amend_pending` | — | — |
 | `lifecycle.partially_filled` | `FAULT` | — | `lifecycle.quarantined` | — | — |
+| `lifecycle.partially_filled` | `EXPIRE` | — | `lifecycle.expired` | — *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.partially_filled` | `REMOTE_CANCELLED` | — | `lifecycle.cancelled` | `adopt_remote_cancel` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.cancel_pending` | `EXEC` | `exec_new_and_closes` | `lifecycle.filled` | `apply_fill` | — |
 | `lifecycle.cancel_pending` | `EXEC` | `exec_new_and_partial` | `lifecycle.partially_filled` | `apply_fill` | — |
 | `lifecycle.cancel_pending` | `EXEC` | — | _(internal)_ | `audit_guard_denied` | — |
+| `lifecycle.cancel_pending` | `REMOTE_CANCELLED` | — | `lifecycle.cancelled` | `adopt_remote_cancel` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.cancel_pending` | `*` | — | _(internal)_ | `defer` | — |
 | `lifecycle.amend_pending` | `AMEND_REJECTED` | `has_fills` | `lifecycle.partially_filled` | `keep_prior_order_live`, `notify_amend_rejected` | — |
 | `lifecycle.amend_pending` | `AMEND_REJECTED` | — | `lifecycle.submitted` | `keep_prior_order_live`, `notify_amend_rejected` | — |
+| `lifecycle.amend_pending` | `REMOTE_CANCELLED` | — | `lifecycle.cancelled` | `adopt_remote_cancel` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.amend_pending` | `*` | — | _(internal)_ | `defer` | — |
 | `lifecycle.unknown` | `RECON_FOUND_LIVE` | — | `lifecycle.submitted` | `adopt_recon` | — |
 | `lifecycle.unknown` | `RECON_FOUND_PARTIAL` | — | `lifecycle.partially_filled` | `adopt_recon` | — |
@@ -1267,13 +1446,24 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 | `lifecycle.unknown` | `RECON_FOUND_CANCELLED` | — | `lifecycle.cancelled` | `adopt_recon` | — |
 | `lifecycle.unknown` | `RECON_MISS` | `second_consecutive_miss` | `lifecycle.rejected` | `set_reject_unresolvable` | — |
 | `lifecycle.unknown` | `RECON_MISS` | — | `lifecycle.unknown` | `bump_recon_misses` | yes |
+| `lifecycle.unknown` | `MISMATCH` | — | `lifecycle.held` | `record_mismatch` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.quarantined` | `RECON_FOUND_LIVE` | — | `lifecycle.submitted` | `adopt_recon` | — |
 | `lifecycle.quarantined` | `RECON_FOUND_PARTIAL` | — | `lifecycle.partially_filled` | `adopt_recon` | — |
 | `lifecycle.quarantined` | `RECON_FOUND_FILLED` | — | `lifecycle.filled` | `adopt_recon` | — |
+| `lifecycle.quarantined` | `RECON_FOUND_CANCELLED` | — | `lifecycle.cancelled` | `adopt_recon` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.untracked` | `ADOPT` | `adoption_allowed` | `lifecycle.submitted` | `adopt_untracked` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.untracked` | `ADOPT` | — | _(internal)_ | `audit_adoption_denied` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.untracked` | `RECON_FOUND_CANCELLED` | — | `lifecycle.cancelled` | `adopt_recon` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.untracked` | `RECON_MISS` | `second_consecutive_miss` | `lifecycle.cancelled` | `set_cancel_missing_remote` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.untracked` | `RECON_MISS` | — | `lifecycle.untracked` | `bump_recon_misses` *(Corrected 2026-10-19, #847)* | yes |
+| `lifecycle.held` | `OPERATOR_RESOLVED` | — | `lifecycle.rejected` | `audit_operator_resolved` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.held` | `*` | — | _(internal)_ | `defer` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle` | `KILL` | — | `lifecycle.killed` | — (entry of `killed`) | — |
 | `lifecycle.draft` | `KILL` | — | `lifecycle.killed` | `skip_kill_cancel` *(Corrected 2026-10-09, #2133 review)* | — |
 | `lifecycle.validated` | `KILL` | — | `lifecycle.killed` | `skip_kill_cancel` *(Corrected 2026-10-09, #2133 review)* | — |
 | `lifecycle.cancel_pending` | `KILL` | — | _(internal)_ | `mark_halted_by_kill`, `audit_kill_cancel_in_flight` *(Corrected 2026-10-09, #2133 review)* | — |
+| `lifecycle.untracked` | `KILL` | — | _(internal)_ | `audit_kill_ignored_unowned` *(Corrected 2026-10-19, #847)* | — |
+| `lifecycle.held` | `KILL` | — | _(internal)_ | `audit_kill_ignored_unowned` *(Corrected 2026-10-19, #847)* | — |
 | `lifecycle.filled` | `KILL` | — | _(internal)_ | `audit_kill_ignored_terminal` | — |
 | `lifecycle.cancelled` | `KILL` | — | _(internal)_ | `audit_kill_ignored_terminal` | — |
 | `lifecycle.rejected` | `KILL` | — | _(internal)_ | `audit_kill_ignored_terminal` | — |
@@ -1289,26 +1479,29 @@ Every entry has the same seven parts: **Purpose** · **Why this shape** · **Con
 
 | In state | `id` | `src` | `onDone` | `onError` |
 |---|---|---|---|---|
-| `lifecycle.submitting` | `place` | `place_order` | `lifecycle.submitted` if `ret_code_ok`; `lifecycle.submitted` if `is_duplicate_link_id`; `lifecycle.rejected` | `lifecycle.unknown` |
-| `lifecycle.cancel_pending` | `cancel` | `cancel_order` | `lifecycle.cancelled` | `lifecycle.unknown` |
-| `lifecycle.amend_pending` | `amend` | `amend_order` | `lifecycle.partially_filled` if `has_fills`; `lifecycle.submitted` | `lifecycle.unknown` |
+| `lifecycle.submitting` | `place` | `place_order` | `lifecycle.submitted` if `ret_code_ok`; `lifecycle.held` if `is_link_id_mismatch` *(Corrected 2026-10-19, #847)*; `lifecycle.submitted` if `is_duplicate_link_id`; `lifecycle.rejected` | `lifecycle.unknown` |
+| `lifecycle.cancel_pending` | `cancel` | `cancel_order` | `lifecycle.cancelled` if `ret_code_ok`; `lifecycle.partially_filled` if `has_fills`; `lifecycle.submitted` *(Corrected 2026-10-19, #847)* | `lifecycle.unknown` |
+| `lifecycle.amend_pending` | `amend` | `amend_order` | `lifecycle.partially_filled` if `ret_code_ok_and_has_fills`; `lifecycle.submitted` if `ret_code_ok`; `lifecycle.partially_filled` if `has_fills`; `lifecycle.submitted` *(Corrected 2026-10-19, #847)* | `lifecycle.unknown` |
 | `protection.sl_pending` | `attach_sl` | `attach_native_sl` | `protection.sl_present` | `protection.sl_missing` |
 
 ### B1.5 Guards
 
 | Guard | Polarity | Contract |
 |---|---|---|
+| `adoption_allowed` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); denies every adoption until E45-S01 records the Owner's decision D6 |
 | `exec_new_and_closes` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `exec_new_and_partial` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `has_fills` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `is_duplicate_link_id` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
+| `is_link_id_mismatch` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); true when the `place` result's lookup found an order under our `order_link_id` that does not fully match the row (SR-E29-03) |
 | `passes_all_gates` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 | `ret_code_ok` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
+| `ret_code_ok_and_has_fills` *(Corrected 2026-10-19, #847)* | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6); `ret_code_ok` and `has_fills` together (the first `amend` result arm) |
 | `second_consecutive_miss` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
 
 ### B1.6 Actions
 
-All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fault"]`, aborts the transition and routes to this machine's fault state; the snapshot writer refuses to persist a faulted context (MUST-01).
+Actions are coroutine functions registered directly (CV-C67). *(Amended 2026-10-19, #847.)* Under `actionErrorPolicy: "rollback"` an action that raises aborts its step: the interpreter restores the configuration and context from before it, so the order never runs ahead of its `order_events` row, and `CvErrorHooks` logs, counts and pages the failure (24 §8.2 S11). The snapshot writer still refuses a context carrying `_fault` (MUST-01).
 
 | Action |
 |---|
@@ -1346,6 +1539,15 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 | `issue_kill_cancel` *(Corrected 2026-10-09)* |
 | `mark_halted_by_kill` *(Corrected 2026-10-09)* |
 | `skip_kill_cancel` *(Corrected 2026-10-09, #2133 review)* |
+| `adopt_remote_cancel` *(Corrected 2026-10-19, #847)* |
+| `adopt_untracked` *(Corrected 2026-10-19, #847)* |
+| `audit_adoption_denied` *(Corrected 2026-10-19, #847)* |
+| `audit_kill_ignored_unowned` *(Corrected 2026-10-19, #847)* |
+| `audit_operator_resolved` *(Corrected 2026-10-19, #847)* |
+| `record_cancel_refused` *(Corrected 2026-10-19, #847)* |
+| `record_discovered` *(Corrected 2026-10-19, #847)* |
+| `record_mismatch` *(Corrected 2026-10-19, #847)* |
+| `set_cancel_missing_remote` *(Corrected 2026-10-19, #847)* |
 
 ### B1.7 Invariants
 
@@ -1354,15 +1556,20 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 | **INV-1** | `filled_qty <= qty` at every observable point, including mid-drain. |
 | **INV-2** | A terminal state (`filled`, `cancelled`, `rejected`, `expired`, `killed`) is never left (24 §8.2 S6). |
 | **INV-5** | **No delivered `EXEC` is ever unaccounted for**: every `exec_id` the gateway delivers appears in `seen_exec_ids` or in `_deferred`. This is the direct regression test for LC-03 and it is mandatory for this family. |
-| **INV-B1-a** | `apply_fill` is order-independent: applying the same set of `EXEC` events in any order yields identical `filled_qty` and `avg_price` (MUSTNOT-04). |
+| **INV-B1-a** | `apply_fill` is order-independent: applying the same set of `EXEC` events in any order yields identical `filled_qty`, `avg_price`, `cum_exec_value` and `fee_paid` (MUSTNOT-04). *(Amended 2026-10-19, #847: the cumulative keys of chart version 1.)* |
 | **INV-B1-b** | `exec_id` dedupe is total - a repeated `exec_id` changes nothing (24 §8.2 S4). |
-| **INV-B1-c** | An `AMEND_REJECTED` leaves the prior order live (S2): the machine returns to the state it amended from, never to a terminal state. |
+| **INV-B1-c** | An amend rejection leaves the prior order live (S2): an `AMEND_REJECTED`, or an `amend` result that is not `ret_code_ok`, returns the machine to the state it amended from, never to a terminal state, and never runs `adopt_amend`. *(Amended 2026-10-19, #847.)* |
 | **INV-B1-d** | A fill beats a pending cancel (S3): `cancel_pending` handles `EXEC` explicitly rather than deferring it. |
-| **INV-B1-e** | `unknown` never resubmits (S1); it may only be resolved by a `RECON_FOUND_*` event. |
+| **INV-B1-e** | `unknown` never resubmits (S1); it may only be resolved by reconciliation: a `RECON_FOUND_*` event, a second `RECON_MISS`, or a `MISMATCH` into `held`. *(Amended 2026-10-19, #847.)* |
 | **INV-B1-f** | The `protection` region reaches `sl_present` only from an exchange read (`SL_OBSERVED`), never from a local assumption. |
-| **INV-B1-h** | *(Corrected 2026-10-09, #1650; reworded #2133)* **At most one exchange cancel per order, and only if it was submitted.** Root `KILL` from `draft`/`validated` reaches `killed` with audit only (`skip_kill_cancel`, no exchange call); from any other non-terminal lifecycle state except `cancel_pending` it reaches `killed`, sets `halted_by_kill`, writes `audit_kill` **before** the cancel (write-ahead, C-2.9) and issues one `cancel_order` (same `orderLinkId`, C-2.10) bounded by `CV_KILL_CANCEL_TIMEOUT`; failure or timeout is audited and never rolls the kill back. In `cancel_pending` KILL reuses the in-flight cancel (no second call): it sets `halted_by_kill` and audits, and the existing invoke resolves the order. Reconciliation re-syncs the true exchange state (C-2.5). `KILL` on a terminal state only audits. |
+| **INV-B1-h** | *(Corrected 2026-10-09, #1650; reworded #2133; amended 2026-10-19, #847)* **At most one exchange cancel per order, and only if it was submitted.** Root `KILL` from `draft`/`validated` reaches `killed` with audit only (`skip_kill_cancel`, no exchange call); from any other non-terminal lifecycle state except `cancel_pending`, `untracked` and `held` (INV-B1-n) it reaches `killed`, sets `halted_by_kill`, writes `audit_kill` **before** the cancel (write-ahead, C-2.9) and issues one `cancel_order` (same `orderLinkId`, C-2.10) bounded by `CV_KILL_CANCEL_TIMEOUT`; failure or timeout is audited and never rolls the kill back. In `cancel_pending` KILL reuses the in-flight cancel (no second call): it sets `halted_by_kill` and audits, and the existing invoke resolves the order (a refused cancel returns it to its live state, INV-B1-j). Reconciliation re-syncs the true exchange state (C-2.5). `KILL` on a terminal state only audits. |
 | **INV-B1-i** | *(Corrected 2026-10-09, #1650)* `KILL` never changes the `protection` region (C-2.6, C-4.14): no SL is cancelled or amended; the region only audits. |
 | **INV-B1-g** | A write-ahead `order_events` row exists for every transition before the in-memory state changes (S8, A7, MUST-02). |
+| **INV-B1-j** | *(Added 2026-10-19, #847)* A refused cancel never ends the order: only a `cancel` result that is `ret_code_ok` reaches `cancelled` (`adopt_cancel_ack`); any other result returns to the live state (`partially_filled` if `has_fills`, else `submitted`) with `record_cancel_refused`. A fill still beats the cancel (INV-B1-d). |
+| **INV-B1-k** | *(Added 2026-10-19, #847)* An order the exchange ends without a fill is never stranded: every live state (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`) reaches `cancelled` on `REMOTE_CANCELLED`; `submitted`, `triggered` and `partially_filled` reach `expired` on `EXPIRE`; `quarantined` reaches `cancelled` on `RECON_FOUND_CANCELLED`. |
+| **INV-B1-l** | *(Added 2026-10-19, #847)* `untracked` is never managed (S9, SR-E29-12): it is entered only from `draft` on `DISCOVERED`, and left only by `ADOPT` through `adoption_allowed` (a denial is audited and it stays `untracked`) to `submitted`, or by `RECON_FOUND_CANCELLED` or a second `RECON_MISS` to `cancelled`. No other event moves it or runs a managing action. |
+| **INV-B1-m** | *(Added 2026-10-19, #847)* Verify before adopt (SR-E29-03): a `place` result that `is_link_id_mismatch`, and `MISMATCH` in `submitted` or `unknown`, land in `held`; `held` is left only by the operator's `OPERATOR_RESOLVED` (to `rejected`), never by `adopt_recon` or by any exchange push or lookup. |
+| **INV-B1-n** | *(Added 2026-10-19, #847)* `KILL` never cancels an order the OMS does not own (SR-E29-06): on `untracked` and `held` it only audits (`audit_kill_ignored_unowned`), with no transition and no exchange call. |
 
 ### B1.8 Implementation notes
 
@@ -1370,6 +1577,7 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 - **Deferral is load-bearing.** `submitting` and `amend_pending` are occupied while an exchange round trip is in flight. Omit the wildcard handler on one of them and a fill is lost with no exception and no log line (LC-03; Study 05 C17 lost three `PARTIAL` fills deterministically across 10 runs). `cancel_pending` deliberately handles `EXEC` explicitly instead of deferring, because S3 says the fill wins the race.
 - **Timing is external.** `sl_deadline_us` and the reconciliation deadline are absolute microsecond timestamps in context, armed by the `MonotonicScheduler` and re-armed on restore (A2).
 - **Restore re-drives invokes.** A crash in `submitting` restores a machine parked in `submitting` with no service running (LC-19); the boot procedure re-sends the triggering event *after* draining `_deferred` (MUST-03).
+- **Corrected 2026-10-19 (#847 slice 1; rulings 1 and 3 on the #847 plan), chart `version: 1`.** (a) G-3 of the E29 threat model (SR-E29-12, SR-E29-03): `untracked` holds an exchange order with no local row; it is entered from `draft` on `DISCOVERED` and left only by `ADOPT` through the deny-by-default `adoption_allowed` (a denial is audited on the ordered unguarded arm), or to `cancelled` by `RECON_FOUND_CANCELLED` or a second `RECON_MISS`. `held` holds a local order whose id is on an exchange order that does not match the row: a `place` result that `is_link_id_mismatch` (checked before the duplicate-id arm) or `MISMATCH` in `submitted` or `unknown`; only the operator's `OPERATOR_RESOLVED` ends it, as `rejected`, and whether to adopt the remote order is a separate `ADOPT` on its own `untracked` row. `KILL` on either only audits: the OMS never cancels an order it does not own (SR-E29-06). (b) Exchange outcomes: the `cancel` and `amend` results are adopted only if `ret_code_ok`; any other result returns the order to its live state, chosen by `has_fills`, with `record_cancel_refused` or the `AMEND_REJECTED` actions, so a refused cancel of a `triggered` order resumes as `submitted`. The live states (`submitted`, `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`) handle `REMOTE_CANCELLED`; `triggered` and `partially_filled` also handle `EXPIRE`, and `quarantined` handles `RECON_FOUND_CANCELLED`. (c) The context gains `cum_exec_value` and `fee_paid`, `Decimal` strings like `filled_qty`. **Snapshot migration:** a snapshot sealed at the previous hash (`743dfaada4e3…`) is refused on restore (quarantine row and P1 page). None exists: nothing outside the tests builds an `order` machine and no snapshot store exists yet, so no upcaster is registered; B1 recovers from `order_events`.
 
 ---
 
@@ -7537,7 +7745,7 @@ Contracts were derived from `24-internal-schemas.md` and `20-architecture.md`. S
 
 | Contract | Gap | Owner to update |
 |---|---|---|
-| B1 | `quarantined` is a fourteenth lifecycle state with no counterpart in the status enum; binding rules **S10** (deferral / no dropped fills) and **S11** (no action may raise) are new | `24` §8.2 |
+| B1 | `quarantined`, `held`, `killed`, `triggered` and `unknown` have no `order_state` value, and the chart and the enum mean different states by `submitted`; S10 and S11 are in `24` §8.2 since #847 slice 1 | `24` §8.2 mapping, `21` §3.3 enum (#847 slice 2) |
 | B3 | The per-account unwind is specified in prose in §9.5.1 and has **no ticket anywhere in the backlog** | `24` §9.5.1 + E34 |
 | B8 | The SL deadline is 2 s in `24` §8.8 and 3000 ms in ADR-0008 — the two disagree and must be reconciled | `24` §8.8 / ADR-0008 |
 | B10 | There is **no Alert schema section at all**; alerts exist only in E40, while every other stateful entity is specified in `24` | `24` — new §13.8 |
@@ -7608,7 +7816,7 @@ There is no runtime switch. Every family runs on the pinned library from its fir
 | `leg` | 12 | `a7d8fb5d8c3e…` |
 | `live_gate` | 3 | `780accfd0086…` |
 | `oco` | 11 | `e09f72c6a367…` |
-| `order` | 2 | `743dfaada4e3…` |
+| `order` | 2 | `6fe4aa7df630…` |
 | `paper_account` | 4 | `401363766fb6…` |
 | `position_protection` | 3 | `d95cda091fac…` |
 | `reconciliation` | 8 | `95c8954fe5e7…` |

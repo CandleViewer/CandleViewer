@@ -206,3 +206,26 @@ register_event_schemas(
         )
     }
 )
+
+
+# --- #847 slice 1: `untracked` and `held` (G-3) and exchange outcomes, chart version 1 ----
+# Stubs for the new arms' names: guard bodies land in #847 slice 4, actions in slice 5. The new
+# guards deny until then (A6), so `ADOPT` is refused and no result is read as a mismatch.
+ACTIONS.update(
+    dict.fromkeys(
+        "adopt_remote_cancel adopt_untracked audit_adoption_denied audit_kill_ignored_unowned"
+        " audit_operator_resolved record_cancel_refused record_discovered record_mismatch"
+        " set_cancel_missing_remote".split(),
+        _noop_action,
+    )
+)
+GUARDS.update(
+    dict.fromkeys(
+        ("adoption_allowed", "is_link_id_mismatch", "ret_code_ok_and_has_fills"), _deny_guard
+    )
+)
+register_event_schemas(
+    dict.fromkeys(
+        ("ADOPT", "DISCOVERED", "MISMATCH", "OPERATOR_RESOLVED", "REMOTE_CANCELLED"), _ANY_PAYLOAD
+    )
+)
