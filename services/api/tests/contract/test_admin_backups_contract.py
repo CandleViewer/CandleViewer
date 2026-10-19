@@ -24,7 +24,8 @@ from typing import Any
 import pytest
 
 from candleviewer.api._generated import openapi_models as api
-from tests.contract._admin_support import ROOT, SPEC, text
+from candleviewer.ws._generated.error_codes import ERROR_META, WS_ERROR_CODES, ErrorCode
+from tests.contract._admin_support import ROOT, SPEC, text, validate_example
 
 _PATHS: dict[str, Any] = SPEC["paths"]
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
@@ -173,6 +174,78 @@ def test_run_and_verify_records_name_their_stages_and_bind_the_digest() -> None:
         "A user may start at most 12 verifications in a rolling hour, else `429 rate_limited`",
     ):
         assert clause in verify, clause
+
+
+#: The run's own refusal for an engine plan that is not encrypted (BK-8 ruling, READY-30, #966).
+_ENGINE_CODE = "backup_engine_invalid"
+
+
+def test_a_run_planned_unencrypted_is_refused_503_backup_engine_invalid() -> None:
+    """BK-8 ruling (READY-30, #966; C-6.1, C-2.9): a plan with `encrypted: false` breaks "always
+    encrypted", so the run is refused fail closed with a code of its own, not the retryable
+    `store_unavailable`: the failure record is written first, nothing starts, and the refusal
+    stands until the configuration is fixed. `createBackup` already declares `503`."""
+    _assert_declared("createBackup")
+    refused = "A run whose backup engine plan has `encrypted: false` breaks the rule that backups "
+    refused += "are always encrypted, so it is refused fail closed: its failure record "
+    refused += "(`backup.run`, `outcome: failure`) is written first, then the answer is "
+    refused += f"`503 {_ENGINE_CODE}`, nothing starts, and runs stay refused this way until the "
+    refused += "engine configuration is fixed."
+    assert refused in _desc("createBackup")
+
+
+def test_backup_engine_invalid_is_registered_rest_only_and_not_retryable() -> None:
+    """The refusal holds until the configuration changes, so a retry cannot clear it: it is the
+    one 503 of the run that is not retryable. Every enumeration of the registry carries it: the
+    YAML, the Python enum and its meta, and both TypeScript tables (all generated from the YAML)."""
+    (entry,) = [e for e in SPEC["x-error-codes"] if e["code"] == _ENGINE_CODE]
+    assert (entry["status"], entry["retryable"]) == (503, False)
+    assert entry.get("surface", ["rest"]) == ["rest"]
+    meta = ERROR_META[ErrorCode(_ENGINE_CODE)]
+    assert (meta.surfaces, meta.retryable, meta.title) == (("rest",), False, entry["title"])
+    assert ErrorCode(_ENGINE_CODE) not in WS_ERROR_CODES
+    tables = (ROOT / "packages/protocol/src/errorCodes.ts").read_text(encoding="utf-8")
+    assert f'\n  "{_ENGINE_CODE}",\n' in tables  # `ERROR_CODES`
+    meta_row = rf'^  {_ENGINE_CODE}: \{{ surfaces: \["rest"\], scope: null, retryable: false, '
+    assert re.search(meta_row, tables, re.MULTILINE)  # `ERROR_META`
+
+
+def test_a_succeeded_job_over_an_unwritten_finished_record_carries_the_audit_marker() -> None:
+    """BK-8 ruling (READY-30, #966): the row is the truth. A `stage: finished` record that cannot
+    be written leaves the row `failed` with `audit_unavailable`, never `ok`; the job is polled
+    apart and may still read `succeeded`, but only with `audit: "unavailable"` in its free-form
+    `result`. The `Job` schema is unchanged: it already admits any object for a `backup` job."""
+    marker = "When the run's `stage: finished` record cannot be written, the row ends `failed` "
+    marker += "with `error: audit_unavailable`, and the job may read `succeeded` only if its "
+    marker += '`result` then also carries `audit: "unavailable"`: the row is the truth.'
+    create = _desc("createBackup")
+    poll = "poll `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`."
+    audited = "The run is audited as `backup.run` ahead of the response."
+    assert create.index(poll) < create.index(marker) < create.index(audited)
+    job = _SCHEMAS["Job"]
+    assert {"type": "object", "additionalProperties": True} in job["properties"]["result"]["anyOf"]
+    assert "audit" not in job["properties"]  # the marker is a member of the open `result` object
+    succeeded = {
+        "id": "18000000-0000-4000-8000-000000000001",
+        "kind": "backup",
+        "status": "succeeded",
+        "result": {"backup_id": "18000000-0000-4000-8000-000000000001", "audit": "unavailable"},
+    }
+    validate_example("/components/schemas/Job", succeeded)
+    assert api.Job.model_validate(succeeded).model_dump(mode="json", exclude_none=True) == succeeded
+
+
+def test_a_503_refusal_to_start_is_not_stored_under_the_idempotency_key() -> None:
+    """SEC-LW-02 (from the lock-wait contract's review; the cache already stores only a 2xx): the
+    exception to replay names the `503` as well as the `409` with which `createBackup` or
+    `restoreBackup` refuses to start, so a run refused for the lock wait, an unwritten record or an
+    engine plan that is not encrypted is evaluated afresh under the same key once the cause
+    clears, never answered from the cache."""
+    exception = "Exception (E42-T05): a `409` or `503` with which `createBackup` or "
+    exception += "`restoreBackup` refuses to start (a precondition, another backup or restore "
+    exception += "still running, or a dependency or the engine unavailable) is not stored under "
+    exception += "the key, so the same key and body are evaluated afresh once the cause clears."
+    assert exception in text(SPEC["info"]["description"])
 
 
 def test_verify_hashes_before_any_decrypt_and_names_its_codes() -> None:

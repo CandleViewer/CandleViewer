@@ -276,10 +276,10 @@ info:
     `Idempotency-Key` (client-generated UUIDv4) is stored with the request fingerprint for 24 h.
     Replay with the same key + same body returns the original response and
     `Idempotency-Replayed: true`. Same key + different body → `409` with code
-    `idempotency_key_reuse`. Exception (E42-T05): a `409` with which `createBackup` or
-    `restoreBackup` refuses to start (a precondition, or another backup or restore still
-    running) is not stored under the key, so the same key and body are evaluated afresh once
-    the cause clears.
+    `idempotency_key_reuse`. Exception (E42-T05): a `409` or `503` with which `createBackup` or
+    `restoreBackup` refuses to start (a precondition, another backup or restore still running,
+    or a dependency or the engine unavailable) is not stored under the key, so the same key and
+    body are evaluated afresh once the cause clears.
 
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
@@ -595,6 +595,10 @@ x-error-codes:
     status: 503
     title: Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)
     retryable: true
+  - code: backup_engine_invalid
+    status: 503
+    title: The backup engine plans a run that is not encrypted; refused, fail closed, until its configuration is fixed
+    retryable: false
   - code: degraded_data
     status: 503
     title: Local store is behind the exchange beyond the freshness SLO
@@ -9591,7 +9595,10 @@ paths:
         without the KEK cannot trade. `verify: true` (the default) schedules an automatic
         restore-into-scratch verification after the dump completes.
         A run is a `backup` job whose id is the `Backup.id` of the `202` body (E42-T05): poll
-        `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. The run is audited as
+        `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. When the run's
+        `stage: finished` record cannot be written, the row ends `failed` with
+        `error: audit_unavailable`, and the job may read `succeeded` only if its `result` then also
+        carries `audit: "unavailable"`: the row is the truth. The run is audited as
         `backup.run` ahead of the response. While a backup or a restore is running, a new run is
         `409 conflict` with rule `backup_or_restore_running` and starts nothing. A run that
         cannot take the backups admission lock (`deleteBackup`) within its wait is
@@ -9603,7 +9610,11 @@ paths:
         is written, so the digest of every single-file artefact is bound in the append-only log,
         and `verifyBackup` and `restoreBackup` check the artefact against it. `note` is kept in
         the `requested` record's `reason` and nowhere else; the row records
-        `triggered_by: manual` and the caller. A user may start at most 4 runs in a rolling hour,
+        `triggered_by: manual` and the caller. A run whose backup engine plan has
+        `encrypted: false` breaks the rule that backups are always encrypted, so it is refused
+        fail closed: its failure record (`backup.run`, `outcome: failure`) is written first, then
+        the answer is `503 backup_engine_invalid`, nothing starts, and runs stay refused this way
+        until the engine configuration is fixed. A user may start at most 4 runs in a rolling hour,
         else `429 rate_limited` with `Retry-After`. Until a backup engine is wired the operation
         answers `501 not_implemented`, writes no record and starts nothing.
       x-rbac: { permissions: [backups:write], scope: none }
