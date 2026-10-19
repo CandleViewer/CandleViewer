@@ -274,11 +274,14 @@ def test_report_comments_on_the_newest_open_bot_issue_of_the_signal(tmp_path: Pa
 
 
 @pytest.mark.parametrize("on_page_two", [False, True])
-def test_report_ignores_other_authors_pull_requests_and_other_signals(
+def test_report_ignores_other_authors_pull_requests_and_other_titles(
     tmp_path: Path, on_page_two: bool
 ) -> None:
     title = f"{PREFIX} (2026-10-19)"
-    others = [_issue(9003, title, login="someone"), _issue(9002, title, pr=True)]
+    # All newer than the bot's issue, none a match: another account, another app's bot (only
+    # github-actions[bot] counts), a pull request, the prefix after a word, another signal.
+    others = [_issue(9005, title, login="someone"), _issue(9004, title, login="dependabot[bot]")]
+    others += [_issue(9003, title, pr=True), _issue(9002, f"Re: {title}")]
     others.append(_issue(9001, "perf: ingestion nightly soak/burst regression (2026-10-19)"))
     pages = [others, [_issue(2219, title)]] if on_page_two else [[*others, _issue(2219, title)]]
     rc, out, calls = _report(tmp_path, pages)
@@ -314,7 +317,9 @@ def test_report_fails_closed_on_a_bad_input(tmp_path: Path, name: str, value: st
     assert "cv-mark" not in out and (not value or value not in out)
 
 
-def test_report_caps_an_overlong_body(tmp_path: Path) -> None:
-    rc, out, calls = _report(tmp_path, [[]], BODY="z" * 70000)
+@pytest.mark.parametrize(("size", "cut"), [(59999, False), (60000, True), (70000, True)])
+def test_report_caps_an_overlong_body(tmp_path: Path, size: int, cut: bool) -> None:
+    # With the step's newline, 60000 bytes pass whole and one more is cut: under GitHub's 65536.
+    rc, out, calls = _report(tmp_path, [[]], BODY="z" * size)
     assert rc == 0, out
-    assert calls[-1][1] == "z" * 60000 + TRUNCATED
+    assert calls[-1][1] == ("z" * 60000 + TRUNCATED if cut else "z" * size + "\n")
