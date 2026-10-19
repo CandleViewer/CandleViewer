@@ -62,7 +62,7 @@ from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from candleviewer.accounts.errors import AccountsError
 from candleviewer.accounts.health import Clock, HealthState, HealthTransition
@@ -81,8 +81,23 @@ if TYPE_CHECKING:
 
 #: The bound on one REST wallet read.
 WALLET_REST_TIMEOUT_S: Final = 5.0
-#: A balance or rate: finite, and hidden from `repr()` (balances are Confidential, C-12.6).
-Amount = Annotated[Decimal, Field(repr=False, allow_inf_nan=False)]
+#: The widest exponent an amount may have, `Decimal.adjusted()` either way: no balance or rate comes
+#: near it. A figure past it is refused where the frame is decoded (C-2.3), not kept to be
+#: expanded into millions of digits on the event loop at every snapshot (C-2.17), as
+#: `ws/coalescing._plain` does.
+AMOUNT_MAX_EXPONENT: Final = 40
+
+
+def bounded_amount(amount: Decimal) -> Decimal:
+    """`amount`, or a `ValueError` that carries no figure (balances are Confidential, C-12.6)."""
+    if abs(amount.adjusted()) > AMOUNT_MAX_EXPONENT:
+        raise ValueError("an amount's exponent is out of range")
+    return amount
+
+
+#: A balance or rate: finite, within `AMOUNT_MAX_EXPONENT`, and hidden from `repr()` (balances are
+#: Confidential, C-12.6).
+Amount = Annotated[Decimal, Field(repr=False, allow_inf_nan=False), AfterValidator(bounded_amount)]
 
 
 class WalletUnavailable(AccountsError):
@@ -93,7 +108,8 @@ class WalletUnavailable(AccountsError):
 
 class WalletSnapshot(BaseModel):
     """One account's wallet as of the exchange's `updated_at` (22-api-openapi.yaml `WalletBalance`).
-    Strict: `Decimal` amounts only, never a float, an int or a string. USDT only (C-1.3).
+    Strict: `Decimal` amounts only, never a float, an int or a string, and none whose exponent is
+    out of range (`AMOUNT_MAX_EXPONENT`). USDT only (C-1.3).
 
     A refusal's `str()` omits the figures it refused (`hide_input_in_errors`), but its `errors()`
     and `json()` still carry them: whoever builds a snapshot from an exchange frame logs only the

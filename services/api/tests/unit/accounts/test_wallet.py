@@ -233,6 +233,23 @@ def test_a_snapshot_holds_finite_decimals_never_floats(name: str, bad: object) -
         WalletSnapshot(**(snapshot().model_dump() | {name: bad}))
 
 
+@pytest.mark.parametrize("bad", ["1E+999999999", "-1E-999999999", "1E+41", "1E-41", "0E-41"])
+@pytest.mark.parametrize("name", _AMOUNTS + _RATES)
+def test_a_snapshot_refuses_an_amount_whose_exponent_is_out_of_range(name: str, bad: str) -> None:
+    """No balance or rate comes near it: it is refused where the frame is decoded (C-2.3), not kept
+    to be expanded into millions of digits on the loop at every snapshot (C-2.17), and the refusal
+    carries no figure (C-12.6)."""
+    with pytest.raises(ValidationError) as refused:
+        WalletSnapshot(**(snapshot().model_dump() | {name: Decimal(bad)}))
+    assert bad.strip("-") not in str(refused.value)
+
+
+@pytest.mark.parametrize("edge", ["1E+40", "-1E+40", "1E-40", "0E-40"])
+def test_a_snapshot_keeps_an_amount_whose_exponent_is_at_the_bound(edge: str) -> None:
+    kept = WalletSnapshot(**(snapshot().model_dump() | {"equity": Decimal(edge)}))
+    assert kept.equity == Decimal(edge)
+
+
 @pytest.mark.parametrize("name", _AMOUNTS + _RATES)
 def test_a_refused_snapshot_never_prints_the_figure_it_refused(name: str) -> None:
     """Balances are Confidential (C-12.6): a malformed exchange frame must not put its figures in a

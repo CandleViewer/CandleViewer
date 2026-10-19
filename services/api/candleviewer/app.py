@@ -358,6 +358,7 @@ from candleviewer.ws_wiring import (
     book_snapshot_source,
     default_snapshot_router,
     ingestion_streams,
+    wallet_topic,
 )
 
 
@@ -1342,6 +1343,10 @@ def create_app(
     # #377 wiring: E08 upstream sink, BarBuilderSet leases, audit, instrument check, snapshots
     # (bars #2195, book #2196; stubs until #2197), sequencing; lifecycle + shutdown in `WsRuntime`.
     ws_upstream = UpstreamRefs(IngestionUpstreamSink(ingestion_streams(ctx)))
+    # E27-T04 (#837): the accounts module's `wallet` topic. Its snapshots read the account health
+    # runtime built below, which attaches to it, and its deltas go out through this hub.
+    ws_wallet = wallet_topic(ws_sequencing)
+    snapshot_adapters["wallet"] = ws_wallet
     # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
     # publish fans out through the sequencing hub, waking a pending subscription.
     machine_states = MachineStateRegistry(hub=ws_sequencing)
@@ -1682,8 +1687,9 @@ def create_app(
     # started `AccountsService` before the app serves (real backend only).
     wire_key_selfcheck(ctx, _LazyAuditEmitter(ctx.audit), metrics_facade)
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
-    # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's.
-    account_health = wire_account_health(resolved, metrics_facade)
+    # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's. It
+    # serves the `wallet` topic built above.
+    account_health = wire_account_health(resolved, metrics_facade, topic=ws_wallet)
     app.state.account_health = account_health
     ctx.accounts.attach_account_health(account_health.feed)
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966

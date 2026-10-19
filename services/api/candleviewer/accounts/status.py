@@ -18,6 +18,7 @@ tick:
   first snapshot, and an account that is not monitored is never stale.
 - Amounts stay `Decimal` in the model. In JSON they are plain digit strings, never an exponent:
   the `Decimal` pattern of both contracts refuses `1E-7`, which `str()` of a `Decimal` can give.
+  One whose exponent is out of range (`wallet.AMOUNT_MAX_EXPONENT`) is refused, not expanded.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, field_serializer
 
 from candleviewer.accounts.health import CONNECTION_STATE, AccountHealth, ConnectionState
 from candleviewer.accounts.models import OptUtcDatetime
-from candleviewer.accounts.wallet import WalletSnapshot, WalletView
+from candleviewer.accounts.wallet import WalletSnapshot, WalletView, bounded_amount
 
 #: The amounts of a `WalletSnapshot`, as REST `WalletBalance` and WS `wallet` name them.
 AMOUNTS: Final = (
@@ -44,7 +45,9 @@ AMOUNTS: Final = (
 
 
 def plain_decimal(value: Decimal) -> str:
-    """An amount on the wire: plain digits, never an exponent and never `-0`."""
+    """An amount on the wire: plain digits, never an exponent and never `-0`. One whose exponent is
+    out of range (`WalletSnapshot` refuses it at the boundary) is refused, not expanded (C-2.17)."""
+    bounded_amount(value)
     return format(value if value else value.copy_abs(), "f")
 
 

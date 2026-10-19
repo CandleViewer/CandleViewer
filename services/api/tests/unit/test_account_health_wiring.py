@@ -29,6 +29,7 @@ from candleviewer.account_health_wiring import (
 from candleviewer.accounts.health import DMS_HOOK_TIMEOUT_S, HealthState, HealthTransition
 from candleviewer.accounts.verification import KeyRefused, Refusal
 from candleviewer.accounts.wallet import WalletThresholds, WalletUnavailable
+from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.app import AppContext
 from candleviewer.observability.health import HealthStatus
 from candleviewer.observability.metrics import Metrics
@@ -36,6 +37,7 @@ from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
 from tests.unit.accounts._fakes import ACC, ACC_B, T0, FakeClock
 from tests.unit.accounts._runtime_rig import Rig, snapshot
 
@@ -699,9 +701,20 @@ def test_create_app_hands_the_accounts_service_the_runtimes_feed() -> None:
     assert feed.ws_heartbeat(ACC) is not None  # the feed reaches the monitor the app built
 
 
+def test_create_app_serves_the_wallet_topic_from_the_runtime_through_the_gateway_hub() -> None:
+    app = appmod.create_app(Settings(environment=Environment.TESTNET))
+    runtime, services = app.state.account_health, app.state.ws_registry.services
+    topic: Any = services.snapshots._sources["wallet"]
+    assert topic is runtime.topic and topic._publish == services.sequencing.publish
+    runtime.monitor.track(ACC)
+    body = topic.build(SimpleNamespace(accounts=frozenset({ACC, ACC_B})))
+    assert [entry["exchange_account_id"] for entry in body.structured["health"]] == [str(ACC)]
+
+
 def test_a_release_without_the_read_it_frees_is_refused() -> None:
     async def release() -> None:
         return None
 
+    topic = WalletTopic(SequencingHub().publish, SnapshotBody)
     with pytest.raises(ValueError, match="release"):
-        wire_account_health(Settings(), Metrics("demo"), release=release)
+        wire_account_health(Settings(), Metrics("demo"), topic, release=release)

@@ -76,7 +76,7 @@ class WalletWorld(StatusWorld):
     def __init__(self) -> None:
         super().__init__()
         self.hub = SequencingHub()
-        self.topic = WalletTopic(self.hub.publish, SnapshotBody)
+        self.topic = WalletTopic(self.hub.publish, SnapshotBody, clock=self.clock.monotonic)
         self.topic.attach(self.monitor, self.wallets)
 
     def conn(self, principal: PrincipalSnapshot) -> Conn:
