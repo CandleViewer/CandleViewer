@@ -131,7 +131,8 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   `surface.app` (on a docs page, a wrapper around each inline story) and count story mounts
   (`<output aria-label="Mount count" hidden>`).
 - Hosting: internal only, never an internet-reachable host (Pages, a public bucket, a preview
-  service). The publish to the Tailscale-only internal host is E05-T09's.
+  service). Publishing the static build to the Tailscale-only internal host is not yet scheduled:
+  it is the E05 threat model's accepted A4 residual (E05-X01, #215; its §5 and §6).
 
 ## Scripts
 

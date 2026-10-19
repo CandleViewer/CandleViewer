@@ -223,7 +223,8 @@ jobs:
             exit 1
           fi
 
-      # The a11y report only (each story's axe results); publishing the static build is E05-T09's.
+      # The a11y report only (each story's axe results). Publishing the static build is not yet
+      # scheduled: the E05 threat model's accepted A4 residual (E05-X01, #215).
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
