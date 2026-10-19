@@ -312,7 +312,9 @@ async def test_b01_binding_stubs_and_event_schemas() -> None:
     """Every event has a schema, every guard denies (A6), every audit reaches the hook (C-2.9)."""
     assert all_events(CHART) <= set(CV_EVENT_SCHEMAS)
     assert not any(guard({}, None) for guard in b01.GUARDS.values())
-    stubs = "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch"  # no body yet
+    # Deny-all: adoption_allowed until E45-S01 records D6; the others have no body yet
+    # (sl_attach_ok came with slice 1b's B1 version 2).
+    stubs = "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch sl_attach_ok"
     deny_all = {name for name, guard in b01.GUARDS.items() if guard is b01._deny_guard}
     assert deny_all == {*stubs.split(), "second_consecutive_miss"}
     audits, hook = sorted(n for n in b01.ACTIONS if n.startswith("audit_")), AsyncMock()
