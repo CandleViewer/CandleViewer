@@ -98,7 +98,7 @@ def test_tail_query_takes_a_limit_from_one_to_max_tail(limit: int) -> None:
 
 
 def test_the_tail_cap_is_the_ws_history_maximum() -> None:
-    """The wire range is 0..1000 (`23-ws-protocol.md` §6.1, §13; the caller skips a 0), and
+    """The wire range is 0..1000 (`23-ws-protocol.md` §6.1, §13), and
     SR-E12-07 caps it at 1000: the one read never exceeds what a snapshot may ask for."""
     assert FAMILIES["bars"].options["history"].hi == MAX_TAIL == 1_000
 

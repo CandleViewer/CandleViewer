@@ -21,10 +21,12 @@ MAX_TIME_WINDOW_US: Final = 400 * 86_400 * 1_000_000
 MAX_NON_TIME_WINDOW_US: Final = 31 * 86_400 * 1_000_000
 MAX_WINDOW_BARS: Final = 250_000
 #: The most bars one WS `bars` snapshot read takes (`BarReader.read_tail`): the topic's `history`
-#: maximum. The wire range is 0..1000 (`23-ws-protocol.md` §6.1, §13; the caller skips a 0), and
-#: SR-E12-07 caps it at 1000. The window caps above bound a series further, so `history` is only
-#: an upper bound: a snapshot holds at most what the window holds, about 800 bars for 12h, 400
-#: for 1d, 57 for 1w, the last 31 d of a non-time kind (`21-database-schema.md` §9.5).
+#: maximum. The wire range is 0..1000 (`23-ws-protocol.md` §6.1, §13), and SR-E12-07 caps it at
+#: 1000. The series store's read takes this many whatever a subscriber's `history` (a 0 too). The
+#: window caps above bound the read further, so `history` is only an upper bound: the read takes at
+#: most what the window holds, about 800 bars for 12h, 400 for 1d, 57 for 1w, the last 31 d of a
+#: non-time kind. A series the store keeps also keeps the bars closed since its read, up to this
+#: many, so a snapshot of it can hold more than its window holds (`21-database-schema.md` §9.5).
 MAX_TAIL: Final = 1_000
 #: The most WS series tail reads that run at once, process-wide (C-2.18; `bars.series_store`, #2787
 #: D2-G1). Every `SeriesStore` on the event loop shares them, and a read that cannot take a slot
