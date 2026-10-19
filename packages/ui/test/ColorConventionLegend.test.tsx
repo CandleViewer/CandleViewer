@@ -13,6 +13,11 @@ describe("ColorConventionLegend", () => {
     expect(h).toContain("▲");
     expect(h).toContain('aria-label="Footprint colour legend"');
   });
+  it("keeps its rows list items of a list inside the named group (axe `listitem`, #269)", () => {
+    expect(html({ view: "Footprint" })).toMatch(
+      /^<div role="group" aria-label="Footprint colour legend"[^>]*><ul><li[^>]*>[\s\S]*<\/li><\/ul><\/div>$/,
+    );
+  });
   it("reflects inversion", () => {
     const h = html({ view: "DOM", convention: "inverted" });
     expect(h).toContain("Red = buy");
