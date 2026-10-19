@@ -156,6 +156,7 @@ class _World:
         self.sink = sink
         self.principals: dict[uuid.UUID, PrincipalSnapshot] = {}
         self.frames: list[list[dict[str, Any]]] = []
+        self.sockets: list[ConnectionAuthz] = []  # by index, as `frames`
         self.first_revoked: dict[int, float] = {}  # socket -> loop time of its first `revoked`
         self.closed: list[int] = []
         self.hold: asyncio.Event | None = None
@@ -179,6 +180,8 @@ class _World:
             assert authz.admit(topic)[1] is not None
         index, frames = len(self.frames), list[dict[str, Any]]()
         self.frames.append(frames)
+        self.sockets.append(authz)
+        authz.session_id = f"sess-{index}"
 
         async def record(frame: dict[str, Any]) -> None:
             if frame["t"] == "revoked" and index not in self.first_revoked:
@@ -198,6 +201,7 @@ class _World:
 
 def _revoked_rows(world: _World) -> list[dict[str, Any]]:
     """The `ws.subscription.revoked` row each `revoked` frame needs: socket, then frame order."""
+    sockets = [_socket(authz) for authz in world.sockets]
     return [
         {
             "action": "ws.subscription.revoked",
@@ -210,11 +214,16 @@ def _revoked_rows(world: _World) -> list[dict[str, Any]]:
                 "removed_accounts": f["p"].get("removed_accounts", []),
                 "sub_id": f["p"]["sub_id"],
                 **({"rs": f["rs"]} if "rs" in f else {}),
+                **socket,  # #415 (E17-R-16): and the socket
             },
         }
-        for frames in world.revoked()
+        for socket, frames in zip(sockets, world.revoked(), strict=True)
         for f in frames
     ]
+
+
+def _socket(authz: ConnectionAuthz) -> dict[str, Any]:
+    return {"connection_id": authz.connection_id, "session_id": authz.session_id}
 
 
 # -- ordering: frames first, rows after (the defect) -----------------------------------------------
@@ -296,10 +305,13 @@ async def test_every_revoked_frame_gets_exactly_one_audit_row_in_socket_then_fra
     world.principals[USER] = _principal(USER, READ - {Permission.MARKETDATA_READ}, A)
     await world.registry.grants_changed(USER)
     assert world.sink.rows == _revoked_rows(world) and len(world.sink.rows) == 9
+    first = _socket(world.sockets[0])
+    removed_b: dict[str, Any] = {"removed_accounts": [str(B)]}
+    removed_none: dict[str, Any] = {"removed_accounts": []}
     assert [(r["object_id"], r["reason"], r["after_state"]) for r in world.sink.rows[:3]] == [
-        ("orders", "account_scope_changed", {"removed_accounts": [str(B)], "sub_id": "s_02"}),
-        ("positions", "account_scope_changed", {"removed_accounts": [str(B)], "sub_id": "s_01"}),
-        ("trades.BTCUSDT", "permission_revoked", {"removed_accounts": [], "sub_id": "s_03"}),
+        ("orders", "account_scope_changed", {**removed_b, "sub_id": "s_02", **first}),
+        ("positions", "account_scope_changed", {**removed_b, "sub_id": "s_01", **first}),
+        ("trades.BTCUSDT", "permission_revoked", {**removed_none, "sub_id": "s_03", **first}),
     ]
 
 

@@ -1506,6 +1506,7 @@ def make_ws_router(
                 revocation_hub.unregister(conn.session_id, conn.closer)
             conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
+        conn.authz.session_id = session_id  # E17-R-16: its audit rows name the session
         if not reauth:
             svc = registry.services
             conn.emitter = TopicEmitter(
@@ -1545,6 +1546,8 @@ def make_ws_router(
         for f in revoked:
             conn.push(f)
         await registry.settle(conn.authz, conn.evict)  # §9.5: a narrowing's snaps follow
+        if revoked:  # E17-R-13 (WS-R02): their rows, once the frames are queued, as a change's
+            await registry.audit_revoked(conn.authz, revoked)
         structlog.contextvars.bind_contextvars(user_id=str(user_id), session_id=session_id)
         _log().info(
             "ws authenticated",

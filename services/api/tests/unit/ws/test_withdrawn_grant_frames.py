@@ -354,6 +354,10 @@ async def test_narrowing_to_a_drops_the_topics_queued_frames_and_snaps_a_after_r
     assert [(p["removed_accounts"], p["resubscribe_allowed"]) for p in revoked] == [
         ([str(ACC_B)], True)
     ] * 2
+    # #415 (E17-R-13, WS-R02): one `ws.subscription.revoked` row per frame on either path, the
+    # in-place re-`auth`'s too, written after the frames
+    rows = [r for r in rig.audit.records if r["action"] == "ws.subscription.revoked"]
+    assert [r["after_state"]["sub_id"] for r in rows] == [p["sub_id"] for p in revoked]
     snaps = [f for f in frames if f["t"] == "snap"]  # `s` 6, after the dropped 2 to 5
     reset = [(f["meta"]["reason"], f["s"], f["meta"]["previous_seq"]) for f in snaps]
     assert reset == [("reconfigure", 6, 5)] * 2

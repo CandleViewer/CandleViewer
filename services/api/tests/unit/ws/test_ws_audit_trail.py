@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -29,16 +29,22 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws import permissions
 from candleviewer.ws.lifecycle import OriginRefusal
 from candleviewer.ws.limits import REBUILD_MAX_PER_TOPIC
-from candleviewer.ws.metrics import AUDIT_FAILURE_REASONS, count_audit_failure
+from candleviewer.ws.metrics import (
+    AUDIT_FAILURE_REASONS,
+    count_audit_failure,
+    cv_ws_subscribe_granted_unaudited_total,
+    cv_ws_subscribe_narrowed_total,
+)
 from candleviewer.ws.metrics import cv_ws_audit_failures_total as failures_total
 from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices, handle_sub
+from candleviewer.ws.topics import parse_topic
 from tests.unit.ws.test_gateway_teardown import _UVICORN_CANCEL, _cancel, _Rig, _Socket
 from tests.unit.ws.test_origin_refusal_audit import SLOW_S, _FailingAudit, _StalledAudit
 
 GRANTED, DENIED, REVOKED = "ws.subscribe.granted", "ws.subscribe.denied", "ws.subscription.revoked"
 MGR = uuid.UUID(int=0x2174)
-A, B, C = (uuid.UUID(int=n) for n in (0xA, 0xB, 0xC))  # C is never granted
+A, B, C, D = (uuid.UUID(int=n) for n in (0xA, 0xB, 0xC, 0xD))  # C and D are never granted
 PERMS = frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ, Permission.POSITIONS_READ})
 GRANTS = tuple(AccountGrant(a, True, False, False) for a in (A, B))
 
@@ -170,6 +176,66 @@ async def test_the_granted_row_lists_the_first_max_grants_listed_and_counts_them
     assert row["after_state"] == {"count": 2, "subscriptions": [["positions", [str(B)]]]}
 
 
+def _counted(metric: Any) -> Callable[[], float]:
+    """An unlabelled counter, counted from now: call the result for the change since."""
+
+    def value() -> float:
+        (family,) = metric.collect()
+        return float(next(s.value for s in family.samples if s.name.endswith("_total")))
+
+    start = value()
+    return lambda: value() - start
+
+
+async def test_grant_records_past_the_connections_own_budget_are_counted_not_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#415 (E17-R-14): grant records draw on a budget per connection of the denial records' size
+    and window (2 here), apart from theirs: past it a record is counted, not written, and the reply
+    is unchanged; a denial record is still written."""
+    monkeypatch.setattr(permissions, "DENIAL_AUDITS_PER_WINDOW", 2)
+    authz, sent, sink = _connection()
+    kept_back = _counted(cv_ws_subscribe_granted_unaudited_total)
+    for family in ("positions", "orders", "trade_groups"):
+        await _sub(authz, sent, _acc(family, A))
+    await _sub(authz, sent, _acc("positions", C))  # C is never granted: a denial
+    assert [r["action"] for r in sink.rows] == [GRANTED, GRANTED, DENIED]
+    assert (kept_back(), len(authz.by_id), [f["t"] for f in sent]) == (1, 3, ["sub_ok"] * 4)
+
+
+_OID = "0a000000-0000-4000-8000-000000000001"
+
+
+@pytest.mark.parametrize(
+    ("ch", "recorded"),
+    [
+        *[("positions", True), ("alerts", True), ("recorder", True)],
+        *[(f"machines.order:{_OID}.state", True), (f"machines.session:{_OID}.state", True)],
+        *[("machines.book:BTCUSDT.state", False), ("machines.kill_switch.state", False)],
+        *[("machines.recording:BTCUSDT.state", False), ("book.BTCUSDT.50", False)],
+    ],
+)
+def test_a_grant_record_covers_what_an_account_or_a_user_scopes_and_the_recorder(
+    ch: str, recorded: bool
+) -> None:
+    """#415 (E17-R-14, WS-R01): a private family's subscription, but no `machines` kind that no
+    account or user scopes, and no public topic."""
+    sub = permissions.Subscription("s_01", parse_topic(ch), {}, {})
+    assert permissions._confidential(sub) is recorded
+
+
+async def test_each_account_a_narrowing_takes_away_is_counted_and_its_entry_recorded() -> None:
+    """#415 (E17-R-15, §6.2): the reply stays silent (`ok`, effective A and B), the two accounts
+    taken away count one each, and the frame's denial record lists the entry as `narrowed`."""
+    authz, sent, sink = _connection()
+    narrowed = _counted(cv_ws_subscribe_narrowed_total)
+    await _sub(authz, sent, _acc("positions", C, A, D, B))
+    (result,) = sent[-1]["p"]["results"]
+    assert (result["ok"], result["effective"]["exchange_account_ids"]) == (True, [str(A), str(B)])
+    assert (narrowed(), [r["action"] for r in sink.rows]) == (2, [DENIED, GRANTED])
+    assert (sink.rows[0]["object_id"], sink.rows[0]["reason"]) == ("positions", "narrowed")
+
+
 def test_the_contract_and_the_threat_model_state_how_many_grants_are_listed() -> None:
     """§5.2 and WS-R01 give the bound in prose: a change to the constant must change both."""
     n, docs = permissions.MAX_GRANTS_LISTED, Path(__file__).resolve().parents[5] / "docs"
@@ -238,10 +304,11 @@ def _rows(world: ls._World, action: str) -> list[dict[str, Any]]:
 def test_a_resync_rate_limited_revocation_writes_its_revoked_row(
     world: ls._World, rs: str | None
 ) -> None:
-    """The row names the subscription (§7.5, #3218): its `sub_id`, and `rs` on replay."""
+    """The row names the subscription (§7.5, #3218): its `sub_id`, and `rs` on replay; and the
+    socket (#415, E17-R-16): the `connection_id` of its `welcome` and its session."""
     ch, named = "book.BTCUSDT.50", {"rs": rs} if rs else {}
     with world.client.websocket_connect("/ws", subprotocols=ls.JSON) as ws:
-        ls._hello(ws)
+        socket = {"connection_id": ls._hello(ws)["p"]["connection_id"], "session_id": ls.SESSION}
         ls._auth(ws)
         ws.send_json({"t": "sub", "id": "s", "p": {"topics": [ch], "replay_session_id": rs}})
         assert ls._recv_type(ws, "sub_ok")["p"]["results"][0]["ok"] is True
@@ -253,7 +320,7 @@ def test_a_resync_rate_limited_revocation_writes_its_revoked_row(
         ls._settle(world, lambda: bool(_rows(world, REVOKED)))
     (row,) = _rows(world, REVOKED)  # the close row follows once the socket is gone
     assert (row["object_id"], row["reason"]) == (ch, "resync_rate_limited")
-    named_by = {"removed_accounts": [], "sub_id": "s_01", **named}
+    named_by = {"removed_accounts": [], "sub_id": "s_01", **named, **socket}
     assert (row["actor_user_id"], row["after_state"]) == (ls.USER, named_by)
 
 
