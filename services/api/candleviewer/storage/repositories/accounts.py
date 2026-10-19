@@ -266,6 +266,10 @@ class SelfCheckTargetRow:
     last_error_code: str | None = None
     #: `api_keys.expires_at`, for the soonest-expiry gauge (SR-034).
     expires_at: datetime | None = None
+    #: `api_keys.status` (`active` or `rotating`) and `created_at`, the registration time the
+    #: key-age policy counts from (US-ACCT-005, #837).
+    status: str = "active"
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

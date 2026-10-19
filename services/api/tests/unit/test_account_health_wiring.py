@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock
@@ -42,11 +43,12 @@ from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
-from tests.unit.accounts._fakes import ACC, ACC_B, T0, FakeClock, Journal, key_row
+from tests.unit.accounts._fakes import ACC, ACC_B, DAY, T0, FakeClock, Journal, key_row
 from tests.unit.accounts._runtime_rig import Rig, snapshot
 
 _ECHO = "echoed exchange text: key abc123"  # what a failing collaborator's message may carry
 _ACC_C = UUID(int=3)
+_ROTATION = ("ok", "warn", "overdue")
 #: A cut-off bound in a test, in real time: a lapse that is no hair's breadth on a starved runner.
 _BOUND_S = 0.1
 
@@ -620,7 +622,7 @@ async def test_create_app_wires_the_runtime_and_counter(monkeypatch: pytest.Monk
     assert app.state.metrics_facade.registry.get_sample_value(metric, labels) == 1.0
 
 
-def _real() -> Settings:
+def _real(**extra: Any) -> Settings:
     return Settings(
         storage_backend="real",
         environment=Environment.TESTNET,
@@ -628,6 +630,7 @@ def _real() -> Settings:
         auth_totp_key_hex=SecretStr("11" * 32),
         auth_recovery_hmac_key_hex=SecretStr("22" * 32),
         auth_csrf_key_hex=SecretStr("33" * 32),
+        **extra,
     )
 
 
@@ -713,6 +716,57 @@ async def test_a_stop_releases_the_pool_of_the_runtimes_own_store_and_only_that_
     runtime = appmod.create_app(_real()).state.account_health
     await runtime.stop()
     assert stored.disposed == 1
+
+
+@pytest.mark.parametrize(
+    ("days", "held", "noticed"), [(90, [1, 1, 1], [1, 1]), (180, [2, 1, 0], [1, 0])]
+)
+async def test_the_real_backend_counts_key_age_from_the_tracking_read_and_disables_nothing(
+    stored: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    days: int,
+    held: list[int],
+    noticed: list[int],
+) -> None:
+    """#837 W6: the first read after boot evaluates every key of the environment under the
+    policy of the settings (AC8 after a policy change), counts its notices and drops nothing."""
+    clock = FakeClock()
+    monkeypatch.setattr(wiring, "SystemClock", lambda: clock)
+    rows = [_account_row(account) for account in (ACC, ACC_B, _ACC_C, UUID(int=8))]
+    rows.append(_account_row(UUID(int=7), env="live"))  # another environment's: never counted
+    ages, statuses = (10, 80, 170, 170, 170), ("active",) * 3 + ("rotating", "active")
+    stored.rows = [
+        replace(row, created_at=T0 - age * DAY, status=status)
+        for row, age, status in zip(rows, ages, statuses, strict=True)
+    ]
+    app = appmod.create_app(_real(CV_KEY_ROTATION_POLICY_DAYS=days))
+    await app.state.account_health.refresh_tracking()
+    read = app.state.metrics_facade.registry.get_sample_value
+    states = [read("cv_keys_rotation_state", {"env": "testnet", "state": s}) for s in _ROTATION]
+    notices = [
+        read("cv_key_rotation_notices_total", {"env": "testnet", "state": s}) for s in _ROTATION[1:]
+    ]
+    assert (states, notices) == (held, noticed)
+    assert app.state.account_health.monitor.current(_ACC_C) is HealthState.DOWN  # still tracked
+
+
+async def test_a_key_age_job_that_raises_never_keeps_the_read_from_tracking(
+    stored: SimpleNamespace,
+) -> None:
+    """#837 W6: the job only reports. A row it cannot evaluate (a naive registration time) is
+    logged by its error type, once per change, and the enabled account is tracked at every read
+    (an untracked one would be refused by the gate)."""
+    runtime = appmod.create_app(_real()).state.account_health
+    naive = replace(_account_row(ACC), created_at=T0.replace(tzinfo=None))
+    tracked: list[HealthState | None] = []
+    with capture_logs() as logs:
+        for row in (naive, naive, _account_row(ACC), naive):  # it fails, again, reads, fails
+            stored.rows = [row]
+            await runtime.refresh_tracking()
+            tracked.append(runtime.monitor.current(ACC))
+    assert tracked == [HealthState.DOWN] * 4  # tracked, never connected
+    errors = [(e["event"], e["error"]) for e in logs if e["log_level"] == "error"]
+    assert errors == [("account_health.key_age_failed", "TypeError")] * 2
 
 
 def test_the_fake_backend_wires_the_runtime_with_no_repository_to_read() -> None:

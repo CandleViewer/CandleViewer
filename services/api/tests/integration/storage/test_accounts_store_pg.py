@@ -450,6 +450,7 @@ async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
     assert kid not in {t.key_id for t in await live.targets()}
     [target] = [t for t in await demo.targets() if t.account.id == acct.id]  # one usable key
     assert (target.key_id, target.account.trading_enabled) == (kid, True)
+    assert target.status == "active" and target.created_at is not None  # key age (#837)
     at, rights = datetime(2026, 10, 16, 9, tzinfo=UTC), {"ContractTrade": ["Order", "Position"]}
     facts = {"fetched_at": at.isoformat(), "uid": "1", "readOnly": 0, "permissions": rights}
     verified = VerifiedKey(facts, True, False, ("203.0.113.7",), None, at)
