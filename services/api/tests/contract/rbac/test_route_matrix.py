@@ -44,7 +44,14 @@ _OPS: dict[str, dict[str, Any]] = _MATRIX["operations"]
 _ROW_INDEX: dict[str, int] = {k: i for i, k in enumerate(_OPS)}
 _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
 _OUTCOMES = {"allow", "401", "403"}
-_TOPIC_OUTCOMES = {"sub_ok", "not_authenticated", "forbidden", "account_scope_denied"}
+#: `unknown_topic`: a family the contract lists before anything serves it (23 §6.1, `served`).
+_TOPIC_OUTCOMES = {
+    "sub_ok",
+    "not_authenticated",
+    "forbidden",
+    "account_scope_denied",
+    "unknown_topic",
+}
 
 
 def _contract_ops() -> set[str]:

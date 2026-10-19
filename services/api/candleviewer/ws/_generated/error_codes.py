@@ -166,7 +166,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.AUTH_FAILED: ErrorMeta(("ws",), "connection", False, "unauthenticated", 4401, "Token invalid or signature rejected"),
     ErrorCode.AUTH_TIMEOUT: ErrorMeta(("ws",), "connection", False, None, 4401, "No auth frame within 10 s of open"),
     ErrorCode.TOKEN_EXPIRED: ErrorMeta(("ws",), "connection", True, "unauthenticated", 4401, "Access token expired; refresh over REST and re-auth"),
-    ErrorCode.UNKNOWN_TOPIC: ErrorMeta(("ws",), "topic", False, "not_found", None, "Topic name not in the catalogue, or bars.* while the bars feature is off"),
+    ErrorCode.UNKNOWN_TOPIC: ErrorMeta(("ws",), "topic", False, "not_found", None, "Topic name not in the catalogue, or a bars.* or indicators.* topic not served"),
     ErrorCode.INVALID_TOPIC_FORMAT: ErrorMeta(("ws",), "topic", False, "validation_failed", None, "Malformed topic string, or a bar spec the server cannot build or bound"),
     ErrorCode.UNSUPPORTED_SYMBOL: ErrorMeta(("ws",), "topic", False, "unsupported_category", None, "Not a Bybit USDT linear perpetual, or unknown instrument"),
     ErrorCode.INVALID_OPTIONS: ErrorMeta(("ws",), "topic", False, "validation_failed", None, "Subscription option out of range, of the wrong type, or an unknown key"),

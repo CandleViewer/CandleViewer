@@ -163,6 +163,11 @@ def test_validate_options_typo_of_every_declared_option_is_rejected(family: str,
     assert (exc.value.code, exc.value.field) == ("invalid_options", "opts")  # §5.1, #3479
 
 
+#: An `indicators.*` instance (§13 `indicatorInstance`), and the most params one may carry.
+_EMA = {"indicator": "ema"}
+_P16 = {f"p{i}": i for i in range(16)}
+
+
 @pytest.mark.parametrize(
     ("family", "opts", "ok"),
     [
@@ -193,6 +198,23 @@ def test_validate_options_typo_of_every_declared_option_is_rejected(family: str,
         ("bars", {"history": "5"}, False),
         ("bars", {"include_delta": 1}, False),
         ("bars", {"include_delta": "true"}, False),
+        ("indicators", {"instances": [_EMA] * 8, "history": 0}, True),
+        ("indicators", {"instances": [_EMA] * 9}, False),
+        ("indicators", {"instances": [{**_EMA, "params": _P16}]}, True),
+        ("indicators", {"instances": [{**_EMA, "params": {**_P16, "q": 1}}]}, False),
+        (
+            "indicators",
+            {"instances": [{**_EMA, "params": {"k": 2.5, "a": "x" * 64, "o": True}}]},
+            True,
+        ),
+        ("indicators", {"instances": [{**_EMA, "params": {"a": "x" * 65}}]}, False),
+        ("indicators", {"instances": [{**_EMA, "params": {"n": float("nan")}}]}, False),
+        ("indicators", {"instances": [{**_EMA, "params": {"n": [21]}}]}, False),
+        ("indicators", {"instances": [{**_EMA, "params": None}]}, False),
+        ("indicators", {"instances": [{"indicator": "x" * 33}]}, False),
+        ("indicators", {"instances": [{"indicator": "ema\n"}]}, False),
+        ("indicators", {"instances": [{"params": {}}]}, False),
+        ("indicators", {"instances": [{**_EMA, "compute": "server"}]}, False),
     ],
 )
 def test_validate_options_boundaries(family: str, opts: dict[str, Any], ok: bool) -> None:

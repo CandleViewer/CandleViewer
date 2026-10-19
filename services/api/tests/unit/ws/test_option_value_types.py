@@ -44,8 +44,9 @@ WRONG_SCALARS: dict[str, tuple[Any, ...]] = {
     "uuids": ("x", 5, True, *NON_FINITE),
     "symbols": ("BTCUSDT", 5, True, *NON_FINITE),
     "strings": ("x", 5, True, *NON_FINITE),
+    "instances": ("x", 5, True, *NON_FINITE),
 }
-_LISTS = frozenset({"uuids", "symbols", "strings"})
+_LISTS = frozenset({"uuids", "symbols", "strings", "instances"})
 
 
 def _distinct() -> list[tuple[str, str, Opt]]:

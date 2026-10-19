@@ -663,9 +663,9 @@ Retuning the throttle without tearing down the subscription or re-snapshotting:
 { "t": "ctl_ok", "id": "c-0030", "ch": "book.BTCUSDT.50", "ts": 1789133000000, "p": { "effective": { "throttle_ms": 200 }, "sub_id": "s_01" } }
 ```
 
-Changing `depth`, `price_grouping`, `time_bucket_ms` or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that continues the sequence: it takes the next number and carries `meta.previous_seq` (§7.7). Its reason is `reconfigure`, unless a snapshot was already pending for another reason. The client must discard its prior state on seeing that flag.
+Changing `depth`, `price_grouping`, `time_bucket_ms`, the `metrics` list or the `instances` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that continues the sequence: it takes the next number and carries `meta.previous_seq` (§7.7). Its reason is `reconfigure`, unless a snapshot was already pending for another reason. The client must discard its prior state on seeing that flag.
 
-**As built (#2823).** `ctl` takes the keys of §13.6, and of those only the ones the topic's own options include (§6.1): `throttle_ms`, `coalesce` and `paused` on every topic the client subscribed to, `min_size` on `trades`, `price_grouping` on `footprint`, `heatmap` and `profile`, `depth` and `time_bucket_ms` on `heatmap`, and `metrics` on `metrics`. `system` is attached to every connection (§6.2), not held as a subscription, so a `ctl` for it gets `not_subscribed`. A change to `depth`, `price_grouping`, `time_bucket_ms` or `metrics` re-snapshots when the effective value changes. `throttle_ms`, `coalesce` and `min_size` never do, and a resume does (below). `bar_type` and `param` are not `ctl` keys: on `bars` and `footprint` they are in the topic name, and on `metrics` they are options of `sub` (§6.1), echoed in `effective` and fixed there. A `ctl` that names one of them, or any other key (`encoding`, `from_seq`, `from_ts_ms`, a scope option of §6.2, `depth` on `book`, a typo), gets `err` `invalid_options` and changes nothing. Its `field` is the key when it is an option name the server knows, of `sub` (§5.1, §6) or `ctl` (§13.6), and `p`, the options object, when it is not, however long the key is (`params`, which §13.5 lists and no topic takes yet, §6.1, is not one). A `ctl` key the server does not know is never carried by the `err`, in `field` or in its message (#3370). To change a bar series, `unsub` and `sub` again.
+**As built (#2823).** `ctl` takes the keys of §13.6, and of those only the ones the topic's own options include (§6.1): `throttle_ms`, `coalesce` and `paused` on every topic the client subscribed to, `min_size` on `trades`, `price_grouping` on `footprint`, `heatmap` and `profile`, `depth` and `time_bucket_ms` on `heatmap`, `metrics` on `metrics`, and `instances` on `indicators` (§6.1). `system` is attached to every connection (§6.2), not held as a subscription, so a `ctl` for it gets `not_subscribed`. A change to `depth`, `price_grouping`, `time_bucket_ms`, `metrics` or `instances` re-snapshots when the effective value changes. `throttle_ms`, `coalesce` and `min_size` never do, and a resume does (below). `bar_type` and `param` are not `ctl` keys: on `bars`, `footprint` and `indicators` they are in the topic name, and on `metrics` they are options of `sub` (§6.1), echoed in `effective` and fixed there. A `ctl` that names one of them, or any other key (`encoding`, `from_seq`, `from_ts_ms`, a scope option of §6.2, `depth` on `book`, a typo), gets `err` `invalid_options` and changes nothing. Its `field` is the key when it is an option name the server knows, of `sub` (§5.1, §6) or `ctl` (§13.6), and `p`, the options object, when it is not, however long the key is (`params`, which §13.5 lists and no topic takes yet, §6.1, is not one). A `ctl` key the server does not know is never carried by the `err`, in `field` or in its message (#3370). To change a bar series, `unsub` and `sub` again.
 
 **Pause and resume (#2517).** While `paused: true`, the server emits no `d` for the subscription and consumes no sequence number. The pause holds until a `ctl` sets `paused: false`: a `ctl` that omits `paused` (a hidden window's throttle change, §8.5) leaves it in place, and its `ctl_ok.effective` echoes `paused: true`. A `ctl` that resumes the subscription (`paused: false` after `paused: true`) also answers `"resnapshot": true`, and a `snap` comes before any further `d`, as for an identity change. Otherwise the updates published during the pause would be lost with no gap to show it. Pausing, or resuming a subscription that is not paused, does not re-snapshot.
 
@@ -687,19 +687,20 @@ Topic names are dot-separated, lower-case, with symbols in Bybit's native upper-
 
 ### 6.1 Public market-data topics
 
-| Topic                                   | Options                                                                                                                                                             | Snapshot                                           | Default throttle                          | Binary     | Payload schema                                               |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------- | ---------- | ------------------------------------------------------------ |
-| `book.{symbol}.{depth}`                 | `depth` ∈ {1, 50, 200, 500} (in the name), `throttle_ms`                                                                                                            | Full book to depth (as built: §7.7)                | 50 ms (depth 1 → 20 ms; 200/500 → 100 ms) | ✔ kind 1/2 | [`BookSnapshot`](#141-booksnapshot--bookdelta) / `BookDelta` |
-| `trades.{symbol}`                       | `min_size`, `cluster_window_ms`, `cluster_tolerance_ticks`                                                                                                          | Last 200 prints                                    | 100 ms                                    | ✔ kind 3   | [`TradesBatch`](#142-tradesbatch)                            |
-| `bars.{symbol}.{bar_type}.{param}`      | `include_delta` (false), `history` (0–1 000, default 500)                                                                                                           | Last `history` bars, forming bar last              | 250 ms                                    | ✔ kind 4   | [`BarsBatch`](#143-barsbatch)                                |
-| `footprint.{symbol}.{bar_type}.{param}` | `price_grouping`, `imbalance_ratio`, `min_stack`, `min_imbalance_volume`, `history` (≤200)                                                                          | Last `history` bars of cells                       | 250 ms                                    | ✔ kind 5   | [`FootprintUpdate`](#144-footprintupdate)                    |
-| `heatmap.{symbol}`                      | `time_bucket_ms` ∈ {100,250,500,1000,5000} (**client-derived, see §6.1.1**; server fallback `500`), `price_grouping`, `depth`, `window_seconds` (≤900, default 900) | Window of columns, capped at the 2 000 most recent | = `time_bucket_ms`                        | ✔ kind 6   | [`HeatmapColumn`](#145-heatmapcolumn)                        |
-| `profile.{symbol}.{kind}`               | `kind` ∈ {volume, delta, tpo}, `split`, `session_anchor`, `price_grouping`, `value_area_pct`                                                                        | Current period profile                             | 1 000 ms                                  | ✖          | [`ProfileUpdate`](#146-profileupdate)                        |
-| `metrics.{symbol}`                      | `metrics` (array of metric codes), `bar_type`, `param`                                                                                                              | Current values                                     | 250 ms                                    | ✖          | [`MetricsUpdate`](#147-metricsupdate)                        |
-| `ticker.{symbol}`                       | —                                                                                                                                                                   | Current ticker                                     | 250 ms                                    | ✖          | [`TickerUpdate`](#148-tickerupdate)                          |
-| `ticker`                                | `symbols` (≤40)                                                                                                                                                     | All requested tickers                              | 250 ms                                    | ✖          | `TickerUpdate` (batched)                                     |
-| `liquidations.{symbol}`                 | `min_notional_usd`, `cluster_window_ms`                                                                                                                             | Last 100                                           | 500 ms                                    | ✖          | [`LiquidationBatch`](#149-liquidationbatch)                  |
-| `liquidations`                          | `symbols`, `min_notional_usd`                                                                                                                                       | Last 100 across symbols                            | 500 ms                                    | ✖          | `LiquidationBatch`                                           |
+| Topic                                    | Options                                                                                                                                                             | Snapshot                                           | Default throttle                          | Binary     | Payload schema                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------- | ---------- | ------------------------------------------------------------ |
+| `book.{symbol}.{depth}`                  | `depth` ∈ {1, 50, 200, 500} (in the name), `throttle_ms`                                                                                                            | Full book to depth (as built: §7.7)                | 50 ms (depth 1 → 20 ms; 200/500 → 100 ms) | ✔ kind 1/2 | [`BookSnapshot`](#141-booksnapshot--bookdelta) / `BookDelta` |
+| `trades.{symbol}`                        | `min_size`, `cluster_window_ms`, `cluster_tolerance_ticks`                                                                                                          | Last 200 prints                                    | 100 ms                                    | ✔ kind 3   | [`TradesBatch`](#142-tradesbatch)                            |
+| `bars.{symbol}.{bar_type}.{param}`       | `include_delta` (false), `history` (0–1 000, default 500)                                                                                                           | Last `history` bars, forming bar last              | 250 ms                                    | ✔ kind 4   | [`BarsBatch`](#143-barsbatch)                                |
+| `footprint.{symbol}.{bar_type}.{param}`  | `price_grouping`, `imbalance_ratio`, `min_stack`, `min_imbalance_volume`, `history` (≤200)                                                                          | Last `history` bars of cells                       | 250 ms                                    | ✔ kind 5   | [`FootprintUpdate`](#144-footprintupdate)                    |
+| `indicators.{symbol}.{bar_type}.{param}` | `instances` (1–8 indicator instances, required), `history` (0–1 000, default 500)                                                                                   | Last `history` closed-bar points per instance      | 250 ms                                    | ✖          | [`IndicatorSeriesBatch`](#1410-indicatorseriesbatch)         |
+| `heatmap.{symbol}`                       | `time_bucket_ms` ∈ {100,250,500,1000,5000} (**client-derived, see §6.1.1**; server fallback `500`), `price_grouping`, `depth`, `window_seconds` (≤900, default 900) | Window of columns, capped at the 2 000 most recent | = `time_bucket_ms`                        | ✔ kind 6   | [`HeatmapColumn`](#145-heatmapcolumn)                        |
+| `profile.{symbol}.{kind}`                | `kind` ∈ {volume, delta, tpo}, `split`, `session_anchor`, `price_grouping`, `value_area_pct`                                                                        | Current period profile                             | 1 000 ms                                  | ✖          | [`ProfileUpdate`](#146-profileupdate)                        |
+| `metrics.{symbol}`                       | `metrics` (array of metric codes), `bar_type`, `param`                                                                                                              | Current values                                     | 250 ms                                    | ✖          | [`MetricsUpdate`](#147-metricsupdate)                        |
+| `ticker.{symbol}`                        | —                                                                                                                                                                   | Current ticker                                     | 250 ms                                    | ✖          | [`TickerUpdate`](#148-tickerupdate)                          |
+| `ticker`                                 | `symbols` (≤40)                                                                                                                                                     | All requested tickers                              | 250 ms                                    | ✖          | `TickerUpdate` (batched)                                     |
+| `liquidations.{symbol}`                  | `min_notional_usd`, `cluster_window_ms`                                                                                                                             | Last 100                                           | 500 ms                                    | ✖          | [`LiquidationBatch`](#149-liquidationbatch)                  |
+| `liquidations`                           | `symbols`, `min_notional_usd`                                                                                                                                       | Last 100 across symbols                            | 500 ms                                    | ✖          | `LiquidationBatch`                                           |
 
 **As built (#2823).** The registry keeps one option map per family and, but for `book` (by depth) and `heatmap` (its `time_bucket_ms`), one default throttle per family. So a family's two shapes share both: the batched `ticker` defaults to 250 ms, like `ticker.{symbol}`. §13.5 lists the union of every topic's options without saying which topic takes which. The registry decides, and refuses any other key with `invalid_options` (§5.1). Beyond the options in the table, `ticker.{symbol}` and `liquidations.{symbol}` also accept `symbols`, and the batched `liquidations` also accepts `cluster_window_ms`. On a per-symbol shape `symbols` is checked and echoed in `sub_ok.effective` and counts toward the 40-symbol limit (§16.2), but what is served is the symbol in the name. `params` is in §13.5, yet no topic takes it yet: `metrics` with `params` is `invalid_options` (`field`: `opts`, §5.1). E23-T02 (#658) plans per-metric `params` on `metrics`.
 
@@ -717,6 +718,15 @@ Notes that bite if ignored:
   - **`include_delta`.** It defaults to false, unlike REST `/market/bars` (true), so a client that bootstraps over REST passes it explicitly on both. When true, structured items carry `delta`, `min_delta` and `max_delta`; `cvd` is never sent per bar (the client sums `delta`). When false those are omitted and kind-4 records carry `delta = 0`. `trades` is always sent, although REST gates it behind `include_delta`. `include_delta` and `history` are fixed at subscribe, not `ctl` keys: change them with `unsub` and `sub`. `sub_ok.effective` echoes both, defaults included.
   - **Encodings.** A binary `bars` subscription gets kind 4 (§3.4), except where §3.4's one fallback trigger fires. Then that `d` frame, or the whole snapshot, is sent structured (`e: "j"`); a snapshot never mixes encodings. A client MUST accept either encoding on any binary `bars` subscription, frame by frame, and MUST apply an amended close by the §8.2 rule; `s` stays contiguous across both. Kind-4 scales are per frame: decode each frame with its own header's scales, never the snapshot's. A structured frame also carries `close_t_ms`, `min_delta` and `max_delta`, which kind 4 lacks: on a binary subscription a client ignores them wherever they appear (§3.4). An emission neither form can carry is not sent and is counted, and the next snapshot repairs the series, not necessarily that bar (§3.4).
   - **Refusals, per topic in `sub_ok`, never clamped.** More distinct bar series than a spec cap allows (8 per user, 32 per symbol, 512 per server) gets `subscription_limit`. A spec the server cannot build, or a `param` outside the server's bounds for its `bar_type` (SR-E12-03, the same bounds as REST `/market/bars`), gets `invalid_topic_format`; the message may name the bound but never lists spec hashes or other users' series. A refusal because the bar service is shutting down is `internal_error` (retryable), not `invalid_topic_format`. More than 16 `bars.*` subscriptions on one connection, live and replay alike, gets `subscription_limit` (SR-E12-07). Each `bars.*` start draws on the §7.5 rebuild budget like any other, whatever its options: that budget (SR-193) is SR-E12-07's per-connection subscribe rate limit, and a start past it gets `resync_rate_limited`. A `history` outside 0–1 000 or a non-boolean `include_delta` gets `invalid_options` naming the field. While the `bars_enabled` setting is off, every `bars.*` topic gets `unknown_topic`; the setting goes when E12-T06 completes. `footprint.*` keeps §7.7's pending behaviour until its producer (#2197), but its `param` is bounded like `bars.*` (SR-E12-03), and a spec the server cannot build is refused `invalid_topic_format`, wherever a builder could serve it: live with the bar service wired, or replay.
+- **`indicators` (E13-T02, #426; ADR-0034).**
+  - **What the topic carries.** The values of the `compute: server` indicators of REST `listIndicators`, which the backend kernel computes (`24-internal-schemas.md` §7.4) from the closed bars of the series the name gives, the series `bars.*` names the same way. A `client_worker` indicator is never served here: the chart engine's worker computes it.
+  - **Options.** `instances` is required: 1 to 8 entries `{indicator, params}` (§13 `indicatorInstance`). `indicator` is the id of a descriptor whose `compute` is `server`, and `params` holds values for its `params_schema`; an absent param takes its default. `history` (0–1 000, default 500) is the number of points per instance in a snapshot. `indicators.*` takes these from its own closed option set (§13.5 `indicatorOptions`), so any other key, `compute` included (IR-41), is `invalid_options` (§5.1). `sub_ok.effective` echoes both options, each instance with every param written out, defaults included, and its `key`. `instances` is an identity option: a `ctl` that changes it re-snapshots (§5.4) and is checked as a `sub` is (below). `history` is fixed at `sub`.
+  - **Identity.** An instance's `key` is its `spec_hash` (24 §7.4): the indicator, every param, the bar series' `spec_hash` and the bar source. Two entries of one request with the same `key` are `invalid_options`. The server computes each `(symbol, key)` once per bar close, however many subscriptions and other consumers read it.
+  - **Snapshot and deltas.** A snapshot holds, per instance, the points of the last `history` closed bars of the series' current generation, oldest first, and `history: 0` sends empty `points` (deltas only). A `d` follows each bar close, with that bar's point for each instance. Only closed bars are served, so no point is forming and none carries `confirm`. A time-bar series is densified before the kernel reads it (24 §3.3); its fillers publish no point, so the points carry the indexes of the series' real bars. An output with no value yet, or none at all (warmup, a zero divisor), is `null`, never 0 and never NaN (the descriptor's `warmup_bars` and `nullable_when`). A snapshot of a series whose builder is quarantined carries `meta.stale: true`, as its `bars` snapshot does (§7.2).
+  - **Amended bars and generations.** A late trade that re-closes a bar (§8.2) re-publishes, in a `d`, each point from that bar forward whose value changed, with `amended: true`; the client replaces stored points by key. A change of the series' generation is a swap, as on `bars.*`: a `snap` with `meta.reason: "generation_swap"` (§7.4), never a `d`, and the client replaces every instance's points. A point's key is `(key, generation, index)` (§8.2): `t_ms` is the bar's open time, which non-time bars can share.
+  - **Refusals, per topic in `sub_ok`, never clamped.** No `instances`, an unknown indicator, a `client_worker` one, a param its descriptor lacks or a value outside its bounds is `invalid_options` with `field: "instances"`: the message names the entry's position and, for a known param, its name and bound, never a key the server does not know (IR-24). More server instances than SR-E13-03 allows (8 per user, 32 per symbol, 128 per server; joining an instance that already runs counts against the user's cap only) is `subscription_limit`, naming the cap. A first computation that needs a read the full-recompute executor cannot start now (SR-E13-04: 2 at a time, at most 250 000 bars, refused, never queued) is `internal_error`, which is retryable. The series is held as a live `bars.*` subscription holds it, under the same spec caps and `param` bounds (above). A `ctl` that changes `instances` is refused in the same ways, with an `err`, and changes nothing. Each start draws on the §7.5 rebuild budget like any other.
+  - **Live only.** A replay `sub` (§11) of `indicators.*` gets `unknown_topic`, until E26 asks for replay.
+  - **Status: contract only (C-6.1).** No engine is wired yet, so every `indicators.*` topic is refused `unknown_topic` after the checks a `sub` decides from the entry itself (§5.2: shape, option types and ranges, permission, duplicate, the 200 and 40 caps, the rebuild budget), and no `ctl` can reach one. E13-T02's delivery serves it behind the `bars_enabled` setting, and while that setting is off it stays `unknown_topic`.
 
 #### 6.1.1 `heatmap.time_bucket_ms` — normative default (resolves open item W3)
 
@@ -810,6 +820,7 @@ introduced, and deliveries are discrete records, so none are coalesced away. Per
 | Topic family                                                                                     | Required permission | Scope narrowing             |
 | ------------------------------------------------------------------------------------------------ | ------------------- | --------------------------- |
 | `book`, `trades`, `bars`, `footprint`, `heatmap`, `profile`, `metrics`, `ticker`, `liquidations` | `marketdata:read`   | none                        |
+| `indicators` (§6.1)                                                                              | `marketdata:read`   | none                        |
 | `orders`, `trade_groups`                                                                         | `orders:read`       | granted accounts            |
 | `positions`                                                                                      | `positions:read`    | granted accounts            |
 | `executions`                                                                                     | `executions:read`   | granted accounts            |
@@ -1172,11 +1183,11 @@ The server accepts this **only** when it can prove continuity: it holds state co
 
 ### 8.1 The three mechanisms, and when each applies
 
-| Mechanism      | What it does                                                               | Applied to                                                          | Loss of information?                                    |
-| -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
-| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions` and `system` flag frames.  | No — state is complete at each emission.                |
-| **Coalescing** | Merges all pending updates for a topic into one frame.                     | Book, bars, footprint, heatmap, metrics, ticker, positions, wallet. | Intermediate _frames_ are lost; final _state_ is exact. |
-| **Shedding**   | Drops the subscription and forces a re-snapshot, or closes the connection. | Last resort under sustained overflow.                               | Yes — recovered by re-snapshot.                         |
+| Mechanism      | What it does                                                               | Applied to                                                                      | Loss of information?                                    |
+| -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions` and `system` flag frames.              | No — state is complete at each emission.                |
+| **Coalescing** | Merges all pending updates for a topic into one frame.                     | Book, bars, footprint, indicators, heatmap, metrics, ticker, positions, wallet. | Intermediate _frames_ are lost; final _state_ is exact. |
+| **Shedding**   | Drops the subscription and forces a re-snapshot, or closes the connection. | Last resort under sustained overflow.                                           | Yes — recovered by re-snapshot.                         |
 
 ### 8.2 Coalescing rules per topic family
 
@@ -1185,6 +1196,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `book`                          | Per price level, last-write-wins; deletes win over earlier updates at the same level.                                                                         | The book is a map; only the current value matters.             |
 | `bars`                          | Per bar `(generation, index)`, last-write-wins; a confirmed bar never replaced by an unconfirmed one, except a confirmed update with `amended: true` (below). | The in-progress bar is overwritten many times per second.      |
 | `footprint`                     | Per (bar, price) cell, the bar keyed by `(generation, index)` (below); values summed for the _same_ bar, replaced across bars.                                | Cells are cumulative within a bar.                             |
+| `indicators`                    | Per point `(key, generation, index)`, last-write-wins; an `amended` point replaces the stored one (§6.1).                                                     | Points of closed bars; a late trade amends some.               |
 | `heatmap`                       | Per time-bucket column, last-write-wins; whole columns dropped only if the bucket is complete and already sent.                                               | Columns are the atomic render unit.                            |
 | `metrics`                       | Per series (metric code and `params`), last point wins.                                                                                                       | Scalar time series.                                            |
 | `ticker`, `wallet`, `positions` | Whole-object last-write-wins.                                                                                                                                 | Snapshot-shaped.                                               |
@@ -1521,7 +1533,7 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `forbidden`                | topic      | no          | =                      | Missing permission for the topic family.                                             |
 | `account_scope_denied`     | topic      | no          | =                      | None of the requested accounts are in scope.                                         |
 | `view_as_read_only`        | request    | no          | =                      | Action frame on a view-as session (§9.6); `cv.v1` defines none yet. Nothing changes. |
-| `unknown_topic`            | topic      | no          | `not_found`            | Topic not in the catalogue, or `bars.*` while the bars feature is off (§6.1).        |
+| `unknown_topic`            | topic      | no          | `not_found`            | Not in the catalogue, or a `bars.*` or `indicators.*` topic not served (§6.1).       |
 | `invalid_topic_format`     | topic      | no          | `validation_failed`    | Malformed topic (bad depth, dotted `param`, unknown bar type) or bad spec (§6.1).    |
 | `unsupported_symbol`       | topic      | no          | `unsupported_category` | Not a Bybit USDT linear perpetual, or unknown instrument.                            |
 | `invalid_options`          | topic      | no          | `validation_failed`    | Bad value or key; `field` names it; an unknown key gets `p` (§5.4) or `opts` (§5.1). |
@@ -1836,6 +1848,25 @@ Shared definitions used throughout:
       "enum": ["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"]
     },
     "depth": { "enum": [1, 50, 200, 500] },
+    "indicatorInstance": {
+      "type": "object",
+      "description": "indicators.* (§6.1): one server instance a subscription reads.",
+      "required": ["indicator"],
+      "properties": {
+        "indicator": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$",
+          "description": "The id of a REST listIndicators descriptor whose compute is server."
+        },
+        "params": {
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": { "type": ["number", "string", "boolean"], "maxLength": 64 },
+          "description": "Values for the descriptor's params_schema; an absent param takes its default. Never clamped (§6.1)."
+        }
+      },
+      "additionalProperties": false
+    },
     "errorCode": {
       "$comment": "GENERATED from 22-api-openapi.yaml x-error-codes-ws + x-error-codes[surface contains ws]. Do not hand-edit; CI gate error_registry_single_source regenerates and diffs.",
       "enum": [
@@ -2227,7 +2258,9 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "required": ["ch"],
         "properties": {
           "ch": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" },
-          "opts": { "$ref": "#/$defs/options" }
+          "opts": {
+            "anyOf": [{ "$ref": "#/$defs/options" }, { "$ref": "#/$defs/indicatorOptions" }]
+          }
         },
         "additionalProperties": false
       }
@@ -2304,10 +2337,32 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "min_notional_usd": { "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal" }
       },
       "additionalProperties": false
+    },
+    "indicatorOptions": {
+      "type": "object",
+      "description": "The options of indicators.* (§6.1): a closed set of its own, because the union above already holds the 32 keys a MessagePack map may (§3.6, SR-185).",
+      "required": ["instances"],
+      "properties": {
+        "throttle_ms": { "type": "integer", "minimum": 0, "maximum": 60000 },
+        "encoding": { "enum": ["binary", "structured"] },
+        "coalesce": { "type": "boolean", "default": true },
+        "from_seq": { "$ref": "cv://ws/v1/common.schema.json#/$defs/seq" },
+        "from_ts_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+        "instances": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/indicatorInstance" }
+        },
+        "history": { "type": "integer", "minimum": 0, "maximum": 1000, "default": 500 }
+      },
+      "additionalProperties": false
     }
   }
 }
 ```
+
+`opts` is the union `options` for every topic but `indicators.*`, which takes `indicatorOptions` (§6.1). The union already holds 32 keys, the most a MessagePack map may carry (§3.6), so a topic that needs a new option gets a closed set of its own rather than widening the union.
 
 ```json
 {
@@ -2414,6 +2469,13 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
     "depth": { "$ref": "cv://ws/v1/common.schema.json#/$defs/depth" },
     "price_grouping": { "type": "integer", "minimum": 1, "maximum": 1000 },
     "metrics": { "type": "array", "items": { "type": "string" } },
+    "instances": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/indicatorInstance" },
+      "description": "indicators.* only (§6.1); a change triggers `resnapshot: true`."
+    },
     "min_size": { "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal" },
     "time_bucket_ms": {
       "enum": [100, 250, 500, 1000, 5000],
@@ -3077,6 +3139,81 @@ result against these schemas, which is what keeps the two representations from d
   "additionalProperties": false
 }
 ```
+
+### 14.10 `IndicatorSeriesBatch`
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cv://ws/v1/indicators.schema.json",
+  "title": "indicators.{symbol}.{bar_type}.{param}",
+  "type": "object",
+  "required": ["symbol", "bar_type", "param", "instances"],
+  "properties": {
+    "symbol": { "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol" },
+    "bar_type": { "$ref": "cv://ws/v1/common.schema.json#/$defs/barType" },
+    "param": { "type": "string", "maxLength": 24 },
+    "instances": {
+      "type": "array",
+      "description": "A snapshot holds every instance of the subscription (at most 8); a d holds those with a new or amended point.",
+      "items": {
+        "type": "object",
+        "required": ["key", "indicator", "params", "outputs", "build_version", "points"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "indicator": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+          "params": {
+            "type": "object",
+            "additionalProperties": { "type": ["number", "string", "boolean"] }
+          },
+          "outputs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" }
+          },
+          "build_version": { "type": "integer", "minimum": 1 },
+          "points": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "required": ["generation", "index", "t_ms", "v"],
+              "properties": {
+                "generation": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "The bar's series generation, as on bars.* (§14.3); compare for equality only."
+                },
+                "index": { "type": "integer", "minimum": 0 },
+                "t_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+                "v": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "oneOf": [
+                      { "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal" },
+                      { "type": "null" }
+                    ]
+                  },
+                  "description": "One value per output, in outputs order (below); null when there is none."
+                },
+                "amended": { "type": "boolean", "default": false }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "coalesced": { "type": "boolean", "default": false },
+    "coalesced_count": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": false
+}
+```
+
+`key` is the instance's `spec_hash` (24 §7.4) and `build_version` the kernel build that computed its points (IR-20). `outputs` are the descriptor's output ids (22 `IndicatorDescriptor.outputs`), in the order of each point's `v`. A point is keyed by `(key, generation, index)` (§8.2); `t_ms` is its bar's open time, which non-time bars can share, and `amended` marks a point a late trade changed (§6.1). A value is the kernel's float64 written as its shortest round-trip digits (Python `repr`, JavaScript `Number.prototype.toString`) in plain positional form, with no exponent, and `-0` as `0`: `1e-7` is `"0.0000001"`. Parsed with `float()` or `Number()`, it is the same float64, so a client can compare the worker mirror with the kernel bit for bit (ADR-0034). An output with no value (warmup, a zero divisor) is `null`, never `0` and never `NaN`. The structured form is the only form: the topic has no binary form (§6.1).
 
 ---
 
@@ -4238,6 +4375,7 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | Max topics / `unsub` frame     | 50 (a longer frame is refused whole, §5.3)         |
 | Max symbols / connection       | 40                                                 |
 | Max `bars.*` / connection      | 16 (SR-E12-07, §6.1)                               |
+| `indicators` server instances  | 8 per `sub`; 8 / user, 32 / symbol, 128 (§6.1)     |
 | Max connections / user         | 8                                                  |
 | Connect rate / user / minute   | 20 (first successful `auth`s, sliding 60 s)        |
 | Sockets awaiting `auth_ok`     | 64 per process; the next gets `1013` (§4.3)        |
@@ -4294,6 +4432,9 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Integration      | Upstream `u` gap → `snap` with `reason: upstream_desync`.                                                                                                                                             | §7.4.                                                     |
 | Contract         | A quarantined `bars` `snap` has `meta.stale: true` on every chunk, both encodings; a `d` or a healthy `snap` has none; a reference client shows the badge from that `snap` until the next one (C21).  | §7.2, §7.7, §13 `snapMeta`.                               |
 | Integration      | A `bars` series generation change, up or down, yields a `snap` with `reason: generation_swap` and no `d`; the client replaces its whole series (C14).                                                 | §7.4, §8.2.                                               |
+| Contract         | `indicators.*` frames validate against §14.10; points are keyed by `(key, generation, index)`; an amended point carries `amended: true`; a generation change is a `generation_swap` `snap`.           | §6.1, §8.2, §14.10.                                       |
+| Contract         | A `client_worker` or unknown indicator, a param out of bounds and a `compute` key are `invalid_options`; the 9th instance per user, 33rd per symbol and 129th per server are `subscription_limit`.    | §6.1 (SR-E13-01, SR-E13-03, IR-41).                       |
+| Contract         | Until its engine is wired, every `indicators.*` `sub`, live or replay, is refused `unknown_topic` and holds nothing.                                                                                  | §6.1 (C-6.1 contract first).                              |
 | Contract         | `snapMeta.reason` is one ordered set in the schema, §7.4's list and `SNAP_REASONS`, `history_repair` among them; a client keeps a reason it does not know (C18).                                      | §7.4, §13, §16.5.                                         |
 | Integration      | Grant revocation mid-stream → `revoked` within 1 s, other topics intact.                                                                                                                              | S7, §9.5.                                                 |
 | Integration      | Token expiry → in-place re-`auth` preserves subscriptions and sequences.                                                                                                                              | §4.1.                                                     |

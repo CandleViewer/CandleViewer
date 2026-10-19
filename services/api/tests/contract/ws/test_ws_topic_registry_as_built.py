@@ -26,6 +26,8 @@ from tests.unit.ws.test_subscriptions import _services, _sub
 
 _DOC: Final = PROTOCOL_DOC.read_text(encoding="utf-8")
 _OPTS: Final = SCHEMAS["cv://ws/v1/sub.schema.json"]["$defs"]["options"]["properties"]  # §13.5
+#: §13.5 `indicatorOptions`: the closed option set of `indicators.*`, beside the union (§6.1).
+_INDICATOR_OPTS: Final = SCHEMAS["cv://ws/v1/sub.schema.json"]["$defs"]["indicatorOptions"]
 _PUBLIC: Final = ("### 6.1 Public market-data topics", "#### 6.1.1 ")
 _PRIVATE: Final = ("### 6.2 Private topics", "#### 6.2.1 ")
 
@@ -75,7 +77,16 @@ def test_a_the_ctl_keys_are_13_6s_and_5_4_lists_the_re_snapshot_ones() -> None:
 def test_a_the_option_names_a_ctl_refusal_may_name_are_13_5s_and_13_6s() -> None:
     """#3370: the registry's names are §13.5's less `params` (test_c below) and §13.6's keys."""
     ctl_keys = set(SCHEMAS["cv://ws/v1/ctl.schema.json"]["properties"])
-    assert OPTION_NAMES == (set(_OPTS) - {"params"}) | ctl_keys
+    sub_keys = set(_OPTS) | set(_INDICATOR_OPTS["properties"])
+    assert OPTION_NAMES == (sub_keys - {"params"}) | ctl_keys
+
+
+def test_a_indicators_takes_exactly_its_13_5_option_set() -> None:
+    """§13.5: `indicatorOptions` is closed and holds the universal options and the family's own."""
+    assert _INDICATOR_OPTS["additionalProperties"] is False
+    assert set(_INDICATOR_OPTS["properties"]) == set(UNIVERSAL) | set(
+        FAMILIES["indicators"].options
+    )
 
 
 def test_c_13_5_lists_params_and_no_topic_takes_it() -> None:

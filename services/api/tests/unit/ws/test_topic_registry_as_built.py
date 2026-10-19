@@ -5,7 +5,8 @@ records as built (rows a-g of #2823). The contract test beside the conformance s
 a. the keys `ctl` takes, and which re-snapshot (§5.4); b. one default throttle per family (§6.1);
 c. no topic takes `params` (§6.1); d. an account-scoped private topic needs `exchange_account_ids`
 (§6.2); e. `encoding_unsupported` means "no binary form" and nothing else (§5.1); f. one option
-map per family (§6.1); g. the subscribe-side metrics (§6.2).
+map per family (§6.1); g. the subscribe-side metrics (§6.2); h. a family the contract lists before
+anything serves it, `indicators` (E13-T02, #426), is refused `unknown_topic` (§6.1).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.ws.permissions import ConnectionAuthz, handle_unsub
 from candleviewer.ws.topics import CTL_KEYS, FAMILIES
-from tests.unit.ws.test_subscriptions import OWNER_ID, A, _ctl, _mgr, _services, _sub
+from tests.unit.ws.test_subscriptions import OWNER_ID, RS, A, _ctl, _mgr, _services, _sub, _viewer
 from tests.unit.ws.test_subscriptions_socket import JSON, _recv, _World
 
 ACC: Final = str(A)
@@ -57,8 +58,9 @@ _CTL: Final[dict[str, tuple[Any, set[str] | None]]] = {
     "depth": (200, {"heatmap"}),
     "time_bucket_ms": (1000, {"heatmap"}),
     "metrics": (["cvd"], {"metrics"}),
+    "instances": ([{"indicator": "ema"}], {"indicators"}),
 }
-_RESNAPSHOT: Final = {"price_grouping", "depth", "time_bucket_ms", "metrics"}
+_RESNAPSHOT: Final = {"price_grouping", "depth", "time_bucket_ms", "metrics", "instances"}
 _OTHER_KEYS: Final = dict(bar_type="range", param="10", encoding="binary", from_seq=1, from_ts_ms=1)
 
 
@@ -86,7 +88,8 @@ def test_a_ctl_takes_a_key_only_where_the_topic_has_that_option(key: str) -> Non
 
 
 def test_a_the_ctl_matrix_has_a_sample_topic_for_every_public_family() -> None:
-    public = {name for name, fam in FAMILIES.items() if not fam.private}
+    """Every one the server serves: an unserved family holds no subscription to retune (h)."""
+    public = {name for name, fam in FAMILIES.items() if not fam.private and fam.served}
     assert {ch.split(".")[0] for ch in _TOPICS} == public, "add a sample topic to _TOPICS"
 
 
@@ -226,3 +229,48 @@ def test_g_sub_results_count_by_family_and_the_depth_is_observed_after_each_fram
     assert handle_unsub(conn, frame, 7)["t"] == "unsub_ok"
     after_unsub = _readings()
     assert [a - b for a, b in zip(after_unsub, after_sub, strict=True)] == [0, 0, 1, 0]  # holds 0
+
+
+_EMA: Final = [{"indicator": "ema"}]
+_INDICATORS: Final = {"ch": "indicators.BTCUSDT.time.1", "opts": {"instances": _EMA}}
+
+
+def test_h_indicators_is_the_one_family_the_contract_lists_before_anything_serves_it() -> None:
+    assert [f.family for f in FAMILIES.values() if not f.served] == ["indicators"]
+
+
+@pytest.mark.parametrize("replay", [None, RS], ids=["live", "replay"])
+def test_h_an_indicators_topic_is_refused_unknown_topic_and_holds_nothing(
+    replay: str | None,
+) -> None:
+    """§6.1 status: refused after the checks a `sub` decides from the entry, live or replay, and
+    nothing is held: no subscription, no upstream reference."""
+    conn = _owner()
+    (result,) = _sub(conn, _INDICATORS, replay_session_id=replay)
+    assert _refusal(result) == (False, "unknown_topic", None)
+    assert result["error"]["message"] == "This topic is not available on this server."
+    assert conn.by_id == {} and len(conn.services.upstream) == 0
+
+
+@pytest.mark.parametrize(
+    ("opts", "code", "field"),
+    [
+        ({}, "unknown_topic", None),  # `instances` is checked where the topic is served
+        ({"instances": []}, "invalid_options", "instances"),
+        ({"instances": [{**_EMA[0], "compute": "server"}]}, "invalid_options", "instances"),
+        ({"instances": _EMA, "compute": "server"}, "invalid_options", "opts"),
+        ({"instances": _EMA, "history": 1001}, "invalid_options", "history"),
+        ({"instances": _EMA, "encoding": "binary"}, "encoding_unsupported", "encoding"),
+    ],
+)
+def test_h_the_checks_decided_from_the_entry_come_before_the_refusal(
+    opts: dict[str, Any], code: str, field: str | None
+) -> None:
+    (result,) = _sub(_owner(), {"ch": _INDICATORS["ch"], "opts": opts})
+    assert _refusal(result) == (False, code, field)
+
+
+def test_h_a_principal_without_marketdata_read_is_forbidden_first() -> None:
+    bare = PrincipalSnapshot(_viewer().user_id, frozenset({"viewer"}), frozenset())
+    (result,) = _sub(ConnectionAuthz(bare, _services()), _INDICATORS)
+    assert _refusal(result) == (False, "forbidden", None)
