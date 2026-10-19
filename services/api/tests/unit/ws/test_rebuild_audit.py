@@ -173,3 +173,28 @@ async def test_a_record_not_confirmed_leaves_the_window_marked_for_the_user_s_ne
         await audit_rebuild_refusal(a.authz)  # not confirmed: counted, logged
         assert [r["ok"] for r in await _asub(b, HEAT)] == [False]
     assert (sink.calls, sink.rows) == (1, [])
+
+
+async def test_a_cancelled_record_write_leaves_the_window_marked_for_the_user_s_next_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3476 (23 §4.3, §7.7): a write cancelled while it runs, the third way a record is not
+    confirmed, does not reopen the window. The cancel propagates, and a later `user` refusal in it,
+    on the user's other socket, reaches no writer: one attempt for the window."""
+    monkeypatch.setattr(permissions, "FANOUT_AUDIT_TIMEOUT_S", 30.0)  # a held write is not cut
+    a, b = _one_user(2, limit=1)
+    a.authz.services.audit = sink = _Held()  # the first write waits for `go`: only a cancel ends it
+    await _asub(a, BOOK)
+    _resume(a)
+    write = asyncio.create_task(audit_rebuild_refusal(a.authz))
+    async with asyncio.timeout(5):
+        await sink.entered.wait()  # A's write is in flight
+    write.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(5):  # inside `raises`: a cancel that hangs is a TimeoutError
+            await write
+    async with asyncio.timeout(5):
+        assert [r["ok"] for r in await _asub(b, HEAT)] == [False]
+        # B's call ran, took its due key and found the window marked:
+        assert b.authz.rebuilds.audit_due is None
+        assert (sink.calls, sink.rows) == (1, [])
