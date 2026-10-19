@@ -21,6 +21,22 @@ class IndicatorParamError(IndicatorError, ValueError):
     """
 
 
+class InvalidParamsError(IndicatorParamError):
+    """`catalogue.validate_params` refused a parameter object. `pointer` is a JSON pointer into
+    the descriptor's public `params_schema` (`""` for the object as a whole) and `rule` the JSON
+    Schema keyword the object breaks. The message names the parameter and its bound; nothing
+    here carries the rejected value or a key the descriptor does not declare (IR-24)."""
+
+    def __init__(self, pointer: str, rule: str, message: str) -> None:
+        super().__init__(message)
+        self.pointer = pointer
+        self.rule = rule
+
+
+class DuplicateIndicatorError(IndicatorError, ValueError):
+    """An indicator id is registered twice in one catalogue."""
+
+
 class IndicatorStateError(IndicatorError):
     """A state blob is malformed or belongs to another kernel (state version, indicator, build,
     params, source or context differ). The kernel keeps its state: nothing is restored."""
