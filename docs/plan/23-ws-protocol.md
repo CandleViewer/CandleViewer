@@ -1084,7 +1084,7 @@ A `bars.*` subscription gets the `instrument_revision` snap too: the server re-s
 
 As a server-initiated trigger, `history_repair` is outside the §7.5 rebuild budget: it never draws on it and is never refused by it. Its bound is part of the contract: a completed re-read sends each subscription at most one `history_repair` `snap`; the store runs at most one re-read of a series at a time, starts none sooner than its `retry_after_s` after the last completed one (5 s today, `bars/series_store.py`), and none while the series is complete by the store's two flags, `hydrated` and not `gapped`. A hole inside the stored rows (for example a row the writer never landed) is not flagged, so a series with one is complete in this sense. It is routine, not an incident: `cv_ws_resync_total{reason="history_repair"}` counts each `snap` sent under it, as it does every reason but `initial`, and it is logged at `info` (§7.7).
 
-_As built (#2787):_ no server code sends it yet. The re-read driver and the publisher's re-snapshot are later slices of #2787.
+_As built (#2787):_ the publisher's half exists (`BarsPublisher.history_repair`, `ws/bars_publish.py`), but nothing calls it until the re-read driver lands, a later slice of #2787, so no server code sends this reason yet.
 
 `upstream_desync` and `backpressure` are counted as incidents in Prometheus (`cv_ws_resync_total{reason}`) with alert thresholds in `06-performance-and-load-standard.md`.
 

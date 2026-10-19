@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, Final
 from unittest.mock import Mock
@@ -16,18 +16,28 @@ from candleviewer.bars.leases import CAP_GLOBAL
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.ws import bars_publish
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import MAX_SERIES, BarsPublisher
 from candleviewer.ws.bars_wire import bar_item
-from candleviewer.ws.binary import FrameEncodeError, decode_b64
+from candleviewer.ws.binary import BARS, Frame, FrameEncodeError, decode_b64
 from candleviewer.ws.cvwb_vectors import structured
 from candleviewer.ws.permissions import Subscription, handle_sub
-from candleviewer.ws.sequencing import SNAP_REASONS, SequencingHub, SnapReason, SnapshotBody
-from tests.unit.ws._seq_support import Clock, Conn, Source
+from candleviewer.ws.pipeline import ConnectionPipeline
+from candleviewer.ws.rebuild_budget import topic_key
+from candleviewer.ws.sequencing import (
+    SNAP_REASONS,
+    SequencingHub,
+    SnapReason,
+    SnapshotBody,
+    cv_ws_resync_total,
+)
+from tests.unit.ws._seq_support import Clock, Conn, Source, validate
 
 SPEC = BarSpec(kind="time", interval_ms=300_000)
 CH = "bars.BTCUSDT.time.5"
 RS = "bb000000-0000-4000-8000-000000000001"
 SWAP: Final = "generation_swap"
+REPAIR: Final = "history_repair"
 T0_US = 1_700_000_000_000_000
 EMPTY = {"symbol": "BTCUSDT", "bar_type": "time", "param": "5", "bars": []}
 EXACT = ("generation", "index", "t_ms", "trades", "confirm")
@@ -94,7 +104,7 @@ def test_the_publisher_is_the_ws_bar_sink() -> None:
     assert sink.name == "ws"
 
 
-@pytest.mark.parametrize("reason", ["nope", "initial", "backpressure"])
+@pytest.mark.parametrize("reason", ["nope", "initial", "backpressure", REPAIR])
 def test_the_publisher_refuses_a_reason_that_is_not_a_swap(reason: Any) -> None:
     with pytest.raises(ValueError, match=f"'{reason}' is not a swap reason"):
         BarsPublisher(SequencingHub(), lambda _: None, swap_reason=reason)
@@ -376,9 +386,10 @@ async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> 
     assert [f["t"] for f in conn.take()] == ["snap"]
 
 
-#: Every pending reason but the retry's match (the publisher's swap and `upstream_desync`,
-#: #3363): `initial` is a `sub` in flight, `backpressure` E17's hold, and the rest another flow's.
-_OTHER_FLOWS: Final = tuple(r for r in SNAP_REASONS if r not in (SWAP, "upstream_desync"))
+#: Every pending reason but the retry's match (the publisher's swap and repair, and
+#: `upstream_desync`, #3363): `initial` is a `sub` in flight, `backpressure` E17's hold, and the
+#: rest another flow's.
+_OTHER_FLOWS: Final = tuple(r for r in SNAP_REASONS if r not in (SWAP, REPAIR, "upstream_desync"))
 
 
 @pytest.mark.parametrize("reason", _OTHER_FLOWS)
@@ -515,3 +526,211 @@ async def test_each_symbol_goes_to_its_own_channel_and_an_unnamed_spec_nowhere()
     pub.note_generation("BTCUSDT", mark, 1)
     (d,) = conn.take()
     assert [b["index"] for b in d["p"]["bars"]] == [3] and pub.series_count() == 2
+
+
+# -- history repair (§7.4 `history_repair`, #2787 D2-H1) -----------------------------------------
+
+#: A snapshot each encoding renders as its own: no bars, so one empty kind-4 frame beside `EMPTY`.
+_BOTH: Final = SnapshotBody(EMPTY, (Frame(BARS),))
+_FLAG = pytest.mark.parametrize("flag", [False, True], ids=["flag-off", "flag-on"])
+
+
+def _resyncs(reason: str) -> float:
+    return float(cv_ws_resync_total.labels(reason=reason)._value.get())
+
+
+def _never_closed(reason: str, *, bye: dict[str, Any] | None = None) -> None:
+    raise AssertionError(f"the pipeline closed the connection: {reason}")
+
+
+def _received(hub: SequencingHub, conn: Conn, flag: bool) -> Callable[[], list[dict[str, Any]]]:
+    """What `conn` is sent from now on, each frame validated against the §13 schemas. With the
+    flag on (`CV_WS_BACKPRESSURE_ENABLED`) the hub's sink for it is a `ConnectionPipeline` (JSON,
+    default config), attached as the gateway attaches one, and its frames are read off its queue.
+    Built here, not with `test_pipeline_outbound`'s helpers: that module's imports reach this one
+    (through `test_span_id`), so importing it from here would be a cycle."""
+    if not flag:
+        return conn.take
+    pipe = ConnectionPipeline(
+        encoding="cv.v1.json", config=BackpressureConfig(), close=_never_closed,
+        wall_ms=lambda: 1_789_132_262_000, connection_id="ws_test",
+    )  # fmt: skip
+    pipe.attach(conn.authz, conn.emitter, lambda _body: None)
+    conn.emitter.push = pipe.push
+    hub.register(conn.authz, pipe)
+
+    def take() -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        while (item := pipe.queue.pop()) is not None:
+            out.append(json.loads(item.payload))
+            validate(out[-1])
+        return out
+
+    return take
+
+
+@_FLAG
+async def test_a_history_repair_re_snapshots_each_settled_subscriber_and_sends_no_d(
+    flag: bool,
+) -> None:
+    """§7.4: each live, snapshotted, unpaused subscriber of the series, in both encodings and
+    both `include_delta` groups, gets one `snap` under `history_repair` and no `d`, flag on or
+    off. `cv_ws_resync_total` counts each and `ws resync` logs each at `info`, so the publisher
+    needs no counter of its own. The series never emitted: a repair needs no baseline, and
+    `history_repair` itself adds no series or seed (the snapshot source seeds, as for every bars
+    `snap`, and this fake one does not)."""
+    src = Source()
+    hub, pub, subs = _world(*GROUPS, src=src)
+    src.bodies["bars"] = _BOTH
+    reads = [_received(hub, conn, flag) for conn, _ in subs]
+    before = _resyncs(REPAIR)
+    with capture_logs() as logs:
+        assert pub.history_repair("BTCUSDT", SPEC, 1) == 4
+    meta = {"reason": REPAIR, "source": "live", "previous_seq": 1}
+    assert [[(f["t"], f["e"], f["meta"]) for f in read()] for read in reads] == [
+        [("snap", e, meta)] for e in ("j", "j", "b64", "b64")
+    ]
+    assert [(s.seq, s.snapshot_pending) for _, s in subs] == [(2, False)] * 4
+    assert _resyncs(REPAIR) == before + 4
+    lines = [(e["log_level"], e["reason"]) for e in _events(logs, "ws resync")]
+    assert lines == [("info", REPAIR)] * 4
+    assert (pub.series_count(), pub._seeds) == (0, {})
+
+
+async def test_a_history_repair_leaves_other_series_replays_pending_and_paused_alone() -> None:
+    """Only the series' settled subscriptions get the `snap`. Another interval or symbol and a
+    replay of the same `ch` get nothing; a paused one takes no `s` (§5.4) and snapshots on
+    resume; a pending one, its `sub_ok` flush or a swap's `snap` still to come, keeps its reason,
+    and that `snap` is built from the repaired series (§7.4, §7.7)."""
+    _, pub, subs = _world({}, {}, {}, {})
+    [(conn, live), (held, paused), (late, pending), (swapped, waiting)] = subs
+    paused.effective["paused"] = True
+    pending.snapshot_pending = True  # its `sub_ok` is queued, its flush still to come
+    waiting.snapshot_pending, waiting.pending_reason = True, SWAP  # its swap `snap` not built yet
+    _, replay = conn.sub({"ch": CH, "opts": {}}, replay_session_id=RS)
+    chs = ("bars.BTCUSDT.time.1", "bars.ETHUSDT.time.5")  # another interval, another symbol
+    others = [conn.sub({"ch": ch, "opts": {}})[1] for ch in chs]
+    conn.take()
+    assert pub.history_repair("BTCUSDT", SPEC, 1) == 1
+    assert [(f["t"], f["ch"], f["meta"]["reason"]) for f in conn.take()] == [("snap", CH, REPAIR)]
+    assert (held.take(), late.take(), swapped.take()) == ([], [], [])
+    assert [s.seq for s in (live, paused, pending, waiting, replay, *others)] == [2] + [1] * 6
+    kept = [(s.snapshot_pending, s.pending_reason) for s in (pending, waiting)]
+    assert kept == [(True, "initial"), (True, SWAP)]
+
+
+@pytest.mark.parametrize(("least", "reached"), [(1, [1, 2, 3, 500]), (3, [3, 500]), (501, [])])
+async def test_a_history_repair_reaches_only_a_history_holding_a_changed_bar(
+    least: int, reached: list[int]
+) -> None:
+    """§7.4: a `snap` goes only where the repair changes it, a `history` (500 by default) of at
+    least `min_history`, so that its newest bars hold one the read added or replaced. A
+    `history: 0` snapshot is empty and never changes."""
+    histories = (0, 1, 2, 3, 500)
+    _, pub, subs = _world(*({"history": h} for h in histories[:-1]), {})  # the last: the default
+    assert pub.history_repair("BTCUSDT", SPEC, least) == len(reached)
+    assert [h for h, (conn, _) in zip(histories, subs, strict=True) if conn.take()] == reached
+
+
+@pytest.mark.parametrize("least", [0, -1])
+async def test_a_history_repair_below_one_bar_is_refused_before_any_snap(least: int) -> None:
+    """No changed bar is ever newer than the newest one, so a `min_history` below 1 is a caller's
+    error: it would reach a `history: 0` subscription, whose snapshot a repair never changes."""
+    _, pub, [(conn, sub)] = _world({"history": 0})
+    with pytest.raises(ValueError, match=f"min_history {least} holds no bar"):
+        pub.history_repair("BTCUSDT", SPEC, least)
+    assert (conn.take(), sub.seq, sub.snapshot_pending) == ([], 1, False)
+
+
+async def test_a_history_repair_nobody_holds_or_no_topic_names_is_a_no_op() -> None:
+    """No subscriber of the series (another interval or symbol, or no connection at all), or no
+    topic can name it (`price_source: mark`): nothing is sent, counted or logged, and the
+    publisher keeps no state for it."""
+    _, pub, [(conn, sub)] = _world({})
+    mark = BarSpec(kind="time", interval_ms=300_000, price_source="mark")
+    alone = BarsPublisher(SequencingHub(), lambda _: None, swap_reason=SWAP)
+    before = _resyncs(REPAIR)
+    with capture_logs() as logs:
+        for p, symbol, spec in [
+            (pub, "BTCUSDT", BarSpec(kind="tick", tick_count=100)),
+            (pub, "ETHUSDT", SPEC),
+            (pub, "BTCUSDT", mark),
+            (alone, "BTCUSDT", SPEC),
+        ]:
+            assert p.history_repair(symbol, spec, 1) == 0
+    assert (conn.take(), sub.seq, logs, _resyncs(REPAIR)) == ([], 1, [], before)
+    assert (pub.series_count(), pub._seeds) == (0, {})
+
+
+async def test_a_history_repair_after_a_swap_keeps_the_baseline_so_deltas_resume() -> None:
+    """A repair keeps the generation (§7.4), so it leaves the baseline alone: after a swap's
+    `snap` it sends its own, and the next emission in the new generation is a `d`, no swap. On
+    this series the publisher already tracks, as in production, the repair brings no counter, log
+    line or storm window of its own: `ws resync` is its one line and the swap count is as it was."""
+    _, pub, [(conn, _)] = _world({"encoding": "structured"})
+    await pub.emit(_em(_up(), generation=0))
+    await pub.emit(_em(_up(), generation=5))  # a swap
+    key = ("BTCUSDT", SPEC.spec_hash)
+    before = (_count("ws_generation_swap"), len(pub._series[key].swaps))
+    with capture_logs() as logs:
+        assert pub.history_repair("BTCUSDT", SPEC, 1) == 1
+    assert {e["event"] for e in logs} == {"ws resync"}
+    assert (_count("ws_generation_swap"), len(pub._series[key].swaps)) == before
+    await pub.emit(_em(_up(), generation=5))
+    out = [(f["t"], f["s"], f["meta"].get("reason")) for f in conn.take()]
+    assert out == [("d", 2, None), ("snap", 3, SWAP), ("snap", 4, REPAIR), ("d", 5, None)]
+
+
+async def test_a_snap_a_swap_left_pending_keeps_its_reason_through_a_repair() -> None:
+    """During a swap: a subscription whose swap `snap` the store could not build yet is pending,
+    so the repair skips it, and its retry still says `generation_swap` (§7.4, §7.7: a pending
+    `snap` keeps its reason)."""
+    src = Source()
+    _, pub, [(conn, sub)] = _world({}, src=src)
+    await pub.emit(_em(_up(), generation=0))
+    src.unavailable.add("BTCUSDT")
+    await pub.emit(_em(_up(), generation=5))  # the swap leaves it pending
+    assert pub.history_repair("BTCUSDT", SPEC, 1) == 0
+    assert (sub.snapshot_pending, sub.pending_reason) == (True, SWAP)
+    src.unavailable.clear()
+    await pub.emit(_em(_up(), generation=5))  # the swap's retry
+    out = [(f["t"], f["s"], f["meta"].get("reason")) for f in conn.take()]
+    assert out == [("d", 2, None), ("snap", 3, SWAP)]
+
+
+async def test_a_repair_snap_the_store_cannot_build_yet_is_retried_on_a_later_emission() -> None:
+    """A repair whose `snap` could not be built leaves the subscription pending under
+    `history_repair`, the publisher's own reason, as a swap does: each later emission retries it,
+    unless it is paused, and the deltas resume after it. Nothing else would send it."""
+    src = Source()
+    _, pub, [(conn, sub)] = _world({}, src=src)
+    src.unavailable.add("BTCUSDT")  # the store has nothing to snapshot yet
+    assert pub.history_repair("BTCUSDT", SPEC, 1) == 0
+    await pub.emit(_em(_up()))  # a retry that still finds nothing
+    assert (sub.snapshot_pending, sub.pending_reason, conn.take()) == (True, REPAIR, [])
+    src.unavailable.clear()
+    sub.effective["paused"] = True  # the store has it now, but a paused one is not retried
+    await pub.emit(_em(_up()))
+    assert (sub.snapshot_pending, sub.pending_reason, conn.take()) == (True, REPAIR, [])
+    sub.effective["paused"] = False
+    for _ in range(2):  # the retry succeeds, then the deltas resume
+        await pub.emit(_em(_up()))
+    out = [(f["t"], f["s"], f["meta"].get("reason")) for f in conn.take()]
+    assert out == [("snap", 2, REPAIR), ("d", 3, None)]
+
+
+async def test_a_history_repair_never_asks_the_rebuild_budget_and_a_spent_one_never_stops_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§7.4, §7.5: server-initiated, as a swap's re-snapshot is, a repair is outside the rebuild
+    budget. With the topic's limit spent (a client `resync` is refused) the `snap` still goes out,
+    and nothing asks the budget at all, so no limit (topic, connection or user) gains a draw."""
+    _, pub, [(conn, sub)] = _world({"encoding": "structured"})
+    budget, key = conn.authz.rebuilds, topic_key(sub.topic, None)
+    for _ in range(budget.limits["topic"]):
+        assert budget.take(key, "resync") is None
+    spy = Mock(wraps=budget)
+    monkeypatch.setattr(conn.authz, "rebuilds", spy)
+    assert pub.history_repair("BTCUSDT", SPEC, 1) == 1
+    assert [f["meta"]["reason"] for f in conn.take()] == [REPAIR]
+    assert (spy.method_calls, budget.refusal(key, "resync")) == ([], "topic")

@@ -1,10 +1,12 @@
-"""#2787 (E12-T06 D2) X1 and X3: `bars.*` against `23-ws-protocol.md` §6.1, §7.5, §7.6 and §7.7
+"""#2787 (E12-T06 D2) X1, X3 and P11: `bars.*` against `23-ws-protocol.md` §6.1 and §7.4 to §7.7
 through the real `/ws` router, on both wires, in both encodings, with the backpressure flag off and
 on. Every frame is validated, and each one that matters is the very next received, so the order is
 asserted. A `resync` and a resuming `ctl` on a series whose store is empty or not hydrated each get
 a `snap`; `sub_ok` waits for the series' first read and no `snap` precedes it; a `snapshot: false`
-attach, which never proves continuity, still gets one. Bars come from the recorded BTCUSDT tape
-(C-13.5), built by the real builder."""
+attach, which never proves continuity, still gets one; once a later read heals a series that was
+not hydrated, a subscriber whose `history` reaches a healed bar, the forming bar counted, gets a
+`history_repair` `snap`, and the others none. Bars come from the recorded BTCUSDT tape (C-13.5),
+built by the real builder."""
 
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ import pytest
 from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.models import BarSpec, BarUpdate
 from candleviewer.bars.reader import BarTail
-from candleviewer.bars.series_store import SeriesStore, TailRead
+from candleviewer.bars.series_store import RETRY_AFTER_S, SeriesStore, TailRead
 from candleviewer.bars.time_builder import TimeBarBuilder
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
@@ -62,13 +64,14 @@ COLD = {"empty": _empty, "unread": _fails}
 class _Rig:
     """The conformance world with `create_app`'s bars wiring over a store that reads with `read`.
     The store's read bound (`asyncio.timeout`, real time) is 60 s, far past any step here: a parked
-    read ends when the test releases it, so no row's result depends on elapsed time (C-13.7)."""
+    read ends when the test releases it, so no row's result depends on elapsed time (C-13.7). The
+    store's clock is `now`, which a row moves to make a read due again."""
 
     def __init__(self, read: TailRead, flag: BackpressureConfig | None) -> None:
-        self.w = h.World(backpressure=flag)
-        self.store = SeriesStore(read, release_grace_s=0.0, clock=lambda: 0.0, timeout_s=60.0)
+        self.w, self.now = h.World(backpressure=flag), 0.0
+        self.store = SeriesStore(read, release_grace_s=0.0, clock=lambda: self.now, timeout_s=60.0)
         publisher = BarsPublisher(self.w.hub, lambda _s: (1, 3), swap_reason="generation_swap")
-        self.router = EmitRouter([self.store, publisher])
+        self.router, self.publisher = EmitRouter([self.store, publisher]), publisher
         source = BarsSnapshotSource(self.store, lambda _s: (1, 3), seed=publisher.note_generation)
         services = self.w.registry.services
         services.bars, services.series = _Bars(), self.store
@@ -201,3 +204,43 @@ def test_contract_bars_snapshot_false_never_proves_continuity_so_the_attach_gets
         assert res["ok"] and res["snapshot_pending"] is True and res["snapshot_forced"] is True
         assert (snap["s"], snap["meta"]["reason"]) == (1, "initial")
         assert _keys(snap) == [(GEN, i, True) for i in range(3)]  # the stored bars
+
+
+@_FLAGS
+@pytest.mark.parametrize("mode", h.MODES)
+@pytest.mark.parametrize("history", [3, 2, 0])
+def test_contract_bars_a_healed_series_re_snapshots_under_history_repair_with_no_d(
+    history: int, mode: str, flag: BackpressureConfig | None
+) -> None:
+    """§7.4 `history_repair` (#2787 D2-H1): a series whose first read failed is served live-only,
+    and its close 3 and forming bar 4 arrive. A later read (here another holder's `ensure` once a
+    read is due again, the re-read the heal driver will start itself) then finds bars 0 to 2. The
+    newest of them is 3rd from the newest bar served, the forming bar counted, so `min_history`
+    is 3: `history: 3` gets, as its very next frame, a `snap` that holds it, with `previous_seq`,
+    and the deltas go on from its `s`. `history: 2` holds the bars it held before and `history: 0`
+    is empty, so neither changes: they get no `snap`, and their next frame is the `d`."""
+    reads = iter([_fails, _stored(12)])
+
+    async def read(symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        return await next(reads)(symbol, spec, limit)
+
+    rig = _Rig(read, flag)
+    with h.connect(rig.w) as c:
+        _, first = _sub(c, {"encoding": mode, "history": history})
+        rig.emit(*_prints(13)[12])  # live: the close of bar 3 and the forming bar 4
+        live = _data(c, "d", mode)
+        rig.now = RETRY_AFTER_S  # the failed read is due again
+        hold = rig.w.call(rig.store.ensure, h.SYM, SPEC)  # another holder's: the read runs now
+        rig.w.call(hold.release)
+        assert rig.store.hydrated(h.SYM, SPEC.spec_hash)
+        sent = rig.w.call(rig.publisher.history_repair, h.SYM, SPEC, 3)  # it added bars 0 to 2
+        snaps = [_data(c, "snap", mode)] if history == 3 else []
+        rig.w.clock.now += 1.0  # past the flag-on pacing window the live `d` opened
+        rig.emit(*_prints(14)[13])
+        delta = _data(c, "d", mode)
+    assert (_keys(first), sent, [f["s"] for f in (live, *snaps, delta)]) == (
+        ([], 1, [2, 3, 4]) if history == 3 else ([], 0, [2, 3])
+    )
+    for snap in snaps:
+        assert (snap["meta"]["reason"], snap["meta"]["previous_seq"]) == ("history_repair", 2)
+        assert _keys(snap) == [(GEN, 2, True), (GEN, 3, True), (GEN, 4, False)]  # bar 2 it lacked
