@@ -3,7 +3,9 @@
 `BookStream` drops the upstream topic and forgets the retained book when a released symbol's
 grace (`DEFAULT_GRACE_S`, US-MKT-005) ends: on the stream's own tick even when no demand change
 comes, and at once when a frame for it arrives. A later acquire subscribes again and is served
-a fresh snapshot. Recorded corpus, fake clock, no network (C-13.5, C-13.7).
+a fresh snapshot. And a served book's `stale` comes from its last applied frame, against the
+watchdog's book limit (#2487 F4, `25-market-data-trust-contract.md` section 3). Recorded corpus,
+fake clock, no network (C-13.5, C-13.7).
 """
 
 from __future__ import annotations
@@ -14,12 +16,15 @@ from decimal import Decimal
 import httpx
 import pytest
 from fastapi import FastAPI, Request
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from candleviewer.api.orderbook import make_orderbook_router
 from candleviewer.book.models import BookPhase
 from candleviewer.bus.bus import Bus
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S
+from candleviewer.ingestion.watchdog import STALENESS_S
 from candleviewer.orderbook_wiring import BookStream
 from tests._corpus import frames
 
@@ -27,6 +32,7 @@ from tests._corpus import frames
 BOOK = frames("ws/orderbook_BTCUSDT.jsonl")
 TOPIC = "orderbook.200.BTCUSDT"
 WS = "ws:book:50"  # a WS book subscription's demand key
+LIMIT_S = STALENESS_S["book"]  # the watchdog's book limit: no new SLO
 
 
 class _Rig:
@@ -166,3 +172,81 @@ async def test_a_rest_read_after_the_grace_is_never_the_frozen_book() -> None:
     assert r.status_code == 503  # resynchronising until a fresh snapshot: never u=100 as live
     assert TOPIC in rig.desired[-1]  # the read subscribed the topic again
     await rig.stream.stop()
+
+
+# ---- #2487 F4: a served book's `stale` comes from its last applied frame -------------------
+
+
+def _stale(rig: _Rig) -> bool:
+    view = rig.stream.view("BTCUSDT", 50)
+    assert view is not None  # LIVE: served
+    return view.stale
+
+
+async def test_view_is_stale_once_no_frame_applied_within_the_limit_and_fresh_after_one() -> None:
+    rig = _Rig()
+    rig.stream.acquire(WS, "BTCUSDT")
+    await rig.feed(BOOK[:10])  # LIVE; the last frame applied at t=0
+    rig.t = LIMIT_S - 0.001
+    assert _stale(rig) is False
+    rig.t = LIMIT_S  # `now - last >= limit`, as the watchdog counts it
+    assert _stale(rig) is True
+    await rig.feed(BOOK[10:11])
+    assert _stale(rig) is False
+
+
+async def test_only_frames_the_served_tier_takes_keep_it_fresh() -> None:
+    """While a depth change warms a second tier, its frames never refresh the served one."""
+    rig = _Rig()
+    rig.stream.acquire(WS, "BTCUSDT")
+    await rig.feed(BOOK[:10])  # depth 200 LIVE at t=0
+    await rig.stream.change_depth("BTCUSDT", 50)  # a depth-50 tier warms, muted
+    rig.t = LIMIT_S
+    await rig.feed([BOOK[1].replace("orderbook.200.", "orderbook.50.")])  # buffered by tier 50
+    assert rig.stream.phase("BTCUSDT") is BookPhase.LIVE and _stale(rig) is True
+
+
+async def test_is_stale_whenever_the_book_is_not_live() -> None:
+    """The invariant #3806 relies on: no book, or a book not LIVE, is stale."""
+    rig = _Rig()
+    assert rig.stream.is_stale("BTCUSDT")  # no book yet
+    rig.stream.acquire(WS, "BTCUSDT")
+    await rig.feed(BOOK[1:3])  # deltas before the snapshot: pending
+    assert rig.stream.phase("BTCUSDT") is BookPhase.SNAPSHOT_PENDING
+    assert rig.stream.is_stale("BTCUSDT")
+    await rig.feed(BOOK[:1])  # the snapshot replays the buffered deltas: LIVE at u=3
+    assert not rig.stream.is_stale("BTCUSDT")
+    await rig.feed(BOOK[2700:2701])  # a sequence gap: resyncing
+    assert rig.stream.phase("BTCUSDT") is BookPhase.SNAPSHOT_PENDING
+    assert rig.stream.is_stale("BTCUSDT")
+
+
+async def test_a_rest_read_after_the_grace_with_no_tick_is_served_stale() -> None:
+    """Gherkin 1, other branch: nothing ran since the release (no frame, no tick), so the
+    retained book missed no frame but has been silent for 31 s: 200 with `stale: true`."""
+    rig = _Rig()
+    await rig.live_then_released()
+    rig.t = DEFAULT_GRACE_S + 1
+
+    r = await _get_orderbook(rig.stream)
+    assert r.status_code == 200 and r.json()["stale"] is True and r.json()["u"] == 100
+
+
+@settings(max_examples=50, deadline=None)
+@given(steps=st.lists(st.tuples(st.floats(0.0, 3.0), st.booleans()), max_size=30))
+def test_property_a_book_served_fresh_applied_a_frame_within_the_limit(
+    steps: list[tuple[float, bool]],
+) -> None:
+    async def run() -> None:
+        rig = _Rig()
+        rig.stream.acquire(WS, "BTCUSDT")
+        await rig.feed(BOOK[:1])
+        applied, sent = rig.t, 1
+        for dt, frame in steps:
+            rig.t += dt
+            if frame:  # the next in-sequence delta
+                await rig.feed(BOOK[sent : sent + 1])
+                applied, sent = rig.t, sent + 1
+            assert _stale(rig) is (rig.t - applied >= LIMIT_S)
+
+    asyncio.run(run())

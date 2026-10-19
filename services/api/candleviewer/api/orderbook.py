@@ -2,9 +2,11 @@
 
 Serves the backend-maintained book, but **only while it is LIVE**: during a
 resync (or before the first snapshot) the answer is `503` with a text reason,
-never a patched or stale book (R7). A request for a listed symbol (re)acquires
-its `orderbook` demand with a grace period so the book warms lazily. RBAC
-(C-12.4) mirrors `api/ticker.py`: fail-closed 501/401/403.
+never a patched book (R7). A LIVE book that has applied no frame within the
+watchdog's book limit is served with `stale: true` (`BookStream.is_stale`,
+#3807). A request for a listed symbol (re)acquires its `orderbook` demand with
+a grace period so the book warms lazily. RBAC (C-12.4) mirrors `api/ticker.py`:
+fail-closed 501/401/403.
 """
 
 from __future__ import annotations

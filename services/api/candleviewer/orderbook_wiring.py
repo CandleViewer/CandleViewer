@@ -50,7 +50,7 @@ from candleviewer.ingestion.metrics import (
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S, DemandTracker
 from candleviewer.ingestion.rejection import RejectionLog
 from candleviewer.ingestion.ticker_stream import UnknownSymbolError
-from candleviewer.ingestion.watchdog import FeedHealthEvent, prune_unlisted
+from candleviewer.ingestion.watchdog import STALENESS_S, FeedHealthEvent, prune_unlisted
 from candleviewer.ingestion.write_behind import WriteBehindBuffer
 from candleviewer.observability.context import spawn
 from candleviewer.storage.repositories.rows import BookDeltaRow, BookSnapshotRow
@@ -70,6 +70,10 @@ RESYNC_BACKOFF_BASE_S = 0.25
 RESYNC_BACKOFF_CAP_S = 30.0
 #: A book LIVE this long without another resync is healthy: the backoff resets.
 RESYNC_STABLE_S = 5.0
+#: #3807, #2487 F4: a LIVE book that has applied no frame for this long is served `stale`.
+#: The watchdog's book limit, which `25-market-data-trust-contract.md` section 3 applies to
+#: the age of the last applied book update.
+BOOK_STALE_AFTER_S = STALENESS_S["book"]
 _TICK_S = 0.25
 _JITTER = random.SystemRandom().random
 
@@ -183,6 +187,8 @@ class BookStream:
         self._deferred: set[str] = set()
         #: #1919: symbol -> clock() reading when its book last left LIVE.
         self._not_live_since: dict[str, float] = {}
+        #: #3807: symbol -> clock() reading when its active book last applied a frame.
+        self._applied_at: dict[str, float] = {}
         self._bus, self._env = bus, env
         self._set_desired, self._parse = set_desired, parse_frame
         self._topic_for, self._resub = topic_for, resubscribe
@@ -264,6 +270,7 @@ class BookStream:
         self._backoff.pop(symbol, None)
         self._deferred.discard(symbol)
         self._not_live_since.pop(symbol, None)
+        self._applied_at.pop(symbol, None)
 
     def out_of_live(self, slo_s: float = RESYNC_BACKOFF_CAP_S) -> tuple[str, ...]:
         """#1919: desired symbols whose book has been out of LIVE longer than `slo_s`
@@ -273,12 +280,24 @@ class BookStream:
 
     # ---- reads (GET /market/orderbook) -----------------------------------
     def view(self, symbol: str, depth: int) -> BookView | None:
-        """The maintained book, only while LIVE at `depth` (else `None`)."""
+        """The maintained book, only while LIVE at `depth` (else `None`); `stale` per
+        `is_stale`."""
         tb = self._books.get(symbol)
         if tb is None or depth > tb.active.depth:
             return None
         snap = tb.active.live_snapshot(depth)
-        return None if snap is None else BookView(snap, stale=False)
+        return None if snap is None else BookView(snap, stale=self.is_stale(symbol))
+
+    def is_stale(self, symbol: str) -> bool:
+        """#3807, #2487 F4: True unless `symbol`'s book is LIVE and applied a frame within
+        `BOOK_STALE_AFTER_S`. Read from the last applied frame, never from the subscription:
+        no book, or a book not LIVE, is stale. It covers the watchdog's `stale` too: that
+        watchdog has the same limit and is touched on every routed frame, applied or not."""
+        tb = self._books.get(symbol)
+        at = self._applied_at.get(symbol)
+        if tb is None or at is None or tb.active.phase is not BookPhase.LIVE:
+            return True
+        return self._clock() - at >= BOOK_STALE_AFTER_S
 
     def phase(self, symbol: str) -> BookPhase | None:
         tb = self._books.get(symbol)
@@ -412,6 +431,8 @@ class BookStream:
             await tb.active.invalidate("grid")
             return
         await tb.on_event(ev)
+        if ev.depth == tb.active.depth and tb.active.phase is BookPhase.LIVE:
+            self._applied_at[ev.symbol] = self._clock()  # applied: what `is_stale` ages
         if tb.warming is None:
             self.sync()  # a completed tier swap retires the old topic
 
