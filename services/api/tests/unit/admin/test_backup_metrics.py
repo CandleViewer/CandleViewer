@@ -228,6 +228,7 @@ def test_catalogue_caps_are_the_closed_label_sets() -> None:
     assert {name: rows[name] for name in metrics.EXPORTED_NAMES} == {
         "cv_backup_last_success_age_seconds": (("kind",), len(metrics.KINDS), True),
         "cv_backup_verify_failures_total": ((), 1, True),
+        "cv_backup_download_source_rate_limited_total": ((), 1, True),
         "cv_restore_jobs_total": (("result",), len(metrics.RESTORE_RESULTS), True),
     }
     assert len(metrics.KINDS) == 5

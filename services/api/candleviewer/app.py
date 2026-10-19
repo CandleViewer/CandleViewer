@@ -29,6 +29,7 @@ from typing import Any, ClassVar, cast
 import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp
 
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
 from candleviewer.account_health_wiring import wire_account_health
@@ -83,6 +84,10 @@ from candleviewer.api import (
     make_trades_router,
 )
 from candleviewer.api.admin_backup_delete import make_admin_backup_delete_router
+from candleviewer.api.admin_backup_download import (
+    NoStoreNoReferrer,
+    make_admin_backup_download_router,
+)
 from candleviewer.api.admin_backup_links import make_admin_backup_links_router
 from candleviewer.api.admin_backups import make_admin_backup_runs_router, make_admin_backups_router
 from candleviewer.api.admin_capacity import make_admin_capacity_router
@@ -168,6 +173,7 @@ from candleviewer.backups_wiring import (
     build_admin_backups,
     build_backup_deletion,
     build_backup_downloads,
+    build_backup_fetch,
     build_backup_freshness,
     build_backup_runs,
     serve_backup_metrics,
@@ -1147,6 +1153,16 @@ async def audit_test_clock_boot(ctx: AppContext) -> None:
         await audit_test_clock_enabled(ctx.settings, _LazyAuditEmitter(ctx.audit))
 
 
+class _StampedApp(FastAPI):
+    """#966 BK-11: the whole ASGI stack inside `NoStoreNoReferrer`, outside every user middleware
+    and Starlette's own error middleware, so every answer to the backup fetch's path (its token
+    is a credential) is no-store and no-referrer, the guards' refusals and a `500` included. The
+    pinned order of the user middleware (#2421, #2295) is untouched."""
+
+    def build_middleware_stack(self) -> ASGIApp:
+        return NoStoreNoReferrer(super().build_middleware_stack())
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -1188,7 +1204,7 @@ def create_app(
     spec = _cached_spec()
     # #2097: the auth perf switch; refused outside a keyless testnet before anything is built.
     auth_perf = auth_perf_enabled(resolved)
-    app = FastAPI(
+    app = _StampedApp(
         title="CandleViewer API",
         version=resolved.version,
         dependencies=[Depends(make_deny_undeclared_dependency(declared_operations(spec)))],
@@ -1974,12 +1990,13 @@ def create_app(
     )
     # BK-10: a single-use download link (`backups:write`, one fresh `backups` step-up each), `501`
     # until the catalogue and an artefact store are wired, on the one gate above.
+    backup_downloads = build_backup_downloads(
+        resolved, backups_catalogue, gate=backups_gate, audit=_LazyAuditEmitter(ctx.audit)
+    )
     app.include_router(
         make_admin_backup_links_router(
             backups_catalogue,
-            build_backup_downloads(
-                resolved, backups_catalogue, gate=backups_gate, audit=_LazyAuditEmitter(ctx.audit)
-            ),
+            backup_downloads,
             auth=ctx.auth,
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
@@ -2002,6 +2019,12 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
         )
     )
+    # BK-11: the token-addressed fetch of a link (no bearer needed; a sent one must resolve), over
+    # the issue's links; `501` until the issue is wired on the real backend with an identity.
+    backup_fetch = build_backup_fetch(
+        resolved, backup_downloads, identity=identity, system_settings=admin_settings
+    )
+    app.include_router(make_admin_backup_download_router(backup_fetch, resolver=audit_resolver))
     # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
     retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)
     app.state.retention_manager = retention_manager
@@ -2254,6 +2277,8 @@ def create_app(
     # Middleware order, outermost first (Starlette: last added = outermost):
     #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> IdleLock (#2300)
     #   -> enrolment-only guard (#2295) -> read-only/step-up guard -> routes.
+    # Outside all of it, Starlette's error middleware included, `_StampedApp` wraps the stack
+    # in BK-11's `NoStoreNoReferrer` (the backup fetch's path only).
     # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
     # reaches a session lookup or an audit write, and outside every route-level
     # guard (read-only/step-up, RBAC): no write reaches them without a valid token.

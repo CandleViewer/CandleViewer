@@ -12,7 +12,6 @@ import yaml
 
 from candleviewer.api._generated import openapi_models as api
 from tests.contract._admin_support import (
-    OWNER_ONLY,
     ROOT,
     SPEC,
     capability_rows,
@@ -40,10 +39,6 @@ _ISSUE = _PATHS["/admin/backups/{backupId}/download"]["post"]
 _FETCH = _PATHS["/admin/backups/{backupId}/download/{token}"]["get"]
 _RESTORE = _PATHS["/admin/backups/{backupId}/restore"]["post"]
 _STEP_UP = _PATHS["/auth/step-up"]["post"]
-#: BK-10 serves the link issue (its matrix row is executed); the fetch waits for BK-11.
-_NEW_OPS = {
-    "GET /admin/backups/{backupId}/download/{token}": (_FETCH, "backups:read"),
-}
 #: Every operation this slice adds or changes.
 _TOUCHED = [
     (path, method)
@@ -64,13 +59,18 @@ def _json_body(operation: dict[str, Any], status: str) -> Any:
     return operation["responses"][status]["content"]["application/json"]["schema"]
 
 
-@pytest.mark.parametrize("op", sorted(_NEW_OPS))
-def test_new_operations_are_owner_only_and_allow_listed_as_pending(op: str) -> None:
-    operation, permission = _NEW_OPS[op]
-    assert operation["x-rbac"] == {"permissions": [permission], "scope": "none"}
+def test_the_token_addressed_fetch_is_served_and_public_in_the_matrix() -> None:
+    """BK-11: the token is the credential, so every actor passes the authorisation layer and the
+    handler answers by the token; the link's user must still hold `backups:read`."""
+    op = "GET /admin/backups/{backupId}/download/{token}"
+    assert _FETCH["x-rbac"] == {"permissions": ["backups:read"], "scope": "none"}
+    assert _FETCH["security"] == [{}, {"bearerAuth": []}] and op not in _PENDING
     row = _MATRIX["operations"][op]
-    assert (row["state"], row["outcomes"]) == ("not_mounted", OWNER_ONLY)
-    assert _PENDING[op]["ticket"] == "E42-T05"
+    assert (row["state"], row["public"], set(row["outcomes"].values())) == (
+        "executed",
+        True,
+        {"allow"},
+    )
 
 
 @pytest.mark.parametrize(("case", "pointer", "value"), _EXAMPLES, ids=[c[0] for c in _EXAMPLES])

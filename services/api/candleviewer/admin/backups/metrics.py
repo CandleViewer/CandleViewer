@@ -13,6 +13,9 @@ the five `BackupKind` values and `result` one of the four `RESTORE_RESULTS`.
   next boot. A success that leaves the catalogue's successes (a delete, BK-12) reaches
   `recompute()`, which reloads its kind, so the age never reads fresher than the catalogue.
 - `cv_backup_verify_failures_total`: verifications that failed.
+- `cv_backup_download_source_rate_limited_total`: fetches refused because their source address
+  missed too often (BK-11), counted whatever the answer, a `503` for an unwritten record too; no
+  label, so never an address or a user.
 - `cv_restore_jobs_total{result}`: restores by result, a refusal counted as `refused` although it
   creates no job (Q17). Every result is bound at import, so a first one after a restart is an
   increase.
@@ -46,6 +49,11 @@ KINDS: Final[frozenset[str]] = frozenset(get_args(BackupKind))
 verify_failures_total = Counter(
     "cv_backup_verify_failures_total", "Backup verifications that failed, whatever the check."
 )
+source_rate_limited_total = Counter(
+    "cv_backup_download_source_rate_limited_total",
+    "Backup download fetches refused because their source address missed (a token or backup id "
+    "that is malformed or matches no link) more than 10 times in a minute.",
+)
 restore_jobs_total = Counter(
     "cv_restore_jobs_total",
     "Restores by result: refused (a precondition failed or could not be evaluated; no job "
@@ -65,6 +73,7 @@ EXPORTED_NAMES: Final = frozenset(
     {
         "cv_backup_last_success_age_seconds",
         "cv_backup_verify_failures_total",
+        "cv_backup_download_source_rate_limited_total",
         "cv_restore_jobs_total",
     }
 )

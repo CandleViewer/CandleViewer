@@ -8,6 +8,10 @@ token leaves only in the `200` body. `consume()` is synchronous, so a lookup and
 step of the event loop: another backup's token, or another user's when the caller names one (a
 bearer), is `LinkUnknown` and unspent; the caller's own spent or expired link `LinkGone`; a live
 one is spent once (`LinkSpent`). The hash is compared with `hmac.compare_digest` against every link.
+BK-11: a match is a lookup, not a spend (10a code F1). `lookup()` finds as `consume()` does but a
+live link is `LinkLive`, unspent; `spend()` spends it, both synchronous, so the fetch checks its
+user's hour between them with no await. A spent link's one `link_reused` record (SR-BK10A-02 (b))
+is claimed by `claim_reuse()` while it is written and taken by `settle_reuse()` once written.
 
 Bounds (C-2.18) and the retention horizon (SR-3456-01): `LIVE_LINKS_MAX` live links, past which
 `issue()` refuses (`LinksFull`). An ended link is kept `ENDED_KEPT` (1 hour) after its spend or,
@@ -23,7 +27,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Final
+from typing import Final, Literal
 from uuid import UUID, uuid4
 
 from candleviewer.admin.errors import AdminError
@@ -33,6 +37,8 @@ LINK_TTL: Final = timedelta(minutes=5)  # a link works once, for 5 minutes (cont
 LIVE_LINKS_MAX: Final = 1024  # every user's together
 ENDED_KEPT: Final = timedelta(hours=1)
 ENDED_LINKS_MAX: Final = 1024
+#: The one `link_reused` record of a spent link: none yet, one being written, or written.
+Reuse = Literal["unrecorded", "writing", "recorded"]
 
 
 class LinksFull(AdminError):
@@ -50,6 +56,7 @@ class DownloadLink:
     issued_at: datetime
     expires_at: datetime
     spent_at: datetime | None = None
+    reuse: Reuse = "unrecorded"
 
     def ended(self, now: datetime) -> bool:
         return self.spent_at is not None or now >= self.expires_at
@@ -70,7 +77,13 @@ class LinkSpent:  # the caller's live link, spent by this call and no other
     link: DownloadLink
 
 
+@dataclass(frozen=True, slots=True)
+class LinkLive:  # the caller's live link, found and not spent
+    link: DownloadLink
+
+
 Consumed = LinkUnknown | LinkGone | LinkSpent
+Found = LinkUnknown | LinkGone | LinkLive
 
 
 def _digest(token: str) -> bytes:
@@ -109,8 +122,13 @@ class DownloadLinks:
         self._held.pop(link_id, None)
 
     def consume(self, token: str, *, backup_id: UUID, user_id: UUID | None) -> Consumed:
-        """Spend the live link `token` names for `backup_id`; `user_id` is the bearer's user, or
-        None without a bearer (the token alone then names its user)."""
+        """`lookup`, then `spend` the live link it finds."""
+        found = self.lookup(token, backup_id=backup_id, user_id=user_id)
+        return self.spend(found.link.link_id) if isinstance(found, LinkLive) else found
+
+    def lookup(self, token: str, *, backup_id: UUID, user_id: UUID | None) -> Found:
+        """The link `token` names for `backup_id`, spending nothing; `user_id` is the bearer's
+        user, or None without a bearer (the token alone then names its user)."""
         now = self._now()
         self._sweep(now)
         digest, found = _digest(token), None
@@ -121,11 +139,35 @@ class DownloadLinks:
             return LinkUnknown()
         if user_id is not None and found.user_id != user_id:
             return LinkUnknown()
-        if found.ended(now):
-            return LinkGone(found)
-        spent = replace(found, spent_at=now)
-        self._held[found.link_id] = (digest, spent)
+        return LinkGone(found) if found.ended(now) else LinkLive(found)
+
+    def spend(self, link_id: UUID) -> Consumed:
+        """Spend the live link `link_id` once (`LinkSpent`); else what is held of it now."""
+        now, held = self._now(), self._held.get(link_id)
+        if held is None:
+            return LinkUnknown()
+        digest, link = held
+        if link.ended(now):
+            return LinkGone(link)
+        spent = replace(link, spent_at=now)
+        self._held[link_id] = (digest, spent)
         return LinkSpent(spent)
+
+    def claim_reuse(self, link_id: UUID) -> bool:
+        """Whether this presentation of the spent link writes its `link_reused` record: once,
+        until `settle_reuse`; a link never spent, or forgotten, has none."""
+        held = self._held.get(link_id)
+        if held is None or held[1].spent_at is None or held[1].reuse != "unrecorded":
+            return False
+        self._held[link_id] = (held[0], replace(held[1], reuse="writing"))
+        return True
+
+    def settle_reuse(self, link_id: UUID, *, written: bool) -> None:
+        """The claimed record written (its place taken), or not (left to the next)."""
+        held = self._held.get(link_id)
+        if held is not None:
+            reuse: Reuse = "recorded" if written else "unrecorded"
+            self._held[link_id] = (held[0], replace(held[1], reuse=reuse))
 
     def _sweep(self, now: datetime) -> list[UUID]:
         """Forget each link ended `ENDED_KEPT` ago; the ended ones kept, oldest issued first."""

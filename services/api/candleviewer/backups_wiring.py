@@ -21,7 +21,10 @@
   (`FlagStoreMaintenance`) and positions stay unknown. Nothing builds it until BK-14 mounts the
   restore after D7 (#3084).
 - BK-10: a download link is issued once the catalogue is read and `CV_BACKUP_ROOT` is set; until
-  then `POST /admin/backups/{backupId}/download` answers `501` before any challenge."""
+  then `POST /admin/backups/{backupId}/download` answers `501` before any challenge.
+- BK-11: the fetch serves the issue's links, once that is wired on the real backend with an
+  identity provider: the link's session family is read on the admin area's one engine, the
+  user's permissions through the identity provider; until then `downloadBackup` answers `501`."""
 
 from __future__ import annotations
 
@@ -36,9 +39,14 @@ import structlog
 from candleviewer.admin.backups import ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.deletion import BackupDeletion, DeleteAudit
-from candleviewer.admin.backups.downloads import BackupDownloads
+from candleviewer.admin.backups.downloads import (
+    BackupDownloads,
+    DownloadsAudit,
+    FetchPorts,
+    UserPermissions,
+)
 from candleviewer.admin.backups.gate import BackupJobGate
-from candleviewer.admin.backups.limits import RUNS_PER_HOUR
+from candleviewer.admin.backups.limits import FETCHES_PER_HOUR, RUNS_PER_HOUR
 from candleviewer.admin.backups.links import DownloadLinks
 from candleviewer.admin.backups.metrics import BackupFreshness, export_backup_metrics
 from candleviewer.admin.backups.ports import JOB_ERROR_CODES, BackupJobError, JobEnd
@@ -46,9 +54,9 @@ from candleviewer.admin.backups.rows import LostCount, LostRuns, RunAudit, RunRo
 from candleviewer.admin.backups.runs import BackupRuns
 from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.service import DEFAULT_READ_BUDGET_MS
-from candleviewer.admin.http import AuditEmitter
 from candleviewer.api.audit_limiter import AuditVerifyLimiter
 from candleviewer.api.recorder_admin import AdminJobStore, Job
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.step_up import POSITION_SOURCE_NOT_DEPLOYED
 from candleviewer.observability.metrics import CollectorRegistry, ReexportCollector
 from candleviewer.settings import Settings
@@ -56,6 +64,7 @@ from candleviewer.storage.backup_artefacts import LocalArtefactStore
 from candleviewer.storage.repositories.backups_sqlalchemy import SqlAlchemyBackups
 from candleviewer.storage.repositories.flags_sqlalchemy import FlagRow
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
 from candleviewer.storage.repositories.system_settings import SystemSettings
 from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
 
@@ -148,12 +157,15 @@ def _catalogue(
     shared with the counts, the tier and the incident list (`admin_wiring`), never a second one."""
     if not (BACKUPS_CATALOGUED and settings.storage_backend == "real"):
         return None
-    relational = (
-        system_settings.relational
-        if isinstance(system_settings, SqlAlchemySystemSettings)
-        else SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
-    )
-    return SqlAlchemyBackups(relational)
+    return SqlAlchemyBackups(_admin_engine(settings, system_settings))
+
+
+def _admin_engine(
+    settings: Settings, system_settings: SystemSettings | None
+) -> SqlAlchemyRelationalRepository:
+    if isinstance(system_settings, SqlAlchemySystemSettings):
+        return system_settings.relational
+    return SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
 
 
 def build_admin_backups(
@@ -203,7 +215,7 @@ def build_backup_runs(
 
 
 def build_backup_downloads(
-    settings: Settings, catalogue: BackupCatalogue, *, gate: BackupJobGate, audit: AuditEmitter
+    settings: Settings, catalogue: BackupCatalogue, *, gate: BackupJobGate, audit: DownloadsAudit
 ) -> BackupDownloads | None:
     """The link issue on the catalogue the reads serve, under the one admission lock; None until
     `BACKUPS_CATALOGUED` and `CV_BACKUP_ROOT` are both set."""
@@ -229,3 +241,21 @@ def build_backup_deletion(
     if store is None or remover is None:
         return None
     return BackupDeletion(store, remover, gate=gate, audit=audit, freshness=freshness)
+
+
+def build_backup_fetch(
+    settings: Settings,
+    downloads: BackupDownloads | None,
+    *,
+    identity: UserPermissions | None,
+    system_settings: SystemSettings | None,
+) -> BackupDownloads | None:
+    """The fetch over the issue's links, catalogue and artefacts (`with_fetch`), each user's hour
+    `FETCHES_PER_HOUR`; None until the issue is wired, on the real backend with an identity."""
+    if downloads is None or identity is None or settings.storage_backend != "real":
+        return None
+    rows = SqlAlchemySessionRepository(
+        _admin_engine(settings, system_settings), lambda **row: SessionRecord.model_validate(row)
+    )
+    hourly = AuditVerifyLimiter(rate_per_hour=FETCHES_PER_HOUR)
+    return downloads.with_fetch(FetchPorts(rows, identity, hourly))

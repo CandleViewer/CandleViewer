@@ -8,35 +8,170 @@ or a lock wait past `ADMIT_WAIT_S`, is `OpsUnavailable` (503); `LIVE_LINKS_MAX` 
 it is raised; a link is minted, then recorded with the spent `challenge_id` and its `link_id`,
 never the token or its hash, or forgotten unsent. Records go through the handler's `write_ahead`
 (it calls `audit_issue`) within `LINK_RECORD_BUDGET_S`; unwritten, `OpsAuditUnavailable` (503).
+
+`downloadBackup` (BK-11), in the contract's order, under no lock. A token matching no link, or a
+malformed one, is a miss: it counts against its source address (`SourceMisses`), `LinkMissed`
+(404), and past the minute's budget `FetchLimited` (429), counted in
+`cv_backup_download_source_rate_limited_total` whatever the answer, its first refusal per address
+and minute recorded (`denied`, `rate_limited`: the address, no object). A spent or expired link
+is `LinkEnded` (410), counted nowhere; a spent one's first presentation again is recorded once
+(`link_reused`). A live link meets its user's hour (`FetchLimited`, 429: nothing spent or
+recorded) and is spent, with no await since the lookup; the spend counts in that hour. Then, each
+refusal recorded first: an event that ended the grant that minted it (`grant_ended`,
+`LinkEnded`), its user without `backups:read` (`LinkForbidden`, 403), the backup as for an issue.
+Last the `served` record; the open artefact goes to the route, which streams it. Its records go
+through `audit_serve` the same way; an unwritten one leaves a spent link spent.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Any, Final
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Final, Protocol, TypeVar
 from uuid import UUID
 
 import structlog
 
-from candleviewer.admin.backups.artefact_port import ArtefactReader
+from candleviewer.admin.backups.artefact_port import ArtefactReader, OpenArtefact
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.gate import BackupJobGate
-from candleviewer.admin.backups.limits import LINK_RECORD_BUDGET_S, RESOLVE_BUDGET_S
-from candleviewer.admin.backups.links import DownloadLink, DownloadLinks, LinksFull
-from candleviewer.admin.errors import AdminError, OpsAuditUnavailable, OpsUnavailable
-from candleviewer.admin.http import AuditEmitter
+from candleviewer.admin.backups.limits import (
+    FETCH_READ_BUDGET_S,
+    LINK_RECORD_BUDGET_S,
+    RESOLVE_BUDGET_S,
+)
+from candleviewer.admin.backups.links import (
+    DownloadLink,
+    DownloadLinks,
+    LinkGone,
+    LinkLive,
+    LinksFull,
+    LinkSpent,
+)
+from candleviewer.admin.backups.metrics import source_rate_limited_total
+from candleviewer.admin.backups.misses import SourceMisses
+from candleviewer.admin.errors import AdminError, OpsAuditUnavailable, OpsNotWired, OpsUnavailable
+from candleviewer.admin.overview.fanout import utc_now
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.observability.context import current_request_id
 from candleviewer.storage.backup_artefacts import ArtefactMissing, ArtefactUnreadable
+from candleviewer.storage.repositories.backups import BackupRow
 
 USABLE_STATUSES: Final = frozenset({"ok", "verified", "restored"})
 
 
 class LinkNotUsable(AdminError):
     """`409 conflict`, rule `backup_not_usable`: nothing was minted."""
+
+
+class LinkMissed(AdminError):
+    """`404 not_found`: no link matches, or the token or `backupId` is malformed; nothing spent."""
+
+
+class LinkEnded(AdminError):
+    """`410 gone`, one body whatever the cause; after the spend `reason` names it in the record."""
+
+    def __init__(self, reason: str = "gone") -> None:
+        super().__init__("backups: the link ended")
+        self.reason = reason
+
+
+class LinkForbidden(AdminError):
+    """`403 forbidden`: the link's user no longer holds `backups:read`; the link is spent."""
+
+
+class FetchLimited(AdminError):
+    """`429 rate_limited` for `retry_after_s`: nothing was spent."""
+
+    def __init__(self, retry_after_s: int) -> None:
+        super().__init__("backups: rate limited")
+        self.retry_after_s = retry_after_s
+
+
+class DownloadsAudit(Protocol):
+    """`AuditWriter.emit`'s keywords these records use; a per-source refusal names no object, and
+    no user unless a bearer came."""
+
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: UUID | None,
+        actor_ip: str | None,
+        session_id: UUID | None,
+        object_kind: str | None,
+        object_id: str | None,
+        outcome: AuditOutcome,
+        severity: Severity,
+        reason: str | None,
+        after_state: dict[str, Any],
+        request_id: UUID | None,
+    ) -> None: ...
+
+
+class FamilyRows(Protocol):  # `auth.session_repository.SessionRepository`'s two reads
+    async def walk_rotation_family(self, session_id: str) -> tuple[str, ...]: ...
+
+    async def find_by_id(self, session_id: str) -> SessionRecord | None: ...
+
+
+class UserPermissions(Protocol):  # the identity read: a user who is not active holds none
+    async def session_info(self, user_id: str) -> dict[str, Any]: ...
+
+
+class HourlyLimit(Protocol):  # `api.audit_limiter.AuditVerifyLimiter`, out of M21's reach
+    def retry_after(self, user: str) -> int | None: ...
+
+    def record_start(self, user: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class FetchPorts:
+    """A fetch's reads past the catalogue and the links, its user's hour and the server clock."""
+
+    sessions: FamilyRows
+    identity: UserPermissions
+    hourly: HourlyLimit
+    now: Callable[[], datetime] = utc_now
+
+
+@dataclass(frozen=True, slots=True)
+class Fetch:
+    """The path's `backup_id` and `token` (None: malformed), the bearer's verified principal if
+    one was sent, the address MeshOnly admitted and the request id. The token, a credential, is
+    in no `repr` (C-12.6), so neither is it in a `ServeRecord`'s."""
+
+    backup_id: UUID | None
+    token: str | None = field(repr=False)
+    bearer: AuditPrincipal | None
+    source: str | None
+    request_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class ServeRecord:
+    """One `backup.downloaded` record of a fetch (`stage: served`): of a matching token's link, or
+    with none, of a per-source refusal."""
+
+    ask: Fetch
+    link: DownloadLink | None
+    outcome: AuditOutcome
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Fetched:
+    """A served fetch: its backup, and the open artefact that the route streams and closes."""
+
+    backup_id: UUID
+    kind: str
+    artefact: OpenArtefact
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +185,8 @@ class LinkRecord:
 
 
 WriteAhead = Callable[[LinkRecord], Awaitable[None]]
+ServeWriteAhead = Callable[[ServeRecord], Awaitable[None]]
+_Record = TypeVar("_Record", LinkRecord, ServeRecord)
 
 
 def _log() -> Any:
@@ -60,7 +197,37 @@ def _log() -> Any:
 def _reason(refused: AdminError) -> str:
     if isinstance(refused, LinkNotUsable):
         return "backup_not_usable"
+    if isinstance(refused, LinkEnded):
+        return refused.reason
+    if isinstance(refused, LinkForbidden):
+        return "forbidden"
     return "links_full" if isinstance(refused, LinksFull) else "store_unavailable"
+
+
+def grant_ended(link: DownloadLink, family: Sequence[SessionRecord], now: datetime) -> str | None:
+    """`user_disabled` or `session_ended` once an event ended the grant that minted `link`, else
+    None (SR-BK10A-02 (a)), from the rows of its family: the issuing session and the successors
+    its rotations made (`issued_at` from its own on), as a rotation does not end the link. The
+    user disabled or gone; none of those sessions live (logged out, revoked other than by a
+    rotation, expired); a live one past its lifetime or idle-locked; or one with `readonly_until`
+    set: the step-up that minted the grant cleared it, a successor starts without, and a
+    downgrade keeps it set after its window until a write lifts it. Two events can leave the rows
+    clean (delta: the issue's touch to its mint, seconds): a read-only turn begun within delta
+    and lifted by a write after its `READONLY_WINDOW`, and an idle lock, which needs
+    `MIN_IDLE_TIMEOUT_S` of idleness after the touch, begun and unlocked in the link's last delta
+    (both at least `LINK_TTL`)."""
+    issuing = next((row for row in family if row.id == link.session_id), None)
+    if issuing is None:
+        return "session_ended"
+    if issuing.user_status in (UserStatus.DISABLED, None):
+        return "user_disabled"
+    chain = [row for row in family if row.issued_at >= issuing.issued_at]
+    live = [row for row in chain if not row.is_revoked]
+    if not live or any(row.readonly_until is not None for row in chain):
+        return "session_ended"
+    if any(row.is_absolute_expired(now=now) or row.is_idle_locked(now=now) for row in live):
+        return "session_ended"
+    return None
 
 
 class BackupDownloads:
@@ -71,13 +238,27 @@ class BackupDownloads:
         links: DownloadLinks,
         *,
         gate: BackupJobGate,
-        audit: AuditEmitter,
+        audit: DownloadsAudit,
         resolve_budget_s: float = RESOLVE_BUDGET_S,
         record_budget_s: float = LINK_RECORD_BUDGET_S,
+        fetch: FetchPorts | None = None,
+        fetch_budget_s: float = FETCH_READ_BUDGET_S,
+        misses: SourceMisses | None = None,
     ) -> None:
         self._catalogue, self._reader, self._links = catalogue, reader, links
         self._gate, self._audit = gate, audit
         self._resolve_budget_s, self._record_budget_s = resolve_budget_s, record_budget_s
+        self._fetch, self._fetch_budget_s = fetch, fetch_budget_s
+        self._misses = SourceMisses() if misses is None else misses
+
+    def with_fetch(self, fetch: FetchPorts) -> BackupDownloads:
+        """This service with the fetch's ports: the links, catalogue, artefacts, budgets and the
+        per-source misses shared, so an injected one (its clock) carries through."""
+        return BackupDownloads(
+            self._catalogue, self._reader, self._links, gate=self._gate, audit=self._audit,
+            resolve_budget_s=self._resolve_budget_s, record_budget_s=self._record_budget_s,
+            fetch=fetch, fetch_budget_s=self._fetch_budget_s, misses=self._misses,
+        )  # fmt: skip
 
     async def issue(
         self, backup_id: UUID, who: AuditPrincipal, challenge_id: UUID, write_ahead: WriteAhead
@@ -112,11 +293,121 @@ class BackupDownloads:
             reason=record.reason, after_state=state, request_id=who.request_id,
         )  # fmt: skip
 
+    async def fetch(self, ask: Fetch, write_ahead: ServeWriteAhead) -> Fetched:
+        """`downloadBackup` for `ask`, in the contract's order (the module docstring)."""
+        ports = self._fetch
+        if ports is None:
+            raise OpsNotWired("backups: the fetch is not wired")
+        if ask.backup_id is None or ask.token is None:
+            raise await self._missed(ask, write_ahead)
+        bearer = None if ask.bearer is None else ask.bearer.user_id
+        found = self._links.lookup(ask.token, backup_id=ask.backup_id, user_id=bearer)
+        if isinstance(found, LinkGone):
+            raise await self._gone(ask, found.link, write_ahead)
+        if not isinstance(found, LinkLive):
+            raise await self._missed(ask, write_ahead)
+        user = str(found.link.user_id)
+        if (wait := ports.hourly.retry_after(user)) is not None:
+            raise FetchLimited(wait)  # nothing spent, nothing recorded
+        spent = self._links.spend(found.link.link_id)  # no await since the lookup
+        if not isinstance(spent, LinkSpent):
+            raise LinkEnded()  # it expired between the two readings of the clock, unspent
+        ports.hourly.record_start(user)  # every spend counts, a refused fetch's too
+        return await self._serve(ports, ask, spent.link, write_ahead)
+
+    async def audit_serve(self, record: ServeRecord) -> None:
+        """`backup.downloaded` at `stage: served`, severity `error`: the `link_id`, and `bearer`
+        `matched` (the issuing user's bearer came: its session and name) or `absent`; with no
+        link, the address alone (the per-source refusal), and a bearer's user if one came."""
+        ask, link, who = record.ask, record.link, record.ask.bearer
+        state: dict[str, Any] = {"stage": "served"}
+        user, session = (None, None) if who is None else (who.user_id, who.session_id)
+        kind = target = None
+        if link is not None:
+            bearer = "absent" if who is None else "matched"
+            state |= {"link_id": str(link.link_id), "bearer": bearer}
+            user, kind, target = link.user_id, "backup", str(link.backup_id)
+            session = link.session_id if who is None else session
+        label = str(user or "anonymous") if who is None else who.username
+        await self._audit.emit(
+            "backup.downloaded", actor_label=label, actor_user_id=user, actor_ip=ask.source,
+            session_id=session, object_kind=kind, object_id=target, outcome=record.outcome,
+            severity=Severity.ERROR, reason=record.reason, after_state=state,
+            request_id=ask.request_id,
+        )  # fmt: skip
+
+    async def _missed(self, ask: Fetch, write_ahead: ServeWriteAhead) -> AdminError:
+        """A miss counts against its source; past its minute's budget it is refused and counted,
+        and its first refusal per address and minute recorded, taken once written (SR-3456-02)."""
+        source = ask.source or ""
+        wait = self._misses.miss(source)
+        if wait is None:
+            return LinkMissed("backups: no such link")
+        source_rate_limited_total.inc()  # #3544 F3: also when the record cannot be written
+        if self._misses.claim_record(source):
+            written = False
+            try:
+                refused = ServeRecord(ask, None, AuditOutcome.DENIED, "rate_limited")
+                await self._record(write_ahead, refused)
+                written = True
+            finally:
+                self._misses.settle_record(source, written=written)
+        return FetchLimited(wait)
+
+    async def _gone(
+        self, ask: Fetch, link: DownloadLink, write_ahead: ServeWriteAhead
+    ) -> LinkEnded:
+        """A spent link's first presentation again writes `link_reused`; only a written record
+        takes its place (SR-BK10A-02 (b)). An expired link never spent writes nothing."""
+        if self._links.claim_reuse(link.link_id):
+            written = False
+            try:
+                reused = ServeRecord(ask, link, AuditOutcome.FAILURE, "link_reused")
+                await self._record(write_ahead, reused)
+                written = True
+            finally:
+                self._links.settle_reuse(link.link_id, written=written)
+        return LinkEnded()
+
+    async def _serve(
+        self, ports: FetchPorts, ask: Fetch, link: DownloadLink, write_ahead: ServeWriteAhead
+    ) -> Fetched:
+        try:
+            await self._still_granted(ports, link)
+            row, artefact = await self._open(link.backup_id)
+        except (LinkEnded, LinkForbidden, LinkNotUsable, OpsUnavailable) as refused:
+            failed = ServeRecord(ask, link, AuditOutcome.FAILURE, _reason(refused))
+            await self._record(write_ahead, failed)
+            raise
+        try:
+            await self._record(write_ahead, ServeRecord(ask, link, AuditOutcome.SUCCESS))
+        except BaseException:
+            artefact.close()  # never handed to the route
+            raise
+        return Fetched(row.id, row.kind, artefact)
+
+    async def _still_granted(self, ports: FetchPorts, link: DownloadLink) -> None:
+        try:
+            async with asyncio.timeout(self._fetch_budget_s):
+                ids = await ports.sessions.walk_rotation_family(str(link.session_id))
+                family = [await ports.sessions.find_by_id(sid) for sid in ids]
+                info = await ports.identity.session_info(str(link.user_id))
+        except Exception as exc:  # an outage or a stall: fail closed, the class alone logged
+            _log().warning("admin_backups.fetch_read_failed", error=type(exc).__name__,
+                           request_id=current_request_id())  # fmt: skip
+            raise OpsUnavailable("backups: store unavailable") from None
+        ended = grant_ended(link, [row for row in family if row is not None], ports.now())
+        if ended is not None:
+            raise LinkEnded(ended)
+        held = frozenset(str(code) for code in info.get("permissions", ()))
+        if not AuditPrincipal(link.user_id, str(link.user_id), held).has(Permission.BACKUPS_READ):
+            raise LinkForbidden("backups: the link's user may not read backups")
+
     async def _issue(
         self, bid: UUID, who: AuditPrincipal, sid: UUID, grant: UUID, write_ahead: WriteAhead
     ) -> tuple[str, DownloadLink]:
         try:
-            await self._usable(bid)
+            (await self._open(bid))[1].close()  # only the fetch reads it
             token, link = self._links.issue(user_id=who.user_id, session_id=sid, backup_id=bid)
         except (LinkNotUsable, OpsUnavailable, LinksFull) as refused:
             await self._record(write_ahead, LinkRecord(bid, grant, None, _reason(refused)))
@@ -128,7 +419,8 @@ class BackupDownloads:
             raise
         return token, link
 
-    async def _usable(self, backup_id: UUID) -> None:
+    async def _open(self, backup_id: UUID) -> tuple[BackupRow, OpenArtefact]:
+        """The usable row and its artefact, open: the caller closes it."""
         row = await self._catalogue.get(backup_id)  # within the catalogue's own read budget
         if row is None or row.status not in USABLE_STATUSES or row.deleted_at or not row.encrypted:
             raise LinkNotUsable("backups: the backup is not usable")
@@ -141,9 +433,11 @@ class BackupDownloads:
             _log().warning("admin_backups.link_resolve_failed", error=type(exc).__name__,
                            request_id=current_request_id())  # fmt: skip
             raise OpsUnavailable("backups: store unavailable") from None
-        artefact.close()
+        return row, artefact
 
-    async def _record(self, write_ahead: WriteAhead, record: LinkRecord) -> None:
+    async def _record(
+        self, write_ahead: Callable[[_Record], Awaitable[None]], record: _Record
+    ) -> None:
         try:
             async with asyncio.timeout(self._record_budget_s):
                 await write_ahead(record)

@@ -77,10 +77,9 @@ operations:
   GET /admin/backups/{backupId}/download/{token}:
     permissions: ['backups:read']
     scope: none
-    public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
-    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+    public: true
+    state: executed
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: allow}
   POST /admin/backups/{backupId}/restore:
     permissions: ['backups:write']
     scope: none
