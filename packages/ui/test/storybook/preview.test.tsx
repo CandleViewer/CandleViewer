@@ -62,6 +62,27 @@ describe("Storybook preview", () => {
     expect(mounts).toBe(1);
   });
 
+  it("leaves the body's surface to the last story mounted, then clears it", async () => {
+    const Story = composeStory(
+      { render: () => <Probe /> },
+      { title: "Foundations/Probe" },
+      preview,
+    );
+    const { style } = document.body;
+    const surface = () => [
+      style.getPropertyValue("background-color"),
+      style.getPropertyValue("color"),
+    ];
+    const roots = [1, 2].map(() =>
+      createRoot(document.body.appendChild(document.createElement("div"))),
+    );
+    for (const each of roots) await act(async () => each.render(<Story />));
+    await act(async () => roots[0]?.unmount());
+    expect(surface()).toEqual(["var(--color-surface-app)", "var(--color-text-primary)"]);
+    await act(async () => roots[1]?.unmount());
+    expect(surface()).toEqual(["", ""]);
+  });
+
   it("fails a story on serious and critical axe violations, never on moderate or minor", () => {
     const gate = { test: "error", options: { impactLevels: ["critical", "serious"] } };
     expect(preview.parameters?.["a11y"]).toEqual(gate);

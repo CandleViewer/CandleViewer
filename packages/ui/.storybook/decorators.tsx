@@ -40,12 +40,23 @@ export const withMountCount: Decorator = (Story) => (
   </MountCount>
 );
 
+/** Canvases mounted: a docs page can show several stories at once. */
+let canvases = 0;
+
 /** The canvas is the app's own surface in every theme, so axe measures contrast against it. */
 function TokenCanvas(): null {
   useLayoutEffect(() => {
     const { style } = document.body;
+    canvases += 1;
     style.setProperty("background-color", "var(--color-surface-app)");
     style.setProperty("color", "var(--color-text-primary)");
+    // The last story to go takes the surface with it, so the page shown next keeps its own.
+    return () => {
+      canvases -= 1;
+      if (canvases > 0) return;
+      style.removeProperty("background-color");
+      style.removeProperty("color");
+    };
   }, []);
   return null;
 }
