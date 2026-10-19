@@ -806,6 +806,7 @@ LEVELS = {
     "step": "jobs:\n  a:\n    steps:\n      - run: make\n        env:\n          {}\n",
 }
 ENV_TRACED = "tools/env.sh:1: 'set -x' tracing (SR-146); run by w.yml"
+GITHUB_SCRIPT = "jobs:\n  a:\n    steps:\n      - uses: actions/github-script@v7\n        with:\n"
 
 
 @pytest.mark.parametrize("name", ["BASH_ENV", "ENV"])
@@ -869,14 +870,16 @@ def test_workflow_env_file_forms_are_followed(tmp_path: Path, workflow: str) -> 
         _runs('NAME="$RUNNER_TEMP/env.sh" bash ci.sh'),
         _runs("export NAME=/etc/bash.bashrc"),
         _runs('echo "NAME<<EOF" >> "$GITHUB_ENV"'),
+        _runs("NAME=\\"),
+        "jobs:\n  a:\n    steps:\n      - with: {NAME: prod}\n        uses: x/y@v1\n",
     ],
 )
 def test_workflow_env_file_that_does_not_resolve_is_reported(
     tmp_path: Path, workflow: str, name: str
 ) -> None:
     # #3525: another expression, a path outside the repository (absolute, `~`, `..`), a missing
-    # file, a directory, or a value YAML goes on with on the next line (each line is read alone):
-    # reported, as an unreadable script is.
+    # file, a directory, a value YAML or the shell goes on with on the next line (each line is
+    # read alone), or a key outside `env:`: reported, as an unreadable script is.
     repo = tmp_path / "repo"
     _write(tmp_path, "env.sh", "set -eu\n")
     _write(repo, "tools/env.sh", "set -eu\n")
@@ -898,6 +901,10 @@ def test_workflow_env_file_that_does_not_resolve_is_reported(
         _runs('echo "ENV: demo"; CV_ENV=demo make  # BASH_ENV=/etc/profile'),
         _runs('echo $ENV=x "${ENV: -1}"'),
         "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - ENV: prod\n",
+        (
+            "jobs:\n  a:\n    env: { CI: '${{ matrix.ci }}' }\n"
+            '    steps:\n      - run: echo "env: ${{ github.ref }}"\n'
+        ),
     ],
 )
 def test_workflow_env_set_empty_or_only_read_names_no_file(tmp_path: Path, workflow: str) -> None:
@@ -912,24 +919,77 @@ def test_workflow_env_set_empty_or_only_read_names_no_file(tmp_path: Path, workf
         _runs("read -r BASH_ENV <<< tools/env.sh; printf -v ENV tools/env.sh"),
         _runs("BASH${X}_ENV=tools/env.sh bash ci.sh"),
         LEVELS["step"].format('{"BASH_ENV":tools/env.sh}'),
+        LEVELS["job"].format("? BASH_ENV\n      : tools/env.sh"),
+        "jobs:\n  a:\n    env:\n      ${{ fromJSON(needs.b.outputs.env) }}\n",
+        _runs("cd tools && BASH_ENV=env.sh bash ci.sh"),
+        GITHUB_SCRIPT + "          script: core.exportVariable(name, 'tools/env.sh')\n",
+        (
+            GITHUB_SCRIPT
+            + "          script: |\n            core.exportVariable(\n              'ENV',\n"
+        ),
+        GITHUB_SCRIPT + "          script: process.env.BASH_ENV = 'tools/env.sh'\n",
+        _runs("$env:BASH_ENV = 'tools/env.sh'") + "        shell: pwsh\n",
+        _runs("python3 tools/export.py"),
     ],
 )
 def test_workflow_env_file_not_read_is_pinned(tmp_path: Path, workflow: str) -> None:
     # #3525: listed beside _SHELL_ENV as not read, though each sets the name: an expansion that
     # assigns, `read`, `printf -v`, a name built from an expansion, a flow key with no space after
-    # its colon. Pinned so that the list stays true.
+    # its colon, an explicit key, an `env:` expression on the next line, a relative value after a
+    # `cd` (tried from the root: a clean env.sh there), a name given by a variable, a call split
+    # before its name, another language (github-script's `process.env`, pwsh, a Python file
+    # writing $GITHUB_ENV). Pinned so that the list stays true.
     _write(tmp_path, WF, workflow)
     _write(tmp_path, "tools/env.sh", "set -x\n")
+    _write(tmp_path, "env.sh", "set -eu\n")
+    _write(tmp_path, "tools/export.py", 'print("BASH_ENV=tools/env.sh", file=github_env)\n')
     assert h.check_workflows(tmp_path) == []
+
+
+@pytest.mark.parametrize("name", ["BASH_ENV", "ENV"])
+def test_workflow_env_exported_by_github_script_is_followed(tmp_path: Path, name: str) -> None:
+    # #3525: `core.exportVariable` sets the name for the later steps, as a $GITHUB_ENV line does: a
+    # quoted value is followed, any other value (an expression, a variable) is reported.
+    _write(tmp_path, "tools/env.sh", "set -x\n")
+    export = f"          script: core.exportVariable('{name}', 'tools/env.sh')\n"
+    _write(tmp_path, WF, GITHUB_SCRIPT + export)
+    assert h.check_workflows(tmp_path) == [ENV_TRACED]
+    export = f'core.exportVariable ("{name}" , path.join(dir, "env.sh"));'
+    _write(tmp_path, WF, GITHUB_SCRIPT + f"          script: |\n            {export}\n")
+    assert h.check_workflows(tmp_path) == [f"w.yml:7: unresolvable {name} file (SR-146 scan)"]
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        "jobs:\n  a:\n    container: node:22\n    env: ${{ fromJSON(needs.b.outputs.env) }}\n",
+        "jobs:\n  a:\n    steps:\n      - env: ${{ matrix.env }}  # the step's\n",
+        "jobs:\n  a:\n    steps:\n      - { run: make, env: '${{ matrix.env }}' }\n",
+        "jobs:\n  a:\n    container:\n      env: >-\n        ${{ matrix.env }}\n",
+        "jobs:\n  a:\n    steps:\n      - env: ${{ x }}\n        working-directory: w.sh\n",
+    ],
+)
+def test_workflow_env_mapping_given_as_an_expression_is_reported(
+    tmp_path: Path, workflow: str
+) -> None:
+    # #3525: a mapping no line spells out may set BASH_ENV or ENV: reported as a setting naming no
+    # file (fails closed), whatever file a base names. One spelt out (`env:` then its keys, `env:
+    # { ... }`) is read as before.
+    _write(tmp_path, "w.sh", "set -eu\n")
+    _write(tmp_path, WF, workflow)
+    assert h.check_workflows(tmp_path) == ["w.yml:4: unresolvable env mapping (SR-146 scan)"]
 
 
 def test_workflow_env_naming_no_file_takes_the_allow_marker(tmp_path: Path) -> None:
-    # #3525: a setting naming no file (an ENV naming an environment) takes the allow marker, as each
-    # SR-146 line finding does; the file a marked line names is still followed.
+    # #3525: an ENV naming no file (an environment's name) and an `env:` mapping given as an
+    # expression take the allow marker, as each SR-146 line finding does. A BASH_ENV, which only
+    # ever names a startup file, does not; the file a marked line names is still followed.
     allow = "  # secrets-hygiene: allow"
     marked = LEVELS["job"].format(f"ENV: prod{allow}") + f"      - run: ENV=demo make{allow}\n"
-    _write(tmp_path, WF, marked)
+    _write(tmp_path, WF, marked + f"        env: ${{{{ matrix.env }}}}{allow}\n")
     assert h.check_workflows(tmp_path) == []
+    _write(tmp_path, WF, LEVELS["job"].format(f"BASH_ENV: ${{{{ runner.temp }}}}/e.sh{allow}"))
+    assert h.check_workflows(tmp_path) == ["w.yml:4: unresolvable BASH_ENV file (SR-146 scan)"]
     _write(tmp_path, WF, LEVELS["job"].format(f"BASH_ENV: tools/env.sh{allow}"))
     _write(tmp_path, "tools/env.sh", "set -x\n")
     assert h.check_workflows(tmp_path) == [ENV_TRACED]
@@ -1050,12 +1110,15 @@ def test_env_file_symlink_loop_fails_closed(tmp_path: Path) -> None:
         "$A$'" * 24000,
         "$" + "A" * 96000,
         # #3525: BASH_ENV and ENV settings: shell assignments and $GITHUB_ENV's `<<` form, YAML
-        # keys after a `,`, the spaces after a `{` or a key, each read once.
+        # keys after a `,`, the spaces after a `{` or a key, each read once; the spaces in an
+        # `exportVariable` call or after an `env:` key.
         "ENV=" * 24000,
         "ENV<<" * 19000,
         ", ENV " * 16000,
         "{" + " " * 96000,
         "ENV" + " " * 96000 + "x",
+        "exportVariable(ENV" + " " * 96000 + "x",
+        "{ env" + " " * 48000 + ":" + " " * 48000 + "x",
     ],
     ids=["set-groups", "bash-o-words", "o-spaces", "x-run", "o-run", "deep-path", "brackets"]
     + ["sh-o-sh", "set-o-set", "bash-o-bash", "slashes", "dollar-path"]
@@ -1069,7 +1132,8 @@ def test_env_file_symlink_loop_fails_closed(tmp_path: Path) -> None:
     + ["plus-paths", "brace-pieces", "tilde-starts", "letter-expansions", "unclosed-value"]
     + ["value-words", "shell-prefixes", "quoted-names", "nested-escapes", "signal-quoting"]
     + ["signal-letters", "name-quotes", "long-name"]
-    + ["env-assignments", "env-heredocs", "env-keys", "flow-spaces", "env-key-spaces"],
+    + ["env-assignments", "env-heredocs", "env-keys", "flow-spaces", "env-key-spaces"]
+    + ["export-spaces", "mapping-spaces"],
 )
 def test_tracing_rules_stay_linear_on_a_long_line(line: str) -> None:
     # CPU time, not wall-clock time (C-13.7): a busy runner delays this test but adds no CPU time

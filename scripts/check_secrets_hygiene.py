@@ -489,25 +489,34 @@ _SHEBANG_X = re.compile(r"#!.*\s" + _TRACE_WORD)
 _NOT_SHELL = re.compile(
     r"\.(?:md|markdown|txt|rst|py|json|ya?ml|toml|[cm]?js|tsx?|css|html|xml|csv|lock|cfg|ini|sql)"
 )
-#: A file the shell reads before a script (#3525): bash reads the one ``BASH_ENV`` names before
-#: each script it runs (a ``run:`` step's ``bash -e {0}``), an interactive sh the one ``ENV``
-#: names. Set by a YAML key at a line's start or in a flow mapping (a workflow's, a job's or a
-#: step's ``env:``: ``BASH_ENV: tools/env.sh``, ``env: { BASH_ENV: x.sh }``) or by a shell
-#: assignment (``BASH_ENV=x.sh bash ci.sh``, ``export ENV=x.sh``, ``BASH_ENV+=x.sh``, ``echo
-#: "BASH_ENV=x.sh" >> "$GITHUB_ENV"``), read with its quotes off; one set empty (``BASH_ENV=``,
-#: ``ENV: ""``) names no file. ``workflow_scripts`` follows each value set in a workflow or a
-#: script it runs, whichever steps it reaches (a step's and the job's it overrides), and reports
-#: one naming no repository file unless its line carries the allow marker (a marked line's file
-#: is still followed). Not read: ``${BASH_ENV:=x}``, ``${BASH_ENV=x}``, ``read BASH_ENV``,
-#: ``printf -v BASH_ENV``, a name built from an expansion (``BASH${X}_ENV=x``), a flow key with
-#: no space after its colon (``{"BASH_ENV":x}``), a list item (``- ENV: x``, a matrix's), one
-#: set in a local action's ``action.yml`` (not scanned). Reported though no file is read: a key
-#: outside ``env:`` (``with: {ENV: prod}``), an ``ENV`` no interactive sh reads, a value on the
-#: next line (``BASH_ENV: >-``, ``BASH_ENV=\``, ``$GITHUB_ENV``'s ``BASH_ENV<<EOF``), as each
+#: A file the shell reads before a script (#3525): bash reads the one ``BASH_ENV`` names before each
+#: script it runs (a ``run:`` step's ``bash -e {0}``), an interactive sh the one ``ENV`` names. Set
+#: by a YAML key at a line's start or in a flow mapping (a workflow's, a job's or a step's ``env:``:
+#: ``BASH_ENV: tools/env.sh``, ``env: { BASH_ENV: x.sh }``), by a shell assignment
+#: (``BASH_ENV=x.sh bash ci.sh``, ``export ENV=x.sh``, ``BASH_ENV+=x.sh``,
+#: ``echo "BASH_ENV=x.sh" >> "$GITHUB_ENV"``) or by ``core.exportVariable("BASH_ENV", "x.sh")`` (a
+#: ``github-script`` step), read with its quotes off; one set empty (``BASH_ENV=``, ``ENV: ""``)
+#: names no file. An ``env:`` mapping given as an expression (``env: ${{ matrix.env }}``, or as a
+#: block scalar: ``env: >-``) may set either name: it is read as a setting naming no file.
+#: ``workflow_scripts`` follows each value read here, in a workflow or a script it runs, whichever
+#: steps it reaches (a step's and the job's it overrides), and reports one naming no repository file
+#: unless ``_env_settings`` waives it (a waived line's file is still followed). A relative value is
+#: tried from the root and each ``working-directory``, not from the directory a ``cd`` enters. Not
+#: read: ``${BASH_ENV:=x}``, ``${BASH_ENV=x}``, ``read BASH_ENV``, ``printf -v BASH_ENV``, a name
+#: built from an expansion (``BASH${X}_ENV=x``) or given by a variable
+#: (``exportVariable(name, x)``), a call split before its name, a flow key with no space after its
+#: colon (``{"BASH_ENV":x}``), an explicit key (``? BASH_ENV``), a list item (``- ENV: x``, a
+#: matrix's), an ``env:`` expression on the next line, one set in a local action's ``action.yml``
+#: (not scanned) or in another language (a ``pwsh`` step's ``$env:BASH_ENV = x``,
+#: ``process.env.BASH_ENV = x``, a Python file writing ``$GITHUB_ENV``). Reported though no file is
+#: read: a key outside ``env:`` (``with: {ENV: prod}``), an ``ENV`` no interactive sh reads, a value
+#: on the next line (``BASH_ENV: >-``, ``BASH_ENV=\``, ``$GITHUB_ENV``'s ``BASH_ENV<<EOF``), as each
 #: line is read alone.
 _SHELL_ENV = re.compile(
-    r"(?:^|(?<!\$)\{|,)\s*(?P<key>(?:BASH_)?ENV)\s*:(?!\S)\s*(?P<entry>[^\s,}]*)"
+    r"(?:^|(?<!\$)\{|,)\s*(?:(?P<key>(?:BASH_)?ENV)\s*:(?!\S)\s*(?P<entry>[^\s,}]*)"
+    r"|(?:-\s+)?(?P<map>env)\s*:\s*(?:\$\{\{|[|>]))"
     r"|" + _WORD_START + r"(?<![${])(?P<name>(?:BASH_)?ENV)(?:\+?=|<<)(?P<value>[^\s;&|()<>`]*)"
+    r"|exportVariable\s*\(\s*(?P<arg>(?:BASH_)?ENV)\s*,\s*(?P<given>[^\s,)]*)"
 )
 
 
@@ -561,14 +570,18 @@ def _run_lines(text: str) -> list[str]:
 
 
 def _env_settings(text: str) -> Iterator[tuple[int, str, str, bool]]:
-    """(line, name, value, allow-marked) per ``BASH_ENV`` or ``ENV`` that ``text`` sets
-    (``_SHELL_ENV``) outside comments, but one set empty; a YAML key whose value starts on a later
-    line gives ``""``."""
+    """(line, what, value, waived) per ``BASH_ENV`` or ``ENV`` that ``text`` sets, but one set
+    empty (what: ``<name> file``), and per ``env:`` mapping it gives as an expression (what:
+    ``env mapping``, value ``""``), outside comments (``_SHELL_ENV``); a YAML key or call whose
+    value starts on a later line gives ``""``. An allow-marked line's setting is waived, but a
+    ``BASH_ENV``'s: it only ever names a startup file."""
     for n, line in enumerate(text.splitlines(), 1):
         for m in _SHELL_ENV.finditer(_unquoted(_code(line))):
-            value = m["entry"] if m["key"] else m["value"]
-            if value not in ('""', "''") and (value or m["key"]):
-                yield n, m["key"] or m["name"], value, _SKIP_ALLOW in line
+            name = m["key"] or m["name"] or m["arg"] or m["map"]
+            value = m["entry"] or m["value"] or m["given"] or ""
+            if value not in ('""', "''") and (value or not m["name"]):
+                what = "env mapping" if m["map"] else f"{name} file"
+                yield n, what, value, _SKIP_ALLOW in line and name != "BASH_ENV"
 
 
 def _read(path: Path, size: int = -1) -> str | None:
@@ -624,7 +637,8 @@ def _invoked(root: Path, bases: list[PurePosixPath], line: str) -> Iterator[str]
 def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, int, str]]]:
     """Each repository shell script a workflow step runs, directly or through the scripts it runs
     (root-relative) -> its runners: ``w.yml``, or ``w.yml via <the script that runs it>`` (#3274);
-    and each ``BASH_ENV`` or ``ENV`` setting naming no repository file: (its file, line, name).
+    and each setting ``_env_settings`` gives that names no repository file and is not waived: (its
+    file, line, what).
 
     A command counts at a line start or after ``;``, ``&``, ``|``, ``(``, ``)``, ``{`` or a
     backtick, past ``VAR=x``, ``!``, ``if then elif else do while until`` and the wrappers ``exec
@@ -644,10 +658,11 @@ def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, in
     non-script command in a ``bash -c`` string (judged as a direct command), ``cd <dir> &&
     ./x.sh`` (not tried from ``<dir>``), stdin and pipes (``cat x | bash``, ``bash < x``,
     ``xargs bash x``), a wrapper option taking a word (``timeout -s KILL``), other interpreters.
-    The file a ``BASH_ENV`` or ``ENV`` setting names (``_SHELL_ENV``) in a workflow or a script it
-    runs is a script it runs, whatever its suffix, tried from the same paths (#3525); a setting
-    naming no repository file (another expression, a path outside the root, a missing file) fails
-    the scan, as an unreadable script does, unless its line carries the allow marker.
+    The file a ``BASH_ENV`` or ``ENV`` setting names in a workflow or a script it runs, in the
+    forms ``_SHELL_ENV`` reads, is a script it runs, whatever its suffix, tried from the same paths
+    (#3525); a setting naming no repository file (another expression, a path outside the root, a
+    missing file) or an ``env:`` mapping given as an expression fails the scan, as an unreadable
+    script does, unless it is waived (``_env_settings``).
     """
     root = root.resolve()
     found: dict[str, set[str]] = {}
@@ -655,7 +670,7 @@ def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, in
     wf = root / ".github" / "workflows"
     for path in sorted(wf.glob("*.y*ml")) if wf.is_dir() else []:
         text = _WORKSPACE.sub("", path.read_text(encoding="utf-8"))
-        bases = [PurePosixPath(), *map(PurePosixPath, _WORKDIR.findall(text))]
+        bases = list(dict.fromkeys([PurePosixPath(), *map(PurePosixPath, _WORKDIR.findall(text))]))
         # (a file, its text, its shell lines, the runner of what they run): the workflow, then
         # each script it reaches, once.
         todo = [(path.name, text, _run_lines(text), path.name)]
@@ -663,11 +678,11 @@ def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, in
         while todo:
             where, body, lines, runner = todo.pop()
             keys = [key for line in lines for key in _invoked(root, bases, line)]
-            for n, name, value, allowed in _env_settings(body):
-                files = _in_repo(root, bases, value)
+            for n, what, value, waived in _env_settings(body):
+                files = _in_repo(root, bases, value) if value else []
                 keys += [file.relative_to(root).as_posix() for file in files]
-                if not files and not allowed:
-                    unresolved.add((where, n, name))
+                if not files and not waived:
+                    unresolved.add((where, n, what))
             for key in keys:
                 found.setdefault(key, set()).add(runner)
                 if key not in seen:
@@ -685,9 +700,9 @@ def check_workflows(root: Path) -> list[str]:
         for n, what in _sr146_hits(path.read_text(encoding="utf-8")):
             errors.append(f"{path.name}:{n}: {what} (SR-146)")
     scripts, unresolved = workflow_scripts(root)
-    for where, n, name in sorted(unresolved):
+    for where, n, what in sorted(unresolved):
         by = f"; run by {', '.join(sorted(scripts[where]))}" if where in scripts else ""
-        errors.append(f"{where}:{n}: unresolvable {name} file (SR-146 scan){by}")
+        errors.append(f"{where}:{n}: unresolvable {what} (SR-146 scan){by}")
     for rel, runners in sorted(scripts.items()):
         by = f"run by {', '.join(sorted(runners))}"
         text = _read(root / rel)
