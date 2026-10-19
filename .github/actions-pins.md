@@ -49,5 +49,7 @@ The Action column is the reference before `@`, so each `github/codeql-action/*`
 action, and any workflow called from another repository, has a row of its own.
 Local `./` references and `docker://` images, which are pinned by digest, have
 no row. A `uses:` line the check cannot read fails closed (CI-PIN-009), so write
-each one on one line as `uses: <action>@<sha> # <tag>` and keep local actions
-under `.github/actions/`.
+each one on one line as `uses: <action>@<sha> # <tag>`, with no YAML anchor on
+a `uses` scalar. A local action lives under `.github/actions/`, and its `./`
+reference resolves there (no `..` out of the tree); neither tree may hold a
+symlink, which the runner follows and the check does not.

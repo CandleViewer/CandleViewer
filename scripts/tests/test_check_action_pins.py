@@ -7,6 +7,7 @@ lines are ignored, local/docker refs are exempt; and (#3580) the ledger
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -385,19 +386,20 @@ KEY_FORMS = {  # id -> a step whose `uses` key USES_RE cannot read (YAML still r
     "alias-key": f"- *k : {USE} # v4.2.2",  # `&k uses` is on line 3
     "text-after-ref": f"- uses: {USE} v4.2.2",
 }
-CANNOT = "cannot read this uses: key: "
+CANNOT = "cannot read this uses: key, or text that looks like one: "
+OUTSIDE = (  # a local `./` reference must resolve into a tree whose uses: lines are read
+    "resolves outside .github/actions/ and .github/workflows/, so its uses: lines are not checked"
+)
 UNREAD = {  # id -> (a.yml's step on line 5, the CI-PIN-009 finding's reason)
     **{key: (step, CANNOT + step.splitlines()[0]) for key, step in KEY_FORMS.items()},
     "two-at": (
         f"- uses: actions/checkout@x@{PINNED_SHA} # v4.2.2",
         f"cannot read actions/checkout@x@{PINNED_SHA}, which has more than one @",
     ),
-    "local-action-elsewhere": (
-        "- uses: ./tools/actions/x",
-        (
-            "./tools/actions/x is a local action outside .github/actions/, whose uses: lines are "
-            "not checked"
-        ),
+    "local-action-elsewhere": ("- uses: ./tools/actions/x", f"./tools/actions/x {OUTSIDE}"),
+    "local-action-dot-dot": (
+        "- uses: ./.github/actions/../../tools/actions/x",
+        f"./.github/actions/../../tools/actions/x {OUTSIDE}",
     ),
 }
 
@@ -410,6 +412,75 @@ def test_ledger_uses_line_it_cannot_read_fails_closed(
     assert "uses" in yaml.safe_load(workflow)["jobs"]["j"]["steps"][0]  # a step GitHub would run
     rc, err = _run(_repo(tmp_path, a=workflow), capsys)
     assert rc == 1 and f"\n  CI-PIN-009 .github/workflows/a.yml:5: {reason}\n" in err, err
+
+
+def test_ledger_dotted_alias_key_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A YAML 1.2 anchor name may hold `.`: the yaml and js-yaml packages read this step as a `uses`
+    # key. PyYAML keeps YAML 1.1's anchor names and rejects it, so yaml.safe_load cannot vouch here.
+    step = f"- *k.x : {USE} # v4.2.2"
+    workflow = f"jobs:\n  j:\n    env: {{K: &k.x uses}}\n    steps:\n      {step}\n"
+    rc, err = _run(_repo(tmp_path, a=workflow), capsys)
+    assert rc == 1 and f"\n  CI-PIN-009 .github/workflows/a.yml:5: {CANNOT}{step}\n" in err, err
+
+
+ANCHORS = {  # id -> line 3: an anchor on a `uses` scalar, which `? *k` on line 5 makes a key
+    "flow": "env: {K: &k uses}",
+    "quoted": "env: {K: &k 'uses', L: x}",
+    "tagged": "x: &k !!str uses # the key below",
+    "end-of-line": "x: &k uses",
+}
+
+
+@pytest.mark.parametrize("anchor", ANCHORS.values(), ids=ANCHORS.keys())
+def test_ledger_anchor_on_a_uses_scalar_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], anchor: str
+) -> None:
+    workflow = f"jobs:\n  j:\n    {anchor}\n    steps:\n      - ? *k\n        : {USE} # v4.2.2\n"
+    assert "uses" in yaml.safe_load(workflow)["jobs"]["j"]["steps"][0]  # no line reads this key
+    rc, err = _run(_repo(tmp_path, a=workflow), capsys)
+    assert rc == 1 and f"\n  CI-PIN-009 .github/workflows/a.yml:3: {CANNOT}{anchor}\n" in err, err
+
+
+def test_repo_run_fails_closed_on_a_symlink(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # GitHub follows .github/actions/x to tools/actions/x, whose unpinned uses: line no scan reads.
+    root = _repo(tmp_path, a=WORKFLOW_A + "      - uses: ./.github/actions/x\n")
+    (root / "tools" / "actions" / "x").mkdir(parents=True)
+    _write(root, "tools/actions/x/action.yml", ACTION.replace(CACHE_SHA, "v6"))
+    link = root / ".github" / "actions" / "x"
+    link.symlink_to("../../tools/actions/x", target_is_directory=True)
+    rc, err = _run(root, capsys)
+    found = ".github/actions/x: is a symlink, so the uses: lines behind it are not checked"
+    assert rc == 1 and f"\n  CI-PIN-009 {found}\n" in err, err
+    assert f"\n  CI-PIN-009 .github/workflows/a.yml:5: ./.github/actions/x {OUTSIDE}\n" in err
+
+
+def test_repo_run_fails_closed_on_a_symlinked_tree(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _repo(tmp_path)
+    (root / ".github" / "actions").rename(root / "shared")
+    (root / ".github" / "actions").symlink_to("../shared", target_is_directory=True)
+    found = ".github/actions: is a symlink, so the uses: lines behind it are not checked"
+    assert _fails_with(root, capsys, f"CI-PIN-009 {found}")
+
+
+def test_repo_run_without_composite_actions_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _repo(tmp_path, rows=CHECKOUT_ROW)
+    shutil.rmtree(root / ".github" / "actions")
+    assert _run(root, capsys) == (0, "")
+
+
+def test_repo_run_skips_commented_out_uses_lines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _repo(tmp_path, a=WORKFLOW_A + "      # - { uses: actions/cache@v6 }\n")
+    assert _run(root, capsys) == (0, "")
 
 
 def test_repo_run_checks_composite_actions_for_sr132(

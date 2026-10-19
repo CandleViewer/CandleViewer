@@ -6,10 +6,11 @@
 #3580: run without paths (the ``pin-check`` step), it checks every ``*.yml`` /
 ``*.yaml`` file under ``.github/workflows/**`` and ``.github/actions/**`` of
 ``--root`` (default ``.``), then compares ``.github/actions-pins.md`` with their
-``uses:`` lines, failing closed on a table or a ``uses:`` line it cannot read
-(CI-PIN-001 to CI-PIN-009: the rule is that file's "Verification" paragraph,
-each code's recipe ``docs/ci-runbook.md`` §4). Run with paths, it applies the
-SR-132 checks to those files alone.
+``uses:`` lines, failing closed on a table or a ``uses:`` line it cannot read,
+a local action outside those trees and a symlink in them (CI-PIN-001 to
+CI-PIN-009: the rule is that file's "Verification" paragraph, each code's
+recipe ``docs/ci-runbook.md`` §4). Run with paths, it applies the SR-132 checks
+to those files alone.
 
 Exit codes: 0 clean, 1 violations found, 2 internal error (bad path / no
 workflows found when a specific path was requested).
@@ -23,6 +24,7 @@ Stdlib only — this must run before any package manager is bootstrapped.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -46,7 +48,7 @@ INDENT_RE = re.compile(r"^(\s*)\S")
 LEDGER_PATH = Path(".github/actions-pins.md")
 WORKFLOWS_DIR = Path(".github/workflows")
 ACTIONS_DIR = Path(".github/actions")
-LOCAL_TREES = (f"{WORKFLOWS_DIR.as_posix()}/", f"{ACTIONS_DIR.as_posix()}/")  # `./` refs scanned
+TREES = (WORKFLOWS_DIR, ACTIONS_DIR)  # where a local `./` action or workflow must resolve
 # The columns the ledger check reads, by header title; any other column (Last bumped) is prose.
 LEDGER_COLUMNS = ("Action", "Pinned SHA", "Upstream tag", "Used in")
 CODE_CELL_RE = re.compile(r"^`([^`\s]+)`$")
@@ -55,11 +57,15 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # A `uses` mapping key on a line USES_RE does not read is CI-PIN-009 (fail closed): in block or
 # flow position (after `{`, `[`, `,` or `?`), behind `-`/`?` indicators, anchors or tags, quoted,
 # with a space before the colon or its value on the next line; also an alias key, which may name
-# a `uses` anchor, and a double-quoted key with an escape, which may spell `uses`.
+# a `uses` anchor, and a double-quoted key with an escape, which may spell `uses`. The alias name
+# may hold `.`, `/`, `:` or `+` (YAML 1.2); wider would take markdown bold or `*args)`. Any YAML
+# 1.2 anchor name is caught where it is put on a `uses` scalar (USES_ANCHOR_RE), as an alias of
+# that anchor, as a key in any form or on any line, is a `uses` key.
 USES_KEY_RE = re.compile(
     r"""(?:^\s*|[\[{,?]\s*)(?:(?:[-?]|[&!]\S*)\s+)*"""
-    r"""(?:["']?uses["']?\s*(?::|$)|\*[\w-]+\s*:|"[^"]*\\[^"]*"\s*:)"""
+    r"""(?:["']?uses["']?\s*(?::|$)|\*[\w./:+-]+\s*:|"[^"]*\\[^"]*"\s*:)"""
 )
+USES_ANCHOR_RE = re.compile(r"""&[^\s,\[\]{}]+\s+(?:!\S*\s+)?["']?uses["']?\s*(?:[,\]}#]|$)""")
 
 
 @dataclass(frozen=True)
@@ -204,6 +210,29 @@ def check_paths(paths: list[Path]) -> list[Violation]:
     return violations
 
 
+def _outside_trees(root: Path, ref: str) -> bool:
+    """Whether the local reference ``ref`` (``./``) resolves, ``..`` and symlinks followed as the
+    runner follows them, outside the TREES whose ``uses:`` lines this check reads. ``realpath``,
+    not ``Path.resolve``: that raises RuntimeError on a symlink loop up to Python 3.12."""
+    base = Path(os.path.realpath(root))
+    target = Path(os.path.realpath(base / ref))
+    return not any(target.is_relative_to(base / tree) for tree in TREES)
+
+
+def _symlinks(root: Path) -> list[str]:
+    """CI-PIN-009 for a symlink on or under the TREES: the runner follows it, while rglob does not
+    descend into a symlinked directory, so the ``uses:`` lines behind it would go unchecked."""
+    paths = [root / WORKFLOWS_DIR.parent, *(root / tree for tree in TREES)]
+    for tree in TREES:
+        paths += [top / name for top, dirs, files in (root / tree).walk() for name in dirs + files]
+    return [
+        f"CI-PIN-009 {path.relative_to(root).as_posix()}: is a symlink, so the uses: lines behind "
+        "it are not checked"
+        for path in paths
+        if path.is_symlink()
+    ]
+
+
 def collect_uses(path: Path, root: Path) -> tuple[list[PinUse], list[str]]:
     """The ``uses:`` lines of ``path`` the ledger records (all but ``./`` and ``docker://``), and a
     CI-PIN-009 finding for each line naming an action whose pin this check cannot read."""
@@ -217,14 +246,17 @@ def collect_uses(path: Path, root: Path) -> tuple[list[PinUse], list[str]]:
         where = f"{rel.as_posix()}:{line_no}"
         m = USES_RE.match(line)
         if m is None:
-            if USES_KEY_RE.search(line):
-                unread.append(f"CI-PIN-009 {where}: cannot read this uses: key: {line.strip()}")
+            if USES_KEY_RE.search(line) or USES_ANCHOR_RE.search(line):
+                unread.append(
+                    f"CI-PIN-009 {where}: cannot read this uses: key, or text that looks like one: "
+                    f"{line.strip()}"
+                )
             continue
         ref = m.group("ref").strip('"').strip("'")
-        if ref.startswith("./") and not ref[2:].startswith(LOCAL_TREES):
+        if ref.startswith("./") and _outside_trees(root, ref):
             unread.append(
-                f"CI-PIN-009 {where}: {ref} is a local action outside {ACTIONS_DIR.as_posix()}/, "
-                "whose uses: lines are not checked"
+                f"CI-PIN-009 {where}: {ref} resolves outside {ACTIONS_DIR.as_posix()}/ and "
+                f"{WORKFLOWS_DIR.as_posix()}/, so its uses: lines are not checked"
             )
         if ref.startswith(("./", "docker://")):
             continue
@@ -292,7 +324,7 @@ def check_ledger(root: Path, files: list[Path]) -> list[str]:
     """Compare the ledger with the ``uses:`` lines of ``files`` (CI-PIN-*), naming both sides."""
     ledger = LEDGER_PATH.as_posix()
     collected = [collect_uses(path, root) for path in files]
-    unread = [finding for _, found in collected for finding in found]
+    unread = [finding for _, found in collected for finding in found] + _symlinks(root)
     try:
         rows = parse_ledger(root / LEDGER_PATH)
     except LedgerError as exc:

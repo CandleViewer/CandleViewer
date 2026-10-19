@@ -30,7 +30,7 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │  │                last, as their installs run PR scripts: commitlint*, then gen (generated-code
 │  │                freshness, CI-GEN-001..006)
 │  │                (* pull requests only: they read PR metadata, so a merge group skips them, #3433)
-│  ├─ infra filter: pin-check (SR-132)            (CI-GATE-003, CI-IMG-002, CI-IMG-007..009)
+│  ├─ infra filter: pin-check (SR-132)     (CI-GATE-003, CI-PIN-*, CI-IMG-002, CI-IMG-007..009)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
 ├─ security-review-label (always, #2892) → adds `security-review` when a C-10.2 path is touched,
@@ -217,13 +217,14 @@ here, or the check fails the `governance` lane.
 
 `pin-check` compares the ledger with every `uses:` line in `.github/workflows/**` and
 `.github/actions/**` (#3580; the rule is the ledger's "Verification" paragraph). Each finding names
-both sides where there are two. Fix the side that is out of date, checked against the upstream release the tag names;
-after a pin bump that is the ledger row, updated in the same PR.
+both sides where there are two. Fix the side that is out of date, checked against the upstream
+release the tag names; after a pin bump that is the ledger row, updated in the same PR.
 
 - **CI-PIN-001** (ledger unreadable, fail closed): the file is missing, has no table or a second
   one, the table is not followed by a blank line, its header does not name each of `Action`,
-  `Pinned SHA`, `Upstream tag` and `Used in` exactly once, or the named row is malformed (a cell count unlike the header's, a value outside backticks, a SHA that is not 40-hex,
-  a file listed twice). Repair the named line.
+  `Pinned SHA`, `Upstream tag` and `Used in` exactly once, or the named row is malformed (a cell
+  count unlike the header's, a value outside backticks, a SHA that is not 40-hex, a file listed
+  twice). Repair the named line.
 - **CI-PIN-002** (no row): add one, naming the action as written before `@`, its SHA, the tag from
   its `# <tag>` comment and the files that use it.
 - **CI-PIN-003** (more than one row for an action): merge the rows into one.
@@ -236,8 +237,11 @@ after a pin bump that is the ledger row, updated in the same PR.
 - **CI-PIN-009** (a `uses:` line the check cannot read, fail closed): write the named step's
   `uses:` on one line as `uses: <action>@<40-hex sha> # <tag>`, with no flow mapping, anchor,
   alias, tag, quoted or escaped key, space before the colon, value on the next line, second `@` or
-  text after the reference, and keep a local action under `.github/actions/`. A line in a `run:`
-  script that only looks like a `uses` key trips it too: move that text into a script file.
+  text after the reference, and put no anchor on a `uses` scalar. Keep a local action under
+  `.github/actions/`, with a `./` reference that resolves there (no `..` out of the tree), and
+  replace a named symlink in either tree with the files it points to: the runner follows it, the
+  check does not. A line in a `run:` script that only looks like a `uses` key trips it too: move
+  that text into a script file.
 
 ### CI-JS-* — JS/TS lane
 
