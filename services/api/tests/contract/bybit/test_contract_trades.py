@@ -27,6 +27,7 @@ RECONNECT = "ws/reconnect_publicTrade_ETHUSDT.jsonl"
 ETH = "ws/clean_publicTrade_ETHUSDT.jsonl"
 SOL = "ws/clean_publicTrade_SOLUSDT.jsonl"
 RECENT = "rest/recent_trade_BTCUSDT.json"
+RECORDED = "ws/recorded_publicTrade_BTCUSDT.jsonl"
 
 
 def test_print_fields_are_decimal_side_mapped_and_ms_become_us() -> None:
@@ -42,6 +43,19 @@ def test_print_fields_are_decimal_side_mapped_and_ms_become_us() -> None:
         assert p.ts_event_us == w["T"] * 1000
         assert p.trade_id == w["i"]
         assert p.is_block_trade is False
+
+
+def test_a_recorded_capture_with_bybits_newer_rpi_and_seq_fields_parses_as_before() -> None:
+    # #3447: each live print now also carries `RPI` (boolean) and `seq` (number). The parser reads
+    # the fields it knows, so every print maps as before, in wire order.
+    raws = frames(RECORDED)
+    wire = [d for raw in raws for d in json.loads(raw)["data"]]
+    assert wire and all(isinstance(d["RPI"], bool) and isinstance(d["seq"], int) for d in wire)
+    prints = [p for raw in raws for p in parse_trade_frame(raw) or []]
+    assert [p.trade_id for p in prints] == [d["i"] for d in wire]
+    for p, w in zip(prints, wire, strict=True):
+        assert (p.price, p.qty, p.side) == (Decimal(w["p"]), Decimal(w["v"]), w["S"].lower())
+        assert p.ts_event_us == w["T"] * 1000 and p.is_block_trade is w["BT"]
 
 
 def test_block_trade_flag_is_carried() -> None:

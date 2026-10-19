@@ -225,6 +225,36 @@
       "size_cap_bytes": 64000
     },
     {
+      "path": "ws/recorded_publicTrade_BTCUSDT.jsonl",
+      "symbol": "BTCUSDT",
+      "stream": "publicTrade.BTCUSDT",
+      "host": "stream.bybit.com",
+      "capture_date": "2026-10-19",
+      "source": "capture_fixture.py, fixture-drift run 39210373369 (redacted)",
+      "notable_event": "recorded: 20 frames with RPI and seq on each print",
+      "http_status": 200,
+      "size_cap_bytes": 16000,
+      "window_ms": [
+        1792391736832,
+        1792391746173
+      ]
+    },
+    {
+      "path": "ws/recorded_tickers_BTCUSDT.jsonl",
+      "symbol": "BTCUSDT",
+      "stream": "tickers.BTCUSDT",
+      "host": "stream.bybit.com",
+      "capture_date": "2026-10-19",
+      "source": "capture_fixture.py, fixture-drift run 39210373369 (redacted)",
+      "notable_event": "recorded: snapshot + 19 deltas, incl. tickDirection, prevPrice1h/24h, fundingCap, singleOpenInterest",
+      "http_status": 200,
+      "size_cap_bytes": 8000,
+      "window_ms": [
+        1792391746229,
+        1792391748529
+      ]
+    },
+    {
       "path": "ws/tickers_BTCUSDT.jsonl",
       "symbol": "BTCUSDT",
       "stream": "tickers.BTCUSDT",

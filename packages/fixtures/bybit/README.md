@@ -18,15 +18,16 @@ additive and an old test can pin an old corpus (`corpus_path(..., capture_date=.
 
 ## Coverage
 
-| Scenario                                              | File                                                                     |
-| ----------------------------------------------------- | ------------------------------------------------------------------------ |
-| Clean 3 h windows (BTCUSDT, ETHUSDT, mid-cap SOLUSDT) | `ws/clean_publicTrade_*.jsonl`                                           |
-| Sequence gap                                          | `ws/gap_orderbook_ETHUSDT.jsonl`, `ws/orderbook_BTCUSDT.jsonl`           |
-| Reconnect                                             | `ws/reconnect_publicTrade_ETHUSDT.jsonl`, `ws/publicTrade_BTCUSDT.jsonl` |
-| Ticker delta-only burst                               | `ws/burst_tickers_BTCUSDT.jsonl`                                         |
-| Kline page boundary (450 rows, limit 200)             | `rest/kline_BTCUSDT_1_page{0,1,2}.json`                                  |
-| Errors 10018 / 10002 / 5xx                            | `rest/error_10018.json`, `rest/error_10002.json`, `rest/error_503.json`  |
-| Delisted symbol + changed tick size                   | `rest/instruments_before.json` -> `rest/instruments_after.json`          |
+| Scenario                                              | File                                                                         |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Clean 3 h windows (BTCUSDT, ETHUSDT, mid-cap SOLUSDT) | `ws/clean_publicTrade_*.jsonl`                                               |
+| Sequence gap                                          | `ws/gap_orderbook_ETHUSDT.jsonl`, `ws/orderbook_BTCUSDT.jsonl`               |
+| Reconnect                                             | `ws/reconnect_publicTrade_ETHUSDT.jsonl`, `ws/publicTrade_BTCUSDT.jsonl`     |
+| Ticker delta-only burst                               | `ws/burst_tickers_BTCUSDT.jsonl`                                             |
+| Kline page boundary (450 rows, limit 200)             | `rest/kline_BTCUSDT_1_page{0,1,2}.json`                                      |
+| Errors 10018 / 10002 / 5xx                            | `rest/error_10018.json`, `rest/error_10002.json`, `rest/error_503.json`      |
+| Delisted symbol + changed tick size                   | `rest/instruments_before.json` -> `rest/instruments_after.json`              |
+| Live feed fields (#3447): `RPI`, `seq`, newer tickers | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl` |
 
 ## Provenance and size
 
@@ -36,6 +37,17 @@ deterministic (seeded) and make no network calls. The owner recorded this in exc
 group A. Field names come only from the existing fixtures and the `exchange/bybit` parsers.
 Refresh with `tools/fixtures/capture_fixture.py` (public stream only, redacts every frame,
 aborts on a leftover secret pattern, enforces a size cap).
+
+The two `recorded_*` files are such captures, copied unchanged. They are 20 frames each of
+`publicTrade.BTCUSDT` and `tickers.BTCUSDT`, from `fixture-drift.yml` run 39210373369 on
+2026-10-19 (#3447). They carry the live fields the documented shapes lacked. Each red
+`fixture-drift` run keeps its redacted sample as the `fixture-drift-sample` artifact for 14
+days, so a refresh can start from it when the recording machine cannot reach the public
+stream (`gh run download <run> -n fixture-drift-sample`, into a new empty directory). After
+adding frames: list them in `build_corpus.py`, rebuild the manifest
+(`python tools/fixtures/build_corpus.py`), refresh the expectations
+(`python tools/fixtures/drift_check.py --write-expectations`), and reference each new file
+from a contract test.
 
 The total cap is 2.5 MB. Per-file caps are in the manifest. Captures larger than 1.5 MB must
 go through Git LFS.

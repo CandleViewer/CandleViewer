@@ -17,6 +17,12 @@ from tests._corpus import frames
 
 FULL = "ws/tickers_BTCUSDT.jsonl"
 BURST = "ws/burst_tickers_BTCUSDT.jsonl"
+RECORDED = "ws/recorded_tickers_BTCUSDT.jsonl"
+#: Fields a live snapshot carries that the parser does not map (#3447); empty outside pre-market
+#: for the last three.
+UNMAPPED = {"tickDirection", "prevPrice24h", "prevPrice1h", "highPrice24h", "lowPrice24h",
+            "fundingIntervalHour", "fundingCap", "singleOpenInterest",
+            "singleOpenInterestValue", "preOpenPrice", "preQty", "curPreListingPhase"}  # fmt: skip
 INGEST_US = 1_700_000_000_500_000
 
 
@@ -38,6 +44,25 @@ def test_snapshot_frame_maps_every_wire_field_to_an_internal_name() -> None:
     assert snap.fields["bid1_qty"] == Decimal("12.501")  # wire `bid1Size`
     assert snap.fields["next_funding_time"] == 1_700_006_400_000_000  # ms -> us
     assert all(isinstance(v, Decimal | int) for v in snap.fields.values())
+
+
+def test_a_recorded_capture_with_bybits_newer_fields_merges_as_before() -> None:
+    # #3447: a live snapshot carries twelve fields the documented shapes lacked. The parser maps
+    # every field it knows from the snapshot, ignores the rest, and the merged stream keeps the
+    # last price on the wire.
+    raws = frames(RECORDED)
+    snapshot = json.loads(raws[0])
+    assert snapshot["type"] == "snapshot" and UNMAPPED <= set(snapshot["data"])
+    deltas = _deltas(RECORDED)
+    assert deltas[0].is_snapshot and set(deltas[0].fields) == set(TICKER_FIELDS)
+    assert not any(d.is_snapshot for d in deltas[1:])
+    merger = TickerMerger()
+    events = [merger.apply(d, ts_ingest_us=INGEST_US) for d in deltas]
+    assert all(isinstance(ev, TickerEvent) for ev in events)
+    last = [json.loads(raw)["data"].get("lastPrice") for raw in raws]
+    final = events[-1]
+    assert isinstance(final, TickerEvent)
+    assert final.last_price == Decimal([price for price in last if price is not None][-1])
 
 
 def test_delta_carries_only_the_keys_present_on_the_wire() -> None:
