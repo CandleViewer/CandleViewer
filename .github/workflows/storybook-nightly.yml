@@ -1,0 +1,68 @@
+name: storybook-nightly
+
+# #269 (E05-T03): calls the PR lane's own _job-a11y.yml on `main` with its `storybook_only` input,
+# so the Storybook gate (every story's play function and axe check, the fail-closed fixture and the
+# 10 min budget: CI-A11Y-002..004) runs every night, including after changes that pr.yml's `e2e`
+# filter leaves out on purpose, such as the root dependency manifests (docs/ci-runbook.md
+# section 2): a transitive axe-core or Storybook bump. The lane's `a11y` job is skipped, as
+# a11y-nightly.yml sweeps every route each night.
+# Not a required check (C-9.1 unchanged), but a red nightly blocks the next release (C-9.2): the
+# release checklist needs a green run on the tip it cuts (docs/plan/07-release-and-prr.md §4.1).
+# A red scheduled run comments on the one tracker issue that the repository variable
+# CV_STORYBOOK_NIGHTLY_TRACKER_ISSUE names, or opens a P1 issue while the variable is unset, as
+# e2e-nightly.yml does. Only the `report` job can write; it runs no checkout and no action.
+# No concurrency group (#3449): no run waits in a pending slot that a later one can take.
+# Cost: one job a night, within its 600 s budget and capped by its 15 min timeout.
+
+on:
+  schedule:
+    - cron: "13 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  storybook:
+    name: storybook-nightly
+    uses: ./.github/workflows/_job-a11y.yml
+    with:
+      storybook_only: true
+
+  report:
+    name: storybook-nightly-report
+    needs: storybook
+    # always(), not !cancelled(): a job that hits its timeout ends `cancelled` and must still be
+    # reported (as in e2e-nightly.yml). A manual run is watched by whoever started it.
+    if: ${{ always() && github.event_name == 'schedule' && needs.storybook.result != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Report the red nightly on the tracker issue, or open one (C-9.2)
+        # Only the runner's preinstalled gh CLI runs beside the write token; values reach the
+        # script through env. TRACKER_ISSUE has no default: unset, it opens a P1. A set value must
+        # be an issue number of this repository, or the job fails and files nothing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.storybook.result }}
+          TRACKER_ISSUE: ${{ vars.CV_STORYBOOK_NIGHTLY_TRACKER_ISSUE }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body="storybook-nightly (_job-a11y.yml's storybook job) ended $RESULT on main at"
+          body+=" $GITHUB_SHA, and a red nightly blocks the next release (C-9.2). Run: $run_url."
+          body+=" Triage: docs/ci-runbook.md section 4 (CI-A11Y-002..004)."
+          if [ -z "$TRACKER_ISSUE" ]; then
+            gh issue create --title "storybook: nightly Storybook gate failed ($(date -u +%F))" \
+              --label qa --label area/design-system --label priority/p1 \
+              --body "$body"
+          elif [[ "$TRACKER_ISSUE" =~ ^[1-9][0-9]*$ ]]; then
+            gh issue comment "$TRACKER_ISSUE" --body "$body"
+          else
+            echo "::error title=storybook-nightly-report::CV_STORYBOOK_NIGHTLY_TRACKER_ISSUE is set" \
+              "but is not an issue number, so nothing was filed. Set it to a positive integer or" \
+              "delete it (docs/ci-runbook.md section 2)."
+            exit 1
+          fi

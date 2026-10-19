@@ -7,9 +7,16 @@ name: _job-a11y
 # ISO-8601 UTC, max 24h ahead) waives infra errors only, never violations.
 # E05-T03 (#269): the `storybook` job runs beside it and fails the same check: play functions and
 # axe per story (CI-A11Y-002), a fail-closed fixture (CI-A11Y-003), a 10 min budget (CI-A11Y-004).
+# storybook-nightly.yml sets `storybook_only` to run that job alone on `main` every night; pr.yml
+# keeps the default and runs both.
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      storybook_only:
+        description: "Skip the a11y job and run the storybook job alone (storybook-nightly.yml)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,6 +24,7 @@ permissions:
 jobs:
   a11y:
     name: a11y
+    if: ${{ !inputs.storybook_only }}
     runs-on: ubuntu-latest
     # Two numbers: the 12 min (720 s) PR budget (AC) is MEASURED by the in-step budget
     # gate from after install/build. timeout-minutes is only a backstop above it, since
