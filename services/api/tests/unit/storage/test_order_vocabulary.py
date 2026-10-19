@@ -84,27 +84,17 @@ def test_the_open_states_are_every_live_chart_state() -> None:
 
 
 def test_the_regenerated_rest_and_ws_enums_are_the_database_enums() -> None:
+    """The contract's vocabulary against the database types. That REST and WS agree, that
+    `lifecycle_state` is optional and nullable and that each enum is open-ended for readers is
+    the contract test's: tests/contract/test_order_vocabulary_contract.py."""
     frame = json.loads(_WS.read_text(encoding="utf-8"))["schemas"]["cv://ws/v1/orders.schema.json"]
     order = frame["properties"]["orders"]["items"]["properties"]
-    assert _values(rest.Order, "state") == set(order["state"]["enum"]) == set(models.ORDER_STATES)
-    ws_lifecycle = set(order["lifecycle_state"]["enum"]) - {None}
-    lifecycle = set(models.ORDER_LIFECYCLE_STATES)
-    assert _values(rest.Order, "lifecycle_state") == lifecycle == ws_lifecycle
-    assert None in order["lifecycle_state"]["enum"]  # nullable on both, never required
-    assert rest.Order.model_fields["lifecycle_state"].is_required() is False
+    states, lifecycle = set(models.ORDER_STATES), set(models.ORDER_LIFECYCLE_STATES)
+    assert _values(rest.Order, "state") == states
+    assert set(order["state"]["enum"]) == states
+    assert _values(rest.Order, "lifecycle_state") == lifecycle
+    assert set(order["lifecycle_state"]["enum"]) - {None} == lifecycle
     assert _values(rest.OrderEvent, "kind") == set(models.ORDER_EVENT_KINDS)
-
-
-def test_the_order_enums_are_open_ended_for_readers() -> None:
-    """C-6.3: a new value is additive only where the field says it is open-ended, and a client
-    keeps an order whose state it does not know live until `removed` lists it (23 Sec.15.1)."""
-    frame = json.loads(_WS.read_text(encoding="utf-8"))["schemas"]["cv://ws/v1/orders.schema.json"]
-    order = frame["properties"]["orders"]["items"]["properties"]
-    rest_state = rest.Order.model_fields["state"].description
-    described = [rest_state, rest.OrderEvent.model_fields["kind"].description]
-    described += [order["state"]["description"], order["lifecycle_state"]["description"]]
-    assert all("Open-ended for readers" in str(text) for text in described)
-    assert all("live" in str(text) and "`removed`" in str(text) for text in described[::2])
 
 
 def test_section_8_6_lists_the_exchange_enum_and_keeps_the_oms_codes_apart() -> None:
