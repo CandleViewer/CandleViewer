@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, protocol, session, shell } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARDENED_WEB_PREFERENCES } from "./shellPort.js";
@@ -50,6 +51,15 @@ const APP_ROOT_DIR = path.resolve(__dirname, "../../../web/dist");
 // and only once. The privileges are the closed set in appProtocol.ts.
 protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }]);
 
+// No <webview> anywhere (SR-113): windows keep webviewTag off, and an attach that gets past
+// that is refused here. Registered at load, before any web contents exists, so none escapes it.
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-attach-webview", (event, _webPreferences, params) => {
+    logAuditEvent("webview-denied", { url: safeOriginOf(params["src"] ?? "") });
+    event.preventDefault();
+  });
+});
+
 /**
  * Returns the origin of `url` for audit logging, or "invalid-url" if it does
  * not parse. Never returns the full URL: query strings can carry tokens
@@ -100,6 +110,28 @@ export function isNavigationAllowed(url: string, devServerUrl: DevServerUrl | un
 }
 
 /**
+ * SR-111: true only for an IPC call from a window's main frame showing the shell's own page, by
+ * the navigation rule above (app://candleviewer, or the accepted dev server's origin in an
+ * unpackaged build). A sub-frame, another origin, about:blank, file: and an empty or unparseable
+ * URL are refused.
+ */
+export function isTrustedIpcSender(
+  frameUrl: string,
+  isMainFrame: boolean,
+  devServerUrl: DevServerUrl | undefined,
+): boolean {
+  return isMainFrame && isNavigationAllowed(frameUrl, devServerUrl);
+}
+
+/** What a refused IPC sender gets (SR-111): a fixed message, never data or the sender's URL. */
+export class IpcSenderRefusedError extends Error {
+  constructor() {
+    super("IPC sender refused: not the shell's own page");
+    this.name = "IpcSenderRefusedError";
+  }
+}
+
+/**
  * Scheme `shell.openExternal` is allowed to hand off to the OS browser
  * (SR-113): only `https:` — plain `http:` is never handed to the OS shell
  * (no integrity/confidentiality on the wire, and it is not needed by any
@@ -143,7 +175,7 @@ export function isExternalLinkAllowed(url: string): boolean {
  * shell's own bundle. A set value the shell does not honour is logged by
  * reason only, never echoed: it may carry anything (C-12.6).
  */
-function acceptedDevServerUrl(): DevServerUrl | undefined {
+export function acceptedDevServerUrl(): DevServerUrl | undefined {
   const resolution = resolveDevServerUrl(process.env["CV_DEV_SERVER_URL"], app.isPackaged);
   if (resolution.kind === "ignored") {
     logAuditEvent("dev-server-url-ignored", { reason: resolution.reason });
@@ -151,9 +183,7 @@ function acceptedDevServerUrl(): DevServerUrl | undefined {
   return resolution.kind === "accepted" ? resolution.url : undefined;
 }
 
-export function createMainWindow(): BrowserWindow {
-  // Decided once per window, so the load and both navigation guards agree.
-  const devServerUrl = acceptedDevServerUrl();
+export function createMainWindow(devServerUrl: DevServerUrl | undefined): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -168,6 +198,7 @@ export function createMainWindow(): BrowserWindow {
       webSecurity: HARDENED_WEB_PREFERENCES.webSecurity,
       allowRunningInsecureContent: HARDENED_WEB_PREFERENCES.allowRunningInsecureContent,
       experimentalFeatures: HARDENED_WEB_PREFERENCES.experimentalFeatures,
+      webviewTag: false, // no <webview> (SR-113); an attach is refused for every web contents too
       // enableRemoteModule is deliberately absent (SR-110) — never set it.
     },
   });
@@ -192,6 +223,14 @@ export function createMainWindow(): BrowserWindow {
   win.webContents.on("will-navigate", (event, url) => {
     if (!isNavigationAllowed(url, devServerUrl)) {
       logAuditEvent("navigation-denied", { url: safeOriginOf(url) });
+      event.preventDefault();
+    }
+  });
+
+  // A redirect is a navigation the server picked, so the same rule applies (SR-113).
+  win.webContents.on("will-redirect", (event, url) => {
+    if (!isNavigationAllowed(url, devServerUrl)) {
+      logAuditEvent("redirect-denied", { url: safeOriginOf(url) });
       event.preventDefault();
     }
   });
@@ -246,11 +285,55 @@ function installPermissionHandler(): void {
   });
 }
 
+/** What the IPC sender check could read of the frame that sent a call. */
+interface SenderFrame {
+  readonly url: string;
+  readonly kind: "main-frame" | "not-main-frame" | "frame-unavailable";
+}
+
+/**
+ * Reads the sender frame's URL and whether it is the main frame of the web contents that sent the
+ * call, by identity: the root of a nested frame tree has no parent either. No frame (navigated away
+ * or destroyed) and a getter that throws (disposed mid-call) both mean the frame is unavailable.
+ */
+function readSenderFrame(event: IpcMainInvokeEvent): SenderFrame {
+  try {
+    const frame = event.senderFrame;
+    if (frame === null) {
+      return { url: "", kind: "frame-unavailable" };
+    }
+    const isMainFrame = frame === event.sender.mainFrame;
+    return { url: frame.url, kind: isMainFrame ? "main-frame" : "not-main-frame" };
+  } catch {
+    return { url: "", kind: "frame-unavailable" };
+  }
+}
+
+/**
+ * Wraps an ipcMain.handle listener so it answers only the shell's own page (SR-111), checked
+ * before `reply` runs; `reply` never sees the renderer's arguments. A refused call throws
+ * IpcSenderRefusedError and logs one line: the reason and the sender's origin, never its URL.
+ */
+function fromShellPage<T>(
+  devServerUrl: DevServerUrl | undefined,
+  reply: () => T,
+): (event: IpcMainInvokeEvent) => T {
+  return (event) => {
+    const { url, kind } = readSenderFrame(event);
+    if (!isTrustedIpcSender(url, kind === "main-frame", devServerUrl)) {
+      const reason = kind === "main-frame" ? "not-shell-origin" : kind;
+      logAuditEvent("ipc-sender-refused", { reason, origin: safeOriginOf(url) });
+      throw new IpcSenderRefusedError();
+    }
+    return reply();
+  };
+}
+
 /** Registers the fixed set of ipcMain handlers backing the preload bridge (SR-111). */
-function installIpcHandlers(): void {
-  ipcMain.handle("cv:gpu:info", () => probeGpu());
-  ipcMain.handle("cv:keychain:getKekHandle", () => getKekHandle());
-  ipcMain.handle("cv:updates:check", () => checkForUpdate());
+function installIpcHandlers(devServerUrl: DevServerUrl | undefined): void {
+  ipcMain.handle("cv:gpu:info", fromShellPage(devServerUrl, probeGpu));
+  ipcMain.handle("cv:keychain:getKekHandle", fromShellPage(devServerUrl, getKekHandle));
+  ipcMain.handle("cv:updates:check", fromShellPage(devServerUrl, checkForUpdate));
 }
 
 app.on("window-all-closed", () => {
@@ -267,11 +350,13 @@ void app.whenReady().then(() => {
   // One CSP value for both delivery points: the dev-server response hook and
   // the app:// handler.
   const csp = buildCsp();
+  // One dev-server decision per run, so the window's load, its guards and the IPC check agree.
+  const devServerUrl = acceptedDevServerUrl();
   installCspHeader(csp);
   installAppProtocol(csp);
   installPermissionHandler();
-  installIpcHandlers();
+  installIpcHandlers(devServerUrl);
   logStartup();
-  createMainWindow();
+  createMainWindow(devServerUrl);
   app.emit("workspace-ready");
 });

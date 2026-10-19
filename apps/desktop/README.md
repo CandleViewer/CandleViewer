@@ -18,8 +18,9 @@ because ADR-0011 (Electron vs Tauri) is `proposed`, not decided.
 
 `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`,
 `webSecurity: true`; `window.open` denied via `setWindowOpenHandler`;
-`will-navigate` restricted to the app origin. `e2e/hardening.spec.ts` fails
-if any flag drifts.
+`will-navigate` and `will-redirect` restricted to the app origin; `<webview>`
+refused; IPC handlers answer only the app origin's main frame (#3608).
+`e2e/hardening.spec.ts` fails if any flag drifts.
 
 Dev server hook: `CV_DEV_SERVER_URL` is honoured only in an unpackaged build
 and only for `http://127.0.0.1:<port>` or `http://localhost:<port>`, checked
