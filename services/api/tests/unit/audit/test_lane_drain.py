@@ -1,6 +1,9 @@
 """ADR-0037 S2a2 (#3009): the audit lane's boot and drain (§15.6 Confirmation marker, Scan, Ingest).
 The sink is a real `AuditWriter` over the in-memory repository; the drain's file operations run in
-threads, so a test waits for a condition, bounded by `WAIT_S`. Keys are test vectors."""
+threads. Every async test runs on a `VirtualTimeLoop` (`audit_waits`, #3709): the drain's polls and
+backoffs, the writer's and the lane's budgets and `until()`'s bound are fake seconds, which pass
+only when nothing else can happen, so no wait depends on how fast the runner is. Keys are test
+vectors."""
 
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ from typing import Any
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
+from audit_waits import TaskEnded, VirtualTimeLoop, guarded, virtual
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
@@ -32,11 +36,15 @@ from candleviewer.audit.redact import REDACTION_MARKER
 from candleviewer.audit.wal import encode_frame as wal_frame
 from candleviewer.audit.writer import AuditUnavailable, AuditWriter, _lane_anomaly
 
-KEYS, LANE, WAIT_S = lj.LaneKeys(bytes(range(32))), uuid.UUID(int=7), 5.0
+#: WAIT_S is fake seconds: past every backoff a test waits through (121.5 s), short of SLOW's hour.
+KEYS, LANE, WAIT_S = lj.LaneKeys(bytes(range(32))), uuid.UUID(int=7), 600.0
+THREAD_S = 5.0  # real seconds a parked file thread waits for `release`: a passing test sets it
 OTHER = lj.LaneKeys(bytes(range(32, 64)))  # a key no lane here is configured with
-FAST: dict[str, Any] = {"retry_s": (0.0, 0.0), "poll_s": 0.0, "new_lane": lambda: LANE}
+#: A fake millisecond: the drain parks between polls and retries instead of spinning.
+FAST: dict[str, Any] = {"retry_s": (0.001, 0.001), "poll_s": 0.001, "new_lane": lambda: LANE}
 SLOW: dict[str, Any] = {"retry_s": (3600.0, 3600.0)}  # only an append or a boot retries
 OWN = ("system:audit-lane", "audit_lane", str(LANE))  # actor_label, object_kind, object_id
+WORKERS = ("audit-writer", "audit-lane-drain")  # the flusher's and the drain's task names
 
 
 class Refusing(AuditWriter):
@@ -68,11 +76,40 @@ async def boot(path: Path, writer: AuditWriter, **kw: Any) -> AuditLane:
     return lane
 
 
+def workers() -> list[asyncio.Task[Any]]:
+    """The running flushers and drains, which `guarded()` watches."""
+    return [task for task in asyncio.all_tasks() if task.get_name() in WORKERS]
+
+
+def failed(task: asyncio.Task[Any]) -> bool:
+    return task.done() and not task.cancelled() and task.exception() is not None
+
+
 async def until(check: Callable[[], bool]) -> None:
-    """A condition wait, bounded by `WAIT_S`."""
-    async with asyncio.timeout(WAIT_S):
-        while not check():  # noqa: ASYNC110 - polls state the drain task moves; no event for it
-            await asyncio.sleep(0)
+    """Wait until `check()` holds, looking again at each point where nothing is ready. A flusher
+    or drain that dies meanwhile fails it at once, unless its death is what `check()` waits for.
+    A stall fails it after `WAIT_S` fake seconds, naming the flushers and drains that had died by
+    then, before the wait too, with the last one's error as the cause. It awaits `idle()` itself,
+    which watches the tasks as `guarded()` would: through `asyncio.wait` it would wake a pass
+    late."""
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, VirtualTimeLoop), "an async test here runs on a VirtualTimeLoop"
+    try:
+        async with asyncio.timeout(WAIT_S):
+            while not check():
+                watched = workers()
+                await loop.idle(*watched)
+                died = [task for task in watched if failed(task)]
+                if died and not check():
+                    cause = died[0].exception()
+                    raise TaskEnded(f"{died[0].get_name()} ended before the condition") from cause
+    except TimeoutError:
+        dead = [task for task in loop.made if task.get_name() in WORKERS and failed(task)]
+        stalled = f"stalled: still false after {WAIT_S:g} fake seconds"
+        if dead:
+            names = ", ".join(task.get_name() for task in dead)
+            raise TaskEnded(f"{stalled}; had died: {names}") from dead[-1].exception()
+        raise AssertionError(stalled) from None
 
 
 async def drained(lane: AuditLane) -> None:
@@ -120,6 +157,7 @@ def capped(mp: pytest.MonkeyPatch, name: str, read: Callable[[AuditWriter], Any]
     return looks
 
 
+@virtual
 async def test_resumed_row_records_the_head(tmp_path: Path) -> None:
     """A new lane's frame 1 is `audit.lane_started`, and each boot appends `audit.lane_resumed`
     with the head its frame follows, so a lane restored from an older copy shows a lower head (U37,
@@ -184,8 +222,6 @@ async def refusals(path: Path, steps: list[tuple[str, int]]) -> None:
     assert [r["record_id"] for r in repo.rows if r["action"] == "auth.logout"] == ids
 
 
-# A 5 s real-time wait over runner-paced restarts (C-9.3). ticket: GH-3709 quarantined: 2026-10-19
-@pytest.mark.flaky
 @settings(
     max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
 )
@@ -196,10 +232,12 @@ def test_lane_hands_each_record_over_once_and_in_order_across_refusals_and_resta
     """The S2a2 row: a sink that refuses N times ("r"), restarts of the lane ("x") and appends
     ("a"), in any order; once the sink accepts, it holds every frame's record once, in `seq`
     order, each boot's `audit.lane_resumed` after the records journaled before that boot."""
-    asyncio.run(refusals(Path(tempfile.mkdtemp(dir=tmp_path)), steps))
+    path = Path(tempfile.mkdtemp(dir=tmp_path))
+    asyncio.run(refusals(path, steps), loop_factory=VirtualTimeLoop)
 
 
 @pytest.mark.parametrize("poison", ["retired_action", "invalid_record"])
+@virtual
 async def test_poison_frame_is_quarantined_and_passed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, poison: str
 ) -> None:
@@ -238,6 +276,7 @@ async def test_poison_frame_is_quarantined_and_passed(
     assert repo.rows[3]["record_id"] == str(good.record_id) and secret not in repr(repo.rows)
 
 
+@virtual
 async def test_lane_anomaly_rows_carry_the_run_id_and_pass_the_validation_of_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -298,6 +337,7 @@ class Gated(FakeAuditRepository):
         await super().insert(record)
 
 
+@virtual
 async def test_lane_busy_writer_still_confirms_per_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -336,6 +376,7 @@ async def test_lane_busy_writer_still_confirms_per_record(
     assert [busy for _, _, busy in marks[:2]] == [True, True]
 
 
+@virtual
 async def test_lane_retries_after_0_5_s_doubling_to_30_s_or_when_an_append_wakes_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -347,7 +388,7 @@ async def test_lane_retries_after_0_5_s_doubling_to_30_s_or_when_an_append_wakes
 
     async def recorded(self: AuditLane, delay: float | None) -> None:
         delays.append(delay)
-        await (pause(self, delay) if delay is None else asyncio.sleep(0))
+        await pause(self, delay)  # fake seconds: the backoffs pass at once
 
     monkeypatch.setattr(AuditLane, "_pause", recorded)
     writer.refuse = 9
@@ -370,6 +411,7 @@ async def test_lane_retries_after_0_5_s_doubling_to_30_s_or_when_an_append_wakes
     assert [r["object_id"] for r in repo.rows if r["action"] == "auth.logout"] == ["1", "2"]
 
 
+@virtual
 async def test_lane_attempts_a_confirmation_after_each_batch_of_drain_batch_units(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -399,6 +441,7 @@ async def test_lane_attempts_a_confirmation_after_each_batch_of_drain_batch_unit
     assert marks == [ends[1], ends[3], ends[4], lane.journal.end]
 
 
+@virtual
 async def test_lane_running_scan_parses_nothing_before_its_origin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -421,6 +464,7 @@ async def test_lane_running_scan_parses_nothing_before_its_origin(
 
 
 @pytest.mark.parametrize("cause", ["marker_kid", "frame_kid", "no_lane"])
+@virtual
 async def test_lane_hold_refuses_appends_with_held_and_writes_no_resumed_row(
     tmp_path: Path, cause: str
 ) -> None:
@@ -454,8 +498,8 @@ async def test_lane_hold_refuses_appends_with_held_and_writes_no_resumed_row(
     await until(lambda: [r["action"] for r in repo.rows] == expected)
     await until(lambda: cause != "frame_kid" or lane.confirmed == result.hold)
     await writer.flush(WAIT_S)  # every token committed: the drain has nothing left to confirm
-    for _ in range(50):
-        await asyncio.sleep(0)
+    # A fake second, room for a thousand of the drain's polls: what it would confirm, it has.
+    await asyncio.sleep(1)
     with pytest.raises(lj.LaneRefused) as refused:
         await lane.append(logout(writer, 2))
     await lane.close()
@@ -469,6 +513,7 @@ async def test_lane_hold_refuses_appends_with_held_and_writes_no_resumed_row(
     assert (path / "confirmed").exists() == (cause != "no_lane")
 
 
+@virtual
 async def test_lane_hold_met_while_running_stops_the_lane(tmp_path: Path) -> None:
     """Hold, row 12 while running: a frame under an unknown `kid` planted behind a frame the drain
     has not scanned holds the running scan: the frame before it is handed over and confirmed, the
@@ -496,6 +541,7 @@ async def test_lane_hold_met_while_running_stops_the_lane(tmp_path: Path) -> Non
     assert [(r["action"], r["object_id"]) for r in repo.rows][2:] == [("auth.logout", "0")]
 
 
+@virtual
 async def test_lane_waits_for_a_restart_while_the_writers_flusher_is_dead(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -514,7 +560,7 @@ async def test_lane_waits_for_a_restart_while_the_writers_flusher_is_dead(
     )  # fmt: skip
     await writer.start()
     lane = await boot(tmp_path, writer, **SLOW)
-    await asyncio.wait_for(died.wait(), WAIT_S)  # its first insert failed for good
+    await guarded(died.wait(), *workers())  # its first insert failed for good
     looks = capped(monkeypatch, "failure", vars(AuditWriter)["failure"].fget)
     refused, seen = writer.refused_total, looks[0]
     await lane.append(logout(writer, 1))
@@ -537,6 +583,7 @@ class Exploding(AuditWriter):
         raise RuntimeError("a bug")
 
 
+@virtual
 async def test_lane_drain_that_dies_stops_the_lane(tmp_path: Path) -> None:
     """Failures while running: an error the drain does not handle ends its task and stops the lane,
     so every later append is refused `stopped`; the log names the error class only."""
@@ -559,22 +606,25 @@ async def test_lane_drain_that_dies_stops_the_lane(tmp_path: Path) -> None:
 
 class Parked(lj.LaneFiles):
     """Writes half of the next write, then holds the rest until `release`, so its op keeps the
-    lane lock meanwhile and the file ends inside a frame."""
+    lane lock meanwhile and the file ends inside a frame; `parked` is set on the loop once the half
+    is written. Built inside the test's loop."""
 
     def __init__(self, path: Path) -> None:
         super().__init__(path)
-        self.park, self.parked, self.release = False, threading.Event(), threading.Event()
+        self.park, self.parked, self.release = False, asyncio.Event(), threading.Event()
+        self._loop = asyncio.get_running_loop()
 
     def write(self, fd: int, data: bytes) -> None:
         if self.park:
             self.park = False
             super().write(fd, data[: len(data) // 2])
-            self.parked.set()
-            self.release.wait(WAIT_S)
+            self._loop.call_soon_threadsafe(self.parked.set)
+            self.release.wait(THREAD_S)
             data = data[len(data) // 2 :]
         super().write(fd, data)
 
 
+@virtual
 async def test_lane_flush_returns_once_earlier_frames_are_confirmed_or_times_out(
     tmp_path: Path,
 ) -> None:
@@ -588,7 +638,7 @@ async def test_lane_flush_returns_once_earlier_frames_are_confirmed_or_times_out
     await lane.flush(WAIT_S)
     files.park, before = True, lane.journal.end
     appending = asyncio.create_task(lane.append(logout(writer, 1)))
-    assert await asyncio.to_thread(files.parked.wait, WAIT_S), "the write never ran"
+    await guarded(files.parked.wait(), appending)
     appending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await appending
@@ -608,6 +658,7 @@ async def test_lane_flush_returns_once_earlier_frames_are_confirmed_or_times_out
     assert [r["object_id"] for r in repo.rows if r["action"] == "auth.logout"] == ["1", "2", "3"]
 
 
+@virtual
 async def test_lane_running_scan_seals_damage_at_the_end_and_counts_its_bytes(
     tmp_path: Path,
 ) -> None:
@@ -632,6 +683,7 @@ async def test_lane_running_scan_seals_damage_at_the_end_and_counts_its_bytes(
     assert segments(tmp_path) == [lj.segment_name(1), lj.segment_name(2)]
 
 
+@virtual
 async def test_lane_running_scan_queues_behind_an_append_it_overlaps(tmp_path: Path) -> None:
     """Directory: the running scan takes the lane lock, so it never reads a frame that an append
     is still writing (no false `torn_tail`, no seal)."""
@@ -641,7 +693,7 @@ async def test_lane_running_scan_queues_behind_an_append_it_overlaps(tmp_path: P
     await journal.append({"action": "audit.lane_started", "outcome": "success"})
     origin, files.park = lj.LaneMarker(LANE, journal.end, 2, journal.head[1], True), True
     appending = asyncio.create_task(journal.append({"action": "auth.logout", "outcome": "success"}))
-    assert await asyncio.to_thread(files.parked.wait, WAIT_S), "the write never ran"
+    await guarded(files.parked.wait(), appending)
     scanning = asyncio.create_task(journal.rescan(origin))
     await until(lambda: len(journal._lock._queues["reserved"]) == 1)  # behind the append
     files.release.set()
@@ -653,6 +705,7 @@ async def test_lane_running_scan_queues_behind_an_append_it_overlaps(tmp_path: P
     assert not result.sealed
 
 
+@virtual
 async def test_lane_running_scan_that_reads_its_origin_as_ahead_stops_the_lane(
     tmp_path: Path,
 ) -> None:
@@ -677,6 +730,7 @@ async def test_lane_running_scan_that_reads_its_origin_as_ahead_stops_the_lane(
 @pytest.mark.parametrize(
     "caps", [{"lane_max_bytes": 3000}, {"max_segments": 3, "segment_max_bytes": 1}]
 )
+@virtual
 async def test_lane_at_a_cap_writes_its_boot_row_and_refuses_others_till_the_drain_frees_room(
     tmp_path: Path, caps: dict[str, int]
 ) -> None:
@@ -707,6 +761,7 @@ async def test_lane_at_a_cap_writes_its_boot_row_and_refuses_others_till_the_dra
     ]  # fmt: skip
 
 
+@virtual
 async def test_lane_boot_row_refused_all_the_same_stops_the_lane_and_start_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -733,6 +788,7 @@ async def test_lane_boot_row_refused_all_the_same_stops_the_lane_and_start_raise
 
 
 @pytest.mark.parametrize("window", ["ingest", "compact"])
+@virtual
 async def test_lane_append_during_a_refused_iteration_cuts_its_backoff_short(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, window: str
 ) -> None:
@@ -773,6 +829,7 @@ async def test_lane_append_during_a_refused_iteration_cuts_its_backoff_short(
     assert [r["object_id"] for r in repo.rows[2:]] == ["1", "2", "3"]
 
 
+@virtual
 async def test_lane_append_racing_a_running_scan_is_not_left_for_the_next_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -807,6 +864,7 @@ async def test_lane_append_racing_a_running_scan_is_not_left_for_the_next_one(
     assert [r["object_id"] for r in repo.rows[2:]] == ["1", "2", "3"]
 
 
+@virtual
 async def test_lane_first_running_scan_after_a_boot_starts_at_its_marker(tmp_path: Path) -> None:
     """The first running scan after a boot starts at the boot's marker, so a restart on a lane
     that was confirmed and compacted hands over its new frames only, with no anomaly row; and
@@ -827,6 +885,7 @@ async def test_lane_first_running_scan_after_a_boot_starts_at_its_marker(tmp_pat
     ]  # fmt: skip
 
 
+@virtual
 async def test_lane_run_is_copied_once_before_its_row_and_logged_without_its_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -866,6 +925,7 @@ async def test_lane_run_is_copied_once_before_its_row_and_logged_without_its_rec
     assert "do-not-log" not in repr(logs)
 
 
+@virtual
 async def test_lane_drain_pauses_at_the_writers_depth_and_counts_each_pause_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -894,6 +954,7 @@ async def test_lane_drain_pauses_at_the_writers_depth_and_counts_each_pause_once
     assert (paused, held, lane.paused_batches) == (1, 2, 2)
 
 
+@virtual
 async def test_lane_paused_drain_still_confirms_what_the_writer_commits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -922,6 +983,7 @@ async def test_lane_paused_drain_still_confirms_what_the_writer_commits(
     assert waited == (1, 3)  # still paused: frame 2 not handed over
 
 
+@virtual
 async def test_lane_pause_after_a_refused_hand_over_counts_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -945,6 +1007,7 @@ async def test_lane_pause_after_a_refused_hand_over_counts_again(
     assert lane.paused_batches == 2
 
 
+@virtual
 async def test_lane_start_cancelled_while_a_resumed_lane_opens_stops_it(tmp_path: Path) -> None:
     """The open is shielded and runs on after its caller is cancelled; it still ends with the
     lane stopped, so no append is accepted that no drain would hand over."""
@@ -953,17 +1016,17 @@ async def test_lane_start_cancelled_while_a_resumed_lane_opens_stops_it(tmp_path
     first = await boot(tmp_path, writer)
     await drained(first)
     await first.close()  # a lane on disk: the next boot resumes it
-    parked, release = threading.Event(), threading.Event()
+    loop, parked, release = asyncio.get_running_loop(), asyncio.Event(), threading.Event()
 
     class Parked(lj.LaneFiles):
         def boot(self) -> tuple[list[str], bytes | None, bytes | None]:
-            parked.set()
-            release.wait(WAIT_S)
+            loop.call_soon_threadsafe(parked.set)
+            release.wait(THREAD_S)
             return super().boot()
 
     lane = AuditLane(lj.LaneJournal(Parked(tmp_path / "lane"), KEYS), writer, **FAST)
     starting = asyncio.create_task(lane.start())
-    await asyncio.to_thread(parked.wait, WAIT_S)
+    await guarded(parked.wait(), starting)
     starting.cancel()
     release.set()
     with pytest.raises(asyncio.CancelledError):
@@ -978,6 +1041,7 @@ async def test_lane_start_cancelled_while_a_resumed_lane_opens_stops_it(tmp_path
     assert (refused.value.reason, lane._task) == ("stopped", None)
 
 
+@virtual
 async def test_lane_paused_drain_looks_again_when_an_append_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -997,6 +1061,7 @@ async def test_lane_paused_drain_looks_again_when_an_append_lands(
     assert [r["object_id"] for r in repo.rows][-1] == "1"
 
 
+@virtual
 async def test_lane_catch_up_leaves_a_live_emit_wal_room_and_resumes_as_the_wal_drains(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1057,6 +1122,7 @@ class Broken(lj.LaneFiles):
         super().mark(body)
 
 
+@virtual
 async def test_lane_drain_that_dies_after_a_failed_write_logs_one_stop(tmp_path: Path) -> None:
     """Failures while running: a failed marker write stops the lane and ends the drain, whose
     death adds its own line and no second stop."""
@@ -1076,6 +1142,7 @@ async def test_lane_drain_that_dies_after_a_failed_write_logs_one_stop(tmp_path:
     assert lane.journal.refusal == "stopped" and [e["error"] for e in stops] == ["OSError"]
 
 
+@virtual
 async def test_lane_start_cancelled_during_a_boot_row_stops_the_lane(tmp_path: Path) -> None:
     """A `start()` cancelled while its boot row is being written stops the lane, like a refused
     boot row: the frame lands (#2250), but every later append is refused and no drain runs."""
@@ -1083,7 +1150,7 @@ async def test_lane_start_cancelled_during_a_boot_row_stops_the_lane(tmp_path: P
     writer = await sink(tmp_path, FakeAuditRepository(), AuditWriter)
     lane, files.park = AuditLane(lj.LaneJournal(files, KEYS), writer, **FAST), True
     starting = asyncio.create_task(lane.start())
-    assert await asyncio.to_thread(files.parked.wait, WAIT_S), "the write never ran"
+    await guarded(files.parked.wait(), starting)
     starting.cancel()
     files.release.set()
     with pytest.raises(asyncio.CancelledError):
