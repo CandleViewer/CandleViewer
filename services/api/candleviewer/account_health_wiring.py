@@ -31,11 +31,11 @@ unavailable (E29), so sizing is off once a snapshot is stale after a failed atte
 old; the dead-man's-switch hook (E39) logs the episode.
 
 The runtime serves health and balances on the WS `wallet` topic (`accounts/wallet_topic.py`), which
-`create_app` builds on the gateway's hub and hands in: the topic's snapshots read the monitor and
-the cache, and the runtime publishes a health delta when an account's monitoring starts and on each
-transition it commits, whichever call commits it (the tick, the feed or the reconciler's `rest_ok`),
-and a balance delta on each refresh, pushed or read, and when the tick finds a refreshed balance
-turned stale.
+`create_app` builds on the gateway's hub and hands in: the topic's snapshots read the runtime's
+`view` (the monitor's, less an account tracked for a replayed call alone) and the cache, and the
+runtime publishes a health delta when an account's monitoring starts and on each transition it
+commits, whichever call commits it (the tick, the feed or the reconciler's `rest_ok`), and a balance
+delta on each refresh, pushed or read, and when the tick finds a refreshed balance turned stale.
 
 `order_entry_check` is the account check of the app's one gate, `OrderEntryGate(maintenance,
 order_entry_check)` (#837 W3): it refuses on the key standing (`accounts.key_standing`) and the
@@ -270,12 +270,14 @@ class HealthSeries:
 
 
 class AccountHealthRuntime:
-    """The running monitor, wallet cache and reconciler, with the loops that drive them. `monitor`
-    and `wallets` are for the readers (the order-entry gate, the read models); the private-WS
-    consumer gets `feed` through `ctx.accounts.account_health` (`AccountHealthFeed`): the evidence
-    calls of the monitor, and the wallet cache's `apply` as `wallet_pushed`. `wallet_pushed` does
-    not bound a frame's `updated_at`: the consumer refuses a frame dated ahead of the host clock
-    before it gets here (a dated-ahead snapshot would block every later refresh).
+    """The running monitor, wallet cache and reconciler, with the loops that drive them. `view` (the
+    monitor's health, less an account tracked for a replayed call alone) and `wallets` are for the
+    readers (the `wallet` topic, the read models); the order-entry gate reads the monitor through
+    `order_entry_check`. The private-WS consumer gets `feed` through `ctx.accounts.account_health`
+    (`AccountHealthFeed`): the evidence calls of the monitor, and the wallet cache's `apply` as
+    `wallet_pushed`. `wallet_pushed` does not bound a frame's `updated_at`: the consumer refuses a
+    frame dated ahead of the host clock before it gets here (a dated-ahead snapshot would block
+    every later refresh).
 
     `monitored` reads the ids of the accounts to track (`None`: the fake backend, nothing is
     tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped;
@@ -495,7 +497,7 @@ class AccountHealthRuntime:
     def _census(self) -> None:
         """Set the health gauge, every state and reason (0 for one no account reads), and the age
         of the oldest wallet snapshot (0 with none monitored), from the accounts the cache tracks:
-        the monitor's, since tracking adds and drops an account in both."""
+        the monitor's, less an account tracked for a replayed call alone, as `view` shows them."""
         silence = self.wallets.silence_s()
         views = (self.monitor.view(account_id) for account_id in silence)
         held = Counter((view.state, view.reason) for view in views if view is not None)

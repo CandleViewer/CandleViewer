@@ -180,7 +180,9 @@ class DeadMansSwitch(Protocol):
     for an account the policy cannot act on: a raise is retried for as long as the account stays
     tracked, and replayed at every boot. At least once, so idempotent: a resolved row is never
     replayed, and a call that returned before its resolve committed (a kill between the two, or a
-    failed write) is made at most once more."""
+    failed write) is made at most once more. The boot is the runtime's first tracking pass whose
+    replay read works: until then it tracks nothing, so no call is made for any account, and order
+    entry refuses them all."""
 
     async def account_down(self, transition: HealthTransition) -> None: ...
 

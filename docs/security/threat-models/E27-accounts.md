@@ -616,7 +616,8 @@ material (SR-069). The table lists the events the model requires and what `audit
 | `cv_credential_borrow_total{stage,result}`, `cv_credential_borrow_seconds`, `cv_credential_candidate_sign_total{stage,result}`       | Borrow rate: misuse, storms (KV-D01, KV-R01)  | merged; an alert on borrows without matching order or verification traffic is proposed |
 | `cv_credential_outcome_audit_failures_total`, `cv_credential_touch_failures_total`, `cv_process_hardening_failures_total`            | KV-D04, KV-I08                                | merged                                                                                 |
 | `cv_key_verification_total{result,rule}`, `cv_key_selfcheck_runs_total{result}`, `cv_keys_failing_policy{rule}`                      | Failed verification counts (KV-E05, KV-E06)   | #836 slice 2c1a; no `cv_clock_offset_ms` (decision 13): the clock guard pages drift    |
-| `cv_account_health_state`, `cv_account_health_transitions_total`, `cv_wallet_snapshot_age_seconds`, `cv_wallet_reconcile_total`      | KV-T12                                        | #837 W6: the AccountDown page; per state and reason, never per account (SR-125)        |
+| `cv_account_health_state`, `cv_account_health_transitions_total`                                                                     | KV-T12                                        | #837 W6: the AccountDown page; per state and reason, never per account (SR-125)        |
+| `cv_wallet_snapshot_age_seconds` (no label), `cv_wallet_reconcile_total{result}`                                                     | KV-T13                                        | #837 W6: trading-board series, no alert; never per account (SR-125)                    |
 | `cv_wallet_sizing_old_snapshot_total`                                                                                                | KV-T13                                        | merged (E27-T04, #837); on the trading board (#837 W6); no alert                       |
 | `cv_key_rotation_notices_total`, `cv_keys_rotation_state`                                                                            | Keys past rotation age (US-ACCT-005)          | #837 W6: KeyRotationWarn and KeyRotationOverdue tickets; never a disable               |
 | `oms_rate_tokens_available{account,bucket}`                                                                                          | KV-D01 reserve                                | `20-architecture.md` §4.3; page when `critical` is below 1 for 10 s                    |
@@ -629,7 +630,8 @@ verification freshness window; an execution with no OMS intent; an account red f
 for rotation. The epic's names `cv_credential_borrow_total{result}` and `cv_kek_version` are
 `{stage,result}` and `cv_kek_version_state` in the code; the code's names are authoritative.
 Of those, #837 W6 ships two: AccountDown pages at the transition into `down` and holds while the account is red;
-KeyRotationOverdue tickets once a day per overdue key.
+KeyRotationOverdue tickets once a day per overdue key. An account red since boot, or across a restart, reads
+`never_connected` and does not page: that alert waits for the private-WS client (#3731).
 
 ## 9. Requirements added by this model
 
