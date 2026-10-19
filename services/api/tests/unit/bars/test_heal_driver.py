@@ -399,15 +399,29 @@ async def test_a_miss_streak_logs_its_first_read_only_and_a_clean_read_ends_it(m
 
 @pytest.mark.parametrize(
     ("miss", "live", "wait"),
-    [("failed", "swap", 4), ("failed", "gap", 4), ("degraded", "swap", 4), ("degraded", "gap", 1)],
-    ids=["failed-swap", "failed-gap", "degraded-swap", "degraded-gap"],
+    [
+        ("failed", "swap", 4),
+        ("failed", "gap", 4),
+        ("degraded", "swap", 4),
+        ("degraded", "gap", 1),
+        ("skipped", "swap", 4),
+        ("skipped", "gap", 1),
+    ],
+    ids=[
+        "failed-swap",
+        "failed-gap",
+        "degraded-swap",
+        "degraded-gap",
+        "skipped-swap",
+        "skipped-gap",
+    ],
 )
-async def test_a_gap_seen_live_ends_a_streak_of_degraded_reads_only(
+async def test_a_gap_seen_live_ends_a_streak_of_degraded_and_skipping_reads_only(
     miss: str, live: str, wait: int
 ) -> None:
     """Three misses ask for 20 s. A live swap keeps it, and so does a gap seen live after failed
-    reads (storage has not answered); after degraded reads, which complete, it ends the streak, so
-    the new hole is read 5 s later (H2's interval)."""
+    reads (storage has not answered); after degraded or skipping reads (#3614), which complete, it
+    ends the streak, so the new hole is read 5 s later (H2's interval)."""
     clock, tail = Clock(), missing(Tail(now=True), miss)
     store = SeriesStore(tail, clock=clock)
     _held = await store.ensure(SYM, SPEC)

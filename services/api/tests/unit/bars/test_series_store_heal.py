@@ -564,7 +564,8 @@ async def test_a_clean_read_with_no_row_flags_a_held_bar_above_0_and_the_driver_
     (a-ii) bar 20 closed during the first read; (a-iii) a live swap left a hydrated series not
     `hydrated` (the read finds the old generation's rows only); (c) a clean empty read flagged
     the gap, then a degraded one with no row came. The heal driver reads the series again
-    `retry_after_s` later, once the writer has landed 0..20, and heals and repairs it (§7.4)."""
+    `retry_after_s` later, once the writer has landed 0..20, and heals and repairs it (§7.4). The
+    gap the fold flags is logged, never counted: `bars_series_gaps_total` counts gaps seen live."""
     clock, gen = Clock(), int(before == "swap")
     tail = Tail(rows(*range(5)) if before == "swap" else ())
     tail.error = OSError("questdb down") if before == "failed" else None
@@ -584,6 +585,7 @@ async def test_a_clean_read_with_no_row_flags_a_held_bar_above_0_and_the_driver_
         clock.t += RETRY_AFTER_S
         await store.refresh(SYM, H)
     tail.tail = BarTail(rows(*range(5)) if before == "swap" else [], since_us=T0)
+    counts = counted("bars_series_gaps_total")
     with capture_logs() as logs:
         if before == "during":
             tail.gate.set()
@@ -593,12 +595,43 @@ async def test_a_clean_read_with_no_row_flags_a_held_bar_above_0_and_the_driver_
             await store.refresh(SYM, H)
     gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
     assert (view(store), store.gapped(SYM, H), gaps) == (([20], 21), True, [(0, 19)])
+    assert counted("bars_series_gaps_total") == counts  # logged, not counted, by design
     hook = Hook(store)
     tail.tail = BarTail(rows(*range(21), gen=gen))  # the writer has landed 0..20
     clock.t += RETRY_AFTER_S
     await HealDriver(store).tick()
     healed = (view(store), store.hydrated(SYM, H), store.gapped(SYM, H), hook.calls)
     assert healed == ((list(range(21)), 21), True, False, [(SYM, SPEC, 3)])
+
+
+@pytest.mark.parametrize("miss", ["degraded", "skipped"])
+async def test_a_read_that_is_not_clean_flags_no_held_bar_and_the_next_clean_read_does(
+    miss: str,
+) -> None:
+    """#3660 rule (1): a read that withheld a row (SR-E12-11) or skipped one (#3614) is not clean.
+    Bar 20 is held, 21 forming, when it is folded with no row of the series' generation: it flags
+    no gap and leaves the series not `hydrated`, so it is read again. The next read, clean and
+    empty, with a window that holds bar 20, flags (0, 19)."""
+    clock, tail = Clock(), Tail(error=OSError("questdb down"), now=True)
+    store = SeriesStore(tail, clock=clock)
+    _held = await store.ensure(SYM, SPEC)  # the first read failed
+    await emit(store, up("open", 20))
+    await emit(store, up("close", 20), up("open", 21))
+    tail.error = None
+    tail.tail = BarTail(
+        [], skipped=2 * (miss == "skipped"), dropped=3 * (miss == "degraded"), since_us=T0
+    )
+    clock.t += RETRY_AFTER_S
+    with capture_logs() as logs:
+        await store.refresh(SYM, H)
+    state = (view(store), store.hydrated(SYM, H), store.gapped(SYM, H))
+    assert (state, events(logs, "bars_series_gap")) == ((([20], 21), False, False), [])
+    tail.tail = BarTail([], since_us=T0)
+    clock.t += 2 * RETRY_AFTER_S  # one miss asked for 5 s, two for 10 s
+    with capture_logs() as logs:
+        await store.refresh(SYM, H)
+    gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
+    assert (store.hydrated(SYM, H), store.gapped(SYM, H), gaps) == (True, True, [(0, 19)])
 
 
 async def test_a_read_that_skips_a_row_leaves_the_series_incomplete_until_one_skips_none() -> None:
@@ -631,7 +664,8 @@ async def test_a_restart_emptying_a_series_read_with_rows_is_judged_by_that_read
     """#3660 (b), which rule (1) keeps: rows 0..10 read clean, then a restarted run's bar 5 opens
     (a reset) and closes. It opened inside that read's window (`since_us`, kept for a read that
     found rows too), so the close counts one gap, (0, 4), and the one read it brings ends where it
-    started: harmless, one count, one warning, one read. Opened before the window: none of them."""
+    started: harmless, one count, one warning, one read, measured to the end of that read.
+    Opened before the window: none of them."""
     clock = Clock()
     tail = Tail(now=True)
     tail.tail = BarTail(rows(*range(11)), since_us=T0)
@@ -641,9 +675,10 @@ async def test_a_restart_emptying_a_series_read_with_rows_is_judged_by_that_read
     with capture_logs() as logs:
         await emit(store, up("open", 5, shift=shift))
         await emit(store, up("close", 5, shift=shift), up("open", 6, shift=shift))
+        flagged = store.gapped(SYM, H)
+        clock.t += RETRY_AFTER_S
+        await HealDriver(store).tick()  # the read it brings: logged and counted with the rest
     gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
-    assert (store.gapped(SYM, H), gaps) == (gap, [(0, 4)] * gap)
+    assert (flagged, gaps) == (gap, [(0, 4)] * gap)
     assert counted("bars_series_gaps_total") == before + gap
-    clock.t += RETRY_AFTER_S
-    await HealDriver(store).tick()
     assert (tail.calls, view(store), store.gapped(SYM, H)) == (1 + gap, ([5], 6), False)
