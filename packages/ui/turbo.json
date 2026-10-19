@@ -8,6 +8,7 @@
         "tokens/**",
         "scripts/**",
         "contrast/**",
+        "eslint-rules/**",
         ".storybook/**",
         "vitest.config.mjs",
         "tsconfig.json",
@@ -25,6 +26,7 @@
         "tokens/**",
         "scripts/**",
         "contrast/**",
+        "eslint-rules/**",
         ".storybook/**",
         "vitest.config.mjs",
         "tsconfig.json",
@@ -46,7 +48,11 @@
     },
     "typecheck": {
       "tags": ["typecheck"],
-      "inputs": ["$TURBO_EXTENDS$", "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"]
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "eslint-rules/*.d.mts",
+        "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"
+      ]
     }
   }
 }

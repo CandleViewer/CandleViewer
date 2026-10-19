@@ -48,11 +48,12 @@
     "eslint-plugin-react": "^7.37.3",
     "eslint-plugin-react-hooks": "^5.1.0",
     "style-dictionary": "^5.6.1",
-    "storybook": "^8.6.19",
-    "@storybook/react": "^8.6.19",
-    "@storybook/react-vite": "^8.6.19",
-    "@storybook/addon-a11y": "^8.6.19",
-    "@storybook/addon-essentials": "^8.4.7",
-    "@storybook/test": "^8.4.7"
+    "storybook": "^10.6.2",
+    "@storybook/react-vite": "^10.6.2",
+    "@storybook/addon-a11y": "^10.6.2",
+    "@storybook/addon-docs": "^10.6.2",
+    "@storybook/addon-vitest": "^10.6.2",
+    "@vitest/browser": "^3.2.6",
+    "playwright": "^1.64.1"
   }
 }

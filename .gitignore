@@ -17,6 +17,7 @@ reports/toolchain-regression.json
 reports/flaky-quarantine.json
 playwright-report/
 test-results/
+storybook-static/
 
 # --- Python ---
 __pycache__/

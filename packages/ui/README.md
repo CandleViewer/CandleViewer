@@ -1,6 +1,6 @@
 # @candleviewer/ui
 
-Design system: tokens, primitives, trading components. Storybook 8 with the
+Design system: tokens, primitives, trading components. Storybook 10 with the
 a11y addon; Style Dictionary token build. Depends only on
 `@candleviewer/protocol` and `@candleviewer/chart-engine` — never on `apps/*`
 (C-3.5).
@@ -110,10 +110,22 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   `document.documentElement`, which outlives a single test. Call `resetSharedThemeStores()` in `afterEach`,
   or pass a fresh `root`, so tests do not leak preferences into each other.
 
+## Storybook (E05-T03)
+
+- Run: `build:tokens`, then `storybook` (dev server, port 6006) or `storybook:build`. The preview
+  imports the generated token bundles the app imports. Storybook 10 needs Node 20.19+ or 22.12+.
+- Organisation: titles sit under a catalogue band (`Atoms/` .. `ChartEngine/`, see catalogue
+  §0.3 rule 8) or `Foundations/`; the `candleviewer/story-title-bands` lint rule fails any other.
+  The Theme, Density and Motion toolbars drive the E05-T02 runtime; decorators paint the canvas with
+  `surface.app` and count story mounts (`<output aria-label="Mount count" hidden>`).
+- Hosting: internal only, never an internet-reachable host (Pages, a public bucket, a preview
+  service). The publish to the Tailscale-only internal host is E05-T09's.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/ui build` — runs `build:tokens` (Style
   Dictionary-driven, see above) then the tsup build.
 - `pnpm --filter @candleviewer/ui build:tokens` — token build only.
 - `pnpm --filter @candleviewer/ui storybook` — dev server with the a11y addon.
+- `pnpm --filter @candleviewer/ui storybook:build` — static build.
 - `pnpm --filter @candleviewer/ui test` / `test:cov` — Vitest, ≥80% gate.

@@ -80,6 +80,19 @@ describe("token build integration (real Style Dictionary run)", () => {
     }
   });
 
+  it("emits every theme bundle the Storybook preview imports, each under its data-theme", () => {
+    runBuild(ui);
+    const preview = readFileSync(path.join(UI_ROOT, ".storybook", "theme-bundles.ts"), "utf-8");
+    const bundles = [
+      ...preview.matchAll(/^import "\.\.\/build\/(css\/tokens\.([\w-]+)\.css)";$/gm),
+    ];
+    expect(bundles.map((match) => match[2])).toEqual(["dark", "light", "high-contrast"]);
+    for (const [, rel = "", theme] of bundles) {
+      const css = readFileSync(path.join(buildDir, rel), "utf-8");
+      expect(css).toContain(`[data-theme="${theme}"] {`);
+    }
+  });
+
   it("is byte-identical across two consecutive runs (deterministic build)", () => {
     runBuild(ui);
     const snapshot: Record<string, string> = {};

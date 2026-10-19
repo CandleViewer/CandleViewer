@@ -1,0 +1,19 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+import { tokens } from "../../build/ts/tokens";
+import { TokenTables } from "./TokenTables";
+
+<Meta title="Foundations/Tokens" />
+
+# Design tokens
+
+Generated from `packages/ui/tokens/` by `pnpm --filter @candleviewer/ui build:tokens` (ADR-0024). This
+page renders `build/ts/tokens.ts`, so it cannot drift from the build. Values are the dark set; the light
+and high-contrast bundles define the same custom properties, and a colour swatch paints the property.
+
+Stories sit under the catalogue's bands (`Atoms`, `Molecules`, `Organisms`, `Trading`, `RuleEngine`,
+`ChartEngine`); `Foundations` holds what is not a catalogue component. The Theme, Density and Motion
+toolbars drive the theme runtime (`src/theme/`) for every story. Each component page carries its
+keyboard-interaction and accessible-name tables (`05-accessibility-standard.md` §11.6), and every
+story passes the a11y gate: no serious or critical axe violation, in the Accessibility panel and in CI.
+
+<TokenTables tokens={tokens} />
