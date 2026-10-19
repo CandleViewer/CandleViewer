@@ -328,26 +328,49 @@ async def test_a_replay_read_stuck_past_its_cancellation_fails_the_pass_within_i
     assert rig.dms.calls == [(ACC, "no_success")]
 
 
-async def test_a_cut_off_replay_read_is_cancelled_and_the_error_it_ends_with_retrieved(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Cut off, the read is cancelled, not left to run on holding its pooled connection, and the
-    error it then ends with is retrieved: no unretrieved-task line echoes the driver's text."""
+def _held_replay_read(monkeypatch: pytest.MonkeyPatch) -> tuple[Rig, Journal, asyncio.Event]:
+    """A boot pass whose replay read the server holds past the read bound: it answers neither the
+    read nor its cancellation until `stuck` is set, then fails with the driver's text."""
     monkeypatch.setattr(wiring, "READ_TIMEOUT_S", 0.001)
-    unretrieved: list[object] = []
-    asyncio.get_running_loop().set_exception_handler(lambda _, context: unretrieved.append(context))
     journal = Journal(_OPEN)
     journal.hold["read"] = stuck = asyncio.Event()
     journal.fail["read"] = RuntimeError(_ECHO)  # how it ends once the server answers
-    rig = Rig(journal=journal)
+    return Rig(journal=journal), journal, stuck
+
+
+async def _answer(stuck: asyncio.Event) -> None:
+    """The server answers the held read, and the read left to unwind ends."""
+    stuck.set()
+    await asyncio.wait({t for t in asyncio.all_tasks() if t.get_name().endswith("-replay")})
+
+
+async def test_a_cut_off_replay_read_is_cancelled_not_left_holding_its_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cut off, the read is cancelled, not left to run on holding its pooled connection."""
+    rig, journal, stuck = _held_replay_read(monkeypatch)
     try:
         with pytest.raises(TimeoutError):
             await rig.runtime.refresh_tracking()
         await asyncio.sleep(0)  # the read left to unwind takes its cancellation
         assert journal.cancelled == ["read"]
     finally:
-        stuck.set()
-        await asyncio.wait({t for t in asyncio.all_tasks() if t.get_name().endswith("-replay")})
+        await _answer(stuck)
+
+
+async def test_the_error_a_cut_off_replay_read_ends_with_is_retrieved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The error the cut-off read ends with once the server answers is retrieved: no
+    unretrieved-task line echoes the driver's text."""
+    unretrieved: list[object] = []
+    asyncio.get_running_loop().set_exception_handler(lambda _, context: unretrieved.append(context))
+    rig, journal, stuck = _held_replay_read(monkeypatch)
+    try:
+        with pytest.raises(TimeoutError):
+            await rig.runtime.refresh_tracking()
+    finally:
+        await _answer(stuck)
     del journal.fail["read"]
     await rig.runtime.refresh_tracking()  # its read replaces the cut-off one, which nothing holds
     await rig.runtime.monitor.drain()

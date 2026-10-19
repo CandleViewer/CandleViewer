@@ -782,17 +782,18 @@ async def test_a_key_age_job_that_raises_never_keeps_the_read_from_tracking(
     assert errors == [("account_health.key_age_failed", "TypeError")] * 2
 
 
-async def test_a_key_age_job_that_raises_leaves_the_standing_and_the_tracking_to_the_read(
-    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """#837 W6: the job runs last, once the read has fed the key standing (the order-entry gate's
-    input) and taken the enabled accounts, so one that raises at every read holds back neither:
-    a listed account is tracked with a standing, and one gone leaves both."""
+async def _reads_with_a_key_age_job(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch, *, raises: bool
+) -> tuple[list[bool], list[tuple[HealthState | None, bool]]]:
+    """Two tracking reads, the account listed and then gone, with a key-age job that raises at
+    each read if `raises`: whether the job found that read's key standing in place, and what each
+    read left tracked and standing."""
     fed: list[bool] = []
 
     def observe(_job: KeyAgeNotices, _keys: object) -> None:
         fed.append(runtime.standings.standing(ACC) is not None)  # the read is in the standing
-        raise RuntimeError(_ECHO)
+        if raises:
+            raise RuntimeError(_ECHO)
 
     monkeypatch.setattr(wiring, "SystemClock", FakeClock)
     monkeypatch.setattr(KeyAgeNotices, "observe", observe)
@@ -802,7 +803,25 @@ async def test_a_key_age_job_that_raises_leaves_the_standing_and_the_tracking_to
         stored.rows = rows
         await runtime.refresh_tracking()
         seen.append((runtime.monitor.current(ACC), runtime.standings.standing(ACC) is not None))
-    assert seen == [(HealthState.DOWN, True), (None, False)] and fed == [True, False]
+    return fed, seen
+
+
+async def test_the_key_age_job_runs_once_the_read_has_fed_the_key_standing(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#837 W6: the job runs last, once the read has fed the key standing (the order-entry gate's
+    input): it finds a listed account's standing in place, and none once the account is gone."""
+    fed, _ = await _reads_with_a_key_age_job(stored, monkeypatch, raises=False)
+    assert fed == [True, False]
+
+
+async def test_a_key_age_job_that_raises_leaves_the_tracking_and_the_standing_to_the_read(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#837 W6: a job that raises at every read holds back neither the tracked set nor the key
+    standing: a listed account is tracked with a standing, and one gone leaves both."""
+    _, seen = await _reads_with_a_key_age_job(stored, monkeypatch, raises=True)
+    assert seen == [(HealthState.DOWN, True), (None, False)]
 
 
 def test_the_fake_backend_wires_the_runtime_with_no_repository_to_read() -> None:
