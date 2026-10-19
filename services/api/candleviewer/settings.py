@@ -122,22 +122,43 @@ DATABASE_DATA_DIRS: Final = ("/var/lib/postgresql", "/var/lib/questdb")
 
 
 def _data_directories(data: Mapping[str, Any]) -> dict[str, Path]:
-    """E42-T05: what `CV_BACKUP_ROOT` stays apart from, resolved as the process opens it: the
-    audit WAL's and checkpoints' directories, the recordings (the Parquet lake and the spill WAL),
-    the bar state, the directories of the KEK handles, the KEK ack and the audit lane keys, and
-    `DATABASE_DATA_DIRS`. The spill WAL and bar state defaults mirror their `_anchor_*` rules."""
+    """E42-T05: what `CV_BACKUP_ROOT` stays apart from, each resolved as the code that opens it
+    takes it: the audit WAL's and checkpoints' directories, the recordings (the Parquet lake and
+    the spill WAL), the bar state, the directories of the KEK handles, the KEK ack and the audit
+    lane keys, and `DATABASE_DATA_DIRS`. A path is taken as written (a padded one keeps its spaces,
+    a `~` is a directory name), except the spill WAL and the bar state: their `_anchor_*` rules
+    strip and `~`-expand them, derive their defaults from the `~`-expanded lake, and so does this.
+    An unknown `~user` there is a `ValueError` naming the setting, never its value."""
 
-    def setting(name: str) -> Path | None:
+    def written(name: str) -> Path | None:
         value = data.get(name)
-        return Path(value).expanduser() if isinstance(value, str) and value.strip() else None
+        return Path(value) if isinstance(value, str) and value.strip() else None
 
     def parent(name: str) -> Path | None:
-        path = setting(name)
+        path = written(name)
         return None if path is None else path.parent
 
-    lake = setting("parquet_root")
-    spill = setting("recorder_wal_dir") or (lake and lake.resolve().parent / "recorder-wal")
-    bars = setting("bars_state_root") or (lake and lake.parent / "bars" / "state")
+    def expanded(label: str, path: Path | None) -> Path | None:
+        try:
+            return path and path.expanduser()
+        except RuntimeError:  # an unknown `~user`
+            raise ValueError(
+                f"CV_BACKUP_ROOT cannot be checked: ~ in {label} names no home directory"
+            ) from None
+
+    def anchored(name: str, label: str) -> Path | None:
+        value = data.get(name)
+        text = value.strip() if isinstance(value, str) else ""
+        return expanded(label, Path(text)) if text else None
+
+    lake = written("parquet_root")
+    where = expanded("CV_PARQUET_ROOT", lake)  # what the anchors derive the two defaults from
+    spill = anchored("recorder_wal_dir", "CV_RECORDER_WAL_DIR") or (
+        where and where.resolve().parent / "recorder-wal"
+    )
+    bars = anchored("bars_state_root", "CV_BARS_STATE_ROOT") or (
+        where and where.parent / "bars" / "state"
+    )
     found = {
         "the directory of CV_AUDIT_WAL_PATH": parent("audit_wal_path"),
         "the directory of CV_AUDIT_CHECKPOINT_PATH": parent("audit_checkpoint_path"),

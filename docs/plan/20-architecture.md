@@ -900,7 +900,11 @@ boot ("this build carries no fixture transport") instead of ignoring it.
 `CV_BACKUP_ROOT` is where the backup services read single-file artefacts (`verifyBackup`,
 `downloadBackup`; E42-T05, `storage/backup_artefacts.py`); only the backup engine writes it, and
 unset, nothing is read. Settings refuses at load a relative path, `/`, `..`, a symlink anywhere in
-the path, and a root that is, contains or lies inside a data directory, compared resolved:
+the path, and a root that is, contains or lies inside a data directory, compared resolved. Each
+path is taken as the code that opens it takes it, as written (a `~` is a directory name, a padded
+path keeps its spaces), except the spill WAL and the bar state: their own checks strip and
+`~`-expand them, and derive their defaults from the `~`-expanded lake, and so does the comparison.
+An unknown `~user` there refuses the root, naming the setting:
 
 - the directories of `CV_AUDIT_WAL_PATH` and `CV_AUDIT_CHECKPOINT_PATH`;
 - `CV_PARQUET_ROOT`, `CV_RECORDER_WAL_DIR` and `CV_BARS_STATE_ROOT`, defaults derived as their own
@@ -916,7 +920,9 @@ A catalogue `location` is read only once it resolves to a regular file inside th
 `O_NOFOLLOW` component at a time from `/`, the root's own components included, so a symlink
 swapped in after boot is refused too. What `O_NOFOLLOW` cannot see is refused on the opened
 descriptor: a file with a second link (`st_nlink` other than 1, so a hard-link snapshot tool aimed
-at the root fails closed) or on another device than the root (a mount below it). A refusal is
+at the root fails closed) or on another device than the root (a mount of another filesystem below
+it). A bind mount of a file from the root's own filesystem is indistinguishable from any other file
+by `st_nlink` or `st_dev`; it takes `CAP_SYS_ADMIN`, so it is an accepted residual. A refusal is
 `artefact_missing`; an I/O error or a process out of descriptors is `store_unavailable`.
 
 ### 7.3 Environment parity for developers
