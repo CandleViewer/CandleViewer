@@ -6,8 +6,8 @@ manual screen-reader passes pending** (cannot be executed by an agent; see "Manu
 ## 1. Automated coverage (axe-core, Playwright)
 
 Spec: `apps/web/e2e/e09-auth-a11y.spec.ts`. Tags: `AXE_GATE_TAGS` in `apps/web/e2e/a11y/tags.ts`,
-levels A and AA of WCAG 2.0, 2.1 and 2.2 (#3700 added `wcag21a`); fails on any serious/critical
-violation. Network stubbed at the transport layer; no live calls.
+levels A and AA of WCAG 2.0, 2.1 and 2.2 (#3700 added `wcag21a` and `wcag22a`); fails on any
+serious/critical violation. Network stubbed at the transport layer; no live calls.
 
 | SCR                            | Route                         | Rendered today                             | axe serious/critical |
 | ------------------------------ | ----------------------------- | ------------------------------------------ | -------------------- |

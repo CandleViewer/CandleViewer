@@ -54,9 +54,13 @@ describe("the a11y gate's axe tags (#3700)", () => {
       })),
     );
     expect(calls.filter((c) => c.arg !== "[...AXE_GATE_TAGS]")).toEqual([]);
-    expect(calls.map((c) => c.file)).toEqual(
-      expect.arrayContaining(["a11y/axe.collect.ts", "e09-auth-a11y.spec.ts"]),
-    );
+    // The exact sites. A scan that loses its tags also loses the rules axe runs only when a tag
+    // selects them (target-size, aria-roledescription, audio-caption). Add any new tagged scan here.
+    expect(calls.map((c) => c.file).sort()).toEqual([
+      "a11y/axe.collect.ts",
+      "e09-auth-a11y.spec.ts",
+      "e09-auth-a11y.spec.ts",
+    ]);
   });
 
   it("are spelled out nowhere else under e2e/", () => {
