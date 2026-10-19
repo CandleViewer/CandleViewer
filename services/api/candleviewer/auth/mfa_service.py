@@ -244,12 +244,16 @@ class MfaService:
         and replaces the recovery codes with 10 new ones, returned here exactly once.
 
         Raises `MfaEnrollmentNotFound`, with nothing changed, when the method stopped
-        being confirmable meanwhile (a concurrent confirm or enrolment won)."""
+        being confirmable meanwhile (a concurrent confirm or enrolment won). Raises
+        `UserDisabled`, with nothing changed, when the user is disabled or gone, read under
+        the user-row lock in that transaction (#2911), so a disable that commits first wins."""
         plaintext_codes = generate_recovery_codes()
         hashes = tuple(hash_recovery_code(c, key=self._recovery_code_key) for c in plaintext_codes)
         confirmed = await self._repository.complete_enrollment(
             user_id, method_id=method_id, time_step=time_step, now=self._clock(), code_hashes=hashes
         )
+        if confirmed is False:
+            raise UserDisabled(None)
         if confirmed is None:
             raise MfaEnrollmentNotFound("the pending method is no longer confirmable")
         return confirmed, tuple(plaintext_codes)

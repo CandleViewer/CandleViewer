@@ -390,8 +390,8 @@ def make_auth_router(
     ) -> None:
         """#2911: record a disabled user's refused mint. Not write-ahead (the refusal is
         already decided and nothing was minted): a record that cannot be written is logged,
-        and the caller's refusal (403 at sign-in, 401 at the MFA step) stands. *session_id* and
-        *after_state* void a session that a write-ahead record announced (#2295)."""
+        and the caller's refusal (403 at sign-in, 401 at the MFA step or the confirm) stands.
+        *session_id* and *after_state* void a session a write-ahead record announced (#2295)."""
         if audit_service is None or not audit_service.is_active:
             _log().error("auth.login_failed.audit_unavailable", error="inactive")
             return
@@ -868,12 +868,20 @@ def make_auth_router(
         user's other TOTP methods and replaces the recovery codes; every session of the user is
         revoked and a full one minted (SR-013). The 10 new codes appear in this response only.
         If that rotation fails after the commit, the method stays active: the answer is a 503
-        telling the client to sign in again with it, and an error log names the sessions."""
+        telling the client to sign in again with it, and an error log names the sessions. A
+        transaction that does not commit changes nothing: the error log
+        `auth.enrolment.commit_failed` names the user and the new session, and the refusal's row
+        voids that session (#2344, as on the recovery). A lost race answers 422 as a wrong code
+        does, a store failure 500, and a user disabled since the read (#2911, read again under
+        the user-row lock) `_enrolling_caller`'s 401."""
         if isinstance(caller := await _enrolling_caller(request), JSONResponse):
             return caller
         writer, ident, record, user = caller
         uid, method_id, ip = str(user.id), str(body.method_id), _client_ip(request)
         mfa, sessions = auth_service.mfa, auth_service.sessions
+        invalid = _problem(
+            422, _INVALID, "invalid or expired enrolment code", code="validation_failed"
+        )
         try:
             step = await mfa.check_enrollment(uid, method_id=method_id, code=body.code)
             profile = await ident.user(uid)  # before any change: one failure point fewer
@@ -902,16 +910,54 @@ def make_auth_router(
                     reason=reason,
                     after_state=after,
                 )
-            method, codes = await mfa.complete_enrollment(uid, method_id=method_id, time_step=step)
         except AuditError:
             return _problem(503, "Service unavailable", "audit sink not active")
-        except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, other method, lost race
+        except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, no such pending method
             auth_enrolments_total.labels(result="refused").inc()
             await _audit(
                 audit_service, "auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED
             )
-            detail = "invalid or expired enrolment code"
-            return _problem(422, _INVALID, detail, code="validation_failed")
+            return invalid
+
+        void: dict[str, Any] = {"voids_session_created": str(new_id)}
+
+        async def uncommitted(exc: Exception, reason: str) -> None:
+            """Nothing changed: the error log names the ids and the error class (C-12.6), and the
+            refusal's row voids the session the records above announced (C-2.9)."""
+            _log().error(
+                "auth.enrolment.commit_failed",
+                user_id=uid,
+                new_session_id=str(new_id),
+                error=type(exc).__name__,
+            )
+            if reason == "user_disabled":  # the row of a disabled user's refused mint
+                await _audit_refusal(request, user.id, session_id=new_id, after_state=void)
+                return
+            await writer.emit(
+                "auth.mfa_failed",
+                actor_label=uid,
+                actor_user_id=user.id,
+                actor_ip=ip,
+                outcome=_FAILED,
+                session_id=new_id,
+                reason=reason,
+                after_state=void,
+            )
+
+        try:
+            method, codes = await mfa.complete_enrollment(uid, method_id=method_id, time_step=step)
+        except UserDisabled as exc:  # #2911: disabled since the read, under the user-row lock
+            await uncommitted(exc, "user_disabled")
+            return _problem(
+                401, _UNAUTHENTICATED, "authentication required", code="unauthenticated"
+            )
+        except MfaEnrollmentNotFound as exc:  # a concurrent confirm or enrolment won
+            auth_enrolments_total.labels(result="refused").inc()
+            await uncommitted(exc, "lost_race")
+            return invalid
+        except Exception as exc:  # a store failure (a timeout, a deadlock): still the 500
+            await uncommitted(exc, "store_error")
+            raise
         auth_enrolments_total.labels(result="completed").inc()
         try:
             await sessions.revoke_all(uid, reason=ENROLLED_REASON)

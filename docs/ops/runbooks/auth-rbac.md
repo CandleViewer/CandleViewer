@@ -269,6 +269,12 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in
    whose user was disabled since the password check gets `403`: its `auth.login_failed` row carries
    `session_id` and `after_state.voids_session_created`, so its `auth.session_created` row is void.
+   A confirm whose transaction did not commit changed nothing (the method is still pending, the
+   codes and sessions are as they were): the error log `auth.enrolment.commit_failed` names the user
+   and the new session, and the refusal row voids that session's `auth.session_created` the same
+   way. It is `auth.mfa_failed` with reason `lost_race` (`422`, a concurrent confirm or enrolment
+   won) or `store_error` (`500`), or `auth.login_failed` (`user_disabled`, `401`) for a user
+   disabled since the confirm read it, read again under the user-row lock (#2911).
    - If confirm answers `503`, the user signs in again. When the error log
      `auth.enrolment.completed_unrotated` names the user, the enrolment completed but the session
      was not rotated: the new TOTP is active (the next sign-in asks for it), its 10 recovery codes

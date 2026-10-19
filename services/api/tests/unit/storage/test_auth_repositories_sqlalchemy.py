@@ -125,7 +125,7 @@ def _recovery_repo(*answers: list[Any]) -> tuple[_Answers, SqlAlchemyMfaReposito
     return rel, SqlAlchemyMfaRepository(cast(SqlAlchemyRelationalRepository, rel), dict, dict)
 
 
-_ACTIVE = [_row(status="active")]  # the user-row read `complete_recovery` starts with (#2911)
+_ACTIVE = [_row(status="active")]  # the user-row read both completions start with (#2911)
 
 
 async def test_complete_recovery_spends_satisfies_and_revokes_in_one_unit_of_work() -> None:
@@ -184,28 +184,43 @@ async def test_time_step_replay_rejected_when_no_row_updated() -> None:
 
 
 async def test_complete_enrollment_claims_revokes_and_swaps_codes_in_one_unit_of_work() -> None:
-    """#2295: the old method and codes stop working at the instant the new ones start."""
-    rel = _Rel([_row(id="m", kind="totp")])
-    repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
+    """#2295: the old method and codes stop working at the instant the new ones start. The user
+    row is share-locked first, as for the recovery (#2911)."""
+    rel, repo = _recovery_repo(_ACTIVE, [_row(id="m", kind="totp")])
     got = await repo.complete_enrollment(
         "u", method_id="m", time_step=7, now=_NOW, code_hashes=("h1", "h2")
     )
-    sql = [statement for statement, _ in rel.calls]
+    (lock, locked), *calls = rel.calls
+    sql = [statement for statement, _ in calls]
     assert got == {"id": "m", "kind": "totp"}
+    assert lock.endswith("WHERE id = CAST(:u AS uuid) AND deleted_at IS NULL FOR SHARE")
+    assert locked == {"u": "u"}
     for rule in ("m.confirmed_at IS NULL", "m.last_accepted_time_step IS NULL", "NOT EXISTS"):
         assert rule in sql[0] and sql[0].startswith("UPDATE mfa_methods m SET confirmed_at")
-    assert rel.calls[0][1] == {"id": "m", "u": "u", "now": _NOW, "step": 7}
+    assert calls[0][1] == {"id": "m", "u": "u", "now": _NOW, "step": 7}
     assert "id <> CAST(:id AS uuid) AND kind = 'totp' AND revoked_at IS NULL" in sql[1]
     assert sql[2].startswith("DELETE FROM recovery_codes")
-    assert [params["h"] for _, params in rel.calls[3:5]] == ["h1", "h2"]
+    assert [params["h"] for _, params in calls[3:5]] == ["h1", "h2"]
     assert sql[5:] == ["COMMIT"]  # one commit, after every statement
 
 
 async def test_complete_enrollment_rolls_back_when_the_method_is_no_longer_confirmable() -> None:
-    rel = _Rel([])
-    repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
+    rel, repo = _recovery_repo(_ACTIVE)
     got = await repo.complete_enrollment("u", method_id="m", time_step=7, now=_NOW, code_hashes=())
     assert got is None
+    assert [statement for statement, _ in rel.calls][2:] == ["ROLLBACK"]  # after the lost claim
+
+
+@pytest.mark.parametrize("user", [[_row(status="disabled")], []], ids=["disabled", "gone"])
+async def test_complete_enrollment_of_a_disabled_or_gone_user_rolls_back_before_any_change(
+    user: list[Any],
+) -> None:
+    """#2911 (C-12.4): a disable that committed after the confirm read the user is read under
+    the share lock: `False`, not a lost race, and no method is confirmed or revoked and no code
+    replaced."""
+    rel, repo = _recovery_repo(user, [_row(id="m", kind="totp")])
+    got = await repo.complete_enrollment("u", method_id="m", time_step=7, now=_NOW, code_hashes=())
+    assert got is False
     assert [statement for statement, _ in rel.calls][1:] == ["ROLLBACK"]
 
 

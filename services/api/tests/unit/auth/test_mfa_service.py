@@ -227,6 +227,25 @@ async def test_confirm_enrollment_unknown_method_raises_not_found() -> None:
         )
 
 
+async def test_complete_enrollment_of_a_user_disabled_since_the_check_changes_nothing() -> None:
+    """#2911 (C-12.4): a disable that committed after the check is read under the user-row lock
+    in the enrolment's own transaction: `UserDisabled`, and nothing is confirmed, revoked or
+    replaced."""
+    repo = FakeMfaRepository()
+    service = _service(repo)
+    user_id = str(uuid.uuid4())
+    pending = await service.enroll(
+        user_id, MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="alice"
+    )
+    methods = dict(repo.methods)
+    repo.disabled_users.add(user_id)
+
+    with pytest.raises(UserDisabled):
+        await service.complete_enrollment(user_id, method_id=str(pending.method_id), time_step=1)
+
+    assert (repo.methods, repo.recovery_codes) == (methods, {})
+
+
 # -- check_recovery() / complete_recovery() (#2344) -----------------------------------------
 
 

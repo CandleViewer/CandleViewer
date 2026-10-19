@@ -38,6 +38,7 @@ from candleviewer.auth.errors import (
     MfaCodeReused,
     MfaEnrollmentNotFound,
     PasswordPolicyViolation,
+    UserDisabled,
 )
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
 from candleviewer.auth.invite_repository import InviteAudit, InviteRepository
@@ -299,6 +300,8 @@ class InviteService:
             self._throttle.record_failure(source_ip)
             users_invites_rejected_total.labels("enrollment_invalid").inc()
             raise InviteRejected("enrollment_invalid") from exc
+        except UserDisabled as exc:  # #2911: disabled or gone since the check; nothing confirmed
+            raise self._reject("redeemed", source_ip) from exc
         pending_hash = record.pending_password_hash
         stored_role = record.role
         if not _is_viewer_role(stored_role):

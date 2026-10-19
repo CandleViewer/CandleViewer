@@ -10,7 +10,7 @@ the other's types — same composition-root pattern `UserRepository` uses.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord
 
@@ -53,13 +53,15 @@ class MfaRepository(Protocol):
         time_step: int,
         now: datetime,
         code_hashes: tuple[str, ...],
-    ) -> MfaMethodRecord | None:
+    ) -> MfaMethodRecord | Literal[False] | None:
         """#2295, ONE transaction: confirm `method_id` (`confirmed_at = now`, accepted
         `time_step`) only while `find_pending_method` would still return it, revoke every
         other unrevoked TOTP method of `user_id`, and replace the user's recovery codes
         with `code_hashes`, so the old method and codes stop working at the instant the
         new ones start. Returns the confirmed method, or `None` after rolling back when
-        the method is no longer confirmable (a concurrent confirm or enrolment won)."""
+        the method is no longer confirmable (a concurrent confirm or enrolment won).
+        `False`, rolled back before any change, when the user is `disabled` or gone: its
+        row is read first under a share lock, as `complete_recovery` reads it (#2911)."""
         ...
 
     async def find_active_totp_methods(self, user_id: str) -> tuple[MfaMethodRecord, ...]:

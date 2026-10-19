@@ -536,6 +536,79 @@ def test_confirm_reads_the_user_before_anything_is_written_or_changed(
     assert _code_hashes(stack, uid) == old_codes
 
 
+#: What the confirm's transaction did instead of committing (#2344, as on the recovery), the
+#: error it logs, the refusal row that follows, and the answer, which stays what it was:
+#: `_enrolling_caller`'s 401 for a user disabled meanwhile, a lost race's 422, otherwise a 500.
+_UNCONFIRMED: dict[str, tuple[object, str, str, AuditOutcome, tuple[int, str]]] = {
+    "lost_race": (
+        None,
+        "MfaEnrollmentNotFound",
+        "auth.mfa_failed",
+        AuditOutcome.FAILURE,
+        (422, "validation_failed"),
+    ),
+    "user_disabled": (
+        False,
+        "UserDisabled",
+        "auth.login_failed",
+        AuditOutcome.DENIED,
+        (401, "unauthenticated"),
+    ),
+    "store_error": (
+        OSError("deadlock"),
+        "OSError",
+        "auth.mfa_failed",
+        AuditOutcome.FAILURE,
+        (500, "internal_error"),
+    ),
+}
+
+
+@pytest.mark.parametrize("cause", sorted(_UNCONFIRMED))
+def test_a_confirm_that_does_not_commit_changes_nothing_and_voids_its_session(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, cause: str
+) -> None:
+    """A concurrent confirm or enrolment won after the check, the user was disabled since
+    `_enrolling_caller` read it (#2911, C-12.4: read again under the user-row lock) or the store
+    failed: the transaction rolls back and nothing changes. The refusal row follows the
+    write-ahead records and voids the session they announced (C-2.9); the error log names the
+    ids and the error class only (C-12.6)."""
+    answer, error, action, outcome, answered = _UNCONFIRMED[cause]
+    uid = _must_enrol(stack, "alice")
+    old_codes = _code_hashes(stack, uid)
+    headers = _enrolment_only(stack, "alice")
+    method_id, seed = _enrol(stack, headers)
+    methods = dict(_store(stack).methods)
+
+    async def claim(user_id: str, **_kw: Any) -> object:
+        if isinstance(answer, Exception):
+            raise answer
+        return answer  # what the unit of work answers once it rolled back
+
+    monkeypatch.setattr(_store(stack), "complete_enrollment", claim)
+    mark = len(stack.audit.records)
+    with structlog.testing.capture_logs() as logs:
+        resp = _confirm(stack, headers, method_id, stack.code(seed))
+
+    assert (resp.status_code, resp.json()["code"]) == answered
+    written = stack.audit.records[mark:]
+    assert [r["action"] for r in written] == [*_ROTATION[:3], "auth.session_created", action]
+    created, refused = written[-2:]
+    assert (refused["actor_user_id"], refused["session_id"]) == (uid, created["session_id"])
+    assert (refused["outcome"], refused["reason"]) == (outcome, cause)
+    assert refused["after_state"] == {"voids_session_created": str(created["session_id"])}
+    assert (_store(stack).methods, _code_hashes(stack, uid)) == (methods, old_codes)
+    assert stack.client.get("/auth/session", headers=headers).status_code == 200
+    commit_failed = {
+        "event": "auth.enrolment.commit_failed",
+        "log_level": "error",
+        "user_id": str(uid),
+        "new_session_id": str(created["session_id"]),
+        "error": error,
+    }
+    assert [e for e in logs if e["event"] == commit_failed["event"]] == [commit_failed]
+
+
 @pytest.mark.parametrize(("step", "proved_after"), [("revoke_all", 200), ("mint", 401)])
 def test_confirm_whose_rotation_fails_keeps_the_enrolment_and_answers_503(
     stack: Stack, monkeypatch: pytest.MonkeyPatch, step: str, proved_after: int

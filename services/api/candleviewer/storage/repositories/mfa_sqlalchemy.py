@@ -106,10 +106,10 @@ _RC_FIND = sa.text(
     "SELECT id::text AS id FROM recovery_codes WHERE user_id = CAST(:u AS uuid) "
     "AND code_hash = :h AND used_at IS NULL"
 )
-#: #2344: the recovery sign-in's unit of work. #2911: the user row first, `FOR SHARE`, as a session
-#: insert reads it (`sessions_sqlalchemy`): a disable that commits first is read as `disabled`, one
-#: that comes later queues behind this. Each conditional update then wins at most once and only
-#: for the code's and the challenge's own user.
+#: #2344: the recovery sign-in's and the enrolment's units of work. #2911: the user row first, `FOR
+#: SHARE`, as a session insert reads it (`sessions_sqlalchemy`): a disable that commits first is
+#: read as `disabled`, one that comes later queues behind this. Each conditional update then wins
+#: at most once and only for the user's own code, challenge or method.
 _LOCK_USER = sa.text(
     "SELECT status::text AS status FROM users WHERE id = CAST(:u AS uuid) "
     "AND deleted_at IS NULL FOR SHARE"
@@ -199,9 +199,15 @@ class SqlAlchemyMfaRepository:
         now: datetime,
         code_hashes: tuple[str, ...],
     ) -> Any:
-        """One unit of work (#2295): claim, revoke the other TOTP methods, replace the codes."""
+        """One unit of work (#2295): claim, revoke the other TOTP methods, replace the codes. A
+        lost claim rolls back (`None`), and so does a user who is `disabled` or gone (`False`,
+        #2911), before any change."""
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
+            user = (await run(_LOCK_USER, {"u": user_id})).first()
+            if user is None or user._mapping["status"] == "disabled":
+                await uow.rollback()
+                return False
             claim = {"id": method_id, "u": user_id, "now": now, "step": time_step}
             claimed = (await run(_CLAIM, claim)).first()
             if claimed is None:

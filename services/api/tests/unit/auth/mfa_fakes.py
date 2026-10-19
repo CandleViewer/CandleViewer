@@ -7,6 +7,7 @@ import asyncio
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.mfa_service import MfaService, _hash_token
@@ -28,7 +29,7 @@ class FakeMfaRepository:
         self.recovery_codes: dict[str, dict[str, str | None]] = {}
         # user_id -> {code_id: code_hash}, used_at tracked in `used_codes`
         self.used_codes: set[str] = set()
-        #: #2911: users `complete_recovery` reads as `disabled` or gone under its user-row lock.
+        #: #2911: users both completions read as `disabled` or gone under their user-row lock.
         self.disabled_users: set[str] = set()
         #: `security.mfa_recovery_used`, one user id per committed spend (contract, #2344).
         self.recovery_events: list[str] = []
@@ -87,9 +88,11 @@ class FakeMfaRepository:
         time_step: int,
         now: datetime,
         code_hashes: tuple[str, ...],
-    ) -> MfaMethodRecord | None:
+    ) -> MfaMethodRecord | Literal[False] | None:
         """Single-threaded fake: the claim, the revocations and the code swap happen in
         one synchronous step, the atomicity the SQL unit of work provides."""
+        if user_id in self.disabled_users:
+            return False
         if await self.find_pending_method(method_id, user_id) is None:
             return None
         claimed = self.methods[method_id].model_copy(

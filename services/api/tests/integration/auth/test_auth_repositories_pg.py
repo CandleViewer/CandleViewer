@@ -142,7 +142,8 @@ async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method
 ) -> None:
     """#2295 (Q8, Q9): a method a recovery sign-in revoked (#2344) never confirms again; a new
     enrolment supersedes the pending one; completion confirms, revokes the other TOTP methods and
-    swaps the codes in one transaction; a second completion changes nothing."""
+    swaps the codes in one transaction; a second completion changes nothing, and neither does one
+    for a user disabled since (#2911: `False`, read under the user-row lock)."""
     await seed(pg_dsn, "carol", "correct horse battery", allow_no_mfa=True)
     rel = SqlAlchemyRelationalRepository(pg_dsn)
     users = SqlAlchemyUserRepository(rel, _rec(UserRecord), clock=lambda: _NOW)
@@ -181,6 +182,16 @@ async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method
         await users.set_mfa_required(uid)
         carol = await users.find_by_id(uid)
         assert carol is not None and carol.mfa_required is True
+
+        pending = await mfa.create_pending_method(uid, secret_enc=b"3", **ref, label="")
+        disable = "UPDATE users SET status = 'disabled' WHERE id = CAST(:u AS uuid) RETURNING id"
+        await _rows(rel, disable, u=uid)
+        refused = await mfa.complete_enrollment(
+            uid, method_id=str(pending.id), time_step=4, now=_NOW, code_hashes=("c" * 64,)
+        )
+        assert refused is False
+        assert await mfa.find_pending_method(str(pending.id), uid) is not None
+        assert await mfa.find_unused_recovery_code(uid, code_hash=new_codes[0]) is not None
     finally:
         await rel.dispose()
 
