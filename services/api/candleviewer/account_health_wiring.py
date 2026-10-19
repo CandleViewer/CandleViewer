@@ -16,8 +16,9 @@ read the boot-time clock, and the loops sleep on the event loop's: a wall-clock 
   A read that fails keeps the set and is a failed pass. An untracked account has no state
   (`current()` is `None`, which the order-entry gate refuses). The same read feeds the key
   standing and the key-age job (`KeyAgeNotices`), so the job runs at boot and every interval
-  after; the job only reports, so one that raises is logged and the read still tracks. The fake
-  backend has no repository, so it runs no such loop and tracks none.
+  after. The job runs last and only reports, so one that raises is logged and the read still
+  feeds the standing and tracks. The fake backend has no repository, so it runs no such loop and
+  tracks none.
 - Dead-man's-switch episodes outlive the process (#837 W5): the monitor journals each before its
   hook call (`system_events`). The tracking loop's first pass that works is the boot: it replays the
   open ones once and tracks `at_boot`, so an account with no evidence for `down_s` is owed one.
@@ -601,7 +602,7 @@ def _repository_source(
         own = [row for row in rows if row.account.env == env]
         standings.observe(own)
         enabled = frozenset(row.account.id for row in own if row.account.is_enabled)
-        try:
+        try:  # last: neither the standing nor the tracked set waits on a job that only reports
             key_ages.observe(
                 RegisteredKey(row.key_id, row.account.id, row.created_at, KeyStatus(row.status))
                 for row in own

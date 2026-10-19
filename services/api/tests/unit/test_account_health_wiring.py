@@ -28,6 +28,7 @@ from candleviewer.account_health_wiring import (
     wire_account_health,
 )
 from candleviewer.accounts.health import DMS_HOOK_TIMEOUT_S, HealthState, HealthTransition
+from candleviewer.accounts.key_age import KeyAgeNotices
 from candleviewer.accounts.verification import KeyRefused, Refusal
 from candleviewer.accounts.wallet import WalletThresholds, WalletUnavailable
 from candleviewer.accounts.wallet_topic import WalletTopic
@@ -767,6 +768,29 @@ async def test_a_key_age_job_that_raises_never_keeps_the_read_from_tracking(
     assert tracked == [HealthState.DOWN] * 4  # tracked, never connected
     errors = [(e["event"], e["error"]) for e in logs if e["log_level"] == "error"]
     assert errors == [("account_health.key_age_failed", "TypeError")] * 2
+
+
+async def test_a_key_age_job_that_raises_leaves_the_standing_and_the_tracking_to_the_read(
+    stored: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#837 W6: the job runs last, once the read has fed the key standing (the order-entry gate's
+    input) and taken the enabled accounts, so one that raises at every read holds back neither:
+    a listed account is tracked with a standing, and one gone leaves both."""
+    fed: list[bool] = []
+
+    def observe(_job: KeyAgeNotices, _keys: object) -> None:
+        fed.append(runtime.standings.standing(ACC) is not None)  # the read is in the standing
+        raise RuntimeError(_ECHO)
+
+    monkeypatch.setattr(wiring, "SystemClock", FakeClock)
+    monkeypatch.setattr(KeyAgeNotices, "observe", observe)
+    runtime = appmod.create_app(_real()).state.account_health
+    seen: list[tuple[HealthState | None, bool]] = []
+    for rows in ([_account_row(ACC)], []):  # listed, then gone
+        stored.rows = rows
+        await runtime.refresh_tracking()
+        seen.append((runtime.monitor.current(ACC), runtime.standings.standing(ACC) is not None))
+    assert seen == [(HealthState.DOWN, True), (None, False)] and fed == [True, False]
 
 
 def test_the_fake_backend_wires_the_runtime_with_no_repository_to_read() -> None:
