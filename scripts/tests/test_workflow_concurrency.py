@@ -9,8 +9,8 @@ keep groups a PR run never shares, so they are never cancelled by one.
 The orchestrator's count on 2026-10-19 found about 950 auxiliary runs against 14 `pr` runs in
 10 hours, so the auxiliary workflows also start fewer runs: the regression guard is a step of the
 `pr-metadata` job, not a workflow of its own (test_pr_metadata_yml.py), a PR body edit starts only
-the workflows that read the body, and `board-automation` runs no job unless `GOVERNANCE_ENFORCE`
-is "true" (observe-only runs enforced nothing) and runs its three close guards in one job.
+`pr-metadata`, and `board-automation` runs no job unless `GOVERNANCE_ENFORCE` is "true"
+(observe-only runs enforced nothing) and runs its three close guards in one job.
 """
 
 from __future__ import annotations
@@ -67,20 +67,21 @@ def _load(name: str) -> dict[Any, Any]:
     return doc
 
 
-# The pull_request workflows that read the PR's body, so that an `edited` event changes what they
-# judge: `pr-metadata`, whose checker reads `Closes #N` and whose regression guard reads the Bug
-# issues the body closes. Any other workflow would start a runner per body edit for nothing.
-BODY_READERS = {"pr-metadata"}
+# The pull_request workflows that must re-run when the PR's body changes (`edited`):
+# `pr-metadata`, whose checker reads `Closes #N` and whose regression guard reads the Bug issues
+# the body closes. `pr` reads the body too (its changelog-fragment gate) but by design does not
+# re-run on an edit. Any other workflow would start a runner per body edit for nothing.
+BODY_EDIT_RERUNS = {"pr-metadata"}
 
 
-def test_a_body_edit_reruns_only_the_workflows_that_read_the_body() -> None:
+def test_a_body_edit_reruns_only_pr_metadata() -> None:
     edited = set()
     for path in _pull_request_workflows():
         on = _on(yaml.safe_load(path.read_text(encoding="utf-8")))
         trigger = on.get("pull_request") if isinstance(on, dict) else None
         if "edited" in ((trigger or {}).get("types") or []):
             edited.add(path.stem)
-    assert edited == BODY_READERS
+    assert edited == BODY_EDIT_RERUNS
 
 
 ENFORCING = "vars.GOVERNANCE_ENFORCE == 'true'"

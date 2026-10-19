@@ -24,8 +24,10 @@ name: pr-metadata
 # PR cannot rewrite the gate that judges it; the head CONSTITUTION.md is read via `git show` as
 # data only. There is no fallback: if the checker is not a regular file on origin/main the job fails
 # and never runs PR code. Changing the gate's own files needs `large-pr-approved` (PR-SIZE-006).
-# The guard's tools/triage is likewise extracted from origin/main, never the PR's copy (a change to
-# it takes effect once merged; its unit tests run on the PR), and nothing is installed for it.
+# The guard's tools/triage is likewise extracted from origin/main, never the PR's copy, and nothing
+# is installed for it. A change to it takes effect once merged; on the PR only governance's
+# scripts/tests/test_pr_metadata_yml.py runs it, as a stdlib import smoke test (tests/triage is not
+# wired into CI).
 # REMAINING GAP: under `pull_request` this workflow file is itself PR-controlled, so editing
 # pr-metadata.yml is still a bypass; only the C-10.2 workflow security review catches it.
 #
@@ -53,8 +55,8 @@ jobs:
   pr-metadata:
     name: pr-metadata
     runs-on: ubuntu-latest
-    # The checker job's old 5 minutes plus the guard step's 2 (#3751): the guard does not eat into
-    # the checker's time.
+    # The old job's 5 minutes (checkout, setup and the checker, which keeps a 5-minute cap of its
+    # own) plus the guard step's 2 (#3751): the guard never eats into the checker's time.
     timeout-minutes: 7
     permissions:
       contents: read
@@ -70,6 +72,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Check PR size, title, body and rule references (live PR data)
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -120,6 +123,7 @@ jobs:
           stop="$(python -I -c 'import secrets; print(secrets.token_hex(16))')"
           echo "::stop-commands::$stop"
           cat "$log"
+          echo # ends a last line without a newline: the resume marker must start a line
           echo "::$stop::"
           [ "$rc" -ne 0 ] || exit 0
           bugs="$(grep -oE '^#[0-9]+: FAIL' "$log" | cut -d: -f1 | paste -sd ' ' -)"

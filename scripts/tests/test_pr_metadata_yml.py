@@ -80,8 +80,9 @@ def test_the_guard_can_neither_fail_nor_time_out_the_required_check() -> None:
     (python,) = [i for i, step in enumerate(steps) if step.get("id") == "python"]
     assert str(steps[python]["uses"]).startswith("actions/setup-python@")
     assert guard["continue-on-error"] is True
-    # The job's budget is the old jobs' two (5 + 2), so the guard's step budget fits inside it.
-    assert guard["timeout-minutes"] == 2
+    # The job's budget is the old jobs' two (5 + 2), so the guard's step budget fits inside it,
+    # and the checker keeps its old job's 5 minutes as a cap of its own.
+    assert (checker["timeout-minutes"], guard["timeout-minutes"]) == (5, 2)
     assert job["timeout-minutes"] >= 5 + guard["timeout-minutes"]
     # A hung guard is stopped inside the step's budget, so the step still reports CI-REG-002.
     inner = re.search(r"\btimeout (\d+) python -E -s -m tools\.triage\.run guard\b", guard["run"])
@@ -98,6 +99,17 @@ def test_the_guard_needs_no_new_permission_secret_or_package() -> None:
     for step in _steps():
         run = str(step.get("run", ""))
         assert "${{" not in run and "pip install" not in run, step.get("name")
+
+
+def test_the_checkout_fetches_main_and_leaves_no_credential() -> None:
+    # Both steps resolve refs/remotes/origin/main, which a shallow checkout of the PR's merge ref
+    # lacks; both call the API with their step's own token, so none is left in .git/config.
+    (checkout,) = [s for s in _steps() if str(s.get("uses", "")).startswith("actions/checkout@")]
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
+
+
+class Exe(str):
+    """A file's text, committed with mode 100755."""
 
 
 Files = dict[str, str | PurePosixPath]  # path -> text, or a symlink's target
@@ -118,6 +130,7 @@ def _commit(repo: Path, files: Files) -> None:
             path.symlink_to(text)
         else:
             path.write_text(text, encoding="utf-8")
+            path.chmod(0o755 if isinstance(text, Exe) else 0o644)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "change")
 
@@ -162,12 +175,27 @@ PR_COPY: Files = {"tools/triage/run.py": _stub("PR CODE RAN\n", 0)}
 
 
 def test_a_bug_closed_without_a_test_is_a_warning_and_a_summary_line(tmp_path: Path) -> None:
-    out = "#12: FAIL - closing a Bug requires a regression test\n#34: PASS - test file changed\n"
+    # Only a verdict line names a failed issue, never a number quoted inside a reason.
+    out = "#12: FAIL - closing a Bug requires a regression test\n#34: PASS - exempt: #56: FAIL\n"
     rc, log, summary = _run(tmp_path, {"tools/triage/run.py": _stub(out, 1)}, PR_COPY)
     assert rc == 1  # the step fails; continue-on-error keeps the job's result the checker's
     assert "PR CODE RAN" not in log  # main's guard judged the PR, never the PR's copy
     assert FAIL_12 in log.splitlines()
-    assert "CI-REG-001: closes Bug issue(s) #12 without" in summary and "#34" not in summary
+    assert "CI-REG-001: closes Bug issue(s) #12 without" in summary
+    assert "#34" not in summary and "#56" not in summary
+
+
+def test_a_last_line_without_a_newline_cannot_keep_workflow_commands_off(tmp_path: Path) -> None:
+    # A guard stopped mid-line (by the step's `timeout`, say): the resume marker must still start
+    # a line, or every later line, the warning included, would print as plain text.
+    out = "#12: FAIL - closing a Bug requires a regression test"
+    rc, log, summary = _run(tmp_path, {"tools/triage/run.py": _stub(out, 1)}, {})
+    match = re.search(r"^::stop-commands::(\w{32})$", log, re.MULTILINE)
+    assert match, log
+    lines, resume = log.splitlines(), f"::{match.group(1)}::"
+    assert resume in lines and FAIL_12 in lines, log
+    assert lines.index(resume) < lines.index(FAIL_12)
+    assert rc == 1 and "CI-REG-001: closes Bug issue(s) #12 without" in summary
 
 
 def test_the_guards_output_is_printed_with_workflow_commands_off(tmp_path: Path) -> None:
@@ -203,9 +231,12 @@ def test_a_guard_error_is_no_verdict_not_a_finding(tmp_path: Path) -> None:
     assert "CI-REG-001" not in log + summary
 
 
-def test_the_guard_runs_with_the_prs_number_and_no_environment_hooks(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", [str, Exe], ids=["100644", "100755"])
+def test_the_guard_runs_with_the_prs_number_and_no_environment_hooks(
+    tmp_path: Path, mode: type[str]
+) -> None:
     stub = "import sys\nprint(sys.argv[1:], sys.flags.ignore_environment, sys.flags.no_user_site)\n"
-    rc, log, _ = _run(tmp_path, {"tools/triage/run.py": stub}, {})
+    rc, log, _ = _run(tmp_path, {"tools/triage/run.py": mode(stub)}, {})
     assert rc == 0 and "['guard', '--number', '7'] 1 1" in log.splitlines()
 
 
