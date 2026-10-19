@@ -16,7 +16,7 @@ Usage:
 Required env vars: GH_REPO ("owner/name"), ISSUE_NUMBER, ACTOR_LOGIN.
 Optional: GOVERNANCE_ENFORCE ("true"/"false", default "false" == observe-only).
 
-CandleViewer is a single-owner, user-level repo (`basiltt/CandleViewer`,
+CandleViewer is a single-owner, user-level repo (`CandleViewer/CandleViewer`,
 ADR-0017 Q1) -- there is no GitHub organization, so `qa-guard` and
 `security-guard` never query org-team membership (that endpoint 404s
 unconditionally for a nonexistent org). Both instead verify, per comment,

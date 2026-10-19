@@ -8,7 +8,7 @@ wrote them. Recorded 2026-10-18.
 
 - `codeql-2.27.2-clean.sarif`: GitHub code scanning's copy of CodeQL 2.27.2 analysis 1974630613
   (PR #3338, no results), from `gh api` with `Accept: application/sarif+json` on
-  `repos/basiltt/CandleViewer/code-scanning/analyses/1974630613`. Each query pack keeps only its
+  `repos/CandleViewer/CandleViewer/code-scanning/analyses/1974630613`. Each query pack keeps only its
   first rule with a `security-severity`, without `help`.
 - `codeql-2.27.2-analyze-clean.sarif`: what the codeql job gates, as `analyze` writes it, with the
   `invocations` that code scanning's copies drop (#3372): the `javascript.sarif` of CodeQL

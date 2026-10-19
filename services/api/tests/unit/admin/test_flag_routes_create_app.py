@@ -28,7 +28,7 @@ from tests.unit.api.test_invites_create_app_e2e import _h, _login, _World
 from tests.unit.api.test_step_up_guard_create_app import _world
 
 _KEY = "rules.graph_editor"
-_LIVE, _EVIDENCE = "trading.live_enabled", "https://github.com/basiltt/CandleViewer/issues/412"
+_LIVE, _EVIDENCE = "trading.live_enabled", "https://github.com/CandleViewer/CandleViewer/issues/412"
 
 
 class _Identity:

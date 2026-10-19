@@ -77,7 +77,7 @@ Put these verbatim into **every** subagent prompt you write (copy the block in �
 | T3 | Dictated commit subjects > 100 chars; body lines > 100 chars (#2025, #2044, #2062). | Count. `awk '{ if (length($0)>100) print "LONG" }' msg.txt` before committing. |
 | T4 | `black` passes but CI runs **`ruff format`** (#2044). | Format gate is `ruff format --check`, not black. |
 | T5 | GitHub GraphQL intermittently rejects `gh pr create --label` / `gh issue create --label` ("Something went wrong"). | Create without labels, then `gh pr edit N --add-label …`. |
-| T6 | `gh issue comment -F file` fails on non-UTF-8 files (cp1252 mojibake) (#343 QA). | Post with `Get-Content -Raw -Encoding UTF8 f \| gh issue comment N -R basiltt/CandleViewer --body-file -`. |
+| T6 | `gh issue comment -F file` fails on non-UTF-8 files (cp1252 mojibake) (#343 QA). | Post with `Get-Content -Raw -Encoding UTF8 f \| gh issue comment N -R CandleViewer/CandleViewer --body-file -`. |
 | T7 | Fetching a force-pushed PR head without `+` leaves the old ref (#2041 security re-check stalled 9 h). | `git fetch origin +refs/pull/N/head:refs/remotes/pr/N`. |
 | T8 | Agents run `semgrep --config .semgrep/` on the whole dir — it **errors** on the malformed `.semgrep/tests/cv-unpinned-action.yml` and the exit code is unreliable. | Run the 33 `.semgrep/cv-*.yml` rules **individually** and read the output, not the exit code. |
 | T9 | Stacked PR auto-closed when its base branch was deleted at merge (#1947). | `gh pr edit <stacked> --base main` **before** merging the base PR; then `rebase --onto` locally (GitHub's update-branch refuses). |
@@ -383,7 +383,7 @@ Rules (non-negotiable):
 - PR: body uses the template; `Closes #N` ONLY if this PR is the whole ticket (else `Refs #N`); labels
   added AFTER create (`gh pr edit --add-label`) because GraphQL rejects labels on create; end the body
   with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`; >400 LOC needs a why-note.
-- Post comments with UTF-8 stdin: `Get-Content -Raw -Encoding UTF8 f | gh issue comment N -R basiltt/CandleViewer --body-file -`.
+- Post comments with UTF-8 stdin: `Get-Content -Raw -Encoding UTF8 f | gh issue comment N -R CandleViewer/CandleViewer --body-file -`.
 - Fetch PR heads with `git fetch origin +refs/pull/N/head:refs/remotes/pr/N`.
 - Keep file writes chunked (several small edits; nothing >~150 lines per call).
 - Remove your worktree and local branch when done; never kill processes you did not start.

@@ -76,7 +76,7 @@ merges `security-review` PRs personally; the orchestrator (Agent B's session, pe
 
 ### 3.1 Machine setup (once)
 
-1. Clone `https://github.com/basiltt/CandleViewer` (default branch `main`); `gh auth login` with the
+1. Clone `https://github.com/CandleViewer/CandleViewer` (default branch `main`); `gh auth login` with the
    owner's account. All agents commit as `basiltt`, so provenance lives in text: **sign every issue
    comment and PR body "<your RelayRoom part> (session <id>)"** and use the commit trailer
    `Co-Authored-By: Claude <noreply@anthropic.com>` (the harness adds it).

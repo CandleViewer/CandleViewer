@@ -115,7 +115,7 @@ command instead (`AGENTS.md` §4, from `services/api/`):
 **323 passed, 11 deselected, 91.17% coverage, gate met** — the backend
 suite itself is healthy.
 
-**Filed as BUG (P1):** [#1564](https://github.com/basiltt/CandleViewer/issues/1564)
+**Filed as BUG (P1):** [#1564](https://github.com/CandleViewer/CandleViewer/issues/1564)
 — `pnpm verify` gate #3 needs `cwd: path.join(REPO_ROOT, "services", "api")`
 matching the pattern gate #6 (`contract`) already uses. This directly
 blocks E02's acceptance criterion "`pnpm install --frozen-lockfile &&
@@ -386,7 +386,7 @@ near-budget result.
 
 | ID    | Severity | Summary                                                                                                                                                                                                                      | Link                                                         |
 | ----- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| BUG-1 | P1       | `pnpm verify` gate #3 (`unit-backend`) runs pytest with `cwd=REPO_ROOT` instead of `services/api/`, causing false-negative collection errors and blocking the composite gate from ever reaching gate #4+ on a clean checkout | [#1564](https://github.com/basiltt/CandleViewer/issues/1564) |
+| BUG-1 | P1       | `pnpm verify` gate #3 (`unit-backend`) runs pytest with `cwd=REPO_ROOT` instead of `services/api/`, causing false-negative collection errors and blocking the composite gate from ever reaching gate #4+ on a clean checkout | [#1564](https://github.com/CandleViewer/CandleViewer/issues/1564) |
 
 Per §11.3's severity table, this is **P1** (major feature — the primary
 local gate command — broken, workaround exists: run the underlying

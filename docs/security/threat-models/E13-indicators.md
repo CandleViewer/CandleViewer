@@ -256,7 +256,7 @@ Stated explicitly, as the ticket requires:
    as out of its scope and only consumes `Sizer`, so the Critical fail-closed row must not name it.
 4. **Zig Zag.** Confirmed `swing_high`/`swing_low` may feed structure-based trailing stops; the provisional leg
    must not. Control: E13-S05 does not publish provisional values into the registry at all (source exclusion);
-   The swing-trail consumer **E32-S04** (#930) and the client mirror E30-T01/S03 must read confirmed swings only; E35 asserts it again at evaluation if a rule reads a swing (the E35 model has no provisional row today: that row is requested on E35-X03 (#1115), which reviews the shipped engine against the E35 model, in [this comment](https://github.com/basiltt/CandleViewer/issues/1115#issuecomment-6210476412), and is not assumed). A non-confirmed swing reaching a rule is IR-11.
+   The swing-trail consumer **E32-S04** (#930) and the client mirror E30-T01/S03 must read confirmed swings only; E35 asserts it again at evaluation if a rule reads a swing (the E35 model has no provisional row today: that row is requested on E35-X03 (#1115), which reviews the shipped engine against the E35 model, in [this comment](https://github.com/CandleViewer/CandleViewer/issues/1115#issuecomment-6210476412), and is not assumed). A non-confirmed swing reaching a rule is IR-11.
 5. **Parity as a security signal.** On a rule-eligible metric a parity mismatch means the chart and the rule use
    different numbers. `indicator_parity_mismatch_total{indicator}` is therefore an **ERROR-level** security-adjacent
    event, not only a bug (§10). It does not itself stop trading; the kernel value stays authoritative.

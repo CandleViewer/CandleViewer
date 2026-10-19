@@ -1,6 +1,6 @@
 """Guard 2 -- QA sign-off (E01-T07 AC1/AC2/AC4).
 
-CandleViewer is a single-owner, user-level repo (`basiltt/CandleViewer`,
+CandleViewer is a single-owner, user-level repo (`CandleViewer/CandleViewer`,
 ADR-0017 Q1) -- there is no GitHub organization and so no `@CandleViewer/qa`
 team whose membership can be queried (`GET /orgs/{org}/teams/{team}/...`
 always 404s: the org does not exist). Per the ticket's "Agent-delivery

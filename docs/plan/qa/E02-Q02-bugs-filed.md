@@ -8,7 +8,7 @@ charter.
 
 ## BUG-1 (P2) — `pnpm verify` flakes on `@candleviewer/web#test:cov` on a cold, uncached run
 
-Filed: [#1535](https://github.com/basiltt/CandleViewer/issues/1535)
+Filed: [#1535](https://github.com/CandleViewer/CandleViewer/issues/1535)
 
 **Session:** 1. **Area:** `apps/web` coverage task under Turborepo.
 
@@ -41,7 +41,7 @@ exist before the first write.
 
 ## BUG-2 (P2) — `services/api` unit gate: hypothesis deadline flake in `test_never_drop_property.py`
 
-Filed: [#1536](https://github.com/basiltt/CandleViewer/issues/1536)
+Filed: [#1536](https://github.com/CandleViewer/CandleViewer/issues/1536)
 
 **Session:** 1. **Area:** `services/api/tests/unit/bus/test_never_drop_property.py`.
 
@@ -71,7 +71,7 @@ minimal fix and does not weaken the property under test.
 
 ## BUG-3 (P2) — README's `make up` port-conflict Troubleshooting list is incomplete and one entry is wrong
 
-Filed: [#1537](https://github.com/basiltt/CandleViewer/issues/1537)
+Filed: [#1537](https://github.com/CandleViewer/CandleViewer/issues/1537)
 
 **Session:** 2 (static). **Area:** `/README.md` Troubleshooting section vs.
 `infra/compose/docker-compose.yml`.
@@ -94,7 +94,7 @@ profiles) `and 9002/9003 if using --profile cold`.
 
 ## BUG-4 (P1) — Compose image digests are well-formed placeholders, not real resolved digests
 
-Filed: [#1538](https://github.com/basiltt/CandleViewer/issues/1538)
+Filed: [#1538](https://github.com/CandleViewer/CandleViewer/issues/1538)
 
 **Session:** 2 (static). **Area:** `infra/compose/docker-compose.yml`.
 

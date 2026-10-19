@@ -206,14 +206,14 @@ this document resolves to an actual ticket.
   - Abuse cases in §10 are confirmed handed to `E03-Q01`'s exploratory charter and to the deferred R1
     audit `E03-X03`, per acceptance criterion / Definition of Done.
   - Record: GitHub issue #110, comment
-    <https://github.com/basiltt/CandleViewer/issues/110#issuecomment-5830796644>.
+    <https://github.com/CandleViewer/CandleViewer/issues/110#issuecomment-5830796644>.
 
 ## 9. Sign-off
 
 **Status: SIGNED OFF.** basiltt (Owner/Approver), 2026-09-25 — **APPROVE**. This document is accepted
 as the R0 gate evidence for E03 supply-chain STRIDE coverage per `30-release-roadmap.md` §4.4. Recorded
 on GitHub issue #110:
-<https://github.com/basiltt/CandleViewer/issues/110#issuecomment-5830796644>.
+<https://github.com/CandleViewer/CandleViewer/issues/110#issuecomment-5830796644>.
 
 ## 10. Abuse cases handed to `E03-Q01` and `E03-X03`
 

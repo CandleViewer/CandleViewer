@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a vulnerability
-    url: https://github.com/basiltt/CandleViewer/security/policy
+    url: https://github.com/CandleViewer/CandleViewer/security/policy
     about: Found a security vulnerability? Do not file a public issue — see SECURITY.md for the private reporting route.
   - name: Discussions
-    url: https://github.com/basiltt/CandleViewer/discussions
+    url: https://github.com/CandleViewer/CandleViewer/discussions
     about: Ask questions and discuss ideas with the community

@@ -16,7 +16,7 @@ def _issue(**overrides) -> Issue:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GH_REPO", "basiltt/CandleViewer")
+    monkeypatch.setenv("GH_REPO", "CandleViewer/CandleViewer")
     monkeypatch.setenv("ISSUE_NUMBER", "1")
     monkeypatch.setenv("ACTOR_LOGIN", "some-human")
     monkeypatch.delenv("GOVERNANCE_ENFORCE", raising=False)
@@ -36,7 +36,7 @@ def test_annotate_write_access_flags_failure() -> None:
 
     comments = [Comment(author_login="bob", body="x")]
     with patch("scripts.gh.gh_adapter.has_write_access", side_effect=GhApiError("boom")):
-        annotated, failed = run_guard._annotate_write_access(comments, "basiltt/CandleViewer")
+        annotated, failed = run_guard._annotate_write_access(comments, "CandleViewer/CandleViewer")
     assert failed is True
     assert annotated[0].author_has_write_access is False
     assert annotated[0].write_access_check_failed is True
@@ -45,7 +45,7 @@ def test_annotate_write_access_flags_failure() -> None:
 def test_annotate_write_access_marks_holder() -> None:
     comments = [Comment(author_login="bob", body="x")]
     with patch("scripts.gh.gh_adapter.has_write_access", return_value=True):
-        annotated, failed = run_guard._annotate_write_access(comments, "basiltt/CandleViewer")
+        annotated, failed = run_guard._annotate_write_access(comments, "CandleViewer/CandleViewer")
     assert failed is False
     assert annotated[0].author_has_write_access is True
 

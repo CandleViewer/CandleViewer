@@ -28,7 +28,7 @@ from collections.abc import Callable
 from typing import Any
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "basiltt/CandleViewer"
+REPO = "CandleViewer/CandleViewer"
 OWNER = "basiltt"
 WAIVER_REF = "#1778"
 GhFn = Callable[[list[str]], Any]

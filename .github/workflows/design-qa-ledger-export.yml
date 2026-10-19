@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   export:
-    if: github.repository == 'basiltt/CandleViewer'
+    if: github.repository == 'CandleViewer/CandleViewer'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

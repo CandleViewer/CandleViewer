@@ -5,8 +5,8 @@
   S4 PR #3238, whose later deltas and rebase checks, to its merged head 7dc93b27, were opus security and opus
   code, APPROVE x2). Owner acceptance of the §13.2 residuals (RR-17) and the Owner decisions D7 (#3084) and D8
   (#1085) are pending, queued on #2701
-  ([RR-17 and D8](https://github.com/basiltt/CandleViewer/issues/2701#issuecomment-6244844061),
-  [D7](https://github.com/basiltt/CandleViewer/issues/2701#issuecomment-6231423922)); review log at the end of §13.
+  ([RR-17 and D8](https://github.com/CandleViewer/CandleViewer/issues/2701#issuecomment-6244844061),
+  [D7](https://github.com/CandleViewer/CandleViewer/issues/2701#issuecomment-6231423922)); review log at the end of §13.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow
   (C-12.1), in the four-question frame: what are we building (§1 to §3), what can go wrong (§4, §6 to §9), what
   are we going to do about it (§5, §10 to §12), did we do a good job (§13). Format mirrors `E27-accounts.md`. It

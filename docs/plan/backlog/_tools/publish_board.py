@@ -39,7 +39,7 @@ ALL_TICKETS = os.path.join(BACKLOG, "all-tickets.json")
 LEDGER_PATH = os.path.join(HERE, "published.json")
 FAILURES_PATH = os.path.join(HERE, "publish_failures.json")
 
-REPO = "basiltt/CandleViewer"
+REPO = "CandleViewer/CandleViewer"
 PROJECT_NUMBER = "10"
 PROJECT_OWNER = "basiltt"
 PROJECT_ID = "PVT_kwHOAzoHns4BjW_b"

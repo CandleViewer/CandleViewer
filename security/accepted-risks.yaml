@@ -59,14 +59,14 @@ entries:
     reason: "LGPL-3.0 DB driver, dynamically linked, unmodified, not redistributed; SR-136 LGPL path"
     approver: "basiltt"
     expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/108"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/108"
   - id: "license:psycopg-binary@3.3.6"
     tool: license-scan
     severity: LOW
     reason: "LGPL-3.0 DB driver (binary wheel of psycopg), same basis as psycopg"
     approver: "basiltt"
     expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/108"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/108"
   # E07-T02 bootstrap-owner migration (0002_rbac_seed) prints a one-time
   # random password to stdout only, gated behind two operator-set env vars
   # (CV_BOOTSTRAP_OWNER_EMAIL and CV_BOOTSTRAP_OWNER_CONFIRM=1) so a routine
@@ -82,7 +82,7 @@ entries:
     reason: "Gated one-time bootstrap-owner password print to stdout only, never a routine-upgrade path; forced change+MFA on first login"
     approver: "basiltt"
     expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1551"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1551"
   # #3540 (first accepted under #1978): re-keyed from line 59, stale since #2612 added an
   # import above it. Pull request scans are diff-informed and never re-report an unchanged
   # line, so only a full scan (the merge queue) showed it. Triaged a false positive by
@@ -95,21 +95,21 @@ entries:
     reason: "False positive by construction: the SHA-256 digest is the lookup key for an opaque 256-bit random MFA challenge token (secrets.token_urlsafe(32)), not a password, so a slow KDF adds nothing. Re-check if the token source or the hashed value changes"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3540"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3540"
   - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:69"
     tool: codeql
     severity: HIGH
     reason: "Random 256-bit bearer mfa_token hashed with SHA-256 as a storage lookup key (high-entropy input, not a password; slow KDFs are inappropriate); CodeQL's password-hashing heuristic keys on the token name. Standing owner-delegated acceptance (run log 2026-09-25, #1778)"
     approver: "basiltt"
     expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1978"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1978"
   - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/api/exchange_keys.py:278"
     tool: codeql
     severity: HIGH
     reason: "False positive by construction: an in-memory HMAC-SHA256, keyed by a per-process random key, over the pasted exchange API key (an exchange-issued random identifier, not a password), used only to tell a reused Idempotency-Key with another API key from a replay; it only feeds the request digest held in the bounded in-memory replay cache, and nothing is persisted or logged. A slow KDF adds nothing. Re-check if the hashed value or the tag's use changes"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/836"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/836"
   # E43-T05-B1: EX-05 (http-cache-semantics) was cleared by a pnpm override to 4.3.0 (#1857) and
   # removed. EX-06 (braces) has no patched release upstream (2026-10-03); dev/build-time only
   # (lint-staged), not shipped in the runtime.
@@ -121,7 +121,7 @@ entries:
     reason: "EX-06: braces@3.0.3 - no patched version exists upstream as of 2026-10-03; dev/build-time only via lint-staged > micromatch. Re-check: re-run pnpm audit at each freeze; remove when a patched version ships"
     approver: "basiltt" # approval = owner CODEOWNER security-review merge of PR #1745
     expires: "2026-12-31"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1737"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1737"
   # #3558: the Medium and Low advisories left on main after #3494 (policy 35 §8.4) and the
   # open Dependabot alerts. 30-release-roadmap.md §4.4 R0 wants a dated entry per Medium. No
   # pnpm advisory has a fix short of a major upgrade; tauri's (2.11.1) is in its installed major
@@ -139,49 +139,49 @@ entries:
     reason: "react-router 6.30.6 ships in apps/web; fixed only in 7.18.0, a major. apps/web renders no <Link> and navigates only to its own route paths; nothing reads the login `next` parameter yet: re-decide before anything does"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
   - id: "GHSA-337j-9hxr-rhxg"
     tool: npm-audit
     severity: MEDIUM
     reason: "react-router 6.30.6 ships in apps/web; fixed only in 7.18.0, a major. The flaw is in server-side-rendering hydration; apps/web renders in the browser only and sets no hydration data"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
   - id: "GHSA-82fw-gwwq-j7x9"
     tool: npm-audit
     severity: MEDIUM
     reason: "vitest and @vitest/mocker 3.2.7, test-only, never shipped; fixed only in 4.1.11, a major (#1819 test-stack step). Reached through the mocker plugins on a dev server's socket; no package uses them or vitest browser mode. Also covers Dependabot alerts 35, 37, 41, 43, 45, 47 and 49"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
   - id: "GHSA-w5hq-g745-h8pq"
     tool: npm-audit
     severity: MEDIUM
     reason: "uuid 9.0.1 under Storybook addon-actions (packages/ui, dev-only); fixed only in 11.1.1, two majors on, and addon-actions 8.6 (latest 8.x) still needs ^9. The flaw is in v3/v5/v6 with a caller buffer; addon-actions calls only v4()"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1819"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
   - id: "GHSA-hp3w-g68c-fv3c"
     tool: npm-audit
     severity: MEDIUM
     reason: "sprintf-js 1.1.3 under electron-builder (apps/desktop packaging, build-time only); no patched release exists. Reached only through format strings an attacker controls; the build passes none"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3639"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
   - id: "GHSA-g7r4-m6w7-qqqr"
     tool: npm-audit
     severity: LOW
     reason: "esbuild 0.27.7 under tsup 8 (package builds); fixed in 0.28.1, which only tsup 9 (a major) takes. The flaw is in esbuild's development server on Windows; the builds never start it"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3639"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
   - id: "GHSA-7gmj-67g7-phm9"
     tool: dependabot
     severity: MEDIUM
     reason: "tauri 2.1.1 in the E06-T01 bench harness (packages/chart-engine/bench/matrix/tauri: spike-only, no CI workflow builds it, bundling is off, nothing ships); fixed in 2.11.1, a pin bump that needs cargo and a harness re-run. The advisory concerns which pages may use the app's IPC: the harness grants its one window no capabilities (empty permission list), defines no commands or plugins, keeps withGlobalTauri off and loads only the runner's loopback page"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3639"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3639"
   # #3549: CI's Semgrep venv (tools/ci/requirements-semgrep.txt). semgrep 1.181.0, the newest
   # release, pins mcp==1.29.0 exactly, and only mcp 1.30.0 has the fix. The entry ends inside
   # C-12.3's 30 days, so it needs no exception. No gate reads it until the alert gate lands, so
@@ -192,7 +192,7 @@ entries:
     reason: "mcp 1.29.0, pinned exactly by semgrep 1.181.0 (the newest release) in CI's Semgrep venv only; fixed in mcp 1.30.0. The flaw is in mcp's Streamable HTTP server: the security lane runs `semgrep scan`, which never starts it, and nothing ships the venv. Bump Semgrep once a release takes mcp 1.30.0"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-14"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/3672"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/3672"
   # E03 #1755 review round 4 (#1778 B5-b forbids file-level excludes): applied migration
   # 0004_instruments.py is immutable (C-5.4), so its three legacy `nosemgrep` markers
   # cannot gain reason/owner/review fields. The `exchange_code` enum value names the one
@@ -204,18 +204,18 @@ entries:
     reason: "applied migration immutable C-5.4; enum value names the exchange; B5-b"
     approver: "basiltt" # owner: security (@CandleViewer/security); approval = PR #1755 merge
     expires: "2026-12-31"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1778"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1778"
   - id: "semgrep.cv-adapter-isolation:services/api/candleviewer/migrations/versions/0004_instruments.py:46"
     tool: semgrep
     severity: HIGH
     reason: "applied migration immutable C-5.4; enum value names the exchange; B5-b"
     approver: "basiltt" # owner: security (@CandleViewer/security); approval = PR #1755 merge
     expires: "2026-12-31"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1778"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1778"
   - id: "semgrep.cv-adapter-isolation:services/api/candleviewer/migrations/versions/0004_instruments.py:52"
     tool: semgrep
     severity: HIGH
     reason: "applied migration immutable C-5.4; enum value names the exchange; B5-b"
     approver: "basiltt" # owner: security (@CandleViewer/security); approval = PR #1755 merge
     expires: "2026-12-31"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/1778"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1778"
