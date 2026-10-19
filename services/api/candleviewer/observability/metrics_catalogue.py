@@ -137,6 +137,12 @@ ENGINE_BUCKETS: Final = (
     0.05,
     0.1,
 )
+#: Indicator kernel time per instance (E13-T02): a closed-bar update takes about 1 to 6 us and a
+#: full recompute over 100k bars up to about 0.3 s (the ADR-0034 spike, CPython); 20 ms is
+#: budget #6's p95 for the fan-out path.
+INDICATOR_COMPUTE_BUCKETS: Final = (
+    1e-6, 5e-6, 2.5e-5, 1e-4, 5e-4, 2.5e-3, 0.01, 0.02, 0.05, 0.1, 0.25, 0.5
+)  # fmt: skip
 #: Storage round-trips.
 STORAGE_BUCKETS: Final = (
     0.001,
@@ -1366,6 +1372,81 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "budget health",
         _L,
         "E04",
+    ),
+    # --- Indicator kernels (E13-T02, ADR-0034, E13 threat model section 10) (planned) ------
+    # Named ahead: the engine and the `indicators.*` WS delivery that observe them are #426's
+    # second PR. `indicator` is a server kernel id (10), `where` is `server`.
+    _s(
+        "indicator_compute_seconds",
+        "histogram",
+        "seconds",
+        ("indicator", "where"),
+        "Indicator kernel time per instance: one closed-bar update, or one full recompute, by "
+        "indicator and where it ran (server: the backend kernel).",
+        "n/a (E13-Q03 owns the perf gate)",
+        _P,
+        "E13",
+        INDICATOR_COMPUTE_BUCKETS,
+        max_series=10,
+    ),
+    _s(
+        "indicator_cache_hits_total",
+        "counter",
+        "reads",
+        (),
+        "Indicator reads served by an instance already running for that symbol and spec_hash "
+        "(memoised, 24 section 7.3).",
+        "n/a",
+        _P,
+        "E13",
+        max_series=1,
+    ),
+    _s(
+        "indicator_cache_misses_total",
+        "counter",
+        "reads",
+        (),
+        "Indicator reads that had to start an instance: none ran for that symbol and spec_hash.",
+        "n/a",
+        _P,
+        "E13",
+        max_series=1,
+    ),
+    _s(
+        "indicator_recompute_total",
+        "counter",
+        "recomputes",
+        ("reason",),
+        "Indicator series recomputed from an earlier bar: amended (a late trade changed a "
+        "closed bar), param_change, or backfill (re-primed from stored bars).",
+        "n/a",
+        _P,
+        "E13",
+        max_series=3,
+    ),
+    _s(
+        "indicator_subscriptions",
+        "gauge",
+        "users",
+        ("bucket",),
+        "Users holding server indicator instances, by how many they hold: 1, 2-4, 5-7 or 8 (the "
+        "SR-E13-03 per-user cap). Never a user id (IR-21).",
+        "bucket 8 held: a user at the cap (IR-31)",
+        _P,
+        "E13",
+        max_series=4,
+    ),
+    _s(
+        "indicator_cap_rejected_total",
+        "counter",
+        "requests",
+        ("cap",),
+        "Server indicator requests refused by a cap: user, symbol or process instances "
+        "(SR-E13-03), the window or the recompute slots (SR-E13-04).",
+        "sustained = abuse or caps too low (SR-E13-03/04)",
+        _P,
+        "E13",
+        max_series=5,
     ),
     # --- Statechart (E50) ---------------------------------------------------
     _s(

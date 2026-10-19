@@ -283,6 +283,28 @@ def test_account_health_and_key_age_series_are_bounded_by_their_closed_sets() ->
     assert specs["cv_account_dms_journal_failures_total"] == ("counter", (), 1, "E27")
 
 
+def test_indicator_metrics_are_planned_bounded_and_never_per_user() -> None:
+    """E13-T02 (#426 decision D8): declared ahead of the engine and the WS delivery that observe
+    them; `indicator_subscriptions` is bucketed by instances held, never labelled by user (IR-21,
+    SR-125's `DISALLOWED_LABEL_NAMES`)."""
+    specs = {
+        s.name: (s.kind, s.labels, s.max_series, s.status, s.owner_epic)
+        for s in CATALOGUE
+        if s.name.startswith("indicator_")
+    }
+    assert specs == {
+        "indicator_compute_seconds": ("histogram", ("indicator", "where"), 10, "planned", "E13"),
+        "indicator_cache_hits_total": ("counter", (), 1, "planned", "E13"),
+        "indicator_cache_misses_total": ("counter", (), 1, "planned", "E13"),
+        "indicator_recompute_total": ("counter", ("reason",), 3, "planned", "E13"),
+        "indicator_subscriptions": ("gauge", ("bucket",), 4, "planned", "E13"),
+        "indicator_cap_rejected_total": ("counter", ("cap",), 5, "planned", "E13"),
+    }
+    compute = next(s for s in CATALOGUE if s.name == "indicator_compute_seconds")
+    assert compute.buckets is not None and 0.02 in compute.buckets  # budget #6's p95 edge
+    assert "user" in DISALLOWED_LABEL_NAMES
+
+
 def test_labels_exercised_contain_no_personal_data() -> None:
     m = Metrics("live")
     register_r0(m)
