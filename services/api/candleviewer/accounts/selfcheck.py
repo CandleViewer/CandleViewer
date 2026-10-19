@@ -68,8 +68,8 @@ Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admi
 `watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
 minute, so a job that stalls or dies still latches `STALE` once a key's last pass is past its
 window; if that loop dies, `watch_ended()` latches `UNAVAILABLE`. It counts missed runs and
-publishes the oldest key's age, the soonest expiry and, as a run's end and a failure do, the pages'
-gauges (`_failing()`, #836 slice 2c2). `/readyz` is anonymous (SR-010), so it gets
+publishes the oldest key's age, the soonest expiry and, as a run's end and a failure do, the
+alerts' gauges (`_failing()`, #836 slice 2c2). `/readyz` is anonymous (SR-010), so it gets
 the key count and the oldest age only (`ages()`, no key id); each key's age goes to the debug log,
 never to a series labelled by key (decision 13 on #836). `key_selfcheck_wiring` builds the job on
 the real backend.
@@ -317,7 +317,7 @@ class KeySelfCheck:
         self._ran_at: datetime | None = None
         self._missed = 0
         self._expiry: datetime | None = None
-        #: Whether this job latched the gate: its page's gauge, which only a restart resets.
+        #: Whether this job latched the gate: its alert's gauge, which only a restart resets.
         self._latched = False
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
@@ -392,7 +392,7 @@ class KeySelfCheck:
             except TimeoutError:
                 logger().critical("key_selfcheck_boot_unfinished")
                 self._latch(UNAVAILABLE)
-                self._ran("error")  # counted, and the pages' gauges published (a failure found)
+                self._ran("error")  # counted, and the alerts' gauges published (a failure found)
             self._task = spawn(self._loop(), name="key-selfcheck")
             self._task.add_done_callback(self._loop_ended)
 
@@ -475,14 +475,14 @@ class KeySelfCheck:
                 self._ran(next((o for o in ("failed", "inconclusive") if o in outcomes), "passed"))
 
     def _ran(self, result: str) -> None:
-        """Count the run, and publish the pages' gauges."""
+        """Count the run, and publish the alerts' gauges."""
         self._m.get("cv_key_selfcheck_runs_total").labels(result).inc()
         self._failing()
 
     def _failing(self) -> None:
         """Publish each rule's failing keys (every rule, 0 when none), then whether this job latched
-        the gate, in that order. Only that write order is promised: a scrape reads the two series
-        one after the other. Callers publish after enforcing, so a fault withholds nothing."""
+        the gate, in that order. The catalogue lists the latch first, so a scrape that sees it as 1
+        sees the failing counts. Callers publish after enforcing: a fault withholds nothing."""
         codes = [c.code for c in tuple(self.results.values()) if c.outcome == "failed"]
         for rule in Rule:
             self._m.get("cv_keys_failing_policy").labels(rule.value).set(codes.count(rule.value))
@@ -617,7 +617,7 @@ class KeySelfCheck:
         )
         await self._disarm(PolicyDisarm(account_id, rule, now))
         await self._violation(key, account_id, verdict)
-        self._failing()  # its page now, not after the run's other keys
+        self._failing()  # its alert now, not after the run's other keys
 
     async def _violation(self, key: UUID, account_id: UUID, verdict: VerificationResult) -> None:
         """`security.key_policy_violation`, after the rule code and the disarm: a refused or

@@ -19,9 +19,9 @@ the loop and the error type: see [`account-health.md`](account-health.md).
 
 ## Symptom: read-only with `accounts.key_selfcheck_failed`
 
-Signals: the page `KeySelfCheckFailed`, one alert per failing rule; `/readyz` reports `degraded`
-with a failing `accounts` check; every WS client gets the critical `system` notice with this reason
-and the text "Trading disabled: a stored API key failed its check."; at start-up the log
+Signals: the ticket `KeySelfCheckFailed` (page promotion pending owner approval, #2701), one alert
+per failing rule; `/readyz` reports `degraded` with a failing `accounts` check; every WS client gets
+the critical `system` notice: "Trading disabled: a stored API key failed its check."; at start-up the log
 says `starting in read-only mode (accounts.key_selfcheck_failed)`; the critical log
 `key_selfcheck_failed` names the key id and the failing rules; the audit log has `account.tested`
 (outcome failure, severity critical, `reason` the rule, `object_id` the key id), then, if the
@@ -50,6 +50,7 @@ or that column by hand (C-2.9).
 
 Find the key and the rule as an Owner (`GET $API/admin/audit?action=account.tested`), then fix the
 key at the exchange. The whitelist is edited in the exchange's web dashboard only (ADR-0009).
+Until `rotateApiKey` (#897) and `revokeApiKey` (#898) ship, "replace" and "store" below wait: `createApiKey` answers 409 while the key is active, and a key deleted at the exchange keeps failing (`key_wrong_environment`), so order entry stays read-only; fix the key in place where you can.
 
 | Rule                                                    | Fix at the exchange                                                                                                                              |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -86,16 +87,16 @@ with no verdict keeps the failure, logs `key_selfcheck_failed` with `restored` t
 again; only a pass clears it (decision 3 on #836).
 Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a new
 `account.tested` with outcome success for the key. `KeySelfCheckFailed` resolves once a pass finds
-no failing key, and `KeySelfCheckLatched` then pages until the restart. The disarmed account stays
+no failing key, and `KeySelfCheckLatched` then fires until the restart. The disarmed account stays
 disarmed: re-arming `trading_enabled` has no operation yet, so a force-disabled account has no
 audited way back until #3657 ships (decision 16 on #836). Never re-arm in SQL (C-2.9).
 
 ## Symptom: read-only with `accounts.key_verification_stale` or `accounts.key_selfcheck_unavailable`
 
-Pages: `KeySelfCheckLatched` (the latch, until the restart: a passing run never ends it) and
-`KeySelfCheckRunMissed` (a run is overdue; it ends 2 h after the last missed run, not at the
-restart). WS clients get "Trading disabled: a stored API key has no recent passing check." or
-"Trading disabled: the stored API keys could not be checked."
+Tickets (page promotion pending owner approval, #2701): `KeySelfCheckLatched` (the latch, until the
+restart: a passing run never ends it) and `KeySelfCheckRunMissed` (a run is overdue; it ends 2 h
+after the last missed run, not at the restart). WS clients get "Trading disabled: a stored API key
+has no recent passing check." or "Trading disabled: the stored API keys could not be checked."
 
 No verdict was possible, so no key is blamed and nothing is disarmed. `stale`: a key has had no
 passing check for the interval plus 15 minutes; the warning log `key_selfcheck_inconclusive` and

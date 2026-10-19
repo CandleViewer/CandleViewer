@@ -723,7 +723,7 @@
           "refId": "A"
         }
       ],
-      "title": "Stored API keys failing the self-check, by rule (dashed: pages at 1)",
+      "title": "Stored API keys failing the self-check, by rule (dashed: ticket at 1)",
       "type": "timeseries"
     },
     {

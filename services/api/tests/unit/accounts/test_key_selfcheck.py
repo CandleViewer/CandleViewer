@@ -1013,7 +1013,7 @@ def sample(w: World, name: str, **labels: str) -> float | None:
     return w.metrics.registry.get_sample_value(name, {"env": "demo", **labels})
 
 
-FAILING, LATCH = "cv_keys_failing_policy", "cv_key_selfcheck_latch_state"  # the pages' gauges
+FAILING, LATCH = "cv_keys_failing_policy", "cv_key_selfcheck_latch_state"  # the alerts' gauges
 
 
 @pytest.mark.parametrize(
@@ -1049,7 +1049,7 @@ async def test_the_watchdog_latches_stale_once_a_last_pass_is_past_its_window(
     assert (w.of("latch"), stale) == (([("latch", STALE)], [[str(KEY2)]]) if latched else ([], []))
     gauge = [sample(w, LATCH)]  # the watchdog publishes its latch at once
     del w.infos[KEY2]
-    await w.run()  # every key passes: the latch's page gauge holds until a restart resets it
+    await w.run()  # every key passes: the latch's alert gauge holds until a restart resets it
     assert [*gauge, sample(w, LATCH)] == [float(latched)] * 2
 
 
@@ -1097,9 +1097,11 @@ async def test_a_failure_publishes_its_rule_then_the_latch_before_the_next_key_i
     monkeypatch.setattr(w, "key_info", key_info)
     monkeypatch.setattr(w.metrics, "get", spy := Mock(wraps=w.metrics.get))
     await w.run()
-    assert seen == [(1.0, 1.0)]  # KeySelfCheckFailed at once; the latch page waits on it
-    pages = [c.args[0] for c in spy.call_args_list if c.args[0] in (FAILING, LATCH)]
-    assert pages and pages == ([FAILING] * len(Rule) + [LATCH]) * (len(pages) // (len(Rule) + 1))
+    assert seen == [(1.0, 1.0)]  # KeySelfCheckFailed at once; the latch alert waits on it
+    writes = [c.args[0] for c in spy.call_args_list if c.args[0] in (FAILING, LATCH)]
+    assert writes and writes == ([FAILING] * len(Rule) + [LATCH]) * (len(writes) // (len(Rule) + 1))
+    families = [f.name for f in w.metrics.registry.collect()]
+    assert families.index(LATCH) < families.index(FAILING)  # a scrape reads the latch first
 
 
 async def test_the_watchdog_before_any_run_counts_and_latches_nothing() -> None:
@@ -1275,7 +1277,7 @@ async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
 
     monkeypatch.setattr(w.metrics, "get", get)
     with pytest.raises(KeyError) if series in (FAILING, LATCH) else nullcontext():
-        await w.run()  # only the pages' gauges, set at the run's end, escape its per-key guard
+        await w.run()  # only the alerts' gauges, set at the run's end, escape its per-key guard
     assert (w.kinds(), w.gate.reason_code) == (WITHDRAW_FAILURE, FAILED)
 
 
@@ -1375,7 +1377,7 @@ async def test_a_boot_pass_cut_while_the_violation_record_hangs_leaves_the_disar
     assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
     assert (w.gate.reason_code, w.armed[ACCT]) == (FAILED, False)
     assert w.disarms[ACCT] == ["key_withdraw_permission", NOW, NOW]  # its record sent and marked
-    assert sample(w, "cv_keys_failing_policy", rule="key_withdraw_permission") == 1.0  # its page
+    assert sample(w, "cv_keys_failing_policy", rule="key_withdraw_permission") == 1.0  # its alert
 
 
 async def test_a_verdict_with_several_failures_records_and_disarms_its_first_rule() -> None:

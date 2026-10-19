@@ -307,8 +307,8 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("1447m", True, {_OVERDUE: _A_DAY_APART}),
         ("6m", False, {_OVERDUE: _ZERO, _WARN: _RISE}),
     ),
-    # #836: a latch pages and holds until the restart that rebinds the gauge at 0. While a key
-    # fails it is quiet (KeySelfCheckFailed pages); once that key passes, the latch pages again.
+    # #836: a latch fires and holds until the restart that rebinds the gauge at 0. While a key
+    # fails it is quiet (KeySelfCheckFailed fires); once that key passes, the latch fires again.
     "KeySelfCheckLatched": (
         ("5m", True, {_LATCH: "0+0x2 1+0x10"}),
         ("5m", False, {_LATCH: "1+0x10", _FAILING.format(_WD): "1+0x10"}),
@@ -318,7 +318,7 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
 }
 
 #: alert -> cases of (eval_time, {series: values}, the `rule` of each alert expected): #836's
-#: failing-key page fires once per failing rule, for every rule, and never for a rule at 0.
+#: failing-key alert fires once per failing rule, for every rule, and never for a rule at 0.
 BY_RULE: dict[str, tuple[tuple[str, dict[str, str], tuple[str, ...]], ...]] = {
     "KeySelfCheckFailed": (
         ("5m", {_FAILING.format(_WD): "0+0x2 1+0x10"}, (_WD,)),
