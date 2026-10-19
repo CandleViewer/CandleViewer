@@ -10,8 +10,9 @@ folds them into its merge at the frame bound rather than overflow. `never_thrott
 its latest payload only (§6.4), whatever `coalesce` says.
 
 Exactly one pending update leaves verbatim, with its binary `part`, its own replay `ts_ms` and its
-producer's own `coalesced_count`; two or more leave as one merged structured payload with the sum
-of their counts (each at least 1; an append batch counts 1) and the latest `ts_ms` (the
+producer's own `coalesced_count` (a heatmap update that holds a bucket twice is read like a whole
+frame as it leaves, below); two or more leave as one merged structured payload with the sum of
+their counts (each at least 1; an append batch counts 1) and the latest `ts_ms` (the
 emitter adds the §8.2 disclosure). While every update in a window carried a part of its family's
 body kind (`_BODY_KINDS`, §3.4), the merged payload keeps one (#3353): a `book` delta at their
 scales, a `trades` batch of their records (unless it carries `dropped` prints, which kind 3 has no
@@ -21,8 +22,10 @@ Any other merged frame is structured, even for a binary subscriber. An update th
 nothing new is discarded
 as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`), or a
 column for a heatmap bucket already sent complete, by a window or by the snapshot that seeded the
-queue (`seed`). An update's envelope `meta` (bars: the
-`include_delta` echo) leaves with it; a merged window carries its last update's.
+queue (`seed`); a heatmap frame queued whole (`coalesce: false`) loses such columns as it is
+queued and again as it leaves, and is not queued at all when none is left (#3423). An update's
+envelope `meta` (bars: the `include_delta` echo) leaves with it; a merged window carries its last
+update's.
 
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
 (§8.4) counts pending state as well as queued frames; every buffer is also bounded by count. A
@@ -45,7 +48,7 @@ from __future__ import annotations
 import copy
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from decimal import Context, Decimal, Inexact
 from typing import Any, Final, Literal
@@ -196,6 +199,12 @@ class _Merge(ABC):
         """Raise if `body` is queued as a whole frame that `emitted` cannot
         read. The merge path checks the same fields as it merges."""
         return None
+
+    def unsent(self, body: dict[str, Any]) -> dict[str, Any] | None:
+        """`body`, a whole frame as it is queued and again as it leaves, without what the client
+        has by then: `body` itself when nothing is dropped, None when nothing is left. Only a
+        heatmap drops anything."""
+        return body
 
     def emitted(self, body: Payload) -> None:
         """Called with each emitted payload; only a family that remembers what it sent uses it."""
@@ -400,7 +409,7 @@ class _HeatmapMerge(_KeyedMerge):
     """§8.2 `heatmap`: per time-bucket column, last write wins; once a bucket's complete column
     was sent, any later column for that bucket is dropped, so a final column is never re-sent or
     regressed, unless the update also changes a root field (e.g. `max_value`). Columns leave in
-    time order."""
+    time order. A frame queued whole (`coalesce: false`) loses such columns too (`unsent`)."""
 
     def __init__(self, limit: int) -> None:
         super().__init__(limit, "columns", _t_key)
@@ -422,8 +431,13 @@ class _HeatmapMerge(_KeyedMerge):
             self.root_bytes = _size(self.root)
         return changed
 
+    def is_final(self, key: Hashable) -> bool:
+        """The bucket's complete column was sent, by a window, a whole frame or the snapshot that
+        seeded the queue: any later column for it is dropped (§8.2)."""
+        return key in self.sent
+
     def upsert(self, key: Hashable, item: Payload) -> bool:
-        if key in self.sent:
+        if self.is_final(key):
             self.trimmed = True
             return False
         return super().upsert(key, item)
@@ -438,9 +452,33 @@ class _HeatmapMerge(_KeyedMerge):
                 raise TypeError("a heatmap column is an object")
             _t_key(col)
 
+    def unsent(self, body: dict[str, Any]) -> dict[str, Any] | None:
+        """A whole frame without its columns of final buckets, as `upsert` drops them from a
+        window: sent complete (`is_final`), or completed by an earlier column of this frame, which
+        the client reads first. None when that leaves a frame that had columns with none, whether
+        or not a root field changed. A frame with no column to begin with, or with one that cannot
+        be read (`validate` refuses it, and `take` behind it), stays as it is."""
+        columns = body.get("columns")
+        if not isinstance(columns, Sequence):
+            return body
+        kept: list[Any] = []
+        last: dict[Hashable, Payload] = {}  # per bucket, the last column kept: it ends the bucket
+        try:
+            for col in columns:
+                key = _t_key(col)
+                if self.is_final(key) or (key in last and _complete(last[key])):
+                    continue
+                kept.append(col)
+                last[key] = col
+        except (ArithmeticError, LookupError, TypeError, ValueError):
+            return body
+        if len(kept) == len(columns):
+            return body
+        return {**body, "columns": kept} if kept else None
+
     def emitted(self, body: Payload) -> None:
         for col in body.get("columns") or ():
-            if col.get("complete") is True:
+            if _complete(col):
                 self.sent[int(col["t_ms"])] = None
         while len(self.sent) > SENT_COLUMNS_MEMORY:
             del self.sent[next(iter(self.sent))]
@@ -582,6 +620,11 @@ def _id_key(item: Payload) -> Hashable:
 
 def _t_key(item: Payload) -> Hashable:
     return int(item["t_ms"])
+
+
+def _complete(column: Payload) -> bool:
+    """§8.2: a heatmap column completes its bucket when `complete` is the JSON `true`."""
+    return column.get("complete") is True
 
 
 def _symbol_key(item: Payload) -> Hashable:
@@ -744,6 +787,12 @@ class CoalescingQueue:
                 size = _size(emission.body)
                 if merge is not None:
                     merge.validate(emission.body)  # `take` never meets a frame it can't read
+                    if (kept := merge.unsent(emission.body)) is not emission.body:
+                        if kept is None:
+                            return  # nothing in it is new: a merging window discards it as well
+                        # a part would still carry the dropped columns, so it goes with them
+                        emission = Emission(kept, None, count, ts_ms, meta)
+                        size = _size(kept)
                 self._frames.append(emission)
                 self._frame_bytes += size
                 self._bound()
@@ -832,7 +881,9 @@ class CoalescingQueue:
     def take(self) -> list[Emission]:
         """The frames to emit now (none after a refusal), resetting the pending state. They count
         as delivered (a heatmap remembers the complete buckets it sent): a caller that drops any
-        of them must `clear()` the queue and re-snapshot the topic."""
+        of them must `clear()` the queue and re-snapshot the topic. Each is read, in the order it
+        leaves, against what the frames before it in this take just sent, which no frame knew when
+        it was queued: a heatmap's whole frame loses a column of a bucket one of them completed."""
         if self.refusal is not None:
             return []
         merge = self._merge
@@ -841,8 +892,16 @@ class CoalescingQueue:
                 self._close_window(merge)
             out, self._frames, self._frame_bytes = self._frames, [], 0
             if merge is not None:
+                leaving: list[Emission] = []
                 for emission in out:
+                    body = merge.unsent(emission.body)
+                    if body is None:
+                        continue
+                    if body is not emission.body:  # its part mirrored the columns just dropped
+                        emission = replace(emission, body=body, part=None)
                     merge.emitted(emission.body)
+                    leaving.append(emission)
+                out = leaving
         except Exception as exc:  # `offer` validated these: never raise here (fail closed)
             self._refuse(exc)
             return []
@@ -881,8 +940,9 @@ class CoalescingQueue:
 
     def seed(self, sent: Iterable[int], root: Payload) -> None:
         """What the topic's snapshot sent, for a queue made after it (`Pacer.snapshotted`): a
-        heatmap's complete buckets (`t_ms`) and root fields, which its windows then never send
-        again (§8.2). Every other family keeps nothing across windows, so it keeps none of it."""
+        heatmap's complete buckets (`t_ms`) and root fields, which its windows and whole frames
+        then never send again (§8.2). Every other family keeps nothing across windows, so it keeps
+        none of it."""
         if self._merge is not None:
             self._merge.seed(sent, root)
 

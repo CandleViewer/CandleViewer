@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
 import pytest
-from hypothesis import assume, given
+from hypothesis import assume, example, given
 from hypothesis import strategies as st
 
 from candleviewer.ws.binary import BOOK_DELTA, FLAG_ESTIMATED, FLAG_REPLAY, HEATMAP_COLUMN, Frame
@@ -976,6 +977,247 @@ def test_coalescer_heatmap_root_change_never_resends_a_sent_bucket() -> None:
     queue.offer({**body, "columns": [_column(1, complete=False)]})
     [frame] = queue.take()
     assert frame.body == {**body, "columns": []}
+
+
+def test_coalescer_heatmap_single_update_with_a_bucket_twice_leaves_its_completing_column() -> None:
+    """A lone update leaves verbatim, and every frame is read as it leaves (#3423): one that holds
+    a bucket twice, which no producer sends, loses the later column as a whole frame does."""
+    queue = CoalescingQueue("heatmap")
+    twice = [_column(0), _column(0, complete=False)]
+    assert queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": twice})
+    [frame] = queue.take()
+    assert frame.body["columns"] == [_column(0)]
+
+
+# -- a heatmap frame that leaves whole (`coalesce: false`) is trimmed like a window (#3423) -----
+
+_HEAT = {"symbol": "X", "time_bucket_ms": 100}
+
+
+def _sent_whole(*buckets: int) -> CoalescingQueue:
+    """A whole-frame heatmap queue that has sent each of `buckets` complete."""
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    for t_ms in buckets:
+        queue.offer({**_HEAT, "columns": [_column(t_ms)]})
+    assert len(queue.take()) == len(buckets)
+    return queue
+
+
+#: A later column for a bucket sent complete: it repeats that column, differs from it, or is open.
+_LATER = pytest.mark.parametrize(
+    "later",
+    [_column(0), {**_column(0), "bids": [9.0]}, _column(0, complete=False)],
+    ids=["identical", "differing", "incomplete"],
+)
+
+
+@_LATER
+@pytest.mark.parametrize("seq", [list, tuple, deque], ids=["list", "tuple", "deque"])
+def test_coalescer_whole_heatmap_frame_of_a_sent_complete_bucket_alone_sends_nothing(
+    later: Body, seq: Callable[[list[Body]], Sequence[Body]]
+) -> None:
+    """§8.2 "Completed heatmap buckets": a complete bucket is final, so a later column for it is
+    dropped whatever it holds, and a frame left with no column is not queued."""
+    queue = _sent_whole(0)
+    assert queue.offer({**_HEAT, "columns": seq([later])})
+    assert (queue.pending, queue.pending_bytes, queue.take()) == (False, 0, [])
+
+
+def test_coalescer_whole_heatmap_frame_loses_its_sent_columns_only() -> None:
+    """The rest is as it was: root fields, column order, counts, `ts_ms` and `meta`; its part is
+    not, as it mirrored the dropped columns. The producer's body is untouched."""
+    queue = _sent_whole(0, 200)
+    new, root = [_column(300, complete=False), _column(100)], {**_HEAT, "max_value": 2.0}
+    body = {**root, "columns": [new[0], _column(0), _column(200, complete=False), new[1]]}
+    before = copy.deepcopy(body)
+    assert queue.offer(body, Frame(HEATMAP_COLUMN), ts_ms=7, meta={"k": 1}, count=3)
+    twin = CoalescingQueue("heatmap", coalesce=False)
+    assert twin.offer({**root, "columns": new})
+    assert queue.pending_bytes == twin.pending_bytes  # sized as what is left
+    assert queue.take() == [Emission({**root, "columns": new}, None, 3, 7, {"k": 1})]
+    assert body == before
+
+
+def test_coalescer_whole_heatmap_frames_keep_their_order_and_an_untouched_one_its_part() -> None:
+    queue, part = _sent_whole(0), Frame(HEATMAP_COLUMN)
+    for count, columns in enumerate(([_column(0), _column(100)], [_column(0)], [_column(200)]), 1):
+        assert queue.offer({**_HEAT, "columns": columns}, part, count=count)
+    first, last = queue.take()  # the second frame was left with no column
+    assert (first.body["columns"], first.part, first.coalesced_count) == ([_column(100)], None, 1)
+    assert (last.body["columns"], last.part, last.coalesced_count) == ([_column(200)], part, 3)
+
+
+@_LATER
+def test_coalescer_whole_heatmap_frames_in_one_window_never_regress_a_complete_bucket(
+    later: Body,
+) -> None:
+    """§8.2: a column that completes a bucket makes it final as it leaves, so a later column for it
+    in the same window does not follow it (the client would go from complete back to open), and a
+    complete one after the take is dropped: the client holds the complete column."""
+    queue, first = CoalescingQueue("heatmap", coalesce=False), {**_HEAT, "columns": [_column(0)]}
+    other = {**_HEAT, "columns": [_column(100)]}
+    assert queue.offer(first) and queue.offer({**_HEAT, "columns": [later]}) and queue.offer(other)
+    assert [f.body for f in queue.take()] == [first, other]
+    assert queue.offer({**_HEAT, "columns": [{**_column(0), "asks": [2.0]}]})
+    assert (queue.pending, queue.take()) == (False, [])
+
+
+@_LATER
+def test_coalescer_whole_heatmap_frame_with_a_bucket_twice_keeps_the_completing_column(
+    later: Body,
+) -> None:
+    """The same rule inside one frame: its columns reach the client in order, so each one after
+    the column that completes its bucket is dropped (three here: a dropped one never stands in for
+    the completing one), however many open ones came before it and whatever stands between them."""
+    queue, open_ = CoalescingQueue("heatmap", coalesce=False), _column(0, complete=False)
+    kept = [open_, _column(0), _column(100, complete=False)]
+    assert queue.offer({**_HEAT, "columns": [*kept, later, later, later]})
+    [frame] = queue.take()
+    assert frame.body["columns"] == kept
+
+
+def test_coalescer_whole_heatmap_frame_open_columns_before_a_complete_one_stay_whole() -> None:
+    """Only a complete column makes a bucket final: open ones before it are sent, with the part."""
+    queue, part = CoalescingQueue("heatmap", coalesce=False), Frame(HEATMAP_COLUMN)
+    open_ = _column(0, complete=False)
+    body = {**_HEAT, "columns": [open_, open_, _column(0)]}
+    assert queue.offer(body, part)
+    assert queue.take() == [Emission(body, part)]
+
+
+def test_coalescer_whole_heatmap_frame_trimmed_at_take_keeps_its_counts_not_its_part() -> None:
+    """The next frame of the window is trimmed as it leaves, as one trimmed as it is queued is:
+    root fields, counts, `ts_ms` and `meta` stay, and its part goes with the dropped column. What
+    it keeps is recorded as sent like any frame's: its complete bucket is final from then on."""
+    queue, part, root = CoalescingQueue("heatmap", coalesce=False), Frame(HEATMAP_COLUMN), _HEAT
+    assert queue.offer({**root, "columns": [_column(0)]}, part, count=2)
+    later = {**root, "max_value": 2.0, "columns": [_column(0, complete=False), _column(100)]}
+    assert queue.offer(later, part, ts_ms=7, meta={"k": 1}, count=3)
+    assert queue.take() == [
+        Emission({**root, "columns": [_column(0)]}, part, 2),
+        Emission({**root, "max_value": 2.0, "columns": [_column(100)]}, None, 3, 7, {"k": 1}),
+    ]
+    assert queue.offer({**root, "columns": [_column(100, complete=False)]})
+    assert not queue.pending  # bucket 100 left complete in the frame that was trimmed as it left
+
+
+def test_coalescer_whole_heatmap_emptied_frame_is_not_queued_whatever_its_root_fields() -> None:
+    """The merging path sends a changed root field with `columns: []` (above); a whole frame the
+    filter leaves with no column is not queued, `max_value` changed or not. Pinned, so that
+    sending it one day is a decision."""
+    queue = _sent_whole(0)
+    assert queue.offer({**_HEAT, "max_value": 2.0, "columns": [_column(0)]})
+    assert (queue.pending, queue.pending_bytes, queue.take()) == (False, 0, [])
+
+
+def test_coalescer_whole_heatmap_frame_is_trimmed_by_the_snapshot_that_seeded_the_queue() -> None:
+    """The memory is the merge's own, bound included: what a snapshot sent (`seed`) is final too."""
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    queue.seed(range(SENT_COLUMNS_MEMORY + 1), _HEAT)  # buckets 1 to 2000 are kept, 0 is not
+    assert queue.offer({**_HEAT, "columns": [_column(1), _column(0)]})
+    [frame] = queue.take()
+    assert frame.body["columns"] == [_column(0)]
+
+
+def test_coalescer_whole_heatmap_frame_for_a_bucket_sent_incomplete_is_sent() -> None:
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    queue.offer({**_HEAT, "columns": [_column(0, complete=False)]})
+    queue.take()
+    queue.offer({**_HEAT, "columns": [_column(0)]})
+    assert [f.body["columns"] for f in queue.take()] == [[_column(0)]]
+
+
+@pytest.mark.parametrize("coalesce", [False, True], ids=["whole", "merging"])
+@pytest.mark.parametrize("complete", [1, "true", "false", None], ids=["1", "true", "false", "none"])
+def test_coalescer_heatmap_only_the_json_true_completes_a_bucket(
+    complete: Any, coalesce: bool
+) -> None:
+    """§8.2: a column completes its bucket when `complete` is the JSON `true` and for no other
+    value, truthy or not. One that carries another value is sent and leaves the bucket open: a
+    complete column for it after the take is sent too, and inside one frame it does not end it."""
+    odd, done = {**_column(0), "complete": complete}, _column(0)
+    queue = CoalescingQueue("heatmap", coalesce=coalesce)
+    for columns in ([odd], [done]):  # one take each
+        assert queue.offer({**_HEAT, "columns": columns})
+        assert [f.body["columns"] for f in queue.take()] == [columns]
+    twice = CoalescingQueue("heatmap", coalesce=coalesce)
+    assert twice.offer({**_HEAT, "columns": [odd, done]})
+    assert [f.body["columns"] for f in twice.take()] == [[odd, done]]
+
+
+@pytest.mark.parametrize("coalesce", [False, True], ids=["whole", "merging"])
+def test_coalescer_heatmap_reads_a_bucket_by_its_t_ms_as_an_int(coalesce: bool) -> None:
+    """A bucket is its `t_ms` read as an int (`_t_key`), as `validate` and a window read it: a
+    later column that carries it as a string is that bucket's, whether an earlier take sent the
+    bucket complete or the column before it in the same frame did."""
+    as_text = {**_column(0, complete=False), "t_ms": "0"}
+    queue = CoalescingQueue("heatmap", coalesce=coalesce)
+    assert queue.offer({**_HEAT, "columns": [_column(0)]}) and len(queue.take()) == 1
+    assert queue.offer({**_HEAT, "columns": [as_text]})
+    assert (queue.pending, queue.take()) == (False, [])
+    twice = CoalescingQueue("heatmap", coalesce=coalesce)
+    assert twice.offer({**_HEAT, "columns": [_column(0), as_text]})
+    assert [f.body["columns"] for f in twice.take()] == [[_column(0)]]
+
+
+@pytest.mark.parametrize(
+    "columns", [{"columns": []}, {"columns": deque()}, {}], ids=["empty", "empty-deque", "absent"]
+)
+def test_coalescer_whole_heatmap_frame_with_no_column_to_begin_with_is_sent(columns: Body) -> None:
+    """Only a frame the filter emptied is dropped: a root-only update still leaves."""
+    queue = _sent_whole(0)
+    body = {**_HEAT, "max_value": 2.0, **columns}
+    assert queue.offer(body)
+    assert [f.body for f in queue.take()] == [body]
+
+
+@pytest.mark.parametrize(
+    "unreadable",
+    [3, {"complete": True}, {"t_ms": "abc"}, {"t_ms": float("inf")}],
+    # what `_t_key` raises on each: a TypeError, a KeyError, a ValueError, an OverflowError
+    ids=["not-an-object", "no-t_ms", "bad-t_ms", "t_ms-inf"],
+)
+def test_coalescer_whole_heatmap_frame_the_filter_cannot_read_stays_whole(
+    monkeypatch: pytest.MonkeyPatch, unreadable: Any
+) -> None:
+    """Defence in depth behind `validate`, as for `take`: a frame it let through with a column that
+    cannot be read, whichever way, is queued as it came, a sent bucket's column included, for
+    `take` to refuse."""
+    queue = _sent_whole(0)
+    monkeypatch.setattr(queue._merge, "validate", lambda body: None)
+    monkeypatch.setattr(queue._merge, "emitted", lambda body: None)  # hand the frame back
+    body = {**_HEAT, "columns": [_column(0), unreadable]}
+    assert queue.offer(body)
+    assert [f.body for f in queue.take()] == [body]
+
+
+#: One whole frame's columns, as `(t_ms, complete)`: none to three, so a frame that is trimmed, not
+#: emptied, as it leaves is drawn as well as one that is dropped.
+_WHOLE_FRAME = st.lists(st.tuples(st.sampled_from([0, 100, 200]), st.booleans()), max_size=3)
+
+
+@example([([(0, True)], False), ([(0, False)], True)])  # complete, then open, in one window
+@example([([(0, True)], False), ([(0, False), (100, True)], True), ([(100, False)], True)])
+@given(st.lists(st.tuples(_WHOLE_FRAME, st.booleans()), max_size=30))
+def test_coalescer_whole_heatmap_frames_never_resend_a_complete_bucket(
+    ops: list[tuple[list[tuple[int, bool]], bool]],
+) -> None:
+    """§8.2: however frames and takes interleave, no column of a bucket follows its complete one on
+    the wire, in the order the client reads them: across takes, within one and inside a frame. The
+    second example is a frame trimmed, not emptied, as it leaves, and then an open column for the
+    bucket it completed."""
+    queue, wire = CoalescingQueue("heatmap", coalesce=False), list[Body]()
+    for cells, cut in ops:
+        columns = [_column(t_ms, complete=complete) for t_ms, complete in cells]
+        assert queue.offer({**_HEAT, "columns": columns})
+        if cut:
+            wire += [col for out in queue.take() for col in out.body["columns"]]
+    wire += [col for out in queue.take() for col in out.body["columns"]]
+    final = set[int]()
+    for col in wire:
+        assert col["t_ms"] not in final
+        if col["complete"]:
+            final.add(col["t_ms"])
 
 
 def test_coalescer_footprint_update_without_bars_changes_nothing() -> None:
