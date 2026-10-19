@@ -18,6 +18,8 @@ from referencing import Registry, Resource
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.spec import WireBarType
 from candleviewer.ws.bars_wire import (
+    _MAX_DEC_ADJUSTED,
+    _MAX_DEC_PLACES,
     ITEM_MAX_BYTES,
     MAX_TS_SPAN_MS,
     _places,
@@ -293,7 +295,9 @@ def test_both_forms_accept_every_integer_at_its_width() -> None:
 
 
 def test_item_max_bytes_bounds_the_widest_item() -> None:
-    nines = Decimal("-" + "9" * 39 + "." + "9" * 38)  # the widest decimal `bar_item` sends
+    # the widest decimal `bar_item` sends: a sign, `_MAX_DEC_ADJUSTED + 1` integer digits, a point
+    # and `_MAX_DEC_PLACES` places (79 characters at the bounds of 38)
+    nines = Decimal("-" + "9" * (_MAX_DEC_ADJUSTED + 1) + "." + "9" * _MAX_DEC_PLACES)
     fields = (
         "open",
         "high",
