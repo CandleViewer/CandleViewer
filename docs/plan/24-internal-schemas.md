@@ -180,7 +180,7 @@ class MarketEvent(DomainEvent):
 
 ## 2. Normalized market-data events
 
-Eight event families. All are produced _only_ by the exchange adapter (§14), all are immutable, all are recorded (§13), and all can be re-emitted byte-identically by the replay engine.
+Eight event families. All are produced _only_ by the exchange adapter (§14), all are immutable, and all are recorded (§13). The replay engine re-emits them field-identical for every recorded field; the fields it derives are deterministic and listed in §13.7 (*Re-emitted events*).
 
 ```mermaid
 flowchart LR
@@ -454,7 +454,12 @@ the table's family→stream mapping is otherwise unchanged. Implemented today: `
 (snapshot + delta + `BookStatus`), `ticker`, `gap` (trade-tape `GapEvent`), feed health
 (`{env}.health.feed`), and instrument metadata changes on `{env}.instruments.{symbol}.updated`
 (`InstrumentUpdatedEvent`, published by the catalogue refresh since #1633; listed by E08-Q06,
-#283). Queue policy is chosen **per subscriber** at `Bus.subscribe` (not per topic):
+#283). **Replay namespace (E26-T03).** A replay session's re-emitted events use the same
+grammar with `env` = `replay-{session_id}`, the replay session's UUID in lower-case canonical form
+(`replay-` then 8-4-4-4-12 lower-case hex digits), e.g. `replay-0b7c5e1a-….md.BTCUSDT.trade`. `live`, `demo`,
+`testnet` and `replay-<uuid>` are the only `env` values; the bus checks a segment's charset today, and the
+stricter `env` check ships with the Injector. A replay topic never equals a live one, so live consumers never
+see replayed events and a replay's consumers subscribe to their own session's namespace only (C-2.11). Queue policy is chosen **per subscriber** at `Bus.subscribe` (not per topic):
 trade consumers must subscribe NEVER_DROP (a full queue awaits and counts
 `ingest_queue_full_total{class="trade"}`); state-like consumers use CONFLATE_LATEST or
 INVALIDATE_ON_FULL (§4.2 of `20-architecture.md`). Metric mapping per family (all
@@ -3354,6 +3359,26 @@ Derived data (bars, footprints, profiles) is a **cache over the trade tape**. An
 
 The replay engine re-emits recorded events onto the **same bus** with the **same types**, so every downstream module (book engine, bar builders, footprint, heatmap, metrics, rule engine, paper matcher, the WS protocol, the chart) runs unmodified. This is the tardis-machine pattern (research 11 §3) and it is the reason replay fidelity is structural rather than aspirational.
 
+**Re-emitted events (E26-T03).** Each recorded field is re-emitted with its stored value (field-identical).
+The fields an event needs but the recording does not hold are derived, and every derivation below is a
+pure function of stored data, the instrument's tick size and the session id, so two replays of one window
+re-emit identical events (C-2.15). A derivation never invents continuity: a recorded gap is re-emitted as
+its `ReplayGap` marker, and the replay-scoped book resyncs from the next recorded snapshot, never from the
+live feed.
+
+| Field            | Events                      | Re-emitted value                                                                                                                                                                                                                                                                      |
+| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source`         | all                         | `"replay"`                                                                                                                                                                                                                                                                            |
+| topic `env`      | all                         | `replay-{session_id}` (§2.9)                                                                                                                                                                                                                                                          |
+| `ts_event`       | all                         | the recorded `ts`                                                                                                                                                                                                                                                                     |
+| `ts_ingest`      | all                         | `ts_event` (replay reads no wall clock)                                                                                                                                                                                                                                               |
+| `event_id`       | all                         | `UUID(bytes=blake2b(session_id.bytes + ordinal.to_bytes(8, "big"), digest_size=16))`, where `ordinal` is the event's 0-based position in the session's read order (below): unique within a session, and identical across replays of it                                                |
+| `price_ticks`    | trade; book levels          | `price / tick_size`, exact, with the instrument-info cache's tick size (`Decimal`); a price that is not an exact multiple (the tick size changed after the recording, #3806) refuses the window typed rather than rounding                                                            |
+| `prev_update_id` | `BookDelta`                 | the recorded value (`orderbook_deltas.prev_update_id`, recorded from E26-T03 on). Before that: the `update_id` of the previous re-emitted book event of the same symbol and depth; the first delta after a seek or after a `ReplayGap` on the book stream takes the anchor snapshot's |
+| `ts_match`       | `BookDelta`, `BookSnapshot` | the recorded value (Bybit `cts`, recorded from E26-T03 on). Before that: `ts_event`                                                                                                                                                                                                   |
+| `cross_seq`      | book events                 | the recorded value, as an int                                                                                                                                                                                                                                                         |
+| `is_block_trade` | `TradeEvent`                | the recorded `trades.is_block`; a row recorded without it (NULL) re-emits `false`                                                                                                                                                                                                     |
+
 ```python
 class ReplaySession(BaseModel):
     session_id: UUID
@@ -3405,7 +3430,7 @@ Every component is stored data, so the order never depends on which tier served 
 
 **Read-ahead and memory ceiling (E26-T02).** `ReplaySource` (`replay/source.py`) runs the merge in one producer task that it owns and hands the batches to its one consumer through a bounded queue. A full queue blocks the producer, so a slow, paused or stalled consumer stops the storage reads and memory stays flat, and no event is dropped: the replay clock slows instead (INV-B12-c). The read-ahead holds at most `readahead_events` events (default 131 072, about 30 s of the busiest dense 200-depth minute E26-K01 measured) and `readahead_bytes` estimated bytes (64 MiB), whichever binds first, and it counts every batch the source keeps for its consumer: the queued ones, the one the producer holds and the one the consumer is iterating, so the queue has two slots fewer than the bounds allow batches. A batch ends at `batch_events` events (at most a third of the read-ahead) or at its share of the bytes less the largest row of the requested depth. `buffered_events` and `replay_readahead_depth` count the queued events. The session's memory ceiling (`memory_ceiling_bytes`, 256 MiB) includes the read-ahead: the merge's cursors share the rest, each read capped at its share in rows and at `DEFAULT_MAX_ROWS_PER_READ` (8 192), so a session too wide or a stream too dense for it ends with `ReplayMemoryCeilingExceeded` (naming the row ceiling when that, not the byte share, bound) after the events already delivered, never with an out-of-memory. Gap markers sit outside it (above). Every byte figure is an estimate (512 B an event, 128 B a snapshot level), not a resident size. The window cap is the request's `max_span_us` (`CV_REPLAY_MAX_WINDOW_HOURS`, at most 24 x 31 h) and nothing else: the source has no cap of its own and re-validates the request it is given, because `model_copy` and `model_construct` skip validation (a seek would derive its request that way). A typed failure (`ReplaySourceUnavailable`, `ReplayTierStraddle`, `ReplayMemoryCeilingExceeded`) reaches the consumer after every event merged before it, any other exception only as `ReplayInternalError` (a fixed text, the original logged by type; RP-I02) after every batch already yielded, and every storage await is bounded by `io_timeout_s`. `aclose` stops the producer (cancellation is never swallowed), waits at most `io_timeout_s` for it (a reader that ignores the cancellation is logged and left, and its producer stops at its next batch), releases every buffer and the gauge, wakes a consumer parked in another task and is idempotent; a producer cancelled by anything else ends the consumer with `ReplayInternalError` rather than a hang. The producer yields to the event loop after every batch (C-2.17); the consumer owns its own yields (`__anext__` suspends only to wait for a batch, and E26-T03's clock is to yield every 256 deliveries). A merge is read once: a second `batches()` call is refused, because resuming would skip the batch in flight, and a source's entries are dropped as soon as it is drained.
 
-**Trading in replay** routes to the local `PaperMatcher` (§12) with `environment="replay"`. It is the mechanism behind trade post-mortems ("step back through the trade against the recorded DOM") and rule backtests.
+**Trading in replay** routes to the local `PaperMatcher` (§12) with `ExecutionMode` `replay` (§1.2; it is never serialised as `environment`, which stays the paper account's `demo`). It is the mechanism behind trade post-mortems ("step back through the trade against the recorded DOM") and rule backtests.
 
 ---
 

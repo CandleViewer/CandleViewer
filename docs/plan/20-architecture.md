@@ -226,7 +226,7 @@ Common conventions for every module below:
 
 - **Module package**: `services/api/candleviewer/<module>/` with `__init__.py` exporting only the public interface, `service.py` (lifecycle), `models.py` (pydantic v2 domain types), `errors.py`, and internal implementation files.
 - **Lifecycle contract**: every module implements `async def start(ctx: AppContext) -> None`, `async def stop(grace_s: float) -> None`, `def health() -> HealthReport`. The app supervisor (§6.2) starts modules in dependency order and stops them in reverse.
-- **Bus contract**: publish through `Bus.publish(topic, event)`; subscribe through `Bus.subscribe(topic, queue_policy)`. Topics are strings of the form `{env}.{domain}.{symbol?}.{detail?}`.
+- **Bus contract**: publish through `Bus.publish(topic, event)`; subscribe through `Bus.subscribe(topic, queue_policy)`. Topics are strings of the form `{env}.{domain}.{symbol?}.{detail?}`. `{env}` is `live`, `demo` or `testnet` for the live pipelines, or `replay-{session_id}` for one replay session's re-emitted events (§3.9, 24 §2.9): the replay session's UUID in lower-case canonical form, so a replay topic never equals a live, demo or testnet one (C-2.11).
 - **Time**: all timestamps are integer microseconds since epoch, UTC, sourced from the exchange event time when available (`exch_ts`) plus a locally stamped `recv_ts`. Never use wall-clock for ordering.
 
 ### 3.1 Ingestion
@@ -465,13 +465,13 @@ The matcher exposes the **same** interface the exchange adapter does (§9), so t
 
 ### 3.9 Replay
 
-| Component        | Responsibility                                                                                                                                                          |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SessionPlanner` | Resolves a (symbol, time-range) request to hot-tier and/or cold-tier readers; reports coverage gaps explicitly (recorder-dependent history, digest 23)                  |
-| `EventSource`    | Merges trade/book/liquidation streams in `exch_ts` order with a stable tie-break on (stream rank, sequence)                                                             |
-| `Clock`          | Virtual clock with speed 0.5×–100×, pause, step-bar, step-tick, scrub, loop and bookmarks                                                                               |
-| `Injector`       | Publishes events on `replay.{session_id}.*` topics through the **same** normalizer/book/bars/order-flow chain (P2), isolated from live state by an env-scoped namespace |
-| `PaperBridge`    | Optionally routes simulated orders during replay to the Paper Matcher, enabling rehearsal                                                                               |
+| Component        | Responsibility                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SessionPlanner` | Resolves a (symbol, time-range) request to hot-tier and/or cold-tier readers; reports coverage gaps explicitly (recorder-dependent history, digest 23)                                                                                                                                                                                                                                       |
+| `EventSource`    | Merges trade/book/liquidation streams in `exch_ts` order with a stable tie-break on (stream rank, sequence)                                                                                                                                                                                                                                                                                  |
+| `Clock`          | Virtual clock with speed 0.5×–100×, pause, step-bar, step-tick, scrub, loop and bookmarks                                                                                                                                                                                                                                                                                                    |
+| `Injector`       | Publishes the recorded events on the session's own topics, `replay-{session_id}.md.{symbol}.{detail}` (24 §2.9), to the **same** bars/order-flow consumers (P2); book events feed a replay-scoped `BookEngine` through a hook in `replay_wiring.py` (the live book reads raw frames, not the bus), and its output is published in the same namespace, so nothing reaches live state (C-2.11) |
+| `PaperBridge`    | Optionally routes simulated orders during replay to the Paper Matcher, enabling rehearsal                                                                                                                                                                                                                                                                                                    |
 
 Determinism: given the same stored data and the same `BarSpec`/engine config, replay produces identical derived series — asserted by a golden-file test in CI.
 
@@ -1305,7 +1305,7 @@ sequenceDiagram
     U->>API: POST /replay/{id}/play {speed: 4}
     CLK->>INJ: tick(virtual_time)
     INJ->>SRC: next events <= virtual_time (merged by exch_ts, stable tie-break)
-    INJ->>PIPE: publish on replay.{session}.* topics
+    INJ->>PIPE: publish on replay-{session}.md.* topics
     PIPE->>GW: derived snapshots/deltas, replay-scoped
     GW-->>U: same frame types as live (engine code is identical)
     opt simulated trading

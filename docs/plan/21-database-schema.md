@@ -2762,6 +2762,8 @@ CREATE TABLE orderbook_deltas (
 
 `PARTITION BY HOUR` because this is by far the largest table (see §11) — hourly partitions make retention drops and Parquet exports cheap and keep partition scan sizes bounded.
 
+**Planned (E26-T03, one migration).** `prev_update_id LONG` and `ts_match TIMESTAMP` (Bybit `cts`) join `orderbook_deltas`, and `ts_match` joins `orderbook_snapshots`: nullable, additive, recorded forward so replay re-emits them instead of deriving them (24 §13.7). Rows and Parquet partitions recorded before stay readable and read them as NULL (C-2.15). The migration ships together with the exporter's widening of the registered schema (§5.2); without it the first export after the change would fail closed and stall roll-off.
+
 ### 4.3 `orderbook_snapshots`
 
 Full book snapshots: on subscribe, on every exchange-sent snapshot, and additionally **forced every 60 s** by the recorder so replay can seek without replaying from session start.
@@ -3129,7 +3131,7 @@ cold/
 | File naming    | `part-NNNN.parquet`, monotonically increasing per partition                                        | Compaction rewrites to `part-0000`                                              |
 | Checksums      | SHA-256 of each file recorded in the manifest and in `backups.checksum_sha256` for the archive run | Corruption detection                                                            |
 
-Canonical schemas mirror the QuestDB DDL in §4 column-for-column, with these additions on every file: `_export_run_id STRING`, `_exported_at TIMESTAMP`, `_source STRING` (`'questdb'`/`'postgres'`). The exporter fails closed if a column set drift is detected against the registered schema in `cold/_manifests/schema-registry.json`.
+Canonical schemas mirror the QuestDB DDL in §4 column-for-column, with these additions on every file: `_export_run_id STRING`, `_exported_at TIMESTAMP`, `_source STRING` (`'questdb'`/`'postgres'`). The exporter fails closed if a column set drift is detected against the registered schema in `cold/_manifests/schema-registry.json`. **Planned (E26-T03):** an additive change, a strict superset of the registered columns (new nullable columns, nothing removed or retyped) that its migration notes (C-5.8), is registered as the dataset's new column set instead; any other difference still fails closed. Readers of older partitions read the new columns as NULL (`union_by_name`).
 
 ### 5.3 Export (hot → cold) job
 
