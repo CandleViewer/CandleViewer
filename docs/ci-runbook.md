@@ -441,7 +441,7 @@ index alone, removing nothing.
   Semgrep 1.181 parses a raw f-string with a replacement field
   (`rf"...{name}..."`) and PEP 695 syntax (`class C[T]`, `def f[T]`,
   `type X = ...`), but not both in one module: such a module shows as a
-  `Syntax error` with no line, so write the rf-string as an `f`-string
+  `Syntax error` with no line span, so write the rf-string as an `f`-string
   (doubling any backslash). For a timeout, look at what changed in the file
   or the rule. A target over the 1 MB size limit (`exceeded_size_limit`) is
   data or generated: list it in `.semgrepignore` with its reason (security
