@@ -3,7 +3,9 @@
 // a resized heatmap pane re-derives its bucket and sends one `ctl` once it settles. The policies are
 // the pure ones of S3b; this keeps what they need around them: the panes, what the engine last
 // asked of each topic (its intent: never diffed against what the server holds, 8.5), and what the
-// server last said. Frames leave through the host: nothing here owns a socket.
+// server last said. A topic is a stream, `(ch, rs)` (23 11): a live and a replay stream of one `ch` are
+// two subscriptions, each with its own intent, wait and latch. Frames leave through the host: nothing
+// here owns a socket.
 import type { ConsumerSpec, PaneVisibility } from "../api";
 import { createCtlDebouncer } from "../policy/ctlDebouncer";
 import { desiredThrottles, type ThrottleConsumer } from "../policy/throttlePolicy";
@@ -16,6 +18,7 @@ import {
   type HeatmapBucketInput,
   type HeatmapBucketMs,
 } from "../protocol/heatmapBucket";
+import { splitKey, topicKey } from "./sequencer";
 
 export interface PaneState {
   readonly visibility: PaneVisibility;
@@ -28,8 +31,8 @@ export interface PaneState {
 export interface FlowHost {
   /** Every consumer of every stream, with the replay session of its stream. */
   consumers(): Iterable<{ readonly spec: ConsumerSpec; readonly rs: string | undefined }>;
-  /** Sends one `ctl` for `ch`. */
-  ctl(ch: string, payload: CtlPayload): void;
+  /** Sends one `ctl` for the stream `(ch, rs)`: `rs` is its replay session, none for the live one (5.4). */
+  ctl(ch: string, rs: string | undefined, payload: CtlPayload): void;
   /** What the server should hold changed (a `ch` was let go of, or wanted again). */
   changed(): void;
   /** `welcome.limits.min_throttle_ms`. */
@@ -39,28 +42,31 @@ export interface FlowHost {
 export interface FlowControl {
   setPane(paneId: string, state: PaneState): void;
   removePane(paneId: string): void;
-  /** The options a `sub` of `spec` carries: a heatmap's `time_bucket_ms` is derived from its pane (6.1.1, rule 2). */
-  optionsOf(spec: ConsumerSpec): SubOptions | undefined;
-  /** `sub_ok` or `ctl_ok` said what the server holds for `ch` (C4): the registry's bounded copy of it, kept as it is. */
-  confirmed(ch: string, effective: Readonly<Record<string, unknown>>): void;
+  /** The options a `sub` of `spec` carries, for the stream `rs` of it: a heatmap's `time_bucket_ms` is derived from its pane (6.1.1, rule 2). */
+  optionsOf(spec: ConsumerSpec, rs: string | undefined): SubOptions | undefined;
+  /** `sub_ok` or `ctl_ok` said what the server holds for the stream `(ch, rs)` (C4): the registry's bounded copy of it, kept as it is. */
+  confirmed(ch: string, rs: string | undefined, effective: Readonly<Record<string, unknown>>): void;
   /** The gateway refused a `ctl` of ours: it never applied, so the next pass asks for it again. */
-  denied(ch: string): void;
+  denied(ch: string, rs: string | undefined): void;
   /**
    * The rebuild budget (SR-193, 8.5) refused a `ctl`, whatever it asked: it never applied, and asking
    * again at once would be refused again. What the engine took for applied is undone now, and
-   * nothing is asked of this `ch` until a back-off that doubles with every refusal is over.
+   * nothing is asked of this stream (of any kind: a hide's slow-down waits too, at most 60 s) until a
+   * back-off that doubles with every refusal is over. Its twin is not held.
    */
-  refused(ch: string): void;
+  refused(ch: string, rs: string | undefined): void;
   /** Collapsed everywhere: not wanted on the server (8.5). */
-  isReleased(ch: string): boolean;
+  isReleased(ch: string, rs: string | undefined): boolean;
   /** A consumer came or went. */
   evaluate(): void;
-  /** The last consumer of `ch` left: what its panes asked is no more. What the server holds stays until it is told (`unsubscribed`), so a consumer that takes the subscription over finds it as it was. */
-  forget(ch: string): void;
-  /** An `unsub` of `ch` went out, or the server ended it: it holds nothing of it, so nothing was confirmed or asked. */
-  unsubscribed(ch: string): void;
+  /** The last consumer of the stream left: what its panes asked is no more. What the server holds stays until it is told (`unsubscribed`), so a consumer that takes the subscription over finds it as it was. */
+  forget(ch: string, rs: string | undefined): void;
+  /** An `unsub` of the stream went out, or the server ended it: it holds nothing of it, so nothing was confirmed or asked. */
+  unsubscribed(ch: string, rs: string | undefined): void;
   /** The connection ended: the server holds nothing, so nothing was confirmed. */
   reset(): void;
+  /** How many entries it keeps in all its maps (C-2.18): bounded by the streams wanted or held, and none once there are none. */
+  readonly retained: number;
 }
 
 const PANE: PaneState = { visibility: "visible", tabHidden: false };
@@ -78,33 +84,45 @@ const bucketOf = (v: unknown): HeatmapBucketMs | undefined =>
 
 export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
   const panes = new Map<string, PaneState>();
-  /** What the engine asked of each confirmed `ch`, a throttle in ms: the one `sub_ok` gave, then its own `ctl`s. */
+  // Everything below is keyed by `topicKey(ch, rs)`: the twins of a `ch` are apart (#3439).
+  /** What the engine asked of each confirmed stream, a throttle in ms: the one `sub_ok` gave, then its own `ctl`s. */
   const intents = new Map<string, number>();
-  /** What the server ran each confirmed `ch` at when it was confirmed: its throttle, a heatmap's bucket. */
+  /** What the server ran each confirmed stream at when it was confirmed: its throttle, a heatmap's bucket. */
   const natural = new Map<string, number>();
   const confirmedOptions = new Map<string, Readonly<Record<string, unknown>>>();
   const released = new Set<string>();
   /** The geometry each heatmap was last derived from. */
   const derivedFrom = new Map<string, string>();
-  /** How long the last refusal of each `ch` made it wait, and the timer of that wait while it runs. */
+  /** How long the last refusal of each stream made it wait, and the timer of that wait while it runs. */
   const backoffs = new Map<string, number>();
   const holds = new Map<string, unknown>();
-  /** The `ch`s whose last `ctl` was refused for rate and asked for again: one more refusal and nothing is asked until a reply (8.5). */
+  /** The streams whose last `ctl` was refused for rate and asked for again: one more refusal and nothing is asked until a reply (8.5). */
   const latched = new Set<string>();
   const debouncer = createCtlDebouncer({
-    emit: (ch, bucket) => host.ctl(ch, { time_bucket_ms: bucket }),
+    emit: (key, bucket) => {
+      const { ch, rs } = splitKey(key);
+      host.ctl(ch, rs, { time_bucket_ms: bucket });
+    },
     timers,
   });
 
   const paneOf = (spec: ConsumerSpec): PaneState => panes.get(spec.paneId) ?? PANE;
+  /** Every stream any map keeps something of: one confirmed with options that name no throttle is in no `natural`. */
+  function known(): Set<string> {
+    const keys = new Set(latched);
+    for (const map of [intents, natural, confirmedOptions, derivedFrom, backoffs, holds]) {
+      for (const key of map.keys()) keys.add(key);
+    }
+    return keys;
+  }
 
-  /** One geometry per `ch`: with several panes on a heatmap the widest decides, or each resize would flip the bucket back and forth (6.1.1). */
-  function geometry(ch: string): HeatmapBucketInput {
+  /** One geometry per stream: with several panes on a heatmap the widest decides, or each resize would flip the bucket back and forth (6.1.1). */
+  function geometry(ch: string, rs: string | undefined): HeatmapBucketInput {
     let widest = { cssWidth: 0, dpr: 0 };
     let userBucketMs: HeatmapBucketMs | undefined;
     let windowSeconds: number | undefined;
-    for (const { spec } of host.consumers()) {
-      if (spec.ch !== ch) continue;
+    for (const { spec, rs: of } of host.consumers()) {
+      if (spec.ch !== ch || of !== rs) continue;
       userBucketMs ??= bucketOf(spec.opts?.time_bucket_ms);
       windowSeconds ??= finite(spec.opts?.window_seconds);
       const { size, visibility } = paneOf(spec);
@@ -112,58 +130,63 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
         if (size.cssWidth * size.dpr > widest.cssWidth * widest.dpr) widest = size;
       }
     }
-    windowSeconds = finite(confirmedOptions.get(ch)?.["window_seconds"]) ?? windowSeconds;
+    windowSeconds =
+      finite(confirmedOptions.get(topicKey(ch, rs))?.["window_seconds"]) ?? windowSeconds;
     return { windowSeconds: windowSeconds ?? WINDOW_SECONDS, ...widest, userBucketMs };
   }
 
-  const requested = (spec: ConsumerSpec): number =>
-    finite(spec.opts?.throttle_ms) ?? natural.get(spec.ch) ?? 0;
+  const requested = (spec: ConsumerSpec, rs: string | undefined): number =>
+    finite(spec.opts?.throttle_ms) ?? natural.get(topicKey(spec.ch, rs)) ?? 0;
 
   function evaluate(): void {
-    const consumers: ThrottleConsumer[] = [];
+    const bySession = new Map<string | undefined, ThrottleConsumer[]>(); // the policy keys by `ch`: it runs once for each stream of it
     const heatmaps = new Set<string>();
-    for (const { spec } of host.consumers()) {
+    for (const { spec, rs } of host.consumers()) {
       const { visibility, tabHidden } = paneOf(spec);
-      consumers.push({ ch: spec.ch, visibility, tabHidden, requestedMs: requested(spec) });
-      if (familyOf(spec.ch) === "heatmap") heatmaps.add(spec.ch);
+      const wish = { ch: spec.ch, visibility, tabHidden, requestedMs: requested(spec, rs) };
+      bySession.set(rs, [...(bySession.get(rs) ?? []), wish]);
+      if (familyOf(spec.ch) === "heatmap") heatmaps.add(topicKey(spec.ch, rs));
     }
     let moved = false;
-    for (const [ch, want] of desiredThrottles(consumers, host.minThrottleMs())) {
-      if (want.kind === "release") {
-        moved ||= !released.has(ch);
-        released.add(ch);
-        forgetServerState(ch);
-        continue;
+    for (const [rs, consumers] of bySession) {
+      for (const [ch, want] of desiredThrottles(consumers, host.minThrottleMs())) {
+        const key = topicKey(ch, rs);
+        if (want.kind === "release") {
+          moved ||= !released.has(key);
+          released.add(key);
+          forgetServerState(key);
+          continue;
+        }
+        moved ||= released.delete(key);
+        if (holds.has(key)) continue; // a refusal of the rebuild budget: nothing is asked of this stream until its wait is over
+        // Acted on by difference to the last intent: a hide and a show before the first `ctl_ok` must still send the restore.
+        const last = intents.get(key);
+        if (last === undefined || last === want.throttleMs) continue;
+        intents.set(key, want.throttleMs);
+        host.ctl(ch, rs, { throttle_ms: want.throttleMs });
       }
-      moved ||= released.delete(ch);
-      if (holds.has(ch)) continue; // a refusal of the rebuild budget: nothing is asked of this `ch` until its wait is over
-      // Acted on by difference to the last intent: a hide and a show before the first `ctl_ok` must still send the restore.
-      const last = intents.get(ch);
-      if (last === undefined || last === want.throttleMs) continue;
-      intents.set(ch, want.throttleMs);
-      host.ctl(ch, { throttle_ms: want.throttleMs });
     }
     // Whatever moved (a pane, its size, a consumer), the bucket is derived from the panes that are left.
-    for (const ch of heatmaps) rederive(ch);
+    for (const key of heatmaps) rederive(key);
     if (moved) host.changed();
   }
 
-  function forgetServerState(ch: string): void {
-    intents.delete(ch);
-    natural.delete(ch);
-    confirmedOptions.delete(ch);
-    debouncer.forget(ch);
-    derivedFrom.delete(ch);
-    backoffs.delete(ch);
-    latched.delete(ch);
-    endHold(ch);
+  function forgetServerState(key: string): void {
+    intents.delete(key);
+    natural.delete(key);
+    confirmedOptions.delete(key);
+    debouncer.forget(key);
+    derivedFrom.delete(key);
+    backoffs.delete(key);
+    latched.delete(key);
+    endHold(key);
   }
 
   /** Ends the wait that follows a refusal: its timer is stopped, never cleared with a handle it does not hold. */
-  function endHold(ch: string): void {
-    const timer = holds.get(ch);
+  function endHold(key: string): void {
+    const timer = holds.get(key);
     if (timer !== undefined) timers.clearTimeout(timer);
-    holds.delete(ch);
+    holds.delete(key);
   }
 
   /**
@@ -171,39 +194,41 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
    * A geometry that is as it was leaves the debounce alone, or any pass at all (a reply, another pane) would keep a settled resize waiting.
    * A heatmap that waits out a refusal is not derived: the wait ends with a derivation from the geometry of that moment.
    */
-  function rederive(ch: string): void {
-    if (holds.has(ch)) return;
-    const input = geometry(ch);
+  function rederive(key: string): void {
+    if (holds.has(key)) return;
+    const { ch, rs } = splitKey(key);
+    const input = geometry(ch, rs);
     const seen = JSON.stringify(input);
-    if (derivedFrom.get(ch) === seen) return;
-    derivedFrom.set(ch, seen);
-    debouncer.resize(ch, input);
+    if (derivedFrom.get(key) === seen) return;
+    derivedFrom.set(key, seen);
+    debouncer.resize(key, input);
   }
 
   /** The bucket the server holds for `ch` is known: what was derived from the panes is to be compared with it again. */
-  function activate(ch: string, bucket: HeatmapBucketMs): void {
-    debouncer.activate(ch, bucket);
-    derivedFrom.delete(ch);
+  function activate(key: string, bucket: HeatmapBucketMs): void {
+    debouncer.activate(key, bucket);
+    derivedFrom.delete(key);
   }
 
   /** What the server runs a confirmed heatmap at: the bucket it named, else its default (rule 3). */
-  const heldBucket = (ch: string): HeatmapBucketMs | undefined =>
-    familyOf(ch) === "heatmap" && confirmedOptions.has(ch)
-      ? (bucketOf(confirmedOptions.get(ch)?.["time_bucket_ms"]) ?? HEATMAP_FALLBACK_BUCKET_MS)
+  const heldBucket = (key: string): HeatmapBucketMs | undefined =>
+    familyOf(splitKey(key).ch) === "heatmap" && confirmedOptions.has(key)
+      ? (bucketOf(confirmedOptions.get(key)?.["time_bucket_ms"]) ?? HEATMAP_FALLBACK_BUCKET_MS)
       : undefined;
 
   /** What the server last confirmed is what it runs: what was taken for applied since is not. */
-  function undo(ch: string): void {
-    const held = finite(confirmedOptions.get(ch)?.["throttle_ms"]);
-    if (held !== undefined) intents.set(ch, held);
-    const bucket = heldBucket(ch);
-    if (bucket !== undefined) activate(ch, bucket);
+  function undo(key: string): void {
+    const held = finite(confirmedOptions.get(key)?.["throttle_ms"]);
+    if (held !== undefined) intents.set(key, held);
+    const bucket = heldBucket(key);
+    if (bucket !== undefined) activate(key, bucket);
   }
 
-  function denied(ch: string): void {
-    undo(ch);
-    if (latched.has(ch)) return; // asked again once and refused again: a server that keeps refusing is not fed
-    latched.add(ch);
+  function denied(key: string): void {
+    if (!confirmedOptions.has(key)) return; // let go, or lost with its connection, since the `ctl` left: no latch for a dead key
+    undo(key);
+    if (latched.has(key)) return; // asked again once and refused again: a server that keeps refusing is not fed
+    latched.add(key);
     evaluate();
   }
 
@@ -218,66 +243,77 @@ export function createFlowControl(host: FlowHost, timers: Timers): FlowControl {
       evaluate();
     },
 
-    optionsOf(spec) {
+    optionsOf(spec, rs) {
       const opts = spec.opts;
       if (familyOf(spec.ch) !== "heatmap") return opts;
-      const input = geometry(spec.ch);
+      const input = geometry(spec.ch, rs);
       if (input.cssWidth * input.dpr <= 0) return opts; // no size yet: the server's 500 ms (rule 3)
       return { ...opts, time_bucket_ms: selectHeatmapBucket(input) };
     },
 
-    confirmed(ch, effective) {
-      latched.delete(ch);
-      confirmedOptions.set(ch, effective);
+    confirmed(ch, rs, effective) {
+      const key = topicKey(ch, rs);
+      latched.delete(key);
+      confirmedOptions.set(key, effective);
       const heatmap = familyOf(ch) === "heatmap";
       const bucket = bucketOf(effective["time_bucket_ms"]) ?? HEATMAP_FALLBACK_BUCKET_MS;
-      const before = natural.get(ch);
+      const before = natural.get(key);
       const now = heatmap ? bucket : (before ?? finite(effective["throttle_ms"]));
       if (now !== undefined) {
-        natural.set(ch, now);
+        natural.set(key, now);
         // Not dimmed (or not yet known): the server runs at what it says, which for a heatmap can be a throttle of its own and not its bucket.
         const running = finite(effective["throttle_ms"]) ?? now;
-        if (!intents.has(ch) || intents.get(ch) === before) intents.set(ch, running);
+        if (!intents.has(key) || intents.get(key) === before) intents.set(key, running);
       }
       if (heatmap) {
-        if (bucket !== before) backoffs.delete(ch); // a bucket was applied: the next refusal starts from the first wait
-        activate(ch, bucket);
+        if (bucket !== before) backoffs.delete(key); // a bucket was applied: the next refusal starts from the first wait
+        activate(key, bucket);
       }
       evaluate();
     },
 
-    denied,
+    denied: (ch, rs) => denied(topicKey(ch, rs)),
 
-    refused(ch) {
-      if (!confirmedOptions.has(ch)) return; // let go, or the connection was lost, since the `ctl` left: nothing is held to ask for again
+    refused(ch, rs) {
+      const key = topicKey(ch, rs);
+      if (!confirmedOptions.has(key)) return; // let go, or the connection was lost, since the `ctl` left: nothing is held to ask for again
       const wait = Math.min(
-        (backoffs.get(ch) ?? REFUSED_BACKOFF_MS / 2) * 2,
+        (backoffs.get(key) ?? REFUSED_BACKOFF_MS / 2) * 2,
         REFUSED_BACKOFF_MAX_MS,
       );
-      backoffs.set(ch, wait);
-      endHold(ch); // a second refusal replaces the wait of the first
+      backoffs.set(key, wait);
+      endHold(key); // a second refusal replaces the wait of the first
       holds.set(
-        ch,
+        key,
         timers.setTimeout(() => {
-          holds.delete(ch);
+          holds.delete(key);
           evaluate(); // asks again for whatever is wanted now: a throttle too, from the geometry of this moment
         }, wait),
       );
-      debouncer.forget(ch); // a settle that is still running would send inside the wait
-      undo(ch);
+      debouncer.forget(key); // a settle that is still running would send inside the wait
+      undo(key);
     },
 
-    isReleased: (ch) => released.has(ch),
+    isReleased: (ch, rs) => released.has(topicKey(ch, rs)),
     evaluate,
 
-    forget(ch) {
-      released.delete(ch);
+    forget(ch, rs) {
+      released.delete(topicKey(ch, rs));
+      derivedFrom.delete(topicKey(ch, rs)); // a heatmap that never got its sub has no other time to lose it
     },
 
-    unsubscribed: forgetServerState,
+    unsubscribed: (ch, rs) => forgetServerState(topicKey(ch, rs)),
 
     reset() {
-      for (const ch of [...natural.keys()]) forgetServerState(ch);
+      for (const key of known()) forgetServerState(key);
+    },
+
+    get retained() {
+      let count = latched.size + released.size;
+      for (const map of [intents, natural, confirmedOptions, derivedFrom, backoffs, holds]) {
+        count += map.size;
+      }
+      return count;
     },
   };
 }

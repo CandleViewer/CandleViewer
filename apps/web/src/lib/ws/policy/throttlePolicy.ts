@@ -27,10 +27,8 @@ export const MAX_THROTTLE_MS = 60_000;
 export const DEFAULT_MIN_THROTTLE_MS = 50;
 
 /**
- * One pane's interest in one topic. Topics are keyed by `ch` alone, as `ctl`, `unsub` and `resync` are
- * on the wire: 23 11 lets a live and a replay subscription share a `ch` (told apart by `sub_id`, and
- * replay frames carry `rs`) while those frames carry no `sub_id`, so S4 decides how a replay one is
- * keyed (a #572 candidate).
+ * One pane's interest in one topic. A topic is keyed by `ch` here: 23 11 lets a live and a replay stream share
+ * a `ch`, so the caller (flow control, #3439) runs this once for each stream, with that stream's consumers.
  */
 export interface ThrottleConsumer {
   readonly ch: string;

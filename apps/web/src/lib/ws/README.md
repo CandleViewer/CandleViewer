@@ -17,6 +17,7 @@ reachable from `main.tsx` until the last one wires it (C-4.13). State is a plain
 | `core/engine.ts`                        | streams to `sub`/`unsub`/`resync`, replies, revocation, system, baselines       | S4d to S4h          |
 | `core/flowControl.ts`                   | panes: throttles, collapsed topics, heatmap bucket                              | S4g, S4h            |
 | `core/engine.ts`, `flowControl.ts`      | `rs` on `ctl`/`unsub`, SR-193 back-off, `rebaseline`, `changed`                 | S5a, S5a-2          |
+| `core/`                                 | flow control, the `unsub` guard and revocations keyed by `(ch, rs)`             | #3439               |
 | `port/`                                 | port messages (checked both ways); frame queue and buffer copies; `endpoint.ts` | S5b, S5b-2, S5e-2   |
 | `worker/portHost.ts`                    | the shared worker's host: tabs, token over ports, state; then streams           | S5c to S5d-3, S5e-3 |
 | `worker/wsWorker.ts`, `faultChannel.ts` | shared-worker entry; dev-only fault channel, absent from production             | S5e, S5e-2          |

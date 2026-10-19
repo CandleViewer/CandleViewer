@@ -77,10 +77,12 @@ export interface FakeConn {
   skip(ch: string, rs?: string): void;
   /** A `snap` the server sends unasked (7.4). */
   snap(ch: string, reason: string, rs?: string, extra?: Json): void;
-  /** The held replies go out. */
-  releaseHeld(): void;
+  /** The held replies go out, in the order they were made: the first `n`, else all of them. */
+  releaseHeld(n?: number): void;
   /** `revoked`, and the subscription ends with it (a narrowing that keeps accounts does not end it, 9.5). */
   revoke(ch: string, reason: string, extra?: Json): void;
+  /** `revoked` of one stream alone, as 9.5 names it (`sub_id`, and `rs` on a replay one): it ends the subscription as `revoke` does. */
+  revokeStream(ch: string, rs: string | undefined, reason: string, extra?: Json): void;
 }
 
 interface Sub {
@@ -490,7 +492,7 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
       lateClose: (code) => events.close(code),
       lateMessage: (frame) => events.message(JSON.stringify({ ts: now(), ...frame })),
       of: (t) => received.filter((f) => f["t"] === t),
-      releaseHeld: () => held.splice(0).forEach((send) => send()),
+      releaseHeld: (n) => held.splice(0, n ?? held.length).forEach((send) => send()),
       subs: () =>
         [...subs.values()].map(({ ch, rs, id, seq, effective }) => ({
           ch,
@@ -527,6 +529,15 @@ export function createFakeGateway(options: FakeGatewayOptions = {}) {
           send({ t: "revoked", ch, ...namedBy(sub), p });
           if (!narrowed) subs.delete(keyOf(sub.ch, sub.rs));
         }
+      },
+      revokeStream(ch, rs, reason, extra = {}) {
+        const sub = subs.get(keyOf(ch, rs));
+        if (sub === undefined) return;
+        const narrowed =
+          reason === "account_scope_changed" && extra["resubscribe_allowed"] === true;
+        const p = { reason, message: reason, sub_id: sub.id, ...extra };
+        send({ t: "revoked", ch, ...namedBy(sub), p });
+        if (!narrowed) subs.delete(keyOf(ch, rs));
       },
     };
     conns.push(conn);
