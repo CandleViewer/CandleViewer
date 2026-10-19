@@ -123,7 +123,7 @@ async def test_apply_roles_demoting_a_disabled_owner_counts_only_active_owners()
 async def test_apply_roles_writes_ahead_audit_with_the_locked_set_then_commits() -> None:
     rel = _Rel(owners=2)
     assert await _apply(rel) is True
-    writes = [m._DROP, m._GRANT, f.CONSTRAINTS_NOW, "AUDIT"]
+    writes = [m.DROP_ROLES, m.GRANT_ROLES, f.CONSTRAINTS_NOW, "AUDIT"]
     assert rel.order() == [f.LOCK_USER, *_LOCKED_OWNERS, f.ROLES, *writes] and rel.committed
     assert rel.ran[-1] == ("AUDIT", frozenset({"owner"}))
     assert rel.ran[5][1] == {"id": str(_UID), "roles": ["viewer"], "by": str(_ACTOR)}

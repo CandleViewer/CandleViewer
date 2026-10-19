@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -71,29 +72,40 @@ def _iso(value: Any) -> str | None:
     return None if value is None else str(value.isoformat())
 
 
+async def read_user(session: AsyncSession, user_id: str) -> dict[str, Any] | None:
+    """The OpenAPI `User` of an undeleted user, read in the caller's transaction; `None` when
+    there is none. `SqlAlchemyIdentityProvider.user` reads it on its own, and the user admin
+    store (E42-T09, #2649) under the user-row lock, so `getUser` and its `If-Match` check read
+    one representation."""
+    row = (await session.execute(_USER_SQL, {"id": user_id})).first()
+    if row is None:
+        return None
+    m = row._mapping
+    return {
+        "id": m["id"],
+        "username": m["username"],
+        "email": m["email"],
+        "display_name": m["display_name"],
+        "roles": list(m["roles"] or ()),
+        "status": m["status"],
+        "mfa_enabled": bool(m["mfa_enabled"]),
+        "mfa_required": bool(m["mfa_required"]),
+        "last_login_at": _iso(m["last_login_at"]),
+        "created_at": _iso(m["created_at"]),
+        "updated_at": _iso(m["updated_at"]),
+    }
+
+
 class SqlAlchemyIdentityProvider:
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._relational = relational
 
     async def user(self, user_id: str) -> dict[str, Any]:
         async with self._relational.unit_of_work() as uow:
-            row = (await uow.session.execute(_USER_SQL, {"id": user_id})).first()
-        if row is None:
+            found = await read_user(uow.session, user_id)
+        if found is None:
             raise LookupError("unknown user")
-        m = row._mapping
-        return {
-            "id": m["id"],
-            "username": m["username"],
-            "email": m["email"],
-            "display_name": m["display_name"],
-            "roles": list(m["roles"] or ()),
-            "status": m["status"],
-            "mfa_enabled": bool(m["mfa_enabled"]),
-            "mfa_required": bool(m["mfa_required"]),
-            "last_login_at": _iso(m["last_login_at"]),
-            "created_at": _iso(m["created_at"]),
-            "updated_at": _iso(m["updated_at"]),
-        }
+        return found
 
     async def session_info(self, user_id: str) -> dict[str, Any]:
         async with self._relational.unit_of_work() as uow:

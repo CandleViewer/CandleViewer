@@ -819,6 +819,15 @@ class SessionService:
             mfa_satisfied_at=session.mfa_satisfied_at,
         )
 
+    async def find_live_session(self, user_id: str, session_id: str) -> SessionRecord | None:
+        """Read-only (E42-T09, #2649): `session_id` if it is a live session of `user_id`, one that
+        `list_sessions(user_id)` lists; `None` for an unknown, ended or another user's session
+        alike, so the admin revoke answers each with one 404 (IDOR). Revokes nothing."""
+        session = await self._repository.find_by_id(session_id)
+        if session is None or session.is_revoked or str(session.user_id) != user_id:
+            return None
+        return session
+
     async def list_sessions(
         self, user_id: str, *, current_session_id: str | None = None
     ) -> tuple[SessionView, ...]:
