@@ -1270,6 +1270,9 @@ def create_app(
         bars_series = SeriesStore(hydrate_reader.read_tail if hydrate_reader is not None else None)
         scales = functools.partial(_catalogue_scales, ctx)
         publisher = BarsPublisher(ws_sequencing, scales, swap_reason="generation_swap")
+        # #2787 D2-H1, 23 §7.4: a repairing read reaches the subscribers through the store's hook
+        # alone, never a task that diffs `latest()` across an await (it can miss a repair).
+        bars_series.on_repair(publisher.history_repair)
         app.state.bars_runtime = wire_bars(
             ctx,
             inner_sink=bars_sink,

@@ -81,6 +81,24 @@ def test_the_heal_driver_comes_with_the_flag_over_the_wired_store(
     assert isinstance(heal, HealDriver) and heal._store is app.state.ws_registry.services.series
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_the_repair_hook_is_the_publishers_history_repair_set_once_and_only_with_the_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    """#2787 P4b: 23 §7.4's `history_repair` has one caller, the store's repair hook (a task that
+    diffs `latest()` across an await can miss a repair or send extra snaps). `create_app` sets it
+    once, on the store the gateway serves, to the publisher on the emit path; flag off, no store
+    exists to hook."""
+    hooks: list[tuple[SeriesStore, Any]] = []
+    monkeypatch.setattr(SeriesStore, "on_repair", lambda store, hook: hooks.append((store, hook)))
+    services = create_app(_settings(tmp_path, enabled=enabled)).state.ws_registry.services
+    if not enabled:
+        assert (hooks, services.series) == ([], None)
+        return
+    _store, publisher, _writer = services.bars._router._sinks
+    assert hooks == [(services.series, publisher.history_repair)]
+
+
 async def test_the_lifespan_runs_the_heal_driver_task_and_stops_it_before_the_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

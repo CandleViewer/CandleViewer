@@ -277,6 +277,31 @@ async def test_a_read_that_changes_nothing_or_loses_a_held_bar_repairs_nothing(r
     assert store.hydrated(SYM, H) and store.due(clock.t + LATE) == []  # complete: no more reads
 
 
+@pytest.mark.parametrize(
+    ("fetched", "hole", "depth"),
+    [(MAX_HISTORY, None, 2), (MAX_HISTORY - 1, None, None), (MAX_HISTORY, 500, None)],
+    ids=["row-limit", "below-it", "row-limit-hole"],
+)
+async def test_a_read_at_its_row_limit_counts_the_older_held_bars_as_slid_off_not_lost(
+    fetched: int, hole: int | None, depth: int | None
+) -> None:
+    """1 000 rows fetched, one skipped: 999 bars, so the series is not full, but the row limit, not
+    `since_us`, ended the read's window: held bars 1 and 2, below its oldest row, slid off and the
+    read repairs the hole at 1 000. One row fewer fetched, the read took every row from `since_us`
+    on and they are lost. At the limit too, a held bar inside the rows' span that the read lacks
+    (500, skipped) is lost: no repair."""
+    clock = Clock()
+    store, tail, _held = await full(clock)  # holds 1 to 999 and 1 001: the hole at 1 000
+    hook = Hook(store)
+    oldest = MAX_HISTORY + 3 - fetched  # the rows less the skipped ones, `fetched - 1` bars
+    bars = [i for i in range(oldest, MAX_HISTORY + 2) if i != hole]
+    tail.tail = BarTail(rows(*bars), skipped=1 + (hole is not None), fetched=fetched)
+    clock.t += RETRY_AFTER_S
+    assert await store.refresh(SYM, H) is (depth is not None)
+    assert hook.calls == ([] if depth is None else [(SYM, SPEC, depth)])
+    assert view(store)[0][0] == oldest and not store.gapped(SYM, H)
+
+
 async def test_a_failed_refresh_returns_false_and_takes_the_store_failure_path() -> None:
     clock = Clock()
     store, tail, _held = await gapped(clock)

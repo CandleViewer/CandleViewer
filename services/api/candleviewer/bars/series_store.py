@@ -48,9 +48,11 @@ a WS snapshot source reads `latest` and `version`.
   without holding it. A completed read repairs a series (23 §7.4 `history_repair`) when it adds
   or replaces a bar the series serves and loses none it held. A held bar below the oldest bar the
   series keeps is lost too, unless no read could hold it there: it opened before the read's
-  window (`BarTail.since_us`), or the series is full, so the 1 000-bar cap leaves it deeper than
-  any `history`. Whoever started that read, the store then calls the repair hook (`on_repair`,
-  set once; nothing sets it until `BarsRuntime` wires the WS publisher's `history_repair`) with
+  window (`BarTail.since_us`), the series is full, so the 1 000-bar cap leaves it deeper than any
+  `history`, or the read hit its row limit (`BarTail.fetched` reached `MAX_HISTORY`: a skipped
+  row left the series short of full, but the limit, not `since_us`, ended the window). Whoever
+  started that read, the store then calls the repair hook (`on_repair`, set once: `create_app`
+  sets it, with `bars_enabled`, to the WS publisher's `history_repair`) with
   `min_history`, the depth of the newest bar it added or replaced, newest first and the forming
   bar 1, as `latest` counts `history`. A depth it cannot count (the walk raised, or gave less
   than 1) goes out as 1, counted (`bars_series_repair_failed_total{reason="depth"}`) and logged
@@ -111,10 +113,8 @@ reader logs and counts each row it withholds.
 Not covered: the forming bar is unknown until the next `open` or `update` (builders expose none);
 a held bar whose row a clean read skipped (`BarTail.skipped`, malformed rows included) is dropped
 by that read, which ends `hydrated` (#3614), and a read that loses a held bar repairs nothing, even
-if it adds bars (§7.4); a read that hit its row limit with a skipped row is not `full`, so a held
-bar the limit cut counts as lost and the repair is skipped (P4b, the driver slice, is to treat
-`fetched >= MAX_HISTORY` like a full series); a hole inside the stored rows with no bar held for it
-(a row skipped or withheld, or one the writer never landed) stays a hole and is not flagged; a
+if it adds bars (§7.4); a hole inside the stored rows with no bar held for it (a row skipped or
+withheld, or one the writer never landed) stays a hole and is not flagged; a
 jump is seen on a close only; a close seen before the first clean read (one from the ring, or a
 live one after a failed or degraded read) is judged only by that read's rows, so an empty read
 leaves it unflagged: the series cannot see its junction, and a writer lagging behind it goes
@@ -336,20 +336,22 @@ def _miss(s: _Series, *, failed: bool) -> bool:
     return first
 
 
-def _repair_depth(s: _Series, before: dict[int, Bar], since_us: int) -> int | None:
+def _repair_depth(
+    s: _Series, before: dict[int, Bar], since_us: int, limited: bool = False
+) -> int | None:
     """§7.4 `min_history` of a fold that turned `before` (index -> bar) into `s`: the depth of the
     newest bar it added or replaced among those `s` serves, newest first and the forming bar 1, as
     `latest` counts `history`. None when it added or replaced none, or lost a bar `s` held (no
     repair, §7.4). A held bar below `s`'s oldest is not lost when no read could hold it there: it
     opened before the read's window (`since_us`), or `s` is full, so the 1 000-bar cap leaves it
-    deeper than any `history`. Exact for the window and for the cap, not for a read that hit its
-    row limit with a skipped row (module docstring, "Not covered")."""
+    deeper than any `history`, or the read hit its row limit (`limited`: its rows end before its
+    window does, as a full series' do). Exact for the window, the cap and the row limit."""
     forming = int(s.forming is not None)
     served = itertools.islice(reversed(s.closed.values()), MAX_HISTORY - forming)
     for depth, bar in enumerate(served, 1 + forming):
         was = before.get(bar.index)
         if was is not bar and was != bar:  # added or replaced: a bar kept keeps its object
-            oldest, full = next(iter(s.closed)), len(s.closed) >= MAX_HISTORY
+            oldest, full = next(iter(s.closed)), limited or len(s.closed) >= MAX_HISTORY
             lost = any(  # gone, and not below `oldest` out of the read's reach
                 i not in s.closed and (i > oldest or (b.open_time >= since_us and not full))
                 for i, b in before.items()
@@ -359,14 +361,14 @@ def _repair_depth(s: _Series, before: dict[int, Bar], since_us: int) -> int | No
 
 
 def _counted_depth(
-    s: _Series, before: dict[int, Bar], since_us: int
+    s: _Series, before: dict[int, Bar], since_us: int, limited: bool
 ) -> tuple[int | None, Exception | int | None]:
     """`_repair_depth`, guarded, never raising: a depth it cannot count (it raised, or came out
     below 1) is 1, never a skipped repair (P11's caller contract: extra snaps, never a miss), and
     counted (`reason="depth"`). The second item is the fault, which `_hydrate` logs after the
     hook: the exception, or the depth below 1."""
     try:
-        depth = _repair_depth(s, before, since_us)
+        depth = _repair_depth(s, before, since_us, limited)
     except Exception as exc:  # broad on purpose: a repair whose depth fails still goes out
         bars_series_repair_failed_total.labels(reason="depth").inc()
         return 1, exc
@@ -508,7 +510,8 @@ class SeriesStore:
 
     def on_repair(self, hook: RepairHook) -> None:
         """Set the repair hook (module docstring), once: the WS publisher's `history_repair`,
-        which `BarsRuntime` is to wire (#2787 D2-H1). A second call raises `RuntimeError`."""
+        which `create_app` sets with `bars_enabled` (#2787 D2-H1). A second call raises
+        `RuntimeError`."""
         if self._on_repair is not None:
             raise RuntimeError("the series store's repair hook is set already")
         self._on_repair = hook
@@ -730,7 +733,7 @@ class SeriesStore:
             s.read_at = self._clock()  # pre-fold: nothing after the fold can raise until the hook
             before = dict(s.closed)  # what `s` served: a repair is judged against it
             self._fold(s, tail)
-            depth, fault = _counted_depth(s, before, tail.since_us)
+            depth, fault = _counted_depth(s, before, tail.since_us, tail.fetched >= MAX_HISTORY)
             s.attempted = not tail.integrity_degraded
             s.hydrated = s.attempted and not s.swapped  # swapped during it: read again (D2-H1c)
             s.since_us = tail.since_us  # with `hydrated`, after the fold (D2-H1a)
