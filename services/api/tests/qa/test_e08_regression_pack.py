@@ -7,10 +7,10 @@ sessions under the repo's own strict config and fail when the pack cites a test 
 not select (unless another lane runs it, see `RUN_BY_OTHER_LANE`), when the marker, run over the
 whole tree as QA runs it, selects an item the default lane deselects in the pack paths or misses
 one it selects, when the pack's path list and the code's differ in either direction, when a pack
-path disappears, when a fixed P0/P1 defect row cites no case, and when the marker stops being
-applied end to end (conftest hook, `--strict-markers`, `-m`). Same checks as the E09 guard
-(`tests/qa/test_e09_regression_pack.py`), through the shared helpers in
-`tests/_regression_pack_guard.py`.
+path disappears, when a fixed P0/P1 defect row cites no case or the defect table and its
+"Result:" line disagree, and when the marker stops being applied end to end (conftest hook,
+`--strict-markers`, `-m`). Same checks as the E09 guard (`tests/qa/test_e09_regression_pack.py`),
+through the shared helpers in `tests/_regression_pack_guard.py`.
 """
 
 from __future__ import annotations
@@ -50,8 +50,13 @@ RUN_BY_OTHER_LANE: Final[Mapping[str, str]] = {
     "tests/integration/": "integration",
     "tests/unit/observability/test_latency_overhead.py::"
     "test_stage_recorder_overhead_within_one_percent_cpu": "perf",
+    "tests/security/ingestion/test_resource_exhaustion.py::"
+    "test_huge_exponent_levels_rejected_cheaply": "perf",
 }
 _DEFECT_ROW: Final = re.compile(r"^\|\s*#(\d+)\s*\|\s*(P\d)\s*\|")
+_DEFECT_RESULT: Final = re.compile(
+    r"^Result: (\d+) fixed P0/P1 defects \((\d+) P0, (\d+) P1\)", flags=re.MULTILINE
+)
 
 
 def _pack_citations() -> list[Citation]:
@@ -60,14 +65,19 @@ def _pack_citations() -> list[Citation]:
     return cited_tests(markdown.replace(section(markdown, COVERAGE_HEADING), ""))
 
 
-def _defect_rows() -> list[tuple[str, str, list[Citation]]]:
-    """(issue, severity, citations) for each row of the fixed-defect table."""
+def _defect_table() -> tuple[list[tuple[str, str, list[Citation]]], list[str], str]:
+    """The fixed-defect table: (issue, severity, citations) per row, the rows that do not parse
+    as `| #NNNN | Pn |`, and the section body."""
     body = section(PACK_DOC.read_text(encoding="utf-8"), DEFECTS_HEADING)
+    table = [line for line in body.splitlines() if line.startswith("|")][2:]  # past the header
     rows = []
-    for line in body.splitlines():
+    unparsed = []
+    for line in table:
         if match := _DEFECT_ROW.match(line):
             rows.append((match.group(1), match.group(2), cited_tests(line)))
-    return rows
+        else:
+            unparsed.append(line[:60])
+    return rows, unparsed, body
 
 
 @pytest.fixture(scope="module")
@@ -102,6 +112,8 @@ def test_pack_path_exists_so_a_rename_cannot_silently_shrink_the_pack(entry: str
         ("tests/unit/ingestionx/test_other.py", set(), False),
         ("tests/unit/bars/test_kline_rows.py", set(), True),
         ("tests/unit/bars/test_time_builder.py", set(), False),
+        ("tests/xstate_contract/test_b13_ws_conn.py", set(), True),
+        ("tests/xstate_contract/test_b01_order.py", set(), False),
         ("tests/chaos/ingestion/test_s03_book_sequence_gap.py", {"chaos"}, True),
         ("tests/unit/ingestion/test_kline_backfill_perf.py", {"perf"}, False),
         ("tests/security/ingestion/test_fuzz_parsers.py", {"fuzz"}, False),
@@ -215,12 +227,20 @@ def test_pack_run_command_selects_by_the_marker() -> None:
 
 
 def test_every_fixed_p0_p1_defect_row_cites_at_least_one_case() -> None:
-    """Ticket AC "no fix ships without a regression case": a row with no case blocks sign-off."""
-    rows = _defect_rows()
+    """Ticket AC "no fix ships without a regression case": a row with no case blocks sign-off.
+
+    Every table row must parse and the rows must add up to the section's "Result:" line, so a
+    reformatted row cannot drop out of this check unseen."""
+    rows, unparsed, body = _defect_table()
+    result = _DEFECT_RESULT.search(body)
     caseless = [f"#{issue}" for issue, _, cited in rows if not cited]
     wrong_severity = [f"#{issue} ({sev})" for issue, sev, _ in rows if sev not in ("P0", "P1")]
+    counted = (len(rows), sum(s == "P0" for _, s, _ in rows), sum(s == "P1" for _, s, _ in rows))
 
-    assert len(rows) >= 20, f"the fixed-defect table has only {len(rows)} rows"
+    assert not unparsed, f"fixed-defect rows not in the `| #NNNN | Pn |` form: {unparsed}"
+    assert result is not None, "section B lost its 'Result: N fixed P0/P1 defects' line"
+    expected = tuple(map(int, result.groups()))
+    assert counted == expected, f"the table counts {counted} (all, P0, P1), Result: says {expected}"
     assert not caseless, f"fixed P0/P1 defects with no regression case: {caseless}"
     assert not wrong_severity, f"rows in the P0/P1 table with another severity: {wrong_severity}"
 

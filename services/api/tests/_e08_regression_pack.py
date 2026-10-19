@@ -47,6 +47,12 @@ PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/unit/api/test_orderbook_api.py",
     "tests/unit/api/test_trades_api.py",
     "tests/contract/test_market_klines_contract.py",
+    # E08's statechart contract modules (B13 ws_conn, B14 book) and its instrument persistence.
+    "tests/xstate_contract/test_b13_ws_conn.py",
+    "tests/xstate_contract/test_b14_book.py",
+    "tests/xstate_contract/test_b14_book_health.py",
+    "tests/unit/migrations/test_0004_instruments.py",
+    "tests/unit/storage/test_db_models.py",
     "tests/unit/storage/questdb/test_repository.py",
     "tests/unit/storage/questdb/test_bind_count_guards.py",
     "tests/unit/storage/questdb/test_schema_tag_parity.py",
