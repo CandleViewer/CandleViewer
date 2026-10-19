@@ -67,6 +67,7 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     setShellState({ connection: { kind: "offline", cause: "backend_unreachable" } });
     return { ready: runBootstrap(options), stop: () => undefined };
   }
+  const opened = options.port === undefined;
   const client = createWsClient({
     wsUrl: options.wsUrl,
     tokens: options.tokens ?? unavailableTokens,
@@ -85,6 +86,7 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
 
   const stop = (): void => {
     client.stop();
+    if (opened) port.close?.(); // what the shell opened it lets go of: a replaced shell leaves one worker, not two
     if (stopActive === stop) {
       stopActive = null;
       setActiveClient(null);
