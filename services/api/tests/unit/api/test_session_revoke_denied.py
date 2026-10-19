@@ -21,6 +21,7 @@ from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.api.csrf import RefusalAuditTracker
+from candleviewer.api.enrolment_guard import EnrolmentRefusals
 from candleviewer.api.sessions import PROBE_AUDIT_WINDOW_S, make_session_router
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -99,6 +100,7 @@ class _World:
             probe_global_throttle=overall,
             audit_tracker=self.tracker,
             audit_timeout_s=audit_timeout_s,
+            enrolment_refusals=EnrolmentRefusals(self.audit.writer, tracker=self.tracker),
         )
         self.app.include_router(router, prefix="/api/v1")
         self.client = TestClient(self.app, base_url=BASE)

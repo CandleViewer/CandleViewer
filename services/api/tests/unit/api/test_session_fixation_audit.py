@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from candleviewer.api.csrf import AUDIT_TIMEOUT_S, RefusalAuditTracker
+from candleviewer.api.enrolment_guard import EnrolmentRefusals
 from candleviewer.api.sessions import (
     FIXATION_AUDIT_WINDOW_S,
     FIXATION_AUDITS_GLOBAL_PER_WINDOW,
@@ -76,6 +77,7 @@ class _World:
                 ),
                 audit_tracker=self.tracker,
                 audit_timeout_s=audit_timeout_s,
+                enrolment_refusals=EnrolmentRefusals(self.audit.writer, tracker=self.tracker),
             ),
             prefix="/api/v1",
         )

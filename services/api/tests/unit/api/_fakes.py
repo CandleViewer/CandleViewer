@@ -12,6 +12,8 @@ from typing import Any
 
 from prometheus_client import REGISTRY
 
+from candleviewer.api.csrf import RefusalAuditTracker
+from candleviewer.api.enrolment_guard import EnrolmentRefusals
 from candleviewer.audit.actions import validate_action
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
@@ -35,6 +37,11 @@ def fixation_count(reason: str) -> float:
     """`auth_session_fixation_attempts_total{reason}` on the process-default registry."""
     sample = "auth_session_fixation_attempts_total"
     return float(REGISTRY.get_sample_value(sample, {"reason": reason}) or 0.0)
+
+
+def enrolment_recorder(writer: Any) -> EnrolmentRefusals:
+    """The enrolment guard's refusal recorder over *writer*: the session router needs one."""
+    return EnrolmentRefusals(writer, tracker=RefusalAuditTracker())
 
 
 def sessions(repo: FakeSessionRepository | None = None, *, now: datetime = NOW) -> SessionService:

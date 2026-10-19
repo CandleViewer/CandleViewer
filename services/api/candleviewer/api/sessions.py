@@ -264,18 +264,6 @@ class AuditServiceLike(Protocol):
     def writer(self) -> AuditEmitter: ...
 
 
-class _RouterAudit:
-    """The enrolment refusal recorder's sink when the app passes none: this router's writer."""
-
-    def __init__(self, audit: AuditServiceLike | None) -> None:
-        self._audit = audit
-
-    async def emit(self, action: str, **kwargs: Any) -> None:
-        if self._audit is None or not self._audit.is_active:
-            raise AuditUnavailableError
-        await self._audit.writer.emit(action, **kwargs)
-
-
 Clock = Callable[[], Any]
 
 
@@ -457,7 +445,7 @@ def make_session_router(
     audit_timeout_s: float = AUDIT_TIMEOUT_S,
     unlock_authority: Callable[[], UnlockAuthority | None] | None = None,
     unlock_throttle: PerIpLoginThrottle | None = None,
-    enrolment_refusals: EnrolmentRefusals | None = None,
+    enrolment_refusals: EnrolmentRefusals,
 ) -> APIRouter:
     """*audit_tracker*: pass the app's CSRF refusal tracker so both guards share one
     in-flight cap and one shutdown drain. *unlock_authority* is a thunk (step-up exists
@@ -502,7 +490,6 @@ def make_session_router(
         max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
     )
     tracker = audit_tracker if audit_tracker is not None else RefusalAuditTracker()
-    refusals = enrolment_refusals or EnrolmentRefusals(_RouterAudit(audit_service), tracker=tracker)
 
     def _audit_ready() -> bool:
         return audit_service is not None and audit_service.is_active
@@ -1109,7 +1096,7 @@ def make_session_router(
         except SessionNotFound:
             return _unauthorized()
         refused = await route_refusal(  # #2295: not an enrolment-only session's operation
-            auth_service, refusals, record, operation=("POST", "/auth/unlock"), ip=ip
+            auth_service, enrolment_refusals, record, operation=("POST", "/auth/unlock"), ip=ip
         )
         if refused is not None:
             return refused  # before the lock state is told or any password is checked
