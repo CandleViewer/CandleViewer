@@ -2,7 +2,8 @@
 
 The job is `test_key_selfcheck.World`'s real `KeySelfCheck`, its store, audit sink and calls one
 event log over documented-shape replies; the reads and the WebSocket half are scripted. Clocks are
-fakes, and a hang ends at a bound cut to zero, never a sleep. No network.
+fakes, and a hang ends at a bound cut to zero, never a sleep, except in one case, which lets a
+1 ms bound expire on a socket that never answers, deterministically. No network.
 """
 
 from __future__ import annotations
