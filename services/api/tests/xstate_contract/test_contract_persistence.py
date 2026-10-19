@@ -71,7 +71,7 @@ class Rig:
             audit=self.audit,
             pager=self.pager,
             latch=self.latch,
-            plugins=lambda: [AuditTap()],
+            plugins=lambda _key: [AuditTap()],
             clock=SimulatedClock(),
             lane=lane_of(self.machine),
         )

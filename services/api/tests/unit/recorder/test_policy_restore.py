@@ -32,7 +32,7 @@ def _restorer(journal: InMemoryDrainJournal) -> Restorer:
         audit=Audit(),
         pager=Pager(),
         latch=ChainTripLatch(),
-        plugins=lambda: [],
+        plugins=lambda _key: [],
         clock=default_clock(),
         lane="platform",
     )

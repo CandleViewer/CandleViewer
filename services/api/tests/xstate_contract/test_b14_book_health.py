@@ -142,7 +142,7 @@ async def test_b14_snapshot_round_trip_at_resync_quiescence_and_refusals() -> No
     def restorer() -> Restorer:
         return Restorer(
             registry=registry, keys=keys, journal=InMemoryDrainJournal(), audit=audit,
-            pager=Pager(), latch=ChainTripLatch(), plugins=lambda: [],
+            pager=Pager(), latch=ChainTripLatch(), plugins=lambda _key: [],
             clock=SimulatedClock(), lane="platform",
         )  # fmt: skip
 

@@ -507,7 +507,7 @@ async def test_b16_snapshot_round_trip_while_locked_and_read_only() -> None:
         audit=Audit(),
         pager=Pager(),
         latch=ChainTripLatch(),
-        plugins=list,
+        plugins=lambda _key: [],
         clock=SimulatedClock(),
         lane="platform",
     )

@@ -930,7 +930,7 @@ def _persistence() -> tuple[_Sealed, dict[str, Any]]:
     )  # fmt: skip
     restore = Restorer(
         registry=reg, keys=sealed, journal=journal, audit=sealed, pager=sealed,
-        latch=ChainTripLatch(), plugins=tuple, clock=default_clock(), lane="control",
+        latch=ChainTripLatch(), plugins=lambda _key: (), clock=default_clock(), lane="control",
     )  # fmt: skip
     return sealed, {"persister": persist, "snapshots": sealed, "restorer": restore}
 

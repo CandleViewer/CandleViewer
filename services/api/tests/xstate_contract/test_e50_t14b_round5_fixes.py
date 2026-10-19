@@ -558,7 +558,7 @@ async def test_migration_pre_2204_snapshot_is_refused_loudly_never_silently_rest
     assert env.machine_hash == OLD_HASHES[machine]
     restorer = Restorer(
         registry=REG, keys=keys, journal=InMemoryDrainJournal(), audit=audit, pager=pager,
-        latch=ChainTripLatch(), plugins=lambda: [], clock=SimulatedClock(),
+        latch=ChainTripLatch(), plugins=lambda _key: [], clock=SimulatedClock(),
         lane=lane_of(machine),
     )  # fmt: skip
     from candleviewer.statechart.persistence import RestoreRefusedError

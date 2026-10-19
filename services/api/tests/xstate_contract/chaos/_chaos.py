@@ -127,7 +127,7 @@ async def restart(live: Live, envelope: Any) -> Live:
         audit=live.audit,
         pager=live.pager,
         latch=live.latch,
-        plugins=lambda: [AuditTap()],
+        plugins=lambda _key: [AuditTap()],
         clock=clock,
         lane=lane_of(live.machine),
     ).restore(live.key, envelope)

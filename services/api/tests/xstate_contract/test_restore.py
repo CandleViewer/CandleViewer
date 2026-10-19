@@ -5,6 +5,9 @@ Gherkin (ticket E50-T49):
   2. plugins are attached via from_snapshot(plugins=);
   3. a snapshot with chain_trips = 1 restores degraded: reads served, order
      commands refused.
+
+E50-T62: `Restorer.plugins` is called with the key being restored, and the journal cases run on
+both journals (the reference and `RowStoreDrainJournal` over an in-memory row store).
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from candleviewer.statechart import factory as cv_factory
 from candleviewer.statechart.persistence import (
     ChainTripLatch,
     DegradedLatchError,
+    DrainJournal,
     InMemoryDrainJournal,
     MachineKey,
     Persister,
@@ -35,6 +39,7 @@ from candleviewer.statechart.persistence import (
 )
 from candleviewer.statechart.registry import Registry
 from tests.xstate_contract.persist_fixtures import binding_persist  # noqa: F401
+from tests.xstate_contract.persist_fixtures.journals import JOURNALS, JournalSubject
 
 _FIXTURES = Path(__file__).resolve().parent / "persist_fixtures"
 _KIND = "persist_min"
@@ -102,12 +107,17 @@ def registry() -> Registry:
     return Registry(machines_dir=_FIXTURES)
 
 
+@pytest.fixture(params=list(JOURNALS))
+def journal(request: pytest.FixtureRequest) -> JournalSubject:
+    return JOURNALS[request.param]()
+
+
 def _restorer(
     registry: Registry,
     keys: FakeKeys,
     audit: FakeAudit,
     pager: FakePager,
-    journal: InMemoryDrainJournal | None = None,
+    journal: DrainJournal | None = None,
     latch: ChainTripLatch | None = None,
 ) -> Restorer:
     return Restorer(
@@ -117,14 +127,14 @@ def _restorer(
         audit=audit,
         pager=pager,
         latch=latch or ChainTripLatch(),
-        plugins=lambda: [CvErrorHooks(), CvMetricsPlugin(), CvAuditPlugin()],
+        plugins=lambda key: [CvErrorHooks(), CvMetricsPlugin(), CvAuditPlugin()],
         clock=SimulatedClock(),
         lane="platform",
     )
 
 
 async def _sealed(
-    registry: Registry, keys: FakeKeys, journal: InMemoryDrainJournal, chain_trips: int = 0
+    registry: Registry, keys: FakeKeys, journal: DrainJournal, chain_trips: int = 0
 ) -> SealedSnapshot:
     res = await build(_KIND, clock=SimulatedClock(), lane="platform", registry=registry)
     interp = res.interpreter
@@ -214,9 +224,10 @@ async def test_restore_unknown_key_id_refused(registry: Registry) -> None:
         await _restorer(registry, keys, audit, pager).restore(KEY, env)
 
 
-async def test_restore_after_key_rotation_uses_envelope_key_id(registry: Registry) -> None:
+async def test_restore_after_key_rotation_uses_envelope_key_id(
+    registry: Registry, journal: JournalSubject
+) -> None:
     keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
-    journal = InMemoryDrainJournal()
     env = await _sealed(registry, keys, journal)
     keys.cur = "k2"  # rotated after sealing
     res = await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
@@ -227,9 +238,10 @@ async def test_restore_after_key_rotation_uses_envelope_key_id(registry: Registr
         await res.interpreter.stop()
 
 
-async def test_restore_attaches_plugins_via_from_snapshot(registry: Registry) -> None:
+async def test_restore_attaches_plugins_via_from_snapshot(
+    registry: Registry, journal: JournalSubject
+) -> None:
     keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
-    journal = InMemoryDrainJournal()
     env = await _sealed(registry, keys, journal)
     res = await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
     interp = res.interpreter
@@ -243,9 +255,11 @@ async def test_restore_attaches_plugins_via_from_snapshot(registry: Registry) ->
         await interp.stop()
 
 
-async def test_restore_chain_trip_latch_serves_reads_refuses_orders(registry: Registry) -> None:
+async def test_restore_chain_trip_latch_serves_reads_refuses_orders(
+    registry: Registry, journal: JournalSubject
+) -> None:
     keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
-    journal, latch = InMemoryDrainJournal(), ChainTripLatch()
+    latch = ChainTripLatch()
     env = await _sealed(registry, keys, journal, chain_trips=1)
     res = await _restorer(registry, keys, audit, pager, journal, latch).restore(KEY, env)
     try:
@@ -290,9 +304,31 @@ def test_reconcile_counts_mismatch_raises(field: str) -> None:
         reconcile_counts(blob, _Stub(1, 1, 1))  # type: ignore[arg-type]  # duck-typed stub
 
 
-async def test_factory_restore_delegates(registry: Registry) -> None:
+async def test_factory_restore_delegates(registry: Registry, journal: JournalSubject) -> None:
     keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
-    journal = InMemoryDrainJournal()
     env = await _sealed(registry, keys, journal)
     res = await cv_factory.restore(_restorer(registry, keys, audit, pager, journal), KEY, env)
     await res.interpreter.stop()
+
+
+async def test_restore_calls_the_plugins_factory_with_the_key_it_restores(
+    registry: Registry,
+) -> None:
+    """E50-T62: the mandatory plugin triple needs the identity of the machine being restored
+    (`cv_plugins(machine_kind=, entity_id=, env=, ...)`), so the factory receives the key."""
+    keys, audit, pager, journal = FakeKeys(), FakeAudit(), FakePager(), InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    seen: list[MachineKey] = []
+
+    def plugins(key: MachineKey) -> list[PluginBase[Any]]:
+        seen.append(key)
+        return [CvErrorHooks(), CvMetricsPlugin(), CvAuditPlugin()]
+
+    restorer = dataclasses.replace(
+        _restorer(registry, keys, audit, pager, journal), plugins=plugins
+    )
+    res = await restorer.restore(KEY, env)
+    try:
+        assert seen == [KEY]
+    finally:
+        await res.interpreter.stop()

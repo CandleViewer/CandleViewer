@@ -24,8 +24,10 @@ quarantine row and fires a P1 alert; a tampered blob is never loaded.
 Storage and audit are injected Protocols: `statechart` may not import
 `audit` or `storage` directly (import-linter, forbidden-M18). The Postgres
 tables (`machine_snapshots`, `machine_drain_journal`, 24-internal-schemas.md
-§17.6) are created by E50-T61 and their stores are E50-T62. An in-memory
-journal ships here for tests and for the contract suite.
+§17.6) are created by E50-T61; their row stores (E50-T62) are mapped onto
+these Protocols by `candleviewer.statechart_wiring`, and `RowStoreDrainJournal`
+replays the Postgres journal here, where the library may be imported. An
+in-memory journal ships here for tests and for the contract suite.
 """
 
 from __future__ import annotations
@@ -170,6 +172,39 @@ class InMemoryDrainJournal:
             interp._enqueue_restored(ev, priority=entry.lane == "priority")
             count += 1
         return count
+
+
+class JournalRowStore(Protocol):
+    """One machine's `machine_drain_journal` rows (E50-T62), served by the composition root's
+    `JournalRowsAdapter`. Replay needs the library, so `RowStoreDrainJournal` stays here."""
+
+    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None: ...
+
+    async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]: ...
+
+    async def mark_replayed(self, key: MachineKey, send_ids: Sequence[str]) -> None: ...
+
+
+@dataclass(slots=True)
+class RowStoreDrainJournal:
+    """`DrainJournal` over a `JournalRowStore` (E50-T62): the body of
+    `InMemoryDrainJournal.replay_once`, the reference, with the stamp after the re-enqueue. A crash
+    between the two re-delivers the rows, and an order retry reuses its client order id (C-2.10);
+    stamping first could lose an event."""
+
+    rows: JournalRowStore
+
+    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None:
+        await self.rows.append(key, entries)
+
+    async def replay_once(self, key: MachineKey, interp: Interpreter[Any]) -> int:
+        pending = sorted(await self.rows.list_unreplayed(key), key=lambda e: e.ordinal)
+        for entry in pending:
+            ev = restore_event(entry.record)
+            interp._enqueue_restored(ev, priority=entry.lane == "priority")
+        if pending:
+            await self.rows.mark_replayed(key, [entry.send_id for entry in pending])
+        return len(pending)
 
 
 @dataclass(slots=True)
@@ -439,8 +474,9 @@ def _pre_start_checks(blob: dict[str, Any], interp: Interpreter[Any]) -> None:
 
 
 #: Plugin factory: fresh instances per restore (CvErrorHooks, CvMetricsPlugin,
-#: CvAuditPlugin — E50-T60). Passed via `from_snapshot(plugins=)` (R13-W1).
-PluginsFactory = Callable[[], Sequence[PluginBase[Any]]]
+#: CvAuditPlugin — E50-T60), for the machine being restored: `cv_plugins` needs its
+#: identity (E50-T62). Passed via `from_snapshot(plugins=)` (R13-W1).
+PluginsFactory = Callable[[MachineKey], Sequence[PluginBase[Any]]]
 
 
 @dataclass(slots=True)
@@ -480,7 +516,7 @@ class Restorer:
                 clock=self.clock,
                 minimum_version=SNAPSHOT_V,
                 expected_machine_hash=machine.structure_hash,
-                plugins=list(self.plugins()),
+                plugins=list(self.plugins(key)),
             )
             factory.apply_lane_config(interp, self.lane)
             _pre_start_checks(blob, interp)
