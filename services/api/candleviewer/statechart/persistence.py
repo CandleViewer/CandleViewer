@@ -22,9 +22,9 @@ quarantine row and fires a P1 alert; a tampered blob is never loaded.
 `from_snapshot(` appears only in this module (CV-LINT-RESTORE).
 
 Storage and audit are injected Protocols: `statechart` may not import
-`audit` or `storage` directly (import-linter, forbidden-M18), and the
-Postgres tables (`machine_snapshots`, `machine_drain_journal`,
-24-internal-schemas.md §17.6) land with migration E29-T12. An in-memory
+`audit` or `storage` directly (import-linter, forbidden-M18). The Postgres
+tables (`machine_snapshots`, `machine_drain_journal`, 24-internal-schemas.md
+§17.6) are created by E50-T61 and their stores are E50-T62. An in-memory
 journal ships here for tests and for the contract suite.
 """
 

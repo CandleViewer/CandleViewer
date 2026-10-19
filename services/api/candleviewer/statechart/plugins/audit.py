@@ -9,9 +9,9 @@ A failed transition writes a row with `fault` set (CvErrorHooks companion).
 Every row carries `prev_hash`/`row_hash` (sha256 over canonical JSON), so a
 gap or edit in the per-machine stream is detectable — the same chaining
 discipline as the M19 audit log. The sink is an injected Protocol:
-`statechart` may not import `audit`/`storage` (import-linter); the Postgres
-sink lands with migration E29-T12. Until that table exists the phase is
-carried as `phase` and mapped into `payload._cv_phase` by the sink.
+`statechart` may not import `audit`/`storage` (import-linter). The
+`machine_events` table (24-internal-schemas.md §17.6, E50-T61) stores `phase`,
+`prev_hash` and `row_hash` as columns; the Postgres sink is E50-T63.
 """
 
 from __future__ import annotations

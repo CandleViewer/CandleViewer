@@ -83,6 +83,10 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "positions",
         "position_snapshots",
         "auth_keys",
+        # E50-T61 (0033_machine_persistence)
+        "machine_snapshots",
+        "machine_drain_journal",
+        "machine_events",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected

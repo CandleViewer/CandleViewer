@@ -3461,6 +3461,7 @@ NAMING_CONVENTION = {
 | `0030_auth_keys`              | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, landed after `0029_oms_core`; the downgrade refuses while any row exists                                                                     |
 | `0031_policy_disarm`          | `exchange_accounts.policy_disarm_code`, `policy_disarmed_at`, `policy_disarm_audited_at` (§3.2.1): the self-check's durable disarm and its owed audit record — **#836 slice 2d**; the downgrade refuses while a record is owed             |
 | `0032_backups_write_once`     | `backups.deleted_at`, `deleted_by`, `bk_deleted`, trigger `trg_backups_write_once`, no DELETE for `cv_app` (§3.10.3): write-once location, digest, identity — **E42-T05 BK-2**; the downgrade refuses while an artefact is marked deleted  |
+| `0033_machine_persistence`    | `machine_snapshots`, `machine_drain_journal`, `machine_events` (24 §17.6): sealed snapshots, the drain journal (stamped once) and the append-only event log — **E50-T61**; the downgrade refuses while any holds a row                     |
 
 ---
 
@@ -3764,11 +3765,15 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |
 | `backups`                                              | `deleted_by`                            | P0         | plaintext                                       | A user id (0032), never a name, email or IP; `ON DELETE SET NULL` detaches it, and the delete's audit record keeps the actor                    |
 | `settings`                                             | `value` where `is_secret`               | S          | AES-256-GCM                                     | `is_secret=true` rows are returned masked by the API                                                                                            |
+| `machine_snapshots`                                    | `snapshot`                              | P1         | jsonb, plaintext; HMAC tag (CV-C53)             | A machine context can repeat order and position values; holds no credential, token or key; never logged (24 §17.6)                              |
+| `machine_drain_journal`                                | `payload`                               | P1         | jsonb, plaintext                                | A drained event, replayed once after restore; can repeat order values; holds no credential, token or key; never logged                          |
+| `machine_events`                                       | `payload`                               | P1         | jsonb, plaintext; hash-chained (`row_hash`)     | Event data; append-only (C-5.7), kept on erase like `order_events`; holds no credential, token or key; never logged                             |
 | Everything else                                        | —                                       | P0         | —                                               |                                                                                                                                                 |
 
 Enforcement:
 
 - A CI check parses the migration DDL and asserts every column listed above carries a matching `COMMENT ON COLUMN` tag (`PII:` / `SECRET:`).
+- A column outside the table above is class P0. In the three statechart persistence tables (24 §17.6) every such column carries a `P0:` comment with its meaning, so each of their columns declares its class; the CI check above still asserts only the `PII:` and `SECRET:` tags of the listed columns.
 - A Semgrep rule forbids `SELECT *` on `users`, `api_keys`, `auth_keys`, `mfa_methods`, `sessions`, `alerts` in application code.
 - The structured logger has a deny-list of field names; a unit test asserts that logging a model instance containing a secret field emits `[redacted]`.
 - Parquet exports of OMS tables exclude every S-class column by explicit projection, and the exporter test asserts the written schema contains none of them.
@@ -3834,6 +3839,9 @@ Each row: the screen/job that issues the query, the query shape, the serving ind
 | 34  | KEK rotation job              | `api_keys WHERE kek_version < $1`                                                      | `ix_api_keys_kek`                                                       | < 5 ms                                |
 | 35  | Risk dashboard                | latest `wallet_balances` per account                                                   | `ix_wb_acct_time` + `DISTINCT ON`                                       | < 10 ms                               |
 | 36  | Incident list / upsert        | `WHERE status = $1 ORDER BY last_seen_at DESC`; `ON CONFLICT (component, signature)`   | `ix_incidents_status_seen`, `ix_incidents_seen`, `ux_incidents_group`   | < 5 ms                                |
+| 37  | Restore: journal replay       | `machine_drain_journal` of a machine key `WHERE replayed_at IS NULL ORDER BY ordinal`  | `ix_mdj_pending` (partial)                                              | < 5 ms                                |
+| 38  | Machine inspector timeline    | `machine_events` of a machine key `ORDER BY seq`                                       | `ix_me_machine_seq`                                                     | < 5 ms                                |
+| 39  | Event-sink chain head         | `machine_events` of a machine key `ORDER BY seq DESC LIMIT 1`                          | `ix_me_machine_seq`                                                     | < 2 ms                                |
 
 **Why partial indexes dominate:** the hot predicates in this system are almost all "the small live subset of a large historical table" (open orders, open positions, unacked alerts, unprocessed outbox, live recordings, in-flight submits). Partial indexes keep those indexes a few pages large and permanently cache-resident, which is what makes the 1 s safety loop and the per-tick rule scheduler affordable. Full indexes are reserved for time-ordered history browsing (`*_time` descending) where the planner needs a backwards scan.
 
