@@ -110,11 +110,13 @@ def refused_alone(
     field: str | None = None,
     audited: str | None = None,
     send: Sender = send_batch,
+    hostile: str | None = None,
 ) -> None:
     """`entry` in a `sub` between `T` and `TICKER` (sent by `send`) is refused alone: its `sub_ok`
     result carries the documented error, the other two are served (results, snapshots, spies),
     `cv_ws_subscribe_total` counts each result once, no `err` frame is built, and a private
-    family's refusal writes the one `ws.subscribe.denied` row, which names `audited`."""
+    family's refusal writes the one `ws.subscribe.denied` row, which names `audited`. The text the
+    entry smuggles, `hostile`, is in no sink (as AC-08's names are not)."""
     ch = entry if isinstance(entry, str) else entry["ch"]
     calls = arm(world)
     login = world.login("alice")
@@ -135,6 +137,8 @@ def refused_alone(
         severity=Severity.WARNING, reason=code,
     )  # fmt: skip
     assert world.audit.of("ws.subscribe.denied") == ([row] if audited else [])
+    if hostile is not None:
+        assert leaked(world, c, hostile) == []
 
 
 def cp(*points: int) -> str:
@@ -148,7 +152,9 @@ def wide(text: str) -> str:
 
 def leaked(world: RawWorld, c: RawClient, name: str) -> list[str]:
     """The sinks that hold `name` as sent or as they print it (JSON- and `repr`-escaped). Under four
-    characters it marks nothing (`.` is in every frame), so it is not looked for."""
+    characters it marks nothing (`.` is in every frame), so it is not looked for: the four names
+    that short (`.`, `..`, `...` and `*`) are searched in no sink, and a longer text only by the
+    spellings that reach four."""
     spellings = {name, json.dumps(name)[1:-1], repr(name)[1:-1]}
     return [sink for text in sorted(spellings) if len(text) >= 4 for sink in world.leaks(text, c)]
 
@@ -247,6 +253,7 @@ def test_x02_ac_08_a_string_that_is_no_topic_name_refuses_its_whole_sub(
         assert (errors(), counted("cv_ws_subscribe_total"), calls()) == (4, results, {})
         still_serves(world, c, calls)
     assert world.audit.of("ws.subscribe.denied") == []
+    # Four of the 43 names are under four characters (`.`, `..`, `...`, `*`): the search skips them.
     assert leaked(world, c, name) == []  # in no frame, close reason, audit row, log or metric
 
 

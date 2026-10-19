@@ -3,10 +3,10 @@ Unknown keys, wrong types (of every option kind), NaN-like strings, huge and neg
 (floats past a `number` option's bounds, and non-finite ones), 41 `symbols`, 26
 `exchange_account_ids` (a cap counts entries, so duplicates count), objects nested to the decoder's
 depth cap and extra fields on the topic entry (the model's WS-T06 keys among them) each refuse that
-topic alone: `invalid_options` with its `field` (never the client's text), counted in
-`cv_ws_subscribe_total`, audited when the topic is a private family's, and the topics around it in
-the same `sub` are served (their results, snapshots and upstream refs). Under both subprotocols,
-fake clock, no sleeps.
+topic alone: `invalid_options` with its `field` (never the client's text, which is in no sink
+either), counted in `cv_ws_subscribe_total`, audited when the topic is a private family's, and the
+topics around it in the same `sub` are served (their results, snapshots and upstream refs). Under
+both subprotocols, fake clock, no sleeps.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pytest
 
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.topics import FAMILIES
-from tests.contract.ws._harness import current_wire
+from tests.contract.ws._harness import OFFERS, current_wire
 from tests.security.ws import test_topic_injection as inj
 from tests.security.ws._raw import RawClient, RawWorld, authenticated, delta, raw_connect
 from tests.unit.ws._seq_support import ACC_A, ACC_B, USER
@@ -135,6 +135,21 @@ OPTIONS: dict[str, Row] = {
     "accounts-on-the-entry": extra({"ch": "orders", "exchange_account_ids": [str(ACC_B)]}),
     "user-on-the-entry": extra({"ch": T, "user": str(USER)}),
 }
+#: The text a row smuggles in a key or a string, which the refusal never repeats (it names the
+#: option by `field` at most): in no sink, as AC-08's names are in none.
+HOSTILE = {
+    "key-of-5000-characters": "k" * 5000,
+    "key-of-look-alikes": inj.cp(0x430, 0x431),  # two characters: found only by its JSON spelling
+    "proto-key": "__proto__",
+    "token-key": "access_token",
+    "token-on-the-entry": "access_token",
+    "metrics-a-string-of-65-characters": "x" * 65,
+    "symbol-of-look-alikes": inj.cp(0x412, 0x422, 0x421) + "USDT",
+    "symbol-fullwidth": inj.wide("BTCUSDT"),
+    "symbol-trailing-newline": "BTCUSDT\n",
+    "param-of-25-characters": "a" * 25,
+}
+assert HOSTILE.keys() <= OPTIONS.keys()  # a name that is no row would skip the search
 
 
 def overflow(c: RawClient, entry: Any) -> dict[str, Any]:
@@ -145,14 +160,16 @@ def overflow(c: RawClient, entry: Any) -> dict[str, Any]:
 
 
 #: Numbers no finite float is, with the sender that writes each in the JSON text: `json.dumps`
-#: writes `NaN`, `Infinity` and `-Infinity`; `overflow` writes a literal `json.loads` reads as one
-#: (JSON text only: MessagePack has no such spelling, so there that case is `infinity` again).
+#: writes `NaN`, `Infinity` and `-Infinity`; `overflow` writes a literal `json.loads` reads as one.
 NON_FINITE: dict[str, tuple[float, inj.Sender]] = {
     "nan": (math.nan, inj.send_batch),
     "infinity": (math.inf, inj.send_batch),
     "minus-infinity": (-math.inf, inj.send_batch),
     "1e999": (math.inf, overflow),
 }
+#: The (wire, number) runs. MessagePack has no overflowing spelling, so `1e999` would send
+#: `infinity` again there: it runs on JSON alone.
+NON_FINITE_RUNS = [(w, n) for w in OFFERS for n in NON_FINITE if w == "json" or n != "1e999"]
 #: The value just inside each limit, with the `effective` its result reports: served, whole.
 INSIDE: dict[str, tuple[Any, dict[str, Any]]] = {
     "25-accounts": (  # §6.2: narrowed to the one account the caller may view, ACC_A
@@ -197,23 +214,31 @@ def refused_as_malformed(world: RawWorld, entry: Any) -> None:
         inj.still_serves(world, c, calls)
 
 
-@pytest.mark.parametrize("row", OPTIONS.values(), ids=OPTIONS.keys())
+@pytest.mark.parametrize(("name", "row"), OPTIONS.items(), ids=OPTIONS.keys())
 def test_x02_ac_09_a_smuggled_option_refuses_its_topic_alone_and_the_batch_is_served(
-    world: RawWorld, row: Row
+    world: RawWorld, name: str, row: Row
 ) -> None:
     entry, field, message = row
     family = entry["ch"].split(".")[0]
+    hostile = HOSTILE.get(name)
+    assert hostile is None or repr(hostile)[1:-1] in repr(entry)  # the text is what the row sends
     inj.refused_alone(
-        world, entry, "invalid_options", message, field, family if family in PRIVATE else None
+        world,
+        entry,
+        "invalid_options",
+        message,
+        field,
+        family if family in PRIVATE else None,
+        hostile=hostile,
     )
 
 
 @pytest.mark.parametrize("option", NUMBER_OPTIONS)
-@pytest.mark.parametrize("number", NON_FINITE.values(), ids=NON_FINITE.keys())
+@pytest.mark.parametrize(("wire", "number"), NON_FINITE_RUNS, indirect=["wire"])
 def test_x02_ac_09_a_non_finite_number_is_refused_as_each_wire_reads_it(
-    world: RawWorld, number: tuple[float, inj.Sender], option: str
+    world: RawWorld, number: str, option: str
 ) -> None:
-    value, send = number
+    value, send = NON_FINITE[number]
     entry, field, message = bad(NUMBER_OPTIONS[option], **{option: value})
     if current_wire() == "json":  # `json.loads` reads the literal: the option check refuses it
         inj.refused_alone(world, entry, "invalid_options", message, field, send=send)
