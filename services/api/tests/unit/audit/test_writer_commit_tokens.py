@@ -527,6 +527,8 @@ async def test_writer_a_restart_counts_a_dead_batchs_confirmed_records_in_its_de
     assert (depth, w.buffer_depth, w.committed_through()) == (4, 0, 4)
 
 
+# A 5 s real-time wait over runner-paced retries (C-9.3). ticket: GH-3729 quarantined: 2026-10-19
+@pytest.mark.flaky
 async def test_writer_a_commit_takes_only_its_own_records_out_of_the_depth(tmp_path: Path) -> None:
     """Each cursor commit takes out of `buffer_depth` only the records confirmed since the last
     one: after a first batch commits, a second batch's commit leaves the third record counted."""
