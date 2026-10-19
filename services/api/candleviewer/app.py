@@ -175,7 +175,6 @@ from candleviewer.budget_wiring import build_disk_budget
 from candleviewer.bus.models import Topic
 from candleviewer.bus.service import BusService
 from candleviewer.domain.events import InstrumentUpdatedEvent
-from candleviewer.domain.order_entry import OrderEntryGate
 from candleviewer.exchange.base.instruments import InstrumentsFetcher
 from candleviewer.exchange.base.models import TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
@@ -1760,12 +1759,11 @@ def create_app(
     ctx.accounts.attach_account_health(account_health.feed)
     # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and
     # then the account check (key standing, health, wallet), synchronous and never flag-gated
-    # (C-2.21, C-4.14). It replaces the flag runtime's maintenance-only gate, and `app.state` only
-    # ever holds this one, so no holder serves a gate without the account check.
-    feature_flags.order_entry_gate = OrderEntryGate(
-        feature_flags.gate, account_health.order_entry_check
+    # (C-2.21, C-4.14). The flag runtime holds no gate until this composes it, so no holder ever
+    # takes one without the account check; the runtime and `app.state` serve this one.
+    app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
+        account_health.order_entry_check
     )
-    app.state.order_entry_gate = feature_flags.order_entry_gate
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966
     # wires the real runner (E42-T02): no job, and its gauge stays 0 (never pages).
     app.state.audit_verify_job = build_audit_verify_job(

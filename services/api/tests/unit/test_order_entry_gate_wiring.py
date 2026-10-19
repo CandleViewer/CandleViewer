@@ -15,7 +15,7 @@ import candleviewer.account_health_wiring as wiring
 import candleviewer.app as appmod
 from candleviewer.accounts.order_gate import DisabledReason, KeyStanding
 from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, KeyCheck
-from candleviewer.domain.order_entry import OrderEntryGate
+from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryCheck, OrderEntryGate
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
@@ -96,6 +96,25 @@ def test_create_app_serves_one_gate_the_maintenance_check_then_the_account_check
     assert gate.checks == (world.maintenance, world.runtime.order_entry_check)
 
 
+def test_create_app_builds_no_order_entry_gate_but_the_one_it_serves(
+    world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.21: no router or holder is ever handed a gate of the maintenance check alone, not even
+    while `create_app` runs: the one gate it builds is the composed one it serves."""
+    built: list[OrderEntryGate] = []
+    init = OrderEntryGate.__init__
+
+    def record(
+        gate: OrderEntryGate, maintenance: GlobalOrderEntryCheck, *checks: OrderEntryCheck
+    ) -> None:
+        init(gate, maintenance, *checks)
+        built.append(gate)
+
+    monkeypatch.setattr(OrderEntryGate, "__init__", record)
+    app = appmod.create_app(_real())
+    assert len(built) == 1 and built[0] is app.state.order_entry_gate
+
+
 @pytest.mark.parametrize("backend", ["fake", "real"])
 def test_maintenance_refuses_first_and_an_untracked_account_once_it_is_off(
     backend: str, world: SimpleNamespace
@@ -123,8 +142,10 @@ async def test_ac3_an_account_down_30_s_after_its_last_success_is_refused_by_the
 async def test_the_apps_gate_refuses_once_the_last_good_tracking_read_is_a_minute_old(
     world: SimpleNamespace,
 ) -> None:
-    """The standing's age bound is the tracking loop's fault bound, `TRACKING_FAULT_AFTER_S` (when
-    `/readyz` degrades): reads that keep failing never admit on a frozen list, however healthy."""
+    """The standing's age bound is `TRACKING_FAULT_AFTER_S`, the tracking loop's fault threshold
+    (`/readyz` degrades after four failed passes: as late as about 100 s after the last good read
+    when reads hang to their timeout, so the gate refuses first): reads that keep failing never
+    admit on a frozen list, however healthy."""
     await _admit(world)
     world.down.append(ConnectionError("the database is down"))
     world.clock.advance(wiring.TRACKING_FAULT_AFTER_S)

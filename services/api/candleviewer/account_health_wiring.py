@@ -103,8 +103,10 @@ RELEASE_TIMEOUT_S: Final = 3.0
 FAULT_AFTER_S: Final = 5.0
 #: The tracking loop's: a repository that cannot be read leaves a new account untracked (the gate
 #: refuses it) and a removed one tracked. A minute is four reads, long enough that a restart of the
-#: database is no fault. It also bounds the key standing: once its last good read is this old, the
-#: gate refuses every account.
+#: database is no fault. It also bounds the key standing: the gate refuses every account from the
+#: last good read plus this, while `/readyz` reports the loop degraded only at its fourth failed
+#: pass in a row, later when reads hang to `READ_TIMEOUT_S` (up to about 100 s after the last good
+#: read). The gate refuses first, the safe direction.
 TRACKING_FAULT_AFTER_S: Final = 60.0
 #: A failing loop logs its first failure and then once in this long, not every pass: the failures
 #: are still counted, and `fault` still reports them.

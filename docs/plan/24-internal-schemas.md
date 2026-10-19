@@ -1482,21 +1482,24 @@ refuses with the first of:
 
 The key standing (`candleviewer.accounts.key_standing`, #837 W3) answers the first two from memory,
 over the accounts and usable keys of the account-health tracking read (every 15 s). Once its last
-good read is older than `TRACKING_FAULT_AFTER_S` on the monotonic clock (the bound after which
-`/readyz` reports the tracking loop degraded), it refuses every account, so reads that keep
-failing never admit on a frozen list. Freshness is the self-check's own rule, `selfcheck.is_fresh`
-(one interval plus 15 minutes, SR-E27-18), at each read, so a stalled check job cannot keep a key
-active. A rejected credential refuses the next order at once, held before it is logged, reported
-by the signed call that met it (the wallet reconciliation now; the submit pipeline's §8.6 branch
-with #913, which owns the durable reaction). Only a later recorded pass of one of the account's
-keys clears it, never health evidence, and never a pass the standing knew when it arrived. A check
-already in flight then, dated after it by a wall-clock step back, can clear it once, until the
-next signed call meets the refusal again: the residual accepted under Option A. A restart forgets
-it, and the boot self-check judges the key afresh. The routes that switch an account off, delete
-it or revoke a key (#895, #896) must tell the standing synchronously, before they return, as
-`credential_rejected` does, so the next order is refused without waiting for the next read.
-`create_app` builds the one gate, `OrderEntryGate(maintenance, account_check)`, so every caller
-of it reads the account check.
+good read is older than `TRACKING_FAULT_AFTER_S` (60 s) on the monotonic clock, it refuses every
+account, so reads that keep failing never admit on a frozen list. That is also the tracking loop's
+fault threshold, but `/readyz` reports the loop degraded only at its fourth failed pass in a row:
+at those same 60 s when reads fail at once, up to about 100 s after the last good read when each
+read hangs to its 10 s timeout. The gate refuses first, the safe direction. Freshness is the
+self-check's own rule, `selfcheck.is_fresh` (one interval plus 15 minutes, SR-E27-18), at each
+read, so a stalled check job cannot keep a key active. A rejected credential refuses the next
+order at once, held before it is logged, reported by the signed call that met it (the wallet
+reconciliation now; the submit pipeline's §8.6 branch with #913, which owns the durable reaction).
+Only a later recorded pass of one of the account's keys clears it, never health evidence, and
+never a pass the standing knew when it arrived. A check already in flight then, dated after it by
+a wall-clock step back, can clear it once, until the next signed call meets the refusal again:
+the residual accepted under Option A. A restart forgets it, and the boot self-check judges the key
+afresh. The routes that switch an account off, delete it or revoke a key (#898, E27-S04) must tell
+the standing synchronously, before they return, as `credential_rejected` does, so the next order
+is refused without waiting for the next read; a tracking read already in flight then must not
+undo it. `create_app` builds the one gate, `OrderEntryGate(maintenance, account_check)`, so every
+caller of it reads the account check.
 
 Each reason has one fixed `detail` sentence. It never names an id, a secret, exchange-supplied
 text or the key-policy rule that failed: the 403 also reaches callers without `keys:read`, so that

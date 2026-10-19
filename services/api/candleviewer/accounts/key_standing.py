@@ -47,8 +47,8 @@ import structlog
 
 from candleviewer.accounts.health import Clock
 from candleviewer.accounts.order_gate import DisabledReason, KeyStanding
-from candleviewer.accounts.selfcheck import KeyCheck, is_fresh
-from candleviewer.accounts.verification import Refusal, Rule
+from candleviewer.accounts.selfcheck import STANDING_FAILURE_CODES, KeyCheck, is_fresh
+from candleviewer.accounts.verification import Refusal
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
 
 #: 24-internal-schemas.md section 8.6, what a rejected credential does to the account's standing
@@ -62,7 +62,6 @@ REACTIONS: Final[Mapping[Refusal, DisabledReason | None]] = {
     Refusal.PERMISSION_DENIED: DisabledReason.ACCOUNT_DISABLED,
     Refusal.IP_NOT_ALLOWED: DisabledReason.KEY_IP_WHITELIST_MISMATCH,
 }
-_RULES: Final = frozenset(rule.value for rule in Rule)
 _POLICY: Final[Mapping[str | None, DisabledReason]] = {r.value: r for r in DisabledReason}
 
 
@@ -153,10 +152,7 @@ class KeyStandings:
         if account is None or self._clock.monotonic() - self._read_at > self._stale_after_s:
             return None
         keys = self._judge(account)
-        rejection = self._rejections.get(account_id)
-        if rejection is not None and _passed_since(rejection, keys):
-            del self._rejections[account_id]
-            rejection = None
+        rejection = self._held(account_id, keys)
         now, interval_s = self._clock.now(), self._interval_s
         active = any(
             not key.failed and is_fresh(key.last_pass_at, now=now, interval_s=interval_s)
@@ -174,17 +170,19 @@ class KeyStandings:
 
     def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
         """Hold the section 8.6 reaction to `refusal` for the account, at once and before it is
-        logged, so a logging fault never withholds it (C-2.21); a second rejection adds its
-        reaction to the first, and the fact then needs a pass after both."""
+        logged, so a logging fault never withholds it (C-2.21). A second rejection adds its
+        reaction to a first still in force, and the fact then needs a pass after both; a first
+        that a later pass has cleared adds nothing, whether or not a read dropped it already."""
         account = self._accounts.get(account_id)
         if account is not None:
-            prior = self._rejections.get(account_id)
+            keys = self._judge(account)
+            prior = self._held(account_id, keys)
             disabled = REACTIONS.get(refusal)
             self._rejections[account_id] = _Rejection(
                 no_key=disabled is None or (prior is not None and prior.no_key),
                 disabled=disabled or (None if prior is None else prior.disabled),
                 at=self._clock.now(),
-                seen=frozenset((key.key_id, key.last_pass_at) for key in self._judge(account)),
+                seen=frozenset((key.key_id, key.last_pass_at) for key in keys),
             )
         logger().error(
             "account.credential_rejected",
@@ -192,6 +190,14 @@ class KeyStandings:
             reason=str(refusal),
             listed=account is not None,
         )
+
+    def _held(self, account_id: UUID, keys: Iterable[_Judged]) -> _Rejection | None:
+        """The account's rejection while it is in force; one a later pass has cleared is dropped."""
+        rejection = self._rejections.get(account_id)
+        if rejection is not None and _passed_since(rejection, keys):
+            del self._rejections[account_id]
+            return None
+        return rejection
 
     def _judge(self, account: _Account) -> list[_Judged]:
         """Each of the account's keys as the self-check judges it: its result when the job holds
@@ -203,7 +209,7 @@ class KeyStandings:
         for key in account.keys:
             check = results.get(key.key_id)
             if check is None:
-                failed = key.error_code in _RULES
+                failed = key.error_code in STANDING_FAILURE_CODES
                 judged.append(_Judged(key.key_id, failed, key.error_code, key.verified_at))
             else:
                 failed = check.outcome == "failed"
