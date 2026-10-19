@@ -66,7 +66,7 @@ class SymbolNotAllowed(ValueError):
 
 
 def _default_symbol_allowlist(sym: str) -> bool:
-    return bool(_SYMBOL_RE.match(sym))
+    return bool(_SYMBOL_RE.fullmatch(sym))
 
 
 class QuestDbMarketDataRepository:

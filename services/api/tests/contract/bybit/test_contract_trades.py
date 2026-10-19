@@ -143,6 +143,21 @@ async def test_malformed_print_is_rejected_counted_and_stream_continues(
     assert len(h.drain()) == 1
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_a_trade_symbol_ending_in_a_newline_is_rejected(tail: str) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took `publicTrade.BTCUSDT\\n`.
+    The frame is a recorded batch whose topic and every record carry that symbol, so the symbol
+    pattern is the check left to refuse it."""
+    msg = json.loads(frames(BTC)[0])
+    legal = parse_trade_frame(json.dumps(msg))
+    assert legal is not None and {p.symbol for p in legal} == {"BTCUSDT"}
+    msg["topic"] += tail
+    for rec in msg["data"]:
+        rec["s"] += tail
+    with pytest.raises(ValueError, match="invalid symbol"):
+        parse_trade_frame(json.dumps(msg))
+
+
 @pytest.mark.parametrize(
     "junk", ["", "not json", "[]", '{"topic":"publicTrade.BTCUSDT"', '{"op":"pong"}']
 )

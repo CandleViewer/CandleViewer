@@ -192,7 +192,7 @@ async def fetch_kline_page(
     tick_size: Decimal | None = None,
 ) -> list[KlineEvent]:
     """One validated page (ascending) of klines whose open time is in `[start_us, end_us]`."""
-    if not _SYMBOL_RE.match(symbol):
+    if not _SYMBOL_RE.fullmatch(symbol):
         raise KlinePageRejected("kline: invalid symbol", "envelope")
     if interval not in INTERVAL_MS:
         raise KlinePageRejected("kline: interval is not backfillable", "envelope")

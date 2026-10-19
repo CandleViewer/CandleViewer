@@ -79,7 +79,7 @@ def parse_ticker_frame(frame: str) -> TickerDelta | None:
     if not isinstance(topic, str) or not topic.startswith(TOPIC_PREFIX):
         return None
     symbol = topic[len(TOPIC_PREFIX) :]
-    if not _SYMBOL_RE.match(symbol):
+    if not _SYMBOL_RE.fullmatch(symbol):
         raise ValueError("ticker frame carries an invalid symbol")
     kind, data, ts = msg.get("type"), msg.get("data"), msg.get("ts")
     if kind not in ("snapshot", "delta") or not isinstance(data, dict):

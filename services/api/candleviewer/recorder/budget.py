@@ -439,7 +439,7 @@ class DiskBudget:
         m = Measurement(total, free, self._breakdown.tiers, self._breakdown.symbols)
         pinned = await self._pins()
         used = sum(m.tiers.get(t, 0) for t in _RECORDED)
-        named = ((s, b) for s, b in m.symbols.items() if _SYMBOL_RE.match(s))
+        named = ((s, b) for s, b in m.symbols.items() if _SYMBOL_RE.fullmatch(s))
         top = tuple(sorted(named, key=lambda sb: (-sb[1], sb[0]))[: cfg.max_symbols])
         point = Point(now, used, top)
         if fresh and self._commit(point):

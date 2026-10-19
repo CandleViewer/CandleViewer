@@ -242,7 +242,7 @@ _GUARD: Final = _SymbolGuard()
 
 def bind_symbol_universe(symbols: Iterable[str]) -> None:
     """Restrict `symbol` label values to the configured/recorded set."""
-    _GUARD.universe = frozenset(s for s in symbols if _SYMBOL_RE.match(s))
+    _GUARD.universe = frozenset(s for s in symbols if _SYMBOL_RE.fullmatch(s))
     _GUARD.seen.clear()
     _EVENT_CHILDREN.clear()
 
@@ -266,7 +266,7 @@ def symbol_label(value: str) -> str:
         return value if value in universe else OTHER_SYMBOL
     if value in _GUARD.seen:  # hot path: already admitted (and validated)
         return value
-    if not _SYMBOL_RE.match(value) or len(_GUARD.seen) >= MAX_SYMBOLS:
+    if not _SYMBOL_RE.fullmatch(value) or len(_GUARD.seen) >= MAX_SYMBOLS:
         return OTHER_SYMBOL
     _GUARD.seen.add(value)
     return value

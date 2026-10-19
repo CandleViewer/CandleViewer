@@ -183,6 +183,9 @@ async def test_fetch_kline_page_uses_public_market_data_bucket() -> None:
     ("symbol", "interval", "limit", "exc"),
     [
         ("btc/../x", "1", 10, KlinePageRejected),
+        # #3555: `$` also matches before a final newline, so `match` let the first one through
+        ("BTCUSDT\n", "1", 10, KlinePageRejected),
+        ("BTCUSDT\r\n", "1", 10, KlinePageRejected),
         ("BTCUSDT", "M", 10, KlinePageRejected),
         ("BTCUSDT", "1", 1001, ValueError),
         ("BTCUSDT", "1", 0, ValueError),

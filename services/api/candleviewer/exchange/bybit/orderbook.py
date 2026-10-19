@@ -84,7 +84,7 @@ def parse_book_frame(frame: str, tick_size: TickSize) -> BookSnapshot | BookDelt
         raise ValueError("book frame carries an invalid topic")
     depth, symbol = int(parts[0]), parts[1]
     data = msg.get("data")
-    if not _SYMBOL_RE.match(symbol) or not isinstance(data, dict) or data.get("s") != symbol:
+    if not _SYMBOL_RE.fullmatch(symbol) or not isinstance(data, dict) or data.get("s") != symbol:
         raise ValueError("book frame carries an invalid symbol or data")
     tick = tick_size(symbol)
     if tick is None or tick <= 0:

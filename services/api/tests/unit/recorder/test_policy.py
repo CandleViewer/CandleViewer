@@ -196,7 +196,17 @@ async def test_policy_capacity_guard(clock: FakeClock, bus: FakeBus, audit: Fake
         await p.stop()
 
 
-@pytest.mark.parametrize("bad", ["btcusdt", "BTC.USDT", "*", "B"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "btcusdt",
+        "BTC.USDT",
+        "*",
+        "B",
+        "BTCUSDT\n",  # #3555: `$` also matches before a final newline, so `match` took this one
+        "BTCUSDT\r\n",
+    ],
+)
 async def test_policy_rejects_invalid_symbol(policy: RecordingPolicy, bad: str) -> None:
     with pytest.raises(InvalidRecordedSymbolError):
         await policy.on_chart_opened(bad, "c1")
