@@ -1,13 +1,13 @@
 """E27-T04 W3 (#837): the one order-entry gate `create_app` composes, `OrderEntryGate(maintenance,
 account_check)`. AC3's "order entry for that account is refused" through it; `no_active_key` and
 `account_disabled_by_policy` from the real key standing the tracking read feeds; maintenance first.
-The usable-key read is faked at its SQL edge, on a fake clock: no Docker, no network."""
+The usable-key and episode replay reads are faked at their SQL edge (`fake_sql_edges`), on a fake
+clock: no Docker, no network."""
 
 from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
@@ -19,12 +19,7 @@ from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, KeyCheck
 from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryCheck, OrderEntryGate
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
-from candleviewer.storage.repositories.dms_episodes_sqlalchemy import SqlAlchemyDmsEpisodeJournal
-from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
-from candleviewer.storage.repositories.relational_sqlalchemy import (
-    SqlAlchemyRelationalRepository,
-)
-from tests.unit.accounts._fakes import ACC, ACC_B, FakeClock, key_of, key_row
+from tests.unit.accounts._fakes import ACC, ACC_B, FakeClock, fake_sql_edges, key_of, key_row
 
 #: Not the default hour, so a standing that ignored the configured interval would show.
 INTERVAL_S = 600.0
@@ -45,30 +40,19 @@ def _real() -> Settings:
 
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """The real-backend app on a fake clock, its usable-key read answering `rows`, or raising the
-    error in `down`."""
-    clock, rows, down = FakeClock(), list[SelfCheckTargetRow](), list[Exception]()
-
-    async def targets(_store: SqlAlchemyKeySelfCheckStore) -> tuple[SelfCheckTargetRow, ...]:
-        if down:
-            raise down[0]
-        return tuple(rows)
-
-    async def dispose(_repository: SqlAlchemyRelationalRepository) -> None:
-        return None
-
+    """The real-backend app on a fake clock, its SQL edges faked by `fake_sql_edges`: the
+    usable-key read answers `rows`, or raises the error in `down`, and the episode replay read
+    finds no open episode."""
+    clock, edges = FakeClock(), fake_sql_edges(monkeypatch)
     monkeypatch.setattr(wiring, "SystemClock", lambda: clock)
-    monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
-    monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
-    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", AsyncMock(return_value=()))
     monkeypatch.setattr(appmod, "_build_accounts_counts", lambda _settings: None)
     app = appmod.create_app(_real())
     ctx = app.state.app_context
     return SimpleNamespace(
         app=app,
         clock=clock,
-        rows=rows,
-        down=down,
+        rows=edges.rows,
+        down=edges.down,
         gate=app.state.order_entry_gate,
         runtime=app.state.account_health,
         maintenance=app.state.feature_flags.gate,

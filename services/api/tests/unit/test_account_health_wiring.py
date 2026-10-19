@@ -7,7 +7,7 @@ The lifespan's order is in `test_main_lifespan_stop_order.py`."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -39,14 +39,18 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.redaction import redact_structure
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
-from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
-    DmsEpisodeRow,
-    SqlAlchemyDmsEpisodeJournal,
-)
-from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
-from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
-from tests.unit.accounts._fakes import ACC, ACC_B, DAY, T0, FakeClock, Journal, key_row
+from tests.unit.accounts._fakes import (
+    ACC,
+    ACC_B,
+    DAY,
+    T0,
+    FakeClock,
+    Journal,
+    SqlEdges,
+    fake_sql_edges,
+    key_row,
+)
 from tests.unit.accounts._runtime_rig import Rig, snapshot
 
 _ECHO = "echoed exchange text: key abc123"  # what a failing collaborator's message may carry
@@ -676,33 +680,16 @@ def _account_row(
 
 
 @pytest.fixture
-def stored(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
+def stored(monkeypatch: pytest.MonkeyPatch) -> SqlEdges:
     """The real-backend `create_app` with the usable-key read and the episode journal's replay
-    read faked at their SQL edge, each recording the environment its store was bound to."""
-    edges = SimpleNamespace(rows=[], envs=[], journal_envs=[], disposed=0)
-
-    async def targets(store: SqlAlchemyKeySelfCheckStore) -> tuple[SelfCheckTargetRow, ...]:
-        edges.envs.append(store._env)
-        return tuple(edges.rows)
-
-    async def open_episodes(
-        journal: SqlAlchemyDmsEpisodeJournal, limit: int
-    ) -> tuple[DmsEpisodeRow, ...]:
-        edges.journal_envs.append(journal._env)
-        return ()
-
-    async def dispose(_repository: SqlAlchemyRelationalRepository) -> None:
-        edges.disposed += 1
-
-    monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
-    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", open_episodes)
-    monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
+    read faked at their SQL edge (`fake_sql_edges`), each recording the environment its store or
+    journal was bound to."""
     monkeypatch.setattr(appmod, "_build_accounts_counts", lambda _settings: None)
-    yield edges
+    return fake_sql_edges(monkeypatch)
 
 
 async def test_the_real_backend_tracks_only_the_enabled_accounts_of_its_environment(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     stored.rows = [
         _account_row(ACC),
@@ -716,7 +703,7 @@ async def test_the_real_backend_tracks_only_the_enabled_accounts_of_its_environm
 
 
 async def test_the_real_backend_binds_the_store_it_reads_to_the_process_environment(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     runtime = appmod.create_app(_real()).state.account_health
     await runtime.refresh_tracking()
@@ -724,7 +711,7 @@ async def test_the_real_backend_binds_the_store_it_reads_to_the_process_environm
 
 
 async def test_a_row_of_another_environment_is_logged_once_for_as_long_as_it_stays(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     runtime = appmod.create_app(_real()).state.account_health
     foreign = _account_row(_ACC_C, env="live")  # the store filters on `env`: a bug worth a line
@@ -737,7 +724,7 @@ async def test_a_row_of_another_environment_is_logged_once_for_as_long_as_it_sta
 
 
 async def test_a_stop_releases_the_pool_of_the_runtimes_own_store_and_only_that_one(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     runtime = appmod.create_app(_real()).state.account_health
     await runtime.stop()
@@ -748,7 +735,7 @@ async def test_a_stop_releases_the_pool_of_the_runtimes_own_store_and_only_that_
     ("days", "held", "noticed"), [(90, [1, 1, 1], [1, 1]), (180, [2, 1, 0], [1, 0])]
 )
 async def test_the_real_backend_counts_key_age_from_the_tracking_read_and_disables_nothing(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
     monkeypatch: pytest.MonkeyPatch,
     days: int,
     held: list[int],
@@ -777,7 +764,7 @@ async def test_the_real_backend_counts_key_age_from_the_tracking_read_and_disabl
 
 
 async def test_a_key_age_job_that_raises_never_keeps_the_read_from_tracking(
-    stored: SimpleNamespace,
+    stored: SqlEdges,
 ) -> None:
     """#837 W6: the job only reports. A row it cannot evaluate (a naive registration time) is
     logged by its error type, once per change, and the enabled account is tracked at every read
@@ -796,7 +783,7 @@ async def test_a_key_age_job_that_raises_never_keeps_the_read_from_tracking(
 
 
 async def test_a_key_age_job_that_raises_leaves_the_standing_and_the_tracking_to_the_read(
-    stored: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#837 W6: the job runs last, once the read has fed the key standing (the order-entry gate's
     input) and taken the enabled accounts, so one that raises at every read holds back neither:

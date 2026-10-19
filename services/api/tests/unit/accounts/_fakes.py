@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import random
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
 from uuid import UUID
+
+import pytest
 
 from candleviewer.accounts.health import HealthTransition
 from candleviewer.accounts.order_gate import KeyStanding
 from candleviewer.domain.primitives import Exchange
 from candleviewer.observability.context import get_context
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
-from candleviewer.storage.repositories.dms_episodes_sqlalchemy import DmsEpisodeRow
+from candleviewer.storage.repositories.dms_episodes_sqlalchemy import (
+    DmsEpisodeRow,
+    SqlAlchemyDmsEpisodeJournal,
+)
+from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
 DAY = timedelta(days=1)
@@ -215,3 +222,44 @@ class Journal:
         return tuple(
             DmsEpisodeRow(n, e.account_id, e.from_state, e.reason, e.at) for n, e in newest
         )
+
+
+@dataclass
+class SqlEdges:
+    """The real backend's account health SQL edges as `fake_sql_edges` fakes them: the usable-key
+    read answers `rows`, or raises the first error in `down`; the episode replay read finds no
+    open episode; a pool release is counted. Each read records the environment its store or
+    journal was bound to."""
+
+    rows: list[SelfCheckTargetRow] = field(default_factory=list)
+    down: list[Exception] = field(default_factory=list)
+    envs: list[str] = field(default_factory=list)
+    journal_envs: list[str] = field(default_factory=list)
+    disposed: int = 0
+
+
+def fake_sql_edges(monkeypatch: pytest.MonkeyPatch) -> SqlEdges:
+    """Fake, for one test, every SQL edge the real backend's account health runtime reaches: the
+    usable-key read, the episode replay read and the pool release, each with the signature of the
+    method it replaces. The app-wiring tests share it, so an edge added later is faked for all."""
+    edges = SqlEdges()
+
+    async def targets(store: SqlAlchemyKeySelfCheckStore) -> tuple[SelfCheckTargetRow, ...]:
+        edges.envs.append(store._env)
+        if edges.down:
+            raise edges.down[0]
+        return tuple(edges.rows)
+
+    async def open_episodes(
+        journal: SqlAlchemyDmsEpisodeJournal, limit: int
+    ) -> tuple[DmsEpisodeRow, ...]:
+        edges.journal_envs.append(journal._env)
+        return ()
+
+    async def dispose(_repository: SqlAlchemyRelationalRepository) -> None:
+        edges.disposed += 1
+
+    monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", open_episodes)
+    monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
+    return edges
