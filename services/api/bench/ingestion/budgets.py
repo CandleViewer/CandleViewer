@@ -2,6 +2,13 @@
 
 Budgets are 06-performance-and-load-standard §2 rows; each `Check` carries the measured number
 beside the budget so the report can print both (AC 1). Hard vs soft follows the §2 table.
+
+Budget #8 is per symbol (06 §2: book state, bar builders, rolling aggregation buffers):
+`rss_per_symbol_mb` is the RSS the lanes add, i.e. the sample minus the RSS taken before they were
+built, per symbol. The soak lanes run the trade stream and the book state; bar builders and
+aggregation enter this figure when they enter the lanes. `rss_process_mb` is the whole-process RSS
+at each sample, imports included, reported beside it so that growth in what is imported is not
+read as per-symbol growth.
 """
 
 from __future__ import annotations
@@ -112,8 +119,17 @@ def check_loss(
 # --- budget #8 / #11 / #12 and memory flatness --------------------------------------------------
 
 
-def rss_per_symbol_mb(samples: Sequence[Sample], n_symbols: int) -> list[float]:
-    return [s.rss_bytes / 2**20 / max(1, n_symbols) for s in samples]
+def rss_per_symbol_mb(
+    samples: Sequence[Sample], n_symbols: int, pre_lanes_bytes: int = 0
+) -> list[float]:
+    """Budget #8's figure at each sample: the RSS the lanes added per symbol, never below 0.
+    `pre_lanes_bytes` is the RSS taken before the market and lanes existed (0: whole process)."""
+    return [max(0, s.rss_bytes - pre_lanes_bytes) / 2**20 / max(1, n_symbols) for s in samples]
+
+
+def rss_process_mb(samples: Sequence[Sample]) -> list[float]:
+    """Whole-process RSS (MiB) at each sample: the footprint, imports included (not budget #8)."""
+    return [s.rss_bytes / 2**20 for s in samples]
 
 
 def vcpu_per_symbol(samples: Sequence[Sample], n_symbols: int) -> list[float]:
@@ -149,15 +165,29 @@ def flatness(samples: Sequence[Sample], baseline_at_s: float) -> tuple[float, fl
 
 
 def check_soak(
-    samples: Sequence[Sample], n_symbols: int, baseline_at_s: float, tolerance: float
+    samples: Sequence[Sample],
+    n_symbols: int,
+    baseline_at_s: float,
+    tolerance: float,
+    pre_lanes_bytes: int = 0,
 ) -> list[Check]:
-    rss = percentile(rss_per_symbol_mb(samples, n_symbols), 0.95)
+    rss = percentile(rss_per_symbol_mb(samples, n_symbols, pre_lanes_bytes), 0.95)
     cpu = percentile(vcpu_per_symbol(samples, n_symbols), 0.95)
     gb = storage_gb_per_day_per_symbol(samples, n_symbols)
     dev, at = flatness(samples, baseline_at_s)
     return [
         Check(
-            "rss_per_symbol_p95", "#8", rss, B8_RSS_MB_PER_SYMBOL, "MB", rss <= B8_RSS_MB_PER_SYMBOL
+            "rss_per_symbol_p95",
+            "#8",
+            rss,
+            B8_RSS_MB_PER_SYMBOL,
+            "MB",
+            rss <= B8_RSS_MB_PER_SYMBOL,
+            note=(
+                f"RSS added since the {pre_lanes_bytes / 2**20:.1f} MiB before the lanes"
+                if pre_lanes_bytes
+                else ""
+            ),
         ),
         Check(
             "vcpu_per_symbol_p95",

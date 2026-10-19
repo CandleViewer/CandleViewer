@@ -41,6 +41,24 @@ def test_soak_checks_pass_within_budgets() -> None:
     assert checks["rss_per_symbol_p95"].measured == pytest.approx(100.0)
 
 
+def test_rss_per_symbol_is_what_the_lanes_added_and_the_footprint_is_reported_apart() -> None:
+    s = _samples([300 * MiB, 330 * MiB, 360 * MiB])
+    # a 270 MiB process before the lanes were built: 30, 60, 90 MiB added over 3 symbols
+    assert b.rss_per_symbol_mb(s, 3, 270 * MiB) == pytest.approx([10.0, 20.0, 30.0])
+    assert b.rss_process_mb(s) == pytest.approx([300.0, 330.0, 360.0])
+    assert b.rss_per_symbol_mb(_samples([250 * MiB]), 3, 270 * MiB) == [0.0]  # RSS fell: not < 0
+
+
+def test_budget_8_ignores_the_import_footprint_but_still_fails_real_lane_growth() -> None:
+    imports = _samples([2000 * MiB, 2010 * MiB, 2030 * MiB])  # a big process, small lane growth
+    ok = b.check_soak(imports, 3, 60.0, 0.05, 2000 * MiB)[0]
+    assert ok.name == "rss_per_symbol_p95" and ok.passed and ok.measured == pytest.approx(10.0)
+    assert "2000.0 MiB" in ok.note
+    lanes = _samples([2000 * MiB, 2500 * MiB, 3000 * MiB])  # 3 x 333 MB added: a real breach
+    bad = b.check_soak(lanes, 3, 60.0, 0.05, 2000 * MiB)[0]
+    assert not bad.passed and bad.hard and bad.limit == b.B8_RSS_MB_PER_SYMBOL == 300.0
+
+
 def test_soak_rss_over_budget_and_growth_fail() -> None:
     rss = [1000 * MiB, 1000 * MiB, 1060 * MiB, 1100 * MiB]
     checks = {c.name: c for c in b.check_soak(_samples(rss), 3, 60.0, 0.05)}

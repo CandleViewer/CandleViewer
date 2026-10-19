@@ -80,6 +80,13 @@ class LaneConfig:
     inbound_queue: int = 64
     sample_every_s: float = 5.0
     seed: int = 7
+    #: Unsampled warm-up, in virtual seconds: the lanes run this long before the sampled window
+    #: (`duration_s`) starts, so bounded buffers are full and one-off start-up allocations have
+    #: settled when the first sample is taken. 0 = sample from the first tick.
+    warmup_s: float = 0.0
+    #: The warm-up also lasts at least this much wall time: start-up work lands at a fixed
+    #: wall-clock offset, which a fast machine covers in fewer virtual seconds. 0 = no floor.
+    warmup_wall_s: float = 0.0
     #: Pace each tick on the wall clock (the 24 h 1x leg); virtual time otherwise.
     realtime: bool = False
     #: Per-symbol rate multiplier windows: (symbol, start_s, end_s, factor).
@@ -95,6 +102,8 @@ class LaneConfig:
 @dataclass(slots=True)
 class LaneResult:
     samples: list[Sample] = field(default_factory=list)
+    #: RSS taken once before the market and lanes were built: what budget #8 subtracts.
+    rss_pre_lanes_bytes: int = 0
     injected: dict[str, int] = field(default_factory=dict)
     ingested: dict[str, int] = field(default_factory=dict)
     detected_gap: dict[str, int] = field(default_factory=dict)
@@ -308,21 +317,26 @@ async def run_lanes(
     bind: Callable[[list[Lane]], None] | None = None,
 ) -> LaneResult:
     """Drive every lane tick by tick (virtual time). One task per symbol per tick (gathered),
-    so a lane's work never runs inside another's; the clock only advances when all are done."""
+    so a lane's work never runs inside another's; the clock only advances when all are done.
+
+    RSS is sampled once before the market and lanes are built (`LaneResult.rss_pre_lanes_bytes`).
+    A warm-up (`LaneConfig.warmup_s`) runs the lanes unsampled first; `duration_s` is the sampled
+    window that follows, and sample times count from its start."""
+    if cfg.loads and (cfg.warmup_s or cfg.warmup_wall_s):
+        raise ValueError("a warm-up would shift the load windows: scenarios with loads take none")
+    rss_pre, _ = sampler.sample()  # budget #8's baseline: before the market and lanes exist
     market = SyntheticMarket(cfg.symbols, cfg.seed)
     lanes = [Lane(s, cfg, market, i) for i, s in enumerate(cfg.symbols)]
     if bind is not None:
         bind(lanes)  # self-tests observe lane state (e.g. retained events) from the sampler
     n_ticks = int(cfg.duration_s / cfg.tick_s)
     every = max(1, int(cfg.sample_every_s / cfg.tick_s))
-    res = LaneResult()
+    res = LaneResult(rss_pre_lanes_bytes=rss_pre)
     sample_cost: list[float] = []
-    wall0 = time.perf_counter()
-    rss0, cpu0 = sampler.sample()
-    res.samples.append(Sample(0.0, rss0, 0.0, 0.0, 0, 0))
     lag_window: deque[float] = deque(maxlen=64)
-    for tick in range(n_ticks + drain_ticks):
-        feeding = tick < n_ticks
+    wall0 = time.perf_counter()
+
+    async def step(tick: int, feeding: bool) -> None:
         if feeding:
             for lane in lanes:
                 lane.feed(tick)
@@ -332,14 +346,34 @@ async def run_lanes(
         lag_window.append(spent * 1000)
         if cfg.realtime and feeding:
             await asyncio.sleep(max(0.0, cfg.tick_s - spent))
+
+    tick, warm_ticks = 0, int(cfg.warmup_s / cfg.tick_s)
+    while tick < warm_ticks or time.perf_counter() - wall0 < cfg.warmup_wall_s:
+        await step(tick, True)
+        tick += 1
+    first = tick  # the sampled window starts here
+    rss0, cpu0 = sampler.sample()
+    res.samples.append(
+        Sample(
+            0.0,
+            rss0,
+            0.0,
+            0.0,
+            sum(lane.backlog() for lane in lanes),
+            sum(lane.storage_bytes for lane in lanes),
+        )
+    )
+    for tick in range(first, first + n_ticks + drain_ticks):
+        feeding = tick < first + n_ticks
+        await step(tick, feeding)
         if not feeding and all(lane.backlog() == 0 for lane in lanes):
             break
-        if feeding and (tick + 1) % every == 0:
+        if feeding and (tick + 1 - first) % every == 0:
             t_s0 = time.perf_counter()
             rss, cpu = sampler.sample()
             res.samples.append(
                 Sample(
-                    (tick + 1) * cfg.tick_s,
+                    (tick + 1 - first) * cfg.tick_s,
                     rss,
                     cpu - cpu0,
                     max(lag_window, default=0.0),

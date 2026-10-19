@@ -6,4 +6,6 @@ and written up by `report.py`. Consumes (never forks) the E08-T06 harness
 `bench/ingestion_soak.py`. Offline: recorded corpus + seeded synthetic feeds only (C-13.5).
 """
 
-HARNESS_VERSION = "e08-q04/1"
+#: Bumped when a metric's definition changes: `gate.compare` reads no baseline from another version.
+#: /2: `rss_mb_per_symbol` is the RSS the lanes add (it was the whole process's RSS per symbol).
+HARNESS_VERSION = "e08-q04/2"
