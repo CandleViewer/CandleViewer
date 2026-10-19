@@ -14,11 +14,18 @@ import contextlib
 import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from typing import Any, Final
 
 import asyncpg
 
 from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.pgwire_metrics import (
+    DiscardReason,
+    WireName,
+    questdb_pgwire_abandoned_total,
+    questdb_pgwire_discards_total,
+    questdb_pgwire_lock_wait_seconds,
+)
 from candleviewer.storage.questdb.ilp_writer import IlpTransport, IlpWriter, TableSchema
 from candleviewer.storage.questdb.reader import (
     PgWireConnection,
@@ -113,7 +120,14 @@ class LazyPgWire:
     (`backoff_*`): calls inside the window fail fast instead of hammering a dead DB. After
     `degraded_after` consecutive failures `degraded` is True (surfaced by the bars writer
     probe); one success clears it. Any exception - including cancellation - during a query
-    discards the connection so the next caller never reuses a half-used one."""
+    discards the connection so the next caller never reuses a half-used one. A cancellation that
+    arrives while the discard closes the connection terminates it and is re-raised, never swallowed.
+
+    `name`, from the closed `WireName` set, labels its series (#2787 D2-G2): each discard by
+    reason (`questdb_pgwire_discards_total`), the wait for the lock before a query, observed on
+    `clock` when it is granted (`questdb_pgwire_lock_wait_seconds`), and a query call cancelled
+    before its query started, waiting for the lock or a connect (`questdb_pgwire_abandoned_total`).
+    Each cancelled call counts once: abandoned before its query, a `cancelled` discard during it."""
 
     def __init__(
         self,
@@ -122,6 +136,7 @@ class LazyPgWire:
         user: str,
         password: str,
         *,
+        name: WireName,
         connect: Callable[..., Awaitable[Any]] = asyncpg.connect,
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
@@ -132,6 +147,7 @@ class LazyPgWire:
         backoff_max_s: float = 30.0,
         degraded_after: int = 3,
     ) -> None:
+        self.name: Final = name
         self._args: dict[str, Any] = {
             "host": host,
             "port": port,
@@ -157,22 +173,43 @@ class LazyPgWire:
     def degraded(self) -> bool:
         return self._failures >= self._degraded_after
 
+    def sibling(self, name: WireName) -> LazyPgWire:
+        """A second wire to this one's endpoint, with its credentials, `connect`, clock and
+        bounds, and its own lock, connection and backoff (D2-G2: the WS series store's reads)."""
+        a = self._args
+        return LazyPgWire(
+            a["host"], a["port"], a["user"], a["password"], name=name, connect=self._connect,
+            clock=self._clock, connect_timeout_s=self._connect_timeout_s,
+            query_timeout_s=self._query_timeout_s, close_timeout_s=self._close_timeout_s,
+            backoff_base_s=self._base_s, backoff_max_s=self._max_s,
+            degraded_after=self._degraded_after,
+        )  # fmt: skip
+
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         return [dict(r) for r in await self.fetch_records(sql, *params)]
 
     async def fetch_records(self, sql: str, *params: object) -> list[Mapping[str, object]]:
         """`fetch` without the per-row `dict` copy: the driver's read-only records, for a
-        caller that maps them off the event loop (E26-T02, C-2.17)."""
-        async with self._lock:
-            if self._conn is None:
-                await self._open()
-            try:
-                async with asyncio.timeout(self._query_timeout_s):
-                    rows: list[Mapping[str, object]] = await self._conn.fetch(sql, *params)
-            except BaseException:  # incl. CancelledError: never reuse a half-used connection
-                await self._discard()
-                raise
-            return rows
+        caller that maps them off the event loop (E26-T02, C-2.17). Counted as the class says."""
+        started, waited = False, self._clock()
+        try:
+            async with self._lock:
+                questdb_pgwire_lock_wait_seconds.labels(self.name).observe(self._clock() - waited)
+                if self._conn is None:
+                    await self._open()
+                started, deadline = True, asyncio.timeout(self._query_timeout_s)
+                try:
+                    async with deadline:
+                        rows: list[Mapping[str, object]] = await self._conn.fetch(sql, *params)
+                except BaseException as exc:  # incl. CancelledError: never reuse a half-used one
+                    questdb_pgwire_discards_total.labels(self.name, _reason(exc, deadline)).inc()
+                    await self._discard()
+                    raise
+                return rows
+        except asyncio.CancelledError:
+            if not started:  # waiting for the lock or a connect: its query never ran
+                questdb_pgwire_abandoned_total.labels(self.name).inc()
+            raise
 
     async def _open(self) -> None:
         now = self._clock()
@@ -196,14 +233,26 @@ class LazyPgWire:
         try:
             async with asyncio.timeout(self._close_timeout_s):
                 await asyncio.shield(conn.close())
-        except BaseException:
+        except BaseException as exc:  # a hung or failing close is abandoned, a cancellation is not
             with contextlib.suppress(Exception):
                 conn.terminate()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
 
     async def close(self) -> None:
         """Bounded: a hung `close()` is abandoned via `terminate()` after `close_timeout_s`."""
         async with self._lock:
             await self._discard()
+
+
+def _reason(exc: BaseException, deadline: asyncio.Timeout) -> DiscardReason:
+    """A discard's `reason`: the exception the query call raises decides; `deadline.expired()`
+    tells the wire's own query timeout from a `TimeoutError` the driver raised."""
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    if isinstance(exc, TimeoutError) and deadline.expired():
+        return "query_timeout"
+    return "error"
 
 
 class QuestDbRowSink:
@@ -223,7 +272,9 @@ class QuestDbRowSink:
     ) -> None:
         ilp_host, _, ilp_port = ilp.partition(":")
         pg_host, _, pg_port = pg.partition(":")
-        self.pgwire = pgwire or LazyPgWire(pg_host, int(pg_port or 8812), user, password)
+        self.pgwire = pgwire or LazyPgWire(
+            pg_host, int(pg_port or 8812), user, password, name="bars"
+        )
         self.writer = build_hot_tier_writer(
             transport or TcpIlpTransport(ilp_host, int(ilp_port or 9009)),
             ALL_SCHEMAS,

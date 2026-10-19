@@ -36,6 +36,10 @@ def ok_entity_kind(reg: object) -> None:
     reg.counter("cv_m_total", "help", ("entity_kind",))  # ok: cv-obs-metric-label-allowlist
 
 
+def ok_wire(reg: object) -> None:
+    reg.counter("cv_q_total", "help", ("wire", "reason"))  # ok: cv-obs-metric-label-allowlist
+
+
 def ok_bars_1998(reg: object) -> None:
     reg.gauge("cv_t_rows", "help", ("table",))  # ok: cv-obs-metric-label-allowlist
     reg.counter("cv_u", "h", ("from_source", "to_source"))  # ok: cv-obs-metric-label-allowlist

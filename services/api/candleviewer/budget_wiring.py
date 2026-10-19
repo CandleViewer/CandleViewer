@@ -286,6 +286,7 @@ def build_disk_budget(
         int(port or QUESTDB_PG_DEFAULT_PORT),
         settings.questdb_pg_user,
         settings.questdb_pg_password.get_secret_value(),
+        name="budget",
     )
     config = BudgetConfig(
         cap_bytes=settings.disk_cap_gb * 10**9,

@@ -18,6 +18,7 @@ from typing import Final, Literal
 
 from candleviewer.observability.latency import E2E_BUCKETS, STAGE_BUCKETS
 from candleviewer.observability.metrics import BoundedMetric, MetricKind, Metrics
+from candleviewer.observability.pgwire_metrics import LOCK_WAIT_BUCKETS
 
 Status = Literal["live", "planned"]
 
@@ -1202,6 +1203,48 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "rising after a builder change = old rows still served (bars_rebuild_scheduled_total)",
         _L,
         "E12",
+        exported=True,
+    ),
+    _s(
+        "questdb_pgwire_discards_total",
+        "counter",
+        "connections",
+        ("wire", "reason"),
+        "QuestDB PG-wire connections discarded after their query raised, by wire (reason: error,"
+        " query_timeout, cancelled = the caller was cancelled during the query).",
+        "wire=bars_hydrate, reason=cancelled sustained = first reads outliving the store's 2 s;"
+        " any on wire=bars = REST, klines or the writer probe losing their connection",
+        _L,
+        "E12",
+        max_series=18,  # 6 `WireName` x 3 `DiscardReason` (observability.pgwire_metrics)
+        exported=True,
+    ),
+    _s(
+        "questdb_pgwire_abandoned_total",
+        "counter",
+        "queries",
+        ("wire",),
+        "QuestDB PG-wire queries cancelled before they started, waiting for the wire's lock or its"
+        " connect, by wire.",
+        "any on wire=bars = a REST or klines read gave up queued on the connection (#2787 G2)",
+        _L,
+        "E12",
+        max_series=6,
+        exported=True,
+    ),
+    _s(
+        "questdb_pgwire_lock_wait_seconds",
+        "histogram",
+        "seconds",
+        ("wire",),
+        "Wait for a QuestDB PG-wire connection's lock before a query, by wire (observed when"
+        " granted).",
+        "wire=bars p99 nearing 2 s = REST bars reads near their budget; wire=bars_hydrate = the"
+        " first-read queue (8 at most, MAX_CONCURRENT_TAIL_READS)",
+        _L,
+        "E12",
+        LOCK_WAIT_BUCKETS,
+        max_series=6,
         exported=True,
     ),
     _s(

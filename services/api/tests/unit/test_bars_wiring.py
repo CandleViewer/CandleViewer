@@ -305,7 +305,8 @@ def _wire(factory: _Factory, now: list[float], **kw: Any) -> Any:
     from candleviewer.storage.questdb.wiring import LazyPgWire
 
     return LazyPgWire(
-        "h", 1, "u", "p", connect=factory, clock=lambda: now[0], rng=random.Random(1),  # noqa: S311
+        "h", 1, "u", "p", name="bars", connect=factory, clock=lambda: now[0],
+        rng=random.Random(1),  # noqa: S311
         close_timeout_s=0.01, query_timeout_s=0.05, **kw,
     )  # fmt: skip
 
