@@ -111,6 +111,16 @@ CREATE TYPE leg_status          AS ENUM ('pending','submitted','rejected','open'
 CREATE TYPE order_intent        AS ENUM ('entry','stop_loss','take_profit','scale_in','scale_out','flatten','reverse','algo_child');
 CREATE TYPE order_state         AS ENUM ('new','pending_submit','submitted','accepted','partially_filled','filled','pending_cancel','cancelled','pending_amend','rejected','expired','untracked');
 CREATE TYPE order_event_kind    AS ENUM ('local_create','submit_attempt','ack','reject','fill','partial_fill','amend_request','amend_ack','cancel_request','cancel_ack','expire','exchange_push','reconcile_diff','error');
+-- 0033_order_vocabulary (E29-T03): appended to the two above (§9.3 rule 7), and the B1 order chart's
+-- states verbatim (`orders.lifecycle_state`); 24-internal-schemas.md §8.2 maps one onto the other.
+ALTER TYPE order_state      ADD VALUE 'triggered';
+ALTER TYPE order_state      ADD VALUE 'unknown';
+ALTER TYPE order_state      ADD VALUE 'quarantined';
+ALTER TYPE order_state      ADD VALUE 'killed';
+ALTER TYPE order_state      ADD VALUE 'held';
+ALTER TYPE order_event_kind ADD VALUE 'kill';
+ALTER TYPE order_event_kind ADD VALUE 'adopt';
+CREATE TYPE order_lifecycle_state AS ENUM ('draft','validated','submitting','submitted','triggered','partially_filled','cancel_pending','amend_pending','unknown','quarantined','untracked','held','filled','cancelled','rejected','expired','killed');
 CREATE TYPE algo_kind           AS ENUM ('none','oco','iceberg','twap','chase','scaled','bracket');
 CREATE TYPE rule_scope          AS ENUM ('global','account','symbol','position','trade_group');
 CREATE TYPE rule_mode           AS ENUM ('disabled','simulate','armed');
@@ -1190,33 +1200,7 @@ The TP-ladder sum rule (`Σ pct ≤ 100`) is enforced by trigger `trg_ap_ladder_
 
 #### 3.3.1 State machine (reference for `orders.state`)
 
-```mermaid
-stateDiagram-v2
-    [*] --> new
-    new --> pending_submit : validate + reserve risk
-    pending_submit --> submitted : REST/WS request sent
-    pending_submit --> rejected : local guard / profile cap
-    submitted --> accepted : exchange ack (orderId)
-    submitted --> rejected : exchange reject
-    submitted --> untracked : timeout, no ack (reconcile)
-    accepted --> partially_filled : execution push
-    accepted --> filled : execution push (full)
-    accepted --> pending_cancel : cancel request
-    accepted --> pending_amend : amend request
-    partially_filled --> filled
-    partially_filled --> pending_cancel
-    pending_amend --> accepted : amend ack
-    pending_amend --> rejected : amend reject
-    pending_cancel --> cancelled : cancel ack
-    pending_cancel --> filled : raced by fill
-    accepted --> expired : TIF / trigger expiry
-    untracked --> accepted : reconciliation found it
-    untracked --> cancelled : reconciliation says gone
-    filled --> [*]
-    cancelled --> [*]
-    rejected --> [*]
-    expired --> [*]
-```
+`orders.state` persists the `lifecycle` region of the B1 order chart ([`28-statechart-catalogue.md` §B1](28-statechart-catalogue.md#b1--order)), whose states, events and transitions are normative there and in `24-internal-schemas.md` §8.2. That section maps each chart state to the one `order_state` value that stores it: six names differ, and `submitted` names a different state on each side (the chart's `submitting`), so `orders.lifecycle_state` (§3.3.4, revision `0033_order_vocabulary`) stores the chart state verbatim as well. The diagram that stood here sent a submitted order with no ack to `untracked`; under that section's S1 it goes to `unknown`, and `untracked` holds only exchange orders with no local row (its S9).
 
 #### 3.3.2 `trade_groups`
 
@@ -1387,6 +1371,7 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `exchange_updated_ts` | timestamptz    | yes  | NULL       | Bybit `updatedTime` — used for staleness compare                  |
 | `last_reconciled_at`  | timestamptz    | yes  | NULL       |                                                                   |
 | `is_paper`            | boolean        | no   | `false`    | Paper-matcher orders never hit the network                        |
+| `lifecycle_state`     | enum           | yes  | NULL       | `order_lifecycle_state`: the B1 chart state verbatim (`0033`)     |
 
 ```sql
 CREATE TABLE orders (
@@ -1468,6 +1453,16 @@ CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = '
 
 **Implementation note (E29-T01, revision `0029_oms_core`).** `trade_group_leg_id`, here and in `executions` (§3.3.6), is created without its FK because `trade_group_legs` (§3.3.3) does not exist yet. The E28-T01 revision that creates `trade_group_legs` adds both FKs, `NOT VALID` and then validated (C-5.6), as [recorded on #905](https://github.com/CandleViewer/CandleViewer/issues/905#issuecomment-6220575333); `ix_orders_leg` and `ix_exec_leg` exist already. The monetary columns of `orders`, `executions`, `positions` and `position_snapshots` (§12, class P1: every `numeric(38,18)` column) carry a `PII:` column comment (C-5.9), and so do the columns that keep the exchange's answer to an order, `orders.reject_code` and `reject_message` and `order_events.payload`, `ret_code` and `ret_msg` (§12, class P1: the answer can repeat the order's money values).
 
+**Vocabulary (E29-T03, revision `0033_order_vocabulary`).** `lifecycle_state` holds the B1 chart's state verbatim (`order_lifecycle_state`, §1.2) beside its persisted form in `state` (§3.3.1). It is nullable with no default and needs no backfill: no write sets it yet (E29-T03's transition, §3.3.5, moves `state` without it), so it reads NULL until the transition writes both. `ord_lifecycle` admits a `lifecycle_state` only beside the `state` that `24-internal-schemas.md` §8.2 maps it to, so the two columns never disagree (`ORDER_STATE_OF` in `storage/repositories/orders.py`; a unit test pins the pairs to it, and a refused pair is SQLSTATE 23514). `ix_orders_open` also covers the four non-terminal values the revision adds to `order_state` (`triggered`, `unknown`, `quarantined`, `held`), so `list_open` returns those orders. It is rebuilt in the revision's transaction, not `CONCURRENTLY`: a concurrent build waits for every older snapshot of the database, a booting replica's wait for the migration advisory lock included, and nothing writes `orders` yet (§9.3 rule 3 asks for it over 1 M rows). The downgrade refuses while a row holds an `order_state` or `order_event_kind` value or a `lifecycle_state` that the revision added.
+
+```sql
+ALTER TABLE orders ADD COLUMN lifecycle_state order_lifecycle_state;
+ALTER TABLE orders ADD CONSTRAINT ord_lifecycle CHECK (lifecycle_state IS NULL OR (lifecycle_state, state) IN (('draft','new'),('validated','pending_submit'),('submitting','submitted'),('submitted','accepted'),('triggered','triggered'),('partially_filled','partially_filled'),('cancel_pending','pending_cancel'),('amend_pending','pending_amend'),('unknown','unknown'),('quarantined','quarantined'),('untracked','untracked'),('held','held'),('filled','filled'),('cancelled','cancelled'),('rejected','rejected'),('expired','expired'),('killed','killed')));
+DROP INDEX ix_orders_open;
+CREATE INDEX ix_orders_open      ON orders (exchange_account_id, symbol)
+  WHERE state IN ('pending_submit','submitted','accepted','partially_filled','pending_cancel','pending_amend','triggered','unknown','quarantined','held');
+```
+
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
 
 ```sql
@@ -1503,6 +1498,8 @@ CREATE TRIGGER trg_oe_no_truncate BEFORE TRUNCATE ON order_events
 Partitioned by month (`PARTITION BY RANGE (event_ts)`) once volume exceeds 20 M rows; partitions older than 24 months are detached and exported to Parquet (§5).
 
 **Writes (E29-T01, E29-T03).** Rows are written only through the order store (`storage/repositories/orders_sqlalchemy.py`, behind the OMS's `OrderRepository` and `OrderEventRepository`). It assigns `seq`: 0 for the event inserted with its order row, in the same statement, then the next value under a lock on the order row, so `seq` stays dense per order. An order's later states are written ahead (`24-internal-schemas.md` §8.2 S7, S8): its first persisted state is that insert, so `draft` is never stored, and each later step (`OrderRepository.transition`, and `ExecutionRepository.commit_fill` for a fill) is one transaction that locks the row in its account, moves `orders.state` with a compare-and-set from the state the caller expects, and appends the step's event with `from_state`, `to_state` and `source`. A fill also inserts its execution (`ON CONFLICT DO NOTHING` on `ux_exec_id`) and, only when that took a row, is checked against the locked order and sets the totals the caller computed, under a compare-and-set that also needs the stored `cum_exec_qty` plus the fill's `exec_qty` to equal the new one. A repeated `exec_id` is reported as such and changes nothing (S4), whatever totals come with it; a fill the order refuses raises `FillRefused` (OM-T04: totals above `qty`, a paper flag unlike the order's, or `filled` reached without filling `qty`, or the reverse); a missed compare-and-set raises `StaleOrderState`; and none of them writes anything. Once an order is stored, a fill and `filled` are written only so, with the execution: a fill's step takes the order to `partially_filled` or `filled` with a `fill` or `partial_fill` event, `transition` refuses those kinds and `filled`, `append` refuses those kinds, and the execution store's `insert` is for a fill that moves no order (`commit_fill` then reads its `exec_id` as applied). A step the exchange reported (`rest`, `ws_private`, `reconcile`), `create`'s first event included, must carry the exchange's message as its `payload` (OM-R02), a step's states, kind and source must be values of their columns, and `orders.reject_code` and `reject_message` pass `redact_exchange_text()` like `ret_code` and `ret_msg`. Every `payload` passes `redact_exchange_payload()` before it is bound: headers, credential-named fields, the `args` of an `auth` frame, URL queries and credential-shaped strings are replaced (a run of the USDT-linear symbol shape, upper-case letters and digits ending in `USDT` inside the `symbol_code` domain, is a symbol and is kept, in a message too), and anything that is not plain JSON or exceeds the size bounds is cut. `ret_msg` and `ret_code`, the exchange's own text, pass `redact_exchange_text()`, the same string rule (a Bybit signature error can echo the signed string, API key included, in its `retMsg`), and `ret_code` is bounded to 64 characters. `ret_msg`, and every payload string under a key named as a message (`msg`, `message`), also takes the message rule: a run of 18 or more letters alone is replaced as well, because an API key of letters only would pass the string rule as a word. The rule does not read the return code, which stays the adapter's (C-2.2). So no credential-shaped value reaches the table; what is left (a credential under 18 characters, split by separators or shaped like a symbol, under a name the redactor does not know) is for the adapter's allow-listed record (E29-T04), the first control. Each of the store's transactions caps its statements, lock waits included, at 2 s (`statement_timeout`, the E29-T01 default) instead of the repository-wide 30 s, so a blocked order write fails fast and order entry can be refused (`24-internal-schemas.md` §8.2 S7). Any exception from the store means the write is not confirmed and the order is not accepted; Postgres out of reach raises `StorageTierUnavailable`: a connection that fails, is lost mid-statement or meets a server that does not serve (shutting down, starting up or out of connection slots: SQLSTATE 57P01, 57P02, 57P03, 53300). The cap covers neither opening a connection (the driver's default wait is 60 s) nor the pool wait (30 s), and the repositories bound nothing themselves: whoever calls a store, E29-T04's submit path and the writers of E29-T05 and E29-T06, must wrap each call in `asyncio.timeout`, so that order entry is refused at that bound (S7) and not after those waits.
+
+**States in events (E29-T03).** `from_state` and `to_state` hold `order_state` values, the persisted form of the B1 chart's state (§3.3.1), and have no `lifecycle_state` twin. A reader of `orders` takes the chart state from `orders.lifecycle_state` (§3.3.4); a reader of `order_events`, which is E29-T03's rebuild of an order from its events, maps each value back through `ORDER_STATE_OF` (`24-internal-schemas.md` §8.2). That mapping is one to one, so the inverse is exact; it ships, with its test, in the slice that adds the rebuild.
 
 #### 3.3.6 `executions` — fills (append-only, exchange truth)
 
@@ -3462,6 +3459,7 @@ NAMING_CONVENTION = {
 | `0031_policy_disarm`          | `exchange_accounts.policy_disarm_code`, `policy_disarmed_at`, `policy_disarm_audited_at` (§3.2.1): the self-check's durable disarm and its owed audit record — **#836 slice 2d**; the downgrade refuses while a record is owed             |
 | `0032_backups_write_once`     | `backups.deleted_at`, `deleted_by`, `bk_deleted`, trigger `trg_backups_write_once`, no DELETE for `cv_app` (§3.10.3): write-once location, digest, identity — **E42-T05 BK-2**; the downgrade refuses while an artefact is marked deleted  |
 | `0033_machine_persistence`    | `machine_snapshots`, `machine_drain_journal`, `machine_events` (24 §17.6): sealed snapshots, the drain journal (stamped once) and the append-only event log — **E50-T61**; the downgrade refuses while any holds a row                     |
+| `0033_order_vocabulary`       | five `order_state` values, `order_event_kind` `kill` and `adopt`, `orders.lifecycle_state` and `ord_lifecycle` (§1.2, §3.3.4), `ix_orders_open` rebuilt — **E29-T03 #847 slice 2**; the downgrade refuses while a row holds an added value |
 
 ---
 

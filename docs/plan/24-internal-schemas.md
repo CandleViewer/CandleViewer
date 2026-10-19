@@ -1402,6 +1402,28 @@ stateDiagram-v2
 | S10 | An event the current state does not handle (a fill while `Submitting` or `AmendPending` awaits the exchange) is deferred, never dropped (`onUnhandled: "defer"`): every delivered fill is applied or still deferred.        |
 | S11 | No action half-applies a transition: under `actionErrorPolicy: "rollback"` an action that raises (a failed `order_events` write included) aborts the step and restores the prior state and context (S7, S8), and pages.     |
 
+**Persisted state (E29-T03, revision `0033_order_vocabulary`).** `orders.state` (`order_state`, `21-database-schema.md` §1.2) stores each `lifecycle` state of the chart as the value below, and `orders.lifecycle_state` stores the chart state itself, so no reader of `orders` inverts this table; the `protection` region is not persisted there. The `ord_lifecycle` CHECK (`21-database-schema.md` §3.3.4) admits only the pairs below, so the two columns never disagree. `order_events.from_state` and `to_state` hold the `order_state` value alone, so a reader of events (E29-T03's rebuild from `order_events`) maps it back through this table, which, being one to one, inverts exactly (`21-database-schema.md` §3.3.5). The mapping is total and one to one, so it has no many-to-one cases. Six names differ and the other eleven are the same word; `submitted` names a different state on each side. Where §8.4 writes a state (`state=validated`, for example), it is the chart state: the row stores it in `lifecycle_state` and its value from this table in `state`.
+
+| Chart state (`lifecycle_state`) | `orders.state` (`order_state`) |
+| ------------------------------- | ------------------------------ |
+| `draft`                         | `new`                          |
+| `validated`                     | `pending_submit`               |
+| `submitting`                    | `submitted`                    |
+| `submitted`                     | `accepted`                     |
+| `triggered`                     | `triggered`                    |
+| `partially_filled`              | `partially_filled`             |
+| `cancel_pending`                | `pending_cancel`               |
+| `amend_pending`                 | `pending_amend`                |
+| `unknown`                       | `unknown`                      |
+| `quarantined`                   | `quarantined`                  |
+| `untracked`                     | `untracked`                    |
+| `held`                          | `held`                         |
+| `filled`                        | `filled`                       |
+| `cancelled`                     | `cancelled`                    |
+| `rejected`                      | `rejected`                     |
+| `expired`                       | `expired`                      |
+| `killed`                        | `killed`                       |
+
 ### 8.3 Idempotency — `orderLinkId` scheme
 
 Bybit deduplicates `orderLinkId` within its retention window, which makes it a genuine idempotency primitive. Limit: **≤36 chars**, alphanumeric plus `-` and `_`.

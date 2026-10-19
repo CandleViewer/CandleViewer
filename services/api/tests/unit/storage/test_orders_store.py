@@ -121,7 +121,7 @@ def test_rows_and_inserts_follow_the_table_columns() -> None:
     left_to_the_database = set(order_cols) - {f.name for f in fields(NewOrder)}
     assert left_to_the_database == {
         "leaves_qty", "created_ts", "submitted_ts", "last_reconciled_at", "reject_code",
-        "reject_message", "submit_attempts", "idempotency_state",
+        "reject_message", "submit_attempts", "idempotency_state", "lifecycle_state",
     }  # fmt: skip
 
 
@@ -319,7 +319,7 @@ def test_a_letters_only_key_in_the_exchange_message_is_never_bound(name: str) ->
 
 def test_list_open_renders_the_open_states_as_literals_for_the_partial_index() -> None:
     sql = _sql(_STATEMENTS["list_open_statement"])
-    assert "orders.state IN ('accepted', 'partially_filled', 'pending_amend', " in sql
+    assert "orders.state IN ('accepted', 'held', 'partially_filled', 'pending_amend', " in sql
     assert "orders.symbol = $" in sql and sql.endswith("ORDER BY orders.created_ts, orders.id")
     assert "orders.symbol" not in _sql(mod.list_open_statement(ACCOUNT, None)).split("WHERE")[1]
 
@@ -377,7 +377,7 @@ def test_only_a_step_the_exchange_reported_must_carry_its_message(source: Any, e
         step(_HELD, "accepted", event(source=source, payload={}))
 
 
-#: Steps and fills no store may write; `draft` and `exec` are chart names no column holds.
+#: Steps and fills no store may write; `draft` and `exec` are chart names no step column holds.
 _ELSEWHERE = replace(_FILL.execution, exchange_account_id=uuid.UUID(int=9))
 _UNWRITABLE: dict[str, tuple[Callable[[], object], type[Exception], str]] = {
     "unknown_state": (lambda: step(_HELD, cast(Any, "draft")), ValueError, "of their columns"),
@@ -406,6 +406,35 @@ def test_a_step_or_fill_no_column_holds_is_refused_as_it_is_built(built: str) ->
     build, error, match = _UNWRITABLE[built]
     with pytest.raises(error, match=match):
         build()
+
+
+@pytest.mark.parametrize("state", ["triggered", "unknown", "quarantined", "killed", "held"])
+def test_a_step_may_enter_and_leave_each_state_0033_adds(state: Any) -> None:
+    """OM-T04 reads `OrderState`, so each value `0033_order_vocabulary` adds is a step's new state
+    and its compare-and-set like any other (the store checks vocabulary; legality is B1's)."""
+    into = _bound(mod.transition_statement(step(_HELD, state)))
+    out = _bound(mod.transition_statement(step(_HELD, "cancelled", from_state=state)))
+    assert (into[0], into[-1], out[0], out[-1]) == (state, "accepted", "cancelled", state)
+
+
+def test_a_fill_may_leave_triggered_the_one_added_state_with_an_exec_arm() -> None:
+    """28 B1.3: `triggered` takes `EXEC` to `partially_filled` or `filled`, as `submitted` does."""
+    triggered = cast(Any, SimpleNamespace(**(vars(_HELD) | {"state": "triggered"})))
+    bound = _bound(mod.fill_statement(fill(triggered, "E1", "0.1")))
+    assert bound[0] == "partially_filled" and bound.count("triggered") == 1
+
+
+@pytest.mark.parametrize(
+    ("kind", "source", "from_state", "to_state"),
+    [("kill", "local", "pending_submit", "killed"),
+     ("adopt", "reconcile", "untracked", "accepted")],
+)  # fmt: skip
+def test_a_step_may_carry_each_event_kind_0033_adds(
+    kind: Any, source: Any, from_state: str, to_state: Any
+) -> None:
+    """B1's `KILL` from `validated` and `ADOPT` from `untracked`, in their persisted states."""
+    moved = step(_HELD, to_state, event(kind, source=source), from_state=from_state)
+    assert kind in _bound(mod.append_statement(ACCOUNT, ORDER, moved.event))
 
 
 @pytest.mark.parametrize(
