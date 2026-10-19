@@ -8,10 +8,12 @@ Automated backend subset (single command, no network, no docker):
 
 ```
 cd services/api
-uv run pytest -p no:randomly --no-cov -m e08_regression
+HYPOTHESIS_PROFILE=ci uv run pytest -p no:randomly --no-cov -m e08_regression
 ```
 
 `e08_regression` is a pytest marker registered in `services/api/pyproject.toml`. `services/api/tests/conftest.py` applies it at collection to the paths listed under "Marker coverage" below, so a new test in one of them joins the pack. A bare `-m` replaces the repo's default `-m` expression, so the marker is never put on `perf`, `fuzz`, `harness` or `flaky` (C-9.3 quarantine) items; those run in their own lanes. The run collects the whole tree first (about 1 min on the author's laptop).
+
+`HYPOTHESIS_PROFILE=ci` is the profile CI's `py` lane sets (`services/api/tests/_hypothesis_profiles.py`: derandomised, no example database), so the pack's property tests draw the examples CI draws. The default `dev` profile explores at random, and until #1900 (P2, open) is fixed it can fail `tests/security/ingestion/test_fuzz_parsers.py::test_parser_fuzz_bounded` on the book parser with `ts: Infinity`, as it did in an author run on 2026-10-19 and earlier in #2267 (item 16).
 
 Expected result: no failure and five strict `xfail`s, each pinning an open defect (section C). A fix flips its `xfail` to a failure, so the fixing PR removes the marker. Any other failure blocks the E08 sign-off. Counts and the dated record are in section D.
 
