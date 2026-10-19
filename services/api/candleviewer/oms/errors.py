@@ -29,6 +29,12 @@ class InvalidHistoryRetention(OmsError, ValueError):
     retention less one day, so 1 day or less would expire every id on creation."""
 
 
+class ExecutionRefused(OmsError, ValueError):
+    """An execution the order cannot absorb, hostile or malformed exchange data (OM-T04): a fill
+    past `qty`, a qty or price of zero or less, a fee past `MAX_FEE_RATE` or against its rate, or a
+    total numeric(38,18) cannot hold. Never clamped; the message names the rule, never a value."""
+
+
 class DuplicateOrderLinkId(OmsError):
     """`ux_orders_link` already holds this id, so the order was not stored (#845 Gherkin).
 

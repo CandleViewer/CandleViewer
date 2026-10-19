@@ -56,14 +56,15 @@ _UNOWNED = ("untracked", "held")
 _EXCHANGE_LIVE = ("submitted", "triggered", "partially_filled", "cancel_pending", "amend_pending")
 
 INVARIANTS: dict[str, str] = {
-    "INV-B1-a": "deferred:E29",
-    "INV-B1-b": "deferred:E29",
+    "INV-B1-a": "test_b01_order_core.py::test_inv_b1_a_fills_in_any_order_give_the_same_totals",
+    "INV-B1-b": "test_b01_order_core.py::test_duplicate_fill_never_double_counts",
     "INV-B1-c": "test_inv_b1_c_amend_rejected_never_terminal",
     "INV-B1-d": "test_inv_b1_d_cancel_pending_handles_exec",
     "INV-B1-e": "test_inv_b1_e_unknown_resolved_only_by_recon",
     "INV-B1-f": "test_inv_b1_f_sl_present_only_from_the_exchange_property",
     "INV-B1-g": "deferred:E29",
     "INV-B1-h": "test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted",
+    # INV-B1-h also: test_b01_order_core.py::test_inv_b1_h_kill_cancels_a_reconciled_duplicate
     "INV-B1-i": "test_inv_b1_i_kill_never_touches_protection_property",
     "INV-B1-j": "test_inv_b1_j_result_adopted_only_if_ret_code_ok_property",
     "INV-B1-k": "test_inv_b1_k_exchange_end_is_never_stranded_property",
@@ -310,7 +311,12 @@ async def _at(
 async def test_b01_binding_stubs_and_event_schemas() -> None:
     """Every event has a schema, every guard denies (A6), every audit reaches the hook (C-2.9)."""
     assert all_events(CHART) <= set(CV_EVENT_SCHEMAS)
-    assert not any(guard() for guard in b01.GUARDS.values())
+    assert not any(guard({}, None) for guard in b01.GUARDS.values())
+    # Deny-all: adoption_allowed until E45-S01 records D6; the others have no body yet
+    # (sl_attach_ok came with slice 1b's B1 version 2).
+    stubs = "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch sl_attach_ok"
+    deny_all = {name for name, guard in b01.GUARDS.items() if guard is b01._deny_guard}
+    assert deny_all == {*stubs.split(), "second_consecutive_miss"}
     audits, hook = sorted(n for n in b01.ACTIONS if n.startswith("audit_")), AsyncMock()
     b01.set_audit_hook(hook)
     try:
