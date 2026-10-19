@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { SceneB } from "../../../bench/scenes/scene-b.mjs";
 import { MemoryAtlasStore, loadAtlas } from "../../../bench/scenes/atlas.mjs";
-import { runScenario } from "../../../bench/runner.mjs";
+import { runRepetition, runScenario } from "../../../bench/runner.mjs";
 import { captureMachineDescriptor } from "../../../bench/machine.mjs";
 import { generateM0Fixture } from "../../../bench/fixtures/index.mjs";
 import { percentile } from "../../../bench/stats.mjs";
@@ -21,6 +21,7 @@ interface Ext {
 const median = (xs: number[]): number => percentile(xs, 50) ?? Number.NaN;
 const LOD_PAIRS = 15;
 const WARM_LOADS = 5;
+const TEXT_FRAMES = 15;
 
 describe("perf budgets: SceneB", () => {
   it("reformat of 2,500 cells stays within a generous multiple of the 4 ms budget", () => {
@@ -33,9 +34,12 @@ describe("perf budgets: SceneB", () => {
     );
     expect(ms).toBeLessThan(20);
   });
-  it("SDF arm holds B3: p95 <= 16 ms, text <= 2 ms", () => {
+  it("SDF arm holds B3: p95 <= 16 ms, text <= 2 ms (median of frames)", () => {
     const scene = new SceneB({ arm: "sdf" });
     scene.init(generateM0Fixture({ seed: 1, barCount: 200 }));
+    // One discarded repetition first: a cold first repetition pulls the mean frame time above the
+    // last repetition's stage sum and trips the runner's residual guard (12.9% in one local run).
+    runRepetition({ scene, scenario: "B3", durationMs: 1000 });
     const r = runScenario({
       scene,
       scenario: "B3",
@@ -49,9 +53,22 @@ describe("perf budgets: SceneB", () => {
       peakProcessMemMB: 1,
       peakProcessMemSource: "test",
     });
-    const ext = scene.extendedStats() as unknown as Ext;
     expect(r.p95).toBeLessThanOrEqual(16);
-    expect(ext.textBatchMs + ext.outlinePassMs).toBeLessThanOrEqual(2.0);
+    // One frame's text cost mixes a measured CPU batch walk with modelled GPU cost, so a stalled
+    // frame inflates a single read (2.60 ms against the 2 ms budget on an untouched main, #3578).
+    // Sample TEXT_FRAMES further frames after one discarded warm-up frame and compare the median.
+    // That filters stalls; a process-wide slowdown (CPU throttling) moves every frame and still fails.
+    let tMs = 1000;
+    const textMs = (): number => {
+      tMs += 16;
+      scene.step(tMs, { tMs, kind: "none" });
+      const ext = scene.extendedStats() as unknown as Ext;
+      return ext.textBatchMs + ext.outlinePassMs;
+    };
+    textMs();
+    const text: number[] = [];
+    for (let i = 0; i < TEXT_FRAMES; i += 1) text.push(textMs());
+    expect(median(text)).toBeLessThanOrEqual(2.0);
   });
   it("shedding text (L2) renders a faster frame than full text (L0): median of interleaved pairs", () => {
     const scene = new SceneB();

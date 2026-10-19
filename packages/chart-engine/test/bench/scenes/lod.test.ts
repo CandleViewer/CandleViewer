@@ -25,6 +25,10 @@ describe("LOD selection (E06-K02 throwaway prototype) — §3.6", () => {
     expect(selectLod(justOutside, "L0")).not.toBe("L0");
   });
 
+  it("drops from L0 straight to L2 when spacing falls below the L1 threshold (a zoom-out jump)", () => {
+    expect(selectLod(LOD_L1_THRESHOLD_PX * 0.5, "L0")).toBe("L2");
+  });
+
   it("does not re-enter L0 from L1 until spacing rises above the enter threshold", () => {
     const justBelowEnter = LOD_L0_THRESHOLD_PX * 1.1; // 3.3, below the 1.15x enter bound
     expect(selectLod(justBelowEnter, "L1")).toBe("L1");

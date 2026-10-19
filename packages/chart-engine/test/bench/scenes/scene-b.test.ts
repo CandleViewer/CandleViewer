@@ -12,15 +12,12 @@ import { FootprintStore } from "../../../bench/scenes/footprint-store.mjs";
 import { GlyphRunCache } from "../../../bench/scenes/glyph-runs.mjs";
 import { selectFootprintLod } from "../../../bench/scenes/footprint-lod.mjs";
 import { SceneB } from "../../../bench/scenes/scene-b.mjs";
-import { runScenario } from "../../../bench/runner.mjs";
-import { captureMachineDescriptor } from "../../../bench/machine.mjs";
 import { generateM0Fixture } from "../../../bench/fixtures/index.mjs";
 
+// Counters only: the measured members (textBatchMs, outlinePassMs) are read in scene-b.perf.test.ts.
 interface Ext {
   visibleCells: number;
   glyphCount: number;
-  textBatchMs: number;
-  outlinePassMs: number;
   textDrawCalls: number;
   lod: string;
 }
@@ -172,32 +169,22 @@ describe("footprint LOD (E06-D01 LOD_PROFILE_M0)", () => {
 });
 
 describe("B3 and contrast", () => {
-  const machine = captureMachineDescriptor({ gpu: "stub", driver: "stub" });
-  const run = (arm: "sdf" | "canvas2d") => {
+  // One held frame, counted not timed. The bench runner is not used here: its residual guard
+  // (bench/report.mjs) is fed by performance.now() stage timings, a wall-clock path in this
+  // coverage lane (#3578). The B3 budgets run through it in scene-b.perf.test.ts.
+  const frame = (arm: "sdf" | "canvas2d"): Ext => {
     const scene = new SceneB({ arm });
     scene.init(generateM0Fixture({ seed: 1, barCount: 200 }));
-    const r = runScenario({
-      scene,
-      scenario: "B3",
-      durationMs: 1000,
-      repetitions: 3,
-      runtime: "chromium",
-      runtimeVersion: "node",
-      machine,
-      seed: 1,
-      lodProfile: "LOD_PROFILE_M0",
-      peakProcessMemMB: 1,
-      peakProcessMemSource: "test",
-    });
-    return { r, ext: scene.extendedStats() as unknown as Ext };
+    scene.step(0, { tMs: 0, kind: "none" });
+    return scene.extendedStats() as unknown as Ext;
   };
   it("SDF arm renders 2,500 cells with <= 2 text draw calls (timing: scene-b.perf.test.ts)", () => {
-    const { ext } = run("sdf");
+    const ext = frame("sdf");
     expect(ext.visibleCells).toBe(2500);
     expect(ext.textDrawCalls).toBeLessThanOrEqual(2);
   });
   it("Canvas-2D arm exceeds the draw-call gate (comparison evidence)", () => {
-    expect(run("canvas2d").ext.textDrawCalls).toBeGreaterThan(2);
+    expect(frame("canvas2d").textDrawCalls).toBeGreaterThan(2);
   });
   it("outline reaches >= 4.5:1 where raw text-on-fill does not", () => {
     expect(contrastRatio("#E8EAED", "#0B0E11")).toBeGreaterThanOrEqual(4.5);
