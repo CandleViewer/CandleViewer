@@ -38,6 +38,7 @@ from candleviewer.auth.models import (
     MfaEnrollRequest,
     MfaEnrollResult,
     MfaMethodKind,
+    MfaMethodRecord,
     MfaVerifiedResult,
     MfaVerifyRequest,
     RecoveryCodesRegenerated,
@@ -178,6 +179,9 @@ class MfaService:
 
         seed = generate_secret()
         secret_enc = self._encryptor.encrypt(seed)
+        # #2295: each enrolment supersedes the user's earlier pending methods, so only
+        # the latest can be confirmed.
+        await self._repository.supersede_pending_methods(user_id, now=self._clock())
         method = await self._repository.create_pending_method(
             user_id,
             secret_enc=secret_enc,
@@ -195,11 +199,23 @@ class MfaService:
     async def confirm_enrollment(
         self, user_id: str, *, method_id: str, code: str
     ) -> tuple[MfaMethodKind, tuple[str, ...]]:
-        """`POST /auth/mfa/enroll/confirm`. Returns `(method_kind,
-        recovery_codes)` — recovery codes are (re)generated on TOTP
-        confirmation whenever the user has none yet (first enrolment,
-        ticket "First-login enrolment": "TOTP is enabled and 10 single-use
-        recovery codes are displayed once").
+        """`check_enrollment` then `complete_enrollment`, for a caller with no audit
+        record to write in between (the invite redemption). Returns `(method_kind,
+        recovery_codes)`: the 10 new single-use codes (ticket "First-login enrolment":
+        "TOTP is enabled and 10 single-use recovery codes are displayed once").
+
+        Raises `MfaEnrollmentNotFound` or `MfaCodeInvalid`."""
+        step = await self.check_enrollment(user_id, method_id=method_id, code=code)
+        method, recovery_codes = await self.complete_enrollment(
+            user_id, method_id=method_id, time_step=step
+        )
+        return method.kind, recovery_codes
+
+    async def check_enrollment(self, user_id: str, *, method_id: str, code: str) -> int:
+        """The read-only half of a confirmation (#2295): the time step *code* proves for
+        the user's confirmable method (`MfaRepository.find_pending_method`). Nothing
+        changes, so `POST /auth/mfa/enroll/confirm` writes its audit records between
+        this and `complete_enrollment` (C-2.9).
 
         Raises `MfaEnrollmentNotFound` or `MfaCodeInvalid`."""
         method = await self._repository.find_pending_method(method_id, user_id)
@@ -215,21 +231,25 @@ class MfaService:
             refused = [(seed, method.last_accepted_time_step)]
             self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
             raise MfaCodeInvalid("invalid TOTP code")
+        return accepted_step
 
-        confirmed = await self._repository.confirm_method(method_id, now=now)
-        replay_ok = await self._repository.record_time_step(method_id, time_step=accepted_step)
-        if not replay_ok:
-            # Defensive (PR #1618 review finding 4): a pending method has no
-            # prior recorded step, so this should always be `True`; treat a
-            # `False` here as the same "already used" signal `verify()`
-            # gives, rather than silently confirming on a step the replay
-            # guard says was already consumed.
-            raise MfaCodeReused("this code has already been used")
+    async def complete_enrollment(
+        self, user_id: str, *, method_id: str, time_step: int
+    ) -> tuple[MfaMethodRecord, tuple[str, ...]]:
+        """The mutating half (#2295, contract "Completion"): one repository transaction
+        confirms the method at *time_step*, revokes every other TOTP method of the user
+        and replaces the recovery codes with 10 new ones, returned here exactly once.
 
-        recovery_codes: tuple[str, ...] = ()
-        if await self._repository.count_unused_recovery_codes(user_id) == 0:
-            recovery_codes = await self._issue_recovery_codes(user_id)
-        return confirmed.kind, recovery_codes
+        Raises `MfaEnrollmentNotFound`, with nothing changed, when the method stopped
+        being confirmable meanwhile (a concurrent confirm or enrolment won)."""
+        plaintext_codes = generate_recovery_codes()
+        hashes = tuple(hash_recovery_code(c, key=self._recovery_code_key) for c in plaintext_codes)
+        confirmed = await self._repository.complete_enrollment(
+            user_id, method_id=method_id, time_step=time_step, now=self._clock(), code_hashes=hashes
+        )
+        if confirmed is None:
+            raise MfaEnrollmentNotFound("the pending method is no longer confirmable")
+        return confirmed, tuple(plaintext_codes)
 
     async def _issue_recovery_codes(self, user_id: str) -> tuple[str, ...]:
         plaintext_codes = generate_recovery_codes()

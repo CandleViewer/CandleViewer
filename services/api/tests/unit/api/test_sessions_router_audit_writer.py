@@ -52,6 +52,7 @@ from tests.unit.api._fakes import (
     Identity,
     RecordingWriter,
     SessionsAuth,
+    enrolment_recorder,
 )
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -189,6 +190,7 @@ class _World:
                 ip_throttle=_throttle(),
                 session_throttle=_throttle(),
                 csrf=CSRF_CODEC,
+                enrolment_refusals=enrolment_recorder(self.writer),
             ),
             prefix="/api/v1",
         )

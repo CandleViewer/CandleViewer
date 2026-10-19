@@ -31,6 +31,7 @@ from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_service import SessionClass, SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf
+from tests.unit.api._fakes import enrolment_recorder
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
@@ -111,6 +112,7 @@ class _Env:
                     max_attempts=throttle_max, window_s=60.0, clock=lambda: self.t
                 ),
                 csrf=_CSRF_CODEC,
+                enrolment_refusals=enrolment_recorder(self.audit.writer),
             ),
             prefix="/api/v1",
         )

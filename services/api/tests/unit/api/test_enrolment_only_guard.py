@@ -27,12 +27,13 @@ from candleviewer.api import csrf as csrf_module
 from candleviewer.api import sessions as sessions_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import RefusalAuditTracker
-from candleviewer.api.deny_by_default import declared_operations
+from candleviewer.api.deny_by_default import declared_operations, served_operations
 from candleviewer.api.enrolment_guard import (
     ENROLMENT_OPERATIONS,
     REFUSAL_ACTION,
     EnrolmentRefusals,
     make_enrolment_only_guard,
+    route_refusal,
     sessionless_operations,
 )
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
@@ -265,6 +266,48 @@ async def test_guard_allow_list_never_matches_a_lower_case_method() -> None:
     resp = await _guard(_Auth(), _refusals(_Audit()))(request, handler)
 
     assert (resp.status_code, hits) == (403, [])
+
+
+def test_a_refresh_cookie_alone_reaches_no_operation_the_guard_would_refuse() -> None:
+    """The guard classifies a bearer only, so an operation whose contract admits the `cv_refresh`
+    cookie alone would skip it: each one served must be allow-listed, or its route must answer
+    the session as the guard would (`route_refusal`: `POST /auth/unlock`, #2300; pinned in
+    `tests/unit/api/idle_lock/test_unlock.py`)."""
+    from candleviewer import app as appmod
+
+    cookie = {
+        (method.upper(), path)
+        for path, item in _SPEC["paths"].items()
+        for method, op in item.items()
+        if isinstance(op, dict) and {"refreshCookie": []} in (op.get("security") or [])
+    }
+    served = cookie & served_operations(appmod.create_app())
+
+    assert ("POST", "/auth/refresh") in served  # the sweep sees the cookie operations
+    assert served <= ENROLMENT_OPERATIONS | {("POST", "/auth/unlock")}
+
+
+@pytest.mark.parametrize(
+    ("who", "op", "status"),
+    [
+        ("enrolling", ("POST", "/auth/unlock"), 403),
+        ("overlong", ("POST", "/auth/unlock"), 401),
+        ("full", ("POST", "/auth/unlock"), None),
+        ("inactive", ("POST", "/auth/unlock"), None),  # #2911 is the route's
+        ("enrolling", ("GET", "/auth/session"), None),
+        ("overlong", ("POST", "/auth/logout"), None),
+    ],
+)
+async def test_route_refusal_answers_a_session_the_route_found_as_the_guard_would(
+    who: str, op: tuple[str, str], status: int | None
+) -> None:
+    auth, refusals = _Auth(), _refusals(_Audit())
+    auth.enrolment_gate_is_active = False  # its caller reads the gate, once per request
+    record = await auth.authenticate_access_token(f"tok-{who}")
+
+    resp = await route_refusal(auth, refusals, record, operation=op, ip=None, logged_as=op)
+
+    assert (None if resp is None else resp.status_code) == status
 
 
 def test_guard_matches_the_routed_path_under_a_root_path() -> None:
@@ -574,6 +617,43 @@ def test_guard_counts_a_session_it_cannot_check_as_unclassified(world: _World) -
     )
     session = uuid.uuid5(_USERS["full"], "session")  # read, then not classified: named (C-12.6)
     assert (line["session_id"], line["user_id"]) == (str(session), str(_USERS["full"]))
+
+
+async def test_refusal_audit_that_outlasts_the_wait_is_left_to_finish() -> None:
+    """The write is never cancelled mid-append (C-2.9, writer fix #2250): it finishes after
+    the answer, and the late arrival is counted `audit_slow`."""
+    release = asyncio.Event()
+    written: list[str] = []
+
+    class _Slow:
+        async def emit(self, action: str, **_kw: Any) -> None:
+            await release.wait()
+            written.append(action)
+
+    tracker = RefusalAuditTracker()
+    refusals = EnrolmentRefusals(_Slow(), tracker=tracker, audit_timeout_s=0.01)
+    record = SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
+    before = _count("ws", "audit_slow")
+
+    await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
+
+    assert _count("ws", "audit_slow") == before + 1
+    assert (len(tracker), written) == (1, [])
+    release.set()
+    assert await tracker.drain() == 0
+    assert written == [REFUSAL_ACTION]
+
+
+async def test_refusal_is_not_audited_while_the_in_flight_cap_is_full() -> None:
+    audit = _Audit()
+    refusals = _refusals(audit, cap=0)
+    record = SessionRecord.model_construct(id=uuid.uuid5(_OTHER, "refused"), user_id=_OTHER)
+    before = _count("ws", "audit_throttled")
+
+    await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
+
+    assert audit.records == []
+    assert _count("ws", "audit_throttled") == before + 1
 
 
 async def test_refusal_audit_budget_is_shared_by_every_session_of_a_user() -> None:

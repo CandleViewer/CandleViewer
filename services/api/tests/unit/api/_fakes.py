@@ -12,10 +12,17 @@ from typing import Any
 
 from prometheus_client import REGISTRY
 
+from candleviewer.api.csrf import RefusalAuditTracker
+from candleviewer.api.enrolment_guard import EnrolmentRefusals
 from candleviewer.audit.actions import validate_action
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import MfaVerifiedResult, MfaVerifyRequest, SessionRecord
+from candleviewer.auth.models import (
+    MfaVerifiedResult,
+    MfaVerifyRequest,
+    SessionRecord,
+    UserRecord,
+)
 from candleviewer.auth.session_service import SessionClass, SessionService
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -30,6 +37,11 @@ def fixation_count(reason: str) -> float:
     """`auth_session_fixation_attempts_total{reason}` on the process-default registry."""
     sample = "auth_session_fixation_attempts_total"
     return float(REGISTRY.get_sample_value(sample, {"reason": reason}) or 0.0)
+
+
+def enrolment_recorder(writer: Any) -> EnrolmentRefusals:
+    """The enrolment guard's refusal recorder over *writer*: the session router needs one."""
+    return EnrolmentRefusals(writer, tracker=RefusalAuditTracker())
 
 
 def sessions(repo: FakeSessionRepository | None = None, *, now: datetime = NOW) -> SessionService:
@@ -101,3 +113,6 @@ class MfaAuth:
     def __init__(self, user_id: uuid.UUID, service: SessionService) -> None:
         self.mfa: Any = _VerifyingMfa(user_id)
         self.sessions: Any = service
+
+    async def find_user(self, user_id: str) -> UserRecord | None:
+        raise AssertionError("the enrolment routes are not under test here")

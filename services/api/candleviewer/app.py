@@ -1383,6 +1383,7 @@ def create_app(
             allowed_origins=resolved.allowed_origin_set,
             csrf=csrf_codec,
             audit_tracker=csrf_audits,  # one in-flight cap + shutdown drain for refusal audits
+            enrolment_refusals=enrolment_refusals,  # unlock answers as the guard does (#2295)
         )
     )
     # #2713: the shell bootstrap (`/me`, `/me/preferences`, `/me/keymap`), self only. Without an

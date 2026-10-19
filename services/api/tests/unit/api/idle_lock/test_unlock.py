@@ -3,19 +3,24 @@ its refusals, and the write-ahead audit and B16 records (C-2.9, B16.7)."""
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
 import pytest
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
+from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.api.sessions import UnlockBody
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD
+from candleviewer.auth.metrics import ENROLMENT_REFUSAL_REASONS
 from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
+from candleviewer.auth.session_service import SessionClass
 from tests.conftest import RecordingAuditSink
 
 from ._world import (
@@ -564,3 +569,52 @@ async def test_the_wrong_unlock_password_that_locks_the_account_writes_account_l
     assert (again.status_code, again.json()["code"]) == (401, "unlock_invalid")
     assert w.audit.writer.actions()[2:] == ["auth.unlock_failed"]
     assert (await w.row(minted)).is_idle_locked(now=w.clock.now)
+
+
+# -- an enrolment-only session (#2295; contract "Idle lock", "Enrolment-only session") --------
+
+
+async def test_unlock_refuses_an_enrolment_only_session_its_cookie_names(w: World) -> None:
+    """Unlock is not among the session's five operations, and the cookie reaches no bearer
+    guard: the route refuses as the guard does, before the lock state is told, any password is
+    checked, or B16 or the unlock records are written; the refusal row is the guard's."""
+    uid = await w.add_user()
+    minted = await w.mint(uid)
+    w.auth.enrolment_gate_is_active, w.auth.verdict = True, SessionClass.ENROLMENT_ONLY
+    w.lock()
+    r = await _unlock(w, _cookie(minted))
+    assert (r.status_code, r.json()["code"]) == (403, "mfa_enrollment_required")
+    [row] = w.audit.writer.records
+    assert (row["action"], row["session_id"]) == (REFUSAL_ACTION, minted.session_id)
+    assert row["after_state"] == {"channel": "http", "method": "POST", "path": "/auth/unlock"}
+    assert (await w.row(minted)).is_idle_locked(now=w.clock.now)
+    assert (w.b16.actions(), w.failed_logins(uid)) == ([], 0)
+
+
+def _refusals() -> Counter[str]:  # `auth_enrolment_refused_total{transport="http"}`, SR-125
+    name, reasons = "auth_enrolment_refused_total", ENROLMENT_REFUSAL_REASONS
+    return Counter({why: int(_sample(name, transport="http", reason=why)) for why in reasons})
+
+
+@pytest.mark.parametrize(
+    ("verdict", "status", "code", "refused"),
+    [
+        (SessionClass.ENROLMENT_ONLY_EXPIRED, 401, "unauthenticated", ["expired"]),
+        (RuntimeError("user store down"), 503, "store_unavailable", ["unclassified"]),
+        (SessionClass.FULL, 200, None, []),
+    ],
+)
+async def test_unlock_answers_the_session_its_cookie_names_as_the_enrolment_guard_does(
+    w: World, verdict: SessionClass | Exception, status: int, code: str | None, refused: list[str]
+) -> None:
+    """Not minted enrolment-only: the guard's 401; not classifiable: its 503; full: unlocked."""
+    minted = await w.mint(await w.add_user())
+    w.auth.enrolment_gate_is_active, w.auth.verdict = True, verdict
+    w.lock()
+    before = _refusals()
+    with capture_logs() as logs:
+        r = await _unlock(w, _cookie(minted))
+    assert (r.status_code, r.json().get("code")) == (status, code)
+    assert _refusals() - before == Counter(refused)
+    lines = [(e["event"], e["path"]) for e in logs if e["event"].startswith("auth.enrolment_only")]
+    assert lines == [(f"auth.enrolment_only.{why}", "/auth/unlock") for why in refused]

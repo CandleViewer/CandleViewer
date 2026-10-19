@@ -16,6 +16,9 @@ session (#2911, SR-029). A session lookup or a classification that fails answers
 like an expired session, except on `POST /auth/logout`. One past its expiry never reaches the
 class: the session lookup refuses it (#3183), so its route answers 401, uncounted here.
 
+A route that finds its session itself, as `POST /auth/unlock` does by the `cv_refresh` cookie
+the guard never reads, answers it through `route_refusal`, the guard's own verdict ladder.
+
 The guard is inert only while `AuthService.enrolment_gate_is_active` is false: no session store
 is wired, so nothing authenticates. Wired without the user store, every classification fails and
 the guard answers 503 (deny by default).
@@ -374,24 +377,46 @@ def make_enrolment_only_guard(
         except Exception as exc:  # fail closed: a session that cannot be read reaches nothing
             refusals.unclassified(exc, channel="http", method=method, path=template)
             return _unavailable()
-        try:
-            verdict = await auth.classify(record)
-        except Exception as exc:  # fail closed: an unclassified session reaches no handler
-            refusals.unclassified(exc, channel="http", method=method, path=template, record=record)
-            return _unavailable()
-        operation = (request.method, path)
-        if verdict is SessionClass.FULL or verdict is SessionClass.USER_INACTIVE:  # inactive: #2911
-            return await call_next(request)
-        if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED and operation != _SIGN_OUT:
-            refusals.expired(record, channel="http", method=method, path=template)
-            return _problem(_EXPIRED)
-        if operation in ENROLMENT_OPERATIONS:
-            return await call_next(request)
-        ip = source_ip(request.scope)
-        await refusals.refused(record, channel="http", method=method, path=template, ip=ip)
-        return _problem(_REFUSED)
+        operation, ip = (request.method, path), source_ip(request.scope)
+        refused = await route_refusal(
+            auth, refusals, record, operation=operation, ip=ip, logged_as=(method, template)
+        )
+        return await call_next(request) if refused is None else refused
 
     return enrolment_only_guard
+
+
+async def route_refusal(
+    auth: _Auth,
+    refusals: EnrolmentRefusals,
+    record: SessionRecord,
+    *,
+    operation: tuple[str, str],
+    ip: str | None,
+    logged_as: tuple[str, str],
+) -> JSONResponse | None:
+    """The guard's answer to *record*: the one verdict ladder of the middleware, for the session
+    its bearer names, and of a route that found its session itself, as by the `cv_refresh`
+    cookie that no bearer guard sees (`POST /auth/unlock`, contract "Idle lock"). Its caller has
+    read `enrolment_gate_is_active`. *operation* is (METHOD, path) as the allow-list reads it,
+    *logged_as* the (bounded method, route template) its counts, log lines and audit row name.
+    `None` lets the route go on: a full session, a disabled or deleted user's (#2911 is the
+    route's), or an enrolment-only one on an allow-listed operation."""
+    method, path = logged_as
+    try:
+        verdict = await auth.classify(record)
+    except Exception as exc:  # fail closed: an unclassified session reaches no handler
+        refusals.unclassified(exc, channel="http", method=method, path=path, record=record)
+        return _unavailable()
+    if verdict is SessionClass.FULL or verdict is SessionClass.USER_INACTIVE:  # inactive: #2911
+        return None
+    if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED and operation != _SIGN_OUT:
+        refusals.expired(record, channel="http", method=method, path=path)
+        return _problem(_EXPIRED)
+    if operation in ENROLMENT_OPERATIONS:
+        return None
+    await refusals.refused(record, channel="http", method=method, path=path, ip=ip)
+    return _problem(_REFUSED)
 
 
 __all__ = [
@@ -399,5 +424,6 @@ __all__ = [
     "REFUSAL_ACTION",
     "EnrolmentRefusals",
     "make_enrolment_only_guard",
+    "route_refusal",
     "sessionless_operations",
 ]

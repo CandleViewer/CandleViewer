@@ -314,6 +314,8 @@ E28-T01 merges; abuse cases AC-01..AC-33 go to E28-X03 and E28-Q01. Status Draft
 | U10 | Denial of service      | Owner locks themselves out (lost TOTP device)                        | M   | M   | Medium       | SR-023 sealed offline recovery-code envelope + documented host-local break-glass requiring filesystem access                   | Low      |
 | U34 | Spoofing               | Stolen password enrols an attacker's TOTP in the enrolment window    | L   | H   | Medium       | Enrolment-only session (5 routes, 15 min, no WS); recovery and confirm revoke other sessions; owner alert; audit flag; RR-15   | Medium   |
 
+> U34: An enrolment-only session that locks ends by sign-out; unlock is not among its allowed operations (`22-api-openapi.yaml` "Idle lock").
+
 ### 5.7 Area 7 — Admin screens (A-03, A-08, A-18, A-19)
 
 | T   | STRIDE                 | Threat                                                                                         | L   | I   | Risk         | Mitigations                                                                                                          | Residual |

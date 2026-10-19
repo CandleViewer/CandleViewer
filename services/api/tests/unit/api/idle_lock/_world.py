@@ -28,10 +28,11 @@ from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.session_chart import SessionChart
-from candleviewer.auth.session_service import SessionService
+from candleviewer.auth.session_service import SessionClass, SessionService
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.conftest import RecordingAuditSink
+from tests.unit.api._fakes import enrolment_recorder
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -124,6 +125,13 @@ class _Auth:
     def __init__(self, sessions: SessionService) -> None:
         self.sessions = sessions
         self.sessions_is_active = True
+        self.enrolment_gate_is_active = False  # on in the tests that set `verdict` (#2295)
+        self.verdict: SessionClass | Exception = SessionClass.FULL
+
+    async def classify(self, session: SessionRecord) -> SessionClass:
+        if isinstance(self.verdict, Exception):
+            raise self.verdict
+        return self.verdict
 
 
 class World:
@@ -152,11 +160,12 @@ class World:
             chart=SessionChart(),
         )
         self.audit = _Audit()
+        self.auth = _Auth(self.sessions)
 
         app = FastAPI()
         app.include_router(
             make_session_router(
-                _Auth(self.sessions),
+                self.auth,
                 self.audit,
                 identity=_Identity() if identity else None,
                 allowed_origins=frozenset({_ORIGIN}),
@@ -165,6 +174,7 @@ class World:
                 unlock_throttle=PerIpLoginThrottle(
                     max_attempts=throttle_max, window_s=60.0, clock=lambda: 0.0
                 ),
+                enrolment_refusals=enrolment_recorder(self.audit.writer),
             ),
             prefix="/api/v1",
         )
