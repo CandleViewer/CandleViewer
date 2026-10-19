@@ -312,7 +312,7 @@ def test_backpressure_undroppable_backlog_closes_after_the_drop_naming_costs() -
     events = Backpressure(queue, pacer).check([book, orders])
     assert events == [
         LadderEvent("drop", ("book.BTCUSDT.50",)),
-        LadderEvent("close", ("book.BTCUSDT.50",), "budget"),
+        LadderEvent("close", ("orders", "book.BTCUSDT.50"), "budget"),
     ]
     assert all(json.loads(f.payload)["ch"] == "orders" for f in list(queue._priority))
     assert not orders.snapshot_pending  # never dropped
@@ -541,7 +541,7 @@ def test_backpressure_close_hint_counts_pending_state() -> None:
     for _ in range(3):
         pacer.offer(orders, {"orders": []})
     events = Backpressure(queue, pacer).check([book, other, orders])
-    assert events[-1] == LadderEvent("close", ("book.BTCUSDT.50", "book.ETHUSDT.50"), "budget")
+    assert events[-1] == LadderEvent("close", (BTC[0], "orders", ETH[0]), "budget")
 
 
 def test_backpressure_close_hint_sums_a_topics_live_and_replay_frames_once() -> None:
@@ -558,7 +558,7 @@ def test_backpressure_close_hint_sums_a_topics_live_and_replay_frames_once() -> 
     for _ in range(4):
         pacer.offer(orders, {"orders": []})
     events = Backpressure(queue, pacer).check([orders])
-    assert events == [LadderEvent("close", ("trades.BTCUSDT", "trades.ETHUSDT"), "budget")]
+    assert events == [LadderEvent("close", ("orders", TRADES[0], "trades.ETHUSDT"), "budget")]
 
 
 def test_backpressure_close_hint_names_at_most_five_topics_largest_first() -> None:
@@ -569,9 +569,211 @@ def test_backpressure_close_hint_names_at_most_five_topics_largest_first() -> No
     for _ in range(8):
         pacer.offer(orders, {"orders": []})
     events = Backpressure(queue, pacer).check([orders])
+    hint = ("orders", *(f"trades.SYM{i}" for i in (6, 5, 4, 3)))  # eight frames of `orders`
+    assert events == [LadderEvent("close", hint, "budget")]
+
+
+def test_backpressure_close_hint_breaks_ties_by_topic_name_and_keeps_the_first_five() -> None:
+    conn, pacer, queue, _ = _setup(max_frames=7)
+    orders = _orders(conn)
+    for i in (5, 2, 6, 0, 3, 1, 4):  # seven topics holding the same bytes, queued out of order
+        queue.push(encode(_frame("d", f"trades.SYM{i}", pad="x" * 20)))
+    for _ in range(8):
+        pacer.offer(orders, {"orders": []})
+    events = Backpressure(queue, pacer).check([orders])
+    hint = ("orders", *(f"trades.SYM{i}" for i in range(4)))
+    assert events == [LadderEvent("close", hint, "budget")]
+
+
+# -- #3365: the `bye` hint is ranked when the overflow began, and kept for the episode -------------
+
+
+def _deltas(conn: Conn, pacer: Pacer, sub: Subscription, n: int) -> None:
+    """`n` updates of a book topic, each a leading edge: `n` frames queued."""
+    for i in range(n):
+        conn.clock.now += 1.0
+        pacer.offer(sub, _bid(sub.ch.split(".")[1], str(100 + i)))
+
+
+def _orders_checked(
+    pacer: Pacer, ladder: Backpressure, subs: list[Subscription], orders: Subscription, n: int
+) -> list[list[LadderEvent]]:
+    """`n` `orders` frames, which step 1 never drops, with a check after each push as the pipeline
+    runs it: what each check returned."""
+    seen = []
+    for _ in range(n):
+        pacer.offer(orders, {"orders": []})
+        seen.append(ladder.check(subs))
+    return seen
+
+
+def test_backpressure_close_hint_is_ranked_when_the_overflow_began() -> None:
+    """#3365, #410 scenario 2: the check that went over sheds the book topics; `orders` frames
+    then take the queue over again, a check after every push, with nothing droppable left. The
+    `bye` still names the topics that were the most expensive when the overflow began."""
+    conn, pacer, queue, _ = _setup(max_frames=12)
+    btc, eth, orders = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0]), _orders(conn)
+    ladder, subs = Backpressure(queue, pacer), [btc, eth, orders]
+    _deltas(conn, pacer, btc, 8)
+    _deltas(conn, pacer, eth, 5)  # 13 frames against 12, BTC holding more
+    assert ladder.check(subs) == [LadderEvent("drop", (BTC[0], ETH[0]))]
+    assert len(queue) == 0 and set(pacer.resnapshot_required) == {btc.sub_id, eth.sub_id}
+    *under, last = _orders_checked(pacer, ladder, subs, orders, 13)
+    assert under == [[]] * 12 and last == [LadderEvent("close", (BTC[0], ETH[0]), "budget")]
+
+
+def test_backpressure_a_new_overflow_after_the_recovery_ranks_afresh() -> None:
+    """#3365: an episode ends at a check that finds both limits met with no topic awaiting its
+    `backpressure` snapshot; the next overflow ranks at its own first check."""
+    conn, pacer, queue, _ = _setup(max_frames=12)
+    btc, eth, orders = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0]), _orders(conn)
+    ladder, subs = Backpressure(queue, pacer), [btc, eth, orders]
+    _deltas(conn, pacer, btc, 13)
+    assert ladder.check(subs) == [LadderEvent("drop", (BTC[0],))]
+    assert ladder.drain() == [LadderEvent("resnapshot", (BTC[0],))]
+    _drain(queue)  # the client reads the snapshot: BTC is whole again
+    assert ladder.check(subs) == []  # nothing awaits a snapshot, nothing is over: it ended
+    _deltas(conn, pacer, eth, 13)
+    assert ladder.check(subs) == [LadderEvent("drop", (ETH[0],))]
+    *_, last = _orders_checked(pacer, ladder, subs, orders, 13)
+    assert last == [LadderEvent("close", (ETH[0],), "budget")]
+
+
+@pytest.mark.parametrize("pads", [(5_000, 5_000), (7_000,)], ids=["two-checks", "one-check"])
+def test_backpressure_an_overflow_after_the_last_snapshot_left_ranks_afresh(
+    pads: tuple[int, ...],
+) -> None:
+    """#3365: the writer sends BTC's snapshot, the last thing its overflow awaited, and with no
+    mark left nothing drains. The next check is over the budget: it finds the recovery done, so a
+    new overflow begins there and ranks afresh. One check that closes names the closing ranking."""
+    conn, pacer, queue, _ = _setup(max_frames=12)
+    btc, eth, orders = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0]), _orders(conn)
+    ladder, subs = Backpressure(queue, pacer), [btc, eth, orders]
+    _deltas(conn, pacer, btc, 13)
+    assert ladder.check(subs) == [LadderEvent("drop", (BTC[0],))]
+    assert ladder.drain() == [LadderEvent("resnapshot", (BTC[0],))]
+    _deltas(conn, pacer, eth, 11)  # 12 frames with the snapshot, about 1.9 KB
+    assert ladder.check(subs) == []  # under both limits, its snapshot unsent: the episode holds
+    snap = queue.pop()  # the writer sends it
+    assert snap is not None and json.loads(snap.payload)["t"] == "snap"
+    events: list[LadderEvent] = []
+    for pad in pads:  # each check finds the queue over its 6 000 B; the last one closes
+        queue.push(encode(_frame("d", "orders", pad="x" * pad)))
+        events += ladder.check(subs)
     assert events == [
-        LadderEvent("close", tuple(f"trades.SYM{i}" for i in (6, 5, 4, 3, 2)), "budget")
+        LadderEvent("drop", (ETH[0],)),
+        LadderEvent("close", ("orders", ETH[0]), "budget"),
     ]
+
+
+def test_backpressure_a_later_check_of_the_episode_does_not_rank_again() -> None:
+    """#3365: BTC still awaits its snapshot when ETH takes the queue over too. That check sheds
+    ETH; the episode, and the ranking taken at its first check, go on."""
+    conn, pacer, queue, _ = _setup(max_frames=12)
+    btc, eth, orders = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0]), _orders(conn)
+    ladder, subs = Backpressure(queue, pacer), [btc, eth, orders]
+    _deltas(conn, pacer, btc, 13)
+    assert ladder.check(subs) == [LadderEvent("drop", (BTC[0],))]
+    _deltas(conn, pacer, eth, 13)
+    assert ladder.check(subs) == [LadderEvent("drop", (ETH[0],))]
+    *_, last = _orders_checked(pacer, ladder, subs, orders, 13)
+    assert last == [LadderEvent("close", (BTC[0],), "budget")]
+
+
+def test_backpressure_a_later_overflow_where_no_topic_held_bytes_names_none() -> None:
+    """§8.4's "empty when no topic held any" holds for each episode: the first one's ranking is
+    not carried into a second, whose overflow is control frames alone."""
+    conn, pacer, queue, _ = _setup(max_frames=2)
+    btc = _sub(conn, queue, BTC[0])
+    ladder = Backpressure(queue, pacer)
+    _deltas(conn, pacer, btc, 3)
+    assert ladder.check([btc]) == [LadderEvent("drop", (BTC[0],))]
+    assert ladder.drain() == [LadderEvent("resnapshot", (BTC[0],))]
+    _drain(queue)
+    assert ladder.check([btc]) == []  # the first episode is over
+    for _ in range(3):
+        queue.push(encode(_frame("err")))
+    assert ladder.check([btc]) == [LadderEvent("close", (), "budget")]
+
+
+def test_backpressure_ranks_orders_and_executions_but_not_system_or_control_frames() -> None:
+    """#3365's ruling: every topic of the connection by queued plus pending bytes, the priority
+    lane's `orders` and `executions` included; `system` (implicit, §6.2) and control frames are
+    not topics. An overflow that begins and closes at one check names that check's ranking."""
+    conn, pacer, queue, _ = _setup(max_frames=3)
+    book = _sub(conn, queue, BTC[0])
+    for ch, pad in (("system", 1_200), ("orders", 900), ("executions", 600)):
+        queue.push(encode(_frame("d", ch, pad="x" * pad)))
+    queue.push(encode(_frame("err", pad="x" * 1_200)))
+    _deltas(conn, pacer, book, 3)  # 450 B: the least
+    assert Backpressure(queue, pacer).check([book]) == [
+        LadderEvent("drop", (BTC[0],)),
+        LadderEvent("close", ("orders", "executions", BTC[0]), "budget"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("held", "end"),
+    [
+        ("paused", "drain"),
+        ("paused", "check"),
+        ("parked", "drain"),
+        ("unsubscribed", "drain"),
+        ("unsubscribed", "check"),
+    ],
+)
+def test_backpressure_a_paused_parked_or_ended_mark_does_not_hold_the_episode(
+    held: str, end: str
+) -> None:
+    """#3365: a shed topic then paused (D16), parked (its snapshot not ready) or unsubscribed
+    keeps its mark, or `drain` deletes it, but holds the episode open no longer. The next `drain`
+    ends it or, while the writer is stuck in a send, the check after the `ctl` or `unsub` reply
+    does (only a `drain` parks a mark). Resumed or unparked later, the mark does not reopen it:
+    the next overflow, a burst of another topic and `orders` between two checks, ranks afresh."""
+    conn, pacer, queue, source = _setup(max_frames=12)
+    btc, eth, orders = _sub(conn, queue, BTC[0]), _sub(conn, queue, ETH[0]), _orders(conn)
+    ladder, subs = Backpressure(queue, pacer), conn.authz.by_id
+    _deltas(conn, pacer, btc, 13)
+    assert ladder.check(subs.values()) == [LadderEvent("drop", (BTC[0],))]
+    if held == "paused":
+        btc.effective["paused"] = True  # as `ctl {paused: true}` leaves it: its mark stays
+    elif held == "parked":
+        source.unavailable.add("BTCUSDT")
+        source.gen += 1  # the cached render is stale: the snapshot cannot be built
+    else:
+        assert conn.authz.unsubscribe(BTC[0])
+    if end == "drain":
+        assert ladder.drain(subs) == []  # nothing sent; a paused or a parked mark stays
+    else:
+        queue.push(encode(_frame("ctl_ok" if held == "paused" else "unsub_ok")))
+        assert ladder.check(subs.values()) == []  # under both limits
+    if held == "paused":  # resumed: live again
+        btc.effective["paused"] = False
+    elif held == "parked":  # its source rebuilt: live again
+        source.unavailable.discard("BTCUSDT")
+        assert ladder.unpark([btc.sub_id])
+    _deltas(conn, pacer, eth, 13)
+    for _ in range(13):
+        pacer.offer(orders, {"orders": []})
+    assert ladder.check(subs.values())[-1] == LadderEvent("close", (ETH[0], "orders"), "budget")
+
+
+def test_backpressure_a_redrop_close_names_the_ranking_its_episode_began_with() -> None:
+    """#3365, frozen for the episode: ETH's overflow begins it. BTC, marked while ETH still awaits
+    its snapshot, has a snapshot that never fits the budget, and its third drop closes `redrop`.
+    The `bye` names ETH, ranked when the overflow began, not BTC, which was never ranked."""
+    conn, pacer, queue, btc, ladder = _oversized()
+    eth = _sub(conn, queue, ETH[0])
+    _deltas(conn, pacer, eth, 5)
+    assert ladder.check([btc, eth]) == [LadderEvent("drop", (ETH[0],))]
+    pacer.drop(btc)
+    events: list[LadderEvent] = []
+    for _ in range(3 * MAX_REDROPS):  # bounded: the drains take the two marks in turn
+        events = ladder.drain() + ladder.check([btc, eth])
+        if any(event.action == "close" for event in events):
+            break
+    assert events[-1] == LadderEvent("close", (ETH[0],), "redrop")
+    assert ladder._redrops[btc.sub_id] == MAX_REDROPS
 
 
 def test_backpressure_snapshot_that_never_fits_ends_in_a_close() -> None:
