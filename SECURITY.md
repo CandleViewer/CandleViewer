@@ -195,8 +195,9 @@ noted in `CHANGELOG.md` under _Security_.
   GPL/AGPL/SSPL/BUSL/commercial-without-licence are denied; unknown licence fails CI.
 - Lockfiles are committed; CI installs frozen. Container base images are pinned by digest and rebuilt
   weekly.
-- CI gates: CodeQL + Semgrep + Bandit (`sast`), `pip-audit` + `npm audit` (`sca`), Gitleaks/TruffleHog
-  (`secrets-scan`), Trivy (`container-scan`), licence check. Zero high/critical findings may merge.
+- CI gates: CodeQL + Semgrep + Bandit (`sast`), `pip-audit` + `npm audit` + the Dependabot alert
+  gate (`sca`), Gitleaks/TruffleHog (`secrets-scan`), Trivy (`container-scan`), licence check. Zero
+  high/critical findings may merge.
 - Dependency updates are triaged weekly; remediation SLAs match §1's fix targets.
 - New dependencies require justification, an allowlisted licence, a maintained upstream, and CODEOWNER
   approval; `packages/chart-engine` additionally requires an ADR.

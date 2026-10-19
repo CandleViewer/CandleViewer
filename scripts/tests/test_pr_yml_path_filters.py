@@ -109,6 +109,7 @@ LANE_FILTERS: dict[str, frozenset[str]] = {
     "licence-header": frozenset(),
     # #3385: every PR, a docs-only one too, gets the secret scans; #2892, the C-10.2 label.
     **dict.fromkeys(["docs-link-check", "secret-scan", "security-review-label"], frozenset()),
+    "dependabot-alerts": frozenset(),  # #3558: the alerts describe `main`, not the PR's paths
     "backlog-twin-eol": frozenset(),  # #3495: every PR, as validate.py --check cannot see a blob
     "pin-check": frozenset({"infra"}),
     **dict.fromkeys(["py", "architecture", "integration", "statechart-lint"], frozenset({"py"})),

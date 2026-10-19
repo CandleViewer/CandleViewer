@@ -24,9 +24,10 @@
 #   tool:      str   — one of: codeql, semgrep, bandit, pip-audit, npm-audit,
 #                       dependabot, gitleaks, license-scan, trivy. `dependabot`
 #                       records the decision on an open Dependabot alert that
-#                       no scanner here reports. No gate reads such an entry
-#                       until the alert gate (C-9.1 #11, #3558) lands, so only
-#                       check_accepted_risk_expiry.py acts on it, on its date.
+#                       no scanner here reports. The alert gate (C-9.1 #11,
+#                       #3558) takes the entry for an alert's GHSA whatever
+#                       its tool (ids are unique), so one entry decides an
+#                       advisory that pnpm also reports.
 #   severity:  str   — CRITICAL | HIGH | MEDIUM | LOW, exactly (any other
 #                       value is CI-SEC-005): the highest severity the entry
 #                       accepts, as security_gate.py scores the finding; a
@@ -130,8 +131,8 @@ entries:
   # ratify on #2701. They expire when S09 starts, so the re-decision comes before the R1 cut,
   # not on it.
   # The gates block from High only and never read these entries (re-scored High or above, a
-  # pnpm finding outgrows its entry and blocks; no gate reads the tauri one until the alert
-  # gate lands), so check_accepted_risk_expiry.py enforces their dates.
+  # finding outgrows its entry and blocks, the tauri alert in the alert gate too), so
+  # check_accepted_risk_expiry.py enforces their dates.
   - id: "GHSA-wrjc-x8rr-h8h6"
     tool: npm-audit
     severity: MEDIUM
