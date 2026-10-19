@@ -1,6 +1,8 @@
 // E17-T02 part B: nightly mutation fuzz of the TS CVWB decoders (SR-155), seeded from
 // tests/fuzz/ws-frames/corpus.json. Invariant: every decoder returns or throws ONLY
-// BinaryFrameError. N via CV_FUZZ_EXAMPLES (default 20 000), seed via CV_FUZZ_SEED.
+// BinaryFrameError. N via CV_FUZZ_EXAMPLES (default 20 000), seed via CV_FUZZ_SEED; CV_FUZZ_SECONDS
+// (> 0) time-boxes the mutation loop instead. The deterministic seeds (every header bit, every
+// truncation, every power-of-two count, a 256 KiB frame) are cvwb-exhaustive.test.ts, in the unit lane.
 // A failure reports only its target and a sha256 digest of (seed, input), as the Python suite does:
 // the pair goes to CV_FUZZ_ARTIFACT_DIR, which CI uploads only encrypted (fuzz-nightly.yml).
 import { createHash } from "node:crypto";
@@ -25,6 +27,10 @@ const corpus = JSON.parse(
 ) as { name: string; hex: string }[];
 const SEEDS = corpus.map((s) => Uint8Array.from(Buffer.from(s.hex, "hex")));
 const N = Number(process.env["CV_FUZZ_EXAMPLES"] ?? 20_000);
+const SECONDS = Number(process.env["CV_FUZZ_SECONDS"] ?? 0);
+if (!(SECONDS >= 0)) throw new Error("CV_FUZZ_SECONDS must be a number of seconds");
+const BOX = SECONDS > 0 ? `${SECONDS} s of` : String(N);
+const TIMEOUT = SECONDS > 0 ? (SECONDS + 120) * 1000 : 600_000;
 const SEED = BigInt(process.env["CV_FUZZ_SEED"] ?? 0xc0ffee); // up to 64 bits
 // Per-decode sanity bounds (not perf asserts): inputs are <= ~300 B, so 16 MiB of heap growth or
 // 50 ms is a count sizing an allocation/loop. GC is not forced (no --expose-gc in the vitest pool),
@@ -103,10 +109,12 @@ function fail(reason: Reason, decode: { name: string }, data: Uint8Array): never
   throw new Error(`${what}: ${decode.name} sha256=${digest}`);
 }
 
-it(`decoders throw only BinaryFrameError over ${N} mutated corpus inputs`, () => {
+it(`decoders throw only BinaryFrameError over ${BOX} mutated inputs`, { timeout: TIMEOUT }, () => {
   // the digest takes the whole seed; the PRNG state is folded from it
   const rnd = prng(Number(BigInt.asUintN(32, SEED ^ (SEED >> 32n))));
-  for (let i = 0; i < N; i++) {
+  const end = performance.now() + SECONDS * 1000;
+  let runs = 0;
+  for (let i = 0; SECONDS > 0 ? performance.now() < end : i < N; i++, runs++) {
     const data = mutate(SEEDS[Math.floor(rnd() * SEEDS.length)] ?? new Uint8Array(0), rnd);
     for (const decode of DECODERS) {
       const heap0 = process.memoryUsage().heapUsed;
@@ -122,6 +130,7 @@ it(`decoders throw only BinaryFrameError over ${N} mutated corpus inputs`, () =>
       }
     }
   }
+  expect(runs).toBeGreaterThan(0); // a malformed time box or count must not pass by running nothing
 });
 
 // SR-128 (targeted): a wire count that cannot fit must be rejected UP FRONT by assertFits ("exceeds"),

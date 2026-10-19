@@ -30,10 +30,6 @@ export default defineConfig({
   },
   test: {
     ...vitestPreset.test,
-    environment: "jsdom",
-    globals: false,
-    setupFiles: ["./test/setup.ts"],
-    include: ["test/**/*.test.{ts,tsx}"],
     coverage: {
       ...vitestPreset.test.coverage,
       // #1535: do not wipe coverage/ at start (it raced the .tmp writer on a cold
@@ -48,5 +44,24 @@ export default defineConfig({
         branches: 70,
       },
     },
+    // Two projects: `unit` (the default run, under V8 coverage) and `fuzz` (#415: the nightly
+    // mutation fuzz of the WS codec; no PR lane runs it). Each names its own `include`: with
+    // `extends: true` a root-level one would be concatenated into both.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          environment: "jsdom",
+          setupFiles: ["./test/setup.ts"],
+          include: ["test/**/*.test.{ts,tsx}"],
+          exclude: ["test/**/*.fuzz.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: { name: "fuzz", include: ["test/**/*.fuzz.test.ts"], testTimeout: 600_000 },
+      },
+    ],
   },
 });
