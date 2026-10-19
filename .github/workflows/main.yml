@@ -41,7 +41,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.12"
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/candleviewer-api
+  IMAGE_NAME: candleviewer/candleviewer-api  # GHCR requires a lowercase path; the org login is CandleViewer
 
 jobs:
   # ---------------------------------------------------------------------
