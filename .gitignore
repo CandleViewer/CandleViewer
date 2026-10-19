@@ -83,6 +83,7 @@ packages/chart-engine/bench/scenes/report-*.md
 docs/plan/_*.py
 docs/plan/__*.json
 reports/a11y/
+reports/storybook-a11y/
 
 # Hypothesis example database (E35-Q02 roundtrip suite; cached in CI)
 .hypothesis/

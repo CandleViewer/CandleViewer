@@ -119,6 +119,11 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   play function, then axe. A serious or critical violation fails the story, naming the rule and the
   element; moderate and minor are reported only. Stories tagged `perf` are skipped unless
   `CV_STORYBOOK_PERF=1` (a quiet machine).
+- Self-test: `CV_STORYBOOK_A11Y_FIXTURES=1 pnpm --filter @candleviewer/ui storybook:test` runs the
+  gate on `.storybook/__fixtures__/` alone (never built or published otherwise): it must fail the
+  2:1-contrast button naming `color-contrast` and `#a11y-gate-fixture`. CI's `storybook` job
+  (`_job-a11y.yml`, the required `a11y` check) checks that, runs `storybook:test`, logs the story
+  count and the axe violations by impact, and uploads the a11y report; codes `CI-A11Y-002..004`.
 - Organisation: titles sit under a catalogue band (`Atoms/` .. `ChartEngine/`, see catalogue
   §0.3 rule 8) or `Foundations/`; the `candleviewer/story-title-bands` lint rule fails any other.
   The Theme, Density and Motion toolbars drive the E05-T02 runtime; decorators paint the canvas with

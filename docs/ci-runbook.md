@@ -48,7 +48,10 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      a11y-axe smoke, e2e-electron on release/* heads
 │                                      (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
 ├─ _job-a11y.yml  (e2e filter)       → the a11y lane: tools/a11y/gates.py over axe, keyboard, trees,
-│                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
+│                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*);
+│                                      beside it the `storybook` job: the Storybook build, play
+│                                      functions and axe per story, the fail-closed fixture and
+│                                      its 10 min budget (CI-A11Y-002..004)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, register
@@ -386,6 +389,18 @@ index alone, removing nothing.
   report artifact, find the new violation's rule id and selector, fix the
   markup (see `docs/plan/05-accessibility-standard.md`) — never suppress a
   rule repo-wide to unblock one PR.
+- **CI-A11Y-002** (Storybook stories failed, `_job-a11y.yml`'s `storybook` job): a story's play
+  function threw, or axe found a serious or critical violation in it. The log names the story, the
+  rule and the element; the job summary lists every violation by impact and the
+  `storybook-a11y-report` artifact holds each story's axe results. Reproduce: `build:tokens`, then
+  `storybook:test` in `packages/ui` (its README). Fix the component, not the gate.
+- **CI-A11Y-003** (the gate self-test): run on `packages/ui/.storybook/__fixtures__/` alone
+  (`CV_STORYBOOK_A11Y_FIXTURES=1`), the gate did not fail the 2:1-contrast button naming
+  `color-contrast` and `#a11y-gate-fixture`, so it cannot be trusted. Check `parameters.a11y` in
+  `.storybook/preview.ts` and the fixture.
+- **CI-A11Y-004** (Storybook job over its 600 s budget): the job summary records the measured time.
+  Look for a slow step (install, browser download, build); a story count that has outgrown the
+  budget needs sharding (`vitest --shard`), not a higher number.
 
 ### CI-BUILD-* — workspace build prerequisites (`tools/ci/check_built_exports.mjs`)
 
