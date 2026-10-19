@@ -16,6 +16,10 @@ from candleviewer.admin.backups.ports import JobKind
 
 #: How long an admission waits for the admission lock before it is refused, retryable (503).
 ADMIT_WAIT_S: Final = 5.0
+#: The restore guard (BK-13) under the lock: each read alone (maintenance, the row, its bound
+#: digest, the positions, #3084's check), and each `backup.restore` record, its job's end too.
+RESTORE_READ_BUDGET_S: Final = 2.0
+RESTORE_RECORD_BUDGET_S: Final = 2.0
 _HOUR: Final = 3600.0
 #: How long an admitted job may run before it fails `internal_error` and frees its lane.
 JOB_DEADLINE_S: Final[Mapping[JobKind, float]] = {
