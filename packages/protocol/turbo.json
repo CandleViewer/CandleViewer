@@ -34,7 +34,8 @@
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
-        "$TURBO_ROOT$/packages/config/vitest.preset.mjs"
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/tests/fuzz/ws-frames/**"
       ]
     },
     "test:cov": {
@@ -44,7 +45,8 @@
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
-        "$TURBO_ROOT$/packages/config/vitest.preset.mjs"
+        "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
+        "$TURBO_ROOT$/tests/fuzz/ws-frames/**"
       ]
     }
   }

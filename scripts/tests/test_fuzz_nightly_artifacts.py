@@ -112,7 +112,7 @@ def test_each_fuzz_step_draws_its_seed_and_nothing_else_names_it() -> None:
         assert not [e for e in envs if "CV_FUZZ_SEED" in e]  # no env map sets it
         assert not [s for s in steps if s is not fuzz and "seed" in s.get("run", "").lower()]
         assert not [s for s in steps if "GITHUB_ENV" in s.get("run", "")]  # the runner holds none
-    assert set(DOC[True]["workflow_dispatch"]["inputs"]) == {"examples"}  # no input offers a seed
+    assert set(DOC[True]["workflow_dispatch"]["inputs"]) == {"weekend"}  # no input offers a seed
 
 
 @pytest.mark.skipif(LOCAL and not all(map(shutil.which, ("od", "tr"))), reason="od, tr")
