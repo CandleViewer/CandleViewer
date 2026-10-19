@@ -23,7 +23,9 @@ from hypothesis import strategies as st
 
 from candleviewer.api.orderbook import make_orderbook_router
 from candleviewer.book.models import BookPhase
+from candleviewer.book.resync import HealthSink
 from candleviewer.bus.bus import Bus
+from candleviewer.bus.models import QueuePolicy
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
 from candleviewer.ingestion.metrics import ingest_book_live, symbol_label
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S
@@ -38,35 +40,51 @@ WS = "ws:book:50"  # a WS book subscription's demand key
 LIMIT_S = STALENESS_S["book"]  # the watchdog's book limit: no new SLO
 
 
+async def _nothing(_arg: str) -> None:
+    """A resubscribe, or a B14 health sink, that does nothing."""
+
+
+class _Charts:
+    """B14 supervision, faked: a log of the charts attached and detached."""
+
+    def __init__(self) -> None:
+        self.log: list[str] = []
+
+    async def attach(self, key: str, symbol: str) -> HealthSink:
+        self.log.append(f"attach {key}")
+        return _nothing
+
+    def detach(self, key: str) -> None:
+        self.log.append(f"detach {key}")
+
+
 class _Rig:
-    """A `BookStream` on the corpus with a fake clock, the catalogue's tick size wired as
-    `app.wire_public_ws` wires it; `ticked()` runs its scripted ticks."""
+    """A `BookStream` on the corpus with a fake clock, wired as `app.wire_public_ws` wires it
+    (the catalogue's tick size, a B14 supervisor); `ticked()` runs its scripted ticks."""
 
     def __init__(self, ticks: tuple[float, ...] = ()) -> None:
         self.t = 0.0
-        self.tick = Decimal("0.1")  # BTCUSDT's tick size in the catalogue
+        self.tick_size = Decimal("0.1")  # BTCUSDT's tick size in the catalogue
         self.desired: list[set[str]] = []
         self.slept: list[float] = []
+        self.bus, self.charts = Bus(), _Charts()
         self._ticks = list(ticks)
         self._parked = asyncio.Event()
         self.stream = BookStream(
-            bus=Bus(),
+            bus=self.bus,
             env="live",
             set_desired=lambda topics: self.desired.append(set(topics)),
-            parse_frame=lambda f: parse_book_frame(f, lambda _s: self.tick),
+            parse_frame=lambda f: parse_book_frame(f, lambda _s: self.tick_size),
             topic_for=book_topic,
-            resubscribe=self._resubscribe,
+            resubscribe=_nothing,
             is_listed=lambda s: s == "BTCUSDT",
             touch=lambda _t: None,
             clock=lambda: self.t,
             now_us=lambda: 0,
             sleep=self._sleep,
-            tick_size=lambda _s: self.tick,
+            tick_size=lambda _s: self.tick_size,
+            supervisor=self.charts,
         )
-
-    @staticmethod
-    async def _resubscribe(_topic: str) -> None:
-        return None
 
     async def _sleep(self, delay: float) -> None:
         self.slept.append(delay)
@@ -134,6 +152,17 @@ async def test_f2_a_released_book_is_never_served_frozen_as_live_after_its_grace
     assert TOPIC not in rig.desired[-1]  # the first ignored frame dropped the topic upstream
 
 
+async def test_a_frame_after_the_grace_forgets_a_retained_book_that_is_not_live() -> None:
+    """A reconnect left the released book resyncing: the first frame past its grace forgets it."""
+    rig = _Rig()
+    await rig.live_then_released()
+    await rig.stream.invalidate("reconnect")
+    assert rig.stream.phase("BTCUSDT") is BookPhase.SNAPSHOT_PENDING
+    rig.t = DEFAULT_GRACE_S + 1
+    await rig.feed(BOOK[4000:4001])  # the socket's re-sent snapshot, past the grace
+    assert rig.stream.engine("BTCUSDT") is None and TOPIC not in rig.desired[-1]
+
+
 @pytest.mark.parametrize(
     ("at", "kept"), [(DEFAULT_GRACE_S - 1, True), (DEFAULT_GRACE_S + 1, False)]
 )
@@ -145,6 +174,15 @@ async def test_the_tick_alone_ends_a_released_books_grace(at: float, kept: bool)
         assert (TOPIC in rig.desired[-1]) is kept
         assert _live_gauge() == (1.0 if kept else 0.0)  # a forgotten book is not counted LIVE
         assert max(rig.slept) <= 0.25  # a grace ends at most one 0.25 s tick late
+
+
+async def test_the_tick_drops_a_released_topic_that_never_got_a_frame() -> None:
+    """The feed never answered, so no book was built; the topic still goes as the grace ends."""
+    rig = _Rig(ticks=(DEFAULT_GRACE_S + 1,))
+    rig.stream.acquire(WS, "BTCUSDT")
+    rig.stream.release(WS, "BTCUSDT")
+    async with rig.ticked():
+        assert TOPIC in rig.desired[0] and TOPIC not in rig.desired[-1]
 
 
 @pytest.mark.parametrize("hold", ["reacquired_in_grace", "second_consumer"])
@@ -178,13 +216,24 @@ async def test_a_new_subscription_after_idle_gets_a_fresh_snapshot_not_the_froze
         assert view is not None and view.snapshot.update_id == 10
 
 
+async def test_a_forgotten_book_detaches_its_chart_and_a_rebuilt_one_attaches_anew() -> None:
+    """B14 supervision follows the book: one detach as the grace ends, one attach on rebuild."""
+    rig = _Rig(ticks=(DEFAULT_GRACE_S + 1,))
+    await rig.live_then_released()
+    async with rig.ticked():
+        assert rig.charts.log == ["attach live:BTCUSDT:200", "detach live:BTCUSDT:200"]
+        rig.stream.acquire(WS, "BTCUSDT")
+        await rig.feed(BOOK[4000:4001])
+        assert rig.charts.log[2:] == ["attach live:BTCUSDT:200"]  # a new chart, none detached
+
+
 async def test_a_forgotten_book_takes_its_grid_with_it() -> None:
     """#3806's per-book grid goes with the book: the rebuilt book keeps the deltas it gets
     before its snapshot, though the tick size changed while the symbol was idle."""
     rig = _Rig(ticks=(DEFAULT_GRACE_S + 1,))
     await rig.live_then_released()  # snapshotted on grid 0.1
     async with rig.ticked():
-        rig.tick = Decimal("0.05")  # the catalogue halves the tick size meanwhile
+        rig.tick_size = Decimal("0.05")  # the catalogue halves the tick size meanwhile
         rig.stream.acquire(WS, "BTCUSDT")
         await rig.feed(BOOK[1:3])  # deltas before the new snapshot: buffered, not refused
         await rig.feed(BOOK[:1])  # the snapshot replays them
@@ -252,6 +301,19 @@ async def test_is_stale_whenever_the_book_is_not_live() -> None:
     await rig.feed(BOOK[2700:2701])  # a sequence gap: resyncing
     assert rig.stream.phase("BTCUSDT") is BookPhase.SNAPSHOT_PENDING
     assert rig.stream.is_stale("BTCUSDT")
+
+
+async def test_a_book_live_before_its_snapshot_frame_returns_is_served_stale() -> None:
+    """Bus backpressure holds the LIVE status the snapshot frame publishes: the book is LIVE but
+    no frame has finished applying yet, so a read meanwhile is stale, never an error."""
+    rig = _Rig()
+    held = rig.bus.subscribe("held", "live.md.BTCUSDT.book", QueuePolicy.NEVER_DROP, maxsize=1)
+    rig.stream.acquire(WS, "BTCUSDT")
+    applying = asyncio.create_task(rig.feed(BOOK[:1]))
+    await asyncio.wait_for(held.get(), 5)  # the book went out; its LIVE status waits for room
+    assert rig.stream.phase("BTCUSDT") is BookPhase.LIVE and _stale(rig) is True
+    await applying
+    assert _stale(rig) is False
 
 
 async def test_a_rest_read_after_the_grace_with_no_tick_is_served_stale() -> None:
