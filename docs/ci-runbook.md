@@ -867,7 +867,9 @@ previous entry.
   `setopt xtrace`, `SHELLOPTS`, a `DEBUG` trap) or env dumps in workflows, in the repository shell
   scripts their `run:` steps invoke, in the scripts those run or in the file a `BASH_ENV` or `ENV`
   they set names (#3525; a value naming no repository file fails the scan, as an unreadable script
-  does) (which forms count: `_SET_X`, `_SHELL_ENV` and `workflow_scripts` in the script; SR-146).
+  does: point it at one, or end a line that names no startup file, such as an `ENV` naming an
+  environment, with `# secrets-hygiene: allow`) (which forms count: `_SET_X`, `_SHELL_ENV` and
+  `workflow_scripts` in the script; SR-146).
   `inventory <names.json>` and `logs <paths>` back the secret-inventory (SR-140/141) and
   log/artefact scans.
 - Full-history sweep (run by the owner/DevSecOps before the pen-test; gitleaks is not installed on

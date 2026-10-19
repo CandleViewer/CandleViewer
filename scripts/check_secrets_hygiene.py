@@ -493,18 +493,21 @@ _NOT_SHELL = re.compile(
 #: each script it runs (a ``run:`` step's ``bash -e {0}``), an interactive sh the one ``ENV``
 #: names. Set by a YAML key at a line's start or in a flow mapping (a workflow's, a job's or a
 #: step's ``env:``: ``BASH_ENV: tools/env.sh``, ``env: { BASH_ENV: x.sh }``) or by a shell
-#: assignment (``BASH_ENV=x.sh bash ci.sh``, ``export ENV=x.sh``, ``echo "BASH_ENV=x.sh" >>
-#: "$GITHUB_ENV"``), read with its quotes off; one set empty (``BASH_ENV=``, ``ENV: ""``) names
-#: no file. ``workflow_scripts`` follows each value set in a workflow or a script it runs,
-#: whichever steps it reaches (a step's and the job's it overrides), and reports one naming no
-#: repository file. Not read: ``${BASH_ENV:=x}``, ``read BASH_ENV``, ``printf -v BASH_ENV``, a
-#: name built from an expansion (``BASH${X}_ENV=x``). Reported though no file is read: a key
+#: assignment (``BASH_ENV=x.sh bash ci.sh``, ``export ENV=x.sh``, ``BASH_ENV+=x.sh``, ``echo
+#: "BASH_ENV=x.sh" >> "$GITHUB_ENV"``), read with its quotes off; one set empty (``BASH_ENV=``,
+#: ``ENV: ""``) names no file. ``workflow_scripts`` follows each value set in a workflow or a
+#: script it runs, whichever steps it reaches (a step's and the job's it overrides), and reports
+#: one naming no repository file unless its line carries the allow marker (a marked line's file
+#: is still followed). Not read: ``${BASH_ENV:=x}``, ``${BASH_ENV=x}``, ``read BASH_ENV``,
+#: ``printf -v BASH_ENV``, a name built from an expansion (``BASH${X}_ENV=x``), a flow key with
+#: no space after its colon (``{"BASH_ENV":x}``), a list item (``- ENV: x``, a matrix's), one
+#: set in a local action's ``action.yml`` (not scanned). Reported though no file is read: a key
 #: outside ``env:`` (``with: {ENV: prod}``), an ``ENV`` no interactive sh reads, a value on the
 #: next line (``BASH_ENV: >-``, ``BASH_ENV=\``, ``$GITHUB_ENV``'s ``BASH_ENV<<EOF``), as each
 #: line is read alone.
 _SHELL_ENV = re.compile(
-    r"(?:^|(?<!\$)\{|,)\s*(?:-\s+)?(?P<key>(?:BASH_)?ENV)\s*:(?!\S)\s*(?P<entry>[^\s,}]*)"
-    r"|" + _WORD_START + r"(?<![${])(?P<name>(?:BASH_)?ENV)(?:=|<<)(?P<value>[^\s;&|()<>`]*)"
+    r"(?:^|(?<!\$)\{|,)\s*(?P<key>(?:BASH_)?ENV)\s*:(?!\S)\s*(?P<entry>[^\s,}]*)"
+    r"|" + _WORD_START + r"(?<![${])(?P<name>(?:BASH_)?ENV)(?:\+?=|<<)(?P<value>[^\s;&|()<>`]*)"
 )
 
 
@@ -557,14 +560,15 @@ def _run_lines(text: str) -> list[str]:
     return lines
 
 
-def _env_settings(text: str) -> Iterator[tuple[int, str, str]]:
-    """(line, name, value) per ``BASH_ENV`` or ``ENV`` that ``text`` sets (``_SHELL_ENV``) outside
-    comments, but one set empty; a YAML key whose value starts on a later line gives ``""``."""
+def _env_settings(text: str) -> Iterator[tuple[int, str, str, bool]]:
+    """(line, name, value, allow-marked) per ``BASH_ENV`` or ``ENV`` that ``text`` sets
+    (``_SHELL_ENV``) outside comments, but one set empty; a YAML key whose value starts on a later
+    line gives ``""``."""
     for n, line in enumerate(text.splitlines(), 1):
         for m in _SHELL_ENV.finditer(_unquoted(_code(line))):
             value = m["entry"] if m["key"] else m["value"]
             if value not in ('""', "''") and (value or m["key"]):
-                yield n, m["key"] or m["name"], value
+                yield n, m["key"] or m["name"], value, _SKIP_ALLOW in line
 
 
 def _read(path: Path, size: int = -1) -> str | None:
@@ -580,7 +584,10 @@ def _repo_file(root: Path, rel: PurePosixPath) -> Path | None:
     """``rel`` from ``root`` as a file resolving (symlinks, ``..``) inside ``root``, else None; one
     that cannot be resolved (a symlink loop) is kept, so that reading it fails the scan. Not
     ``Path.resolve``: it raises RuntimeError on a symlink loop up to Python 3.12."""
-    path = Path(os.path.realpath(root / rel))
+    try:
+        path = Path(os.path.realpath(root / rel))
+    except ValueError:  # a NUL byte, which no file name holds
+        return None
     try:
         regular = stat.S_ISREG(path.stat().st_mode)
     except (FileNotFoundError, NotADirectoryError):
@@ -640,7 +647,7 @@ def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, in
     The file a ``BASH_ENV`` or ``ENV`` setting names (``_SHELL_ENV``) in a workflow or a script it
     runs is a script it runs, whatever its suffix, tried from the same paths (#3525); a setting
     naming no repository file (another expression, a path outside the root, a missing file) fails
-    the scan, as an unreadable script does.
+    the scan, as an unreadable script does, unless its line carries the allow marker.
     """
     root = root.resolve()
     found: dict[str, set[str]] = {}
@@ -656,10 +663,10 @@ def workflow_scripts(root: Path) -> tuple[dict[str, set[str]], set[tuple[str, in
         while todo:
             where, body, lines, runner = todo.pop()
             keys = [key for line in lines for key in _invoked(root, bases, line)]
-            for n, name, value in _env_settings(body):
+            for n, name, value, allowed in _env_settings(body):
                 files = _in_repo(root, bases, value)
                 keys += [file.relative_to(root).as_posix() for file in files]
-                if not files:
+                if not files and not allowed:
                     unresolved.add((where, n, name))
             for key in keys:
                 found.setdefault(key, set()).add(runner)

@@ -797,9 +797,9 @@ def test_workflow_env_shellopts_is_flagged(tmp_path: Path, entry: str) -> None:
     assert h.check_workflows(tmp_path) == ["w.yml:4: 'set -x' tracing (SR-146)"]
 
 
-# #3525: bash reads the file BASH_ENV names before each `run:` script (GitHub's default shell is
-# `bash --noprofile --norc -eo pipefail {0}`), an interactive sh the file ENV names: a script the
-# workflow runs, set in a workflow's, a job's or a step's `env:` or on a shell line.
+# #3525: bash reads the file BASH_ENV names before each `run:` script (`bash -e {0}`, or `bash
+# --noprofile --norc -eo pipefail {0}` with `shell: bash`), an interactive sh the file ENV names:
+# a script the workflow runs, set in a workflow's, a job's or a step's `env:` or on a shell line.
 LEVELS = {
     "workflow": "env:\n  {}\njobs:\n  a:\n    steps:\n      - run: make\n",
     "job": "jobs:\n  a:\n    env:\n      {}\n    steps:\n      - run: make\n",
@@ -826,6 +826,8 @@ def test_workflow_env_file_is_scanned(tmp_path: Path, level: str, name: str) -> 
         LEVELS["job"].format("BASH_ENV : ${{ github.workspace }}/tools/env.sh"),
         LEVELS["job"].format("BASH_ENV: $GITHUB_WORKSPACE/tools/env.sh"),
         "jobs:\n  a:\n    env: { CI: 1, BASH_ENV: tools/env.sh }\n    steps:\n      - run: make\n",
+        "jobs:\n  a:\n    env: {BASH_ENV: tools/env.sh, CI: 1}\n    steps:\n      - run: make\n",
+        "jobs:\n  a:\n    steps:\n      - run: make\n        env: {BASH_ENV: tools/env.sh}\n",
         "defaults:\n  run:\n    shell: env BASH_ENV=tools/env.sh bash {0}\n",
         (
             "jobs:\n  a:\n    steps:\n      - working-directory: tools\n"
@@ -833,6 +835,8 @@ def test_workflow_env_file_is_scanned(tmp_path: Path, level: str, name: str) -> 
         ),
         _runs("BASH_ENV=tools/env.sh bash ci.sh"),
         _runs("export ENV=./tools/env.sh; sh -i ci.sh"),
+        _runs("BASH_ENV+=tools/env.sh bash ci.sh"),
+        _runs("export ENV+=./tools/env.sh; sh -i ci.sh"),
         _runs('echo "BASH_ENV=$GITHUB_WORKSPACE/tools/env.sh" >> "$GITHUB_ENV"'),
     ],
 )
@@ -857,6 +861,7 @@ def test_workflow_env_file_forms_are_followed(tmp_path: Path, workflow: str) -> 
                 "NAME: tools/missing.sh",
                 "NAME: ../env.sh",
                 "NAME: tools",
+                "NAME: tools/\x00env.sh",
                 "NAME: >-\n        tools/env.sh",
                 "NAME:\n        tools/env.sh",
             )
@@ -891,11 +896,43 @@ def test_workflow_env_file_that_does_not_resolve_is_reported(
         _runs("unset BASH_ENV ENV; env -u BASH_ENV bash ci.sh"),
         _runs('echo "$BASH_ENV ${ENV:-none} ${{ env.BASH_ENV }}" >> "$GITHUB_ENV"'),
         _runs('echo "ENV: demo"; CV_ENV=demo make  # BASH_ENV=/etc/profile'),
+        _runs('echo $ENV=x "${ENV: -1}"'),
+        "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - ENV: prod\n",
     ],
 )
 def test_workflow_env_set_empty_or_only_read_names_no_file(tmp_path: Path, workflow: str) -> None:
     _write(tmp_path, WF, workflow)
     assert h.check_workflows(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        _runs(': "${BASH_ENV:=tools/env.sh}" "${ENV=tools/env.sh}"; export BASH_ENV ENV'),
+        _runs("read -r BASH_ENV <<< tools/env.sh; printf -v ENV tools/env.sh"),
+        _runs("BASH${X}_ENV=tools/env.sh bash ci.sh"),
+        LEVELS["step"].format('{"BASH_ENV":tools/env.sh}'),
+    ],
+)
+def test_workflow_env_file_not_read_is_pinned(tmp_path: Path, workflow: str) -> None:
+    # #3525: listed beside _SHELL_ENV as not read, though each sets the name: an expansion that
+    # assigns, `read`, `printf -v`, a name built from an expansion, a flow key with no space after
+    # its colon. Pinned so that the list stays true.
+    _write(tmp_path, WF, workflow)
+    _write(tmp_path, "tools/env.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == []
+
+
+def test_workflow_env_naming_no_file_takes_the_allow_marker(tmp_path: Path) -> None:
+    # #3525: a setting naming no file (an ENV naming an environment) takes the allow marker, as each
+    # SR-146 line finding does; the file a marked line names is still followed.
+    allow = "  # secrets-hygiene: allow"
+    marked = LEVELS["job"].format(f"ENV: prod{allow}") + f"      - run: ENV=demo make{allow}\n"
+    _write(tmp_path, WF, marked)
+    assert h.check_workflows(tmp_path) == []
+    _write(tmp_path, WF, LEVELS["job"].format(f"BASH_ENV: tools/env.sh{allow}"))
+    _write(tmp_path, "tools/env.sh", "set -x\n")
+    assert h.check_workflows(tmp_path) == [ENV_TRACED]
 
 
 @pytest.mark.parametrize(
