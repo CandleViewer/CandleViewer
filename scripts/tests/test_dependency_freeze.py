@@ -218,7 +218,8 @@ def test_dependabot_every_entry_waits_a_week_after_a_release() -> None:
     # #3672: a version pulled or found malicious soon after publishing is not proposed
     # (the Semgrep dependabot-missing-cooldown rule asks for default-days >= 7).
     for u in _dependabot_updates():
-        assert u["cooldown"]["default-days"] >= 7, (u["package-ecosystem"], u["directory"])
+        # Exactly the default: a shorter per-semver override or an `exclude` would cut the wait.
+        assert u["cooldown"] == {"default-days": 7}, (u["package-ecosystem"], u["directory"])
 
 
 def test_dependabot_github_actions_bumps_carry_security_review_label() -> None:
