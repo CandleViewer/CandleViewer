@@ -12,7 +12,20 @@ from candleviewer.oms import ExecutionRepository, OrderEventRepository, OrderRep
 from candleviewer.oms.fakes import InMemoryOrderStore as Fake
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories import orders as port
-from tests.unit.oms.write_ahead_contract import QTY, T0, Harness, WriteAheadContract, event, fill
+from tests.unit.oms.write_ahead_contract import (
+    QTY,
+    T0,
+    Harness,
+    WriteAheadContract,
+    created,
+    event,
+    fill,
+    step,
+)
+
+
+def _lost() -> StorageTierUnavailable:
+    return StorageTierUnavailable("postgres unreachable (OSError)")
 
 
 class TestInMemoryStore(WriteAheadContract):
@@ -29,11 +42,32 @@ class TestInMemoryStore(WriteAheadContract):
         """`fail_next`, the S7 hook for the unit suites of `persist_event` and the OMS facade: the
         write raises at its commit and the fill, its totals, state and event are all unwritten."""
         row = await h.order()
-        store.fail_next(StorageTierUnavailable("postgres unreachable (OSError)"))
+        store.fail_next(_lost())
         with pytest.raises(StorageTierUnavailable):
             await h.executions.commit_fill(fill(row, "E1", "0.1"))
         assert await h.stored(row) == (row, [0])
         assert await h.executions.commit_fill(fill(row, "E1", "0.1")) is not None  # once only
+
+    async def test_a_fault_after_the_commit_leaves_the_write_stored(
+        self, store: Fake, h: Harness
+    ) -> None:
+        """`fail_next(..., committed=True)`: the write landed but its answer was lost, as when a
+        lost connection cuts a commit off (`orders.py`). A retry meets the stored row, as on
+        Postgres: a create meets its key, a step the state it moved the order to."""
+        new = h.new_order("pending_submit")
+        store.fail_next(_lost(), committed=True)
+        with pytest.raises(StorageTierUnavailable):
+            await h.orders.create(new, created())
+        with pytest.raises(port.OrderConstraintError, match="orders_pkey"):
+            await h.orders.create(new, created())
+        row = await h.orders.get(new.exchange_account_id, new.id)
+        assert row is not None
+        store.fail_next(_lost(), committed=True)
+        with pytest.raises(StorageTierUnavailable):
+            await h.orders.transition(step(row, "submitted"))
+        with pytest.raises(port.StaleOrderState):
+            await h.orders.transition(step(row, "submitted"))
+        assert (await h.stored(row))[1] == [0, 1]
 
     async def test_reads_stay_inside_their_account(self, h: Harness) -> None:
         row, other = await h.order("pending_amend"), await h.order("filled")
@@ -59,7 +93,8 @@ class TestInMemoryStore(WriteAheadContract):
         row = await h.order()
         twin = {name: getattr(row, name) for name in port.NewOrder.__dataclass_fields__}
         filled = {"cum_exec_qty": Decimal("0.1"), "state": "partially_filled"}
-        adopted = port.NewOrder(**twin | filled | {"id": uuid4(), "order_link_id": "ext-adopted"})
+        fresh = {"id": uuid4(), "order_link_id": f"ext-{uuid4().hex}"}  # `ord_link_fmt`'s shape
+        adopted = port.NewOrder(**twin | filled | fresh)
         said = event("reconcile_diff", source="reconcile")
         assert (await h.orders.create(adopted, said)).leaves_qty == QTY - Decimal("0.1")
 
