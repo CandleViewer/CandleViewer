@@ -27,12 +27,15 @@ Dependabot alert gate reads two commits of the local checkout with `git`.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import functools
 import json
+import operator
 import re
 import subprocess
 import sys
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path, PurePosixPath
@@ -1083,7 +1086,23 @@ _DEPENDABOT_SEVERITY: dict[str, Severity] = {
 }
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 # A requirements-file line: the name, any extras, then its specifier up to a marker or comment.
-_REQUIREMENT = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*(?:\[[^\]]*\])?\s*([^;#\\\n]*)", re.MULTILINE)
+_REQUIREMENT = re.compile(
+    r"^([A-Za-z0-9][\w.-]*)[ \t]*(?:\[[^\]]*\])?[ \t]*([^;#\\\n]*)", re.MULTILINE
+)
+# The files an audit step reads, so judges a fix's new versions in: pnpm audit, the root
+# pnpm-lock.yaml; pip-audit, the uv export of services/api. No step audits any other file.
+_AUDITED = frozenset({"pnpm-lock.yaml", "services/api/uv.lock"})
+# How a file pins one release exactly: a lock's version, a Cargo.toml's `=`, else (a
+# requirements file) `==` or `===`.
+_EXACT_PIN = {"Cargo.lock": "", "Cargo.toml": "="}
+_BOUND = re.compile(r"(<=|>=|<|>|=)\s*(\d+(?:\.\d+)*)")  # a term of an advisory's version range
+_HOLDS: dict[str, Callable[[tuple[int, ...], tuple[int, ...]], bool]] = {
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+    "=": operator.eq,
+}
 Reader = Callable[[str, str], str | None]  # (commit, path) -> the file's text there, None if absent
 
 
@@ -1096,6 +1115,8 @@ class DependabotAlert:
     name: str
     manifest: str
     finding: Finding
+    vulnerable: str | None  # its advisory's vulnerable range here, e.g. ">= 2.0.0, <= 2.11.0"
+    patched: str | None  # the first patched version, None while there is none
 
 
 def _dig(obj: object, *keys: str) -> object:
@@ -1158,24 +1179,63 @@ def parse_dependabot_alerts(path: Path) -> list[DependabotAlert]:
         package = f"{ecosystem}:{name}"
         detail = f"alert {number}, {package} in {manifest}: {summary or ''}"
         finding = Finding("dependabot", ghsa, _DEPENDABOT_SEVERITY[severity], package, detail)
-        alerts.append(DependabotAlert(number, ecosystem, name, manifest, finding))
+        vulnerable = _dig(alert, "security_vulnerability", "vulnerable_version_range")
+        patched = _dig(alert, "security_vulnerability", "first_patched_version", "identifier")
+        alerts.append(
+            DependabotAlert(
+                number,
+                ecosystem,
+                name,
+                manifest,
+                finding,
+                vulnerable if isinstance(vulnerable, str) else None,
+                patched if isinstance(patched, str) else None,
+            )
+        )
     return alerts
 
 
-def _resolution_file(alert: DependabotAlert, revs: tuple[str, str], read: Reader) -> str:
-    """The file whose versions of the alert's package decide a fix: npm, pnpm-lock.yaml; pip, the
-    uv.lock beside the manifest or a requirements file; rust, the Cargo.lock beside, else the
-    Cargo.toml."""
+@contextlib.contextmanager
+def _lockfile(path: str, rev: str) -> Iterator[None]:
+    """A lockfile at `path` in commit `rev` that does not parse fails closed (CI-SEC-005)."""
+    try:
+        yield
+    except (yaml.YAMLError, tomllib.TOMLDecodeError, AttributeError, KeyError, TypeError) as exc:
+        raise SecurityGateError(
+            "CI-SEC-005", f"dependabot: {path} at {rev} is not a lockfile the gate can read: {exc}"
+        ) from exc
+
+
+@functools.lru_cache(maxsize=4)
+def _pnpm_documents(text: str) -> tuple[dict[str, Any], ...]:
+    """pnpm-lock.yaml's documents (pnpm 12 writes pnpm's own, then the workspace's), parsed once
+    per text: every blocking alert reads the same lock at the same two commits."""
+    return tuple(document or {} for document in yaml.safe_load_all(text))
+
+
+def _resolution_files(alert: DependabotAlert, base: str, read: Reader) -> tuple[str, ...]:
+    """The files whose versions of the alert's package decide a fix, read in turn at a commit
+    until one names it: npm, the root pnpm-lock.yaml (for a package.json, one of its importers at
+    the merge base); pip, services/api's uv.lock or the requirements file; rust, the Cargo.lock
+    beside the manifest, then the Cargo.toml."""
     manifest = PurePosixPath(alert.manifest)
-    if alert.ecosystem == "npm" and manifest.name in ("package.json", "pnpm-lock.yaml"):
-        return "pnpm-lock.yaml"
-    if alert.ecosystem == "pip" and manifest.name in ("pyproject.toml", "uv.lock"):
-        return (manifest.parent / "uv.lock").as_posix()
-    if alert.ecosystem == "pip" and manifest.suffix == ".txt":
-        return alert.manifest
-    if alert.ecosystem == "rust" and manifest.name in ("Cargo.toml", "Cargo.lock"):
-        lock = (manifest.parent / "Cargo.lock").as_posix()
-        return lock if any(read(rev, lock) is not None for rev in revs) else alert.manifest
+    if alert.ecosystem == "npm" and alert.manifest == "pnpm-lock.yaml":
+        return ("pnpm-lock.yaml",)
+    if alert.ecosystem == "npm" and manifest.name == "package.json":
+        with _lockfile("pnpm-lock.yaml", base):
+            documents = _pnpm_documents(read(base, "pnpm-lock.yaml") or "")
+            importers = {str(key) for doc in documents for key in doc.get("importers") or {}}
+        if manifest.parent.as_posix() in importers:
+            return ("pnpm-lock.yaml",)
+    elif alert.ecosystem == "pip" and alert.manifest in (
+        "services/api/pyproject.toml",
+        "services/api/uv.lock",
+    ):
+        return ("services/api/uv.lock",)
+    elif alert.ecosystem == "pip" and manifest.suffix == ".txt":
+        return (alert.manifest,)
+    elif alert.ecosystem == "rust" and manifest.name in ("Cargo.toml", "Cargo.lock"):
+        return (str(manifest.parent / "Cargo.lock"), str(manifest.parent / "Cargo.toml"))
     raise SecurityGateError(
         "CI-SEC-005",
         f"dependabot: alert {alert.number} is on {alert.manifest} ({alert.ecosystem}), which the "
@@ -1205,12 +1265,12 @@ def _cargo_requirements(node: object, name: str) -> set[str]:
 def resolved_versions(path: str, ecosystem: str, name: str, text: str) -> frozenset[str]:
     """The versions `text`, the file at `path`, resolves package `name` to: pnpm-lock.yaml's
     `packages` keys (in both documents pnpm 12 writes), a lock's `[[package]]` tables, a
-    Cargo.toml's requirements or a requirements file's specifiers."""
+    Cargo.toml's requirements or a requirements file's specifiers, without whitespace."""
     want, kind = _canonical(ecosystem, name), PurePosixPath(path).name
     found: set[str] = set()
     if kind == "pnpm-lock.yaml":
-        for document in yaml.safe_load_all(text):
-            for key in map(str, (document or {}).get("packages") or {}):
+        for document in _pnpm_documents(text):
+            for key in map(str, document.get("packages") or {}):
                 at = key.find("@", 1)  # the version's `@`, not a scope's
                 if at > 0 and key[:at] == want:
                     found.add(key[at + 1 :])
@@ -1222,20 +1282,52 @@ def resolved_versions(path: str, ecosystem: str, name: str, text: str) -> frozen
         found = _cargo_requirements(tomllib.loads(text), want)
     else:
         pins = _REQUIREMENT.findall(text)
-        found = {spec.strip() for dep, spec in pins if _canonical(ecosystem, dep) == want}
-    return frozenset(found)
+        found = {spec for dep, spec in pins if _canonical(ecosystem, dep) == want}
+    return frozenset(re.sub(r"\s+", "", version) for version in found)
 
 
-def _versions_at(read: Reader, rev: str, path: str, alert: DependabotAlert) -> frozenset[str]:
-    text = read(rev, path)
-    if text is None:
-        return frozenset()
-    try:
-        return resolved_versions(path, alert.ecosystem, alert.name, text)
-    except (yaml.YAMLError, tomllib.TOMLDecodeError, AttributeError, KeyError, TypeError) as exc:
+def _versions_at(
+    read: Reader, rev: str, paths: tuple[str, ...], alert: DependabotAlert
+) -> tuple[str, frozenset[str]]:
+    """The first of `paths` that resolves the alert's package at commit `rev`, and its versions
+    there; the first path and none when none does."""
+    for path in paths:
+        text = read(rev, path)
+        with _lockfile(path, rev):
+            if text is None:
+                continue
+            found = resolved_versions(path, alert.ecosystem, alert.name, text)
+        if found:
+            return path, found
+    return paths[0], frozenset()
+
+
+def _release(text: str) -> tuple[int, ...]:
+    """A numeric dotted release, zero-padded so that 2.11 and 2.11.0 compare equal."""
+    parts = tuple(int(part) for part in text.split("."))
+    return parts + (0,) * (8 - len(parts))
+
+
+def _patched(path: str, version: str, alert: DependabotAlert) -> bool:
+    """Whether `version`, as the file at `path` gives it, pins one release exactly, at or above
+    the alert's first patched version and outside its vulnerable range. Numeric releases only:
+    an advisory whose range or patched version is in another form fails closed (CI-SEC-005)."""
+    bounds = [_BOUND.fullmatch(term.strip()) for term in (alert.vulnerable or "").split(",")]
+    terms = [bound for bound in bounds if bound is not None]
+    if len(terms) < len(bounds) or not re.fullmatch(r"\d+(?:\.\d+)*", alert.patched or "0"):
         raise SecurityGateError(
-            "CI-SEC-005", f"dependabot: {path} at {rev} is not a lockfile the gate can read: {exc}"
-        ) from exc
+            "CI-SEC-005",
+            f"dependabot: alert {alert.number}'s advisory gives no vulnerable range "
+            f"{alert.vulnerable!r} and first patched version {alert.patched!r} the gate can "
+            "compare (numeric releases only)",
+        )
+    pin = _EXACT_PIN.get(PurePosixPath(path).name, "===?")
+    exact = re.fullmatch(pin + r"(\d+(?:\.\d+)*)", version)
+    if exact is None or alert.patched is None:
+        return False
+    release = _release(exact[1])
+    inside = all(_HOLDS[term[1]](release, _release(term[2])) for term in terms)
+    return not inside and release >= _release(alert.patched)
 
 
 def judge_alert_fixes(
@@ -1246,10 +1338,11 @@ def judge_alert_fixes(
     base: str,
     read: Reader,
 ) -> tuple[list[Finding], list[str]]:
-    """#3558's ruling: an alert the gate would block passes when the tree under test (HEAD) changes
-    its package's resolved versions since `base`, its merge base with main (or drops it): that PR
-    is the fix, and pip-audit and npm-audit judge the new versions. Returns the findings left for
-    evaluate_findings, and a note per fixed alert."""
+    """#3558's ruling: an alert the gate would block passes when the tree under test (HEAD) fixes
+    it since `base`, its merge base with main. In a file an audit step reads (_AUDITED) any change
+    to the package's resolved versions is the fix, and that step judges the new versions. In any
+    other file, the fix is the package gone or only exact patched releases left (_patched).
+    Returns the findings left for evaluate_findings, and a note per fixed alert."""
     findings: list[Finding] = []
     fixed: list[str] = []
     for alert in alerts:
@@ -1257,24 +1350,34 @@ def judge_alert_fixes(
         if not evaluate_findings([finding], risks, run_date=run_date).blocked:
             findings.append(finding)  # below High, or accepted: evaluate_findings reports it
             continue
-        path = _resolution_file(alert, (base, "HEAD"), read)
-        before, after = (_versions_at(read, rev, path, alert) for rev in (base, "HEAD"))
-        if not (before or after):
+        paths = _resolution_files(alert, base, read)
+        (old, before), (new, after) = (
+            _versions_at(read, rev, paths, alert) for rev in (base, "HEAD")
+        )
+        if not before:  # the gate looks in the wrong place, or the alert is on another tree
             raise SecurityGateError(
                 "CI-SEC-005",
-                f"dependabot: alert {alert.number}: {path} resolves {alert.name} to no version "
-                "here or at the merge base, so the gate cannot tell a fix",
+                f"dependabot: alert {alert.number}: {' or '.join(paths)} resolves {alert.name} to "
+                "no version at the merge base, so the gate cannot tell a fix",
             )
-        was = ", ".join(sorted(before)) or "nothing"
+        was, now = ", ".join(sorted(before)), ", ".join(sorted(after))
         if before == after:
-            detail = f"{finding.detail} (this tree leaves it at {was} in {path})"
-            findings.append(replace(finding, detail=detail))
-        else:
+            why = f"this tree leaves it at {was} in {old}"
+        elif old in _AUDITED or all(_patched(new, version, alert) for version in after):
             fixed.append(
                 f"fixed here: dependabot alert {alert.number} ({finding.finding_id}, "
-                f"{finding.severity}), {finding.package} in {path}: {was} -> "
-                f"{', '.join(sorted(after)) or 'removed'}"
+                f"{finding.severity}), {finding.package} in {old}: {was} -> "
+                + (f"{new}: {now}" if after and new != old else now or "removed")
             )
+            continue
+        else:
+            fix = "removing it, as no release is patched"
+            if alert.patched:
+                fix = f"an exact release at or above {alert.patched} outside "
+                fix += f"{alert.vulnerable!r}, or removing it"
+            why = f"this tree moves it to {now} in {new}, which no audit step reads: "
+            why += f"a fix there is {fix}"
+        findings.append(replace(finding, detail=f"{finding.detail} ({why})"))
     return findings, fixed
 
 
@@ -1301,6 +1404,7 @@ def git_reader(base: str | None) -> Reader:
                 "CI-SEC-005", f"dependabot: {rev} is not a commit in this checkout"
             )
 
+    @functools.cache  # each blocking alert reads the same few files
     def read(rev: str, path: str) -> str | None:
         # A file the commit lacks is None; any git failure raises, never reads as "removed".
         listed = git("ls-tree", "--name-only", rev, "--", path)

@@ -16,11 +16,16 @@ newline; `.prettierignore` keeps the files that way.
   `security_advisory` (GHSA id, summary, severity), `security_vulnerability` (package, severity,
   vulnerable range, first patched version) and `html_url`. The advisories' descriptions,
   references and scores and the alerts' timestamps are left out. The tests plant an alert at High
-  or Critical, or on another package or manifest, from these records.
+  or Critical, on another package or manifest, or with another vulnerable range, from these
+  records.
 - `gh-2.67.0-not-found.json`: what gh wrote, then exiting 1, for a repository path that does not
   exist: an API error inside the slurp array. A token without the permission gets the same shape
   with another message and status. The step fails on gh's exit status (CI-SEC-005), and the gate
   fails this body too.
+
+Redaction (C-13.5): none was needed. The kept fields hold no credential, token or user (the API's
+user fields, such as `dismissed_by`, are among those left out), and `html_url` is the alert's page
+in this public repository.
 
 The alerts describe the default branch, not the PR under test: the gate judges a blocking one on
 the PR's tree against its merge base with `main` (`docs/ci-runbook.md`, CI-SEC-001).

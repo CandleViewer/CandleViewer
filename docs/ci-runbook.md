@@ -364,13 +364,19 @@ index alone, removing nothing.
   for. Fix the finding: for an npm-audit advisory on a transitive
   package, a `pnpm-workspace.yaml` override to the patched release
   (`docs/plan/35-dependency-freeze-policy.md` §8.4). A PR fixes an alert when it
-  changes the package's resolved versions since its merge base with `main`, in
-  `pnpm-lock.yaml` for npm, in the `uv.lock` beside a `pyproject.toml` (or the
-  requirements file) for pip, and in the `Cargo.lock` beside the `Cargo.toml`
-  (else the `Cargo.toml`) for rust; pip-audit and npm-audit then judge the new
-  versions. A High alert may instead take a dated HIGH entry naming its GHSA (an
-  entry of any tool); a Critical one takes none. Dismissing an alert is the
-  owner's decision, recorded on the alert, never a way to make a PR pass.
+  changes the package's resolved versions since its merge base with `main`: for
+  npm in the root `pnpm-lock.yaml` (the alert's `package.json` must be one of its
+  importers), for pip in `services/api/uv.lock` or the requirements file, for rust
+  in the `Cargo.lock` beside the `Cargo.toml` (else the `Cargo.toml`). An audit
+  step judges the new versions only in the root `pnpm-lock.yaml` (pnpm audit) and
+  `services/api/uv.lock` (pip-audit reads its `uv export`). In the other files the
+  change must remove the package or leave only exact pins (`==` in a requirements
+  file, `=` in a `Cargo.toml`, any `Cargo.lock` version) at or above the alert's
+  first patched version and outside its vulnerable range. A High alert may instead
+  take a dated HIGH entry naming its GHSA (an entry of any tool, so its reason
+  must cover every package the alert names); a Critical one takes none. Dismissing
+  an alert is the owner's decision, recorded on the alert, never a way to make a
+  PR pass.
   Gitleaks and trufflehog findings never get an accepted-risk exception (see the gate's own
   comment) — rotate the secret per `SECURITY.md` / IR-02 (§5 below) instead.
 - **CI-SEC-002** (licence violation): a new dependency's licence is not on
@@ -420,8 +426,9 @@ index alone, removing nothing.
   checkout (the job fetches full history for it); or a High or Critical alert
   the gate cannot judge: a manifest it does not map (CI-SEC-001 lists those it
   does; teach it another in a reviewed PR), a lockfile git or the gate cannot
-  read, or a package that resolves to no version there on either side (check the
-  alert on GitHub).
+  read, a package that resolves to no version there at the merge base (check the
+  alert on GitHub), or, for a file no audit step reads, an advisory whose
+  vulnerable range or first patched version is not in numeric releases.
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).

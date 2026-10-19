@@ -424,9 +424,11 @@ jobs:
           pip-audit -r "$RUNNER_TEMP/api-requirements.txt" --no-deps --format json --output pip-audit.json --progress-spinner off || true
           python tools/ci/security_gate.py --tool pip-audit --report pip-audit.json
 
-      # The open alerts describe `main`. A High or Critical one blocks unless this tree changes the
-      # package's resolved versions in its lockfile since the merge base with main (the fix: the
-      # audit steps judge the new versions) or an unexpired entry accepts it (High only; #3558).
+      # The open alerts describe `main`. A High or Critical one blocks unless this tree fixes it
+      # since the merge base with main or an unexpired entry accepts it (High only; #3558). A fix
+      # changes the package's versions in the root pnpm-lock.yaml or services/api/uv.lock, which
+      # npm-audit and pip-audit then judge; in a file no audit step reads (a requirements file, a
+      # Cargo.toml or Cargo.lock) it must leave only exact patched releases (runbook, CI-SEC-001).
       # A failed API call fails closed (CI-SEC-005), never passes as "no alerts" (runbook).
       - name: dependabot-alerts (open Dependabot alerts on main, judged on this tree)
         id: dependabot-alerts

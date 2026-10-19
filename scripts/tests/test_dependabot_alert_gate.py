@@ -1,7 +1,8 @@
 """#3558: C-9.1 #11's Dependabot alert gate (`security_gate.py --tool dependabot`) and the
 `dependabot-alerts` step of `_job-security.yml`. The open alerts on `main` are recorded `gh api`
-listings (scripts/tests/fixtures/dependabot-alerts/), planted at a higher severity where a test needs
-one; the tree under test and its merge base are commits of a scratch git repository. No network."""
+listings (scripts/tests/fixtures/dependabot-alerts/), planted at a higher severity or with another
+range where a test needs one; the tree under test and its merge base are commits of a scratch git
+repository. No network."""
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable, Mapping
 from datetime import date
 from pathlib import Path
@@ -45,6 +47,10 @@ packages:
   pnpm@12.5.1: {}
 ---
 lockfileVersion: '9.0'
+
+importers:
+  .: {}
+  apps/web: {}
 
 packages:
   '@vitest/mocker@3.2.7': {}
@@ -83,14 +89,16 @@ def _commit(repo: Path, files: Files) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-def _checkout(tmp_path: Path, main_tree: Files, pr: Files) -> tuple[Path, str]:
-    """The job's checkout: HEAD is `main` plus the PR, `origin/main` their merge base."""
+def _checkout(tmp_path: Path, main_tree: Files, *prs: Files) -> tuple[Path, str]:
+    """The job's checkout: HEAD is `main` plus the PR (in a merge group, the entries queued ahead
+    of it, then it), `origin/main` their merge base."""
     repo = tmp_path / "ws"
     repo.mkdir()
     _git(repo, "init", "-q")
     base = _commit(repo, {REGISTER: "entries: []\n", **main_tree})
     _git(repo, "update-ref", "refs/remotes/origin/main", base)
-    _commit(repo, pr)
+    for pr in prs:
+        _commit(repo, pr)
     return repo, base
 
 
@@ -102,6 +110,16 @@ def _alert(number: int, severity: str = "critical", **moved: str) -> dict[str, A
     if "manifest_path" in moved:
         alert["dependency"]["manifest_path"] = moved.pop("manifest_path")
     alert["dependency"]["package"].update(moved)
+    return alert
+
+
+def _ranged(alert: dict[str, Any], vulnerable: str, first: str | None) -> dict[str, Any]:
+    """`alert` with another vulnerable range and first patched version (None: none yet)."""
+    patched = first and {"identifier": first}
+    alert["security_vulnerability"] |= {
+        "vulnerable_version_range": vulnerable,
+        "first_patched_version": patched,
+    }
     return alert
 
 
@@ -173,6 +191,8 @@ UV_LOCK = 'version = 1\n\n[[package]]\nname = "pyyaml"\nversion = "6.0.2"\n'
 PINS = "PyYAML==6.0.2 \\\n    --hash=sha256:00\n"
 PYYAML = {"ecosystem": "pip", "name": "PyYAML"}
 CARGO, REQS = f"{TAURI_DIR}/Cargo.toml", "scripts/requirements-ci.txt"
+TAURI_LOCK = f"{TAURI_DIR}/Cargo.lock"
+PINNED = _ranged(_alert(37, manifest_path=REQS, **PYYAML), "< 6.0.3", "6.0.3")
 # Case -> the alert, main's files, the fix PR, an unrelated PR, and the change the fix makes.
 MAPPINGS: dict[str, tuple[dict[str, Any], Files, Files, Files, str]] = {
     "cargo-toml-without-a-lock": (
@@ -184,10 +204,10 @@ MAPPINGS: dict[str, tuple[dict[str, Any], Files, Files, Files, str]] = {
     ),
     "cargo-lock-beside-it": (
         _alert(55),
-        {CARGO: TOML, f"{TAURI_DIR}/Cargo.lock": CARGO_LOCK},
-        {f"{TAURI_DIR}/Cargo.lock": CARGO_LOCK.replace("2.1.1", "2.11.1")},
+        {CARGO: TOML, TAURI_LOCK: CARGO_LOCK},
+        {TAURI_LOCK: CARGO_LOCK.replace("2.1.1", "2.11.1")},
         {CARGO: TOML.replace('"=2.1.1"', '"2"')},
-        f"{TAURI_DIR}/Cargo.lock: 2.1.1 -> 2.11.1",
+        f"{TAURI_LOCK}: 2.1.1 -> 2.11.1",
     ),
     "uv-lock-of-a-pyproject": (
         _alert(37, manifest_path="services/api/pyproject.toml", **PYYAML),
@@ -197,7 +217,7 @@ MAPPINGS: dict[str, tuple[dict[str, Any], Files, Files, Files, str]] = {
         "services/api/uv.lock: 6.0.2 -> 6.0.3",
     ),
     "requirements-file": (
-        _alert(37, manifest_path=REQS, **PYYAML),
+        PINNED,
         {REQS: PINS},
         {REQS: PINS.replace("6.0.2", "6.0.3")},
         {REQS: PINS.replace(":00", ":11")},
@@ -234,12 +254,117 @@ def test_each_ecosystem_judges_the_alerts_package_in_its_lockfile(
         )
 
 
+MOVED = "(this tree moves it to {} in {}, which no audit step reads: "
+# No audit step reads these files, so a change is a fix only if each version it leaves is an exact
+# release at or above the first patched one and outside the vulnerable range (tauri's are 2.11.1
+# and >= 2.0.0, <= 2.11.0): case -> the alert, main's files, the PR, and the fix or why it is none.
+UNAUDITED: dict[str, tuple[dict[str, Any], Files, Files, str]] = {
+    "pin-respelt": (
+        PINNED,
+        {REQS: PINS},
+        {REQS: PINS.replace("==", " == ")},
+        f"at ==6.0.2 in {REQS})",
+    ),
+    "pin-to-another-affected": (
+        PINNED,
+        {REQS: PINS},
+        {REQS: PINS.replace("6.0.2", "6.0.1")},
+        MOVED.format("==6.0.1", REQS),
+    ),
+    "pin-to-a-range": (
+        PINNED,
+        {REQS: PINS},
+        {REQS: PINS.replace("==6.0.2", ">=6.0.3")},
+        MOVED.format(">=6.0.3", REQS),
+    ),
+    "toml-within-the-range": (
+        _alert(55),
+        {CARGO: TOML},
+        {CARGO: TOML.replace("=2.1.1", "=2.5.0")},
+        MOVED.format("=2.5.0", CARGO),
+    ),
+    "downgrade-below-the-range": (
+        _alert(55),
+        {CARGO: TOML},
+        {CARGO: TOML.replace("=2.1.1", "=1.8.0")},
+        MOVED.format("=1.8.0", CARGO),
+    ),
+    "patched-but-in-the-range": (
+        _ranged(_alert(55), ">= 2.0.0", "2.11.1"),
+        {CARGO: TOML},
+        {CARGO: TOML.replace("=2.1.1", "=2.11.1")},
+        MOVED.format("=2.11.1", CARGO),
+    ),
+    "lock-added-at-the-same-version": (
+        _alert(55),
+        {CARGO: TOML},
+        {TAURI_LOCK: CARGO_LOCK},
+        MOVED.format("2.1.1", TAURI_LOCK),
+    ),
+    "lock-deleted": (
+        _alert(55),
+        {CARGO: TOML, TAURI_LOCK: CARGO_LOCK},
+        {TAURI_LOCK: None},
+        MOVED.format("=2.1.1", CARGO),
+    ),
+    "no-patched-release": (
+        _ranged(_alert(55), ">= 2.0.0", None),
+        {CARGO: TOML},
+        {CARGO: TOML.replace("=2.1.1", "=2.11.1")},
+        MOVED.format("=2.11.1", CARGO) + "a fix there is removing it, as no release is patched",
+    ),
+    "lock-added-at-the-patched-version": (
+        _alert(55),
+        {CARGO: TOML},
+        {
+            CARGO: TOML.replace("=2.1.1", "=2.11.1"),
+            TAURI_LOCK: CARGO_LOCK.replace("2.1.1", "2.11.1"),
+        },
+        f"fixed in {CARGO}: =2.1.1 -> {TAURI_LOCK}: 2.11.1",
+    ),
+    "unreadable-range": (
+        _ranged(_alert(55), "~> 2.0", "2.11.1"),
+        {CARGO: TOML},
+        {CARGO: TOML.replace("=2.1.1", "=2.11.1")},
+        "CI-SEC-005: dependabot: alert 55's advisory gives no vulnerable range '~> 2.0' and first ",
+    ),
+    "absent-at-the-merge-base": (
+        PINNED,
+        {REQS: "requests==2.32.4\n"},
+        {REQS: "requests==2.32.4\nPyYAML==6.0.3\n"},
+        f"CI-SEC-005: dependabot: alert 37: {REQS} resolves PyYAML to no version at the merge base",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(UNAUDITED))
+def test_change_no_audit_step_reads_fixes_only_to_an_exact_patched_release(
+    gate: Gate, case: str
+) -> None:
+    alert, main_tree, pr, says = UNAUDITED[case]
+    rc, out, err = gate([alert], pr, main_tree)
+    if says.startswith("fixed in "):
+        assert (rc, err, out.endswith(f" {says.removeprefix('fixed ')}\n{OK}")) == (0, "", True)
+    elif says.startswith("CI-SEC-005: "):
+        assert (rc, out, err.startswith(says)) == (1, "", True)
+    else:
+        assert (rc, out, err.startswith("CI-SEC-001: "), says in err) == (1, "", True, True)
+
+
 @pytest.mark.parametrize(
     ("moved", "pr", "base", "says"),
     [
         ({"manifest_path": "yarn.lock"}, FIX, None, "alert 37 is on yarn.lock (npm), which the "),
+        ({"manifest_path": "tools/x/pnpm-lock.yaml"}, FIX, None, "alert 37 is on tools/x/pnpm-"),
+        ({"manifest_path": "tools/style-dictionary/package.json"}, FIX, None, "alert 37 is on "),
+        ({**PYYAML, "manifest_path": "tools/x/pyproject.toml"}, {}, None, "alert 37 is on tools/x"),
         ({"ecosystem": "go", "manifest_path": "go.mod"}, FIX, None, "alert 37 is on go.mod (go), "),
-        ({"name": "left-pad"}, FIX, None, "alert 37: pnpm-lock.yaml resolves left-pad to no "),
+        (
+            {"name": "left-pad"},
+            FIX,
+            None,
+            "alert 37: pnpm-lock.yaml resolves left-pad to no version at the merge base",
+        ),
         ({}, {"pnpm-lock.yaml": None, "pnpm-lock.yaml/x": ""}, None, "cannot read pnpm-lock.yaml "),
         ({}, {"pnpm-lock.yaml": "packages: [\n"}, None, "pnpm-lock.yaml at HEAD is not a lockfile"),
         ({}, {}, "", "--base (the merge base of HEAD and main, a full commit id) is required"),
@@ -248,6 +373,9 @@ def test_each_ecosystem_judges_the_alerts_package_in_its_lockfile(
     ],
     ids=[
         "unmapped",
+        "nested-lock",
+        "outside-the-workspace",
+        "pip-outside-services-api",
         "ecosystem",
         "no-version",
         "git-error",
@@ -335,10 +463,19 @@ def test_a_dependabot_entry_covers_no_other_tools_finding() -> None:
 
 
 def test_the_repositorys_own_lockfiles_parse() -> None:
+    # Each name is read from its lock, so no dependency change elsewhere breaks this test.
     pnpm = (ROOT / "pnpm-lock.yaml").read_text(encoding="utf-8")  # two YAML documents
-    assert resolved_versions("pnpm-lock.yaml", "npm", "@vitest/mocker", pnpm)
+    key = str(next(iter(list(yaml.safe_load_all(pnpm))[-1]["packages"])))
+    assert resolved_versions("pnpm-lock.yaml", "npm", key[: key.index("@", 1)], pnpm)
     uv = (ROOT / "services/api/uv.lock").read_text(encoding="utf-8")
-    assert resolved_versions("services/api/uv.lock", "pip", "PyYAML", uv)
+    name = tomllib.loads(uv)["package"][0]["name"]
+    assert resolved_versions("services/api/uv.lock", "pip", name, uv)
+
+
+def test_requirement_without_a_specifier_takes_none_from_the_next_line() -> None:
+    text = "PyYAML\nrequests==2.32.4\nidna == 3.10 ; python_version >= '3.12'\n"
+    assert resolved_versions(REQS, "pip", "pyyaml", text) == frozenset({""})
+    assert resolved_versions(REQS, "pip", "idna", text) == frozenset({"==3.10"})
 
 
 @pytest.mark.parametrize("name", sorted(p.name for p in ALERTS.glob("*.json")))
@@ -352,13 +489,13 @@ GH_ARGS = "api --paginate --slurp repos/o/r/dependabot/alerts?state=open&per_pag
 PLANTED = json.dumps([[_alert(37, "critical")]])
 
 
-def _step(tmp_path: Path, listing: str, status: int, pr: Files, main: bool = True) -> Any:
+def _step(tmp_path: Path, listing: str, status: int, *prs: Files, main: bool = True) -> Any:
     """The dependabot-alerts step as the runner runs it (`bash -e`) in the job's checkout, with a
     stand-in `gh` that prints `listing` and exits with `status`, as gh does."""
     jobs = yaml.safe_load((ROOT / ".github/workflows/_job-security.yml").read_text("utf-8"))["jobs"]
     (step,) = [s for s in jobs["read-only-scans"]["steps"] if s.get("id") == "dependabot-alerts"]
     assert step["env"] == {"GH_TOKEN": "${{ github.token }}"}  # the job token, no new secret
-    repo, _ = _checkout(tmp_path, MAIN, pr)
+    repo, _ = _checkout(tmp_path, MAIN, *prs)
     if not main:
         _git(repo, "update-ref", "-d", "refs/remotes/origin/main")
     (repo / "tools").symlink_to(ROOT / "tools")  # untracked: after the commits
@@ -393,6 +530,15 @@ def test_alerts_step_judges_the_alerts_against_the_merge_base_with_main(
         assert (rc, out, err) == (0, FIXED.format(VITEST, "CRITICAL") + OK, "")
     else:
         assert (rc, out, KEPT in err) == (1, "", True)
+
+
+def test_alerts_step_counts_a_fix_queued_ahead_in_the_merge_group(tmp_path: Path) -> None:
+    # A merge group's HEAD is main, the entries queued ahead and this one; its base is still the
+    # merge base with main, never merge_group.base_sha (#3433), so the alert a fix ahead of this
+    # entry clears does not block it.
+    behind = {"pnpm-lock.yaml": FIX["pnpm-lock.yaml"].replace("tinypool@2.2.0", "tinypool@2.2.1")}
+    rc, out, err = _step(tmp_path, PLANTED, 0, FIX, behind)
+    assert (rc, out, err) == (0, FIXED.format(VITEST, "CRITICAL") + OK, "")
 
 
 API_FAILED = (
