@@ -3,12 +3,14 @@ its refusals, and the write-ahead audit and B16 records (C-2.9, B16.7)."""
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
 import pytest
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.api.enrolment_guard import REFUSAL_ACTION
 from candleviewer.api.sessions import UnlockBody
@@ -16,6 +18,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD
+from candleviewer.auth.metrics import ENROLMENT_REFUSAL_REASONS
 from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
 from candleviewer.auth.session_service import SessionClass
 from tests.conftest import RecordingAuditSink
@@ -588,20 +591,30 @@ async def test_unlock_refuses_an_enrolment_only_session_its_cookie_names(w: Worl
     assert (w.b16.actions(), w.failed_logins(uid)) == ([], 0)
 
 
+def _refusals() -> Counter[str]:  # `auth_enrolment_refused_total{transport="http"}`, SR-125
+    name, reasons = "auth_enrolment_refused_total", ENROLMENT_REFUSAL_REASONS
+    return Counter({why: int(_sample(name, transport="http", reason=why)) for why in reasons})
+
+
 @pytest.mark.parametrize(
-    ("verdict", "status", "code"),
+    ("verdict", "status", "code", "refused"),
     [
-        (SessionClass.ENROLMENT_ONLY_EXPIRED, 401, "unauthenticated"),
-        (RuntimeError("user store down"), 503, "store_unavailable"),
-        (SessionClass.FULL, 200, None),
+        (SessionClass.ENROLMENT_ONLY_EXPIRED, 401, "unauthenticated", ["expired"]),
+        (RuntimeError("user store down"), 503, "store_unavailable", ["unclassified"]),
+        (SessionClass.FULL, 200, None, []),
     ],
 )
 async def test_unlock_answers_the_session_its_cookie_names_as_the_enrolment_guard_does(
-    w: World, verdict: SessionClass | Exception, status: int, code: str | None
+    w: World, verdict: SessionClass | Exception, status: int, code: str | None, refused: list[str]
 ) -> None:
     """Not minted enrolment-only: the guard's 401; not classifiable: its 503; full: unlocked."""
     minted = await w.mint(await w.add_user())
     w.auth.enrolment_gate_is_active, w.auth.verdict = True, verdict
     w.lock()
-    r = await _unlock(w, _cookie(minted))
+    before = _refusals()
+    with capture_logs() as logs:
+        r = await _unlock(w, _cookie(minted))
     assert (r.status_code, r.json().get("code")) == (status, code)
+    assert _refusals() - before == Counter(refused)
+    lines = [(e["event"], e["path"]) for e in logs if e["event"].startswith("auth.enrolment_only")]
+    assert lines == [(f"auth.enrolment_only.{why}", "/auth/unlock") for why in refused]
