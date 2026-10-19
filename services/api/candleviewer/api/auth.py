@@ -335,11 +335,17 @@ def make_auth_router(
                 return False
         return True
 
-    async def _audit_refusal(request: Request, user_id: uuid.UUID, **void: Any) -> None:
+    async def _audit_refusal(
+        request: Request,
+        user_id: uuid.UUID,
+        *,
+        session_id: uuid.UUID | None = None,
+        after_state: dict[str, Any] | None = None,
+    ) -> None:
         """#2911: record a disabled user's refused mint. Not write-ahead (the refusal is
         already decided and nothing was minted): a record that cannot be written is logged,
-        and the caller's 401 stands. *void* (`session_id`, `after_state`) names a session that
-        a write-ahead record announced, as the recovery's refusal row voids its own (#2295)."""
+        and the caller's refusal (403 at sign-in, 401 at the MFA step) stands. *session_id* and
+        *after_state* void a session that a write-ahead record announced (#2295)."""
         if audit_service is None or not audit_service.is_active:
             _log().error("auth.login_failed.audit_unavailable", error="inactive")
             return
@@ -352,7 +358,8 @@ def make_auth_router(
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="user_disabled",
-                **void,
+                session_id=session_id,
+                after_state=after_state,
             )
         except AuditError as exc:
             _log().error("auth.login_failed.audit_unavailable", error=type(exc).__name__)
@@ -374,10 +381,7 @@ def make_auth_router(
         """`AuthenticatedResponse` (plus *extra*) with the `cv_refresh` and SR-041 cookies of
         the session just minted, each living *lifetime_s* seconds."""
         tokens = _tokens(minted, include_refresh=False, refresh_expires_in=lifetime_s)
-        response = JSONResponse(
-            status_code=200,
-            content={"status": "authenticated", "tokens": tokens, "user": user, **extra},
-        )
+        response = JSONResponse({"status": "authenticated", "tokens": tokens, "user": user} | extra)
         _set_refresh_cookie(response, minted.refresh_token, max_age=lifetime_s)
         set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=lifetime_s)
         return response
@@ -390,8 +394,7 @@ def make_auth_router(
         is audited as at the MFA step (U6/SR-013). Write-ahead (C-2.9): that record,
         `auth.login` and `auth.session_created` (`enrolment_only: true`) precede the session,
         and a failed write mints none (503). The user is read before anything is written."""
-        ready = _enrolment_ready(mfa=False)
-        if isinstance(ready, JSONResponse):
+        if isinstance(ready := _enrolment_ready(mfa=False), JSONResponse):
             return ready
         writer, ident = ready
         unaudited = _problem(503, "Service unavailable", "audit sink not active")
