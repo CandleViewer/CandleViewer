@@ -6,6 +6,8 @@
 #   * Later matching rules win, so ordering below is general -> specific.
 #   * A directory without an owner is a defect: add it in the PR that creates the directory (C-8.1).
 #   * @basiltt is the owner of last resort and the sole approver of Constitution amendments (C-8.3, C-16.1).
+#   * @basiltt is the owner of last resort (C-8.3) and the only resolvable individual until the
+#     organisation teams exist; team entries stay for when they do.
 #
 # Teams (GitHub team placeholders under the @CandleViewer org):
 #   @CandleViewer/architecture   - architect, protocol & ADR stewardship
@@ -31,128 +33,128 @@
 /AGENTS.md                              @basiltt @CandleViewer/architecture
 /CLAUDE.md                              @basiltt @CandleViewer/architecture
 /SECURITY.md                            @basiltt @CandleViewer/security
-/security/                              @CandleViewer/devsecops @CandleViewer/security
+/security/                              @CandleViewer/devsecops @CandleViewer/security @basiltt
 /CONTRIBUTING.md                        @basiltt @CandleViewer/architecture
 /CODE_OF_CONDUCT.md                     @basiltt
 /LICENSE                                @basiltt
 /README.md                              @basiltt @CandleViewer/architecture
-/CHANGELOG.md                           @CandleViewer/devsecops @CandleViewer/architecture
-/version.txt                            @CandleViewer/devsecops @CandleViewer/architecture
-/Makefile                               @CandleViewer/devsecops @CandleViewer/architecture
+/CHANGELOG.md                           @CandleViewer/devsecops @CandleViewer/architecture @basiltt
+/version.txt                            @CandleViewer/devsecops @CandleViewer/architecture @basiltt
+/Makefile                               @CandleViewer/devsecops @CandleViewer/architecture @basiltt
 
 # ---------------------------------------------------------------------------
 # Agentic tooling (Claude Code): rules, subagents, slash commands, hooks
 # ---------------------------------------------------------------------------
-/.claude/                               @CandleViewer/architecture @CandleViewer/devsecops
-/.claude/settings.json                  @CandleViewer/devsecops @CandleViewer/security
+/.claude/                               @CandleViewer/architecture @CandleViewer/devsecops @basiltt
+/.claude/settings.json                  @CandleViewer/devsecops @CandleViewer/security @basiltt
 
 # ---------------------------------------------------------------------------
 # Repo tooling, CI/CD, infrastructure
 # ---------------------------------------------------------------------------
-/.github/                               @CandleViewer/devsecops @CandleViewer/architecture
+/.github/                               @CandleViewer/devsecops @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/.github/workflows/                     @CandleViewer/devsecops @CandleViewer/security
+/.github/workflows/                     @CandleViewer/devsecops @CandleViewer/security @basiltt
 /.github/CODEOWNERS                     @basiltt @CandleViewer/architecture
-/.github/PULL_REQUEST_TEMPLATE.md       @CandleViewer/architecture @CandleViewer/qa
-/.github/ISSUE_TEMPLATE/                @CandleViewer/architecture @CandleViewer/qa
+/.github/PULL_REQUEST_TEMPLATE.md       @CandleViewer/architecture @CandleViewer/qa @basiltt
+/.github/ISSUE_TEMPLATE/                @CandleViewer/architecture @CandleViewer/qa @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/infra/                                 @CandleViewer/devsecops @CandleViewer/security
-/deployments/                           @CandleViewer/devsecops @CandleViewer/security
+/infra/                                 @CandleViewer/devsecops @CandleViewer/security @basiltt
+/deployments/                           @CandleViewer/devsecops @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/docker-compose*.yml                    @CandleViewer/devsecops @CandleViewer/security
+/docker-compose*.yml                    @CandleViewer/devsecops @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/Dockerfile*                            @CandleViewer/devsecops @CandleViewer/security
-/.gitignore                             @CandleViewer/devsecops
+/Dockerfile*                            @CandleViewer/devsecops @CandleViewer/security @basiltt
+/.gitignore                             @CandleViewer/devsecops @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/.gitattributes                         @CandleViewer/devsecops
+/.gitattributes                         @CandleViewer/devsecops @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/package.json                           @CandleViewer/devsecops @CandleViewer/frontend
+/package.json                           @CandleViewer/devsecops @CandleViewer/frontend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/pnpm-lock.yaml                         @CandleViewer/devsecops @CandleViewer/security
+/pnpm-lock.yaml                         @CandleViewer/devsecops @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/pnpm-workspace.yaml                    @CandleViewer/devsecops @CandleViewer/architecture
+/pnpm-workspace.yaml                    @CandleViewer/devsecops @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/turbo.json                             @CandleViewer/devsecops @CandleViewer/frontend
+/turbo.json                             @CandleViewer/devsecops @CandleViewer/frontend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/tsconfig.base.json                     @CandleViewer/frontend @CandleViewer/architecture
+/tsconfig.base.json                     @CandleViewer/frontend @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/quality-gates.json                     @CandleViewer/devsecops @CandleViewer/architecture
+/quality-gates.json                     @CandleViewer/devsecops @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/reports/bundle-size-baseline.json      @CandleViewer/devsecops @CandleViewer/frontend
-/eslint.config.mjs                      @CandleViewer/frontend @CandleViewer/devsecops
-/.dependency-cruiser.js                 @CandleViewer/frontend @CandleViewer/architecture
+/reports/bundle-size-baseline.json      @CandleViewer/devsecops @CandleViewer/frontend @basiltt
+/eslint.config.mjs                      @CandleViewer/frontend @CandleViewer/devsecops @basiltt
+/.dependency-cruiser.js                 @CandleViewer/frontend @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/.prettierrc.json                       @CandleViewer/frontend
-/prettier.config.mjs                    @CandleViewer/frontend
-/.prettierignore                        @CandleViewer/frontend
-/.pa11yci.json                          @CandleViewer/frontend @CandleViewer/devsecops
-/tsconfig.json                          @CandleViewer/frontend @CandleViewer/architecture
-/.npmrc                                 @CandleViewer/devsecops
-/.nvmrc                                 @CandleViewer/devsecops
-/.husky/                                @CandleViewer/devsecops @CandleViewer/frontend
-/.editorconfig                          @CandleViewer/devsecops
-/.gitleaks.toml                         @CandleViewer/security @CandleViewer/devsecops
-/.env.example                           @CandleViewer/security @CandleViewer/devsecops
-/.trufflehog-exclude                     @CandleViewer/security @CandleViewer/devsecops
-/.zap/                                  @CandleViewer/security @CandleViewer/devsecops
-/.semgrep/                              @CandleViewer/security @CandleViewer/devsecops
-/.semgrepignore                         @CandleViewer/security @CandleViewer/devsecops
-/.mcp.json                              @CandleViewer/security @CandleViewer/devsecops
-/.semgrep-fixtures/                     @CandleViewer/security @CandleViewer/devsecops
-/Makefile                               @CandleViewer/devsecops @CandleViewer/architecture
+/.prettierrc.json                       @CandleViewer/frontend @basiltt
+/prettier.config.mjs                    @CandleViewer/frontend @basiltt
+/.prettierignore                        @CandleViewer/frontend @basiltt
+/.pa11yci.json                          @CandleViewer/frontend @CandleViewer/devsecops @basiltt
+/tsconfig.json                          @CandleViewer/frontend @CandleViewer/architecture @basiltt
+/.npmrc                                 @CandleViewer/devsecops @basiltt
+/.nvmrc                                 @CandleViewer/devsecops @basiltt
+/.husky/                                @CandleViewer/devsecops @CandleViewer/frontend @basiltt
+/.editorconfig                          @CandleViewer/devsecops @basiltt
+/.gitleaks.toml                         @CandleViewer/security @CandleViewer/devsecops @basiltt
+/.env.example                           @CandleViewer/security @CandleViewer/devsecops @basiltt
+/.trufflehog-exclude                     @CandleViewer/security @CandleViewer/devsecops @basiltt
+/.zap/                                  @CandleViewer/security @CandleViewer/devsecops @basiltt
+/.semgrep/                              @CandleViewer/security @CandleViewer/devsecops @basiltt
+/.semgrepignore                         @CandleViewer/security @CandleViewer/devsecops @basiltt
+/.mcp.json                              @CandleViewer/security @CandleViewer/devsecops @basiltt
+/.semgrep-fixtures/                     @CandleViewer/security @CandleViewer/devsecops @basiltt
+/Makefile                               @CandleViewer/devsecops @CandleViewer/architecture @basiltt
 # Root pytest config: its addopts keep C-9.3 quarantined tests out of suites with no nearer config.
-/pytest.ini                             @CandleViewer/devsecops @CandleViewer/qa
-/scripts/                               @CandleViewer/devsecops @CandleViewer/architecture
-/tools/                                 @CandleViewer/devsecops @CandleViewer/security
+/pytest.ini                             @CandleViewer/devsecops @CandleViewer/qa @basiltt
+/scripts/                               @CandleViewer/devsecops @CandleViewer/architecture @basiltt
+/tools/                                 @CandleViewer/devsecops @CandleViewer/security @basiltt
 # E03-T04: coverage floors/baselines/tolerance policy — QA lead is CODEOWNER
 # (must approve any edit, including a baseline lowering, to this file).
-/tools/ci/coverage-baselines.json       @CandleViewer/qa @CandleViewer/devsecops
+/tools/ci/coverage-baselines.json       @CandleViewer/qa @CandleViewer/devsecops @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/commitlint.config.*                    @CandleViewer/devsecops
+/commitlint.config.*                    @CandleViewer/devsecops @basiltt
 
 # ---------------------------------------------------------------------------
 # Frontend applications
 # ---------------------------------------------------------------------------
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/                                  @CandleViewer/frontend
+/apps/                                  @CandleViewer/frontend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/web/                              @CandleViewer/frontend
+/apps/web/                              @CandleViewer/frontend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/web/src/features/admin/           @CandleViewer/frontend @CandleViewer/security
+/apps/web/src/features/admin/           @CandleViewer/frontend @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/web/src/features/risk/            @CandleViewer/frontend @CandleViewer/security
+/apps/web/src/features/risk/            @CandleViewer/frontend @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/web/src/features/ticket/          @CandleViewer/frontend @CandleViewer/security
+/apps/web/src/features/ticket/          @CandleViewer/frontend @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/web/src/transport/                @CandleViewer/frontend @CandleViewer/architecture
+/apps/web/src/transport/                @CandleViewer/frontend @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/desktop/                          @CandleViewer/frontend @CandleViewer/devsecops
+/apps/desktop/                          @CandleViewer/frontend @CandleViewer/devsecops @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/desktop/src/main/                 @CandleViewer/devsecops @CandleViewer/security
+/apps/desktop/src/main/                 @CandleViewer/devsecops @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/apps/desktop/src/preload/              @CandleViewer/security @CandleViewer/frontend
-/apps/desktop/src/main/csp.ts           @CandleViewer/security @CandleViewer/devsecops
-/apps/web/index.html                    @CandleViewer/security @CandleViewer/frontend
-/tools/ci/electron_hardening_*          @CandleViewer/security @CandleViewer/devsecops
+/apps/desktop/src/preload/              @CandleViewer/security @CandleViewer/frontend @basiltt
+/apps/desktop/src/main/csp.ts           @CandleViewer/security @CandleViewer/devsecops @basiltt
+/apps/web/index.html                    @CandleViewer/security @CandleViewer/frontend @basiltt
+/tools/ci/electron_hardening_*          @CandleViewer/security @CandleViewer/devsecops @basiltt
 
 # ---------------------------------------------------------------------------
 # Shared packages
 # ---------------------------------------------------------------------------
-/packages/                              @CandleViewer/frontend @CandleViewer/architecture
+/packages/                              @CandleViewer/frontend @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/packages/chart-engine/                 @CandleViewer/chart-engine
+/packages/chart-engine/                 @CandleViewer/chart-engine @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/packages/chart-engine/bench/           @CandleViewer/chart-engine @CandleViewer/qa
+/packages/chart-engine/bench/           @CandleViewer/chart-engine @CandleViewer/qa @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/packages/chart-engine/package.json     @CandleViewer/chart-engine @CandleViewer/architecture
-/packages/ui/                           @CandleViewer/design-system @CandleViewer/frontend
-/packages/ui/tokens/                    @CandleViewer/design-system @CandleViewer/design
+/packages/chart-engine/package.json     @CandleViewer/chart-engine @CandleViewer/architecture @basiltt
+/packages/ui/                           @CandleViewer/design-system @CandleViewer/frontend @basiltt
+/packages/ui/tokens/                    @CandleViewer/design-system @CandleViewer/design @basiltt
 # future: E02 will restructure tokens under src/; keep both rules until then.
-/packages/ui/src/tokens/                @CandleViewer/design-system @CandleViewer/design
+/packages/ui/src/tokens/                @CandleViewer/design-system @CandleViewer/design @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/packages/protocol/                     @CandleViewer/architecture @CandleViewer/backend
+/packages/protocol/                     @CandleViewer/architecture @CandleViewer/backend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/packages/config/                       @CandleViewer/devsecops @CandleViewer/frontend
+/packages/config/                       @CandleViewer/devsecops @CandleViewer/frontend @basiltt
 
 # ---------------------------------------------------------------------------
 # Backend monolith
@@ -161,42 +163,42 @@
 # (E02-T11 layout); they used to name `services/api/<module>/`, which matches no
 # file (#2706). `config/`, `http/`, `storage/migrations/` and `storage/schemas/`
 # (the C-5.8 path) are still placeholders: no module of that name exists yet.
-/services/                              @CandleViewer/backend
-/services/api/                          @CandleViewer/backend
+/services/                              @CandleViewer/backend @basiltt
+/services/api/                          @CandleViewer/backend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/services/api/config/                   @CandleViewer/backend @CandleViewer/devsecops
-/services/api/candleviewer/secrets/     @CandleViewer/security
-/services/api/candleviewer/auth/        @CandleViewer/security
-/services/api/tests/contract/rbac/matrix.yaml  @CandleViewer/security
-/services/api/candleviewer/audit/       @CandleViewer/security
-/services/api/candleviewer/admin/       @CandleViewer/backend @CandleViewer/security
-/services/api/candleviewer/exchange/    @CandleViewer/backend @CandleViewer/security
-/services/api/candleviewer/exchange/base/  @CandleViewer/architecture @CandleViewer/backend
-/services/api/candleviewer/exchange/bybit/  @CandleViewer/backend @CandleViewer/security
-/services/api/candleviewer/oms/         @CandleViewer/backend @CandleViewer/security
-/services/api/candleviewer/risk/        @CandleViewer/backend @CandleViewer/security
-/services/api/candleviewer/rules/       @CandleViewer/backend @CandleViewer/security
-/services/api/candleviewer/paper/       @CandleViewer/backend
-/services/api/candleviewer/accounts/    @CandleViewer/backend @CandleViewer/security
-/services/api/candleviewer/bus/         @CandleViewer/backend @CandleViewer/architecture
-/services/api/candleviewer/ingestion/   @CandleViewer/backend
-/services/api/candleviewer/book/        @CandleViewer/backend
-/services/api/candleviewer/bars/        @CandleViewer/backend
-/services/api/candleviewer/orderflow/   @CandleViewer/backend
-/services/api/candleviewer/recorder/    @CandleViewer/backend @CandleViewer/devsecops
-/services/api/candleviewer/replay/      @CandleViewer/backend
-/services/api/candleviewer/journal/     @CandleViewer/backend
-/services/api/candleviewer/alerts/      @CandleViewer/backend
-/services/api/candleviewer/observability/  @CandleViewer/devsecops @CandleViewer/backend
+/services/api/config/                   @CandleViewer/backend @CandleViewer/devsecops @basiltt
+/services/api/candleviewer/secrets/     @CandleViewer/security @basiltt
+/services/api/candleviewer/auth/        @CandleViewer/security @basiltt
+/services/api/tests/contract/rbac/matrix.yaml  @CandleViewer/security @basiltt
+/services/api/candleviewer/audit/       @CandleViewer/security @basiltt
+/services/api/candleviewer/admin/       @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/candleviewer/exchange/    @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/candleviewer/exchange/base/  @CandleViewer/architecture @CandleViewer/backend @basiltt
+/services/api/candleviewer/exchange/bybit/  @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/candleviewer/oms/         @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/candleviewer/risk/        @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/candleviewer/rules/       @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/candleviewer/paper/       @CandleViewer/backend @basiltt
+/services/api/candleviewer/accounts/    @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/candleviewer/bus/         @CandleViewer/backend @CandleViewer/architecture @basiltt
+/services/api/candleviewer/ingestion/   @CandleViewer/backend @basiltt
+/services/api/candleviewer/book/        @CandleViewer/backend @basiltt
+/services/api/candleviewer/bars/        @CandleViewer/backend @basiltt
+/services/api/candleviewer/orderflow/   @CandleViewer/backend @basiltt
+/services/api/candleviewer/recorder/    @CandleViewer/backend @CandleViewer/devsecops @basiltt
+/services/api/candleviewer/replay/      @CandleViewer/backend @basiltt
+/services/api/candleviewer/journal/     @CandleViewer/backend @basiltt
+/services/api/candleviewer/alerts/      @CandleViewer/backend @basiltt
+/services/api/candleviewer/observability/  @CandleViewer/devsecops @CandleViewer/backend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/services/api/http/                     @CandleViewer/backend @CandleViewer/architecture
-/services/api/candleviewer/ws/          @CandleViewer/backend @CandleViewer/architecture
-/services/api/candleviewer/storage/     @CandleViewer/backend @CandleViewer/architecture
+/services/api/http/                     @CandleViewer/backend @CandleViewer/architecture @basiltt
+/services/api/candleviewer/ws/          @CandleViewer/backend @CandleViewer/architecture @basiltt
+/services/api/candleviewer/storage/     @CandleViewer/backend @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/services/api/storage/migrations/       @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security
+/services/api/storage/migrations/       @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/services/api/storage/schemas/          @CandleViewer/backend @CandleViewer/architecture
-/backend/db/                            @CandleViewer/backend @CandleViewer/architecture
+/services/api/storage/schemas/          @CandleViewer/backend @CandleViewer/architecture @basiltt
+/backend/db/                            @CandleViewer/backend @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
 
 # bugfix #1556 (E07-T02 / issue #168 defect 3): the *actual* Alembic/DB
@@ -205,75 +207,75 @@
 # epic). 21-database-schema.md §9.3 rule 13: "a migration PR requires the
 # data-owner code-owner approval in addition to the normal two approvals" —
 # these two entries are what makes that gate fire in practice.
-/services/api/candleviewer/db/          @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security
-/services/api/candleviewer/migrations/  @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security
+/services/api/candleviewer/db/          @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security @basiltt
+/services/api/candleviewer/migrations/  @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security @basiltt
 # E22-T01: the SR-E22 constants module at its real path. Threat model E22 §7. (Its pre-`candleviewer/`
 # placeholder `/services/api/orderflow/limits.py` was removed with the others in #2706.)
-/services/api/candleviewer/orderflow/limits.py  @CandleViewer/backend @CandleViewer/security
-/services/api/pyproject.toml            @CandleViewer/backend @CandleViewer/devsecops @CandleViewer/security
+/services/api/candleviewer/orderflow/limits.py  @CandleViewer/backend @CandleViewer/security @basiltt
+/services/api/pyproject.toml            @CandleViewer/backend @CandleViewer/devsecops @CandleViewer/security @basiltt
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-/qa/plans/                              @CandleViewer/qa
+/qa/plans/                              @CandleViewer/qa @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/tests/                                 @CandleViewer/qa
+/tests/                                 @CandleViewer/qa @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/tests/e2e/                             @CandleViewer/qa @CandleViewer/frontend
+/tests/e2e/                             @CandleViewer/qa @CandleViewer/frontend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/tests/load/                            @CandleViewer/qa @CandleViewer/devsecops
+/tests/load/                            @CandleViewer/qa @CandleViewer/devsecops @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/tests/chaos/                           @CandleViewer/qa @CandleViewer/backend
+/tests/chaos/                           @CandleViewer/qa @CandleViewer/backend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/tests/fixtures/                        @CandleViewer/qa @CandleViewer/backend @CandleViewer/security
+/tests/fixtures/                        @CandleViewer/qa @CandleViewer/backend @CandleViewer/security @basiltt
 
 # ---------------------------------------------------------------------------
 # Spikes (docs/plan/01-sdlc-and-branching.md C-4.5 — written finding + deleted branch)
 # ---------------------------------------------------------------------------
-/spikes/                                @CandleViewer/backend @CandleViewer/architecture
+/spikes/                                @CandleViewer/backend @CandleViewer/architecture @basiltt
 
 # ---------------------------------------------------------------------------
 # Governance / repo tooling scripts (GOV-00n checkers and their tests)
 # ---------------------------------------------------------------------------
-/scripts/                               @CandleViewer/architecture @CandleViewer/devsecops
-/scripts/tests/                         @CandleViewer/architecture @CandleViewer/qa
+/scripts/                               @CandleViewer/architecture @CandleViewer/devsecops @basiltt
+/scripts/tests/                         @CandleViewer/architecture @CandleViewer/qa @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/scripts/validate-backlog.*              @CandleViewer/architecture
+/scripts/validate-backlog.*              @CandleViewer/architecture @basiltt
 
 # ---------------------------------------------------------------------------
 # Documentation
 # ---------------------------------------------------------------------------
-/docs/                                  @CandleViewer/architecture
-/docs/design/                           @CandleViewer/design @CandleViewer/design-system
-/docs/plan/                             @CandleViewer/architecture
+/docs/                                  @CandleViewer/architecture @basiltt
+/docs/design/                           @CandleViewer/design @CandleViewer/design-system @basiltt
+/docs/plan/                             @CandleViewer/architecture @basiltt
 /docs/plan/00-planning-brief.md         @basiltt @CandleViewer/architecture
-/docs/plan/01-sdlc-and-branching.md     @CandleViewer/architecture @CandleViewer/devsecops
-/docs/plan/02-definition-of-ready-done.md @CandleViewer/architecture @CandleViewer/qa
-/docs/plan/03-testing-strategy.md       @CandleViewer/qa @CandleViewer/architecture
-/docs/plan/04-security-program.md       @CandleViewer/security
-/docs/plan/05-accessibility-standard.md @CandleViewer/design @CandleViewer/qa
-/docs/plan/06-performance-and-load-standard.md @CandleViewer/qa @CandleViewer/chart-engine
+/docs/plan/01-sdlc-and-branching.md     @CandleViewer/architecture @CandleViewer/devsecops @basiltt
+/docs/plan/02-definition-of-ready-done.md @CandleViewer/architecture @CandleViewer/qa @basiltt
+/docs/plan/03-testing-strategy.md       @CandleViewer/qa @CandleViewer/architecture @basiltt
+/docs/plan/04-security-program.md       @CandleViewer/security @basiltt
+/docs/plan/05-accessibility-standard.md @CandleViewer/design @CandleViewer/qa @basiltt
+/docs/plan/06-performance-and-load-standard.md @CandleViewer/qa @CandleViewer/chart-engine @basiltt
 /docs/plan/07-release-and-prr.md        @CandleViewer/devsecops @basiltt
-/docs/plan/10-personas.md               @CandleViewer/design
-/docs/plan/11-user-stories.md           @CandleViewer/design @CandleViewer/architecture
-/docs/plan/12-sitemap.md                @CandleViewer/design
-/docs/plan/13-user-flows.md             @CandleViewer/design
-/docs/plan/14-screens-catalogue.md      @CandleViewer/design
-/docs/plan/15-component-catalogue.md    @CandleViewer/design-system
-/docs/plan/16-design-system-brief.md    @CandleViewer/design-system @CandleViewer/design
-/docs/plan/17-ux-diagrams.md            @CandleViewer/design
-/docs/plan/20-architecture.md           @CandleViewer/architecture
-/docs/plan/21-database-schema.md        @CandleViewer/architecture @CandleViewer/backend
-/docs/plan/22-api-openapi.yaml          @CandleViewer/architecture @CandleViewer/backend
-/docs/plan/23-ws-protocol.md            @CandleViewer/architecture @CandleViewer/backend
-/docs/plan/24-internal-schemas.md       @CandleViewer/architecture @CandleViewer/backend
-/docs/plan/26-chart-engine-design.md    @CandleViewer/chart-engine @CandleViewer/architecture
-/docs/plan/27-adrs/                     @CandleViewer/architecture
+/docs/plan/10-personas.md               @CandleViewer/design @basiltt
+/docs/plan/11-user-stories.md           @CandleViewer/design @CandleViewer/architecture @basiltt
+/docs/plan/12-sitemap.md                @CandleViewer/design @basiltt
+/docs/plan/13-user-flows.md             @CandleViewer/design @basiltt
+/docs/plan/14-screens-catalogue.md      @CandleViewer/design @basiltt
+/docs/plan/15-component-catalogue.md    @CandleViewer/design-system @basiltt
+/docs/plan/16-design-system-brief.md    @CandleViewer/design-system @CandleViewer/design @basiltt
+/docs/plan/17-ux-diagrams.md            @CandleViewer/design @basiltt
+/docs/plan/20-architecture.md           @CandleViewer/architecture @basiltt
+/docs/plan/21-database-schema.md        @CandleViewer/architecture @CandleViewer/backend @basiltt
+/docs/plan/22-api-openapi.yaml          @CandleViewer/architecture @CandleViewer/backend @basiltt
+/docs/plan/23-ws-protocol.md            @CandleViewer/architecture @CandleViewer/backend @basiltt
+/docs/plan/24-internal-schemas.md       @CandleViewer/architecture @CandleViewer/backend @basiltt
+/docs/plan/26-chart-engine-design.md    @CandleViewer/chart-engine @CandleViewer/architecture @basiltt
+/docs/plan/27-adrs/                     @CandleViewer/architecture @basiltt
 /docs/plan/30-release-roadmap.md        @basiltt @CandleViewer/architecture
 /docs/plan/31-sprint-plan.md            @basiltt @CandleViewer/architecture
-/docs/plan/32-risk-register.md          @CandleViewer/architecture @CandleViewer/security
+/docs/plan/32-risk-register.md          @CandleViewer/architecture @CandleViewer/security @basiltt
 /docs/plan/33-raci.md                   @basiltt
-/docs/plan/backlog/                      @CandleViewer/architecture @CandleViewer/qa
+/docs/plan/backlog/                      @CandleViewer/architecture @CandleViewer/qa @basiltt
 
 # --- Backlog: schema vs content ------------------------------------------------
 # The backlog is two different kinds of artefact under one directory, with two
@@ -295,26 +297,26 @@
 # migration required by the schema change, in which case label it `shared-package`
 # and get both approvals.
 # future: E02/later scaffolding; directory does not exist yet.
-/docs/plan/backlog/schema/               @CandleViewer/architecture
+/docs/plan/backlog/schema/               @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/docs/plan/backlog/*.schema.json         @CandleViewer/architecture
+/docs/plan/backlog/*.schema.json         @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/docs/plan/backlog/README.md             @CandleViewer/architecture @CandleViewer/qa
+/docs/plan/backlog/README.md             @CandleViewer/architecture @CandleViewer/qa @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/docs/plan/backlog/_index.json           @CandleViewer/architecture
+/docs/plan/backlog/_index.json           @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
 /docs/plan/backlog/epics.json            @CandleViewer/architecture @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/docs/plan/backlog/labels.json           @CandleViewer/architecture @CandleViewer/devsecops
+/docs/plan/backlog/labels.json           @CandleViewer/architecture @CandleViewer/devsecops @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
-/docs/plan/backlog/tickets/              @CandleViewer/qa @CandleViewer/architecture
+/docs/plan/backlog/tickets/              @CandleViewer/qa @CandleViewer/architecture @basiltt
 # -------------------------------------------------------------------------------
-/docs/adr/                              @CandleViewer/architecture
+/docs/adr/                              @CandleViewer/architecture @basiltt
 /docs/research/                         @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
 /docs/incidents/                        @CandleViewer/security @basiltt
 
 # E47-T02: shrink-only axe baseline and a11y gate logic need the Accessibility role (@CandleViewer/design)
-/tools/a11y/axe-baseline.json           @CandleViewer/design @CandleViewer/devsecops
-/tools/a11y/                            @CandleViewer/design @CandleViewer/frontend @CandleViewer/devsecops
-/.github/workflows/_job-a11y.yml        @CandleViewer/devsecops @CandleViewer/design
+/tools/a11y/axe-baseline.json           @CandleViewer/design @CandleViewer/devsecops @basiltt
+/tools/a11y/                            @CandleViewer/design @CandleViewer/frontend @CandleViewer/devsecops @basiltt
+/.github/workflows/_job-a11y.yml        @CandleViewer/devsecops @CandleViewer/design @basiltt
