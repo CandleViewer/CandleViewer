@@ -51,6 +51,7 @@ The marker selects every test under these paths except the `perf`, `fuzz`, `harn
 - `tests/unit/bars/test_tape_time_reader.py` stored-bar turnover (#2138).
 - `tests/unit/bars/test_kline_rows.py` stored kline rows and their timestamp binds (#2170).
 - `tests/unit/bars/test_production_factory.py` bar kinds the production factory registers (#2191).
+- `tests/qa/test_e08_handshake.py` the E08-Q06 cross-epic handshake checks (ports, event envelopes, bus topics, WS families, instrument bodies); a downstream epic re-runs this file at its start.
 
 ### Evidence the marker does not select
 

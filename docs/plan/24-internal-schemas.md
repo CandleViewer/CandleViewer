@@ -452,7 +452,9 @@ signals only (C-2.20). Surfaced as `/readyz` check `ingestion` (`ok:false`, `det
 (`bus/models.py` `Topic.key`, e.g. `demo.md.BTCUSDT.trade`), not `md.{detail}.{symbol}` as tabled above;
 the table's family→stream mapping is otherwise unchanged. Implemented today: `trade`, `book`
 (snapshot + delta + `BookStatus`), `ticker`, `gap` (trade-tape `GapEvent`), feed health
-(`{env}.health.feed`). Queue policy is chosen **per subscriber** at `Bus.subscribe` (not per topic):
+(`{env}.health.feed`), and instrument metadata changes on `{env}.instruments.{symbol}.updated`
+(`InstrumentUpdatedEvent`, published by the catalogue refresh since #1633; listed by E08-Q06,
+#283). Queue policy is chosen **per subscriber** at `Bus.subscribe` (not per topic):
 trade consumers must subscribe NEVER_DROP (a full queue awaits and counts
 `ingest_queue_full_total{class="trade"}`); state-like consumers use CONFLATE_LATEST or
 INVALIDATE_ON_FULL (§4.2 of `20-architecture.md`). Metric mapping per family (all
