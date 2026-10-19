@@ -1975,10 +1975,14 @@ def test_pnpm_audit_fixtures_keep_pnpms_own_formatting(name: str) -> None:
 
 _ROOT = Path(__file__).resolve().parents[2]
 _TOKEN_HASH = 'return hashlib.sha256(token.encode("utf-8")).hexdigest()'
+_KEY_TAG = (
+    'tag = hmac.new(mac_key, body.api_key.get_secret_value().encode(), "sha256").hexdigest()'
+)
 # `rule:path` of every line-keyed codeql entry -> the code its line must still hold.
 _CODEQL_LINE_PINS = {
     "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py": _TOKEN_HASH,
     "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py": _TOKEN_HASH,
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/api/exchange_keys.py": _KEY_TAG,
     "py/clear-text-logging-sensitive-data:"
     "services/api/candleviewer/migrations/versions/0002_rbac_seed.py": (
         "print(message, file=sys.stdout)"
@@ -2041,6 +2045,30 @@ def _refs_of(tree: ast.Module, name: str) -> list[str]:
         or (isinstance(node, ast.alias) and node.name == name)
         or (isinstance(node, ast.Constant) and node.value == name)
     ]
+
+
+def test_repo_register_key_tag_entry_still_keys_a_random_mac_over_the_api_key() -> None:
+    """The exchange_keys.py:205 entry is a false positive only while the HMAC key is a per-process
+    random key and the tag feeds only the request's fingerprint: pin both (re-triage otherwise)."""
+    path = _PRODUCT / "api/exchange_keys.py"
+    keys = ast.parse(path.read_text(encoding="utf-8"))
+    minted = [
+        (ast.unparse(n.targets[0]), ast.unparse(n.value))
+        for n in ast.walk(keys)
+        if isinstance(n, ast.Assign) and "os.urandom" in ast.unparse(n.value)
+    ]
+    key = "(replays if replays is not None else IdempotencyCache(), os.urandom(32))"
+    assert minted == [("(replays, mac_key)", key)]
+    route = next(n for n in ast.walk(keys) if getattr(n, "name", "") == "create_api_key")
+
+    def uses(tree: ast.AST, name: str) -> list[str]:
+        names = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == name]
+        return [type(n.ctx).__name__ for n in names]
+
+    assert uses(keys, "mac_key") == ["Store", "Load"]  # minted once, read only by the tag
+    assert uses(keys, "tag") == ["Store", "Load"]  # read only by the fingerprint
+    assert uses(route, "shown") == ["Store", "Load"]  # the fingerprint feeds only the digest
+    assert path.read_text(encoding="utf-8").splitlines()[204].strip() == _KEY_TAG  # line 205, whole
 
 
 def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> None:

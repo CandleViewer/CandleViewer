@@ -102,6 +102,13 @@ entries:
     approver: "basiltt"
     expires: "2027-03-25"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1978"
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/api/exchange_keys.py:205"
+    tool: codeql
+    severity: HIGH
+    reason: "False positive by construction: an in-memory HMAC-SHA256, keyed by a per-process random key, over the pasted exchange API key (an exchange-issued random identifier, not a password), used only to tell a reused Idempotency-Key with another API key from a replay; it only feeds the request digest held in the bounded in-memory replay cache, and nothing is persisted or logged. A slow KDF adds nothing. Re-check if the hashed value or the tag's use changes"
+    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
+    expires: "2027-03-25"
+    ticket: "https://github.com/basiltt/CandleViewer/issues/836"
   # E43-T05-B1: EX-05 (http-cache-semantics) was cleared by a pnpm override to 4.3.0 (#1857) and
   # removed. EX-06 (braces) has no patched release upstream (2026-10-03); dev/build-time only
   # (lint-staged), not shipped in the runtime.
