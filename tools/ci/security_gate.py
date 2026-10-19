@@ -2,9 +2,10 @@
 """E03-T07: security lane severity normalisation and gate policy.
 
 Every scanner in `.github/workflows/_job-security.yml` (CodeQL, Semgrep,
-Bandit, pip-audit, npm audit, gitleaks, license-scan, Trivy) reduces its
-native output to a single `Finding` shape here, so "what blocks" is defined
-exactly once (technical notes, E03-T07 ticket body) instead of per-tool.
+Bandit, pip-audit, npm audit, gitleaks, license-scan, Trivy) and the
+Dependabot alert gate reduce their native output to a single `Finding` shape
+here, so "what blocks" is defined exactly once (technical notes, E03-T07
+ticket body) instead of per-tool.
 
 Error codes (ticket "Technical notes / design"):
     CI-SEC-001  blocking finding (severity meets/exceeds the tool's policy
@@ -19,7 +20,8 @@ Error codes (ticket "Technical notes / design"):
 
 Stdlib + PyYAML only: `scripts/requirements-ci.txt` pins PyYAML for the CI
 image, and `tools/ci/requirements-security-gate.txt` pins it by hash for the
-codeql job (#3337). No network access performed by this module itself.
+codeql job (#3337). No network access performed by this module itself: the
+Dependabot alert gate reads two commits of the local checkout with `git`.
 """
 
 from __future__ import annotations
@@ -27,11 +29,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
+import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -55,6 +59,7 @@ _KNOWN_TOOLS = frozenset(
         "bandit",
         "pip-audit",
         "npm-audit",
+        "dependabot",
         "gitleaks",
         "license-scan",
         "trivy",
@@ -70,6 +75,7 @@ _BLOCKING_THRESHOLD: dict[str, Severity | None] = {
     "bandit": "MEDIUM",  # High/Medium confidence+severity blocks (12.1 table)
     "pip-audit": "HIGH",
     "npm-audit": "HIGH",
+    "dependabot": "HIGH",  # C-9.1 #11 (sca): the Dependabot alert gate, zero High/Critical
     "gitleaks": None,  # any finding blocks, handled specially
     "license-scan": None,  # handled by evaluate_licenses(), not severity
     "trivy": "HIGH",
@@ -193,8 +199,11 @@ def load_accepted_risks(path: Path) -> list[AcceptedRisk]:
 
 
 def _find_risk(risks: list[AcceptedRisk], finding: Finding) -> AcceptedRisk | None:
+    # A Dependabot alert takes the register's entry for its GHSA whatever that entry's tool: ids are
+    # unique there (check_accepted_risk_expiry.py), so one decision also covers an advisory that
+    # pnpm, pip-audit or Trivy reports (#3558). Every other finding needs an entry of its own tool.
     for risk in risks:
-        if risk.finding_id == finding.finding_id and risk.tool == finding.tool:
+        if risk.finding_id == finding.finding_id and finding.tool in (risk.tool, "dependabot"):
             return risk
     return None
 
@@ -1063,6 +1072,253 @@ def parse_npm_audit(path: Path) -> list[Finding]:
     return findings
 
 
+# C-9.1 #11's alert gate (#3558) reads what the `dependabot-alerts` step writes: `gh api --paginate
+# --slurp` of the repository's open Dependabot alerts (REST API 2022-11-28), one array per page
+# (scripts/tests/fixtures/dependabot-alerts/README.md). The alerts describe `main`.
+_DEPENDABOT_SEVERITY: dict[str, Severity] = {
+    "critical": "CRITICAL",
+    "high": "HIGH",
+    "medium": "MEDIUM",
+    "low": "LOW",
+}
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
+# A requirements-file line: the name, any extras, then its specifier up to a marker or comment.
+_REQUIREMENT = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*(?:\[[^\]]*\])?\s*([^;#\\\n]*)", re.MULTILINE)
+Reader = Callable[[str, str], str | None]  # (commit, path) -> the file's text there, None if absent
+
+
+@dataclass(frozen=True)
+class DependabotAlert:
+    """One open alert: its finding, and the package and manifest its fix is judged on."""
+
+    number: int
+    ecosystem: str
+    name: str
+    manifest: str
+    finding: Finding
+
+
+def _dig(obj: object, *keys: str) -> object:
+    """`obj[k1][k2]...`, or None as soon as a level is not an object."""
+    for key in keys:
+        obj = obj.get(key) if isinstance(obj, dict) else None
+    return obj
+
+
+def parse_dependabot_alerts(path: Path) -> list[DependabotAlert]:
+    """The open alerts, each a finding keyed by its advisory's GHSA id (as register entries are).
+
+    Fails closed (CI-SEC-005), never as zero alerts (which is `[[]]`): on an empty file, on anything
+    but a non-empty list of pages that are lists (gh writes an API error as `[{"message": ...}]`),
+    and on an alert that is not open or lacks a number, a known severity, a GHSA id, a package or a
+    manifest inside the repository.
+    """
+
+    def malformed(reason: str) -> SecurityGateError:
+        return SecurityGateError("CI-SEC-005", f"dependabot: {path} {reason}")
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise malformed(f"is unreadable: {exc}") from exc
+    if not text.strip():
+        raise malformed("is empty: the alerts API call wrote nothing")
+    try:
+        pages = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise malformed(f"is not JSON: {exc}") from exc
+    if not (isinstance(pages, list) and pages and all(isinstance(p, list) for p in pages)):
+        raise malformed(f"is not a list of pages of alerts: {text[:300]}")
+
+    alerts: list[DependabotAlert] = []
+    for alert in (alert for page in pages for alert in page):
+        number = _dig(alert, "number")
+        if type(number) is not int:
+            raise malformed("has an alert without a number")
+        advisory, dependency = _dig(alert, "security_advisory"), _dig(alert, "dependency")
+        severity, ghsa, summary = (_dig(advisory, k) for k in ("severity", "ghsa_id", "summary"))
+        ecosystem, name = (_dig(dependency, "package", k) for k in ("ecosystem", "name"))
+        manifest, state = _dig(dependency, "manifest_path"), _dig(alert, "state")
+        if state != "open":
+            raise malformed(f"alert {number} is {state!r}: the step lists open alerts only")
+        if not isinstance(severity, str) or severity not in _DEPENDABOT_SEVERITY:
+            raise malformed(f"alert {number} has no known severity (critical, high, medium, low)")
+        if not isinstance(ghsa, str) or not _GHSA_ID.fullmatch(ghsa):
+            raise malformed(f"alert {number} has no GHSA id")
+        if (
+            not isinstance(ecosystem, str)
+            or not isinstance(name, str)
+            or not isinstance(manifest, str)
+            or not (ecosystem and name and manifest)
+        ):
+            raise malformed(f"alert {number} has no package ecosystem, package name or manifest")
+        posix = PurePosixPath(manifest)
+        if posix.is_absolute() or ".." in posix.parts or posix.as_posix() != manifest:
+            raise malformed(f"alert {number}'s manifest {manifest!r} is not a path in the repo")
+        package = f"{ecosystem}:{name}"
+        detail = f"alert {number}, {package} in {manifest}: {summary or ''}"
+        finding = Finding("dependabot", ghsa, _DEPENDABOT_SEVERITY[severity], package, detail)
+        alerts.append(DependabotAlert(number, ecosystem, name, manifest, finding))
+    return alerts
+
+
+def _resolution_file(alert: DependabotAlert, revs: tuple[str, str], read: Reader) -> str:
+    """The file whose versions of the alert's package decide a fix: npm, pnpm-lock.yaml; pip, the
+    uv.lock beside the manifest or a requirements file; rust, the Cargo.lock beside, else the
+    Cargo.toml."""
+    manifest = PurePosixPath(alert.manifest)
+    if alert.ecosystem == "npm" and manifest.name in ("package.json", "pnpm-lock.yaml"):
+        return "pnpm-lock.yaml"
+    if alert.ecosystem == "pip" and manifest.name in ("pyproject.toml", "uv.lock"):
+        return (manifest.parent / "uv.lock").as_posix()
+    if alert.ecosystem == "pip" and manifest.suffix == ".txt":
+        return alert.manifest
+    if alert.ecosystem == "rust" and manifest.name in ("Cargo.toml", "Cargo.lock"):
+        lock = (manifest.parent / "Cargo.lock").as_posix()
+        return lock if any(read(rev, lock) is not None for rev in revs) else alert.manifest
+    raise SecurityGateError(
+        "CI-SEC-005",
+        f"dependabot: alert {alert.number} is on {alert.manifest} ({alert.ecosystem}), which the "
+        "gate cannot map to resolved versions, so no change here can count as its fix",
+    )
+
+
+def _canonical(ecosystem: str, name: str) -> str:
+    """PEP 503 for pip (PyYAML, pyyaml and py_yaml are one project); other names as given."""
+    return re.sub(r"[-_.]+", "-", name).lower() if ecosystem == "pip" else name
+
+
+def _cargo_requirements(node: object, name: str) -> set[str]:
+    """The version requirements a Cargo.toml gives crate `name`, in every dependency table."""
+    found: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if str(key).endswith("dependencies") and isinstance(value, dict):
+                for dep, spec in value.items():
+                    if (spec.get("package", dep) if isinstance(spec, dict) else dep) == name:
+                        found.add(str(spec.get("version") if isinstance(spec, dict) else spec))
+            else:
+                found |= _cargo_requirements(value, name)
+    return found
+
+
+def resolved_versions(path: str, ecosystem: str, name: str, text: str) -> frozenset[str]:
+    """The versions `text`, the file at `path`, resolves package `name` to: pnpm-lock.yaml's
+    `packages` keys (in both documents pnpm 12 writes), a lock's `[[package]]` tables, a
+    Cargo.toml's requirements or a requirements file's specifiers."""
+    want, kind = _canonical(ecosystem, name), PurePosixPath(path).name
+    found: set[str] = set()
+    if kind == "pnpm-lock.yaml":
+        for document in yaml.safe_load_all(text):
+            for key in map(str, (document or {}).get("packages") or {}):
+                at = key.find("@", 1)  # the version's `@`, not a scope's
+                if at > 0 and key[:at] == want:
+                    found.add(key[at + 1 :])
+    elif kind in ("uv.lock", "Cargo.lock"):
+        for package in tomllib.loads(text).get("package", []):
+            if _canonical(ecosystem, str(package["name"])) == want:
+                found.add(str(package.get("version")))
+    elif kind == "Cargo.toml":
+        found = _cargo_requirements(tomllib.loads(text), want)
+    else:
+        pins = _REQUIREMENT.findall(text)
+        found = {spec.strip() for dep, spec in pins if _canonical(ecosystem, dep) == want}
+    return frozenset(found)
+
+
+def _versions_at(read: Reader, rev: str, path: str, alert: DependabotAlert) -> frozenset[str]:
+    text = read(rev, path)
+    if text is None:
+        return frozenset()
+    try:
+        return resolved_versions(path, alert.ecosystem, alert.name, text)
+    except (yaml.YAMLError, tomllib.TOMLDecodeError, AttributeError, KeyError, TypeError) as exc:
+        raise SecurityGateError(
+            "CI-SEC-005", f"dependabot: {path} at {rev} is not a lockfile the gate can read: {exc}"
+        ) from exc
+
+
+def judge_alert_fixes(
+    alerts: list[DependabotAlert],
+    risks: list[AcceptedRisk],
+    *,
+    run_date: date,
+    base: str,
+    read: Reader,
+) -> tuple[list[Finding], list[str]]:
+    """#3558's ruling: an alert the gate would block passes when the tree under test (HEAD) changes
+    its package's resolved versions since `base`, its merge base with main (or drops it): that PR
+    is the fix, and pip-audit and npm-audit judge the new versions. Returns the findings left for
+    evaluate_findings, and a note per fixed alert."""
+    findings: list[Finding] = []
+    fixed: list[str] = []
+    for alert in alerts:
+        finding = alert.finding
+        if not evaluate_findings([finding], risks, run_date=run_date).blocked:
+            findings.append(finding)  # below High, or accepted: evaluate_findings reports it
+            continue
+        path = _resolution_file(alert, (base, "HEAD"), read)
+        before, after = (_versions_at(read, rev, path, alert) for rev in (base, "HEAD"))
+        if not (before or after):
+            raise SecurityGateError(
+                "CI-SEC-005",
+                f"dependabot: alert {alert.number}: {path} resolves {alert.name} to no version "
+                "here or at the merge base, so the gate cannot tell a fix",
+            )
+        was = ", ".join(sorted(before)) or "nothing"
+        if before == after:
+            detail = f"{finding.detail} (this tree leaves it at {was} in {path})"
+            findings.append(replace(finding, detail=detail))
+        else:
+            fixed.append(
+                f"fixed here: dependabot alert {alert.number} ({finding.finding_id}, "
+                f"{finding.severity}), {finding.package} in {path}: {was} -> "
+                f"{', '.join(sorted(after)) or 'removed'}"
+            )
+    return findings, fixed
+
+
+def git_reader(base: str | None) -> Reader:
+    """Read files at commit `base` and at HEAD of the checkout in the working directory, with local
+    git only. `base` must be a full commit id that the checkout holds (the job fetches history)."""
+    if base is None:
+        raise SecurityGateError(
+            "CI-SEC-005",
+            "dependabot: --base (the merge base of HEAD and main, a full commit id) is required",
+        )
+    if not _FULL_SHA.fullmatch(base):
+        raise SecurityGateError("CI-SEC-005", f"dependabot: --base {base!r} is no full commit id")
+
+    def git(*args: str) -> subprocess.CompletedProcess[bytes]:
+        try:  # a fixed argv, no shell; the commit and path were validated above
+            return subprocess.run(["git", *args], capture_output=True, timeout=60, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SecurityGateError("CI-SEC-005", f"dependabot: git {args[0]}: {exc}") from exc
+
+    for rev in (base, "HEAD"):
+        if git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}").returncode:
+            raise SecurityGateError(
+                "CI-SEC-005", f"dependabot: {rev} is not a commit in this checkout"
+            )
+
+    def read(rev: str, path: str) -> str | None:
+        # A file the commit lacks is None; any git failure raises, never reads as "removed".
+        listed = git("ls-tree", "--name-only", rev, "--", path)
+        if listed.returncode == 0 and not listed.stdout.strip():
+            return None
+        blob = git("cat-file", "blob", f"{rev}:{path}")
+        try:
+            if listed.returncode or blob.returncode:
+                raise ValueError((listed.stderr + blob.stderr).decode(errors="replace").strip())
+            return blob.stdout.decode("utf-8")
+        except ValueError as exc:  # UnicodeDecodeError is one too
+            raise SecurityGateError(
+                "CI-SEC-005", f"dependabot: cannot read {path} at {rev}: {exc}"
+            ) from exc
+
+    return read
+
+
 def parse_gitleaks(path: Path) -> list[Finding]:
     """`gitleaks detect --report-format json --redact` output -> Findings.
 
@@ -1132,9 +1388,8 @@ _PARSERS: dict[str, Any] = {
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--tool", required=True, choices=sorted(_PARSERS) + ["license-scan", "semgrep-auth"]
-    )
+    tools = sorted([*_PARSERS, "dependabot", "license-scan", "semgrep-auth"])
+    parser.add_argument("--tool", required=True, choices=tools)
     parser.add_argument(
         "--report",
         required=True,
@@ -1151,6 +1406,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path("tools/ci/licenses-allowlist.json"),
         help="only used when --tool license-scan",
+    )
+    parser.add_argument(
+        "--base",
+        default=None,
+        help="only used when --tool dependabot: HEAD's merge base with main, a full commit id",
     )
     parser.add_argument(
         "--run-date",
@@ -1185,6 +1445,14 @@ def main(argv: list[str] | None = None) -> int:
             # did not analyse, every rule counted as the repo's own (#3549).
             notes = check_semgrep_coverage(args.report, _every_rule)
             result = evaluate_findings([], risks, run_date=run_date)
+        elif args.tool == "dependabot":
+            alerts = parse_dependabot_alerts(args.report)
+            read = git_reader(args.base)
+            findings, fixed = judge_alert_fixes(
+                alerts, risks, run_date=run_date, base=args.base, read=read
+            )
+            judged = evaluate_findings(findings, risks, run_date=run_date)
+            result = GateResult(judged.blocked, judged.code, fixed + judged.messages)
         else:
             if args.tool == "semgrep":
                 findings = parse_sarif(args.report, "semgrep", today=run_date)

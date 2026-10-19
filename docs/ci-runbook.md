@@ -49,8 +49,8 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
-│                                      read-only-scans (security-auth, pip-audit, npm-audit,
-│                                      license-scan)                    (CI-SEC-001..005)
+│                                      read-only-scans (security-auth, pip-audit, dependabot-alerts,
+│                                      npm-audit, license-scan)         (CI-SEC-001..005)
 ├─ _job-coverage.yml (js/py filters) → per-package threshold            (CI-COV-001..004)
 ├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
 │                                      (CI-BEN-001, stub pending E03-T14)
@@ -359,9 +359,18 @@ index alone, removing nothing.
   scores its findings HIGH and their entries need HIGH, #3558), or is Critical, which
   no entry covers (30-release-roadmap.md §4.4 R0), or trufflehog found a
   secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
-  step, §3). Fix the finding: for an npm-audit advisory on a transitive
+  step, §3), or an open High or Critical Dependabot alert on `main` (the
+  `dependabot-alerts` step, C-9.1 #11) that the PR neither fixes nor has an entry
+  for. Fix the finding: for an npm-audit advisory on a transitive
   package, a `pnpm-workspace.yaml` override to the patched release
-  (`docs/plan/35-dependency-freeze-policy.md` §8.4).
+  (`docs/plan/35-dependency-freeze-policy.md` §8.4). A PR fixes an alert when it
+  changes the package's resolved versions since its merge base with `main`, in
+  `pnpm-lock.yaml` for npm, in the `uv.lock` beside a `pyproject.toml` (or the
+  requirements file) for pip, and in the `Cargo.lock` beside the `Cargo.toml`
+  (else the `Cargo.toml`) for rust; pip-audit and npm-audit then judge the new
+  versions. A High alert may instead take a dated HIGH entry naming its GHSA (an
+  entry of any tool); a Critical one takes none. Dismissing an alert is the
+  owner's decision, recorded on the alert, never a way to make a PR pass.
   Gitleaks and trufflehog findings never get an accepted-risk exception (see the gate's own
   comment) — rotate the secret per `SECURITY.md` / IR-02 (§5 below) instead.
 - **CI-SEC-002** (licence violation): a new dependency's licence is not on
@@ -401,12 +410,18 @@ index alone, removing nothing.
   the gate applies the threshold (#3558). A report that passes is only as complete as
   the registry's answer: pnpm builds it from the advisories the registry's
   audit endpoint returns, so the gate cannot tell a registry that listed none
-  from a tree with none. C-9.1 #11's Dependabot alert gate, the independent
-  second signal, is not wired yet (#3558). It needs no new secret: the job's
-  `GITHUB_TOKEN` lists the alerts with `vulnerability-alerts: read`, a read
-  permission a workflow may grant on fork and Dependabot runs too. But alerts
-  describe `main`, not the PR, so it first needs a way for the PR that fixes a
-  Critical alert to merge.
+  from a tree with none. C-9.1 #11's Dependabot alert gate, the `dependabot-alerts`
+  step, is the independent second signal (#3558). For `dependabot` it is: the
+  alerts API call failed (gh prints why: an outage, so re-run; or a token without
+  `vulnerability-alerts: read`, which GitHub may withhold from a fork's pull
+  request, so push the branch to this repository instead); a listing that is not
+  pages of open alerts, each with a known severity, a GHSA id, a package and a
+  manifest inside the repository; no merge base with `origin/main` in the
+  checkout (the job fetches full history for it); or a High or Critical alert
+  the gate cannot judge: a manifest it does not map (CI-SEC-001 lists those it
+  does; teach it another in a reviewed PR), a lockfile git or the gate cannot
+  read, or a package that resolves to no version there on either side (check the
+  alert on GitHub).
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).

@@ -11,7 +11,7 @@ Owner: Security. Threat model: `docs/security/threat-models/e09-auth-rbac.md` (E
 | Suppression policy                                    | same script                                                            | `nosem`/`nosec`/`noqa: S…` in auth/accounts/secrets/api without `reason= owner= review=YYYY-MM-DD`, or past its review date |
 | gitleaks token shapes                                 | `.gitleaks.toml` (`cv-*` rules), `.husky/pre-commit`, CI `gitleaks`    | session/refresh/invite token, recovery code, TOTP secret                                                                    |
 | ZAP authenticated scan                                | `.github/workflows/dast-auth-zap.yml`, `security/zap/`                 | high alerts; any loss of the logged-in indicator                                                                            |
-| SCA                                                   | `dependabot.yml` (pip/npm), CI `pip-audit` / `npm-audit`               | high/critical advisories (argon2-cffi, TOTP, starlette cookie/session)                                                      |
+| SCA                                                   | `dependabot.yml` (pip/npm), CI `pip-audit` / `npm-audit` + alert gate  | high/critical advisories (argon2-cffi, TOTP, starlette cookie/session)                                                      |
 | Bandit                                                | CI `bandit` (`[tool.bandit]`, no rule skipped)                         | medium+ — B105/B106/B311 stay active for token/recovery-code generation (CSPRNG only, SR-012/SR-022)                        |
 
 ## Rule → SR map

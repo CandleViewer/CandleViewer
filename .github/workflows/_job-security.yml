@@ -8,7 +8,8 @@ name: _job-security
 # jobs that hold the same permissions: protection requires only `ci-required`,
 # which judges this whole workflow as the one `security` lane, and every job
 # costs a runner slot and its own setup.
-# - `read-only-scans` (contents: read): security-auth, pip-audit, npm-audit and
+# - `read-only-scans` (contents: read, and vulnerability-alerts: read for the
+#   alert gate): security-auth, pip-audit, dependabot-alerts, npm-audit and
 #   license-scan;
 # - `semgrep-bandit` (security-events: write, for their SARIF uploads).
 # Each scan is a step with an `id`, `continue-on-error` and its old job's
@@ -356,19 +357,26 @@ jobs:
   #   docs/security/auth-security-gates.md), and polices suppressions. The gate
   #   fails the scan on a target or rule it did not analyse (#3549).
   # - pip-audit, npm-audit — CONSTITUTION §9 #11 (sca), Python and JS/TS advisories.
+  # - dependabot-alerts — §9 #11's Dependabot alert gate (#3558): the open alerts on `main`.
   # - license-scan — CONSTITUTION §9 #14 (license-check), SR-136 policy, after its
   #   backend install and package-scope check (license-scope) and the freeze check.
-  # The tree readers (security-auth, pip-audit) run before the pnpm and uv installs.
+  # The tree readers (security-auth, pip-audit, dependabot-alerts) run before the pnpm and uv
+  # installs.
   # ---------------------------------------------------------------------
   read-only-scans:
     name: read-only-scans
     runs-on: ubuntu-latest
-    timeout-minutes: 45 # four scans of 10 + 5 for setup
+    timeout-minutes: 47 # four scans of 10, the alert gate's 2, + 5 for setup
     permissions:
       contents: read
+      # dependabot-alerts lists the open alerts with the job token and GitHub's read-only
+      # `vulnerability-alerts` permission, so no new secret:
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions
+      vulnerability-alerts: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0 # dependabot-alerts reads HEAD's merge base with origin/main
           persist-credentials: false # nothing here pushes or fetches
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -415,6 +423,24 @@ jobs:
           uv export --frozen --no-hashes --all-groups --no-emit-project --project services/api -o "$RUNNER_TEMP/api-requirements.txt"
           pip-audit -r "$RUNNER_TEMP/api-requirements.txt" --no-deps --format json --output pip-audit.json --progress-spinner off || true
           python tools/ci/security_gate.py --tool pip-audit --report pip-audit.json
+
+      # The open alerts describe `main`. A High or Critical one blocks unless this tree changes the
+      # package's resolved versions in its lockfile since the merge base with main (the fix: the
+      # audit steps judge the new versions) or an unexpired entry accepts it (High only; #3558).
+      # A failed API call fails closed (CI-SEC-005), never passes as "no alerts" (runbook).
+      - name: dependabot-alerts (open Dependabot alerts on main, judged on this tree)
+        id: dependabot-alerts
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fail() { echo "CI-SEC-005: dependabot: $*" >&2; exit 1; }
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" > dependabot-alerts.json ||
+            fail "the alerts API call failed (gh's error above): a token without vulnerability-alerts: read (GitHub may withhold it from a fork's pull request) or an API outage"
+          base=$(git merge-base HEAD origin/main) || fail "this checkout has no merge base with origin/main"
+          python tools/ci/security_gate.py --tool dependabot --report dependabot-alerts.json --base "$base"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ !cancelled() }}

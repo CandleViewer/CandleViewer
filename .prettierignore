@@ -51,3 +51,5 @@ docs/plan/backlog/_reconciliation-report.md
 # #3494: `pnpm audit --json` reports as pnpm wrote them (JSON.stringify, 2-space indent, LF),
 # format-checked by scripts/tests/test_security_gate.py; prettier would fold their short arrays.
 scripts/tests/fixtures/pnpm-audit/*.json
+# #3558: `gh api --paginate --slurp` Dependabot alert listings as gh wrote them (compact, one line).
+scripts/tests/fixtures/dependabot-alerts/*.json

@@ -15,6 +15,8 @@ point running everything runnable locally"):
   - gitleaks (working tree; full-history scan is CI-only, needs the
     pinned container image -- see .github/workflows/_job-security.yml)
   - license-check (pnpm licenses + python env licences)
+The Dependabot alert gate is CI-only: it lists the repository's alerts with the
+workflow token (`dependabot-alerts` in .github/workflows/_job-security.yml).
 
 Any tool that cannot run in the current environment (e.g. semgrep does not
 ship Windows wheels, docker not installed) is reported as SKIPPED with the
