@@ -335,10 +335,11 @@ def make_auth_router(
                 return False
         return True
 
-    async def _audit_refusal(request: Request, user_id: uuid.UUID) -> None:
+    async def _audit_refusal(request: Request, user_id: uuid.UUID, **void: Any) -> None:
         """#2911: record a disabled user's refused mint. Not write-ahead (the refusal is
         already decided and nothing was minted): a record that cannot be written is logged,
-        and the caller's 401 stands."""
+        and the caller's 401 stands. *void* (`session_id`, `after_state`) names a session that
+        a write-ahead record announced, as the recovery's refusal row voids its own (#2295)."""
         if audit_service is None or not audit_service.is_active:
             _log().error("auth.login_failed.audit_unavailable", error="inactive")
             return
@@ -351,6 +352,7 @@ def make_auth_router(
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="user_disabled",
+                **void,
             )
         except AuditError as exc:
             _log().error("auth.login_failed.audit_unavailable", error=type(exc).__name__)
@@ -421,9 +423,11 @@ def make_auth_router(
         except UserDisabled:
             # #2911: disabled (or deleted) since the password check; nothing was minted. The
             # records written ahead are followed by the refusal, counted and audited like login's
-            # refusal of a disabled account (SR-125), then login's 403 for it: never a 500.
+            # refusal of a disabled account (SR-125), then login's 403 for it: never a 500. Its
+            # row voids the session that `auth.session_created` announced (C-2.9).
             auth_login_failures_total.labels(method="password").inc()
-            await _audit_refusal(request, user_id)
+            voided = {"voids_session_created": str(session_id)}
+            await _audit_refusal(request, user_id, session_id=session_id, after_state=voided)
             return _problem(403, "Account disabled", "Account disabled - contact the owner")
         # U34 (RR-15): an Owner's password-only session is to page; no rule yet (#2746).
         role = normalise_role(user.get("roles") or ())
