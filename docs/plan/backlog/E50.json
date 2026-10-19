@@ -15,7 +15,7 @@
     "sprint": "Sprint 02",
     "priority": "P0 Critical",
     "risk": "R10 Key-person",
-    "estimate": 85,
+    "estimate": 88,
     "blocked_by": [
       "E02",
       "E03",
@@ -2117,5 +2117,30 @@
     "parent": "E50",
     "perspective": "Architecture",
     "body": "> **RETIRED 2026-09-24: C65′ drain journal folded into E50-T10; C69 into E50-T60 (29 §4a)**\n\n## Context\n\n#239 makes `drain_pending()` complete (priority first). Drained `wait=True` receipts resolve with `InterpreterStoppedError` (R14-02). #244 adds `dropped_receipts`/`on_receipt_dropped`, which is called from a finaliser.\n\n## Acceptance criteria\n\n1. Shutdown is drain, then journal, then `get_persisted_snapshot()`, then `stop()`. After restore, the journal is replayed exactly once, with de-duplication.\n2. Waiters check `Receipt.error`.\n3. The `on_receipt_dropped` hook is thread-safe and does not touch the loop. The supervisor alerts on `dropped_receipts > 0`.\n4. The round-trip test must pass on BOTH kinds.\n\n## References\n\n`docs/research/xstate/79-r14-final-readiness-verdict.md` §7/§10; ADR-0016 Amendment 14."
+  },
+  {
+    "key": "E50-T61",
+    "kind": "Task",
+    "title": "Create the statechart persistence tables (machine_snapshots, machine_drain_journal, machine_events) and their Postgres repositories",
+    "labels": [
+      "type/tech",
+      "area/backend-platform",
+      "priority/p1",
+      "security-review"
+    ],
+    "sprint": "Sprint 14",
+    "priority": "P1 High",
+    "risk": "R5 Scope",
+    "estimate": 3,
+    "blocked_by": [
+      "E50-T10",
+      "E50-T49"
+    ],
+    "component": "api",
+    "phase": "P0 Foundations",
+    "milestone": "R0 Foundations",
+    "parent": "E50",
+    "perspective": "Architecture",
+    "body": "## Context\n`docs/plan/24-internal-schemas.md` §17.6 defines the statechart persistence tables — `machine_snapshots` (with `lib_snapshot_ver`, `hmac_key_id`, `hmac_tag`, `chain_trips`), `machine_drain_journal` (CV-C65') and `machine_events` (append-only, written by `CvAuditPlugin`; `order_events` §8 specialises it) — and attributes their migration to \"E29-T12\", a ticket that does not exist. The persistence code already exists (`statechart/persistence.py`: `Persister` from E50-T10 and `Restorer` from E50-T49, both taking injected `SnapshotRepo` / `DrainJournal` / `PersistAudit` repositories), so the only missing piece is the relational schema and the SQLAlchemy repositories that implement those ports against Postgres. Filed by the orchestrator on 2026-10-19 as a plan gap found while sequencing E29-T03 (B1 recovers from `order_events` and does not create these tables).\n\n## Scope / Deliverables\n- One Alembic revision creating `machine_snapshots`, `machine_drain_journal` and `machine_events` exactly as 24 §17.6 specifies (columns, keys, indexes, append-only grants for `machine_events` per C-5.7), reversible `downgrade()`.\n- `storage/repositories/` implementations of `SnapshotRepo`, `DrainJournal` and `PersistAudit` (asyncpg via SQLAlchemy 2.x async), wired through the factory's `build()` / `restore()` only (`statechart/factory.py` stays the single construction site).\n- 24 §17.6: replace \"migration E29-T12\" with this ticket's key; 21-database-schema.md gains the three tables with their C-5.9 classification.\n\n## Out of scope\nAny machine-specific table (`order_events` is E29-T03's), the admin inspector screen (E42-S08), snapshot policy changes (ADR-0016 §persistence is final).\n\n## Acceptance criteria\n```gherkin\nScenario: round-trip migration\n  Given an empty database and a seeded database\n  When alembic upgrade head, downgrade -1, upgrade head run\n  Then both succeed and the three tables match 24 §17.6 column for column\n\nScenario: snapshot, drain and restore through the real repositories\n  Given a built machine persisted at quiescence through Persister\n  When the process restarts and Restorer.restore runs from the Postgres rows\n  Then last_transition_ok is not None, the drain journal is replayed exactly once and the HMAC envelope verifies\n\nScenario: machine_events is append-only\n  Given the application role\n  When an UPDATE or DELETE is attempted on machine_events\n  Then it is refused by the grant\n```\n\n## Technical notes / design\nFollow 24 §17.6 verbatim (the schema doc is the contract); quarantine rows (`fault` set) never write a snapshot (MUST-01); `send_id` semantics from E50-T10. Migration slot: coordinate the head with the orchestrator (single-head check, C-5.3).\n\n## Test plan\nUnit: repository contract tests against the fakes already used by E50-T10/T49. Integration (`@pytest.mark.integration`): the three scenarios above on the compose Postgres; migrations round-trip in CI `migrations`.\n\n## Security notes\nHMAC envelope binds `machine_hash` (CV-C53); `hmac_key_id` references the secrets module's key id only — no key material in the table. `security-review` label (storage of audit-grade rows).\n\n## Accessibility notes\nn/a\n\n## Performance notes\nSnapshot writes are off the hot path by construction (C-2.20); index `machine_events (machine_kind, entity_id, ordinal)`.\n\n## Observability\n`cv_machine_snapshot_write_total`, `cv_machine_restore_total{outcome}` already registered by `CvMetricsPlugin`; the repositories add latency histograms per operation.\n\n## Definition of Done\nMigration merged and round-tripped in CI; repositories wired through the factory; 24 §17.6 and 21 updated; QA record on this issue.\n\n## Dependencies\nblocked_by E50-T10, E50-T49 (both Done).\n\n## Branch\n`feat/e50-t61-statechart-persistence-tables`\n\n## References\n24-internal-schemas.md §17.6; 29-statechart-adoption-plan.md (E50-T10, E50-T49 rows); ADR-0016; CONSTITUTION §5 (C-5.1–C-5.9), C-2.22 (CV-C53, CV-C65').\n\n## Agent execution brief\n- Read first: 24 §17.6, 29 §persistence rows, `statechart/persistence.py`, `21-database-schema.md` §audit tables, `.claude/rules/60-database-migrations.md`.\n- Repo paths: `services/api/candleviewer/migrations/versions/`, `services/api/candleviewer/storage/repositories/`, `services/api/candleviewer/statechart/factory.py` (wiring only), `docs/plan/24-internal-schemas.md`, `docs/plan/21-database-schema.md`.\n- Interfaces you must not break: `SnapshotRepo` / `DrainJournal` / `PersistAudit` ports; `cv.statechart.factory.build/restore` signatures.\n- Commands: `AGENTS.md` §4 (backend lint/type/test; `alembic upgrade head && alembic downgrade -1 && alembic upgrade head`).\n- Branch & PR: one PR ≤ 800 LOC, `Closes #<this issue>`, `security-review` label; migration slot agreed with the orchestrator before opening.\n- Done means: the three Gherkin scenarios pass in CI; docs updated in the same PR.\n- Do NOT: touch any machine JSON or `machine_hashes.lock`; create machine-specific tables; import `xstate_statemachine` outside `statechart/`.\n- If blocked: comment on this issue with the BLOCKER template (`.claude/rules/70-multi-agent.md` §5).\n"
   }
 ]
