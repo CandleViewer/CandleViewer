@@ -18,7 +18,8 @@ a 403: a test never answers on an audit record), then `accounts.key_test`, which
 probes and has the self-check enforce the verdict (decision 11). Its read refused by the store's
 live-owner gate (SR-051) is audited and answered the same way. Every failure the exchange gives
 is a `200` with `passed: false`; a test that probed nothing is its problem. The fake backend has
-no test: `503 store_unavailable`.
+no test: `503 store_unavailable`. A test runs in the request's task: a stop cancelling it past the
+latch may skip the disarm (the latch holds order entry off; the boot pass re-derives the verdict).
 """
 
 from __future__ import annotations
@@ -109,8 +110,7 @@ class _OnAccount:
 def _problem(
     code: str, detail: str, *, status: int | None = None, retry_s: int | None = None, **extra: Any
 ) -> JSONResponse:
-    """A problem of a registered code (`x-error-codes`); a `503` or a throttled test says when to
-    retry."""
+    """A problem of a registered code (`x-error-codes`); a `503` or a `429` says when to retry."""
     status, headers = status or _STATUS[code], {}
     body = {"type": f"https://candleviewer.local/errors/{code}", "status": status, "code": code}
     body |= {"title": ERROR_META[ErrorCode(code)].title, "detail": detail, **extra}
