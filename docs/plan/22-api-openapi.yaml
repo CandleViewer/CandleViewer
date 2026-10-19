@@ -142,6 +142,9 @@ info:
       "Cross-origin (CORS)"), every response that issues a new `__Host-cv_csrf` value (not an
       expiry) also carries that value in an `X-CSRF-Token` response header
       (`components.headers.CsrfTokenIssued`), in the request header's `<nonce>.<mac>` format.
+      Today only the three operations that issue the token in code declare it, on their `200`:
+      `POST /auth/mfa/verify`, `POST /auth/refresh` and `GET /auth/session`. Each other operation
+      in the issue list above declares it in the change that makes it issue one (ADR-0038 F5).
       `GET /auth/session` then always carries the current session's token: the re-issued value
       when it re-issues the cookie, else the verified cookie value. The header is declared but
       never `required`: with the flag off no response carries it. Every response that carries it
@@ -152,23 +155,27 @@ info:
       it keeps the token in memory only, never in web storage, updates it from every backend
       response that carries the header, and shares it with the app's other same-origin windows
       over a `BroadcastChannel`. After a reload it calls `GET /auth/session` for the token (the
-      `cv_refresh` cookie identifies the session), then `POST /auth/refresh` for a bearer.
+      `cv_refresh` cookie identifies the session), then `POST /auth/refresh` for a bearer. The
+      desktop mode needs both cookies to be stored from and sent with the page's requests, which
+      their attributes in "Cookie" decide (ADR-0038 4b).
     * **Desktop recovery.** On `403 csrf_token_invalid` the desktop page calls
       `GET /auth/session`, takes the token from its `X-CSRF-Token` header and retries the request
       **once** if the token changed: the multi-tab rule with a different token source. A second
       refusal is surfaced to the user.
 
-    ### Cross-origin (CORS, ADR-0038)
+    ### Cross-origin (CORS)
     The desktop shell's page, `app://candleviewer` (SR-042), calls the backend from another
-    origin. Every CORS answer sits behind the `desktop.backend_connection` flag (default off);
-    with it off, no response carries a CORS header. A listed `Origin` is an anti-CSRF control,
-    not client authentication: a session still needs the password and TOTP, and every unsafe
-    request still needs the session-bound token (see "CSRF").
+    origin (ADR-0038). Every CORS answer sits behind the `desktop.backend_connection` flag
+    (default off); with it off, no response carries a CORS header. A listed `Origin` is an
+    anti-CSRF control, not client authentication: a session still needs the password and TOTP,
+    and every unsafe request that "CSRF" does not exempt still needs the session-bound token.
 
     * **Origins.** Only the origins in `CV_ALLOWED_ORIGINS`, the SR-042 allow-list, compared
       exactly once a trailing `/` is dropped; never `*` and never a pattern. A listed origin gets
       its own value back in `Access-Control-Allow-Origin`, with
-      `Access-Control-Allow-Credentials: true` and `Vary: Origin`.
+      `Access-Control-Allow-Credentials: true` and `Vary: Origin`. So with the flag on, listing
+      an origin lets its pages read credentialed responses, not only send the writes SR-042
+      allows.
     * **Preflight.** Methods `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`;
       `Access-Control-Max-Age` 600 s. Allowed request headers: `Authorization`, `Content-Type`
       and every header parameter this document declares (today `X-CSRF-Token`,
@@ -179,8 +186,9 @@ info:
       are derived from this document, so they follow it.
     * **Unlisted origins.** A request with no `Origin` or an unlisted one, preflight included,
       passes through untouched: it gets the answer it would get without CORS and no CORS header,
-      so a browser withholds the response. The flag is read only after the origin match. The
-      SR-042 `Origin` check, the double-submit and the session MAC run whatever the flag says.
+      so a browser withholds the response from a cross-origin page whose origin is not listed.
+      The flag is read only after the origin match. The SR-042 `Origin` check, the double-submit
+      and the session MAC run whatever the flag says.
     * **Placement and refusals.** CORS is answered inside the mesh-only guard and the CSRF guard:
       off-mesh traffic never reaches it, and a preflight (`OPTIONS`, a safe method) passes the
       CSRF guard. The guard's token refusals (`403 csrf_token_invalid` for a missing, mismatched
