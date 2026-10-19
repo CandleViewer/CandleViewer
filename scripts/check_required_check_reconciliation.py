@@ -117,33 +117,32 @@ class ReconciliationError(Exception):
     pass
 
 
+#: The most `_read` takes from one file, in characters. The workflows and JSON files this reads
+#: are far smaller, so a larger one is refused rather than buffered (cv-unbounded-read, #3716).
+MAX_READ_CHARS = 1 << 20
+
+
 def load_json(path: str) -> dict:
     try:
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except FileNotFoundError as exc:
-        raise ReconciliationError(f"file not found: {path}") from exc
+        data: dict = json.loads(_read(path))
     except json.JSONDecodeError as exc:
         raise ReconciliationError(f"{path} is not valid JSON: {exc}") from exc
+    return data
 
 
 def load_constitution_check_names(path: str) -> list[str]:
     names: list[str] = []
-    try:
-        with open(path, encoding="utf-8") as fh:
-            in_table = False
-            for line in fh:
-                if line.strip().startswith("| # | Check name"):
-                    in_table = True
-                    continue
-                if in_table:
-                    if not line.strip().startswith("|"):
-                        break
-                    match = CHECK_ROW_RE.match(line.strip())
-                    if match:
-                        names.append(match.group(1))
-    except FileNotFoundError as exc:
-        raise ReconciliationError(f"file not found: {path}") from exc
+    in_table = False
+    for line in _read(path).splitlines():
+        if line.strip().startswith("| # | Check name"):
+            in_table = True
+            continue
+        if in_table:
+            if not line.strip().startswith("|"):
+                break
+            match = CHECK_ROW_RE.match(line.strip())
+            if match:
+                names.append(match.group(1))
     if not names:
         raise ReconciliationError(
             f"no §9 check rows found in {path} — table heading may have moved"
@@ -500,9 +499,12 @@ def aggregated_checks(names: list[str], lanes: set[str]) -> tuple[set[str], list
 def _read(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as fh:
-            return fh.read()
+            text = fh.read(MAX_READ_CHARS + 1)
     except FileNotFoundError as exc:
         raise ReconciliationError(f"file not found: {path}") from exc
+    if len(text) > MAX_READ_CHARS:
+        raise ReconciliationError(f"{path} is over {MAX_READ_CHARS} characters")
+    return text
 
 
 def required_contexts(desired_state: dict[str, Any]) -> set[str]:

@@ -438,3 +438,50 @@ def test_main_exits_2_when_a_called_workflow_is_missing(tmp_path, monkeypatch, c
     flags = ("--workflows-glob", str(tmp_path / "*.yml"))
     assert _run(tmp_path, monkeypatch, _valid_desired_state(), *flags, live=_no_api_call) == (2, [])
     assert "_gone.yml" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("call", "body"),
+    [
+        (lambda: abp.fetch_live_state("o/r", "not-a-real-token"), b"{}" + b" " * 7),
+        (lambda: abp.apply_state("o/r", "not-a-real-token", {}), b"{}" + b" " * 7),
+        (lambda: abp.fetch_branch_rules("o/r", "not-a-real-token"), b"[]" + b" " * 7),
+    ],
+    ids=["live-state", "apply", "branch-rules"],
+)
+def test_an_api_answer_over_the_bound_is_refused(
+    monkeypatch: pytest.MonkeyPatch, call: Callable[[], object], body: bytes
+) -> None:
+    # #3716: every API read takes MAX_RESPONSE_BYTES + 1 at most and refuses a longer answer,
+    # rather than buffering whatever arrives (cv-unbounded-read).
+    monkeypatch.setattr(abp, "MAX_RESPONSE_BYTES", 8)
+    reads: list[int] = []
+
+    class _Counted(_Resp):
+        def read(self, size: int | None = -1, /) -> bytes:
+            reads.append(-1 if size is None else size)
+            return super().read(size)
+
+    monkeypatch.setattr(abp.urllib.request, "urlopen", lambda request, timeout: _Counted(body))
+    with pytest.raises(abp.ApplyError, match=r"^(GET|PUT) \S+: the answer is over 8 bytes$"):
+        call()
+    assert reads == [9]
+
+
+def test_an_api_answer_at_the_bound_is_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(abp, "MAX_RESPONSE_BYTES", 8)
+    monkeypatch.setattr(
+        abp.urllib.request, "urlopen", lambda request, timeout: _Resp(b"[]" + b" " * 6)
+    )
+    assert abp.fetch_branch_rules("o/r", "not-a-real-token") == {}
+
+
+def test_a_desired_state_file_over_the_bound_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #3716: load_desired_state reads MAX_FILE_CHARS + 1 characters at most.
+    monkeypatch.setattr(abp, "MAX_FILE_CHARS", 8)
+    over = tmp_path / "over.json"
+    over.write_text("{}" + " " * 7, encoding="utf-8")
+    with pytest.raises(abp.DesiredStateError, match="over 8 characters"):
+        abp.load_desired_state(str(over))
