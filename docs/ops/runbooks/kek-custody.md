@@ -107,23 +107,26 @@ environment's process. Nothing here reads or changes another environment's rows 
    `CV_KEK_VERSION=n+1`, `CV_KEK_HANDLE` = v(n+1) and `CV_KEK_PREV_HANDLE` = v(n). The boot checks
    the previous KEK first, then enrols v(n+1) (`security.kek_enrolled`). From this boot on, rows
    still at v(n) sign only while the previous handle is supplied.
-2. **Re-wrap.** As the Owner, log in, complete MFA, and send `POST /admin/keys/kek-rewrap` with
-   the CSRF token and `{"environment": "<env>", "to_version": <n+1>}`. Its first answer is
-   `403 step_up_required`: step up for class `keys` and send it again. The call latches new
-   orders read-only (`secrets.kek_rotation`) until the restart in step 3; cancels, stop-loss
-   amendments and borrows keep working. The answer holds counts only. Repeat the call until it
-   answers `complete: true`: each call resumes the run, and a `503` keeps the rows moved so far.
-   Investigate every `failed` row first: `security.kek_rotation_failed` names it, and it stays
-   at v(n). A `409 kek_rotation_not_staged` means the body differs from the boot or the
-   previous handle is missing. Each run writes `security.kek_rotation_started` (or
-   `security.kek_rotation_resumed`), one `security.credential_rewrapped` per moved row in that
-   row's transaction, and `security.kek_rotated`, or `security.kek_rotation_incomplete` while
-   rows are left: never go on after an incomplete record. An auth keyring row left at v(n) moves
-   only at a rotation boot: restart as in step 1, then call again (ADR-0009 Amendment 4).
+2. **Re-wrap.** As the Owner, log in, complete MFA, and send `POST /admin/keys/kek-rewrap` with the
+   CSRF token and `{"environment": "<env>", "to_version": <n+1>}`. Its first answer, unless a `keys`
+   step-up is still live, is `403 step_up_required`: step up for class `keys` and send it again. The
+   call latches new orders read-only (`secrets.kek_rotation`) until the restart in step 3; cancels,
+   stop-loss amendments and borrows keep working. The answer holds counts only. Repeat the call
+   until it answers `complete: true`: each call resumes the run, and a `503` keeps the rows moved so
+   far. Investigate every `failed` row first: `security.kek_rotation_failed` names it, and it stays
+   at v(n). A `409 kek_rotation_not_staged` means the body differs from the boot or the previous
+   handle is missing; a `409 kek_rotation_in_progress`, that a run is under way (call again after
+   its `Retry-After`); a `403 kek_unavailable`, that the process is degraded (see the Symptom
+   section above; stage again as in step 1 once it is fixed). Each run writes
+   `security.kek_rotation_started` (or `security.kek_rotation_resumed`), one
+   `security.credential_rewrapped` per moved row in that row's transaction, and
+   `security.kek_rotated`, or `security.kek_rotation_incomplete` while rows are left: never go on
+   after an incomplete record. An auth keyring row left at v(n) moves only at a rotation boot:
+   restart as in step 1, then call again (ADR-0009 Amendment 4).
 3. **Prove v(n+1) alone.** Restart via the launcher without `CV_KEK_PREV_HANDLE`, keeping v(n) in
    custody. Confirm health is OK with no `kek_rows_stranded` and that the stored-key self-check
-   passed (no `accounts.key_selfcheck_*` latch). If rows are stranded, stage again as in step 1
-   and resume step 2.
+   passed (no `accounts.key_*` latch). If rows are stranded, stage again as in step 1 and resume
+   step 2.
 4. **Retire.** Only then set `kek_versions.retired_at` for v(n) of this environment only
    (`WHERE env = '<env>' AND version = <n>`), under change control (owner + security reviewer).
    A boot that supplies a retired KEK is refused (`kek_retired`).

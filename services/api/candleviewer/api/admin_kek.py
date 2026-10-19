@@ -4,8 +4,8 @@
 Owner only. `CsrfMiddleware` and the step-up middleware (`DANGEROUS_ROUTES`, class `keys`) answer
 before this handler runs. It then resolves the caller (none wired: 501; no verified session: 401),
 checks the body, read up to 1 KiB, against `KekRewrapRequest` (422), and checks `keys:manage` with
-`auth.scopes.enforce`, which audits `rbac.denied`, then the Owner role (403), as the owner TOTP
-reset does. The run is `AdminService.rewrap_kek`: M2 checks the staged boot, audits a refusal,
+`auth.scopes.enforce`, then the Owner role (403), each denial audited as `rbac.denied` (C-2.9).
+The run is `AdminService.rewrap_kek`: M2 checks the staged boot, audits a refusal,
 latches order entry and re-wraps. This module imports `admin` only, never `secrets` (C-3.2). The
 answer holds counts only, no key id and no KCV; `Idempotency-Key` is never read
 (`x-idempotency: ignored`: a repeat resumes the run).
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import uuid
 from typing import Any, Final, Protocol
 
 from fastapi import APIRouter, Request
@@ -24,10 +25,13 @@ from pydantic import ValidationError
 from candleviewer.admin.errors import KekRewrapError
 from candleviewer.admin.models import KekRewrapResult
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.csrf import source_ip
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, enforce
+from candleviewer.observability.context import current_request_id
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _RETRY_AFTER_S: Final = 5
@@ -108,14 +112,27 @@ def make_admin_kek_router(
         body = await _body(request)
         if isinstance(body, JSONResponse):
             return body
+        ip, rid = source_ip(request.scope), current_request_id()  # the request id: a UUID4
+        who: dict[str, Any] = {"actor_ip": ip, "request_id": uuid.UUID(rid) if rid else None}
         try:
-            await enforce(principal, Permission.KEYS_MANAGE, scope=Scope.NONE, emitter=emitter)
+            await enforce(
+                principal, Permission.KEYS_MANAGE, scope=Scope.NONE, emitter=emitter, **who
+            )
+            if not principal.is_owner:  # the RBAC seed gives `keys:manage` to the Owner alone
+                await emitter.emit(
+                    "rbac.denied",
+                    actor_label=str(principal.user_id),
+                    actor_user_id=principal.user_id,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="owner_only",
+                    **who,
+                )
+                return _problem("forbidden")
         except ForbiddenError:
             return _problem("forbidden")
         except AuditError:  # a denial that cannot be recorded is not answered as one (C-2.9)
             return _problem("audit_unavailable")
-        if not principal.is_owner:  # the RBAC seed gives `keys:manage` to the Owner alone
-            return _problem("forbidden")
         try:
             result = await admin.rewrap_kek(
                 body.environment, body.to_version, str(principal.user_id)

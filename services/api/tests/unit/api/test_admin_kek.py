@@ -5,8 +5,10 @@ rotation of two keys on its in-memory store, injected as the secrets bundle."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -35,11 +37,13 @@ from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.credentials_m2._service_fakes import _boot, _Src, _store_one, _svc
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, AuditLog
+from tests.unit.credentials_m2.test_rotation_preconditions import _hold
 
 PATH = "/admin/keys/kek-rewrap"
 BODY = {"environment": "demo", "to_version": 2}
 OWNER = frozenset({Permission.KEYS_MANAGE})
-_REFUSED = "security.kek_rotation_refused"
+_REFUSED, _STARTED = "security.kek_rotation_refused", "security.kek_rotation_started"
+_IN_PROGRESS = "kek_rotation_in_progress"
 
 
 def deploy(monkeypatch: pytest.MonkeyPatch, svc: SecretsService) -> tuple[_World, Any]:
@@ -108,15 +112,22 @@ async def kek(monkeypatch: pytest.MonkeyPatch) -> _Kek:
 
 
 async def test_an_owner_with_step_up_and_csrf_gets_the_run_counts(kek: _Kek) -> None:
-    owner = await elevated(kek.w, "owner", OWNER)
-    r = kek.post(owner)
+    r = kek.post(await elevated(kek.w, "owner", OWNER))
     assert r.status_code == 200, r.text
     run = {k: v for k, v in r.json().items() if k != "run_id"}
     versions = {"environment": "demo", "from_version": 1, "to_version": 2, "resumed": False}
     assert run == versions | {"rewrapped": 2, "remaining": 0, "failed": 0, "complete": True}
-    _, terminal = kek.audit.records[-1]
-    by = str(kek.w.resolver.by_token[owner].user_id)
-    assert (terminal["run_id"], terminal["actor_user_id"]) == (r.json()["run_id"], by)
+
+
+async def test_every_record_of_the_run_carries_its_run_id_and_the_owner(kek: _Kek) -> None:
+    booted, owner = len(kek.audit.records), await elevated(kek.w, "owner", OWNER)
+    run_id, by = kek.post(owner).json()["run_id"], str(kek.w.resolver.by_token[owner].user_id)
+    records = [f for _, f in kek.audit.records[booted:] + kek.store.rewrap_audit]
+    assert [(f["run_id"], f["actor_user_id"]) for f in records] == [(run_id, by)] * 4
+
+
+async def test_the_run_latches_order_entry_with_the_rotation_reason(kek: _Kek) -> None:
+    kek.post(await elevated(kek.w, "owner", OWNER))
     assert kek.ctx.oms_read_only_gate.reason_code == "secrets.kek_rotation"
 
 
@@ -161,20 +172,25 @@ async def test_a_manager_or_viewer_is_challenged_then_forbidden_and_nothing_runs
     kek: _Kek, role: str
 ) -> None:
     """The step-up gate precedes RBAC (`test_invites_create_app_e2e.py`): no `rbac.denied` until
-    the session is elevated, then exactly one."""
+    the session is elevated, then exactly one, naming the caller's address and request id."""
     token = await _login(kek.w, role, frozenset())
     first = kek.post(token)
     assert (first.json()["code"], kek.w.audit.of("rbac.denied")) == ("step_up_required", [])
     assert kek.w.elevate(token).status_code == 200
     second = kek.post(token)
     assert (second.status_code, second.json()["code"]) == (403, "forbidden")
-    assert len(kek.w.audit.of("rbac.denied")) == 1
+    [denial] = kek.w.audit.of("rbac.denied")
+    rid = uuid.UUID(second.headers["x-correlation-id"])
+    assert (denial["actor_ip"], denial["request_id"]) == ("127.0.0.1", rid)
     assert (kek.runs(), kek.ctx.oms_read_only_gate.is_read_only) == ([], False)
 
 
-async def test_a_denial_that_cannot_be_recorded_answers_audit_unavailable(kek: _Kek) -> None:
+@pytest.mark.parametrize("perms", [frozenset(), OWNER], ids=["no_keys_manage", "not_the_owner"])
+async def test_a_denial_that_cannot_be_recorded_answers_audit_unavailable(
+    kek: _Kek, perms: frozenset[Permission]
+) -> None:
     """C-2.9: `rbac.denied` is written ahead of the 403; if it cannot be, the answer is a 503."""
-    token, emit = await elevated(kek.w, "viewer", frozenset()), kek.w.audit.emit
+    token, emit = await elevated(kek.w, "viewer", perms), kek.w.audit.emit
 
     async def refuse_denials(action: str, **kw: Any) -> None:
         if action == "rbac.denied":
@@ -190,6 +206,7 @@ async def test_keys_manage_without_the_owner_role_is_forbidden(kek: _Kek) -> Non
     """Defence in depth: the RBAC seed gives `keys:manage` to the Owner alone."""
     r = kek.post(await elevated(kek.w, "manager", OWNER))
     assert (r.status_code, r.json()["code"], kek.runs()) == (403, "forbidden", [])
+    assert [d["reason"] for d in kek.w.audit.of("rbac.denied")] == ["owner_only"]
 
 
 async def test_a_call_without_its_csrf_token_is_refused(kek: _Kek) -> None:
@@ -229,10 +246,6 @@ async def _as_booted(kek: _Kek) -> None:
     return None
 
 
-async def _in_progress(kek: _Kek) -> None:
-    kek.svc._rotating = True  # the single-flight flag a run holds
-
-
 async def _stopped(kek: _Kek) -> None:
     await kek.svc.stop(0)  # no usable KEK
 
@@ -242,10 +255,9 @@ async def _stopped(kek: _Kek) -> None:
     [
         (_as_booted, {"environment": "demo", "to_version": 3}, 409, "kek_rotation_not_staged"),
         (_as_booted, {"environment": "live", "to_version": 2}, 409, "kek_rotation_not_staged"),
-        (_in_progress, BODY, 409, "kek_rotation_in_progress"),
         (_stopped, BODY, 403, "kek_unavailable"),
     ],
-    ids=["other_version", "other_environment", "in_progress", "kek_unavailable"],
+    ids=["other_version", "other_environment", "kek_unavailable"],
 )
 async def test_an_m2_refusal_answers_its_status_and_code_and_latches_nothing(
     kek: _Kek,
@@ -257,12 +269,23 @@ async def test_an_m2_refusal_answers_its_status_and_code_and_latches_nothing(
     owner = await elevated(kek.w, "owner", OWNER)
     await brake(kek)
     r = kek.post(owner, body)
-    assert (r.status_code, r.json()["code"], "Retry-After" in r.headers) == (
-        status,
-        code,
-        code == "kek_rotation_in_progress",  # the contract's one retryable refusal
-    )
+    assert (r.status_code, r.json()["code"], "Retry-After" in r.headers) == (status, code, False)
     assert (kek.runs(), kek.ctx.oms_read_only_gate.is_read_only) == ([_REFUSED], False)
+
+
+async def test_a_call_while_a_run_holds_the_lock_answers_in_progress_with_retry_after(
+    kek: _Kek,
+) -> None:
+    """A real run, held at its first store call, then released: the call's refusal is recorded
+    before that run opens, and the run still completes."""
+    owner = await elevated(kek.w, "owner", OWNER)
+    entered, release = _hold(kek.store, "count_at_kek_version")  # a run's first store call
+    held = asyncio.create_task(kek.ctx.admin.rewrap_kek("demo", 2, "owner-1"))
+    await entered.wait()
+    r = kek.post(owner)
+    release.set()
+    assert (r.status_code, r.json()["code"], r.headers["Retry-After"]) == (409, _IN_PROGRESS, "5")
+    assert ((await held).complete, kek.runs()) == (True, [_REFUSED, _STARTED])
 
 
 def _audit_down(kek: _Kek) -> None:

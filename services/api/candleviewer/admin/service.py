@@ -46,8 +46,8 @@ class AdminService:
     ) -> KekRewrapResult:
         """#2266 D1: one KEK re-wrap run for the Owner (`rewrapKek`), counts only. M2 checks the
         staged boot, audits a refusal, latches order entry and runs; this maps its errors to the
-        contract's codes. Without M2 no refusal can be recorded: `audit_unavailable`. No route
-        calls it yet (#2266 D2)."""
+        contract's codes. Without M2 no refusal can be recorded: `audit_unavailable`. Called by
+        `POST /admin/keys/kek-rewrap` (`api/admin_kek.py`), the Owner-only entry point."""
         if self.secrets is None:
             raise KekRewrapError("audit_unavailable")
         try:
