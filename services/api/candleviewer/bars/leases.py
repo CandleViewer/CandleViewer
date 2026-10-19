@@ -125,9 +125,20 @@ class SpecLeases:
             del self._series[k]
         return out
 
-    def drop(self, key: Key) -> None:
-        """Forget a series immediately (its build failed)."""
-        self._series.pop(key, None)
+    def give_back(self, key: Key, consumer: str, now_us: int, *, built: bool) -> None:
+        """Undo `consumer`'s `acquire` once its registration raised or was cancelled (#2762). Every
+        other holder keeps its lease. A `built` series goes as on `release` (its last lease starts
+        the grace); an unbuilt one is forgotten with its last lease, as nothing exists to tear
+        down. A lease no longer held is a no-op: this never raises over the error in flight."""
+        series = self._series.get(key)
+        if series is None or consumer not in series.holders:
+            return
+        if built:
+            self.release(key, consumer, now_us)
+            return
+        del series.holders[consumer]
+        if not series.holders:
+            del self._series[key]
 
     def quarantine(self, key: Key) -> None:
         """Mark a leased series as having lost its builder, until the series ends."""

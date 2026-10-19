@@ -242,6 +242,10 @@ class BarBuilderSet:
         self._lanes: dict[str, _Lane] = {}
         self._issued: OrderedDict[tuple[str, str], int] = OrderedDict()
         self._ticker: asyncio.Task[None] | None = None
+        #: A series' build in flight, which its other registrants wait on (#2762): `None` once
+        #: built, else the error it raised; cancelled when its registrant left. One per leased
+        #: series at most, so bounded by the caps (C-2.18).
+        self._building: dict[tuple[str, str], asyncio.Future[Exception | None]] = {}
         self._reasons: set[BarsHealthReason] = set()
         self._drains: set[asyncio.Task[None]] = set()
         self._stopping = False
@@ -378,6 +382,11 @@ class BarBuilderSet:
         string), or the per-user cap is meaningless. `None` is reserved for system consumers
         (recorder, rules) and skips only the per-user cap.
 
+        Returns once the series exists (#2762): a registrant that finds it still being built waits
+        for that build and raises what it raised; if the builder's registrant is cancelled, one
+        still waiting builds it. A registration that raises or is cancelled gives back its own
+        lease only, never another consumer's.
+
         Raises `SpecCapExceeded` (nothing changed), `BarSpecError` for an unbuildable kind, or
         `BarServiceStopping` once `stop()` has begun (a transient refusal).
         """
@@ -386,8 +395,30 @@ class BarBuilderSet:
                 "The bar service is shutting down; open the series again later."
             )
         key = (symbol, spec.spec_hash)
-        if not self._leases.acquire(key, consumer, user):
-            return
+        self._leases.acquire(key, consumer, user)
+        try:
+            while (pending := self._building.get(key)) is not None:
+                await asyncio.wait((pending,))  # never cancels the build, which ends the wait
+                if not pending.cancelled():  # cancelled: its registrant left, so build it here
+                    if (error := pending.result()) is not None:
+                        raise error
+                    return
+            if spec.spec_hash in self.active(symbol) or self._leases.quarantined(key):
+                return  # live, in its grace or quarantined: the lease is all it takes
+            await self._build_shared(spec, symbol, key)
+        except BaseException:
+            built = spec.spec_hash in self.active(symbol)
+            self._leases.give_back(key, consumer, self._now(), built=built)
+            await self._maybe_close_lane(symbol)
+            raise
+
+    async def _build_shared(self, spec: BarSpec, symbol: str, key: tuple[str, str]) -> None:
+        """Build a leased series that has none; the other registrants of `key` meanwhile wait on
+        its outcome (#2762)."""
+        if self._stopping:  # its builder left during `stop()`: a new lane would outlive it
+            raise BarServiceStopping("The bar service is shutting down.")
+        outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
+        self._building[key] = outcome
         try:
             builder = self._factory(spec, symbol)
             lane = self._lane(symbol)
@@ -396,10 +427,15 @@ class BarBuilderSet:
                 if all(e.spec.spec_hash != key[1] for e in lane.entries):
                     entry = await self._build(spec, symbol, builder, lane)
                     lane.entries = (*lane.entries, entry)
-        except BaseException:
-            self._leases.drop(key)
-            await self._maybe_close_lane(symbol)
+        except Exception as exc:
+            outcome.set_result(exc)  # every registrant waiting on it raises it too
             raise
+        except BaseException:
+            outcome.cancel()  # its registrant left: one still waiting builds the series
+            raise
+        finally:
+            del self._building[key]
+        outcome.set_result(None)
         bar_builder_specs_in_use.labels(symbol=symbol).set(len(lane.entries))
 
     def release(self, spec_hash: str, symbol: str, consumer: str) -> None:
