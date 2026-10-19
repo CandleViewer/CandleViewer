@@ -94,6 +94,18 @@ async def test_out_of_permission_account_is_invisible_and_forbidden() -> None:
     assert audits == ["rule_scope_denied", "rule_scope_denied"]
 
 
+def test_a_frozen_grant_is_not_listed_but_the_runtime_still_names_it() -> None:
+    """A frozen grant is no access (C-12.4): the account picker omits it, as `/me` does.
+    `granted_accounts` keeps it, so the runtime tells `manager_frozen` from `grant_revoked`."""
+    st = FakeState()
+    st.accounts[B] = AccountState("demo", frozen=True)
+    r = ScopeResolver(st, _noop)
+    assert r.listable_accounts(OWNER) == [A]
+    assert st.granted_accounts(OWNER) == frozenset({A, B})
+    res = r.resolve(scope(account_ids=[str(B)]), OWNER, "demo")
+    assert [s.reason for s in res.suppressed] == ["manager_frozen"]
+
+
 def test_live_requires_explicit_opt_in() -> None:
     """Scenario: Live requires explicit opt-in"""
     st = FakeState()

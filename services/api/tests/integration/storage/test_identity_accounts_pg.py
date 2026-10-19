@@ -1,9 +1,12 @@
-"""Integration (#2713): `SqlAlchemyIdentityProvider.accounts` on real Postgres 16.
+"""Integration (#2713, #415): `SqlAlchemyIdentityProvider` on real Postgres 16.
 
 The accounts `GET /me` lists: an owner reaches every live account with `trade`; anyone else
 only the live, unfrozen, viewable grants of their own, `trade` where `can_trade`. A soft-deleted
 account, a soft-revoked or frozen grant, and another user's grant never appear, and an expired
-owner role, or an owner who is disabled, locked or deleted, is no owner. Every test runs alone and
+owner role, or an owner who is disabled, locked or deleted, is no owner. The `account_scope` of
+`session_info` applies the same grant predicate to a non-owner (`can_view AND NOT frozen`, C-12.4);
+`Me.accounts` also joins the live account, as before. The `/rules` API reads that scope as the
+accounts a caller may target, so the last tests drive it end to end. Every test runs alone and
 in any order: the `db` fixture keeps one active owner standing, because the owner floor (migration
 0001) refuses a commit that leaves none. Not run locally (no docker); exercised by CI `integration`.
 """
@@ -16,17 +19,25 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 import sqlalchemy as sa
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.api.rules_actor import SessionRulesActorResolver
+from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.rules.manager import InMemoryRuleStore, RulesManager
+from candleviewer.rules.vocabulary import default_registry
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.rules.test_rules_manager import _ir
 
 pytestmark = pytest.mark.integration
 
@@ -69,6 +80,14 @@ _SET_STATUS = sa.text(
     "UPDATE users SET status = CAST(:status AS user_status) WHERE id = CAST(:id AS uuid)"
 )
 _SOFT_DELETE_USER = sa.text("UPDATE users SET deleted_at = now() WHERE id = CAST(:id AS uuid)")
+_FREEZE = sa.text(
+    "UPDATE user_account_access SET frozen = true, frozen_at = now() "
+    "WHERE user_id = CAST(:user AS uuid) AND exchange_account_id = CAST(:account AS uuid)"
+)
+_UNFREEZE = sa.text(
+    "UPDATE user_account_access SET frozen = false "
+    "WHERE user_id = CAST(:user AS uuid) AND exchange_account_id = CAST(:account AS uuid)"
+)
 
 
 @pytest.fixture(scope="module")
@@ -230,3 +249,151 @@ async def test_a_soft_deleted_owner_reaches_nothing(db: Any) -> None:
     assert account in _reached(await provider.accounts(owner))
     await _exec(engine, _SOFT_DELETE_USER, id=owner)
     assert await provider.accounts(owner) == []
+
+
+async def _scope(provider: SqlAlchemyIdentityProvider, user: str) -> list[str]:
+    return sorted((await provider.session_info(user))["account_scope"])
+
+
+async def test_the_session_scope_lists_the_view_grants_that_are_not_frozen(db: Any) -> None:
+    provider, engine = db
+    manager, other = await _user(engine, "manager"), await _user(engine, "manager")
+    tag = manager[:6]
+    trade = await _account(engine, f"s-trade-{tag}", age=50)
+    read = await _account(engine, f"s-read-{tag}", age=40)
+    frozen = await _account(engine, f"s-frozen-{tag}", age=30)
+    revoked = await _account(engine, f"s-revoked-{tag}", age=25)
+    theirs = await _account(engine, f"s-theirs-{tag}", age=15)
+    await _grant(engine, manager, trade, trade=True)
+    await _grant(engine, manager, read)
+    await _grant(engine, manager, frozen, trade=True, frozen=True)
+    await _grant(engine, manager, revoked, view=False)
+    await _grant(engine, other, theirs, trade=True)
+    scope = await _scope(provider, manager)
+    assert scope == sorted([trade, read])
+    # The same grant predicate as `/me`; `Me.accounts` also joins the live account, as before.
+    assert set(scope) == _reached(await provider.accounts(manager))
+
+
+async def test_a_freeze_takes_a_grant_out_of_the_session_scope_at_the_next_read(db: Any) -> None:
+    provider, engine = db
+    manager = await _user(engine, "manager")
+    account = await _account(engine, f"s-flip-{manager[:6]}", age=12)
+    await _grant(engine, manager, account, trade=True)
+    assert await _scope(provider, manager) == [account]
+    await _exec(engine, _FREEZE, user=manager, account=account)
+    assert await _scope(provider, manager) == []
+    await _exec(engine, _UNFREEZE, user=manager, account=account)
+    assert await _scope(provider, manager) == [account]
+
+
+class _Sessions:
+    """`SessionService.authenticate_access_token` for one user: any token is that user's session."""
+
+    def __init__(self, user: str) -> None:
+        self.record = SimpleNamespace(user_id=uuid.UUID(user), id=uuid.uuid4())
+
+    async def authenticate_access_token(self, token: str, *, touch: bool = True) -> Any:
+        return self.record
+
+
+def _rules() -> tuple[RulesManager, list[tuple[str, dict[str, Any]]]]:
+    """A rule manager, and the audit records it writes ahead of each answer (C-2.9)."""
+    audits: list[tuple[str, dict[str, Any]]] = []
+
+    async def audit(action: str, payload: dict[str, Any]) -> None:
+        audits.append((action, payload))
+
+    async def broadcast(payload: dict[str, Any]) -> None:
+        return None
+
+    rules = RulesManager(InMemoryRuleStore(), default_registry(), audit=audit, broadcast=broadcast)
+    return rules, audits
+
+
+def _api(provider: SqlAlchemyIdentityProvider, rules: RulesManager, user: str) -> httpx.AsyncClient:
+    """The `/rules` API as `user` calls it: the real session resolver over the real identity read.
+    The router's own `ScopeResolver` pre-check is not wired here (`tests/rules/test_scope_crud.py`
+    covers it): the refusals below are the manager's, from the accounts the actor is granted."""
+    resolver = SessionRulesActorResolver(lambda: _Sessions(user), lambda: None, provider)
+    app = FastAPI()
+    app.include_router(make_rules_crud_router(lambda: rules, resolver.resolve))
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://rules.invalid",
+        headers={"authorization": "Bearer session-token"},
+    )
+
+
+async def _save(api: httpx.AsyncClient, name: str, *accounts: str) -> httpx.Response:
+    """`POST /rules`: a BTCUSDT rule in demo that names `accounts`."""
+    scope = {"level": "symbol", "symbols": ["BTCUSDT"], "environments": ["demo"]}
+    ir = _ir(name=name, scope=scope | {"account_ids": list(accounts)})
+    return await api.post("/rules", json={"ir": ir})
+
+
+async def _mode(api: httpx.AsyncClient, rule: str, mode: str) -> httpx.Response:
+    headers = {"Idempotency-Key": uuid.uuid4().hex}
+    return await api.put(f"/rules/{rule}/mode", json={"mode": mode}, headers=headers)
+
+
+async def test_the_rules_api_refuses_a_rule_on_an_account_once_its_grant_is_frozen(db: Any) -> None:
+    """The `/rules` checks read the session scope as the accounts the caller may target: the same
+    account takes a rule while its grant is live and is refused, and audited, once it is frozen,
+    as is an account never granted (both read `account_not_granted`: the actor holds one flat set
+    of granted accounts). A session without `rules:write` is refused at the permission gate."""
+    provider, engine = db
+    manager, viewer = await _user(engine, "manager"), await _user(engine, "viewer")
+    account = await _account(engine, f"s-rules-{manager[:6]}", age=11)
+    never = await _account(engine, f"s-never-{manager[:6]}", age=10)
+    await _grant(engine, manager, account, trade=True)
+    await _grant(engine, viewer, account)
+    rules, audits = _rules()
+    async with _api(provider, rules, manager) as api:
+        live = await _save(api, "on-live", account)
+        await _exec(engine, _FREEZE, user=manager, account=account)
+        frozen = await _save(api, "on-frozen", account)
+        ungranted = await _save(api, "on-never-granted", never)
+    async with _api(provider, rules, viewer) as api:
+        read_only = await _save(api, "by-viewer", account)
+    assert live.status_code == 201
+    for refused in (frozen, ungranted):
+        assert refused.status_code == 403
+        assert refused.json()["code"] == "forbidden"
+    assert read_only.status_code == 403
+    assert read_only.json()["detail"] == "requires rules:write"
+    # The refused requests stored nothing (one `rule.created`); each scope refusal is audited
+    # ahead of its answer (C-2.9).
+    assert [(action, payload.get("reason")) for action, payload in audits] == [
+        ("rule.created", None),
+        ("rule.scope_refused", "account_not_granted"),
+        ("rule.scope_refused", "account_not_granted"),
+    ]
+
+
+async def test_a_frozen_grant_hides_an_armed_rule_from_its_manager_but_not_the_owner(
+    db: Any,
+) -> None:
+    """Ruled 19 Oct (#415): an armed rule naming a live and a frozen account stays armed on the
+    live one; until the grant is unfrozen its manager cannot read or disarm it through the API
+    (404). The Owner can. The runtime's `manager_frozen` is pinned in tests/rules/test_scope.py."""
+    provider, engine = db
+    manager, owner = await _user(engine, "manager"), await _user(engine, "owner")
+    live = await _account(engine, f"s-both-live-{manager[:6]}", age=9)
+    frozen = await _account(engine, f"s-both-frozen-{manager[:6]}", age=8)
+    for account in (live, frozen):
+        await _grant(engine, manager, account, trade=True)
+    rules, _ = _rules()
+    async with _api(provider, rules, manager) as api:
+        rule = (await _save(api, "on-both", live, frozen)).json()["id"]
+        versions = await api.get(f"/rules/{rule}/versions")
+        assert (await _mode(api, rule, "simulate")).status_code == 200
+        await rules.record_simulation(rule, versions.json()["items"][0]["ir_hash"], 5, 0.0)
+        assert (await _mode(api, rule, "armed")).status_code == 200
+        await _exec(engine, _FREEZE, user=manager, account=frozen)
+        read, disarm = await api.get(f"/rules/{rule}"), await _mode(api, rule, "disabled")
+    async with _api(provider, rules, owner) as api:
+        seen, stop = await api.get(f"/rules/{rule}"), await _mode(api, rule, "disabled")
+    assert (read.status_code, disarm.status_code) == (404, 404)
+    assert (seen.status_code, stop.status_code) == (200, 200)
+    assert (seen.json()["mode"], stop.json()["mode"]) == ("armed", "disabled")

@@ -42,9 +42,12 @@ _PERMS_SQL = sa.text("""
     WHERE u.id = CAST(:id AS uuid) AND u.status = 'active' AND u.deleted_at IS NULL
     ORDER BY p.code
     """)
+# `SessionInfo.account_scope`: the grant predicate of `Me.accounts` below and of
+# `auth.scopes.account_scope` (C-12.4): a view grant that is not frozen. `Me.accounts` also joins
+# the live account; this statement, as before, does not. The `/rules` and `/alerts` checks read it.
 _SCOPE_SQL = sa.text(
     "SELECT exchange_account_id::text FROM user_account_access "
-    "WHERE user_id = CAST(:id AS uuid) AND can_view ORDER BY 1"
+    "WHERE user_id = CAST(:id AS uuid) AND can_view AND NOT frozen ORDER BY 1"
 )
 # `Me.accounts`, scoped at construction (SR-051) as `auth.scopes.account_scope` does: an owner
 # (a live `owner` role of an active, undeleted user, the account store's `_OWNER_PRED`) reaches
