@@ -24,8 +24,11 @@ backend only); like the roll-off, the nightly loop is not scheduled yet and will
    `deletion_id`), marks the item `pending` in the checkpoint, deletes, marks it `done`.
 5. Writes `retention.run` at start and end (`phase=end` or `partial`).
 
-Hot (QuestDB) DAY partitions are dropped only when every symbol in the day is past its hot window,
+Hot (QuestDB) days are dropped only when every symbol in the day is past its hot window,
 the watermark proves the day archived, and every symbol's rows still equal its verified archive.
+A day is its DAY partition, or, for the `PARTITION BY HOUR` table `orderbook_deltas`, its live HOUR
+partitions taken together (#3794): the preview lists it, its bytes are their sum, and one drop
+removes them all.
 Cold (Parquet) partition directories are deleted when they are past the total horizon
 (`21-database-schema.md` §7). `bars` partitions use their family's §7 row (the key carries
 `family=`): `family=time` (`bars_time`) is kept forever, `tick/volume/range/renko/delta` go at

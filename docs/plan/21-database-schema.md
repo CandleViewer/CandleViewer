@@ -3149,7 +3149,7 @@ flowchart LR
 
 Invariant: **no hot partition is ever dropped before its Parquet counterpart is written, checksummed and row-count-verified.** The drop and the manifest write are ordered so a crash between them leaves duplicate data (harmless, dedup on read), never missing data.
 
-**E16-T05 implementation note.** The nightly roll-off (`recorder/rolloff.py`) drops a QuestDB DAY partition only after every symbol in it is exported and re-read (row count + canonical content SHA-256 vs the source, plus manifest SHA-256). Failures quarantine the file under `_quarantine/` with a `.reason.json` sidecar. Per-`(symbol, stream)` roll-off watermarks (`archived_through_us`, `downsampled_through_us`) are kept as JSON under `_manifests/_watermarks/<stream>/symbol=<SYM>.json` (no Postgres migration). Downsampled partitions carry `export_run_id='downsample-1s'` and a `_downsample` column (additive, C-5.8).
+**E16-T05 implementation note.** The nightly roll-off (`recorder/rolloff.py`) drops a QuestDB day (its DAY partition, or every HOUR partition of the day for `orderbook_deltas`, #3794) only after every symbol in it is exported and re-read (row count + canonical content SHA-256 vs the source, plus manifest SHA-256). Failures quarantine the file under `_quarantine/` with a `.reason.json` sidecar. Per-`(symbol, stream)` roll-off watermarks (`archived_through_us`, `downsampled_through_us`) are kept as JSON under `_manifests/_watermarks/<stream>/symbol=<SYM>.json` (no Postgres migration). Downsampled partitions carry `export_run_id='downsample-1s'` and a `_downsample` column (additive, C-5.8).
 
 ### 5.4 Compaction
 

@@ -17,6 +17,7 @@ from typing import ClassVar
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.recorder.rolloff import (
@@ -25,6 +26,7 @@ from candleviewer.recorder.rolloff import (
     RollOffJob,
     RollOffTask,
     recorder_rolloff_failures_total,
+    recorder_rolloff_streams_unlisted_total,
 )
 from candleviewer.storage.cold.watermarks import ArchiveOutcome, RollOffWatermark
 from candleviewer.storage.errors import DropNotAppliedReason, StoragePartitionDropNotApplied
@@ -44,9 +46,15 @@ def day(n_ago: int) -> int:
 class FakeHot:
     days: dict[StreamKind, dict[int, list[str]]]
     dropped: list[tuple[StreamKind, int]] = field(default_factory=list)
+    aged: dict[StreamKind, int] = field(default_factory=dict)  # partitions closed_days misses
+    aged_before: list[int] = field(default_factory=list)
 
     async def closed_days(self, stream: StreamKind, before_us: int) -> list[int]:
         return [d for d in self.days.get(stream, {}) if d + US_PER_DAY <= before_us]
+
+    async def aged_partitions(self, stream: StreamKind, before_us: int) -> int:
+        self.aged_before.append(before_us)
+        return self.aged.get(stream, 0)
 
     async def symbols_in(self, stream: StreamKind, rng: TimeRange) -> list[str]:
         return list(self.days[stream][rng.start_us])
@@ -682,3 +690,61 @@ async def test_rolloff_unconfirmed_drop_is_audited_retained_and_stops_the_stream
     # still hot: newest-first, the unconfirmed day (and the untouched older one) cap it.
     assert advanced == [({"BTCUSDT": [first]}, {"BTCUSDT": [second]})]
     assert (await marks.get("BTCUSDT", T)).archived_through_us == 0
+
+
+# #3794: a stream whose aged partitions roll-off cannot list is counted and logged, never silent.
+
+D = StreamKind.ORDERBOOK_DELTA
+
+
+def _unlisted(stream: StreamKind) -> float:
+    return float(recorder_rolloff_streams_unlisted_total.labels(stream=stream.value)._value.get())
+
+
+async def test_rolloff_counts_and_logs_once_a_stream_whose_aged_partitions_list_no_day() -> None:
+    """Deltas sat in QuestDB with no error at all: `closed_days` could not read hour names."""
+    before = _unlisted(D)
+    hot = FakeHot({D: {}}, aged={D: 24})
+    job = _job(hot, FakeArchiver(), FakeMarks(), config=RollOffConfig(streams=(D,)))
+
+    with capture_logs() as logs:
+        report = await job.run()
+
+    assert _unlisted(D) == before + 1 and report.dropped == []
+    assert [e for e in logs if e["event"] == "rolloff_stream_unlisted"] == [
+        {
+            "event": "rolloff_stream_unlisted",
+            "log_level": "warning",
+            "stream": D.value,
+            "partitions": 24,
+        }
+    ]
+    assert hot.aged_before == [NOW_US - 2 * US_PER_DAY]  # two days: whatever the partitioning
+
+
+def test_the_unlisted_counter_starts_at_zero_for_every_rolloff_stream() -> None:
+    """The alert reads `increase()`: a series created by its first increment shows no increase."""
+    from prometheus_client import REGISTRY
+
+    from candleviewer.recorder.rolloff import ROLLOFF_STREAMS
+
+    name = "recorder_rolloff_streams_unlisted_total"
+    for stream in ROLLOFF_STREAMS:
+        assert REGISTRY.get_sample_value(name, {"stream": stream.value}) is not None, stream
+
+
+@pytest.mark.parametrize(
+    ("days", "aged"),
+    [({}, 0), ({day(10): ["BTCUSDT"]}, 5)],
+    ids=["nothing-aged", "days-listed"],
+)
+async def test_rolloff_does_not_count_a_stream_with_nothing_aged_or_with_days_listed(
+    days: dict[int, list[str]], aged: int
+) -> None:
+    before = _unlisted(D)
+    hot = FakeHot({D: dict(days)}, aged={D: aged})
+
+    await _job(hot, FakeArchiver(), FakeMarks(), config=RollOffConfig(streams=(D,))).run()
+
+    assert _unlisted(D) == before
+    assert hot.aged_before == ([] if days else [NOW_US - 2 * US_PER_DAY])  # read only if none

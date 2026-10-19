@@ -34,7 +34,7 @@ from candleviewer.storage.cold.layout import (
 )
 from candleviewer.storage.cold.manifest import ManifestCorrupt, ManifestStore
 from candleviewer.storage.cold.partition_lock import run_locked_to_completion
-from candleviewer.storage.cold.rolloff_ops import QuestDbHotPartitions, day_name
+from candleviewer.storage.cold.rolloff_ops import QuestDbHotPartitions, day_name, partition_day
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.natural_keys import TABLE_BY_STREAM
 from candleviewer.storage.questdb.reader import PgWireConnection
@@ -201,12 +201,13 @@ class QuestDbRetentionHotStore:
         sql = f"SELECT name, diskSize, numRows, minTimestamp FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted table as escaped literal
         out: dict[str, int] = {}
         for row in await self._fetch(sql):
-            name = str(row.get("name", ""))
+            day = partition_day(str(row.get("name", "")))
             # QuestDB can keep listing a dropped / emptied partition (no rows, null
             # minTimestamp) until it is purged; that is not data, so it is not "present".
             rows = int(str(row.get("numRows") or 0))
-            if _DATE_RE.fullmatch(name) and rows > 0 and row.get("minTimestamp") is not None:
-                out[name] = int(str(row.get("diskSize") or 0))
+            if day is not None and rows > 0 and row.get("minTimestamp") is not None:
+                # A `PARTITION BY HOUR` table's day is the sum of its live hours (#3794).
+                out[day] = out.get(day, 0) + int(str(row.get("diskSize") or 0))
         return out
 
     async def days(self, stream: StreamKind, before_us: int) -> list[HotDayInfo]:

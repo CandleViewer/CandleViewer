@@ -341,3 +341,15 @@ groups:
         annotations:
           summary: "A backup kind has not succeeded for over 26 h (a daily kind) or 8 days (config_bundle)"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-backuplastsuccessstale"
+      - alert: RollOffStreamUnlisted
+        # #3794: a nightly roll-off listed no closed day for a stream whose hot table holds aged
+        # partitions, so that stream sits outside retention (deltas did, by their hour names).
+        # The run increments once per stream; the 25 h window spans the nightly cadence.
+        expr: sum by (env, stream) (increase(recorder_rolloff_streams_unlisted_total[25h])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: recorder
+        annotations:
+          summary: "Roll-off listed no closed day for a stream whose hot table holds aged partitions"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-rolloffstreamunlisted"

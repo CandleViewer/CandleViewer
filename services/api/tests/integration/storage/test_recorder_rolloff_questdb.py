@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from candleviewer.recorder.rolloff import RollOffConfig, RollOffJob
+from candleviewer.recorder.rolloff import US_PER_DAY, RollOffConfig, RollOffJob
 from candleviewer.storage.cold.duckdb_views import build_views, query_symbol_day_count
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.questdb_source import QuestDbHotTierSource
@@ -39,6 +39,7 @@ from tests.integration.storage.test_questdb_hot_tier import (
     questdb_container,  # noqa: F401 -- pytest fixture re-export
     wait_for_row_count,
 )
+from tests.unit.storage.cold._replay_rows import SYMBOL, generated_rows
 
 pytestmark = pytest.mark.integration
 
@@ -140,5 +141,65 @@ async def test_rolloff_real_questdb_partition_export_verify_drop(
         db = tmp_path / "analytics.duckdb"
         build_views(db, reg)
         assert query_symbol_day_count(db, "trades", "BTCUSDT", "2026-10-01") == 1200
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_rolloff_real_questdb_rolls_an_hour_partitioned_table_off(
+    questdb_container: tuple[str, int, int],  # noqa: F811 -- fixture injection
+    tmp_path: Path,
+) -> None:
+    """#3794: `orderbook_deltas` is `PARTITION BY HOUR`. Roll-off never listed its hours as a
+    closed day, so deltas never left QuestDB. The old day's hours are now exported, verified and
+    dropped together by name; the newer day's hour stays hot."""
+    host, pg_port, ilp_port = questdb_container
+    conn = await _connect(host, pg_port)
+    try:
+        await run_migrations(_AsyncpgExecutor(conn), DDL_DIR)
+        old = generated_rows()[StreamKind.ORDERBOOK_DELTA]  # 2026-10-01T00 and T01
+        shift = _us(_NEW) - _us(_OLD)
+        new = [row | {"ts": int(str(row["ts"])) + shift} for row in old[:10]]  # 2026-10-09T00
+        writer = IlpWriter(_AsyncpgTcpIlpTransport(host, ilp_port), ALL_SCHEMAS)
+        await writer.start()
+        await writer.write_rows("orderbook_deltas", [*old, *new], "ts")
+        await writer.stop()
+        await wait_for_row_count(conn, "orderbook_deltas", len(old) + len(new))
+        pg = _AsyncpgExecutor(conn)
+        hot = QuestDbHotPartitions(pg)
+        # The guard's column, read on the real `table_partitions`: the old day's two hours.
+        assert (
+            await hot.aged_partitions(StreamKind.ORDERBOOK_DELTA, _us(_NOW) - 2 * US_PER_DAY) == 2
+        )
+        reg = DatasetRegistry(tmp_path)
+        marks = FileWatermarkStore(reg)
+
+        async def hot_days(symbol: str, stream: StreamKind) -> int | None:
+            return 7
+
+        job = RollOffJob(
+            hot=hot,
+            archiver=ColdArchiver(reg, QuestDbHotTierSource(pg)),
+            watermarks=marks,
+            hot_days=hot_days,
+            audit=_Audit(),
+            events=_Events(),
+            lock=_Lock(),
+            config=RollOffConfig(streams=(StreamKind.ORDERBOOK_DELTA,)),
+            clock=lambda: _NOW,
+        )
+        report = await job.run()
+
+        assert report.dropped == [(StreamKind.ORDERBOOK_DELTA, _us(_OLD))]
+        sql = "SELECT name, numRows, minTimestamp FROM table_partitions('orderbook_deltas')"
+        live = {
+            str(r["name"])
+            for r in await pg.fetch(sql)
+            if int(r["numRows"] or 0) > 0 and r["minTimestamp"] is not None
+        }
+        assert live == {"2026-10-09T00"}
+        assert await conn.fetchval("SELECT count() FROM orderbook_deltas") == len(new)
+        mark = await marks.get(SYMBOL, StreamKind.ORDERBOOK_DELTA)
+        assert mark.archived_through_us == _us(_OLD + timedelta(days=1))
     finally:
         await conn.close()

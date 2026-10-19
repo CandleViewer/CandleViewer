@@ -59,6 +59,16 @@ recorder_rolloff_failures_total = Counter(
 recorder_watermark_lag_days = Gauge(
     "recorder_watermark_lag_days", "Days between now and the roll-off watermark.", ["stream"]
 )
+recorder_rolloff_streams_unlisted_total = Counter(
+    "recorder_rolloff_streams_unlisted_total",
+    "Roll-off runs listing no closed day while the stream's hot table holds aged partitions.",
+    ["stream"],
+)
+for _stream in ROLLOFF_STREAMS:  # at 0 from the start: the alert's `increase()` sees the first
+    recorder_rolloff_streams_unlisted_total.labels(stream=_stream.value)
+#: A partition whose newest row is older than this belongs to a day that closed at least a day
+#: before the listing's own one-day cut-off, whatever the table's partitioning.
+UNLISTED_AGE_DAYS = 2
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -68,6 +78,10 @@ def logger() -> structlog.stdlib.BoundLogger:
 
 class HotPartitions(Protocol):
     async def closed_days(self, stream: StreamKind, before_us: int) -> list[int]: ...
+
+    async def aged_partitions(self, stream: StreamKind, before_us: int) -> int:
+        """How many partitions hold only rows older than `before_us`, read without their names."""
+        ...
 
     async def symbols_in(self, stream: StreamKind, rng: TimeRange) -> list[str]: ...
 
@@ -274,10 +288,22 @@ class RollOffJob:
             )
         return outcome
 
+    async def _unlisted(self, stream: StreamKind) -> None:
+        """#3794: a table whose aged partitions `closed_days` cannot list sits outside retention
+        with no error at all (deltas did, under their hour names). Count it and log it once."""
+        cutoff = self._now_us() - UNLISTED_AGE_DAYS * US_PER_DAY
+        aged = await self._hot.aged_partitions(stream, cutoff)
+        if aged:
+            recorder_rolloff_streams_unlisted_total.labels(stream=stream.value).inc()
+            logger().warning("rolloff_stream_unlisted", stream=stream.value, partitions=aged)
+
     async def _roll_stream(self, stream: StreamKind, report: RollOffReport) -> None:
         dropped: dict[str, list[int]] = {}
         retained: dict[str, list[int]] = {}
-        for day_start in await self._eligible_days(stream):
+        days = await self._eligible_days(stream)
+        if not days:
+            await self._unlisted(stream)
+        for day_start in days:
             day = TimeRange(start_us=day_start, end_us=day_start + US_PER_DAY)
             before = await self._hot.snapshot(stream, day)
             symbols = sorted(before)
