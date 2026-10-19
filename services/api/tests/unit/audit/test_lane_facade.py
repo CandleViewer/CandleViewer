@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import inspect
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -19,11 +20,19 @@ from structlog.testing import capture_logs
 
 from candleviewer.audit import lane_journal as lj
 from candleviewer.audit.journal import hold_run_lock, journal_dir
-from candleviewer.audit.lane import AuditLane, LaneBootRefused, LaneFacade, lock_lane
-from candleviewer.audit.models import AuditEmission, AuditOutcome
+from candleviewer.audit.lane import (
+    FALLBACK_LOG_S,
+    PROBE_FILE,
+    AuditLane,
+    LaneBootRefused,
+    LaneFacade,
+    lane_dir,
+    lock_lane,
+)
+from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
 from candleviewer.audit.redact import REDACTION_MARKER
 from candleviewer.audit.service import AuditService
-from candleviewer.audit.writer import AuditUnavailable, AuditWriter
+from candleviewer.audit.writer import AuditUnavailable, AuditWriter, AuditWriterStopped
 
 KEYS, WAIT_S = (bytes(range(32)), None), 5.0
 LOGOUT: dict[str, Any] = {"actor_label": "owner", "object_id": "s1"}
@@ -89,18 +98,28 @@ async def test_facade_hands_the_same_record_to_ingest_when_the_lane_is_silent_pa
     writer, lane = await sink(tmp_path, repo), Lane(stall=True)
     await facade(writer, lane, wait_s=0).emit("auth.logout", **LOGOUT)
     assert await ids(writer, repo) == [lane.records[0].record_id]
+
+
+def test_facade_waits_append_wait_s_for_the_lane_by_default() -> None:
     assert inspect.signature(LaneFacade).parameters["wait_s"].default == lj.APPEND_WAIT_S == 1.0
 
 
-async def test_facade_lane_wait_and_fallback_share_the_callers_deadline(
-    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+async def test_facade_ends_the_lanes_wait_at_the_callers_deadline(
+    tmp_path: Path, repo: FakeAuditRepository
 ) -> None:
-    """A wait past the deadline ends at it. Then a 0.2 s wait uses part of a 0.3 s deadline, and
-    the sink is released at 0.4 s: after the shared deadline, before a fresh one could end."""
     writer, lane = await sink(tmp_path, repo), Lane(stall=True)
     async with asyncio.timeout(WAIT_S):  # a wait that ignored the deadline would stall here
         with pytest.raises(AuditUnavailable, match="deadline"):
             await facade(writer, lane, wait_s=3600).emit("auth.logout", **LOGOUT, deadline_s=0)
+    assert await ids(writer, repo) == []
+
+
+async def test_facade_gives_the_fallback_only_what_the_lanes_wait_left(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 0.2 s wait uses part of a 0.3 s deadline, and the sink is released at 0.4 s: after the
+    shared deadline, before a fresh one could end."""
+    writer, lane = await sink(tmp_path, repo), Lane(stall=True)
     release, loop, ingest = asyncio.Event(), asyncio.get_running_loop(), writer.ingest
 
     async def held(record: AuditEmission | dict[str, Any]) -> int:  # a sink slower than 0.1 s
@@ -112,7 +131,7 @@ async def test_facade_lane_wait_and_fallback_share_the_callers_deadline(
     with pytest.raises(AuditUnavailable, match="deadline"):
         await facade(writer, lane, wait_s=0.2).emit("auth.logout", **LOGOUT, deadline_s=0.3)
     timer.cancel()
-    assert len(lane.records) == 2 and await ids(writer, repo) == []
+    assert len(lane.records) == 1 and await ids(writer, repo) == []
 
 
 async def test_facade_never_hands_a_lane_not_admitted_to_the_sink(
@@ -178,7 +197,55 @@ async def test_facade_with_the_flag_off_is_todays_path_byte_for_byte(
     assert repos[0].rows == repos[1].rows
 
 
-async def test_service_loads_its_keys_off_the_loop_and_reads_the_flag_off_until_it_is_wired(
+def test_facade_takes_emits_keywords_and_the_callers_deadline() -> None:
+    """Decision 2's shape: `emit()`'s parameters and `deadline_s`, kind and default."""
+    facade_params = dict(inspect.signature(LaneFacade.emit).parameters)
+    deadline = facade_params.pop("deadline_s")
+    assert facade_params == dict(inspect.signature(AuditWriter.emit).parameters)
+    assert (deadline.kind, deadline.default) == (inspect.Parameter.KEYWORD_ONLY, None)
+
+
+async def test_facade_forwards_every_keyword_to_build(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """A distinct value per keyword, so a dropped or swapped one shows."""
+    writer, lane = await sink(tmp_path, repo), Lane()
+    fields: dict[str, Any] = {
+        "actor_label": "label-1", "actor_user_id": uuid.UUID(int=2), "actor_ip": "203.0.113.3",
+        "session_id": uuid.UUID(int=4), "object_kind": "kind-5", "object_id": "id-6",
+        "object_label": "label-7", "outcome": AuditOutcome.FAILURE, "severity": Severity.WARNING,
+        "reason": "reason-8", "before_state": {"b": 9}, "after_state": {"a": 10},
+        "request_id": uuid.UUID(int=11), "env": ExchangeEnv.DEMO,
+    }  # fmt: skip
+    assert set(fields) == set(inspect.signature(AuditWriter.emit).parameters) - {"self", "action"}
+    await facade(writer, lane).emit("auth.logout", **fields)
+    built, mine = writer.build("auth.logout", **fields), lane.records[0]
+    assert mine.model_dump(exclude={"record_id", "event_ts"}) == built.model_dump(
+        exclude={"record_id", "event_ts"}
+    )
+
+
+async def test_facade_logs_one_fallback_per_reason_per_interval(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """A held lane falls back on every record; one WARNING per reason per interval,
+    with the count of those it did not log, and `timeout` is a reason of its own."""
+    now, writer, lane = [0.0], await sink(tmp_path, repo), Lane(lj.LaneRefused("held"))
+    held = facade(writer, lane, wait_s=0, clock=lambda: now[0])
+    with capture_logs() as logs:
+        for now[0] in (0.0, 1.0, 2.0):
+            await held.emit("auth.logout", **LOGOUT)
+        lane.error, lane.stall = None, True  # the lane stops answering: `timeout`
+        await held.emit("auth.logout", **LOGOUT)
+        lane.error, lane.stall, now[0] = lj.LaneRefused("held"), False, FALLBACK_LOG_S + 1
+        await held.emit("auth.logout", **LOGOUT)
+    lines = [(e["log_level"], e["reason"], e["skipped"]) for e in logs if "skipped" in e]
+    assert lines == [("warning", "held", 0), ("warning", "timeout", 0), ("warning", "held", 2)]
+    assert {e["event"] for e in logs if "skipped" in e} == {"audit.lane.fallback"}
+    assert len(await ids(writer, repo)) == 5
+
+
+async def test_service_loads_its_keys_once_off_the_loop(
     tmp_path: Path, repo: FakeAuditRepository
 ) -> None:
     threads: list[int] = []
@@ -190,6 +257,15 @@ async def test_service_loads_its_keys_off_the_loop_and_reads_the_flag_off_until_
     svc = AuditService(repo, lane_keys=loader)
     await svc.start(ctx(tmp_path / "audit" / "a.wal"))
     assert len(threads) == 1 and threads[0] != threading.get_ident() and svc._lane is not None
+    await svc.stop(1)
+
+
+async def test_service_reads_the_flag_off_until_it_is_wired(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    svc = AuditService(repo, lane_keys=lambda: KEYS)
+    await svc.start(ctx(tmp_path / "audit" / "a.wal"))
+    assert svc._lane is not None
     end = svc._lane.journal.end
     await svc.lane.emit("auth.logout", **LOGOUT)
     await svc.writer.flush(WAIT_S)
@@ -197,17 +273,28 @@ async def test_service_loads_its_keys_off_the_loop_and_reads_the_flag_off_until_
     await svc.stop(1)
 
 
-async def test_service_boots_the_lane_and_stops_it_first_and_its_lock_last(
-    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    wal, order = tmp_path / "audit" / "a.wal", list[str]()
-    svc = AuditService(repo, lane_keys=lambda: KEYS)
+async def started(tmp_path: Path, repo: FakeAuditRepository) -> tuple[AuditService, Path]:
+    wal, svc = tmp_path / "audit" / "a.wal", AuditService(repo, lane_keys=lambda: KEYS)
     svc.use_lane_flag(on)
     await svc.start(ctx(wal))
+    return svc, wal
+
+
+async def test_service_boots_the_lane_with_its_two_rows(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    svc, _ = await started(tmp_path, repo)
     await svc.lane.emit("auth.logout", **LOGOUT)
     await svc.lane.flush(WAIT_S)
     actions = ["audit.lane_started", "audit.lane_resumed", "auth.logout"]
     assert [row["action"] for row in repo.rows] == actions
+    await svc.stop(1)
+
+
+async def test_service_stops_the_lane_first_and_holds_lane_lock_past_the_writer(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (svc, wal), order = await started(tmp_path, repo), list[str]()
     close, stop = AuditLane.close, AuditWriter.stop
 
     async def closing(lane: AuditLane) -> None:
@@ -222,12 +309,77 @@ async def test_service_boots_the_lane_and_stops_it_first_and_its_lock_last(
 
     monkeypatch.setattr(AuditLane, "close", closing)
     monkeypatch.setattr(AuditWriter, "stop", stopping)
+    await svc.stop(1)
+    assert order == ["lane", "writer"]
+
+
+async def test_service_stop_releases_lane_lock_and_the_facade(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    svc, wal = await started(tmp_path, repo)
     lock = svc._lane_lock
     await svc.stop(1)
-    assert order == ["lane", "writer"] and lock is not None and lock.closed
-    lock_lane(str(wal)).close()  # released by stop()
+    assert lock is not None and lock.closed
+    lock_lane(str(wal)).close()
     with pytest.raises(RuntimeError):
         _ = svc.lane
+
+
+@pytest.mark.parametrize("failure", ["raises", "overruns"])
+async def test_service_stop_runs_on_past_a_lane_close_that_fails(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """The close gets half the grace, then the writer stops with the rest and the run lock is
+    released; `lane.lock` stays with the process, since a lane operation may still run (#2250)."""
+    (svc, wal), graces = await started(tmp_path, repo), list[float]()
+    lane, close, stop = svc._lane, AuditLane.close, AuditWriter.stop
+
+    async def closing(lane: AuditLane) -> None:
+        if failure == "raises":
+            raise OSError("the close failed")
+        await asyncio.Event().wait()
+
+    async def stopping(writer: AuditWriter, grace_s: float = 5.0) -> None:
+        graces.append(grace_s)
+        await stop(writer, grace_s)
+
+    monkeypatch.setattr(AuditLane, "close", closing)
+    monkeypatch.setattr(AuditWriter, "stop", stopping)
+    lock = svc._lane_lock
+    with capture_logs() as logs:
+        async with asyncio.timeout(WAIT_S):
+            await svc.stop(0.2)
+    assert not svc.is_active and len(graces) == 1 and graces[0] <= 0.2
+    assert (0.05 <= graces[0] <= 0.15) if failure == "overruns" else (graces[0] > 0.1)  # the rest
+    error = "OSError" if failure == "raises" else "TimeoutError"
+    assert ("critical", error) in [(e["log_level"], e.get("error")) for e in logs]
+    hold_run_lock(journal_dir(str(wal)), exclusive=True).close()  # the run lock is gone
+    with pytest.raises(LaneBootRefused, match="held"):
+        lock_lane(str(wal))
+    assert lock is not None and not lock.closed and svc._lane_lock is lock
+    assert lane is not None
+    await close(lane)
+    lock.close()
+
+
+async def test_service_stop_keeps_both_locks_when_the_writer_stop_fails(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    svc, _ = await started(tmp_path, repo)
+    locks, stop = (svc._lane_lock, svc._run_lock), AuditWriter.stop
+
+    async def failing(writer: AuditWriter, grace_s: float = 5.0) -> None:
+        raise AuditWriterStopped()
+
+    monkeypatch.setattr(AuditWriter, "stop", failing)
+    with pytest.raises(AuditWriterStopped):
+        await svc.stop(1)
+    assert svc._query is None and not svc._started
+    assert (svc._lane_lock, svc._run_lock) == locks
+    assert all(lock is not None and not lock.closed for lock in locks)
+    monkeypatch.setattr(AuditWriter, "stop", stop)
+    await svc.stop(1)  # the writer stops now, and both locks go
+    assert all(lock is not None and lock.closed for lock in locks)
 
 
 @pytest.mark.parametrize(
@@ -294,34 +446,87 @@ async def test_service_holds_a_lane_it_cannot_open_and_boots_on(
     await svc.stop(1)
 
 
-async def test_service_holds_the_lane_when_its_lock_fails_otherwise_and_then_fails_closed(
-    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """READY-21: a lock error but another holder (`EACCES`) holds the lane, logged and counted.
-    With the flag on the façade falls back, and the action fails closed only if the sink refuses."""
+def denied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`lane.lock` cannot be opened for a reason other than another holder (`EACCES`)."""
     real = lj._open
 
-    def denied(path: Path | str, flags: int, dir_fd: int | None = None) -> int:
+    def opening(path: Path | str, flags: int, dir_fd: int | None = None) -> int:
         if str(path).endswith("lane.lock"):
             raise PermissionError(errno.EACCES, "denied")
         return real(path, flags, dir_fd)
 
-    async def refusing(record: AuditEmission | dict[str, Any]) -> int:
-        raise AuditUnavailable("the sink refuses")
+    monkeypatch.setattr(lj, "_open", opening)
 
-    monkeypatch.setattr(lj, "_open", denied)
-    svc = AuditService(repo, lane_keys=lambda: KEYS)
-    svc.use_lane_flag(on)
+
+async def test_service_holds_the_lane_when_its_lock_fails_otherwise(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """READY-21: a lock error but another holder holds the lane, logged critical and counted."""
+    denied(monkeypatch)
     with capture_logs() as logs:
-        await svc.start(ctx(tmp_path / "audit" / "a.wal"))
+        svc, _ = await started(tmp_path, repo)
     assert svc.lane_lock_failures == 1 and svc._lane is not None
     assert svc._lane.journal.refusal == "held"
     assert ("critical", "PermissionError") in [(e["log_level"], e.get("error")) for e in logs]
+    await svc.stop(1)
+
+
+async def test_a_held_lane_fails_closed_when_the_sink_refuses_too(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def refusing(record: AuditEmission | dict[str, Any]) -> int:
+        raise AuditUnavailable("the sink refuses")
+
+    denied(monkeypatch)
+    svc, _ = await started(tmp_path, repo)
     monkeypatch.setattr(svc.writer, "ingest", refusing)
     with pytest.raises(AuditUnavailable, match="the sink refuses"):
         await svc.lane.emit("auth.logout", **LOGOUT)
     monkeypatch.delattr(svc.writer, "ingest")
+    await svc.stop(1)
+
+
+async def test_a_held_lane_falls_back_to_the_sink(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    denied(monkeypatch)
+    svc, _ = await started(tmp_path, repo)
     await svc.lane.emit("auth.logout", **LOGOUT)
     await svc.writer.flush(WAIT_S)
     assert [row["action"] for row in repo.rows] == ["auth.logout"]
+    await svc.stop(1)
+
+
+async def test_service_holds_the_lane_on_a_volume_without_hard_links(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§15.6: the probe at boot finds no hard links, so the lane holds unopened (counted, logged
+    critical) and keeps `lane.lock`; the probe leaves no file behind."""
+
+    def no_links(src: Path | str, dst: Path | str, **kw: Any) -> None:
+        raise OSError(errno.EPERM, "no hard links")
+
+    monkeypatch.setattr("os.link", no_links)
+    with capture_logs() as logs:
+        svc, wal = await started(tmp_path, repo)
+    assert svc.lane_link_failures == 1 and svc._lane is not None
+    assert svc._lane.journal.refusal == "held" and svc.lane_lock_failures == 0
+    assert ("critical", "PermissionError") in [(e["log_level"], e.get("error")) for e in logs]
+    assert sorted(os.listdir(lane_dir(str(wal)))) == ["lane.lock"]
+    with pytest.raises(LaneBootRefused, match="held"):
+        lock_lane(str(wal))
+    await svc.stop(1)
+
+
+async def test_the_hard_link_probe_clears_a_crashs_leftovers_and_leaves_nothing(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    directory = lane_dir(str(tmp_path / "audit" / "a.wal"))
+    directory.mkdir(parents=True)
+    for name in (PROBE_FILE, f"{PROBE_FILE}.link"):
+        (directory / name).write_bytes(b"")
+    svc, _ = await started(tmp_path, repo)
+    assert svc.lane_link_failures == 0 and svc._lane is not None
+    assert svc._lane.journal.refusal is None
+    assert not {PROBE_FILE, f"{PROBE_FILE}.link"} & set(os.listdir(directory))
     await svc.stop(1)

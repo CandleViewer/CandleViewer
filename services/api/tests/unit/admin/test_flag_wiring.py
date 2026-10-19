@@ -83,38 +83,113 @@ def _runtime(settings: _Settings | None = None) -> wiring.FeatureFlagsRuntime:
     )
 
 
-async def test_the_audit_lane_flag_is_cached_read_with_no_principal_and_kept_in_an_outage() -> None:
-    """READY-21: the catalogue default until a read succeeds (on here: no implicit off); then no
-    principal, from a rebuilt service; the last value through an outage; no wait on the store."""
-    spec = FlagSpec("audit.lane_journal_first", FlagKind.BOOLEAN, "d", Category.FEATURE_ROLLOUT,
-                    True, Visibility.OWNER_ONLY, restrictive=False)  # fmt: skip
-    registry, (down, store), clock = (
-        FlagRegistry([spec]),
-        (FakeFlagStore(), FakeFlagStore()),
-        Clock(),
-    )
-    runtime = SimpleNamespace(registry=registry, service=FlagService(registry, down, clock=clock))
-    flag, down.down = wiring.LaneFlag(cast(wiring.FeatureFlagsRuntime, runtime)), True
-    await flag.refresh()  # a boot during an outage
+_LANE = "audit.lane_journal_first"
+
+
+def _lane_flag(default: bool) -> tuple[wiring.LaneFlag, SimpleNamespace, FakeFlagStore, Clock]:
+    """A `LaneFlag` over a fake store, as `FeatureFlagsRuntime` builds it (READY-21)."""
+    spec = FlagSpec(_LANE, FlagKind.BOOLEAN, "d", Category.FEATURE_ROLLOUT, default,
+                    Visibility.OWNER_ONLY, restrictive=False)  # fmt: skip
+    registry, store, clock = FlagRegistry([spec]), FakeFlagStore(), Clock()
+    runtime = SimpleNamespace(registry=registry, service=FlagService(registry, store, clock=clock))
+    return wiring.LaneFlag(cast(wiring.FeatureFlagsRuntime, runtime)), runtime, store, clock
+
+
+async def _settled(flag: wiring.LaneFlag) -> None:
+    assert flag._task is not None
+    await asyncio.wait_for(flag._task, 5)
+
+
+async def test_a_boot_during_an_outage_reads_the_lane_flag_as_its_catalogue_default() -> None:
+    """The default is on here, so a value that stays on is no implicit off."""
+    flag, _, store, _ = _lane_flag(default=True)
+    store.down = True
+    await flag.refresh()
     assert flag.value is True
-    runtime.service = FlagService(registry, store, clock=clock)
-    store.rows[spec.key] = StoredFlag(False, role_overrides={"owner": True})
+
+
+async def test_the_lane_flag_is_read_with_no_principal_from_the_service_start_rebuilt() -> None:
+    flag, runtime, _, clock = _lane_flag(default=True)
+    store = FakeFlagStore()
+    runtime.service = FlagService(runtime.registry, store, clock=clock)  # `start()` rebuilt it
+    store.rows[_LANE] = StoredFlag(False, role_overrides={"owner": True})
     await flag.refresh()
     assert flag.value is False  # no role applies
-    store.rows[spec.key], clock.now = StoredFlag(True), clock.now + 30
+
+
+async def test_the_lane_flag_keeps_its_last_value_when_its_row_is_unreadable() -> None:
+    flag, _, store, clock = _lane_flag(default=False)
+    store.rows[_LANE] = StoredFlag(True)
     await flag.refresh()
-    store.rows[spec.key], clock.now = StoredFlag("on"), clock.now + 30
-    await flag.refresh()  # an unreadable row keeps it too
+    store.rows[_LANE], clock.now = StoredFlag("on"), clock.now + 30  # not a boolean
+    await flag.refresh()
+    assert flag.value is True
+
+
+async def test_the_lane_flag_keeps_its_last_value_through_an_outage() -> None:
+    flag, _, store, clock = _lane_flag(default=False)
+    store.rows[_LANE] = StoredFlag(True)
+    await flag.refresh()
     store.down, clock.now = True, clock.now + 30
     await flag.refresh()
-    assert flag.value is True  # kept through the outage, not failed closed
-    store.rows[spec.key] = StoredFlag(False)
-    store.down, store.hold, clock.now = False, asyncio.Event(), clock.now + 30
-    assert flag() is True  # at once: the refresh waits on the slow store in its own task
+    assert flag.value is True  # kept, not failed closed
+
+
+async def test_a_lane_flag_call_answers_at_once_and_refreshes_in_the_background() -> None:
+    flag, _, store, _ = _lane_flag(default=True)
+    store.rows[_LANE], store.hold = StoredFlag(False), asyncio.Event()
+    assert flag() is True  # the refresh waits on the slow store in its own task
     store.hold.set()
-    async with asyncio.timeout(5):
-        while flag.value:  # noqa: ASYNC110 - the refresh completes in its own task
-            await asyncio.sleep(0)
+    await _settled(flag)
+    assert flag.value is False
+
+
+async def test_a_later_lane_flag_call_refreshes_again() -> None:
+    """A call after the last refresh ended starts the next one."""
+    flag, _, store, clock = _lane_flag(default=False)
+    flag()
+    await _settled(flag)
+    store.rows[_LANE], clock.now = StoredFlag(True), clock.now + 30
+    flag()
+    await _settled(flag)
+    assert flag.value is True
+
+
+async def test_the_lane_flag_runs_one_refresh_at_a_time() -> None:
+    """While a refresh runs, a call starts no other (C-2.18)."""
+    flag, _, store, _ = _lane_flag(default=False)
+    store.hold = asyncio.Event()
+    flag()
+    first = flag._task
+    flag()
+    named = [t for t in asyncio.all_tasks() if t.get_name() == "audit-lane-flag"]
+    assert flag._task is first and named == [first]
+    store.hold.set()
+    await _settled(flag)
+
+
+async def test_stop_cancels_the_lane_flags_refresh_and_starts_no_other() -> None:
+    """A refresh in flight at stop is cancelled before the engine goes (C-2.18)."""
+    runtime = _runtime()
+    await runtime.start()
+    store = FakeFlagStore()
+    store.hold = asyncio.Event()  # the refresh is still reading when the runtime stops
+    runtime.service = FlagService(runtime.registry, store, clock=Clock())
+    runtime.lane_flag()
+    task = runtime.lane_flag._task
+    await runtime.stop()
+    assert task is not None and task.cancelled()
+    assert runtime.lane_flag() is False and runtime.lane_flag._task is task
+
+
+async def test_start_reads_the_lane_flag_once() -> None:
+    runtime = _runtime()
+    runtime.lane_flag.value = True
+    await runtime.start()
+    try:
+        assert runtime.lane_flag.value is False  # the stored value
+    finally:
+        await runtime.stop()
 
 
 def test_every_step_up_class_a_flag_write_demands_is_registered() -> None:
@@ -192,10 +267,8 @@ async def test_start_ensures_the_rows_and_the_poll_opens_the_order_gate() -> Non
     runtime, account = _runtime(), uuid.uuid4()
     refusal = runtime.order_entry_gate.refusal(account)
     assert refusal is not None and refusal.reason == "maintenance"  # unknown: engaged
-    runtime.lane_flag.value = True
     await runtime.start()
     poll = runtime._poll
-    assert runtime.lane_flag.value is False  # start() read the audit lane flag's stored value
     try:
         for _ in range(100):  # bounded: the poll's first read sees both gate flags off
             if not runtime.gate.engaged:

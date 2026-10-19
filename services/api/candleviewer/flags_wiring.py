@@ -13,7 +13,8 @@ a lapsed bound, a flag with no row and an override user deleted after the writer
 maintenance gate (engaged until its flags are read), the composed order-entry gate, and the store:
 Postgres on the real backend, in memory at the registry defaults on the fake one. `start()` reads
 `flags.read_budget_ms` (500 ms when unset or unreadable; anything but a whole number of ms from 50
-to 2000 refuses boot), ensures every flag's row and starts the maintenance poll.
+to 2000 refuses boot), ensures every flag's row, reads `audit.lane_journal_first` once (`LaneFlag`)
+and starts the maintenance poll; `stop()` cancels the poll and the lane flag's refresh.
 """
 
 from __future__ import annotations
@@ -269,6 +270,7 @@ class FeatureFlagsRuntime:
         if poll is not None:
             poll.cancel()
             await asyncio.wait({poll})
+        await self.lane_flag.close()  # before the engine its refresh reads goes
         if self._relational is not None:
             await self._relational.dispose()
 
@@ -283,11 +285,20 @@ class LaneFlag:
         self._runtime, self._spec = runtime, runtime.registry[AUDIT_LANE_JOURNAL_FIRST]
         self.value = self._spec.default is True
         self._task: asyncio.Task[None] | None = None
+        self._closed = False
 
     def __call__(self) -> bool:
-        if self._task is None or self._task.done():
+        if not self._closed and (self._task is None or self._task.done()):
             self._task = spawn(self.refresh(), name="audit-lane-flag")
         return self.value
+
+    async def close(self) -> None:
+        """`FeatureFlagsRuntime.stop()`: cancel a refresh in flight and start no other, so every
+        task stays owned (C-2.18); a later call returns the last value read."""
+        self._closed, task = True, self._task
+        if task is not None:
+            task.cancel()
+            await asyncio.wait({task})
 
     async def refresh(self) -> None:
         service = self._runtime.service

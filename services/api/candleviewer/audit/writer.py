@@ -200,6 +200,8 @@ class AuditWriter:
         #: WAL's cap bounds it (C-2.18).
         self._uncommitted: deque[int] = deque()
         self._committed_through = 0
+        #: Records confirmed since the last cursor commit: their frames are still in the WAL.
+        self._confirmed_since_commit = 0
         #: Bytes that compactions removed from the front of the WAL file, so `_base + offset`
         #: is a position no compaction moves.
         self._base = 0
@@ -267,8 +269,9 @@ class AuditWriter:
         if self._task is not None and not self._task.done():
             return
         self._failure = None
-        # A flusher that stopped mid-batch confirmed records it never committed: count again.
-        self._pending = len(self._uncommitted)
+        # A flusher that stopped mid-batch confirmed records it never committed: count them
+        # again, since the restart reads the whole batch from the unmoved cursor.
+        self._pending = len(self._uncommitted) + self._confirmed_since_commit
         self._running = True
         # An op abandoned by a previous stop() may have read a batch with no commit
         # to clear this; a stale flag would refuse the emergency compaction (#2250).
@@ -567,7 +570,6 @@ class AuditWriter:
                 batch = await self._shielded("audit-wal-read", self._read_batch)
                 if not batch:
                     break
-                before = self._committed_through  # only this process's records have tokens
                 for end_offset, record in batch:
                     # A frame appended before records were normalised is made storable here.
                     await self._write_with_retry(storable(record))
@@ -575,8 +577,7 @@ class AuditWriter:
                     self._confirm(end_offset)
                 # One cursor fsync per batch: a crash mid-batch re-inserts the
                 # already-written prefix, which ON CONFLICT (record_id) ignores.
-                mine = self._committed_through - before  # what `_pending` counted of the batch
-                await self._shielded("audit-wal-commit", self._commit, batch[-1][0], mine)
+                await self._shielded("audit-wal-commit", self._commit, batch[-1][0])
 
     def _confirm(self, end_offset: int) -> None:
         """The record whose frame ends at `end_offset` is in Postgres, and so is every frame
@@ -586,6 +587,7 @@ class AuditWriter:
         while self._uncommitted and self._uncommitted[0] <= position:
             self._uncommitted.popleft()
             self._committed_through += 1
+            self._confirmed_since_commit += 1  # only this process's records have tokens
 
     async def _read_batch(self, op: _WalOp) -> list[tuple[int, dict[str, Any]]]:
         """Flusher WAL op: the next uncommitted batch; marks idle when empty."""
@@ -600,13 +602,15 @@ class AuditWriter:
         op.raise_if_cancelled()
         return batch
 
-    async def _commit(self, op: _WalOp, end_offset: int, count: int) -> None:
+    async def _commit(self, op: _WalOp, end_offset: int) -> None:
         """Flusher WAL op: advance the commit cursor, then compact — both under
-        `_wal_lock`, so no append can land between the copy and the file swap."""
+        `_wal_lock`, so no append can land between the copy and the file swap. The records
+        confirmed since the last commit leave `buffer_depth` with their frames."""
         async with self._wal_lock:
             op.holding = True
             await _uninterruptible(op, self._wal.mark_committed, end_offset)
-            self._pending = max(0, self._pending - count)
+            self._pending = max(0, self._pending - self._confirmed_since_commit)
+            self._confirmed_since_commit = 0
             self._inflight = False
             # Cancelled during the cursor write: the cursor is durable and the
             # bookkeeping above is done; compaction is optional, so it is skipped.

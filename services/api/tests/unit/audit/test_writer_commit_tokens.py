@@ -498,3 +498,52 @@ def test_writer_random_interleavings_keep_committed_through_monotonic_and_stored
     `committed_through()` never goes down and never passes a record that is not stored."""
     with mock.patch.object(wal_module, "os", _NoFsync()), tempfile.TemporaryDirectory() as tmp:
         asyncio.run(_interleave(steps, batch, Path(tmp)))
+
+
+async def test_writer_a_restart_counts_a_dead_batchs_confirmed_records_in_its_depth(
+    tmp_path: Path,
+) -> None:
+    """The flusher dies on the third record of a four-record batch, after it confirmed two: the
+    restart reads all four again from the unmoved cursor, so `buffer_depth` counts four, then
+    none once the batch commits."""
+    died = asyncio.Event()
+
+    async def alarm(_reason: str) -> None:
+        died.set()
+
+    repo = _ObservedRepository()
+    w = _writer(repo, tmp_path, flush_batch_size=4, max_insert_attempts=1, on_alarm=alarm)
+    await w.start()
+    built = [w.build("auth.logout", actor_label=str(i)) for i in range(4)]
+    repo.refuse = {str(built[2].record_id)}
+    await asyncio.gather(*(w.ingest(b) for b in built))  # one batch
+    await asyncio.wait_for(died.wait(), 5)
+    repo.refuse.clear()
+    await w.start()
+    depth = w.buffer_depth
+    await w.flush(5)
+    await w.stop(1)
+
+    assert (depth, w.buffer_depth, w.committed_through()) == (4, 0, 4)
+
+
+async def test_writer_a_commit_takes_only_its_own_records_out_of_the_depth(tmp_path: Path) -> None:
+    """Each cursor commit takes out of `buffer_depth` only the records confirmed since the last
+    one: after a first batch commits, a second batch's commit leaves the third record counted."""
+    repo = _ObservedRepository()
+    w = _writer(repo, tmp_path, flush_batch_size=1)
+    await w.start()
+    built = [w.build("auth.logout", actor_label=str(i)) for i in range(3)]
+    await w.ingest(built[0])
+    await w.flush(5)  # the first batch commits
+    repo.refuse = {str(built[1].record_id), str(built[2].record_id)}
+    for record in built[1:]:
+        await w.ingest(record)
+    repo.refuse = {str(built[2].record_id)}  # the second goes in and commits; the third waits
+    await asyncio.wait_for(_attempted(repo, str(built[2].record_id)), 5)
+    depth = w.buffer_depth
+    repo.refuse.clear()
+    await w.flush(5)
+    await w.stop(1)
+
+    assert (depth, w.buffer_depth) == (1, 0)

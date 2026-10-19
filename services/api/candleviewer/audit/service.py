@@ -9,11 +9,21 @@ also runs the journal-first audit lane and its façade, `lane` (ADR-0037, #3009)
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import structlog
 
 from candleviewer.audit.journal import fold_in, hold_run_lock, journal_dir
-from candleviewer.audit.lane import AuditLane, LaneFacade, LaneLockUnavailable, boot_lane, lock_lane
+from candleviewer.audit.lane import (
+    AuditLane,
+    LaneFacade,
+    LaneLockUnavailable,
+    boot_lane,
+    links_work,
+    lock_lane,
+)
 from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.health import HealthReport, HealthStatus
 
@@ -57,6 +67,7 @@ class AuditService:
         self._lane_keys = lane_keys
         self._journal_first: Callable[[], bool] = _flag_off
         self.lane_lock_failures = 0  # READY-21: a `lane.lock` that held the lane (S4a's metric)
+        self.lane_link_failures = 0  # a failed hard-link probe that held the lane (S4a's metric)
         self._lane: AuditLane | None = None
         self._lane_lock: FileIO | None = None
         self._facade: LaneFacade | None = None
@@ -103,7 +114,8 @@ class AuditService:
         ADR-0037 (#3009): it first runs the lane key loader off the loop; its refusals refuse boot,
         the environment form on every backend. With keys and a real backend it takes `lane.lock`
         before the writer, which an unanchored directory or another holder refuses (any other lock
-        error holds the lane), and boots the lane after the fold-in (`boot_lane`)."""
+        error holds the lane), and boots the lane after the fold-in (`boot_lane`); a volume that
+        fails the hard-link probe holds it too."""
         if self._writer is not None:
             # Two writers on one WAL file would truncate each other's in-flight frames.
             raise RuntimeError("AuditService.start(): a writer is already running; stop() first")
@@ -132,33 +144,58 @@ class AuditService:
         if self._writer is not None:
             await fold_in(self._writer, journal_dir(ctx.settings.audit_wal_path))
             if keys is not None:
-                held = self._lane_lock is None
-                self._lane = await boot_lane(ctx.settings.audit_wal_path, keys, self._writer, held)
+                wal, held = ctx.settings.audit_wal_path, self._lane_lock is None
+                if not held and not await run_in_thread(links_work, wal):
+                    held, self.lane_link_failures = True, self.lane_link_failures + 1
+                self._lane = await boot_lane(wal, keys, self._writer, held)
             self._facade = LaneFacade(self._writer, self._lane, lambda: self._journal_first())
 
     async def stop(self, grace_s: float) -> None:
         """Stop the module within `grace_s` seconds: the lane first (its drain hands records to
-        the writer), then the writer, then the locks."""
-        self._facade = None
-        if self._lane is not None:
-            await self._lane.close()
-            self._lane = None
-        if self._writer is not None:
-            await self._writer.stop(grace_s)
-            self._writer = None
-        if self._query is not None:
-            self._query.close()
-        self._query = None
-        self._started = False
-        if self._lane_lock is not None:  # after the writer: a second cv-api may boot from here on
-            self._lane_lock.close()
-            self._lane_lock = None
-        if self._run_lock is not None:  # after the writer: the CLI may run from here on
-            self._run_lock.close()
-            self._run_lock = None
+        the writer), within half of it, then the writer with what is left, then the locks. A lane
+        close that fails or overruns is logged critical and the writer stops all the same; what
+        the lane did not confirm drains at the next boot. Each lock outlives what it guards
+        (#2250): after the writer stopped, and `lane.lock` only after the lane closed too, so a
+        step that failed leaves its lock to the process's exit."""
+        loop, self._facade = asyncio.get_running_loop(), None
+        deadline, closed = loop.time() + grace_s, await self._close_lane(grace_s / 2)
+        try:
+            if self._writer is not None:
+                await self._writer.stop(max(deadline - loop.time(), 0.0))
+                self._writer = None
+        finally:
+            if self._query is not None:
+                self._query.close()
+            self._query, self._started = None, False
+            if self._writer is None:
+                if closed and self._lane_lock is not None:  # a second cv-api may boot from here on
+                    self._lane_lock.close()
+                    self._lane_lock = None
+                if self._run_lock is not None:  # the CLI may run from here on
+                    self._run_lock.close()
+                    self._run_lock = None
+
+    async def _close_lane(self, bound_s: float) -> bool:
+        """Close the lane within `bound_s`; False when that failed or overran, logged critical."""
+        lane, self._lane = self._lane, None
+        if lane is None:
+            return True
+        try:
+            async with asyncio.timeout(bound_s):
+                await lane.close()
+        except Exception as exc:  # `TimeoutError` among them: the writer stops all the same
+            _log().critical("audit lane close failed; the writer stops all the same",
+                            error=type(exc).__name__)  # fmt: skip
+            return False
+        return True
 
     def health(self) -> HealthReport:
         """Report module health. Scaffold modules report `ok` when constructed."""
         status = HealthStatus.OK if self._started else HealthStatus.STOPPED
         detail = "" if self.is_active else "scaffold module — fake storage backend"
         return HealthReport(module="audit", status=status, detail=detail)
+
+
+def _log() -> Any:
+    """Resolved per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)

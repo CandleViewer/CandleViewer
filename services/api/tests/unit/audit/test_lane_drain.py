@@ -892,6 +892,88 @@ async def test_lane_drain_pauses_at_the_writers_depth_and_counts_each_pause_once
     assert (paused, held, lane.paused_batches) == (1, 2, 2)
 
 
+async def test_lane_paused_drain_still_confirms_what_the_writer_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While the drain waits at the depth, the marker still moves past a unit the writer has
+    committed (Ingest step 3), so the lane's room comes back while live callers fill the WAL."""
+    repo, depth = FakeAuditRepository(), [0]
+    writer = await sink(tmp_path, repo, AuditWriter)
+    lane = await boot(tmp_path, writer, pause_depth=3, poll_s=0.01, **SLOW)
+    await drained(lane)
+    capped(monkeypatch, "buffer_depth", lambda _: depth[0])
+    repo.down, attempts = True, repo.insert_attempts
+    await lane.append(logout(writer, 1))  # handed over; its token waits for Postgres
+    first = lane.journal.end
+    await until(lambda: repo.insert_attempts > attempts)
+    depth[0] = 3
+    await lane.append(logout(writer, 2))  # at the depth: it waits
+    await until(lambda: lane.paused_batches == 1)
+    repo.down = False
+    await until(lambda: lane.confirmed == first)
+    waited = (lane.paused_batches, len(repo.rows))
+    depth[0] = 0
+    await drained(lane)
+    await lane.close()
+    await stopped(writer)
+
+    assert waited == (1, 3)  # still paused: frame 2 not handed over
+
+
+async def test_lane_pause_after_a_refused_hand_over_counts_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pause, a resume whose hand-over the sink refuses, and a pause again: two pauses."""
+    repo, depth = FakeAuditRepository(), [3]
+    writer = await sink(tmp_path, repo, Refusing)
+    lane = await boot(tmp_path, writer, pause_depth=3, poll_s=0.01, retry_s=(0.01, 0.01))
+    await drained(lane)
+    capped(monkeypatch, "buffer_depth", lambda _: depth[0])
+    await lane.append(logout(writer, 1))
+    await until(lambda: lane.paused_batches == 1)
+    writer.refuse, depth[0] = 1, 2  # resume; the sink refuses that hand-over
+    await until(lambda: writer.refuse == 0)
+    depth[0] = 3  # before the backoff ends: the retry meets the depth
+    await until(lambda: lane.paused_batches == 2)
+    depth[0] = 0
+    await drained(lane)
+    await lane.close()
+    await stopped(writer)
+
+
+async def test_lane_start_cancelled_while_a_resumed_lane_opens_stops_it(tmp_path: Path) -> None:
+    """The open is shielded and runs on after its caller is cancelled; it still ends with the
+    lane stopped, so no append is accepted that no drain would hand over."""
+    repo = FakeAuditRepository()
+    writer = await sink(tmp_path, repo, AuditWriter)
+    first = await boot(tmp_path, writer)
+    await drained(first)
+    await first.close()  # a lane on disk: the next boot resumes it
+    parked, release = threading.Event(), threading.Event()
+
+    class Parked(lj.LaneFiles):
+        def boot(self) -> tuple[list[str], bytes | None, bytes | None]:
+            parked.set()
+            release.wait(WAIT_S)
+            return super().boot()
+
+    lane = AuditLane(lj.LaneJournal(Parked(tmp_path / "lane"), KEYS), writer, **FAST)
+    starting = asyncio.create_task(lane.start())
+    await asyncio.to_thread(parked.wait, WAIT_S)
+    starting.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    while lane.journal._ops:  # the open, still running
+        await asyncio.wait(set(lane.journal._ops))
+    with pytest.raises(lj.LaneRefused) as refused:
+        await lane.append(logout(writer, 1))
+    await lane.close()
+    await stopped(writer)
+
+    assert (refused.value.reason, lane._task) == ("stopped", None)
+
+
 async def test_lane_paused_drain_looks_again_when_an_append_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

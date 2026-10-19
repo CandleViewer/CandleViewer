@@ -255,13 +255,15 @@ def test_an_environment_key_in_the_env_file_is_refused_at_load(
 def test_lane_key_loader_hands_the_audit_service_the_key_bytes(
     tmp_path: Path, key_hex: str
 ) -> None:
-    root = tmp_path.resolve()
+    root, previous_hex = tmp_path.resolve(), secrets.token_hex(32)
     key = _key_file(root / "secrets" / "k1", key_hex.encode())
+    previous = _key_file(root / "secrets" / "k0", previous_hex.encode())
+    settings = _real(root, CV_AUDIT_LANE_KEY_FILE=key)
 
-    assert wiring.lane_key_loader(_real(root, CV_AUDIT_LANE_KEY_FILE=key))() == (
-        bytes.fromhex(key_hex),
-        None,
-    )
+    current = bytes.fromhex(key_hex)
+    assert wiring.lane_key_loader(settings)() == (current, None)
+    rotating = _real(root, CV_AUDIT_LANE_KEY_FILE=key, CV_AUDIT_LANE_PREVIOUS_KEY_FILE=previous)
+    assert wiring.lane_key_loader(rotating)() == (current, bytes.fromhex(previous_hex))
     assert wiring.lane_key_loader(Settings())() is None  # the fake backend reads no key
 
 
