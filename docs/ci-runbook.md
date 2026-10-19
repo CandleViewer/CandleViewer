@@ -449,6 +449,9 @@ index alone, removing nothing.
   same way (`--tool semgrep-auth`), with every auth rule counted like a cv-*
   one. Both steps install semgrep by hash from
   `tools/ci/requirements-semgrep.txt`.
+  It also fires on the register: `accepted-risk entry #N is malformed: ...`
+  names the entry and its fault, such as a field it omits or leaves blank
+  (04-security-program.md §16.2, #3587); fix that entry.
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

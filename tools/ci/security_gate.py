@@ -172,6 +172,10 @@ def load_accepted_risks(path: Path) -> list[AcceptedRisk]:
                 if isinstance(expires_raw, date) and not isinstance(expires_raw, datetime)
                 else datetime.strptime(str(expires_raw), "%Y-%m-%d").replace(tzinfo=UTC).date()
             )
+            # §16.2's text fields: a blank one is as missing as an absent one (#3587).
+            for key in ("id", "tool", "reason", "approver", "ticket"):
+                if not isinstance(entry[key], str) or not entry[key].strip():
+                    raise ValueError(f"{key!r} must be a non-empty string")
             risks.append(
                 AcceptedRisk(
                     finding_id=entry["id"],
@@ -180,7 +184,6 @@ def load_accepted_risks(path: Path) -> list[AcceptedRisk]:
                     reason=entry["reason"],
                     approver=entry["approver"],
                     expires=expires,
-                    # Required, like the rest (04-security-program.md §16.2, #3587).
                     ticket=entry["ticket"],
                 )
             )

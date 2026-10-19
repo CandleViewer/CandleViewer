@@ -1299,6 +1299,22 @@ def test_register_refuses_an_entry_without_a_ticket(tmp_path: Path) -> None:
     assert exc_info.value.message == "accepted-risk entry #0 is malformed: 'ticket'"
 
 
+@pytest.mark.parametrize("key", ["id", "tool", "reason", "approver", "ticket"])
+@pytest.mark.parametrize("blank", [None, "", "  "])
+def test_register_refuses_an_entry_with_a_blank_text_field(
+    tmp_path: Path, key: str, blank: str | None
+) -> None:
+    # #3587: §16.2 says the gate refuses an entry that lacks a field; a blank one lacks it too.
+    entry: dict[str, object] = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "ticket": "#1"}
+    entry |= {"severity": "HIGH", "reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    with pytest.raises(SecurityGateError) as exc_info:
+        load_accepted_risks(_write_yaml(tmp_path, {"entries": [entry | {key: blank}]}))
+    assert exc_info.value.code == "CI-SEC-005"
+    assert exc_info.value.message == (
+        f"accepted-risk entry #0 is malformed: '{key}' must be a non-empty string"
+    )
+
+
 # --------------------------------------------------------------------------
 # CLI entrypoint
 # --------------------------------------------------------------------------
@@ -2103,6 +2119,32 @@ def test_repo_register_mfa_token_hash_helpers_are_not_reached_from_other_modules
             found.extend(f"{rel}: {ref}" for name in named for ref in _refs_of(tree, name))
     hint = "re-triage the weak-hashing entries (or give an unrelated helper another name)"
     assert not found, f"{hint}: {found}"
+
+
+# The latest expiry a register entry may carry, the GA cut: 04-security-program.md §16.2 names it.
+GA_CUT = date(2027, 3, 25)
+
+
+def test_repo_register_entries_are_owner_approved_and_expire_by_the_ga_cut() -> None:
+    # SR-156 (E43-T05, #3587); the loader has already refused a Critical or blank entry.
+    for risk in load_accepted_risks(REGISTER):
+        assert risk.severity in {"HIGH", "MEDIUM", "LOW"}, risk.finding_id
+        assert risk.expires <= GA_CUT and risk.approver == "basiltt", risk.finding_id
+
+
+def test_security_program_names_the_register_as_the_scan_exception_record() -> None:
+    # #3587: SR-156 and §16.2 make each scanner finding's register entry its exception record.
+    text = (_ROOT / "docs/plan/04-security-program.md").read_text(encoding="utf-8")
+    (sr156,) = [line for line in text.splitlines() if line.startswith("| SR-156 |")]
+    assert "`security/accepted-risks.yaml`" in sr156 and "§16.2" in sr156
+    assert "in-source suppression" in sr156  # the other record, which §16.2 also names
+    prose = text.split("### 16.2 Exception process\n", 1)[1].split("\n| Exception id |", 1)[0]
+    for name in ("security/accepted-risks.yaml", "tools/ci/security_gate.py"):
+        assert f"`{name}`" in prose, name
+    assert f"the GA cut, {GA_CUT.isoformat()};" in prose
+    assert "(§12.2, CI-SEC-006)" in prose
+    # The fields the loader requires of each entry (the test_register_refuses_an_entry_* tests).
+    assert "id, tool, severity, reason, approver, expiry date and ticket" in prose
 
 
 def _codeql_full_scan(results: list[tuple[str, str, int]]) -> dict[str, object]:

@@ -61,6 +61,7 @@ PINNED = {
     "test_repo_register_codeql_line_entries_still_hold_the_code_they_accept",
     "test_repo_register_mfa_token_hash_entries_still_hash_a_random_token",
     "test_repo_register_mfa_token_hash_helpers_are_not_reached_from_other_modules",
+    "test_repo_register_entries_are_owner_approved_and_expire_by_the_ga_cut",
 }
 INSTALLERS = ("pnpm install", "uv sync", "corepack", "actions/setup-node@")
 # A node package-manager word anywhere in a line: quoted, path-qualified, in `sh -c`, backticks or
