@@ -40,7 +40,7 @@ on it (ADR-0003).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
@@ -275,7 +275,10 @@ class RecordedStreamReader(Protocol):
         self, symbol: str, depth: int, at_us: int, *, not_before_us: int
     ) -> RecordedEvent | None:
         """Latest `orderbook_snapshot` of `(symbol, depth)` with
-        `not_before_us <= ts_us <= at_us` (the bounded seek-anchor lookup), else `None`."""
+        `not_before_us <= ts_us <= at_us` (the bounded seek-anchor lookup), else `None`.
+        Snapshots of one instant resolve by `order_key`, the copy written last among identical
+        keys, so both tiers return the same row; a tier whose bounded read cannot see every
+        snapshot of the latest instant refuses with its typed read error (24 Sec.13.7)."""
         ...
 
 
@@ -302,12 +305,13 @@ class RecordingGapReader(Protocol):
     """Read side of `recording_gaps` (21 Sec.3.6.2)."""
 
     async def recording_gaps(
-        self, symbol: str, rng: TimeRange, *, limit: int
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
     ) -> Sequence[RecordedGap]:
-        """Gaps of `symbol` (any stream) with `start_us < rng.end_us` and
+        """Gaps of `symbol` in `streams` with `start_us < rng.end_us` and
         `end_us > rng.start_us`, at most `limit` of them (the earliest by `start_us` when the
-        cap binds; callers pass `cap + 1` to detect truncation, as for `read`). A `limit` below
-        1 (or a bool) raises `RecordedQueryRejected` before storage is read."""
+        cap binds; callers pass `cap + 1` to detect truncation, as for `read`), so the rows of a
+        stream the caller does not read never count toward its cap. A `limit` below 1 (or a
+        bool) raises `RecordedQueryRejected` before storage is read."""
         ...
 
 

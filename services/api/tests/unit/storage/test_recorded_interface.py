@@ -83,7 +83,7 @@ async def test_fakes_conform_to_the_reader_protocols_by_signature() -> None:
     assert list(await reader.read(SYM, StreamKind.TRADES, window, depth=200, limit=1)) == []
     assert await reader.snapshot_at(SYM, 200, 10, not_before_us=0) is None
     assert list(await coverage.archived(SYM, StreamKind.TRADES, window)) == []
-    assert list(await gaps.recording_gaps(SYM, window, limit=1)) == []
+    assert list(await gaps.recording_gaps(SYM, window, streams=(StreamKind.TRADES,), limit=1)) == []
 
 
 async def test_read_includes_the_range_start_and_excludes_its_end() -> None:
@@ -341,7 +341,7 @@ async def test_gap_reader_returns_half_open_intersections(start: int, end: int, 
     gap = RecordedGap(SYM, StreamKind.TRADES, start, end, "ws_disconnect")
     reader = StaticGapReader([gap])
 
-    got = await reader.recording_gaps(SYM, _window(10, 20), limit=5)
+    got = await reader.recording_gaps(SYM, _window(10, 20), streams=(StreamKind.TRADES,), limit=5)
 
     assert got == ([gap] if hit else [])
 
@@ -349,17 +349,33 @@ async def test_gap_reader_returns_half_open_intersections(start: int, end: int, 
 async def test_gap_reader_ignores_other_symbols() -> None:
     reader = StaticGapReader([RecordedGap("ETHUSDT", StreamKind.TRADES, 0, 99, "x")])
 
-    assert await reader.recording_gaps(SYM, _window(10, 20), limit=5) == []
+    assert (
+        await reader.recording_gaps(SYM, _window(10, 20), streams=(StreamKind.TRADES,), limit=5)
+        == []
+    )
 
 
 async def test_gap_reader_at_the_row_cap_keeps_the_earliest_starts() -> None:
     stored = [RecordedGap(SYM, StreamKind.TRADES, start, 30, "x") for start in (14, 11, 13, 12)]
     reader = StaticGapReader(stored)
 
-    got = await reader.recording_gaps(SYM, _window(10, 20), limit=3)
+    got = await reader.recording_gaps(SYM, _window(10, 20), streams=(StreamKind.TRADES,), limit=3)
 
     assert [g.start_us for g in got] == [11, 12, 13]
     assert reader.limits == [3]
+
+
+async def test_gap_reader_returns_only_the_asked_streams_and_caps_after_filtering() -> None:
+    """Rows of a stream the caller does not read never take a place under its cap."""
+    other = [RecordedGap(SYM, StreamKind.TICKERS, start, 30, "x") for start in (10, 11, 12)]
+    wanted = RecordedGap(SYM, StreamKind.TRADES, 13, 30, "x")
+    reader = StaticGapReader([*other, wanted])
+
+    got = await reader.recording_gaps(SYM, _window(10, 20), streams=(StreamKind.TRADES,), limit=1)
+    none = await reader.recording_gaps(SYM, _window(10, 20), streams=(), limit=5)
+
+    assert (got, none) == ([wanted], [])
+    assert reader.stream_sets == [frozenset({StreamKind.TRADES}), frozenset()]
 
 
 @pytest.mark.parametrize("limit", [0, -1, True])
@@ -367,8 +383,8 @@ async def test_gap_reader_refuses_a_limit_below_one_before_touching_storage(limi
     reader = StaticGapReader([RecordedGap(SYM, StreamKind.TRADES, 11, 12, "x")])
 
     with pytest.raises(RecordedQueryRejected):
-        await reader.recording_gaps(SYM, _window(10, 20), limit=limit)
-    assert reader.limits == []
+        await reader.recording_gaps(SYM, _window(10, 20), streams=(StreamKind.TRADES,), limit=limit)
+    assert reader.limits == [] and reader.windows == [] and reader.stream_sets == []
 
 
 @pytest.mark.parametrize(
@@ -384,7 +400,17 @@ def test_reader_interface_takes_no_filesystem_path(port: type, method: str) -> N
     """SR-097 / ticket AC 5: datasets are addressed by stream id + symbol + time only."""
     params = inspect.signature(getattr(port, method)).parameters
 
-    allowed = {"self", "symbol", "stream", "rng", "depth", "limit", "at_us", "not_before_us"}
+    allowed = {
+        "self",
+        "symbol",
+        "stream",
+        "streams",
+        "rng",
+        "depth",
+        "limit",
+        "at_us",
+        "not_before_us",
+    }
     assert set(params) <= allowed
     assert not any("path" in str(p.annotation).lower() for p in params.values())
 

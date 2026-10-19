@@ -16,9 +16,9 @@ only) are read once, before any event, and become `ReplayGap` markers at `max(ga
 carrying the stored bounds and cause. A marker sorts on the same key as an event: rank 0, its
 symbol and stream's domain ordinal, `seq` 0, its stream ordinal and `(gap_start, gap_end, cause)`
 as the tiebreak, so identical rows report once. The read is bounded by `DEFAULT_MAX_ROWS_PER_READ`
-rows per symbol: more is refused whole, never replayed with some gaps unreported. A table that
-size is built in steps that yield to the event loop (C-2.17). A gap table that cannot be read
-fails the replay rather than hide its holes.
+rows per symbol over the requested streams: more is refused whole, never replayed with some gaps
+unreported. A table that size is built in steps that yield to the event loop (C-2.17). A gap
+table that cannot be read fails the replay rather than hide its holes.
 
 **Reading.** One cursor per `(symbol, stream)` reads `[start, end)` in adaptive windows, the
 last one clipped to `end`. A window starts at `window_us` (ADR-0035: 30 s), doubles while the
@@ -483,7 +483,9 @@ class RecordedMerge:
         req = self._request
         start_us, end_us = req.start_us, req.end_us
         window = TimeRange(start_us=start_us, end_us=end_us)
-        read = self._tiers.gaps.recording_gaps(symbol, window, limit=DEFAULT_MAX_ROWS_PER_READ + 1)
+        read = self._tiers.gaps.recording_gaps(
+            symbol, window, streams=req.streams, limit=DEFAULT_MAX_ROWS_PER_READ + 1
+        )
         rows = await self._guarded(read, tier="recording_gaps", symbol=symbol, stream=None)
         if len(rows) > DEFAULT_MAX_ROWS_PER_READ:
             raise ReplayMemoryCeilingExceeded(

@@ -15,12 +15,20 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
-from datetime import datetime
-from typing import Any
+from collections.abc import Collection, Sequence
+from datetime import datetime, timedelta
+from typing import Any, Final
 
 import sqlalchemy as sa
 
+from candleviewer.domain.sql_names import EPOCH, ts_us_from_row
+from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.models import StreamKind, TimeRange
+from candleviewer.storage.repositories.recorded import (
+    STREAM_BY_DB_KIND,
+    RecordedGap,
+    RecordedQueryRejected,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -147,6 +155,15 @@ _GAPS_IN = sa.text(
     "FROM recording_gaps WHERE symbol = :symbol AND gap_start < :hi AND gap_end > :lo "
     "ORDER BY gap_start"
 )
+# `RecordingGapReader` (E26-T02): `_GAPS_IN` held to the asked streams and to the earliest
+# `:limit` rows by start, `id` breaking ties; `gaps_in` stays unbounded for its own callers.
+_REPLAY_GAPS = sa.text(
+    "SELECT stream::text AS stream, gap_start, gap_end, cause "
+    "FROM recording_gaps WHERE symbol = :symbol AND gap_start < :hi AND gap_end > :lo "
+    "AND stream = ANY(CAST(:streams AS stream_kind[])) ORDER BY gap_start, id LIMIT :limit"
+)
+#: Storage stream -> its Postgres `stream_kind` value, for the gap read's stream filter.
+_DB_KIND: Final = {stream: kind for kind, stream in STREAM_BY_DB_KIND.items()}
 _EARLIEST = sa.text(
     "SELECT min(first_event_ts) AS first FROM recording_sessions WHERE symbol = :symbol"
 )
@@ -355,6 +372,45 @@ class SqlAlchemyRecorderRepository:
 
     async def gaps_in(self, symbol: str, lo: datetime, hi: datetime) -> list[dict[str, Any]]:
         return await self._all(_GAPS_IN, {"symbol": symbol, "lo": lo, "hi": hi})
+
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
+    ) -> list[RecordedGap]:
+        """`RecordingGapReader` (E26-T02): gaps of `symbol` in `streams` intersecting `rng`, the
+        earliest `limit` by start. A `limit` below 1 (or a bool) or a stream that is not
+        recorded is refused before the query. A database failure is `StorageQueryFailed`,
+        raised after the handler with only the SQLSTATE: the replay fails it as an unreadable
+        gap table, and no driver text or chain (which may name the server) goes with it
+        (24 Sec.13.7, RP-I02)."""
+        if isinstance(limit, bool) or limit < 1:
+            raise RecordedQueryRejected("limit must be an int >= 1")
+        if any(stream not in _DB_KIND for stream in streams):
+            raise RecordedQueryRejected("streams must be recorded streams")
+        params = {
+            "symbol": symbol,
+            "lo": EPOCH + timedelta(microseconds=rng.start_us),
+            "hi": EPOCH + timedelta(microseconds=rng.end_us),
+            "streams": sorted(_DB_KIND[stream] for stream in streams),
+            "limit": limit,
+        }
+        try:
+            rows = await self._all(_REPLAY_GAPS, params)
+        except (sa.exc.SQLAlchemyError, OSError) as exc:
+            state = (
+                getattr(exc.orig, "sqlstate", None) if isinstance(exc, sa.exc.DBAPIError) else None
+            )
+        else:
+            return [
+                RecordedGap(
+                    symbol=symbol,
+                    stream=STREAM_BY_DB_KIND[str(row["stream"])],
+                    start_us=ts_us_from_row(row["gap_start"]),
+                    end_us=ts_us_from_row(row["gap_end"]),
+                    cause=str(row["cause"]),
+                )
+                for row in rows
+            ]
+        raise StorageQueryFailed(state if isinstance(state, str) else None)  # nothing chained
 
     async def earliest_first_event(self, symbol: str) -> datetime | None:
         rows = await self._all(_EARLIEST, {"symbol": symbol})

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import weakref
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 
 from candleviewer.replay import ReadAheadConfig, ReplayItem, ReplaySource
 from candleviewer.storage.models import StreamKind, TimeRange
@@ -123,8 +123,12 @@ class MintingGaps(StaticGapReader):
         self._rows = list(rows)
         self._causes: list[tuple[str, weakref.ref[Cause]]] = []
 
-    async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
+    ) -> list[RecordedGap]:
         out: list[RecordedGap] = []
+        if StreamKind.TRADES not in streams:  # every row it serves is a trades gap
+            return out
         for owner, start_us, end_us in self._rows:
             start, end = T0 + start_us, T0 + end_us
             if owner == symbol and start < rng.end_us and end > rng.start_us:
