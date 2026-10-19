@@ -18,11 +18,12 @@ import json
 import math
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -962,6 +963,8 @@ async def test_a_boot_pass_past_its_overall_bound_fails_closed_and_the_loop_stil
     assert (w.gate.reason_code, w.built) == (UNAVAILABLE, [(KEY, "1000001")])  # KEY2 never ran
     assert w.of("aclose") == [("aclose",)] and task is not None and task.cancelled()
     assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
+    assert sample(w, "cv_key_selfcheck_runs_total", result="error") == 1.0
+    assert sample(w, LATCH) == 1.0  # KeySelfCheckLatched
 
 
 def test_the_boot_pass_is_bounded_at_sixty_seconds_unless_told_otherwise() -> None:
@@ -1010,6 +1013,9 @@ def sample(w: World, name: str, **labels: str) -> float | None:
     return w.metrics.registry.get_sample_value(name, {"env": "demo", **labels})
 
 
+FAILING, LATCH = "cv_keys_failing_policy", "cv_key_selfcheck_latch_state"  # the alerts' gauges
+
+
 @pytest.mark.parametrize(
     ("interval_s", "age", "fresh"),
     [
@@ -1041,6 +1047,10 @@ async def test_the_watchdog_latches_stale_once_a_last_pass_is_past_its_window(
         w.check.watch()  # a repeat notifies nobody
     stale = [log["key_ids"] for log in logs if log["event"] == "key_selfcheck_stale"]
     assert (w.of("latch"), stale) == (([("latch", STALE)], [[str(KEY2)]]) if latched else ([], []))
+    gauge = [sample(w, LATCH)]  # the watchdog publishes its latch at once
+    del w.infos[KEY2]
+    await w.run()  # every key passes: the latch's alert gauge holds until a restart resets it
+    assert [*gauge, sample(w, LATCH)] == [float(latched)] * 2
 
 
 async def test_the_row_gauge_loop_runs_the_watchdog_while_the_jobs_loop_is_stalled() -> None:
@@ -1071,6 +1081,27 @@ async def test_the_watchdog_counts_one_missed_run_per_interval_past_the_grace() 
     runs = [e for e in logs if e["event"] == "key_selfcheck_run_missed"]
     missed = [(e["log_level"], e["missed"]) for e in runs]
     assert missed == [("error", 1), ("error", 2), ("error", 1)]  # none inside the grace
+
+
+async def test_a_failure_publishes_its_rule_then_the_latch_before_the_next_key_is_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    w, seen = World(target(), target(key=KEY2, acct=ACCT2), info=facts(permissions=WITHDRAW)), []
+    real = w.key_info
+
+    async def key_info() -> Any:  # KEY2's check begins: what has KEY's failure published?
+        if w.built[-1][0] == KEY2:
+            seen.append((sample(w, FAILING, rule="key_withdraw_permission"), sample(w, LATCH)))
+        return await real()
+
+    monkeypatch.setattr(w, "key_info", key_info)
+    monkeypatch.setattr(w.metrics, "get", spy := Mock(wraps=w.metrics.get))
+    await w.run()
+    assert seen == [(1.0, 1.0)]  # KeySelfCheckFailed at once; the latch alert waits on it
+    writes = [c.args[0] for c in spy.call_args_list if c.args[0] in (FAILING, LATCH)]
+    assert writes and writes == ([FAILING] * len(Rule) + [LATCH]) * (len(writes) // (len(Rule) + 1))
+    families = [f.name for f in w.metrics.registry.collect()]
+    assert families.index(LATCH) < families.index(FAILING)  # a scrape reads the latch first
 
 
 async def test_the_watchdog_before_any_run_counts_and_latches_nothing() -> None:
@@ -1215,6 +1246,7 @@ async def test_a_dead_watchdog_fails_closed_and_reads_degraded_with_no_accounts_
             status = svc.health().status
     assert (w.gate.reason_code, status) == (latch, HealthStatus.DEGRADED)
     assert {"event": "key_selfcheck_watchdog_died", "log_level": "error"} in logs
+    assert sample(w, LATCH) == (1.0 if held is None else 0.0)
 
 
 async def test_a_clean_stop_of_the_watchdog_loop_latches_nothing() -> None:
@@ -1229,7 +1261,9 @@ async def test_a_clean_stop_of_the_watchdog_loop_latches_nothing() -> None:
     assert (w.gate.reason_code, w.of("latch")) == (None, [])
 
 
-@pytest.mark.parametrize("series", ["cv_key_verification_seconds", "cv_key_verification_total"])
+@pytest.mark.parametrize(
+    "series", ["cv_key_verification_seconds", "cv_key_verification_total", FAILING, LATCH]
+)
 async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
     series: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1242,7 +1276,8 @@ async def test_a_metrics_fault_never_withholds_a_failures_records_or_disarm(
         return real(name)
 
     monkeypatch.setattr(w.metrics, "get", get)
-    await w.run()
+    with pytest.raises(KeyError) if series in (FAILING, LATCH) else nullcontext():
+        await w.run()  # only the alerts' gauges, set at the run's end, escape its per-key guard
     assert (w.kinds(), w.gate.reason_code) == (WITHDRAW_FAILURE, FAILED)
 
 
@@ -1342,6 +1377,7 @@ async def test_a_boot_pass_cut_while_the_violation_record_hangs_leaves_the_disar
     assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
     assert (w.gate.reason_code, w.armed[ACCT]) == (FAILED, False)
     assert w.disarms[ACCT] == ["key_withdraw_permission", NOW, NOW]  # its record sent and marked
+    assert sample(w, "cv_keys_failing_policy", rule="key_withdraw_permission") == 1.0  # its alert
 
 
 async def test_a_verdict_with_several_failures_records_and_disarms_its_first_rule() -> None:
@@ -1372,6 +1408,8 @@ async def test_a_borrow_the_c28_recheck_refuses_is_a_withdraw_verdict_not_check_
     await w.run()  # the wiring's judging, as deployed, between M2's refusal and the job
     assert (w.kinds(), w.check.results[KEY].code) == (WITHDRAW_FAILURE, "key_withdraw_permission")
     assert (w.armed[ACCT], w.audit(VIOLATION)["severity"]) == (False, "critical")
+    # the runbook's tamper discriminator: its record lists no key-info fact, `permissions` included
+    assert set(w.audit(TESTED)["after_state"]) == CODES
 
 
 async def test_a_code_the_disarm_check_refuses_is_replaced_and_never_blocks_the_disarm() -> None:

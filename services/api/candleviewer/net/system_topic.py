@@ -61,11 +61,19 @@ def gate_notice(
 
 
 #: Role-neutral client texts per gate reason (no internal addresses reach WS clients).
+#: The key self-check's texts name no key and no account (`23-ws-protocol.md` §15.9; E27-T03).
 _CLIENT_TEXT = {
     "secrets.kek_unavailable": "Trading disabled: the credential key is unavailable.",
     "secrets.kek_rotation": "Trading disabled: a credential key rotation is in progress.",
     "secrets.kek_rows_stranded": (
         "Trading disabled: some stored API keys cannot be used with the loaded key."
+    ),
+    "accounts.key_selfcheck_failed": "Trading disabled: a stored API key failed its check.",
+    "accounts.key_verification_stale": (
+        "Trading disabled: a stored API key has no recent passing check."
+    ),
+    "accounts.key_selfcheck_unavailable": (
+        "Trading disabled: the stored API keys could not be checked."
     ),
 }
 

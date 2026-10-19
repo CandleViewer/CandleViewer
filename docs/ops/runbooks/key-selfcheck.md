@@ -19,9 +19,9 @@ the loop and the error type: see [`account-health.md`](account-health.md).
 
 ## Symptom: read-only with `accounts.key_selfcheck_failed`
 
-Signals: `/readyz` reports `degraded` with a failing `accounts` check; every WS client gets the
-critical `system` notice with this reason (its text is the generic read-only one until #836 slice
-2c lists the `accounts.*` codes in `23-ws-protocol.md` §15.9); at start-up the log
+Signals: the ticket `KeySelfCheckFailed` (page promotion pending owner approval, #2701), one alert
+per failing rule; `/readyz` reports `degraded` with a failing `accounts` check; every WS client gets
+the critical `system` notice: "Trading disabled: a stored API key failed its check."; at start-up the log
 says `starting in read-only mode (accounts.key_selfcheck_failed)`; the critical log
 `key_selfcheck_failed` names the key id and the failing rules; the audit log has `account.tested`
 (outcome failure, severity critical, `reason` the rule, `object_id` the key id), then, if the
@@ -50,6 +50,7 @@ or that column by hand (C-2.9).
 
 Find the key and the rule as an Owner (`GET $API/admin/audit?action=account.tested`), then fix the
 key at the exchange. The whitelist is edited in the exchange's web dashboard only (ADR-0009).
+Until `rotateApiKey` (#897) and `revokeApiKey` (#898) ship, "replace" and "store" below wait: `createApiKey` answers 409 while the key is active, and a key deleted at the exchange keeps failing (`key_wrong_environment`), so order entry stays read-only; fix the key in place where you can.
 
 | Rule                                                    | Fix at the exchange                                                                                                                              |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -85,10 +86,17 @@ the app serves. Fix the key first: its rule stays in `api_keys.last_error_code`,
 with no verdict keeps the failure, logs `key_selfcheck_failed` with `restored` true and latches
 again; only a pass clears it (decision 3 on #836).
 Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a new
-`account.tested` with outcome success for the key. The disarmed account stays disarmed: re-arming
-is an audited admin action that comes with the key routes (#2417, #836); never re-arm in SQL (C-2.9).
+`account.tested` with outcome success for the key. `KeySelfCheckFailed` resolves once a pass finds
+no failing key, and `KeySelfCheckLatched` then fires until the restart. The disarmed account stays
+disarmed: re-arming `trading_enabled` has no operation yet, so a force-disabled account has no
+audited way back until #3657 ships (decision 16 on #836). Never re-arm in SQL (C-2.9).
 
 ## Symptom: read-only with `accounts.key_verification_stale` or `accounts.key_selfcheck_unavailable`
+
+Tickets (page promotion pending owner approval, #2701): `KeySelfCheckLatched` (the latch, until the
+restart: a passing run never ends it) and `KeySelfCheckRunMissed` (a run is overdue; it ends 2 h
+after the last missed run, not at the restart). WS clients get "Trading disabled: a stored API key
+has no recent passing check." or "Trading disabled: the stored API keys could not be checked."
 
 No verdict was possible, so no key is blamed and nothing is disarmed. `stale`: a key has had no
 passing check for the interval plus 15 minutes; the warning log `key_selfcheck_inconclusive` and
@@ -110,7 +118,8 @@ sealed columns, or the columns bound into them, were edited (`secret_enc`, `enc_
 or `exchange_account_id`, for example). A Postgres or audit-log outage, a key revoked during the
 run or a row wrapped under a KEK version that is not loaded give the same error: rule them out
 first. A row that will not decrypt once those causes are ruled out was edited since `store()`
-accepted it (KV-T03 of the E27 threat model): treat it as a possible database tamper and take the
+accepted it (KV-T01 of the E27 threat model, ciphertext substitution; KV-T02's write-once trigger is
+what that edit got past): treat it as a possible database tamper and take the
 three steps under the first symptom above. No verdict is possible for it, so it shows up only as
 the stale latch.
 
@@ -126,8 +135,10 @@ has each key's age.
 pass or at a key test),
 the key list could not be read at start-up, or once a known key is past its window
 (`key_selfcheck_targets_failed`; a read that fails inside every window latches nothing), a key's
-check passed its deadline or its row is refused (`key_selfcheck_unfinished`,
-`key_selfcheck_env_mismatch`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
+check passed its deadline, the account model refused its row or the check raised after its verdict,
+as a metrics fault does (`key_selfcheck_unfinished`; a borrow M2 refuses is a
+`key_withdraw_permission` failure instead), a row of another environment is read
+(`key_selfcheck_env_mismatch`), the start-up pass passed its bound (`key_selfcheck_boot_unfinished`;
 with more than about ten keys an exchange outage at start-up is enough, a rate-limit hold is not)
 or the loop died
 (`key_selfcheck_loop_died`, or `key_selfcheck_watchdog_died` after `accounts_row_gauges_loop_died`
@@ -173,6 +184,7 @@ A latched self-check, a failing stored key or a faulted account-health loop make
 closed, as intended; do not relax the smoke test for it. The first two apply wherever the job runs:
 the real storage backend with at least one usable stored key. The fake backend wires no
 self-check, but its two account-health loops can still fault.
+Without a self-check the guard `ExpectedMetricMissingCvKeysFailingPolicy` stands there as a ticket.
 
 The case to expect is `CV_EGRESS_IP` unset with a stored key (`key_selfcheck_no_egress_ip`,
 `accounts.key_selfcheck_unavailable`), and compose cannot supply it today. It forwards neither

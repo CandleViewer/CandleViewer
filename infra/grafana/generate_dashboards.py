@@ -248,6 +248,25 @@ def system() -> Board:
         0.01,
     )
     b.ts("Watchdog alert state", 'ALERTS{alertname="Watchdog"}', "short")
+    # #836 (E27-T03): keys failing the self-check; the oldest last pass, lines at the default 3600 s
+    # interval and its +900 s stale latch (ticketed). More series: #3658. `max`: replicas agree.
+    b.ts(
+        "Stored API keys failing the self-check, by rule (dashed: ticket at 1)",
+        f"max by (rule) (cv_keys_failing_policy{{{E}}})",
+        "short",
+        None,
+        1,
+        "{{rule}}",
+    )
+    _threshold_lines(b)  # a line, not colour alone, marks the alert
+    b.ts(
+        "Oldest stored API key's last pass (dashed: the default interval; stale latch at +15 min)",
+        f"max(cv_key_verification_age_seconds{{{E}}})",
+        "s",
+        3600,
+        4500,
+    )
+    _threshold_lines(b)
     b.flush()
     return b
 

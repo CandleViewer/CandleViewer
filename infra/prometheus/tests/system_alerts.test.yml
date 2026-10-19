@@ -706,6 +706,98 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: cv_key_selfcheck_missed_runs_total{env="live"}
+    values: 0+0x10 1+0x10
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: KeySelfCheckRunMissed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_selfcheck
+        env: live
+      exp_annotations:
+        summary: 'A stored-key self-check run is overdue: the job may have stopped'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfchecklatched
+- interval: 1m
+  input_series:
+  - series: cv_key_selfcheck_missed_runs_total{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: KeySelfCheckRunMissed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_key_soonest_expiry_seconds{env="live"}
+    values: 864000+0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: KeyExpiringWithin14Days
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_expiry
+        env: live
+      exp_annotations:
+        summary: A stored API key expires within 14 days (SR-034)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyexpiring
+- interval: 1m
+  input_series:
+  - series: cv_key_soonest_expiry_seconds{env="live"}
+    values: 1209600+0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: KeyExpiringWithin14Days
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_key_soonest_expiry_seconds{env="live"}
+    values: 259200+0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: KeyExpiringWithin7Days
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_expiry
+        env: live
+      exp_annotations:
+        summary: A stored API key expires within 7 days (SR-034)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyexpiring
+- interval: 1m
+  input_series:
+  - series: cv_key_soonest_expiry_seconds{env="live"}
+    values: 604800+0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: KeyExpiringWithin7Days
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_key_soonest_expiry_seconds{env="live"}
+    values: 43200+0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: KeyExpiringWithin1Day
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_expiry
+        env: live
+      exp_annotations:
+        summary: A stored API key expires within 1 day (SR-034)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyexpiring
+- interval: 1m
+  input_series:
+  - series: cv_key_soonest_expiry_seconds{env="live"}
+    values: 0+0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: KeyExpiringWithin1Day
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
     values: 300+0x1700
   alert_rule_test:
@@ -1250,6 +1342,56 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 0+0x2 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: KeySelfCheckLatched
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_selfcheck
+        env: live
+      exp_annotations:
+        summary: The stored-key self-check holds order entry read-only until a restart
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfchecklatched
+- interval: 1m
+  input_series:
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 1+0x10
+  - series: cv_keys_failing_policy{env="live",rule="key_withdraw_permission"}
+    values: 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: KeySelfCheckLatched
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 1+0x20
+  - series: cv_keys_failing_policy{env="live",rule="key_withdraw_permission"}
+    values: 1+0x4 0+0x15
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: KeySelfCheckLatched
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_selfcheck
+        env: live
+      exp_annotations:
+        summary: The stored-key self-check holds order entry read-only until a restart
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfchecklatched
+- interval: 1m
+  input_series:
+  - series: cv_key_selfcheck_latch_state{env="live"}
+    values: 1+0x4 0+0x15
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: KeySelfCheckLatched
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}
     values: 92400+60x40
   alert_rule_test:
@@ -1298,3 +1440,53 @@ tests:
         summary: A backup kind has not succeeded for over 26 h (a daily kind) or 8
           days (config_bundle)
         runbook_url: docs/plan/07-release-and-prr.md#alert-backuplastsuccessstale
+- interval: 1m
+  input_series:
+  - series: cv_keys_failing_policy{env="live",rule="key_withdraw_permission"}
+    values: 0+0x2 1+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: KeySelfCheckFailed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_selfcheck
+        env: live
+        rule: key_withdraw_permission
+      exp_annotations:
+        summary: 'A stored API key fails its self-check: order entry is read-only'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfcheckfailed
+- interval: 1m
+  input_series:
+  - series: cv_keys_failing_policy{env="live",rule="key_permission_not_allowed"}
+    values: 1+0x10
+  - series: cv_keys_failing_policy{env="live",rule="key_ip_whitelist_mismatch"}
+    values: 2+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: KeySelfCheckFailed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: key_selfcheck
+        env: live
+        rule: key_ip_whitelist_mismatch
+      exp_annotations:
+        summary: 'A stored API key fails its self-check: order entry is read-only'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfcheckfailed
+    - exp_labels:
+        severity: ticket
+        component: key_selfcheck
+        env: live
+        rule: key_permission_not_allowed
+      exp_annotations:
+        summary: 'A stored API key fails its self-check: order entry is read-only'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-keyselfcheckfailed
+- interval: 1m
+  input_series:
+  - series: cv_keys_failing_policy{env="live",rule="key_withdraw_permission"}
+    values: 1+0x4 0+0x10
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: KeySelfCheckFailed
+    exp_alerts: []

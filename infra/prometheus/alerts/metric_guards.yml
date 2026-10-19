@@ -31,6 +31,35 @@ groups:
         annotations:
           summary: "Expected metric cv_kek_degraded_state is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #836: the key self-check alerts' series. The first appears with a run, so its guard stands
+      # where no self-check is wired (the fake backend: dev until #3180); the others are bound at 0.
+      - alert: ExpectedMetricMissingCvKeysFailingPolicy
+        expr: absent(cv_keys_failing_policy)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_keys_failing_policy is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingCvKeySelfcheckLatchState
+        expr: absent(cv_key_selfcheck_latch_state)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_key_selfcheck_latch_state is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingCvKeySelfcheckMissedRunsTotal
+        expr: absent(cv_key_selfcheck_missed_runs_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_key_selfcheck_missed_runs_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       # #2496: the series behind the NetBindingUnsafe and AuthRecoveryCodeUsed pages. The mesh
       # gauge went unscraped for its whole life before #2496; a page on it could never fire.
       - alert: ExpectedMetricMissingNetBindingSafe

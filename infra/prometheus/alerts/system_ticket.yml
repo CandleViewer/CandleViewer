@@ -67,6 +67,81 @@ groups:
         annotations:
           summary: "Credential or certificate expiry within 14 days"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-credentialexpiryapproaching"
+      - alert: KeySelfCheckFailed
+        # #836 (C-2.8, C-12.2, SR-032): a stored key fails a rule (a refused right, a whitelist that
+        # is not the egress IP, SR-033, or any other), one alert per rule: order entry is read-only,
+        # the account disarmed. A ticket by ruling: page promotion pending owner approval (#2701).
+        expr: max by (env, rule) (cv_keys_failing_policy) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: key_selfcheck
+        annotations:
+          summary: "A stored API key fails its self-check: order entry is read-only"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyselfcheckfailed"
+      - alert: KeySelfCheckLatched
+        # #836 (SR-E27-18, ADR-0009 item 4): the job latched order entry read-only (a key past its
+        # window, keys it could not check, or a failure since fixed), a state gauge held until the
+        # restart. A ticket by ruling: page promotion pending owner approval (#2701).
+        expr: >-
+          max by (env) (cv_key_selfcheck_latch_state) > 0
+          unless on (env) max by (env) (cv_keys_failing_policy) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: key_selfcheck
+        annotations:
+          summary: "The stored-key self-check holds order entry read-only until a restart"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyselfchecklatched"
+      - alert: KeySelfCheckRunMissed
+        # #836 (SR-E27-18): a run not begun within the interval plus 15 min; a stopped job counts
+        # one each interval (at most 1 h), so 2 h holds it. Ends 2 h after the last increment, a
+        # restart or not. A ticket by ruling: page promotion pending owner approval (#2701).
+        expr: sum by (env) (increase(cv_key_selfcheck_missed_runs_total[2h])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: key_selfcheck
+        annotations:
+          summary: "A stored-key self-check run is overdue: the job may have stopped"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyselfchecklatched"
+      - alert: KeyExpiringWithin14Days
+        # #836 (SR-034): the soonest `expiredAt` of a stored key (+Inf for none) is under 14 days
+        # away. One ticket per band, so each of the 14, 7 and 1 day lines raises a new one.
+        expr: >-
+          min by (env) (cv_key_soonest_expiry_seconds) < 14 * 86400
+          and min by (env) (cv_key_soonest_expiry_seconds) >= 7 * 86400
+        for: 10m
+        labels:
+          severity: ticket
+          component: key_expiry
+        annotations:
+          summary: "A stored API key expires within 14 days (SR-034)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyexpiring"
+      - alert: KeyExpiringWithin7Days
+        expr: >-
+          min by (env) (cv_key_soonest_expiry_seconds) < 7 * 86400
+          and min by (env) (cv_key_soonest_expiry_seconds) >= 86400
+        for: 10m
+        labels:
+          severity: ticket
+          component: key_expiry
+        annotations:
+          summary: "A stored API key expires within 7 days (SR-034)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyexpiring"
+      - alert: KeyExpiringWithin1Day
+        # Above 0: 0 is the gauge before a watchdog sets it (none on the fake backend); a lapsed
+        # key fails `key_expired` at its next check, which raises KeySelfCheckFailed.
+        expr: >-
+          min by (env) (cv_key_soonest_expiry_seconds) < 86400
+          and min by (env) (cv_key_soonest_expiry_seconds) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          component: key_expiry
+        annotations:
+          summary: "A stored API key expires within 1 day (SR-034)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-keyexpiring"
       - alert: AuthLoginFailureSpike
         expr: sum(increase(auth_login_failures_total[10m])) > 10
         for: 0m
