@@ -2204,7 +2204,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "events",
         ("stream", "tier"),
-        "Recorded events replay sources read.",
+        "Recorded events replay sources read, each counted once.",
         "none (throughput); read latency alerts below",
         _L,
         "E26",

@@ -106,7 +106,7 @@ def test_the_real_backend_wires_questdb_parquet_manifest_coverage_and_gaps(
 @pytest.mark.parametrize(
     ("address", "port"), [("questdb", QUESTDB_PG_DEFAULT_PORT), ("questdb:9009", 9009)]
 )
-def test_the_questdb_address_names_the_pgwire_port_or_takes_its_default(
+def test_the_wiring_passes_the_questdb_port_or_its_default_user_and_password(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, address: str, port: int
 ) -> None:
     opened: list[tuple[object, ...]] = []
@@ -150,17 +150,20 @@ async def test_aclose_releases_the_questdb_connection_and_the_cold_scan_pool(
     assert released == ["cold", "questdb"]
 
 
-def test_every_reader_deadline_is_below_the_merge_deadline(tmp_path: Path) -> None:
+async def test_every_reader_deadline_is_below_the_merge_deadline(tmp_path: Path) -> None:
     """A slow read fails typed in its own tier before the merge's outer timeout cancels it: the
     readers' defaults, and the readers as the wiring builds them."""
     assert max(hot.DEFAULT_TIMEOUT_S, cold.DEFAULT_TIMEOUT_S) < DEFAULT_IO_TIMEOUT_S
     settings = _settings(storage_backend="real", parquet_root=str(tmp_path / "parquet"))
     wiring = build_replay_wiring(settings, StaticGapReader())
     assert wiring is not None
-    tiers = wiring.tiers
-    assert isinstance(tiers.hot, QuestDbRecordedReader)
-    assert isinstance(tiers.cold, ParquetRecordedReader)
-    assert max(tiers.hot._timeout_s, tiers.cold._timeout_s) < DEFAULT_IO_TIMEOUT_S
+    try:
+        tiers = wiring.tiers
+        assert isinstance(tiers.hot, QuestDbRecordedReader)
+        assert isinstance(tiers.cold, ParquetRecordedReader)
+        assert max(tiers.hot._timeout_s, tiers.cold._timeout_s) < DEFAULT_IO_TIMEOUT_S
+    finally:
+        await wiring.aclose()
 
 
 def test_the_app_serves_the_replay_read_path_series_where_prometheus_scrapes() -> None:

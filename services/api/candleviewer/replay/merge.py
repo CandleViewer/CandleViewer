@@ -96,7 +96,9 @@ type _Key = tuple[int, int, int, int, int, int, Tiebreak]
 type _Entry = tuple[_Key, ReplayItem, int]
 
 replay_events_read_total = Counter(
-    "replay_events_read_total", "Recorded events replay sources read.", ["stream", "tier"]
+    "replay_events_read_total",
+    "Recorded events replay sources read, each counted once.",
+    ["stream", "tier"],
 )
 replay_gap_warnings_total = Counter(
     "replay_gap_warnings_total", "ReplayGap markers replay sources emitted."
