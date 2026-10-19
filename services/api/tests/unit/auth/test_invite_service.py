@@ -16,6 +16,7 @@ from candleviewer.auth.errors import (
     InviteRejected,
     MfaCodeInvalid,
     PasswordPolicyViolation,
+    UserDisabled,
 )
 from candleviewer.auth.invite_service import (
     ENROLL_WINDOW,
@@ -279,6 +280,32 @@ async def test_wrong_totp_code_does_not_activate() -> None:
             audit_downgrade=_noop_audit,
         )
     assert e.value.reason == "enrollment_invalid"
+    assert repo.rows[hash_token(inv.token)].user_status is UserStatus.INVITED
+
+
+async def test_a_user_disabled_during_redemption_gets_the_redeemed_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2911: the enrolment's transaction reads the user under the user-row lock, so a disable
+    that commits after the check confirms nothing (`UserDisabled`). The answer is the uniform
+    `redeemed` rejection a failed activation gives that race, never a 500."""
+    svc, repo, _ = _make()
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
+    await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
+
+    async def disabled(self: FakeMfa, user_id: str, **_kw: Any) -> tuple[Any, tuple[str, ...]]:
+        raise UserDisabled("disabled")
+
+    monkeypatch.setattr(FakeMfa, "confirm_enrollment", disabled)
+    with pytest.raises(InviteRejected) as e:
+        await svc.complete_redemption(
+            inv.token,
+            method_id="m",
+            code="123456",
+            source_ip="1.1.1.1",
+            audit_downgrade=_noop_audit,
+        )
+    assert e.value.reason == "redeemed"
     assert repo.rows[hash_token(inv.token)].user_status is UserStatus.INVITED
 
 

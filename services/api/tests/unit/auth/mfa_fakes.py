@@ -7,6 +7,7 @@ import asyncio
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.mfa_service import MfaService, _hash_token
@@ -28,6 +29,10 @@ class FakeMfaRepository:
         self.recovery_codes: dict[str, dict[str, str | None]] = {}
         # user_id -> {code_id: code_hash}, used_at tracked in `used_codes`
         self.used_codes: set[str] = set()
+        #: #2911: users both completions read as `disabled` or gone under their user-row lock.
+        self.disabled_users: set[str] = set()
+        #: `security.mfa_recovery_used`, one user id per committed spend (contract, #2344).
+        self.recovery_events: list[str] = []
 
     # -- mfa_methods ---------------------------------------------------
 
@@ -83,9 +88,11 @@ class FakeMfaRepository:
         time_step: int,
         now: datetime,
         code_hashes: tuple[str, ...],
-    ) -> MfaMethodRecord | None:
+    ) -> MfaMethodRecord | Literal[False] | None:
         """Single-threaded fake: the claim, the revocations and the code swap happen in
         one synchronous step, the atomicity the SQL unit of work provides."""
+        if user_id in self.disabled_users:
+            return False
         if await self.find_pending_method(method_id, user_id) is None:
             return None
         claimed = self.methods[method_id].model_copy(
@@ -209,13 +216,6 @@ class FakeMfaRepository:
                 return code_id
         return None
 
-    async def consume_recovery_code(self, code_id: str, *, now: datetime) -> bool:
-        row = self.recovery_codes[code_id]
-        if row["used_at"] is not None:
-            return False
-        row["used_at"] = now.isoformat()
-        return True
-
     async def count_unused_recovery_codes(self, user_id: str) -> int:
         return sum(
             1
@@ -223,10 +223,29 @@ class FakeMfaRepository:
             if row["user_id"] == user_id and row["used_at"] is None
         )
 
-    async def set_mfa_required_reenroll(self, user_id: str) -> None:
+    async def complete_recovery(
+        self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
+    ) -> bool | None:
+        """Single-threaded fake of the SQL unit of work (#2344): the user's status and both
+        conditions are checked before anything changes, so a disabled user (`None`) or a lost
+        race leaves the code, the challenge and the methods as they were."""
+        if user_id in self.disabled_users:
+            return None
+        row = self.recovery_codes.get(code_id)
+        challenge = self.challenges.get(challenge_id)
+        if row is None or row["user_id"] != user_id or row["used_at"] is not None:
+            return False
+        if challenge is None or str(challenge.user_id) != user_id:
+            return False
+        if challenge.satisfied_at is not None:
+            return False
+        row["used_at"] = now.isoformat()
+        self.challenges[challenge_id] = challenge.model_copy(update={"satisfied_at": now})
         for method_id, method in list(self.methods.items()):
-            if str(method.user_id) == user_id and method.kind == MfaMethodKind.TOTP:
-                self.methods[method_id] = method.model_copy(update={"confirmed_at": None})
+            if str(method.user_id) == user_id and method.revoked_at is None:
+                self.methods[method_id] = method.model_copy(update={"revoked_at": now})
+        self.recovery_events.append(user_id)
+        return True
 
 
 class RecordingSystemEvents:

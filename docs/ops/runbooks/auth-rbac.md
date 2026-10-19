@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119); §4 was updated 2026-10-18 for #965 (the served disable and its limits). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119); §4 was updated 2026-10-18 for #965 (the served disable and its limits). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -114,14 +114,15 @@ authentication on the `/auth` routes, `method` being the factor that failed: `pa
 per-address throttle, or a disabled account after a correct password); `totp`, `webauthn` or
 `recovery_code` (as named in the request) per `auth.mfa_failed` row of `POST /auth/mfa/verify`, and
 per `auth.login_failed` row (reason `user_disabled`) of the same route when the code was right but
-the user was disabled since the password step (#3054); `recovery_code` also per `auth.mfa_failed`
-row of `POST /auth/mfa/recovery` and per `auth.recovery_codes_exhausted`. It does not move for an
-attempt refused while the account is locked (the `auth.account_locked` rows above), for a success,
-or for the WebSocket gateway's `auth.login_failed` rows (actor `ws`, reason `ws_auth_failed`,
-written on the third failed `auth` frame of a connection): `cv_ws_auth_failures_total{reason}`
-counts those, one per failed frame. Its `user_mismatch` reason on a first `auth`, or on a re-`auth`
-whose token names the socket's own user, means the principal store answered for another user: a
-server fault to investigate, not a client error.
+the user was disabled since the password step (#3054); `recovery_code` also per `auth.mfa_failed`,
+`auth.login_failed` (a user disabled during the sign-in) and `auth.recovery_codes_exhausted` row of
+`POST /auth/mfa/recovery`. It does not move for an attempt refused while the account is locked (the
+`auth.account_locked` rows above), for a success, or for the WebSocket gateway's `auth.login_failed`
+rows (actor `ws`, reason `ws_auth_failed`, written on the third failed `auth` frame of a
+connection): `cv_ws_auth_failures_total{reason}` counts those, one per failed frame. Its
+`user_mismatch` reason on a first `auth`, or on a re-`auth` whose token names the socket's own
+user, means the principal store answered for another user: a server fault to investigate, not a
+client error.
 Every method is listed at 0 from process start. The `AuthLoginFailureSpike` rule reads it
 (`sum(increase(...[10m])) > 10`); `sum by (method) (increase(auth_login_failures_total[10m]))`
 shows which factor is attacked.
@@ -134,12 +135,40 @@ curl -s -X POST "$API/auth/mfa/recovery" -H 'Content-Type: application/json' \
   -d '{"mfa_token":"<mfa_token>","recovery_code":"<code>"}'
 ```
 
-Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. This route mints no
-session, token or cookie yet (recovery-session gap: #2344), but it un-confirms the old TOTP, so
-the next password sign-in gets an enrolment-only session: re-enrol as in §2 step 4 (#2295). A code is single use;
-`auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
-Re-enrolment is forced after every recovery sign-in, however many codes remain
-(`auth/mfa_service.py`); there is no remaining-codes threshold (#2296).
+Expected `200` with `status: authenticated`, `tokens`, a `user` with `mfa_required` true and
+`mfa_enabled` false, and the `cv_refresh` and `__Host-cv_csrf` cookies (#2344). The session is
+**enrolment-only**: it lives 15 minutes and may only enrol and confirm a new TOTP, as in §2 step 4
+(#2295). The call revokes every MFA method of the user, so the lost device can never be confirmed
+again, and every other session of the user. A code is single use. A wrong or spent code, an
+expired or locked challenge and any other refusal answer the same `401` and spend nothing; five
+wrong codes lock the challenge, so sign in with the password again. That `401` also answers a
+user disabled since the password step (`auth.login_failed`, reason `user_disabled`) and an audit
+record that cannot be written (error log `auth.recovery.audit_unavailable` names the action).
+Before anything changes, `auth.recovery_code_used`, one `auth.session_revoked` (reason
+`mfa_recovery`) per ended session and `auth.session_created` (`enrolment_only: true`,
+`mfa_method: recovery_code`) are written; `auth.recovery_codes_exhausted` is written when none
+remain. The spend records a `system_events` row (`auth`, `security.mfa_recovery_used`) in its own
+transaction. Re-enrolment is forced after every
+recovery sign-in, however many codes remain (`auth/mfa_service.py`); there is no remaining-codes
+threshold (#2296). If the 15 minutes run out before the confirm, sign in with the password alone:
+with no method left, that sign-in is enrolment-only too.
+
+If the answer is `401` with `sign in again with your password`, the code was spent and every method
+revoked, but no session was minted: the error log `auth.recovery.completed_unminted` names the
+`user_id`, the `new_session_id` and the `revoked_session_ids` the call meant to end, and an
+`auth.mfa_failed` row (reason `unminted`) voids the `auth.session_created` written ahead. Those
+sessions may still be live, but while the user has no method one that proved a second factor
+answers `401` except to `POST /auth/logout`, one minted on the password alone reaches only the
+enrolment operations, and the confirm ends them. Sign in with the password alone (enrolment-only)
+and re-enrol. A session minted while the recovery ran ends with the others under its own
+`auth.session_revoked` with `unplanned: true`. A recovery whose
+transaction did not commit changes nothing, and its refusal row names the records it voids:
+`auth.mfa_failed` with reason `lost_race` (a concurrent recovery won) or `store_error` (error log
+`auth.recovery.commit_failed`), or `auth.login_failed` (`user_disabled`) when the user was disabled
+meanwhile; the status is read under the user-row lock. A user disabled after the spend gets `401`
+`account is disabled` and an `auth.login_failed` row that voids the session. An Owner's recovery
+sign-in moves
+`auth_enrolment_only_sessions_total{role="owner"}` (§2 step 4).
 
 Not available today:
 
@@ -240,6 +269,12 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in
    whose user was disabled since the password check gets `403`: its `auth.login_failed` row carries
    `session_id` and `after_state.voids_session_created`, so its `auth.session_created` row is void.
+   A confirm whose transaction did not commit changed nothing (the method is still pending, the
+   codes and sessions are as they were): the error log `auth.enrolment.commit_failed` names the user
+   and the new session, and the refusal row voids that session's `auth.session_created` the same
+   way. It is `auth.mfa_failed` with reason `lost_race` (`422`, a concurrent confirm or enrolment
+   won) or `store_error` (`500`), or `auth.login_failed` (`user_disabled`, `401`) for a user
+   disabled since the confirm read it, read again under the user-row lock (#2911).
    - If confirm answers `503`, the user signs in again. When the error log
      `auth.enrolment.completed_unrotated` names the user, the enrolment completed but the session
      was not rotated: the new TOTP is active (the next sign-in asks for it), its 10 recovery codes

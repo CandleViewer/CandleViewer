@@ -10,7 +10,7 @@ the other's types — same composition-root pattern `UserRepository` uses.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord
 
@@ -35,8 +35,9 @@ class MfaRepository(Protocol):
     async def find_pending_method(self, method_id: str, user_id: str) -> MfaMethodRecord | None:
         """The confirmable method `method_id` of `user_id`, or `None` (#2295): never
         confirmed (no accepted time step), not revoked, and the user's latest method, so
-        only the one the latest enrolment created qualifies. A method a recovery sign-in
-        un-confirmed has an accepted step and never qualifies again."""
+        only the one the latest enrolment created qualifies. A recovery sign-in revokes
+        every method (#2344); one it un-confirmed before that has an accepted step, so
+        neither qualifies again."""
         ...
 
     async def supersede_pending_methods(self, user_id: str, *, now: datetime) -> None:
@@ -52,13 +53,15 @@ class MfaRepository(Protocol):
         time_step: int,
         now: datetime,
         code_hashes: tuple[str, ...],
-    ) -> MfaMethodRecord | None:
+    ) -> MfaMethodRecord | Literal[False] | None:
         """#2295, ONE transaction: confirm `method_id` (`confirmed_at = now`, accepted
         `time_step`) only while `find_pending_method` would still return it, revoke every
         other unrevoked TOTP method of `user_id`, and replace the user's recovery codes
         with `code_hashes`, so the old method and codes stop working at the instant the
         new ones start. Returns the confirmed method, or `None` after rolling back when
-        the method is no longer confirmable (a concurrent confirm or enrolment won)."""
+        the method is no longer confirmable (a concurrent confirm or enrolment won).
+        `False`, rolled back before any change, when the user is `disabled` or gone: its
+        row is read first under a share lock, as `complete_recovery` reads it (#2911)."""
         ...
 
     async def find_active_totp_methods(self, user_id: str) -> tuple[MfaMethodRecord, ...]:
@@ -139,22 +142,19 @@ class MfaRepository(Protocol):
         `None`."""
         ...
 
-    async def consume_recovery_code(self, code_id: str, *, now: datetime) -> bool:
-        """Conditional `UPDATE ... WHERE used_at IS NULL`, stamping
-        `used_at = now`, returning whether *this call* won the race.
-        PR #1618 review finding 2 (high): `find_unused_recovery_code` then
-        `consume_recovery_code` is check-then-act; without this the code
-        is single-use only in appearance and two concurrent requests with
-        the same recovery code can both be accepted (and, worse, both go
-        on to try to satisfy the same challenge). The caller must treat
-        `False` as `RecoveryCodeInvalid`."""
-        ...
-
     async def count_unused_recovery_codes(self, user_id: str) -> int: ...
 
-    async def set_mfa_required_reenroll(self, user_id: str) -> None:
-        """Clear every confirmed TOTP method's `confirmed_at` (force
-        re-enrolment) after a recovery-code sign-in (ticket "forces
-        re-enrolment of TOTP"). Implemented as a targeted UPDATE, not a
-        revoke, so the method row (and its audit history) is retained."""
+    async def complete_recovery(
+        self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
+    ) -> bool | None:
+        """#2344, ONE transaction: mark the recovery code `code_id` of `user_id` used and
+        satisfy its login challenge `challenge_id`, each only while unused and unsatisfied
+        (conditional `UPDATE`s), then revoke (`revoked_at = now`) every unrevoked MFA method
+        of `user_id` (which forces TOTP re-enrolment: `find_pending_method` never returns a
+        revoked method) and record the contract's `security.mfa_recovery_used` system event.
+        Returns whether this call won both; when it did not, it rolls back, so a lost race
+        spends no code. PR #1618 review finding 2 (high): the conditions are what make one
+        code, and one challenge, sign in at most once. `None`, rolled back before any change,
+        when the user is `disabled` or gone: its row is read first under a share lock, as a
+        session insert does (#2911)."""
         ...

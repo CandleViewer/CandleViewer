@@ -3,10 +3,11 @@ trip lives in tests/integration/auth, not run locally)."""
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -17,6 +18,9 @@ from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories import mfa_sqlalchemy
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
+from candleviewer.storage.repositories.relational_sqlalchemy import (
+    SqlAlchemyRelationalRepository,
+)
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 
 _NOW = datetime(2026, 10, 1, tzinfo=UTC)
@@ -95,13 +99,81 @@ async def test_find_by_identifier_maps_json_params_and_methods() -> None:
     assert got["password_algo_params"] == {"m": 1} and got["mfa_methods"] == ("totp",)
 
 
-async def test_recovery_code_consume_is_single_use_cas() -> None:
-    rel = _Rel([])
-    repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
-    assert await repo.consume_recovery_code("c", now=_NOW) is False
-    assert "used_at IS NULL" in rel.calls[0][0]
-    rel.rows = [_row(x=1)]
-    assert await repo.consume_recovery_code("c", now=_NOW) is True
+class _Answers(_Rel):
+    """`_Rel` whose statements answer in turn, one row list each, then no rows."""
+
+    def __init__(self, *answers: list[Any]) -> None:
+        super().__init__([])
+        self.answers = list(answers)
+
+    @asynccontextmanager
+    async def unit_of_work(self) -> Any:
+        async with super().unit_of_work() as uow:
+            record = uow.session.execute
+
+            async def execute(stmt: Any, params: dict[str, Any]) -> _Result:
+                await record(stmt, params)
+                return _Result(self.answers.pop(0) if self.answers else [])
+
+            uow.session.execute = execute
+            yield uow
+
+
+def _recovery_repo(*answers: list[Any]) -> tuple[_Answers, SqlAlchemyMfaRepository]:
+    """The repository over `_Answers`, which has the relational repository's `unit_of_work`."""
+    rel = _Answers(*answers)
+    return rel, SqlAlchemyMfaRepository(cast(SqlAlchemyRelationalRepository, rel), dict, dict)
+
+
+_ACTIVE = [_row(status="active")]  # the user-row read both completions start with (#2911)
+
+
+async def test_complete_recovery_spends_satisfies_and_revokes_in_one_unit_of_work() -> None:
+    """#2344: the user row is share-locked first (#2911); the code and the challenge are each
+    won once, only as the user's own; every method of the user is revoked and the contract's
+    system event inserted in the same unit of work."""
+    rel, repo = _recovery_repo(_ACTIVE, [_row(x=1)], [_row(x=1)])
+    assert await repo.complete_recovery("u", challenge_id="ch", code_id="c", now=_NOW) is True
+    (lock, p0), (use, p1), (satisfy, p2), (revoke, p3), (event, p4), commit = rel.calls
+    assert lock.endswith("WHERE id = CAST(:u AS uuid) AND deleted_at IS NULL FOR SHARE")
+    assert use.startswith("UPDATE recovery_codes SET used_at = :now")
+    assert "user_id = CAST(:u AS uuid) AND used_at IS NULL RETURNING 1" in use
+    assert "user_id = CAST(:u AS uuid) AND satisfied_at IS NULL RETURNING 1" in satisfy
+    assert revoke == (
+        "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
+        "AND revoked_at IS NULL"
+    )
+    assert "VALUES ('auth', 'security.mfa_recovery_used', 'warning', :message" in event
+    assert (p0, p1, p2, p3) == (
+        {"u": "u"},
+        {"id": "c", "u": "u", "now": _NOW},
+        {"id": "ch", "u": "u", "now": _NOW},
+        {"u": "u", "now": _NOW},
+    )
+    assert json.loads(p4["details"]) == {"user_id": "u", "challenge_id": "ch"}
+    assert p4["now"] == _NOW
+    assert commit == ("COMMIT", {})  # one commit, after every statement
+
+
+@pytest.mark.parametrize("answers", [([],), ([_row(x=1)], [])], ids=["code_lost", "challenge_lost"])
+async def test_complete_recovery_rolls_back_a_lost_race_and_spends_nothing(
+    answers: tuple[list[Any], ...],
+) -> None:
+    rel, repo = _recovery_repo(_ACTIVE, *answers)
+    assert await repo.complete_recovery("u", challenge_id="ch", code_id="c", now=_NOW) is False
+    statements = [statement for statement, _ in rel.calls]
+    assert statements[1 + len(answers) :] == ["ROLLBACK"]  # nothing after the lost update
+
+
+@pytest.mark.parametrize("user", [[_row(status="disabled")], []], ids=["disabled", "gone"])
+async def test_complete_recovery_of_a_disabled_or_gone_user_rolls_back_before_any_change(
+    user: list[Any],
+) -> None:
+    """#2911: a disable that committed first is read under the share lock: nothing is spent,
+    satisfied, revoked or recorded."""
+    rel, repo = _recovery_repo(user)
+    assert await repo.complete_recovery("u", challenge_id="ch", code_id="c", now=_NOW) is None
+    assert [statement for statement, _ in rel.calls][1:] == ["ROLLBACK"]
 
 
 async def test_time_step_replay_rejected_when_no_row_updated() -> None:
@@ -112,28 +184,43 @@ async def test_time_step_replay_rejected_when_no_row_updated() -> None:
 
 
 async def test_complete_enrollment_claims_revokes_and_swaps_codes_in_one_unit_of_work() -> None:
-    """#2295: the old method and codes stop working at the instant the new ones start."""
-    rel = _Rel([_row(id="m", kind="totp")])
-    repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
+    """#2295: the old method and codes stop working at the instant the new ones start. The user
+    row is share-locked first, as for the recovery (#2911)."""
+    rel, repo = _recovery_repo(_ACTIVE, [_row(id="m", kind="totp")])
     got = await repo.complete_enrollment(
         "u", method_id="m", time_step=7, now=_NOW, code_hashes=("h1", "h2")
     )
-    sql = [statement for statement, _ in rel.calls]
+    (lock, locked), *calls = rel.calls
+    sql = [statement for statement, _ in calls]
     assert got == {"id": "m", "kind": "totp"}
+    assert lock.endswith("WHERE id = CAST(:u AS uuid) AND deleted_at IS NULL FOR SHARE")
+    assert locked == {"u": "u"}
     for rule in ("m.confirmed_at IS NULL", "m.last_accepted_time_step IS NULL", "NOT EXISTS"):
         assert rule in sql[0] and sql[0].startswith("UPDATE mfa_methods m SET confirmed_at")
-    assert rel.calls[0][1] == {"id": "m", "u": "u", "now": _NOW, "step": 7}
+    assert calls[0][1] == {"id": "m", "u": "u", "now": _NOW, "step": 7}
     assert "id <> CAST(:id AS uuid) AND kind = 'totp' AND revoked_at IS NULL" in sql[1]
     assert sql[2].startswith("DELETE FROM recovery_codes")
-    assert [params["h"] for _, params in rel.calls[3:5]] == ["h1", "h2"]
+    assert [params["h"] for _, params in calls[3:5]] == ["h1", "h2"]
     assert sql[5:] == ["COMMIT"]  # one commit, after every statement
 
 
 async def test_complete_enrollment_rolls_back_when_the_method_is_no_longer_confirmable() -> None:
-    rel = _Rel([])
-    repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
+    rel, repo = _recovery_repo(_ACTIVE)
     got = await repo.complete_enrollment("u", method_id="m", time_step=7, now=_NOW, code_hashes=())
     assert got is None
+    assert [statement for statement, _ in rel.calls][2:] == ["ROLLBACK"]  # after the lost claim
+
+
+@pytest.mark.parametrize("user", [[_row(status="disabled")], []], ids=["disabled", "gone"])
+async def test_complete_enrollment_of_a_disabled_or_gone_user_rolls_back_before_any_change(
+    user: list[Any],
+) -> None:
+    """#2911 (C-12.4): a disable that committed after the confirm read the user is read under
+    the share lock: `False`, not a lost race, and no method is confirmed or revoked and no code
+    replaced."""
+    rel, repo = _recovery_repo(user, [_row(id="m", kind="totp")])
+    got = await repo.complete_enrollment("u", method_id="m", time_step=7, now=_NOW, code_hashes=())
+    assert got is False
     assert [statement for statement, _ in rel.calls][1:] == ["ROLLBACK"]
 
 

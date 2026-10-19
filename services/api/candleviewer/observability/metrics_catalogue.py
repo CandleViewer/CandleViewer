@@ -2780,7 +2780,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "codes",
         (),
-        "Recovery codes accepted (SR-022); counted before the audit write, so >= audit rows.",
+        "Recovery codes spent (SR-022); counted after the commit, so never more than audit rows.",
         "AuthRecoveryCodeUsed (any in 15m, page)",
         _L,
         "E09",

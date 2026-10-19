@@ -127,7 +127,7 @@ async def test_open_challenge_at_attempt_cap_is_locked() -> None:
             update={"attempts": CHALLENGE_ATTEMPT_CAP}
         )
     with pytest.raises(MfaChallengeLocked):
-        await _service(repo).recover(token, "AAAA")
+        await _service(repo).check_recovery(token, "AAAA")
 
 
 async def test_enroll_rejects_non_totp_method() -> None:
@@ -278,36 +278,59 @@ async def _with_codes(repo: FakeMfaRepository, uid: uuid.UUID) -> list[str]:
     return codes
 
 
-async def test_recover_lost_consume_race_is_invalid_and_counts_attempt() -> None:
-    """Conditional UPDATE on recovery_codes returned 0 rows (concurrent use)."""
+async def test_recover_lost_code_race_spends_nothing_and_counts_attempt() -> None:
+    """Another request spent the code between the check and the completion (#2344): the
+    conditional update finds it used, so the unit of work changes nothing."""
     repo = FakeMfaRepository()
+    svc = _service(repo)
     uid = uuid.uuid4()
+    await _enrolled(svc, repo, uid)
     codes = await _with_codes(repo, uid)
-    token = await _challenge(repo, uid)
+    check = await svc.check_recovery(await _challenge(repo, uid), codes[0])
+    repo.recovery_codes[check.code_id]["used_at"] = _NOW.isoformat()  # the racing request won
+    methods = dict(repo.methods)
 
-    async def _lost(code_id: str, *, now: datetime) -> bool:
-        return False
-
-    repo.consume_recovery_code = _lost  # type: ignore[method-assign]
     with pytest.raises(RecoveryCodeInvalid):
-        await _service(repo).recover(token, codes[0])
-    challenge = next(iter(repo.challenges.values()))
-    assert challenge.attempts == 1
-    assert challenge.satisfied_at is None
+        await svc.complete_recovery(check)
+
+    challenge = repo.challenges[str(check.challenge_id)]
+    assert (challenge.attempts, challenge.satisfied_at) == (1, None)
+    assert repo.methods == methods
 
 
-async def test_recover_lost_challenge_race_mints_no_session() -> None:
+async def test_recover_lost_challenge_race_spends_no_code_and_mints_no_session() -> None:
+    """A concurrent TOTP verify satisfied the challenge first: one unit of work, so the code
+    stays unspent and no method is revoked (it used to burn the code, PR #1618 finding 2)."""
     repo = FakeMfaRepository()
+    svc = _service(repo)
+    uid = uuid.uuid4()
+    await _enrolled(svc, repo, uid)
+    codes = await _with_codes(repo, uid)
+    check = await svc.check_recovery(await _challenge(repo, uid), codes[0])
+    assert await repo.satisfy_challenge(str(check.challenge_id), now=_NOW)  # the verify won
+    methods = dict(repo.methods)
+
+    with pytest.raises(RecoveryCodeInvalid):
+        await svc.complete_recovery(check)
+
+    assert repo.recovery_codes[check.code_id]["used_at"] is None
+    assert repo.methods == methods
+
+
+async def test_recover_completes_once_for_two_checks_of_one_code() -> None:
+    """Two requests with the same code both pass the read-only check; exactly one spends it."""
+    repo = FakeMfaRepository()
+    svc = _service(repo)
     uid = uuid.uuid4()
     codes = await _with_codes(repo, uid)
-    token = await _challenge(repo, uid)
+    first = await svc.check_recovery(await _challenge(repo, uid, "t1"), codes[0])
+    second = await svc.check_recovery(await _challenge(repo, uid, "t2"), codes[0])
 
-    async def _lost(challenge_id: str, *, now: datetime) -> bool:
-        return False
+    await svc.complete_recovery(first)
+    with pytest.raises(RecoveryCodeInvalid):
+        await svc.complete_recovery(second)
 
-    repo.satisfy_challenge = _lost  # type: ignore[method-assign]
-    with pytest.raises(MfaChallengeInvalid, match="already satisfied"):
-        await _service(repo).recover(token, codes[0])
+    assert repo.challenges[str(second.challenge_id)].satisfied_at is None
 
 
 async def test_recover_code_valid_once_then_rejected() -> None:
@@ -315,9 +338,11 @@ async def test_recover_code_valid_once_then_rejected() -> None:
     svc = _service(repo)
     uid = uuid.uuid4()
     codes = await _with_codes(repo, uid)
-    await svc.recover(await _challenge(repo, uid, "t1"), codes[0])
+    await svc.complete_recovery(
+        await svc.check_recovery(await _challenge(repo, uid, "t1"), codes[0])
+    )
     with pytest.raises(RecoveryCodeInvalid):
-        await svc.recover(await _challenge(repo, uid, "t2"), codes[0])
+        await svc.check_recovery(await _challenge(repo, uid, "t2"), codes[0])
 
 
 async def test_recover_with_wrong_hmac_key_rejects_valid_code() -> None:
@@ -329,4 +354,4 @@ async def test_recover_with_wrong_hmac_key_rejects_valid_code() -> None:
         repo, TotpEncryptor(os.urandom(32)), recovery_code_key=b"z" * 32, clock=lambda: _NOW
     )
     with pytest.raises(RecoveryCodeInvalid):
-        await other.recover(token, codes[0])
+        await other.check_recovery(token, codes[0])
