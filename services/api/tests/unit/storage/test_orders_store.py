@@ -17,8 +17,8 @@ import socket
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
-from dataclasses import fields
+from contextlib import asynccontextmanager, nullcontext
+from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -32,6 +32,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from candleviewer.db import models
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
+from candleviewer.storage.repositories import executions_sqlalchemy as ex
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories import orders_sqlalchemy as mod
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
@@ -39,15 +40,18 @@ from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
     OPEN_STATES,
+    FillRefused,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
     OrderEventRow,
     OrderNotFoundError,
     OrderRow,
+    StaleOrderState,
     require_aware,
     require_money,
 )
+from tests.unit.oms.write_ahead_contract import event, fill, step
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
@@ -196,6 +200,13 @@ def test_constraint_error_names_the_constraint_only() -> None:
     )
 
 
+def test_a_missed_compare_and_set_names_both_of_its_causes() -> None:
+    """Another writer moved the state, or only the `cum_exec_qty` a fill's totals came from; the
+    message names the order and the state, never a value."""
+    moved = f"order {ORDER} moved on from 'accepted' or from the row a fill was built on"
+    assert str(StaleOrderState(ORDER, "accepted")) == f"{moved}: nothing was written"
+
+
 # -- adapter: statements ------------------------------------------------------------------------
 
 
@@ -216,6 +227,12 @@ _SECRET_EVENT = _event(
     ret_code="10004",
     ret_msg=f"error sign! origin_string[1760630400000{_KEY}5000]",  # the signed string echoed
 )
+#: An order row as the write-ahead step reads it (E29-T03), and a step and a fill from it.
+_HELD = cast(Any, SimpleNamespace(id=ORDER, exchange_account_id=ACCOUNT, state="accepted"))
+_HELD.order_link_id, _HELD.qty = LINK, Decimal("0.3")
+_HELD.cum_exec_qty = _HELD.cum_exec_value = _HELD.fee_paid = 0
+_STEP = step(_HELD, "rejected", reject_code="10004", reject_message=_SECRET_EVENT.ret_msg)
+_FILL = fill(_HELD, "E1", "0.1")
 _STATEMENTS: dict[str, Any] = {
     "create_statement": mod.create_statement(_new_order(), _SECRET_EVENT),
     "get_statement": mod.get_statement(ACCOUNT, ORDER),
@@ -225,6 +242,8 @@ _STATEMENTS: dict[str, Any] = {
     "lock_statement": mod.lock_statement(ACCOUNT, ORDER),
     "append_statement": mod.append_statement(ACCOUNT, ORDER, _SECRET_EVENT),
     "list_events_statement": mod.list_events_statement(ACCOUNT, ORDER, 3, 50),
+    "transition_statement": mod.transition_statement(_STEP),
+    "fill_statement": mod.fill_statement(_FILL),
 }
 
 
@@ -319,6 +338,86 @@ def test_append_locks_the_order_and_takes_the_next_seq_of_that_order() -> None:
     columns = sql.split(" VALUES ")[0]
     assert "from_state" not in columns and "to_state" not in columns
     assert "local_create" in _bound(_STATEMENTS["append_statement"])
+
+
+def test_a_step_is_a_compare_and_set_with_its_reject_redacted() -> None:
+    """24 Sec.8.2 S7, S8: the UPDATE holds only on the expected state (a fill's, also only on the
+    stored quantity plus its own); the reject echo is never bound (#845 decision 2)."""
+    stmt = _STATEMENTS["transition_statement"]
+    sql, bound, fill_sql = _sql(stmt), _bound(stmt), _sql(_STATEMENTS["fill_statement"])
+    assert sql.startswith("UPDATE orders SET state=$1::order_state, reject_code=$2::VARCHAR, ")
+    assert "orders.id = $5::UUID AND orders.state = $6::order_state RETURNING orders.id, " in sql
+    assert bound[:3] + bound[5:] == ["rejected", "10004", REDACTED, "accepted"]
+    held = "orders.state = $8::order_state AND orders.cum_exec_qty + $9::NUMERIC(38, 18) = $10"
+    assert held in fill_sql and "cum_exec_value=$3" in fill_sql
+
+
+@pytest.mark.parametrize(
+    ("given", "stored"),
+    [({"reject_code": _KEY}, REDACTED), ({"reject_code": "1" * (MAX_CODE_CHARS + 1)}, OVERSIZE),
+     ({"reject_message": _REJECTED_TEXT}, REDACTED)],
+)  # fmt: skip
+def test_a_reject_is_redacted_like_ret_code_and_ret_msg(given: dict[str, Any], stored: str) -> None:
+    """#845 decision 2: `reject_code` takes the string rule within 64 characters, and
+    `reject_message` the message rule too (its 18 letters alone pass the string rule)."""
+    moved = step(_HELD, "rejected", **given)
+    assert moved.changes() == {"state": "rejected"} | dict.fromkeys(given, stored)
+    assert _bound(mod.transition_statement(moved))[:2] == ["rejected", stored]
+
+
+@pytest.mark.parametrize(
+    ("source", "expect"),
+    [*((s, pytest.raises(ValueError, match="OM-R02")) for s in ("reconcile", "rest", "ws_private")),
+     ("local", nullcontext()), ("paper", nullcontext())],
+)  # fmt: skip
+def test_only_a_step_the_exchange_reported_must_carry_its_message(source: Any, expect: Any) -> None:
+    """OM-R02: a `rest`, `ws_private` or `reconcile` step carries what the exchange said (every
+    source of the column is listed here, not read off `EXCHANGE_SOURCES`)."""
+    with expect:
+        step(_HELD, "accepted", event(source=source, payload={}))
+
+
+#: Steps and fills no store may write; `draft` and `exec` are chart names no column holds.
+_ELSEWHERE = replace(_FILL.execution, exchange_account_id=uuid.UUID(int=9))
+_UNWRITABLE: dict[str, tuple[Callable[[], object], type[Exception], str]] = {
+    "unknown_state": (lambda: step(_HELD, cast(Any, "draft")), ValueError, "of their columns"),
+    "unknown_from_state": (lambda: step(_HELD, "accepted", from_state=cast(Any, "draft")),
+                           ValueError, "of their columns"),
+    "unknown_kind": (lambda: step(_HELD, "accepted", event(cast(Any, "exec"))),
+                     ValueError, "of their columns"),
+    "unknown_source": (lambda: step(_HELD, "accepted", event(source=cast(Any, "bybit"))),
+                       ValueError, "of their columns"),
+    "another_order": (lambda: fill(_HELD, "E1", "0.1", order_id=ACCOUNT),
+                      ValueError, "another account or order"),
+    "another_account": (lambda: replace(_FILL, execution=_ELSEWHERE),
+                        ValueError, "another account or order"),
+    "fill_to_another_state": (lambda: fill(_HELD, "E1", "0.1", to_state="cancelled"),
+                              ValueError, "partially_filled or filled"),
+    "fill_by_another_kind": (lambda: fill(_HELD, "E1", "0.1", event("ack")),
+                             ValueError, "partially_filled or filled"),
+    "float_totals": (lambda: replace(_FILL.totals, fee_paid=cast(Any, 0.5)),
+                     TypeError, "^fee_paid "),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("built", sorted(_UNWRITABLE))
+def test_a_step_or_fill_no_column_holds_is_refused_as_it_is_built(built: str) -> None:
+    """OM-T04: every store refuses it alike, before any statement."""
+    build, error, match = _UNWRITABLE[built]
+    with pytest.raises(error, match=match):
+        build()
+
+
+@pytest.mark.parametrize(
+    ("qty", "paper", "reason"),
+    [("0.09", False, "above_qty"), ("0.3", True, "paper_mismatch"),
+     ("0.1", False, "state_mismatch")],
+)  # fmt: skip
+def test_a_fill_its_locked_order_cannot_take_is_refused(qty: str, paper: bool, reason: str) -> None:
+    """OM-T04: `_FILL` takes 0.1 to `partially_filled` on a live order of a held `qty`."""
+    with pytest.raises(FillRefused, match=reason) as err:
+        _FILL.check(Decimal(qty), paper)
+    assert (err.value.order_id, err.value.reason) == (ORDER, reason)
 
 
 def test_list_events_pages_by_seq_inside_the_account() -> None:
@@ -441,6 +540,79 @@ async def test_append_returns_the_stored_event_with_its_order_link_id() -> None:
     assert _sql(rel.statements[1]).startswith("INSERT INTO order_events")
 
 
+_LOCKED = _Result([{"qty": Decimal("0.3"), "is_paper": False}])  # `lock_order` reads `_HELD`
+_TAKEN = _Result([SimpleNamespace(order_id=ORDER)])  # a fill's insert took a row
+_CAS, _EVENT = _Result([_order_row()]), _Result([_event_row()])
+_FILL_SCRIPT = [_LOCKED, _TAKEN, _CAS, _EVENT]  # what one `commit_fill` of `_FILL` reads
+_Step = tuple[Callable[[_Rel], Awaitable[Any]], list[_Result], str, str]
+_STEPS: dict[str, _Step] = {  # a step: its call, script, statements it runs, event's `to_state`
+    "transition": (lambda r: _store(r).transition(_STEP), [_LOCKED, _CAS], "UPDATE", "rejected"),
+    "commit_fill": (
+        lambda rel: ex.SqlAlchemyExecutionStore(cast(Any, rel)).commit_fill(_FILL),
+        [_LOCKED, _TAKEN, _CAS], "INSERT UPDATE", "partially_filled",
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("call", sorted(_STEPS))
+async def test_a_step_locks_its_order_then_writes_and_commits_once(call: str) -> None:
+    """24 Sec.8.2 S8: the step's event, with both states, commits with its compare-and-set."""
+    run, script, verbs, to_state = _STEPS[call]
+    rel = _Rel(*script, _EVENT)
+    done = await run(rel)
+    assert (done.order.order_link_id, done.event.order_link_id, rel.commits) == (LINK, LINK, 1)
+    assert [_sql(stmt).split()[0] for stmt in rel.statements] == f"SELECT {verbs} INSERT".split()
+    assert _sql(rel.statements[0]).startswith("SELECT orders.order_link_id, orders.qty, orders.is_")
+    assert _bound(rel.statements[-1])[6:8] == ["accepted", to_state]
+
+
+_STALE = {"order_id": ORDER, "expected": "accepted"}  # the state the step expected, not its own
+_ABOVE = {"order_id": ORDER, "reason": "above_qty"}
+
+
+@pytest.mark.parametrize(
+    ("call", "script", "error", "named"),
+    [
+        ("transition", [_Result()], OrderNotFoundError, {}),
+        ("transition", [_LOCKED, _Result()], StaleOrderState, _STALE),
+        ("commit_fill", [_Result([{"qty": Decimal(0), "is_paper": False}]), _TAKEN],
+         FillRefused, _ABOVE),
+        ("commit_fill", [_LOCKED, _TAKEN, _Result()], StaleOrderState, _STALE),  # rolled back
+    ],
+)  # fmt: skip
+async def test_a_refused_step_writes_nothing(
+    call: str, script: list[_Result], error: type, named: dict[str, object]
+) -> None:
+    """S7, and the error names what slice 6 reads to choose its audit record and code."""
+    rel = _Rel(*script)
+    with pytest.raises(error) as err:
+        await _STEPS[call][0](rel)
+    assert (len(rel.statements), rel.commits) == (len(script), 0)
+    assert {name: getattr(err.value, name) for name in named} == named
+
+
+@pytest.mark.parametrize(
+    "write",
+    [lambda st: st.transition(step(_HELD, "filled")),  # a fill comes with its execution
+     lambda st: st.transition(step(_HELD, "partially_filled", event("partial_fill"))),
+     lambda st: st.append(ACCOUNT, ORDER, event("fill")),  # nor appended without it
+     lambda st: st.append(ACCOUNT, ORDER, event("partial_fill")),
+     lambda st: st.create(_new_order(), _event(source="reconcile"))],  # without its message
+)  # fmt: skip
+async def test_a_write_refused_as_it_starts_opens_no_unit(write: Any) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match=r"commit_fill|OM-R02"):
+        await write(_store(rel))
+    assert rel.units == []
+
+
+async def test_a_duplicate_fill_is_none_and_commits_nothing() -> None:
+    """S4 before OM-T04: a duplicate is no refusal, though its order would refuse it as new."""
+    rel = _Rel(_Result([{"qty": Decimal(0), "is_paper": True}]), _Result())  # no row inserted
+    assert await _STEPS["commit_fill"][0](rel) is None
+    assert (len(rel.statements), rel.commits) == (2, 0)
+
+
 _CAP = "SELECT set_config('statement_timeout', :timeout, true)"
 #: Every store call, with the script one call consumes.
 _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]], list[_Result]]] = {
@@ -454,6 +626,7 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
         [_Result(scalar=LINK), _Result([_event_row()])],
     ),
     "list_for_order": (lambda st: st.list_for_order(ACCOUNT, ORDER), [_Result()]),
+    "transition": (lambda st: st.transition(_STEP), [_LOCKED, _CAS, _EVENT]),
 }
 
 

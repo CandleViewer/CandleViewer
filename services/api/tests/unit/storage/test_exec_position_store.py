@@ -43,6 +43,7 @@ from candleviewer.storage.repositories.positions import (
     PositionState,
     SnapshotReason,
 )
+from tests.unit.storage import test_orders_store as scripted
 from tests.unit.storage.test_orders_store import _ASYNCPG, _CAP, _leaky, _Rel, _Result, _sql
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
@@ -268,6 +269,7 @@ _EXEC, _POS = ex.SqlAlchemyExecutionStore, pos.SqlAlchemyPositionStore
 _CALLS: dict[str, tuple[type[Any], Callable[[Any], Awaitable[object]], list[_Result]]] = {
     "insert": (_EXEC, lambda s: s.insert(_fill()), [_Result([SimpleNamespace(order_id=None)])]),
     "get": (_EXEC, lambda s: s.get(ACCOUNT, "E1"), [_Result()]),
+    "commit_fill": (_EXEC, lambda s: s.commit_fill(scripted._FILL), scripted._FILL_SCRIPT),
     "upsert": (_POS, lambda s: s.upsert(_state()), [_Result([_POSITION_ROW])]),
     "list_open": (_POS, lambda s: s.list_open(ACCOUNT), [_Result()]),
     "list_unprotected": (_POS, lambda s: s.list_unprotected(ACCOUNT), [_Result()]),

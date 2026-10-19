@@ -8,7 +8,8 @@ the #846 allocator takes (`OrderLinkLookup`), and a log line with the `order_lin
 order, event and fill write (ADR-0006 rule 1). Every read takes the exchange account (C-12.4) but
 `exists`, a yes/no the allocator alone needs. The store redacts what the exchange said (`payload`,
 `ret_code`, `ret_msg`) before binding it (21 Sec.3.3.5; the #845 security notes). A `WriteTimer`
-times every write on `oms_db_write_seconds{table}`.
+times every write on `oms_db_write_seconds{table}`. `transition` and `commit_fill` (E29-T03) return
+only once a step is committed with its event; any refusal writes nothing (24 Sec.8.2 S7, S8).
 """
 
 from __future__ import annotations
@@ -22,10 +23,16 @@ from uuid import UUID
 import structlog
 
 from candleviewer.observability.metrics import BoundedMetric
-from candleviewer.storage.repositories.executions import ExecutionRow, ExecutionStore, NewExecution
+from candleviewer.storage.repositories.executions import (
+    ExecutionRow,
+    ExecutionStore,
+    NewExecution,
+    OrderFill,
+)
 from candleviewer.storage.repositories.orders import (
     MAX_EVENT_PAGE,
     UX_ORDERS_LINK,
+    CommittedStep,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
@@ -33,6 +40,7 @@ from candleviewer.storage.repositories.orders import (
     OrderEventStore,
     OrderRow,
     OrderStore,
+    OrderTransition,
 )
 from candleviewer.storage.repositories.positions import (
     NewPositionSnapshot,
@@ -110,6 +118,13 @@ class OrderRepository:
         )
         return row
 
+    async def transition(self, step: OrderTransition) -> CommittedStep:
+        """The write-ahead step: `StaleOrderState` when another writer moved the order first."""
+        with self._timer.measure("orders"):
+            done = await self._store.transition(step)
+        _log_step("oms_order_transitioned", done)
+        return done
+
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None:
         return await self._store.get(account_id, order_id)
 
@@ -166,7 +181,8 @@ class ExecutionRepository:
     async def insert(self, execution: NewExecution) -> bool:
         """Store a fill once whatever source reports it (24 Sec.8.2 S4): True when this call
         stored it, False when its account holds the `exec_id` already; `OrderNotFoundError` when
-        `order_id` is not an order of that account."""
+        `order_id` is not an order of that account. Only for a fill that moves no order's totals:
+        one that does goes through `commit_fill`, which then reads it as applied."""
         with self._timer.measure("executions"):
             stored = await self._store.insert(execution)
         ids = {
@@ -181,8 +197,30 @@ class ExecutionRepository:
             _log().debug("oms_execution_duplicate", **ids)
         return stored
 
+    async def commit_fill(self, fill: OrderFill) -> CommittedStep | None:
+        """A fill's write-ahead step; None when its `exec_id` is stored already (S4)."""
+        with self._timer.measure("executions"):
+            done = await self._store.commit_fill(fill)
+        execution = fill.execution
+        if done is None:
+            ids = {"order_link_id": execution.order_link_id, "order_id": str(execution.order_id)}
+            ids |= {"account_id": str(execution.exchange_account_id), "exec_id": execution.exec_id}
+            _log().debug("oms_execution_duplicate", **ids)
+        else:
+            _log_step("oms_order_filled", done, exec_id=execution.exec_id)
+        return done
+
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None:
         return await self._store.get(account_id, exec_id)
+
+
+def _log_step(name: str, done: CommittedStep, **extra: str) -> None:
+    """A committed step's line: the ids and `state` every OMS line carries (E29-T08), the state
+    it left and the step's event."""
+    order, event = done.order, done.event
+    ids = {"order_link_id": order.order_link_id, "order_id": str(order.id), **extra}
+    ids |= {"account_id": str(order.exchange_account_id), "state": order.state}
+    _log().info(name, **ids, from_state=event.from_state, seq=event.seq, source=event.source)
 
 
 class PositionRepository:

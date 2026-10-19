@@ -18,8 +18,8 @@ nothing is changed silently.
 
 Writes here are the insert of an order with its first event (`OrderStore.create`) and the append of
 an event without a state transition (`OrderEventStore.append`). Updates of an existing order
-(state, fills, reject fields) and events with `from_state`/`to_state` land with E29-T03/T04, which
-extend these protocols (the B1 write-ahead transition and the 24 Sec.8.4 pipeline).
+(state, fills, reject fields) with events that carry `from_state`/`to_state` are E29-T03's
+write-ahead step (`transition`, `ExecutionStore.commit_fill`); E29-T04 adds the 24 Sec.8.4 columns.
 
 For the OMS (24 Sec.8.2 S7): an exception from any call means its write is not confirmed. The OMS
 does not accept the order and sends nothing under its id; a commit cut off by a lost connection
@@ -38,6 +38,8 @@ from decimal import Decimal
 from typing import Final, Literal, Protocol, get_args, get_type_hints
 from uuid import UUID
 
+from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, redact_exchange_text
+
 OrderState = Literal[
     "new", "pending_submit", "submitted", "accepted", "partially_filled", "filled",
     "pending_cancel", "cancelled", "pending_amend", "rejected", "expired", "untracked",
@@ -52,6 +54,7 @@ OrderEventKind = Literal[
     "error",
 ]  # fmt: skip
 OrderEventSource = Literal["local", "rest", "ws_private", "reconcile", "paper"]
+FillRefusal = Literal["above_qty", "paper_mismatch", "state_mismatch"]
 OrderSide = Literal["Buy", "Sell"]
 OrderType = Literal["Market", "Limit"]
 TimeInForce = Literal["GTC", "IOC", "FOK", "PostOnly"]
@@ -70,6 +73,12 @@ OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
         "pending_amend",
     }
 )
+#: The sources of a step the exchange reported, which carries the exchange's message (OM-R02).
+EXCHANGE_SOURCES: Final = frozenset[OrderEventSource]({"rest", "ws_private", "reconcile"})
+#: The kinds of a fill's event, which only a fill's step writes, with its execution (OM-R02).
+FILL_KINDS: Final = frozenset[OrderEventKind]({"fill", "partial_fill"})
+#: The values a step's `from_state`, `to_state`, `kind` and `source` may take (OM-T04).
+_LITERALS: Final = tuple(map(get_args, (OrderState, OrderState, OrderEventKind, OrderEventSource)))
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
 UX_ORDERS_LINK: Final = "ux_orders_link"
 #: Upper bound of one `list_for_order` page.
@@ -184,6 +193,51 @@ class NewOrderEvent:
         require_aware("event_ts", self.event_ts)
 
 
+def require_exchange_record(event: NewOrderEvent) -> None:
+    """OM-R02: an event that puts an order in a state, `create`'s first one too, carries the
+    exchange's message as its `payload` when the exchange reported it."""
+    if event.source in EXCHANGE_SOURCES and not event.payload:
+        raise ValueError("a step the exchange reported must carry its message (OM-R02)")
+
+
+def require_no_fill(event: NewOrderEvent, to_state: OrderState | None = None) -> None:
+    """A fill event, and `filled`, come with the execution that justifies them (OM-R02): only
+    `ExecutionStore.commit_fill` writes them, so `transition` and `append` refuse them."""
+    if event.kind in FILL_KINDS or to_state == "filled":
+        raise ValueError("a fill is written by commit_fill, with its execution")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderTransition:
+    """A write-ahead step (24 Sec.8.2 S8): `state` moves to `to_state` only while the row holds
+    `from_state` (compare-and-set), and `event` is appended with both states, in one transaction.
+    `reject_code` and `reject_message` are set when given. Built only from the columns' values,
+    so every store refuses anything else alike, before any statement (OM-T04)."""
+
+    account_id: UUID
+    order_id: UUID
+    from_state: OrderState
+    to_state: OrderState
+    event: NewOrderEvent
+    reject_code: str | None = None
+    reject_message: str | None = None
+
+    def __post_init__(self) -> None:
+        require_exchange_record(self.event)
+        given = (self.from_state, self.to_state, self.event.kind, self.event.source)
+        if any(value not in values for value, values in zip(given, _LITERALS, strict=True)):
+            raise ValueError("a step's states, kind and source must be values of their columns")
+
+    def changes(self) -> dict[str, object]:
+        """The columns it sets, the exchange's text redacted like `ret_msg` (#845 decision 2)."""
+        values: dict[str, object] = {"state": self.to_state}
+        if self.reject_code is not None:
+            values["reject_code"] = redact_exchange_text(self.reject_code, max_chars=MAX_CODE_CHARS)
+        if self.reject_message is not None:
+            values["reject_message"] = redact_exchange_text(self.reject_message, message=True)
+        return values
+
+
 @dataclass(frozen=True, slots=True)
 class OrderRow:
     """One `orders` row, every column (an explicit allow-list, pinned to the table by a test)."""
@@ -254,6 +308,14 @@ class OrderEventRow:
 EVENT_FIELDS: Final = tuple(f.name for f in fields(OrderEventRow) if f.name != "order_link_id")
 
 
+@dataclass(frozen=True, slots=True)
+class CommittedStep:
+    """What a write-ahead step committed: the order row as it now stands, and its event."""
+
+    order: OrderRow
+    event: OrderEventRow
+
+
 class OrderStoreError(Exception):
     """Base for order store errors."""
 
@@ -272,12 +334,40 @@ class OrderNotFoundError(OrderStoreError):
     """No such order in this account; another account's order is indistinguishable."""
 
 
+class StaleOrderState(OrderStoreError):
+    """The compare-and-set missed (another writer moved the order first, or a fill's totals came
+    from an older row): nothing was written. Names the order and state, never a payload."""
+
+    def __init__(self, order_id: UUID, expected: OrderState) -> None:
+        moved = f"order {order_id} moved on from {expected!r} or from the row a fill was built on"
+        super().__init__(f"{moved}: nothing was written")
+        self.order_id = order_id
+        self.expected = expected
+
+
+class FillRefused(OrderStoreError):
+    """A fill its locked order refuses as hostile or malformed data (OM-T04), with nothing written:
+    `cum_exec_qty` past `qty` (`above_qty`, INV-1), a paper flag unlike the order's
+    (`paper_mismatch`, C-2.11's separate state), or `filled` reached without filling `qty`, or
+    the reverse (`state_mismatch`). Names the order and the reason only; quantities are P1."""
+
+    def __init__(self, order_id: UUID, reason: FillRefusal) -> None:
+        super().__init__(f"order {order_id} refuses a fill ({reason}): nothing was written")
+        self.order_id, self.reason = order_id, reason
+
+
 class OrderStore(Protocol):
-    """Insert and account-scoped reads of `orders`; E29-T03/T04 add the updates (module docs)."""
+    """Insert, the write-ahead step and account-scoped reads of `orders` (module docs)."""
 
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
         """Insert the order and its first event (`seq` 0, `to_state` the order's state) in one
         statement, so one round trip in one transaction (#845 performance notes)."""
+        ...
+
+    async def transition(self, step: OrderTransition) -> CommittedStep:
+        """Commit `step`, or raise with nothing written: `StaleOrderState` when the row no longer
+        holds `step.from_state`, `OrderNotFoundError` outside the account, `ValueError` for a fill
+        (`require_no_fill`)."""
         ...
 
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None: ...
@@ -297,11 +387,12 @@ class OrderStore(Protocol):
 
 
 class OrderEventStore(Protocol):
-    """Append and account-scoped reads of `order_events`; E29-T03 adds the transition event."""
+    """Append and account-scoped reads of `order_events`; a step's event is `transition`'s."""
 
     async def append(self, account_id: UUID, order_id: UUID, event: NewOrderEvent) -> OrderEventRow:
         """Append with the next `seq`, under a lock on the order row; no state transition
-        (`from_state`, `to_state` NULL). `OrderNotFoundError` outside the account."""
+        (`from_state`, `to_state` NULL). `OrderNotFoundError` outside the account, `ValueError`
+        for a fill's event (`require_no_fill`)."""
         ...
 
     async def list_for_order(

@@ -14,6 +14,12 @@ dense and `UNIQUE (order_id, seq)` is only the backstop. Inside the statement bu
 anything is bound, `payload` passes `redact_exchange_payload()` and `ret_msg` and `ret_code` pass
 `redact_exchange_text()`, `ret_msg` with the message rule (21 Sec.3.3.5; the #845 security notes).
 
+A write-ahead step (E29-T03: `transition`; `commit_fill` in `executions_sqlalchemy.py`) locks its
+order row in the account, runs the compare-and-set UPDATE, appends the event with both states and
+commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Sec.8.2 S7, S8).
+Before any statement, `transition` refuses a fill's event and `filled`, `append` a fill's event
+(`require_no_fill`): a fill comes with its execution.
+
 Every unit of work first caps each of its statements, lock waits included, at the store's
 `statement_timeout` (`OMS_STATEMENT_TIMEOUT_MS`, the #845 default of `CV_OMS_STATEMENT_TIMEOUT_MS`,
 instead of the repository-wide 30 s), so a blocked order write fails within it and the OMS can
@@ -35,7 +41,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import fields
+from dataclasses import asdict, fields
 from typing import Any, Final
 from uuid import UUID
 
@@ -49,16 +55,22 @@ from candleviewer.storage.repositories.exchange_payload import (
     redact_exchange_payload,
     redact_exchange_text,
 )
+from candleviewer.storage.repositories.executions import OrderFill
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
     OPEN_STATES,
+    CommittedStep,
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
     OrderEventRow,
     OrderNotFoundError,
     OrderRow,
+    OrderTransition,
+    StaleOrderState,
+    require_exchange_record,
+    require_no_fill,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -161,6 +173,20 @@ def append_statement(account_id: UUID, order_id: UUID, event: NewOrderEvent) -> 
     )
 
 
+def transition_statement(step: OrderTransition) -> sa.Update:
+    """The compare-and-set: the row moves only while it holds `step.from_state`."""
+    held = (_O.exchange_account_id == step.account_id, _O.id == step.order_id)
+    stmt = sa.update(orders).where(*held, _O.state == step.from_state).values(step.changes())
+    return stmt.returning(*ORDER_COLUMNS)
+
+
+def fill_statement(fill: OrderFill) -> sa.Update:
+    """The step's compare-and-set with the totals, holding only while the stored `cum_exec_qty`
+    plus this fill's `exec_qty` is the new one: totals computed from an older row write nothing."""
+    held = _O.cum_exec_qty + fill.execution.exec_qty == fill.totals.cum_exec_qty
+    return transition_statement(fill.step).values(asdict(fill.totals)).where(held)
+
+
 def list_events_statement(
     account_id: UUID, order_id: UUID, after_seq: int, limit: int
 ) -> sa.Select[Any]:
@@ -171,6 +197,34 @@ def list_events_statement(
         .order_by(_E.seq)
         .limit(limit)
     )
+
+
+async def lock_order(uow: SqlAlchemyUnitOfWork, account_id: UUID, order_id: UUID) -> sa.RowMapping:
+    """Lock the order row in its account and read what a fill is checked against, `qty` and
+    `is_paper`, or raise `OrderNotFoundError`."""
+    stmt = lock_statement(account_id, order_id).add_columns(_O.qty, _O.is_paper)
+    row = (await uow.session.execute(stmt)).mappings().first()
+    if row is None:
+        raise OrderNotFoundError
+    return row
+
+
+async def commit_step(
+    uow: SqlAlchemyUnitOfWork, change: OrderTransition | OrderFill
+) -> CommittedStep:
+    """A step once `lock_order` holds its row: the compare-and-set, its event, the commit."""
+    if isinstance(change, OrderFill):
+        step, cas = change.step, fill_statement(change)
+    else:
+        step, cas = change, transition_statement(change)
+    row = (await uow.session.execute(cas)).mappings().first()
+    if row is None:
+        raise StaleOrderState(step.order_id, step.from_state)
+    stmt = append_statement(step.account_id, step.order_id, step.event)
+    states = {"from_state": step.from_state, "to_state": step.to_state}
+    event = (await uow.session.execute(stmt.values(states))).mappings().one()
+    await uow.commit()
+    return CommittedStep(_order(row), _event(event, row["order_link_id"]))
 
 
 def _order(row: Mapping[Any, Any]) -> OrderRow:
@@ -251,11 +305,18 @@ class SqlAlchemyOrderStore(CappedStore):
     """`OrderStore` and `OrderEventStore` over one relational repository (asyncpg)."""
 
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
+        require_exchange_record(first_event)
         stmt = create_statement(order, first_event)
         async with self._unit_of_work() as uow:
             row = (await uow.session.execute(stmt)).mappings().one()
             await uow.commit()
         return _order(row)
+
+    async def transition(self, step: OrderTransition) -> CommittedStep:
+        require_no_fill(step.event, step.to_state)
+        async with self._unit_of_work() as uow:
+            await lock_order(uow, step.account_id, step.order_id)
+            return await commit_step(uow, step)
 
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None:
         return await self._one(get_statement(account_id, order_id))
@@ -276,6 +337,7 @@ class SqlAlchemyOrderStore(CappedStore):
             return bool(result.scalar_one())
 
     async def append(self, account_id: UUID, order_id: UUID, event: NewOrderEvent) -> OrderEventRow:
+        require_no_fill(event)
         async with self._unit_of_work() as uow:
             lock = await uow.session.execute(lock_statement(account_id, order_id))
             order_link_id = lock.scalar_one_or_none()
@@ -304,7 +366,8 @@ class SqlAlchemyOrderStore(CappedStore):
 
 __all__ = [
     "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
-    "SqlAlchemyOrderStore", "append_statement", "create_statement", "get_by_link_statement",
-    "get_statement", "link_taken_statement", "list_events_statement", "list_open_statement",
-    "lock_statement",
+    "SqlAlchemyOrderStore", "append_statement", "commit_step", "create_statement",
+    "fill_statement", "get_by_link_statement", "get_statement", "link_taken_statement",
+    "list_events_statement", "list_open_statement", "lock_order", "lock_statement",
+    "transition_statement",
 ]  # fmt: skip

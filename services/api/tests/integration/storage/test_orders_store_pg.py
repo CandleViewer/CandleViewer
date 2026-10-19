@@ -9,7 +9,8 @@ store's statement cap on a lock wait, and a redacted payload, `ret_code` and `re
 for fills and positions, one row per fill whatever reports it, the account-scoped order link of a
 fill, the position upsert with a cleared stop, a stale position write that leaves the newer row, a
 future-dated position time refused and a future-dated row healed, and `list_unprotected` planned
-over `ix_pos_no_sl`. The DDL itself is `test_oms_core_migration.py`'s.
+over `ix_pos_no_sl`. `TestWriteAheadOnPostgres` runs E29-T03's write-ahead contract on real row
+locks, its races and rollbacks. The DDL itself is `test_oms_core_migration.py`'s.
 """
 
 from __future__ import annotations
@@ -71,6 +72,7 @@ from candleviewer.storage.repositories.positions_sqlalchemy import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.unit.oms.write_ahead_contract import Harness, WriteAheadContract
 
 pytestmark = pytest.mark.integration
 
@@ -627,3 +629,21 @@ async def test_a_position_snapshot_is_appended_as_given(ledger: Ledger, pg_dsn: 
     assert (snap.size, snap.equity_usd, snap.reason) == (Decimal("0.010"), equity, "minute_tick")
     count = "SELECT count(*) FROM position_snapshots WHERE exchange_account_id = %s"
     assert snap.id > 0 and _sql(pg_dsn, count, account) == [(1,)]
+
+
+@pytest_asyncio.fixture
+async def h(app_dsn: str, pg_dsn: str) -> AsyncIterator[Harness]:
+    """The order and execution stores on one pool, as `cv_app`, each account a new row."""
+    rel = SqlAlchemyRelationalRepository(app_dsn, "write-ahead-it")
+    store = SqlAlchemyOrderStore(rel)
+    fills = ExecutionRepository(SqlAlchemyExecutionStore(rel))
+    try:
+        yield Harness(
+            OrderRepository(store), OrderEventRepository(store), fills, lambda: _account(pg_dsn)
+        )
+    finally:
+        await rel.dispose()
+
+
+class TestWriteAheadOnPostgres(WriteAheadContract):
+    """E29-T03's contract on real row locks: the races are real, so is the rollback."""
