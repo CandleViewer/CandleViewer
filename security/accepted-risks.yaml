@@ -38,7 +38,7 @@
 #                       SR-135/SR-136 approval rule (CI-SEC-003 licence path)
 #   expires:   str   — ISO 8601 date (YYYY-MM-DD). Exclusive: the entry stops
 #                       protecting on this date (fails from `expires` onward).
-#   ticket:    str, optional — tracking issue for the real fix
+#   ticket:    str   — tracking issue for the real fix (04-security-program.md §16.2)
 #
 # gitleaks findings and Critical severity CANNOT be accepted here (§12.1: any
 # gitleaks finding blocks unconditionally; Critical is never exception-able

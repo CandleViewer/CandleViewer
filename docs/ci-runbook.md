@@ -49,8 +49,8 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
-│                                      read-only-scans (security-auth, pip-audit, npm-audit,
-│                                      license-scan)                    (CI-SEC-001..005)
+│                                      read-only-scans (security-auth, pip-audit, register
+│                                      pins, npm-audit, license-scan)   (CI-SEC-001..005)
 ├─ _job-coverage.yml (js/py filters) → per-package threshold            (CI-COV-001..004)
 ├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
 │                                      (CI-BEN-001, stub pending E03-T14)
@@ -481,6 +481,9 @@ index alone, removing nothing.
   same way (`--tool semgrep-auth`), with every auth rule counted like a cv-*
   one. Both steps install semgrep by hash from
   `tools/ci/requirements-semgrep.txt`.
+  It also fires on the register: `accepted-risk entry #N is malformed: ...`
+  names the entry and its fault, such as a field it omits or leaves blank
+  (04-security-program.md §16.2, #3587); fix that entry.
 - **CI-SEC-006** (unjustified or expired in-source Semgrep suppression): a
   `# nosemgrep` marker does not clear the gate unless the comment reads
   `nosemgrep: <rule-id>[,<rule-id>] reason=<r> owner=@<handle> review=YYYY-MM-DD`

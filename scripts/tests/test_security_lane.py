@@ -32,7 +32,7 @@ LANE = {
     "codeql": (SARIF, 25),
     "semgrep-bandit": (SARIF, 30),
     "gitleaks": (READ, 10),
-    "read-only-scans": (READ, 45),
+    "read-only-scans": (READ, 47),
     "trivy": (SARIF, 15),
 }
 # Folded job -> scan step id -> the old job whose budget it spends. license-scan's old job is
@@ -41,12 +41,28 @@ SCANS = {
     "semgrep-bandit": {"semgrep": "semgrep", "bandit": "bandit"},
     "read-only-scans": {
         **{scan: scan for scan in ("security-auth", "pip-audit", "npm-audit", "license-scan")},
+        "register-pins": "register-pins",
         **dict.fromkeys(["license-scope", "freeze"], "license-scan"),
     },
 }
 # Old job -> its timeout-minutes before #3104.
 OLD_BUDGETS = {"semgrep": 15, "bandit": 10, "security-auth": 10, "pip-audit": 10}
 OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10}
+OLD_BUDGETS |= {"register-pins": 2}  # #3587: a new step, with no old job, on its own budget
+# #3587: the register's pins, in the lane `ci-required` judges; a rename out of the -k prefix or a
+# narrower selection would drop a pin from it silently.
+REGISTER_PINS = (
+    "python -m pytest scripts/tests/test_security_gate.py -k test_repo_register"
+    " -p no:cacheprovider -q"
+)
+PINNED = {
+    "test_repo_register_accepts_the_braces_ghsa_exception_with_approver_and_expiry",
+    "test_repo_register_covers_the_0004_migration_findings",
+    "test_repo_register_codeql_line_entries_still_hold_the_code_they_accept",
+    "test_repo_register_mfa_token_hash_entries_still_hash_a_random_token",
+    "test_repo_register_mfa_token_hash_helpers_are_not_reached_from_other_modules",
+    "test_repo_register_entries_are_owner_approved_and_expire_by_the_ga_cut",
+}
 INSTALLERS = ("pnpm install", "uv sync", "corepack", "actions/setup-node@")
 # A node package-manager word anywhere in a line: quoted, path-qualified, in `sh -c`, backticks or
 # `$(...)`, or before `)` or `;`; not part of a longer name such as `pnpm-lock.yaml` or `npm-audit`.
@@ -118,11 +134,19 @@ def test_scan_steps_keep_their_old_budgets_and_the_job_adds_five_minutes(job: st
     assert JOBS[job]["timeout-minutes"] == sum(spent.values()) + 5
 
 
+def test_register_pins_run_every_test_repo_register_pin_in_read_only_scans() -> None:
+    (step,) = [s for s in _steps("read-only-scans") if s.get("id") == "register-pins"]
+    assert step["run"] == REGISTER_PINS
+    tree = ast.parse((ROOT / "scripts/tests/test_security_gate.py").read_text(encoding="utf-8"))
+    tests = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    assert PINNED <= tests  # each pin still exists under the name `-k` selects
+
+
 def test_tree_readers_run_before_the_first_install_and_semgrep_before_bandit() -> None:
     ids = _ids("read-only-scans")
     texts = [json.dumps(step) for step in _steps("read-only-scans")]
     first = min(i for i, text in enumerate(texts) if any(word in text for word in INSTALLERS))
-    assert max(ids.index("security-auth"), ids.index("pip-audit")) < first
+    assert max(ids.index(i) for i in ("security-auth", "pip-audit", "register-pins")) < first
     after = ["npm-audit", "license-scope", "freeze", "license-scan"]
     assert first < ids.index(after[0]) and after == sorted(after, key=ids.index)
     # Semgrep scans the whole tree, so it runs before bandit writes its report into it.

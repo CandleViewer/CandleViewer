@@ -8,8 +8,8 @@ name: _job-security
 # jobs that hold the same permissions: protection requires only `ci-required`,
 # which judges this whole workflow as the one `security` lane, and every job
 # costs a runner slot and its own setup.
-# - `read-only-scans` (contents: read): security-auth, pip-audit, npm-audit and
-#   license-scan;
+# - `read-only-scans` (contents: read): security-auth, pip-audit, the register
+#   pins, npm-audit and license-scan;
 # - `semgrep-bandit` (security-events: write, for their SARIF uploads).
 # Each scan is a step with an `id`, `continue-on-error` and its old job's
 # time budget, so a red scan neither stops nor hides another. The last step, the
@@ -356,14 +356,15 @@ jobs:
   #   docs/security/auth-security-gates.md), and polices suppressions. The gate
   #   fails the scan on a target or rule it did not analyse (#3549).
   # - pip-audit, npm-audit — CONSTITUTION §9 #11 (sca), Python and JS/TS advisories.
+  # - register-pins — #3587: the accepted-risk register's own pins (test_repo_register_*).
   # - license-scan — CONSTITUTION §9 #14 (license-check), SR-136 policy, after its
   #   backend install and package-scope check (license-scope) and the freeze check.
-  # The tree readers (security-auth, pip-audit) run before the pnpm and uv installs.
+  # The tree readers (security-auth, pip-audit, register-pins) run before the pnpm and uv installs.
   # ---------------------------------------------------------------------
   read-only-scans:
     name: read-only-scans
     runs-on: ubuntu-latest
-    timeout-minutes: 45 # four scans of 10 + 5 for setup
+    timeout-minutes: 47 # four scans of 10, the register pins' 2, + 5 for setup
     permissions:
       contents: read
     steps:
@@ -415,6 +416,17 @@ jobs:
           uv export --frozen --no-hashes --all-groups --no-emit-project --project services/api -o "$RUNNER_TEMP/api-requirements.txt"
           pip-audit -r "$RUNNER_TEMP/api-requirements.txt" --no-deps --format json --output pip-audit.json --progress-spinner off || true
           python tools/ci/security_gate.py --tool pip-audit --report pip-audit.json
+
+      # #3587: each line-keyed codeql entry in security/accepted-risks.yaml must still hold the code
+      # it accepts, on the premises it rests on. PR scans are diff-informed and never re-report an
+      # unchanged line, so a code move leaves an entry stale until the queue's full scan blocks;
+      # these pins catch it on the PR, in the lane `ci-required` judges (governance runs them too).
+      - name: register-pins (accepted-risk entries still hold the code they accept)
+        id: register-pins
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 2
+        run: python -m pytest scripts/tests/test_security_gate.py -k test_repo_register -p no:cacheprovider -q
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ !cancelled() }}
