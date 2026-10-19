@@ -8,8 +8,8 @@ rest was the rig's copy. `rig.hub` is now a `GatewayHub` that frames nothing:
 - every body a test broadcasts reaches the socket through `_Connection.push_system`, the one place
   that frames and queues a `system` frame (SR-188, `23-ws-protocol.md` §15.9);
 - the one thing the hub lets past is the per-role filter, only for a kind §15.9 does not list, and
-  only while its call runs: after it the production filter is back, and the stand-in takes the
-  arguments the filter takes;
+  only while its call runs, one that raises included: after it the production filter is back, and
+  the stand-in takes the arguments the filter takes;
 - the guard's own detector (`_sites`, from `test_system_frame_callers.py`, which covers
   `candleviewer`) runs over the source of the rig's classes and finds no frame built on the
   channel and no reference to `push_system`.
@@ -61,6 +61,7 @@ from tests.unit.architecture.test_system_frame_callers import _sites
 from tests.unit.ws.test_lifecycle_socket import BASE_MS
 from tests.unit.ws.test_pipeline_ladder import _attached
 from tests.unit.ws.test_pipeline_outbound import _DEADLINE_S, _counter, _queued, _Rig, _Wire
+from tests.unit.ws.test_system_filter import SAMPLES
 
 RIG = Path(__file__).resolve().with_name("test_pipeline_outbound.py")
 #: Every module of `tests/unit/ws` (the scan of helpers reads them all, a new one too).
@@ -192,6 +193,55 @@ async def test_the_filter_is_open_to_unlisted_kinds_only() -> None:
         await asyncio.wait({handler})
     assert unlisted["p"] == {"kind": "tick", "n": 1}
     assert health["p"] == {"kind": "health", "components": [component]}
+
+
+async def test_the_filter_is_back_after_a_broadcast_that_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The opening lasts as long as the call, one that raises included: a `push_system` that fails
+    inside the hub's broadcast leaves the production filter in place, not the stand-in. The test
+    above pins the restore after a normal return."""
+    rig, sock = _Rig(), _Wire()
+    opened: list[bool] = []  # whether the stand-in was in place when the push failed
+
+    def refuse(conn: _Connection, body: dict[str, Any]) -> None:
+        opened.append(vars(gateway)["system_view"] is not system_filter.system_view)
+        raise RuntimeError("push refused")
+
+    # a restore point: if the hub left the stand-in, the next test would still find production's
+    monkeypatch.setattr(gateway, "system_view", system_filter.system_view)
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, _ = await rig.open(sock)
+        with monkeypatch.context() as scoped, pytest.raises(RuntimeError, match="push refused"):
+            scoped.setattr(_Connection, "push_system", refuse)
+            rig.hub.broadcast_system({"kind": "tick", "n": 1})
+        assert opened == [True]
+        assert vars(gateway)["system_view"] is system_filter.system_view  # undone, though it raised
+        handler.cancel()
+        await asyncio.wait({handler})
+
+
+@pytest.mark.parametrize("kind", sorted(system_filter.NEUTRAL_FIELDS))
+async def test_a_listed_kind_reaches_the_rigs_manager_as_the_filter_cuts_it(kind: str) -> None:
+    """The hub opens the filter to a kind §15.9 does not list, and to no other: each kind it lists
+    reaches the rig's Manager as `system_view` gives it, cut or not at all, never whole. The body is
+    the contract's sample of the kind with a field no list has, so the cut changes it."""
+    body = SAMPLES[kind][0] | {"zz_owner_only": 1}
+    rig, sock = _Rig(), _Wire()
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        assert conn.authz is not None and conn.authz.principal.roles == frozenset({"manager"})
+        # the call `push_system` makes; None: nothing arrives
+        view = system_filter.system_view(body, conn.authz.principal, flag_visible=conn.flag_visible)
+        assert view != body, "the cut leaves this body whole: a pass-through would not be seen"
+        rig.hub.broadcast_system(body)
+        sock.feed({"t": "ping", "id": "fence", "p": {"client_ms": BASE_MS}})
+        arrived: list[dict[str, Any]] = []
+        while (frame := (await sock.next())[0])["t"] != "pong":  # a frame queued before it is first
+            arrived.append(frame)
+        handler.cancel()
+        await asyncio.wait({handler})
+    assert [f["p"] for f in arrived] == ([] if view is None else [view])
 
 
 def test_the_filter_stand_in_takes_the_arguments_system_view_takes() -> None:
