@@ -283,7 +283,8 @@ for _withheld in WITHHELD_REASONS:
 cv_ws_overflow_total = Counter(
     "cv_ws_overflow_total",
     "23 section 8.4 overflow by reason: per topic drop, drop_share, unmergeable, resnapshot; per "
-    "close, and per close whose flush deadline expired.",
+    "close, and per close whose flush deadline expired; withdrawn: per queued frame a withdrawn "
+    "grant or permission dropped (section 9.5).",
     labelnames=("reason",),
 )
 cv_ws_malformed_updates_total = Counter(

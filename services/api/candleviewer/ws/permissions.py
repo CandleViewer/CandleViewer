@@ -10,6 +10,7 @@
   subscription after a role/grant change and returns the `revoked` frames (§9.5, S7); it
   refuses another user's snapshot (`SnapshotUserMismatch`, #415). With the backpressure
   flag on, `on_drop` hears of every subscription an operation ends or resets.
+  Whatever the flag, `on_purge` drops the queued frames of what a change revokes (#415).
 - `ConnectionRegistry`: live sockets per user; role/grant change, kill-switch transition and
   user-disabled fan-out. A disabled user is also remembered for one access-token lifetime, so a
   socket that registers after the per-user close is refused (#3413).
@@ -399,6 +400,10 @@ class ConnectionAuthz:
         self.on_drop: Callable[[list[Subscription]], None] | None = None
         self.on_settle: Callable[[list[Subscription]], None] | None = None
         self.settling: list[Subscription] = []
+        #: #415 (§9.5), whatever the flag: called once per change, before its `permission_change`
+        #: is queued, with every subscription it revokes (a grant or a permission withdrawn); it
+        #: drops their queued frames and returns their keys `(ch, rs)` that had any.
+        self.on_purge: Callable[[list[Subscription]], set[tuple[str, str | None]]] | None = None
         #: #3185 (§4.3): when the connection's last `DENIAL_AUDITS_PER_WINDOW` `ws.subscribe.denied`
         #: records were handed to the writer (monotonic s, oldest first), and when the warning for
         #: a record kept back was last logged.
@@ -872,7 +877,8 @@ class ConnectionAuthz:
         rest of the connection continues untouched. SR-189: `None`, and nothing changes, when
         `new` is older than the applied snapshot (a read begun before a grant change). #415:
         `SnapshotUserMismatch`, and nothing changes, when `new` is another user's, whatever its
-        version: a connection keeps the user it authenticated as (§4.3)."""
+        version: a connection keeps the user it authenticated as (§4.3). The queued frames of
+        each affected subscription are dropped before any of these frames is queued (`on_purge`)."""
         if new.principal.user_id != self.principal.user_id:
             raise SnapshotUserMismatch("a permission snapshot of another user")
         if new.version < self.version:
@@ -887,13 +893,17 @@ class ConnectionAuthz:
             if frame is not None:
                 frames.append(frame)
                 affected.append(sub)
+        # #415: a grant or a permission withdrawn alike, one rule at the sending boundary (C-12.4)
+        purged = self.on_purge(affected) if self.on_purge is not None and affected else set()
         self._dropped(affected)  # the discard comes first (§9.5)
-        if self.on_drop is not None:  # flag on: then a narrowed subscription is re-pended
-            for sub in affected:  # unless paused: its resume re-snapshots it (§5.4, §8.4 step 1)
-                paused = sub.effective.get("paused") is True
-                if sub.sub_id in self.by_id and not (sub.snapshot_pending or paused):
-                    sub.snapshot_pending, sub.pending_reason = True, "reconfigure"
-                    self.settling.append(sub)
+        for sub in affected:  # then a narrowed one is re-pended unless paused (its resume
+            # re-snapshots it, §5.4, §8.4 step 1): flag on always, flag off once its frames went
+            if self.on_drop is None and (sub.ch, sub.replay_session_id) not in purged:
+                continue
+            paused = sub.effective.get("paused") is True
+            if sub.sub_id in self.by_id and not (sub.snapshot_pending or paused):
+                sub.snapshot_pending, sub.pending_reason = True, "reconfigure"
+                self.settling.append(sub)
         return frames
 
     def _reevaluate(self, sub: Subscription, now_ms: int) -> dict[str, Any] | None:

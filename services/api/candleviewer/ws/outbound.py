@@ -141,6 +141,14 @@ class Spanned(Queued):
     s: int | None
 
 
+def data_key(frame: Mapping[str, Any]) -> Key | None:
+    """The key of a `d` or `snap` with a channel, `(ch, rs)` (D13); None for any other frame."""
+    ch, rs = frame.get("ch"), frame.get("rs")
+    if frame.get("t") not in _DATA_FRAMES or not isinstance(ch, str):
+        return None
+    return (ch, rs if isinstance(rs, str) else None)
+
+
 def encode(
     frame: Mapping[str, Any], dumps: FrameEncoder = json_payload, *, received: float | None = None
 ) -> Queued:
@@ -148,11 +156,9 @@ def encode(
     classify it for the lanes; a sampled frame that carries `sp` comes back as a `Spanned`. Raises
     what `dumps` raises."""
     payload = dumps(frame)
-    ch, kind, meta, rs = frame.get("ch"), frame.get("t"), frame.get("meta"), frame.get("rs")
+    ch, kind, meta = frame.get("ch"), frame.get("t"), frame.get("meta")
     family = ch.split(".", 1)[0] if isinstance(ch, str) else None
-    key = None
-    if kind in _DATA_FRAMES and isinstance(ch, str):
-        key = (ch, rs if isinstance(rs, str) else None)
+    key = data_key(frame)
     priority = key is None or family in PRIORITY_FAMILIES  # D1: all but what step 1 may drop
     resnap = (
         not priority
@@ -313,6 +319,24 @@ class OutboundQueue:
         if not self:
             self.ready.clear()
         return dropped
+
+    def purge(self, keys: Collection[Key]) -> list[Key]:
+        """#415 (§9.5): remove every frame of `keys` from both lanes, the priority lane's `orders`
+        and `executions` too; the others keep their order. Returns the key of each one removed."""
+        gone: list[Key] = []
+        lanes: list[deque[Queued]] = []
+        for lane in (self._priority, self._normal):
+            lanes.append(deque())
+            for frame in lane:
+                if frame.key is not None and frame.key in keys:
+                    self._forget(frame)
+                    gone.append(frame.key)
+                else:
+                    lanes[-1].append(frame)
+        self._priority, self._normal = lanes
+        if not self:
+            self.ready.clear()
+        return gone
 
     def clear(self, *, normal_only: bool = False) -> int:
         """Discard the normal lane, and the priority lane unless `normal_only` (a close, §8.4);
