@@ -1,0 +1,203 @@
+# Known limits, each a `todoruleid` (a miss) or `todook` (a false positive) row in the fixture.
+# Taint is intra-procedural: a count handed to a helper that allocates, or returned by one, is not
+# followed. `a.length = n` is not a sink; a destructured `{ recordCount }` and a count built from
+# `getUint8` bytes are not sources. A bound is read by shape: an upper-bound comparison of the
+# value, or of a length computed from it in place, in an `if` whose body ends in a throw, return
+# or continue and holds no other `if`, loop, `switch` or `try`. So another wire value as the bound,
+# every name in the compared expression (`a * b > max` checks both), a conjunction
+# (`ok && n > MAX`), a negated upper bound (`!(n > MAX)`) and a lower bound under `!` count too,
+# as does `n <= MAX ? x : y` for both of its branches. For a name, a check holds from its
+# comparison on, along every path, until the name is assigned again, so a throw caught in the same
+# function and a loop's last count after a `continue` guard count as checked. For a member or an
+# element it holds in the rest of its block, so a header parsed again into the same name is not
+# seen. A negated bound (`!(n <= MAX)`), a guard written the positive way round, a bound checked
+# through a variable other than the exact length, a use in a guard's `else` or in a later
+# guard-shaped `if` (`if (n > 8) return x`), a clamp by assignment and a cursor that the buffer
+# bounds but a wire length moves (`while (at < view.byteLength) at += len`) are flagged. The only
+# named check is `assertFits`.
+rules:
+  - id: cv-ws-wire-count-alloc-ts
+    languages: [typescript]
+    severity: ERROR
+    mode: taint
+    message: >-
+      SR-128: a length or count read from the wire (a `DataView` getter, the `recordCount` of a
+      CVWB header, a typed-array element) sizes an array, a typed array or a loop with no bounds
+      check before it. Call `assertFits(count, stride, available, what)` as in
+      `packages/protocol/src/runtime`, or compare the count with an upper bound and refuse (throw,
+      return or continue) first, or clamp it with `Math.min(count, CAP)`, and only then allocate or
+      loop (E17-X02, docs/plan/04-security-program.md SR-128).
+    metadata:
+      rule-id: cv-ws-wire-count-alloc-ts
+      sr: SR-128
+      references:
+        - docs/plan/04-security-program.md SR-128
+        - docs/plan/23-ws-protocol.md section 3.4
+        - docs/security/threat-models/E17-ws-gateway.md section 9
+    pattern-sources:
+      # 16-, 32- and 64-bit reads: an 8-bit value cannot size an unbounded allocation.
+      - patterns:
+          - pattern: $V.$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^get(Big)?(Uint|Int)(16|32|64)$
+      # The count of a CVWB header, read once by the decoders; its other fields are not counts.
+      - pattern: $H.recordCount
+      # An index into a typed array built or declared here (bytes assembled into a count), and a
+      # typed array destructured into names (`const [count] = new Uint32Array(buf, 8, 1)`).
+      - patterns:
+          - pattern-either:
+              - pattern: new $T(...)[$I]
+              - pattern: "[...] = new $T(...)"
+              - patterns:
+                  - pattern: $V[$I]
+                  - pattern-either:
+                      - pattern-inside: |
+                          $V = new $T(...);
+                          ...
+                      - pattern-inside: |
+                          function $F(..., $V: $T, ...) { ... }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(Uint8|Uint8Clamped|Uint16|Uint32|Int8|Int16|Int32)Array$
+      # Inside its own guard (below), a value has passed only the other side of the bound.
+      - patterns:
+          - pattern: $N
+          - pattern-either:
+              - pattern-inside: "if (<... <... $N ...> > $B ...>) $BODY"
+              - pattern-inside: "if (<... <... $N ...> >= $B ...>) $BODY"
+              - pattern-inside: "if (<... $B < <... $N ...> ...>) $BODY"
+              - pattern-inside: "if (<... $B <= <... $N ...> ...>) $BODY"
+              - pattern-inside: "if (<... $B !== <... $N * $K ...> ...>) $BODY"
+              - pattern-inside: "if (<... <... $N * $K ...> !== $B ...>) $BODY"
+              - pattern-inside: "$E = <... $N ...>;\nif ($B !== $E) $BODY"
+              - pattern-inside: "$E = <... $N ...>;\nif ($E !== $B) $BODY"
+          - metavariable-regex:
+              metavariable: $B
+              regex: ^(?![01]$)
+          - metavariable-regex:
+              metavariable: $BODY
+              regex: (?s)^(?!.*(?:^|[;{}])\s*(?:if|for|while|switch)\s*\()(?!.*(?:^|[;{}])\s*(?:try|do)\s*\{).*(?:^|[;{}])\s*(?:throw|return|continue)\b[^;]*;?\s*\}?\s*$
+    pattern-sanitizers:
+      # `assertFits` throws, so the uses of the count after it are clean: for a name, until it is
+      # assigned again; for a member or an element, in the rest of the block.
+      - by-side-effect: true
+        patterns:
+          - pattern: assertFits($N, ...)
+          - focus-metavariable: $N
+      - patterns:
+          - pattern: $N
+          - pattern-inside: "assertFits($N, ...);\n..."
+          - metavariable-regex:
+              metavariable: $N
+              regex: ^(?![A-Za-z_$][\w$]*$)
+      # A guard: a name compared with an upper bound in the condition of an `if` whose body only
+      # refuses, or the exact-length idiom of `decodeBars` (the frame's length against one computed
+      # from the count). By side effect from the comparison, as `assertFits`: the name is clean from
+      # it on, until it is assigned again. A comparison with 0 or 1 is not a bound.
+      - by-side-effect: true
+        patterns:
+          - pattern: $N
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: "<... $N ...> > $B"
+                      - pattern-inside: "<... $N ...> >= $B"
+                      - pattern-inside: "$B < <... $N ...>"
+                      - pattern-inside: "$B <= <... $N ...>"
+                      - pattern-inside: "$B !== <... $N * $K ...>"
+                      - pattern-inside: "<... $N * $K ...> !== $B"
+                  - pattern-either:
+                      - pattern-inside: "if (<... <... $N ...> > $B ...>) $BODY"
+                      - pattern-inside: "if (<... <... $N ...> >= $B ...>) $BODY"
+                      - pattern-inside: "if (<... $B < <... $N ...> ...>) $BODY"
+                      - pattern-inside: "if (<... $B <= <... $N ...> ...>) $BODY"
+                      - pattern-inside: "if (<... $B !== <... $N * $K ...> ...>) $BODY"
+                      - pattern-inside: "if (<... <... $N * $K ...> !== $B ...>) $BODY"
+              - patterns:
+                  - pattern-inside: "$E = <... $N ...>;"
+                  - pattern-either:
+                      - pattern-inside: "$E = <... $N ...>;\nif ($B !== $E) $BODY"
+                      - pattern-inside: "$E = <... $N ...>;\nif ($E !== $B) $BODY"
+          - metavariable-regex:
+              metavariable: $N
+              regex: ^[A-Za-z_$][\w$]*$
+          - metavariable-regex:
+              metavariable: $B
+              regex: ^(?![01]$)
+          - metavariable-regex:
+              metavariable: $BODY
+              regex: (?s)^(?!.*(?:^|[;{}])\s*(?:if|for|while|switch)\s*\()(?!.*(?:^|[;{}])\s*(?:try|do)\s*\{).*(?:^|[;{}])\s*(?:throw|return|continue)\b[^;]*;?\s*\}?\s*$
+      # The same shapes for a member or an element (each read of one is a source): the uses after
+      # the `if` in its block are clean, its own body is not.
+      - patterns:
+          - pattern: $N
+          - pattern-either:
+              - pattern-inside: "if (<... <... $N ...> > $B ...>) $BODY\n..."
+              - pattern-inside: "if (<... <... $N ...> >= $B ...>) $BODY\n..."
+              - pattern-inside: "if (<... $B < <... $N ...> ...>) $BODY\n..."
+              - pattern-inside: "if (<... $B <= <... $N ...> ...>) $BODY\n..."
+              - pattern-inside: "$E = <... $N ...>;\nif ($X !== $E) $BODY\n..."
+              - pattern-inside: "$E = <... $N ...>;\nif ($E !== $X) $BODY\n..."
+              - pattern-inside: "if (<... $X !== <... $N * $K ...> ...>) $BODY\n..."
+              - pattern-inside: "if (<... <... $N * $K ...> !== $X ...>) $BODY\n..."
+          - pattern-not-inside: "if (<... <... $N ...> > $B ...>) $S"
+          - pattern-not-inside: "if (<... <... $N ...> >= $B ...>) $S"
+          - pattern-not-inside: "if (<... $B < <... $N ...> ...>) $S"
+          - pattern-not-inside: "if (<... $B <= <... $N ...> ...>) $S"
+          - pattern-not-inside: "$E = <... $N ...>;\nif ($X !== $E) $S"
+          - pattern-not-inside: "$E = <... $N ...>;\nif ($E !== $X) $S"
+          - pattern-not-inside: "if (<... $X !== <... $N * $K ...> ...>) $S"
+          - pattern-not-inside: "if (<... <... $N * $K ...> !== $X ...>) $S"
+          - metavariable-regex:
+              metavariable: $N
+              regex: ^(?![A-Za-z_$][\w$]*$)
+          - metavariable-regex:
+              metavariable: $BODY
+              regex: (?s)^(?!.*(?:^|[;{}])\s*(?:if|for|while|switch)\s*\()(?!.*(?:^|[;{}])\s*(?:try|do)\s*\{).*(?:^|[;{}])\s*(?:throw|return|continue)\b[^;]*;?\s*\}?\s*$
+      # A conditional expression: `N <= B ? x : y` bounds N (its else branch is not told apart).
+      - patterns:
+          - pattern: $N
+          - pattern-either:
+              - pattern-inside: "<... <... $N ...> <= $B ...> ? $X : $Y"
+              - pattern-inside: "<... <... $N ...> < $B ...> ? $X : $Y"
+      # A clamp to a cap (a literal, an UPPER_CASE constant or a length), a value masked down to a
+      # byte, a slice of a buffer that exists (a name or a member, not a new allocation).
+      - patterns:
+          - pattern: Math.min(..., $CAP, ...)
+          - metavariable-regex:
+              metavariable: $CAP
+              regex: ^(\d[\d_]*|0[xX][0-9a-fA-F_]+|([A-Za-z_$][\w$]*\.)*[A-Z][A-Z0-9_]*|.*\.(byteLength|length))$
+      - pattern: $X & 0xFF
+      - patterns:
+          - pattern: $X.slice(...)
+          - metavariable-regex:
+              metavariable: $X
+              regex: ^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: new $T($N)
+              - pattern: $T($N)
+              - pattern: $T<$X>($N)
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(Array|ArrayBuffer|SharedArrayBuffer|(Big)?(Uint|Int)(8|16|32|64)(Clamped)?Array|Float(32|64)Array)$
+      - patterns:
+          - pattern-either:
+              - pattern: "Array.from({length: $N}, ...)"
+              - pattern: $S.repeat($N)
+              - pattern: $S.padStart($N, ...)
+              - pattern: $S.padEnd($N, ...)
+              # Any loop condition the count flows into (`i < n`, `ok && i < n`, `n--`, `n`), and
+              # a cached length: `for (let i = 0, len = <count>; i < len; ...)`.
+              - pattern: for (...; $N; ...) $BODY
+              - pattern: for (var $I = 0, $L = $N; ...; ...) $BODY
+              - pattern: while ($N) $BODY
+              - pattern: do { ... } while ($N);
+          - focus-metavariable: $N
+    paths:
+      include:
+        - "packages/protocol/src/runtime/**"
+        - "apps/web/src/lib/ws/**"
+        - "**/cv-ws-wire-count-alloc-ts.ts"

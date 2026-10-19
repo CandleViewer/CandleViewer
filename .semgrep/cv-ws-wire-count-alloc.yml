@@ -1,0 +1,187 @@
+# Known limits, each a `todoruleid` (a miss) or `todook` (a false positive) row in the fixture.
+# Taint is intra-procedural: a count handed to a helper that allocates is not followed (`_rows` is
+# a sink for that reason), nor one a helper returns. `while` loops and `str.ljust` are not sinks,
+# nor is a list held in a name (`pad * n`); an index into a slice of the frame (`body = buf[12:]`)
+# is not a source. A bound is read by shape: an upper-bound comparison of a name or an attribute,
+# or of a length computed from it in place, in the condition of an `if` with a raise, return or
+# continue anywhere in its body (0 and 1 are not bounds). So another wire value as the bound, every
+# name in the compared expression (`a * b > max` checks both), a conjunction
+# (`kind == 1 and n > MAX`), a conditional refusal, a negated upper bound (`not n > MAX`), a lower
+# bound under `not` and a check on another element of the same tuple count too, as does
+# `x if n <= MAX else y` for both branches. A check holds along every path from its comparison
+# until the name is bound again, so a refusal caught in the same function and a loop's last count
+# after a `continue` guard count as checked. A guard written the positive way round
+# (`if n <= MAX:`), a bound checked through a variable other than the exact length, a use in a
+# guard's `else`, a use inside a guard-shaped `if` of a value already checked or not from the wire
+# (`if n > 8: return bytearray(n)`), a clamp by assignment (`n = MAX`) and a frame index checked in
+# place (`buf[4] > MAX`) are flagged. The only named check is `candleviewer.ws.binary._fits`.
+rules:
+  - id: cv-ws-wire-count-alloc
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    message: >-
+      SR-128: a length or count read from the wire (a `struct` unpack, `int.from_bytes`, an
+      index into the frame bytes) sizes an allocation or a loop with no bounds check before
+      it. Call `candleviewer.ws.binary._fits(count, stride, available, what)`, or compare the
+      count with an upper bound and refuse (raise, return or continue) first, or clamp it with
+      `min(count, CAP)`, and only then allocate or loop (E17-X02,
+      docs/plan/04-security-program.md SR-128).
+    metadata:
+      rule-id: cv-ws-wire-count-alloc
+      sr: SR-128
+      references:
+        - docs/plan/04-security-program.md SR-128
+        - docs/plan/23-ws-protocol.md section 3.4
+        - docs/security/threat-models/E17-ws-gateway.md section 9
+    pattern-sources:
+      - pattern: $S.unpack(...)
+      - pattern: $S.unpack_from(...)
+      - pattern: $S.iter_unpack(...)
+      - pattern: int.from_bytes(...)
+      - pattern: memoryview(...)[$I]
+      - pattern: $V.cast(...)[$I]
+      - pattern: $M["bytes"][$I]
+      # An index into a name built or received as bytes-like in the same function.
+      - patterns:
+          - pattern: $V[$I]
+          - pattern-either:
+              - pattern-inside: |
+                  $V = <... memoryview(...) ...>
+                  ...
+              - pattern-inside: |
+                  $V = <... $WS.receive_bytes() ...>
+                  ...
+              - pattern-inside: |
+                  $V = $M["bytes"]
+                  ...
+              - pattern-inside: "$V = $M.get(\"bytes\", ...)\n..."
+              - pattern-inside: "for $V in $WS.iter_bytes():\n    ..."
+      # An index into a name declared bytes-like: a parameter or a local.
+      - patterns:
+          - pattern: $V[$I]
+          - pattern-either:
+              - pattern-inside: |
+                  def $F(..., $V: $T, ...):
+                      ...
+              - pattern-inside: |
+                  $V: $T = $X
+                  ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: \b(bytes|bytearray|memoryview)\b
+      # Inside a guard's own body (the guard: below) the value has passed only the other side of
+      # the bound, so a use there is a source; a comparison with 0 or 1 is not a guard.
+      - patterns:
+          - pattern: $N
+          - pattern-either:
+              - pattern-inside: "if <... <... $N ...> > $B ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... <... $N ...> >= $B ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... $B < <... $N ...> ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... $B <= <... $N ...> ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... not <... $N ...> <= $B ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... not $A < <... $N ...> <= $B ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... not $A <= <... $N ...> <= $B ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... $B != <... $N * $K ...> ...>:\n    ...\n    $END"
+              - pattern-inside: "if <... <... $N * $K ...> != $B ...>:\n    ...\n    $END"
+              - pattern-inside: "$E = <... $N ...>\nif $B != $E:\n    ...\n    $END"
+              - pattern-inside: "$E = <... $N ...>\nif $E != $B:\n    ...\n    $END"
+          - metavariable-regex:
+              metavariable: $B
+              regex: ^(?![01]$)
+          - metavariable-regex:
+              metavariable: $END
+              regex: ^(raise|return|continue)\b
+    pattern-sanitizers:
+      # `candleviewer.ws.binary._fits` raises, so what follows it holds a count that fits.
+      - by-side-effect: true
+        patterns:
+          - pattern: _fits($N, ...)
+          - focus-metavariable: $N
+      # A guard: a name or an attribute compared with an upper bound in the condition of an `if`
+      # that refuses (the shapes of the source above). By side effect from the comparison (the first
+      # list pins the name there, not in the body): it is clean from there on, until bound again.
+      - by-side-effect: true
+        patterns:
+          - pattern: $N
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: "<... $N ...> > $B"
+                      - pattern-inside: "<... $N ...> >= $B"
+                      - pattern-inside: "$B < <... $N ...>"
+                      - pattern-inside: "$B <= <... $N ...>"
+                      - pattern-inside: "<... $N ...> <= $B"
+                      - pattern-inside: "$A < <... $N ...> <= $B"
+                      - pattern-inside: "$A <= <... $N ...> <= $B"
+                      - pattern-inside: "$B != <... $N * $K ...>"
+                      - pattern-inside: "<... $N * $K ...> != $B"
+                  - pattern-either:
+                      - pattern-inside: "if <... <... $N ...> > $B ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... <... $N ...> >= $B ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... $B < <... $N ...> ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... $B <= <... $N ...> ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... not <... $N ...> <= $B ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... not $A < <... $N ...> <= $B ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... not $A <= <... $N ...> <= $B ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... $B != <... $N * $K ...> ...>:\n    ...\n    $END"
+                      - pattern-inside: "if <... <... $N * $K ...> != $B ...>:\n    ...\n    $END"
+              - patterns:
+                  - pattern-inside: "$E = <... $N ...>"
+                  - pattern-either:
+                      - pattern-inside: "$E = <... $N ...>\nif $B != $E:\n    ...\n    $END"
+                      - pattern-inside: "$E = <... $N ...>\nif $E != $B:\n    ...\n    $END"
+          - metavariable-regex:
+              metavariable: $N
+              regex: ^[A-Za-z_][\w.]*$
+          - metavariable-regex:
+              metavariable: $B
+              regex: ^(?![01]$)
+          - metavariable-regex:
+              metavariable: $END
+              regex: ^(raise|return|continue)\b
+      # A conditional expression: `x if N <= B else y` bounds N (its else branch is not told apart).
+      - patterns:
+          - pattern: $N
+          - pattern-either:
+              - pattern-inside: "$X if <... <... $N ...> <= $B ...> else $Y"
+              - pattern-inside: "$X if <... <... $N ...> < $B ...> else $Y"
+      # A clamp to a cap (a literal, an UPPER_CASE constant or a length), the length of a
+      # container, a value masked down to a byte.
+      - patterns:
+          - pattern: min(..., $CAP, ...)
+          - metavariable-regex:
+              metavariable: $CAP
+              regex: ^(\d[\d_]*|0[xX][0-9a-fA-F_]+|([A-Za-z_]\w*\.)*[A-Z][A-Z0-9_]*|len\(.*\))$
+      - pattern: len(...)
+      - pattern: $X & 0xFF
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: bytearray($N)
+              - pattern: bytes($N)
+              - pattern: "[...] * $N"
+              - pattern: "$N * [...]"
+              - pattern: "(...,) * $N"
+              - pattern: "$N * (...,)"
+              - pattern: '"..." * $N'
+              - pattern: '$N * "..."'
+              - pattern: bytes($A) * $N
+              - pattern: $N * bytes($A)
+              - pattern: bytearray($A) * $N
+              - pattern: $N * bytearray($A)
+              - pattern: array.array(...) * $N
+              - pattern: $N * array.array(...)
+              - pattern: itertools.repeat($X, $N)
+              - pattern: range($N)
+              - pattern: range($A, $N)
+              - pattern: range($A, $N, $S)
+              # The decoder's own row allocator sizes `iter_unpack(view[off:end])` from `count`.
+              - pattern: _rows($V, $OFF, $N, ...)
+          - pattern-not: bytes([...])
+          - pattern-not: bytearray([...])
+          - focus-metavariable: $N
+    paths:
+      include:
+        - "services/api/candleviewer/ws/**"
+        - "**/cv-ws-wire-count-alloc.py"
