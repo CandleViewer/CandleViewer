@@ -1,9 +1,15 @@
 import type { StorybookConfig } from "@storybook/react-vite";
 
+// The a11y gate's self-test switch (E05-T03): "1" builds the fixtures alone; otherwise the band
+// globs never reach `.storybook/__fixtures__/`, so no fixture is built or published.
+const fixturesOnly = process.env["CV_STORYBOOK_A11Y_FIXTURES"] === "1";
+
 // Story-level lazy compilation: the Vite builder imports each story file on demand and Vite
 // transforms modules on request (`lazyCompilation` is the webpack builder's switch).
 const config: StorybookConfig = {
-  stories: ["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"],
+  stories: fixturesOnly
+    ? ["./__fixtures__/*.stories.tsx"]
+    : ["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"],
   // The E05-T03 addon set: docs pages, the a11y panel and its gate, and the Vitest addon that runs
   // every story's play function and axe check. Controls, toolbars and interactions are core.
   addons: ["@storybook/addon-docs", "@storybook/addon-a11y", "@storybook/addon-vitest"],

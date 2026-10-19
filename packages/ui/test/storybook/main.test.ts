@@ -1,15 +1,24 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-/** `.storybook/main.ts` as Storybook loads it. */
-async function mainConfig() {
+/** `.storybook/main.ts` as Storybook loads it, under the given fixture switch. */
+async function mainConfig(fixtures?: string) {
   vi.resetModules();
+  if (fixtures !== undefined) vi.stubEnv("CV_STORYBOOK_A11Y_FIXTURES", fixtures);
   return (await import("../../.storybook/main.js")).default;
 }
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("Storybook main config", () => {
-  it("builds the band stories and docs pages", async () => {
-    const { stories } = await mainConfig();
-    expect(stories).toEqual(["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"]);
+  it("builds the band stories and docs pages, never the a11y gate fixtures", async () => {
+    for (const unset of [undefined, "", "0"]) {
+      const { stories } = await mainConfig(unset);
+      expect(stories).toEqual(["../src/**/*.mdx", "../src/**/*.stories.@(ts|tsx)"]);
+    }
+  });
+
+  it("builds the fixtures alone when the gate self-test sets the switch", async () => {
+    expect((await mainConfig("1")).stories).toEqual(["./__fixtures__/*.stories.tsx"]);
   });
 
   it("loads the E05-T03 addon set and keeps telemetry and update notifications off", async () => {
