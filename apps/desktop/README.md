@@ -13,8 +13,9 @@ because ADR-0011 (Electron vs Tauri) is `proposed`, not decided.
 - `e2e/` — Playwright-Electron: main-window smoke spec, the hardening
   assertion test that reads live `webPreferences` at runtime,
   `app-protocol.spec.ts` (the default load path renders, under the CSP), and
-  `backend-connection-probe.spec.ts` (ADR-0038's A1 to A11, pinned as S2
-  measured them; it needs `127.0.0.1:8000` free locally).
+  `backend-connection-probe.spec.ts` (ADR-0038's A1 to A10, pinned as S2
+  measured them, with A11 recorded until #413 measures it; it needs
+  `127.0.0.1:8000` free locally).
 
 ## Hardened defaults (asserted, not just configured)
 

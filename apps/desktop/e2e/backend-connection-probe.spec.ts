@@ -240,11 +240,16 @@ function acceptUpgrade(req: http.IncomingMessage, socket: Duplex, sockets: Set<D
 /** Binds 127.0.0.1:8000. The meta CSP admits no other port, so a taken port fails the harness. */
 function listen(server: http.Server): Promise<void> {
   return new Promise((resolve, reject) => {
-    server.once("error", (error: NodeJS.ErrnoException) => {
+    const onError = (error: NodeJS.ErrnoException) => {
       const taken = "harness: 127.0.0.1:8000 is taken; the meta CSP admits no other port";
       reject(error.code === "EADDRINUSE" ? new Error(taken) : error);
+    };
+    server.once("error", onError);
+    server.listen(PREFERRED_PORT, "127.0.0.1", () => {
+      // Bound: later server errors are no longer the bind's, so stop routing them here.
+      server.off("error", onError);
+      resolve();
     });
-    server.listen(PREFERRED_PORT, "127.0.0.1", () => resolve());
   });
 }
 
