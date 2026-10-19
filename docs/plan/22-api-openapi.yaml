@@ -170,9 +170,10 @@ info:
     anti-CSRF control, not client authentication: a session still needs the password and TOTP,
     and every unsafe request that "CSRF" does not exempt still needs the session-bound token.
 
-    * **Origins.** Only the origins in `CV_ALLOWED_ORIGINS`, the SR-042 allow-list, compared
-      exactly once a trailing `/` is dropped; never `*` and never a pattern. A listed origin gets
-      its own value back in `Access-Control-Allow-Origin`, with
+    * **Origins.** Only the origins in `CV_ALLOWED_ORIGINS`, the SR-042 allow-list: each listed
+      entry, with a trailing `/` dropped, is matched exactly against the request's `Origin`.
+      Never `*`, never a pattern and never origin reflection; `null` and `*` are never listed
+      (SR-042). A listed origin gets its own value back in `Access-Control-Allow-Origin`, with
       `Access-Control-Allow-Credentials: true` and `Vary: Origin`. So with the flag on, listing
       an origin lets its pages read credentialed responses, not only send the writes SR-042
       allows.
