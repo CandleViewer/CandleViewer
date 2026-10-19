@@ -48,6 +48,8 @@ _SAMPLES = ("_bucket", "_count", "_sum")
 _SUFFIX_EXCEPTIONS = frozenset(
     {
         "cv_keys_failing_policy",  # named by the E27-T03 ticket's Observability section (#836)
+        "cv_audit_lane_last_seq",  # named by ADR-0037 (U37) and the e09 threat model
+        "cv_audit_lane_journal_first",  # the 1/0 flag gauge named by S2b-2a's review (SR-S2B2A-02)
         "disk_used_ratio",
         "cv_maintenance_mode",
         "recorder_disk_pressure_level",
@@ -312,6 +314,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.admin.backups.metrics import EXPORTED_NAMES as BACKUP_NAMES
     from candleviewer.admin.flags.metrics import EXPORTED_NAMES as FLAG_NAMES
     from candleviewer.admin.lifecycle_metrics import EXPORTED_NAMES as LIFECYCLE_NAMES
+    from candleviewer.audit.metrics import EXPORTED_NAMES as LANE_NAMES
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars import reader, writer  # noqa: F401 - the write and read path (#1998)
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
@@ -335,7 +338,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     assert FLAG_NAMES <= {s.name for s in live_specs() if s.exported}
     others |= AUDIT_NAMES
     others |= BACKUP_NAMES
-    others |= LIFECYCLE_NAMES
+    others |= LIFECYCLE_NAMES | LANE_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")

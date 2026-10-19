@@ -23,18 +23,19 @@ from collections import deque
 from collections.abc import Callable
 from io import FileIO
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import structlog
 from pydantic import ValidationError
 
 from candleviewer.audit import lane_journal as lj
 from candleviewer.audit import writer as aw
-from candleviewer.audit.actions import LANE_ACTIONS, UnknownAuditAction
+from candleviewer.audit.actions import LANE_ACTIONS, LaneClass, UnknownAuditAction
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
 from candleviewer.observability.context import spawn
 
 Unit = lj.Handover | lj.Run
+REFUSALS: tuple[str, ...] = (*get_args(lj.LaneReason), "timeout")  # §15.6's, and the façade's
 
 
 class AuditLane:
@@ -57,6 +58,9 @@ class AuditLane:
         self._retry, self._poll, self._batch = retry_s, poll_s, batch
         self._pause_depth, self._paused = pause_depth, False  # Limits: the drain's pacing
         self.paused_batches = 0  # each pause at `pause_depth` (S4a's metric)
+        self.drained = 0  # S4a: units whose rows the writer reports committed
+        self.anomalies = dict.fromkeys(lj.ANOMALY_REASONS, 0)  # S4a: rows handed over, by reason
+        self.drain_failures = {"held": 0, "stopped": 0}  # S4a: a hold a running scan met; a death
         self.confirmed: lj.Pos | None = None
         self._lane: uuid.UUID | None = None  # the scan's; None while no frame or marker set one
         self._origin = lj.LaneMarker(uuid.UUID(int=0), (1, 0), 1, lj.ZERO_MAC, True)  # next scan's
@@ -162,6 +166,7 @@ class AuditLane:
                 self._dirty = False
                 result = await self.journal.rescan(self._origin)
                 if result.held:
+                    self.drain_failures["held"] += 1
                     self.journal.hold()
                 self._lane = result.lane
                 self._units.extend(result.units)
@@ -207,6 +212,8 @@ class AuditLane:
             await self.journal.quarantine(unit)
             self._copied = unit.quarantined
         token = await self._writer.ingest(self._row(unit))
+        if unit.reason in self.anomalies:  # closed by the scan; a metric never ends the drain
+            self.anomalies[unit.reason] += 1
         _log().warning("audit.lane.anomaly", reason=unit.reason, seqs=(unit.from_seq, unit.to_seq))
         return token
 
@@ -237,6 +244,7 @@ class AuditLane:
         through, marker = self._writer.committed_through(), None
         while self._pending and self._pending[0][1] <= through:
             marker = self._pending.popleft()[0] or marker
+            self.drained += 1
         if marker is not None:
             await self.journal.confirm(marker)
             self.confirmed = marker.pos
@@ -254,6 +262,7 @@ class AuditLane:
         hold stays a hold), so the façade falls back. The log names the error class only."""
         error = None if task.cancelled() else task.exception()
         if error is not None:
+            self.drain_failures["stopped"] += 1
             _log().critical("audit lane drain died", error=type(error).__name__)
             if self.journal.refusal is None:  # `_io()` has stopped it already: one log line
                 self.journal.stop(error)
@@ -370,6 +379,8 @@ class LaneFacade:
         self._writer, self._lane, self._journal_first = writer, lane, journal_first
         self._wait_s, self._clock = wait_s, clock
         self._fallbacks: dict[str, tuple[float, int]] = {}  # per reason: last line, since then
+        #: S4a: the records the lane refused or left unanswered past `wait_s`, by class and reason.
+        self.refused = {(c, r): 0 for c in get_args(LaneClass) for r in REFUSALS}
 
     async def emit(
         self,
@@ -402,7 +413,7 @@ class LaneFacade:
         try:
             async with asyncio.timeout(deadline_s):
                 if not await self._journaled(record):
-                    await self._writer.ingest(record)
+                    await self._writer.ingest_counted(record)
         except TimeoutError:
             raise aw.AuditUnavailable("the audit record missed its caller's deadline") from None
 
@@ -417,7 +428,9 @@ class LaneFacade:
             async with asyncio.timeout(self._wait_s):
                 await self._lane.append(record)
         except (lj.LaneRefused, TimeoutError) as exc:
-            self._fell_back(exc.reason if isinstance(exc, lj.LaneRefused) else "timeout", record)
+            refusal = exc.reason if isinstance(exc, lj.LaneRefused) else "timeout"
+            self.refused[row[0], refusal] += 1
+            self._fell_back(refusal, record)
             return False
         return True
 

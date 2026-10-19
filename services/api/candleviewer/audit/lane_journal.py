@@ -18,6 +18,7 @@ import hmac
 import json
 import os
 import re
+import time
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Mapping
@@ -44,6 +45,7 @@ _HEX64, _KID = re.compile(r"[0-9a-f]{64}"), re.compile(r"[0-9a-f]{16}")
 _UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 _SEGMENT = re.compile(r"seg-([0-9]{20})\.lane")
 _SEVERITY = ("segment_corrupt", "frame_rejected", "marker_lost", "seq_gap", "torn_tail")
+ANOMALY_REASONS = (*_SEVERITY, "record_invalid", "released")  # every anomaly row's (S4a's label)
 _FRAME_KEYS = {"v", "lane", "seq", "prev", "kid", "cls", "rec"}
 _MARKER_KEYS = {"v", "lane", "pos", "next_seq", "prev", "anchored", "kid"}
 _NOTE_KEYS = {"v", "lane", "hold", "end", "from_seq", "operator", "ticket", "operator_reason"}
@@ -729,18 +731,38 @@ class LaneFiles:
     def _size(self, seg: int) -> int:
         return os.lstat(self.dir / segment_name(seg)).st_size
 
-    def quarantine(self, name: str, data: bytes) -> None:
+    def quarantine(self, name: str, data: bytes) -> int:
         """fsync point 4; a crash's partial copy is replaced. `quarantine/` is opened without
-        following a link, and the copy is made through its descriptor."""
+        following a link, and the copy is made through its descriptor. Returns its growth."""
         made = _mkdir(self.dir / "quarantine")
         dir_fd = _open(self.dir / "quarantine", os.O_RDONLY | os.O_DIRECTORY)
         try:
+            old = _sizes(dir_fd, name)
             self._put(name, data, dir_fd)
             self.fsync(dir_fd)
         finally:
             os.close(dir_fd)
         if made:
             self.sync_dir()
+        return len(data) - old
+
+    def quarantined(self) -> int:
+        """The bytes in `quarantine/` at boot; opened as a copy opens it, so a link holds."""
+        try:
+            dir_fd = _open(self.dir / "quarantine", os.O_RDONLY | os.O_DIRECTORY)
+        except FileNotFoundError:
+            return 0
+        try:
+            return _sizes(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+
+def _sizes(dir_fd: int, name: str | None = None) -> int:
+    """The size of the regular file `name` in `dir_fd` (0 if none), or of all of them."""
+    with os.scandir(dir_fd) as entries:
+        found = [e for e in entries if name in (None, e.name) and e.is_file(follow_symlinks=False)]
+        return sum(e.stat(follow_symlinks=False).st_size for e in found)
 
 
 class _LaneLock:
@@ -803,10 +825,11 @@ async def _in_thread[T](op: _Op, fn: Callable[..., T], /, *args: object) -> T:
     return future.result()
 
 
-def _boot(files: LaneFiles, keys: LaneKeys) -> tuple[list[str], object, LaneScan]:
+def _boot(files: LaneFiles, keys: LaneKeys) -> tuple[list[str], object, LaneScan, int]:
     names, marker, note = files.boot()
     found = None if marker is None else decode_marker(keys, marker)
-    return names, found, scan(keys, marker=marker, names=names, read=files.read, note=note)
+    result = scan(keys, marker=marker, names=names, read=files.read, note=note)
+    return names, found, result, files.quarantined()
 
 
 def _running_scan(files: LaneFiles, keys: LaneKeys, origin: bytes) -> LaneScan:
@@ -842,12 +865,14 @@ class LaneJournal:
         lane_max_bytes: int = LANE_MAX_BYTES,
         shared_max_bytes: int = SHARED_MAX_BYTES,
         waiters: Mapping[LaneClass, int] = LANE_WAITERS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._files, self._keys = files, keys
+        self._files, self._keys, self._clock = files, keys, clock
         self._segment_max, self._max_segments = segment_max_bytes, max_segments
         self._lane_max, self._shared_max = lane_max_bytes, shared_max_bytes
         self._bytes = self._shared = 0  # after the marker, a run's bytes too (reading 2)
         self._units: deque[tuple[Pos, int, bool]] = deque()  # (end, bytes, shared) of each
+        self._since: deque[float] = deque()  # when each of `_units` was counted (S4a's age)
         self._end: Pos = (1, 0)  # the furthest unit end counted; no marker passes it
         self._opened = self._closed = False  # `open()` runs once; `close()` ends the drain's ops
         self._stopped = False  # `stop()` ran: an `open()` still running ends stopped too
@@ -858,6 +883,9 @@ class LaneJournal:
         self._fd, self._active, self._size = -1, 0, 0  # the segment the appends go to
         self._lock = _LaneLock(waiters)
         self.boot_overshoot_frames = 0  # Limits: boot rows past a cap (S4a's metric)
+        self.appended: dict[LaneClass, int] = {"reserved": 0, "shared": 0}  # S4a: frames written
+        self.created = 0  # S4a: 1 once this process wrote frame 1 of a new lane
+        self.quarantine_bytes = 0  # S4a: `quarantine/`'s size at boot, plus each copy's growth
         self._resumed = False  # this boot's `audit.lane_resumed` is written
         self._ops: set[asyncio.Task[Any]] = set()
 
@@ -871,7 +899,8 @@ class LaneJournal:
 
     async def _open(self, op: _Op, new_lane: Callable[[], uuid.UUID]) -> LaneScan:
         async with self._held(op):
-            names, found, result = await _in_thread(op, _boot, self._files, self._keys)
+            names, found, result, kept = await _in_thread(op, _boot, self._files, self._keys)
+            self.quarantine_bytes = kept
             state, segments = result.state, _segments(names)
             self.lane = new_lane() if result.lane is None else result.lane
             self._next_seq = 1 if state.next_seq is None else state.next_seq
@@ -903,6 +932,23 @@ class LaneJournal:
     def end(self) -> Pos:
         """The furthest unit end counted: the boot's units and every append since."""
         return self._end
+
+    @property
+    def depth(self) -> int:
+        """The units after the marker: frames and runs, each a row once handed over."""
+        return len(self._units)
+
+    @property
+    def class_bytes(self) -> tuple[int, int]:
+        """The bytes after the marker: not authentic `shared` frames (runs too), and those."""
+        return self._bytes - self._shared, self._shared
+
+    def oldest_age(self) -> float:
+        """Seconds since the oldest unit after the marker was counted, 0 with none (S4a)."""
+        try:
+            return max(0.0, self._clock() - self._since[0])
+        except IndexError:
+            return 0.0
 
     def run_id(self, lane: uuid.UUID | None, run: Run) -> uuid.UUID:
         """The `record_id` of `run`'s anomaly row, keyed under the current key (Ingest step 1)."""
@@ -958,6 +1004,8 @@ class LaneJournal:
                 self.stop(exc)
                 raise LaneRefused("stopped") from None
             self._size += len(frame)
+            self.appended[cls] += 1
+            self.created += seq == 1  # frame 1 makes the lane
             self._next_seq, self._prev = seq + 1, frame[-65:-1].decode("ascii")
             self._count((self._active, self._size), len(frame), cls == "shared")
             self.boot_overshoot_frames += past
@@ -985,6 +1033,7 @@ class LaneJournal:
             _, size, shared = self._units.popleft()
             self._bytes -= size
             self._shared -= size if shared else 0
+            self._since.popleft()
 
     async def compact(self) -> int:
         """fsync point 3 (decision 7); how many segments it unlinked, none until a marker is
@@ -999,7 +1048,8 @@ class LaneJournal:
         """fsync point 4: a run's bytes; a run without bytes has no copy."""
         self._require_open()
         if (name := run.quarantined) is not None:
-            await self._run(lambda op: self._io(op, self._files.quarantine, name, run.data))
+            grew = await self._run(lambda op: self._io(op, self._files.quarantine, name, run.data))
+            self.quarantine_bytes += grew
 
     async def rescan(self, origin: LaneMarker) -> LaneScan:
         """The drain's running scan (§15.6 Scan) from `origin`, the end of the last unit it took:
@@ -1047,6 +1097,7 @@ class LaneJournal:
 
     def _count(self, end: Pos, size: int, shared: bool) -> None:
         self._units.append((end, size, shared))
+        self._since.append(self._clock())
         self._bytes += size
         self._shared += size if shared else 0
         self._end = max(self._end, end)

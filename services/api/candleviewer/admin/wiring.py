@@ -20,6 +20,7 @@ from typing import Any
 
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.lane_journal import key_id
+from candleviewer.audit.metrics import export_audit_lane_metrics
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
@@ -72,6 +73,7 @@ __all__ = [
     "build_audit_service",
     "build_audit_verify_job",
     "build_secrets_service",
+    "export_audit_lane_metrics",
     "export_secrets_metrics",
     "secrets_audit_row",
     "secrets_audit_sink",
