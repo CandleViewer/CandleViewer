@@ -1,7 +1,8 @@
 name: governance
 
-# "governance" required-check job referenced by .github/branch-protection.json
-# phase 1 (E01-T08). Runs the GOV-00x structural checks plus:
+# The "governance" check (E01-T08). Branch protection requires only `ci-required`; the merge
+# procedure (AGENTS.md §4) requires this one green as well. It runs the GOV-00x structural
+# checks plus:
 #   - a canary self-test (--self-test) proving each checker still fails
 #     against a deliberately-broken fixture (scripts/gov_self_test.py),
 #   - a >=85% line coverage gate on scripts/** (CONSTITUTION.md §9 #3),
@@ -29,6 +30,7 @@ jobs:
   governance-checks:
     name: governance-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: "Record job start time (perf budget <=90s, E01-Q02)"
         id: gov_start
@@ -37,6 +39,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # verify_migration_lockfile needs merge-base
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -167,6 +170,7 @@ jobs:
     # 55-69 s of a 90 s budget. Each shard writes raw coverage data only; `governance` combines it.
     name: governance-tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -179,6 +183,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # some tests read the history (merge-base)
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -213,7 +218,7 @@ jobs:
           name: governance-coverage-${{ matrix.shard }}
           path: coverage-shard-${{ matrix.shard }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 5 # a later "Re-run failed jobs" of `governance` still finds both shards
 
       - name: Job duration budget (<=BUDGET_MS, E01-Q02)
         if: always()
@@ -245,6 +250,7 @@ jobs:
     needs: [governance-checks, governance-tests]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: "Record job start time (perf budget <=90s, E01-Q02)"
         id: gov_start
@@ -253,6 +259,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1 # coverage report reads the sources only
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:

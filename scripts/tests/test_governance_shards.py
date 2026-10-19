@@ -1,16 +1,20 @@
 """#3789: the governance unit tests run in two shards; the `governance` job judges them together.
 
 One job ran every governance check plus the whole unit-test suite, and the tests alone took
-55-69 s of its 90 s budget (E01-Q02), so the budget step failed on more than half of the PR runs
-with every test green. `governance.yml` now runs three jobs in parallel: `governance-checks` (the
-GOV checks, the canary and the reports), two `governance-tests` shards that write raw coverage
-data, and `governance`, which combines that data, applies the 85% gate on `scripts/**` and fails
-unless every other job passed. `tools/ci/governance_shards.py` splits the test files by measured
-weight. These tests pin the split and the shape; nothing the old job checked is dropped.
+55-69 s of its 90 s budget (E01-Q02), so the budget step failed on 8 of the last 23 PR attempts
+before the fix with every test green. `governance.yml` now runs three jobs in parallel:
+`governance-checks` (the GOV checks, the canary and the reports), two `governance-tests` shards
+that write raw coverage data, and `governance`, which combines that data, applies the 85% gate
+on `scripts/**` and fails unless every other job passed. `tools/ci/governance_shards.py` splits
+the test files by measured weight. These tests pin the split and the shape; nothing the old job
+checked is dropped: the shards list exactly the files `pytest scripts/tests scripts/gh/tests`
+collects.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from tools.ci import governance_shards as gs  # noqa: E402 - the repo root is on sys.path above
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "governance.yml"
+CHECKOUT = "actions/checkout@"
 BUDGET = "Job duration budget (<=BUDGET_MS, E01-Q02)"
 
 
@@ -46,6 +51,45 @@ def test_the_two_shards_partition_every_test_file() -> None:
     assert first and second and not set(first) & set(second)
     assert sorted(first + second) == files
     assert gs.shards(files, 2) == [first, second]  # deterministic
+
+
+def test_the_shards_list_exactly_the_files_pytest_collects(tmp_path: Path) -> None:
+    # The old step ran `pytest scripts/tests scripts/gh/tests`: recursive, `test_*.py` and
+    # `*_test.py`, no dot or __pycache__ directory. A file the shards missed would never run,
+    # and the 85% gate would not notice. Real pytest, the real scripts/pytest.ini, a tiny tree.
+    wanted = [
+        "scripts/tests/test_top.py",
+        "scripts/tests/suffix_test.py",
+        "scripts/tests/sub/test_nested.py",
+        "scripts/gh/tests/deep/er/deep_test.py",
+    ]
+    ignored = [
+        "scripts/tests/.hidden/test_dot.py",
+        "scripts/tests/__pycache__/test_cache.py",
+        "scripts/tests/helper.py",
+    ]
+    for name in wanted + ignored:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    ini = (REPO_ROOT / "scripts" / "pytest.ini").read_text(encoding="utf-8")
+    (tmp_path / "scripts" / "pytest.ini").write_text(ini, encoding="utf-8")
+    command = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+    run = subprocess.run(
+        [*command, *gs.SUITES],
+        cwd=tmp_path,
+        env={**os.environ, "PYTEST_ADDOPTS": ""},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    collected = {
+        "scripts/" + line.split("::")[0] for line in run.stdout.splitlines() if "::" in line
+    }
+    assert collected == set(gs.suite_files(tmp_path)) == set(wanted)
+    first, second = gs.shards(gs.suite_files(tmp_path), 2)
+    assert sorted(first + second) == sorted(wanted)
 
 
 def test_the_split_is_balanced_by_the_measured_weights() -> None:
@@ -97,6 +141,7 @@ def test_the_checks_job_keeps_every_check_and_runs_no_unit_tests() -> None:
     checks = _runs(_workflow()["jobs"]["governance-checks"])
     assert "pytest" not in checks
     for script in ("check_rule_refs.py", "check_codeowners_coverage.py", "check_issue_forms.py",
+                   "check_sot_duplication.py", "keymap_lint.py --check-docs",
                    "validate.py --check", "validate-backlog.py --quiet",
                    "check_required_check_reconciliation.py", "check_markdown_governance_docs.py",
                    "check_owned_docs_untouched.py", "check_threat_model_ticket_map.py",
@@ -105,10 +150,12 @@ def test_the_checks_job_keeps_every_check_and_runs_no_unit_tests() -> None:
         assert script in checks, script
 
 
-def test_every_job_is_read_only_and_ends_with_its_duration_budget() -> None:
+def test_every_job_is_read_only_bounded_and_ends_with_its_duration_budget() -> None:
     doc = _workflow()
     assert doc["permissions"] == {"contents": "read"}
     for name, job in doc["jobs"].items():
-        assert "permissions" not in job, name
+        assert "permissions" not in job and job["timeout-minutes"] == 10, name
+        checkouts = [s for s in job["steps"] if str(s.get("uses", "")).startswith(CHECKOUT)]
+        assert [c["with"]["persist-credentials"] for c in checkouts] == [False], name
         last = job["steps"][-1]
         assert (last["name"], last["if"], last["env"]["BUDGET_MS"]) == (BUDGET, "always()", "90000")

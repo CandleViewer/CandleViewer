@@ -2,23 +2,28 @@
 """#3789: split the governance unit-test suite (`scripts/tests`, `scripts/gh/tests`) into shards.
 
 `governance.yml` runs one shard per matrix job, and its final `governance` job combines their
-coverage data, so the 85% gate on `scripts/**` still judges the whole suite. Files go greedily,
-heaviest first, to the lightest shard. `WEIGHTS` holds the measured cost of the heaviest files
-(test-seconds on 4 CPUs, CI-like: no semgrep binary, coverage on; 2026-10-19), and any other
-file costs `DEFAULT_WEIGHT`, about the median of the rest. So a new or renamed file always lands
-in a shard, and the split is deterministic for a given set of files; stale weights cost balance,
-never coverage. `python tools/ci/governance_shards.py 1 2` prints shard 1 of 2, one path per
-line, relative to the repository root. Stdlib only.
+coverage data, so the 85% gate on `scripts/**` still judges the whole suite. The files are the
+ones `pytest scripts/tests scripts/gh/tests` collects: recursive, pytest's default `python_files`
+(scripts/pytest.ini sets no other), no `__pycache__` or dot directories, as
+`tools/ci/py_test_lanes.py` lists services/api's. Files go greedily, heaviest first, to the
+lightest shard. `WEIGHTS` holds the measured cost of the heaviest files (test-seconds on 4 CPUs,
+CI-like: no semgrep binary, coverage on; 2026-10-19), and any other file costs `DEFAULT_WEIGHT`,
+about the median of the rest. So a new, renamed or moved file always lands in a shard, and the
+split is deterministic for a given set of files; stale weights cost balance, never coverage.
+`python tools/ci/governance_shards.py 1 2` prints shard 1 of 2, one path per line, relative to
+the repository root. Stdlib only.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SUITES = ("scripts/tests", "scripts/gh/tests")
+PYTHON_FILES = ("test_*.py", "*_test.py")  # pytest's default; scripts/pytest.ini sets no other
 DEFAULT_WEIGHT = 0.2
 WEIGHTS: dict[str, float] = {
     "scripts/tests/test_backlog_validate_check.py": 15.7,
@@ -37,12 +42,16 @@ WEIGHTS: dict[str, float] = {
 
 
 def suite_files(root: Path = REPO_ROOT) -> list[str]:
-    """Every test module the governance suite collects (pytest's default `test_*.py`)."""
-    return sorted(
-        path.relative_to(root).as_posix()
-        for suite in SUITES
-        for path in (root / suite).glob("test_*.py")
-    )
+    """Every test module pytest collects from `SUITES`, as POSIX paths relative to `root`."""
+    found: list[str] = []
+    for suite in SUITES:
+        for path in (root / suite).rglob("*.py"):
+            parts = path.relative_to(root / suite).parts
+            if any(part == "__pycache__" or part.startswith(".") for part in parts):
+                continue
+            if any(fnmatch.fnmatch(path.name, pattern) for pattern in PYTHON_FILES):
+                found.append(path.relative_to(root).as_posix())
+    return sorted(found)
 
 
 def shards(files: Iterable[str], count: int) -> list[list[str]]:

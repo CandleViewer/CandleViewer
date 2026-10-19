@@ -160,14 +160,15 @@ backlog report tool); fix instructions live in the tool's own `--help` and its e
 | `GOV-005` | `scripts/check_required_check_reconciliation.py`                                                      | `.github/branch-protection.json` and `CONSTITUTION.md` §9 (and, once populated, the workflow job names) disagree on required-check names.                                                                                                     |
 | `GOV-006` | `scripts/check_markdown_governance_docs.py`                                                           | A governance document (`CONTRIBUTING.md`, the E01 test plans, the E01-X02 security findings doc) has a broken relative link or a lint issue (hard tab, trailing whitespace, a heading level jump, a bare autolink, missing trailing newline). |
 
-The job also runs a **canary self-test** (`python scripts/gov_self_test.py --self-test`) that replays
-every checker above against a deliberately-broken fixture tree under
+The workflow also runs a **canary self-test** (`python scripts/gov_self_test.py --self-test`) that
+replays every checker above against a deliberately-broken fixture tree under
 `scripts/tests/fixtures/self_test/` and asserts each one fails — the guard against a green `governance`
-check that has silently stopped checking anything — and a **coverage gate** (`pytest --cov=scripts
---cov-fail-under=85`) over all of `scripts/**`. Job duration is measured against a 60s budget and
-recorded as a `::notice` annotation on every run; exceeding the budget fails the job (`::error`
-annotation). Per-run artefacts (CODEOWNERS ownership report, backlog per-epic summary) are uploaded
-as the `governance-reports` artefact for diffable history across runs.
+check that has silently stopped checking anything — and a **coverage gate** over all of `scripts/**`:
+two `governance-tests` shards run the unit tests with `--cov=scripts`, and the `governance` job
+combines their data and fails under 85% (#3789). Each of its three jobs measures its own duration
+against a 90 s budget, recorded as a `::notice` annotation on every run; exceeding it fails that job
+(`::error` annotation). Per-run artefacts (CODEOWNERS ownership report, backlog per-epic summary) are
+uploaded as the `governance-reports` artefact for diffable history across runs.
 
 Sprints are **1 week** (Fri→Thu; Sprint 01 = 2026-09-25; calendar in `docs/plan/backlog/_tools/calendar_cv.py`). Design runs at least two sprints ahead of engineering; no frontend screen work starts before its design
 ticket is Done. Architectural decisions are recorded as MADR ADRs in `docs/adr/` and must be proposed
