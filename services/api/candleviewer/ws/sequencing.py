@@ -100,11 +100,15 @@ INCIDENT_REASONS: Final = frozenset({"upstream_desync", "backpressure"})
 #: name one: that is a programming error, refused when the body is built.
 SERVER_META_KEYS: Final = frozenset({"reason", "previous_seq", "source"})
 #: What a `d`'s `meta` may not name: those, and `stale`, which only a snapshot carries and a `d`
-#: never sets or clears (§7.2). A `d` that names it is refused: a raise to the publisher with the
-#: backpressure flag off; with it on, the pipeline contains it (the update is dropped and the
-#: subscriber re-snapshotted). An owner's `stale` on a body is dropped (`SnapshotBody`).
+#: never sets or clears (§7.2). A `d` that names one, is not JSON, or is over `OWNER_META_MAX_BYTES`
+#: of it is refused: a raise to the publisher with the backpressure flag off; with it on, the
+#: pipeline contains it for a paced family (drops the update, re-snapshots) and closes `orders` and
+#: `executions` with `internal_error`. An owner's `stale` on a body is dropped (`SnapshotBody`).
 DELTA_REFUSED_META_KEYS: Final = SERVER_META_KEYS | {"stale"}
-#: An owner's `meta` is at most this much JSON, so it can never carry a chunk past its limit.
+#: The most JSON an owner's `meta` may hold, on a snapshot (`SnapshotBody`) or a `d`
+#: (`TopicEmitter.delta`). Every snapshot chunk carries it, so both chunk budgets reserve its size:
+#: `render` off the per-part budget (`_widest` sizes the envelope without it), `_frames` in the
+#: envelope it sizes. The cap bounds that room; by itself it does not keep a chunk within its limit.
 OWNER_META_MAX_BYTES: Final = 1024
 #: §13.6 `resync.reason` (client side).
 CLIENT_RESYNC_REASONS: Final = frozenset(
@@ -188,6 +192,32 @@ def _logged_seq(value: object) -> int | None:
 def _dumps(frame: Mapping[str, Any]) -> str:
     """Same serialization as the gateway writer, so size checks match the wire."""
     return json.dumps(frame, separators=(",", ":"))
+
+
+#: `_dumps`'s options, but strict about NaN and Infinity, which JSON has no token for:
+#: `outbound.json_payload` refuses them, and the flag-off writer would send the bare words.
+_STRICT_ENCODER: Final = json.JSONEncoder(separators=(",", ":"), allow_nan=False)
+
+
+def _read_delta_meta(meta: Mapping[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """A `d`'s `meta`, read once: its shallow copy, which is what the frame carries, and why a `d`
+    may not carry it, else None. Refused: it names a key the server owns; it is not JSON (it cannot
+    be read, is circular, is nested past the recursion limit, or holds NaN or Infinity); or it is
+    over `OWNER_META_MAX_BYTES` of JSON, the bound of a snapshot's owner `meta`, counted as
+    `_dumps` counts, but strict about NaN and Infinity. JSON only: `cv.v1.msgpack` also refuses an
+    int outside 64 bits or a lone surrogate, which no publisher sends. An `Exception` from `meta`
+    is a refusal, not a raise from here. The emitter raises a refusal, and the hub, flag off, lets
+    that raise through: the two agree."""
+    try:  # every read of the caller's `meta` is in here
+        own = dict(meta)
+        if DELTA_REFUSED_META_KEYS.intersection(own):
+            return own, "delta meta may not name a server-owned key"
+        size = len(_STRICT_ENCODER.encode(own))
+    except Exception:  # whatever stops it being read or encoded, a defective mapping too
+        return {}, "delta meta is not JSON"
+    if size > OWNER_META_MAX_BYTES:
+        return own, f"delta meta is over {OWNER_META_MAX_BYTES} bytes"
+    return own, None
 
 
 def new_span_id() -> str:
@@ -686,11 +716,15 @@ class TopicEmitter:
         `s` is a multiple of `SAMPLE_EVERY` is stamped with the clock now (a paced frame at its
         release, not at its source update), and a stamped binary delta is also encoded with that
         weight (timed and sized by `cv_ws_frame_*`); the others read no clock and no timer. `meta`
-        rides on the envelope (bars: the §6.1 `include_delta` echo) and may not name a key the
-        server owns, or `stale` (§7.2). Suppressed too once the subscription has ended, as a
-        `snap` is."""
-        if meta and DELTA_REFUSED_META_KEYS.intersection(meta):  # a programming error, as on a snap
-            raise ValueError("delta meta may not name a server-owned key")
+        rides on the envelope (bars: the §6.1 `include_delta` echo). It is read once, into a shallow
+        copy that is checked and then sent, so its values must be immutable: the flag-off writer
+        encodes later, as `SnapshotBody` states for its own. It may not name a key the server owns,
+        or `stale` (§7.2), and must be JSON of at most `OWNER_META_MAX_BYTES`, or it is refused
+        before any `s` is taken (`_read_delta_meta`). Suppressed too once the subscription has
+        ended, as a `snap` is."""
+        own, refusal = (None, None) if meta is None else _read_delta_meta(meta)
+        if refusal:  # a programming error, as on a snap
+            raise ValueError(refusal)
         if sub.snapshot_pending or sub.effective.get("paused") is True or sub.ended:
             return False
         sub.seq += 1
@@ -700,8 +734,8 @@ class TopicEmitter:
         frame["ts"] = ts_ms if ts_ms is not None and sub.replay_session_id is not None else now
         if sub.replay_session_id is not None:
             frame |= {"rs": sub.replay_session_id, "wt": now}
-        if meta:
-            frame["meta"] = dict(meta)
+        if own:
+            frame["meta"] = own
         fam = sub.topic.family.family
         if part is not None and sub.effective.get("encoding") == "binary":
             flags = part.flags | (FLAG_REPLAY if sub.replay_session_id is not None else 0)
@@ -914,8 +948,9 @@ class SequencingHub:
     for `on_rebuild`), so no connection stops a fan-out (§10.1): the flag-on sink contains it
     itself, and the hub contains what a `TopicEmitter` lets through (flag off: `_snapshot_failed`,
     `_delta_failed`, which a waking publish follows with that `snap` at once). A cancellation is
-    never contained, nor, flag off, a `d` whose `meta` names a key the server owns: that is the
-    caller's own error. `clock` paces the failure lines."""
+    never contained, nor, flag off, a `d` whose `meta` the emitter refuses (`_read_delta_meta`: a
+    key the server owns, not JSON, or over the byte bound): that is the caller's own error. `clock`
+    paces the failure lines."""
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._conns: dict[int, tuple[ConnectionAuthz, Sink]] = {}
@@ -983,7 +1018,7 @@ class SequencingHub:
                 ):
                     sent += 1
             except Exception as exc:  # contained to `sub`: the others still get this `d`
-                if meta and DELTA_REFUSED_META_KEYS.intersection(meta):
+                if meta is not None and _read_delta_meta(meta)[1]:
                     raise  # the caller's own error, refused before any `s` was taken
                 self._delta_failed(authz, sub, exc)
                 if wake:  # the source holds `body`: its `snap` goes out now, as a woken one does
