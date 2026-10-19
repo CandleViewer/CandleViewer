@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -312,30 +313,103 @@ def test_ledger_uses_line_without_tag_comment_fails(
     assert _fails_with(root, capsys, f"CI-PIN-005 {A_YML}: {tagged}; {LEDGER}:5 has v4.2.2")
 
 
-UNREADABLE = {  # id -> the ledger's text past its title (None: no ledger file)
-    "no-file": None,
-    "no-table": "No table.\n",
-    "no-tag-column": "| Action | Pinned SHA | Used in |\n| --- | --- | --- |\n",
-    "short-row": HEADER + CHECKOUT_ROW.replace(" x |", ""),
-    "bare-value": HEADER + CHECKOUT_ROW.replace(f"`{PINNED_SHA}`", PINNED_SHA),
-    "short-sha": HEADER + CHECKOUT_ROW.replace(PINNED_SHA, PINNED_SHA[:12]),
-    "unseparated": HEADER + CHECKOUT_ROW.replace("`a.yml`, ", "`a.yml` "),
-    "listed-twice": HEADER + CHECKOUT_ROW.replace("`b.yml`", "`a.yml`"),
-    "second-table": HEADER + CHECKOUT_ROW + "\nprose\n\n" + HEADER + CACHE_ROW,
+FIRST_ROW = HEADER.splitlines(keepends=True)[0] + CHECKOUT_ROW
+UNREADABLE = {  # id -> (the ledger's text past its title, None for no file; the finding's place)
+    "no-file": (None, ": cannot read it (FileNotFoundError)"),
+    "no-table": ("No table.\n", ": has no table (a header row, then a --- separator row)"),
+    "no-tag-column": (
+        "| Action | Pinned SHA | Used in |\n| --- | --- | --- |\n",
+        ":3: the header needs exactly one Upstream tag column",
+    ),
+    "repeated-column": (
+        HEADER.replace("Last", "Pinned SHA"),
+        ":3: the header needs exactly one Pinned SHA column",
+    ),
+    "no-separator": (FIRST_ROW, ":4: the header is not followed by a --- separator row"),
+    "no-end-pipe": (HEADER + CHECKOUT_ROW.replace(" x |", " x"), ":5: the row does not end with |"),
+    "short-row": (
+        HEADER + CHECKOUT_ROW.replace(" x |", ""),
+        ":5: the row has 4 cells, the header 5",
+    ),
+    "bare-value": (
+        HEADER + CHECKOUT_ROW.replace(f"`{PINNED_SHA}`", PINNED_SHA),
+        f":5: '{PINNED_SHA}' is not one `value`",
+    ),
+    "short-sha": (
+        HEADER + CHECKOUT_ROW.replace(PINNED_SHA, PINNED_SHA[:12]),
+        f":5: {PINNED_SHA[:12]} is not a 40-hex commit SHA",
+    ),
+    "used-in-no-comma": (
+        HEADER + CHECKOUT_ROW.replace("`a.yml`, ", "`a.yml` "),
+        ":5: '`a.yml` `b.yml`' is not one `value`",
+    ),
+    "listed-twice": (
+        HEADER + CHECKOUT_ROW.replace("`b.yml`", "`a.yml`"),
+        ":5: 'Used in' lists a file twice",
+    ),
+    "second-table": (
+        HEADER + CHECKOUT_ROW + "\nprose\n\n" + HEADER + CACHE_ROW,
+        ":9: a second table starts here",
+    ),
+    "row-after-table": (  # GitHub shows a row without the leading | as one more row of the table
+        HEADER + CHECKOUT_ROW + CACHE_ROW.removeprefix("| "),
+        ":6: the table must end at a blank line",
+    ),
 }
 
 
-@pytest.mark.parametrize("text", UNREADABLE.values(), ids=UNREADABLE.keys())
+@pytest.mark.parametrize(("text", "place"), UNREADABLE.values(), ids=UNREADABLE.keys())
 def test_ledger_unreadable_table_fails_closed(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str | None
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str | None, place: str
 ) -> None:
     ledger = _repo(tmp_path) / LEDGER
     if text is None:
         ledger.unlink()
     else:
         ledger.write_text(f"# Ledger\n\n{text}", encoding="utf-8")
-    rc, err = _run(tmp_path, capsys)
-    assert rc == 1 and f"CI-PIN-001 {LEDGER}" in err, err
+    assert _fails_with(tmp_path, capsys, f"CI-PIN-001 {LEDGER}{place}")
+
+
+USE = f"actions/checkout@{PINNED_SHA}"
+KEY_FORMS = {  # id -> a step whose `uses` key USES_RE cannot read (YAML still reads a `uses` key)
+    "flow-mapping": f"- {{ uses: {USE} }}",
+    "flow-sequence": f"[uses: {USE}]",
+    "anchor": f"- uses: &a {USE} # v4.2.2",
+    "tag": f"- uses: !!str {USE} # v4.2.2",
+    "next-line": f"- uses:\n          {USE} # v4.2.2",
+    "quoted-key": f'- "uses": {USE} # v4.2.2',
+    "space-before-colon": f"- uses : {USE} # v4.2.2",
+    "explicit-key": f"- ? uses\n        : {USE} # v4.2.2",
+    "key-property": f"- !!str uses: {USE} # v4.2.2",
+    "escaped-key": f'- "u\\x73es": {USE} # v4.2.2',
+    "alias-key": f"- *k : {USE} # v4.2.2",  # `&k uses` is on line 3
+    "text-after-ref": f"- uses: {USE} v4.2.2",
+}
+CANNOT = "cannot read this uses: key: "
+UNREAD = {  # id -> (a.yml's step on line 5, the CI-PIN-009 finding's reason)
+    **{key: (step, CANNOT + step.splitlines()[0]) for key, step in KEY_FORMS.items()},
+    "two-at": (
+        f"- uses: actions/checkout@x@{PINNED_SHA} # v4.2.2",
+        f"cannot read actions/checkout@x@{PINNED_SHA}, which has more than one @",
+    ),
+    "local-action-elsewhere": (
+        "- uses: ./tools/actions/x",
+        (
+            "./tools/actions/x is a local action outside .github/actions/, whose uses: lines are "
+            "not checked"
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize(("step", "reason"), UNREAD.values(), ids=UNREAD.keys())
+def test_ledger_uses_line_it_cannot_read_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], step: str, reason: str
+) -> None:
+    workflow = f"jobs:\n  j:\n    env: {{K: &k uses}}\n    steps:\n      {step}\n"
+    assert "uses" in yaml.safe_load(workflow)["jobs"]["j"]["steps"][0]  # a step GitHub would run
+    rc, err = _run(_repo(tmp_path, a=workflow), capsys)
+    assert rc == 1 and f"\n  CI-PIN-009 .github/workflows/a.yml:5: {reason}\n" in err, err
 
 
 def test_repo_run_checks_composite_actions_for_sr132(

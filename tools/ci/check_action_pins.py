@@ -6,10 +6,10 @@
 #3580: run without paths (the ``pin-check`` step), it checks every ``*.yml`` /
 ``*.yaml`` file under ``.github/workflows/**`` and ``.github/actions/**`` of
 ``--root`` (default ``.``), then compares ``.github/actions-pins.md`` with their
-``uses:`` lines, failing closed on a table it cannot read (CI-PIN-001 to
-CI-PIN-008: the rule is that file's "Verification" paragraph, each code's
-recipe ``docs/ci-runbook.md`` §4). Run with paths, it applies the SR-132
-checks to those files alone.
+``uses:`` lines, failing closed on a table or a ``uses:`` line it cannot read
+(CI-PIN-001 to CI-PIN-009: the rule is that file's "Verification" paragraph,
+each code's recipe ``docs/ci-runbook.md`` §4). Run with paths, it applies the
+SR-132 checks to those files alone.
 
 Exit codes: 0 clean, 1 violations found, 2 internal error (bad path / no
 workflows found when a specific path was requested).
@@ -46,11 +46,20 @@ INDENT_RE = re.compile(r"^(\s*)\S")
 LEDGER_PATH = Path(".github/actions-pins.md")
 WORKFLOWS_DIR = Path(".github/workflows")
 ACTIONS_DIR = Path(".github/actions")
+LOCAL_TREES = (f"{WORKFLOWS_DIR.as_posix()}/", f"{ACTIONS_DIR.as_posix()}/")  # `./` refs scanned
 # The columns the ledger check reads, by header title; any other column (Last bumped) is prose.
 LEDGER_COLUMNS = ("Action", "Pinned SHA", "Upstream tag", "Used in")
 CODE_CELL_RE = re.compile(r"^`([^`\s]+)`$")
 SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# A `uses` mapping key on a line USES_RE does not read is CI-PIN-009 (fail closed): in block or
+# flow position (after `{`, `[`, `,` or `?`), behind `-`/`?` indicators, anchors or tags, quoted,
+# with a space before the colon or its value on the next line; also an alias key, which may name
+# a `uses` anchor, and a double-quoted key with an escape, which may spell `uses`.
+USES_KEY_RE = re.compile(
+    r"""(?:^\s*|[\[{,?]\s*)(?:(?:[-?]|[&!]\S*)\s+)*"""
+    r"""(?:["']?uses["']?\s*(?::|$)|\*[\w-]+\s*:|"[^"]*\\[^"]*"\s*:)"""
+)
 
 
 @dataclass(frozen=True)
@@ -195,22 +204,36 @@ def check_paths(paths: list[Path]) -> list[Violation]:
     return violations
 
 
-def collect_uses(path: Path, root: Path) -> list[PinUse]:
-    """The ``uses:`` lines of ``path`` the ledger records: all but ``./`` and ``docker://``."""
+def collect_uses(path: Path, root: Path) -> tuple[list[PinUse], list[str]]:
+    """The ``uses:`` lines of ``path`` the ledger records (all but ``./`` and ``docker://``), and a
+    CI-PIN-009 finding for each line naming an action whose pin this check cannot read."""
     rel = path.relative_to(root)
     name = rel.relative_to(WORKFLOWS_DIR) if rel.is_relative_to(WORKFLOWS_DIR) else rel
     uses: list[PinUse] = []
+    unread: list[str] = []
     for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        m = None if COMMENT_LINE_RE.match(line) else USES_RE.match(line)
+        if COMMENT_LINE_RE.match(line):
+            continue
+        where = f"{rel.as_posix()}:{line_no}"
+        m = USES_RE.match(line)
         if m is None:
+            if USES_KEY_RE.search(line):
+                unread.append(f"CI-PIN-009 {where}: cannot read this uses: key: {line.strip()}")
             continue
         ref = m.group("ref").strip('"').strip("'")
+        if ref.startswith("./") and not ref[2:].startswith(LOCAL_TREES):
+            unread.append(
+                f"CI-PIN-009 {where}: {ref} is a local action outside {ACTIONS_DIR.as_posix()}/, "
+                "whose uses: lines are not checked"
+            )
         if ref.startswith(("./", "docker://")):
             continue
+        if ref.count("@") > 1:  # GitHub reads owner/repo[/path]@ref; CI-GATE-003 the last @ only
+            unread.append(f"CI-PIN-009 {where}: cannot read {ref}, which has more than one @")
+            continue
         action, _, version = ref.partition("@")
-        where = f"{rel.as_posix()}:{line_no}"
         uses.append(PinUse(action, version, m.group("tag") or "", name.as_posix(), where))
-    return uses
+    return uses, unread
 
 
 def _cells(line_no: int, line: str) -> list[str]:
@@ -252,10 +275,13 @@ def parse_ledger(path: Path) -> list[LedgerRow]:
     for offset, (line_no, _) in enumerate(table):
         if line_no != table[0][0] + offset:
             raise LedgerError("a second table starts here", line_no)
+    end = table[-1][0]  # GitHub reads a non-blank line right after the table as one more row
+    if end < len(lines) and lines[end].strip():
+        raise LedgerError("the table must end at a blank line", end + 1)
     titles = _cells(*table[0])
-    missing = [title for title in LEDGER_COLUMNS if title not in titles]
-    if missing:
-        raise LedgerError(f"the header has no {', '.join(missing)} column", table[0][0])
+    wrong = [title for title in LEDGER_COLUMNS if titles.count(title) != 1]
+    if wrong:
+        raise LedgerError(f"the header needs exactly one {', '.join(wrong)} column", table[0][0])
     separator = _cells(*table[1])
     if len(separator) != len(titles) or not all(map(SEPARATOR_CELL_RE.match, separator)):
         raise LedgerError("the header is not followed by a --- separator row", table[1][0])
@@ -265,22 +291,24 @@ def parse_ledger(path: Path) -> list[LedgerRow]:
 def check_ledger(root: Path, files: list[Path]) -> list[str]:
     """Compare the ledger with the ``uses:`` lines of ``files`` (CI-PIN-*), naming both sides."""
     ledger = LEDGER_PATH.as_posix()
+    collected = [collect_uses(path, root) for path in files]
+    unread = [finding for _, found in collected for finding in found]
     try:
         rows = parse_ledger(root / LEDGER_PATH)
     except LedgerError as exc:
         where = ledger if exc.line_no is None else f"{ledger}:{exc.line_no}"
-        return [f"CI-PIN-001 {where}: {exc}"]
+        return [*unread, f"CI-PIN-001 {where}: {exc}"]
     by_action: dict[str, list[LedgerRow]] = {}
     for row in rows:
         by_action.setdefault(row.action, []).append(row)
-    findings = [
+    findings = unread + [
         f"CI-PIN-003 {', '.join(f'{ledger}:{row.line_no}' for row in same)}: {action} has "
         f"{len(same)} rows; keep one"
         for action, same in by_action.items()
         if len(same) > 1
     ]
     users: dict[str, dict[str, str]] = {}  # action -> {"Used in" name: its first file:line}
-    for use in (use for path in files for use in collect_uses(path, root)):
+    for use in (use for uses, _ in collected for use in uses):
         users.setdefault(use.action, {}).setdefault(use.name, use.where)
         same = by_action.get(use.action, [])
         if not SHA_RE.match(use.ref) or len(same) > 1:

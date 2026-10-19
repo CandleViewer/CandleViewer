@@ -4,7 +4,7 @@ SR-132 (`docs/plan/04-security-program.md` §6.13): every third-party action
 referenced from `.github/workflows/**` and `.github/actions/**` must be pinned
 to a full 40-hex commit SHA, never a floating tag/branch.
 `tools/ci/check_action_pins.py` enforces this mechanically (CI-GATE-003) and
-checks this table against those references (CI-PIN-001 to CI-PIN-008); this
+checks this table against those references (CI-PIN-001 to CI-PIN-009); this
 file is the human-readable ledger of _which_ upstream tag each pinned SHA
 corresponds to, so a reviewer can see at a glance what a pin bump changes.
 
@@ -41,11 +41,13 @@ Verification: `tools/ci/check_action_pins.py` (the `pin-check` step) fails the
 build if any `uses:` line drifts back to a tag or any workflow declares the
 `pull_request_target` trigger (SR-132, CI-GATE-003). It also compares this
 table with every `uses:` line in `.github/workflows/**` and `.github/actions/**`
-(CI-PIN-001 to CI-PIN-008, #3580): each pinned action has exactly one row with
+(CI-PIN-001 to CI-PIN-009, #3580): each pinned action has exactly one row with
 the line's SHA and `# <tag>` comment, every row is used, and "Used in" lists
 exactly the files that use it, a workflow by its file name and a composite
 action by its path from the repository root (`.github/actions/<name>/action.yml`).
 The Action column is the reference before `@`, so each `github/codeql-action/*`
 action, and any workflow called from another repository, has a row of its own.
 Local `./` references and `docker://` images, which are pinned by digest, have
-no row.
+no row. A `uses:` line the check cannot read fails closed (CI-PIN-009), so write
+each one on one line as `uses: <action>@<sha> # <tag>` and keep local actions
+under `.github/actions/`.
