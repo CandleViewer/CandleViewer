@@ -393,18 +393,16 @@ async def route_refusal(
     *,
     operation: tuple[str, str],
     ip: str | None,
-    logged_as: tuple[str, str] | None = None,
+    logged_as: tuple[str, str],
 ) -> JSONResponse | None:
     """The guard's answer to *record*: the one verdict ladder of the middleware, for the session
     its bearer names, and of a route that found its session itself, as by the `cv_refresh`
-    cookie that no bearer guard sees (`POST /auth/unlock`, contract "Idle lock"). *operation* is
-    (METHOD, path) as the allow-list reads it; *logged_as* the (bounded method, route template)
-    its counts, log lines and audit row name, *operation* by default. `None` lets the route go
-    on: a full session, a disabled or deleted user's (#2911 is the route's), or an
-    enrolment-only one on an allow-listed operation."""
-    if not auth.enrolment_gate_is_active:
-        return None  # no session store: nothing authenticates, so no such session exists
-    method, path = logged_as if logged_as is not None else operation
+    cookie that no bearer guard sees (`POST /auth/unlock`, contract "Idle lock"). Its caller has
+    read `enrolment_gate_is_active`. *operation* is (METHOD, path) as the allow-list reads it,
+    *logged_as* the (bounded method, route template) its counts, log lines and audit row name.
+    `None` lets the route go on: a full session, a disabled or deleted user's (#2911 is the
+    route's), or an enrolment-only one on an allow-listed operation."""
+    method, path = logged_as
     try:
         verdict = await auth.classify(record)
     except Exception as exc:  # fail closed: an unclassified session reaches no handler

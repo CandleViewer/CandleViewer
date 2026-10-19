@@ -1095,10 +1095,12 @@ def make_session_router(
             return idle_lock.session_revoked_problem(exc.reason)
         except SessionNotFound:
             return _unauthorized()
-        refused = await route_refusal(  # #2295: not an enrolment-only session's operation
-            auth_service, enrolment_refusals, record, operation=("POST", "/auth/unlock"), ip=ip
-        )
-        if refused is not None:
+        op = ("POST", "/auth/unlock")  # #2295: not an enrolment-only session's operation
+        if auth_service.enrolment_gate_is_active and (
+            refused := await route_refusal(
+                auth_service, enrolment_refusals, record, operation=op, ip=ip, logged_as=op
+            )
+        ):
             return refused  # before the lock state is told or any password is checked
         if (refusal := undeclared_query_refusal(request, UNLOCK_QUERY)) is not None:
             return refusal  # SR-026: before the lock state is told or a password checked

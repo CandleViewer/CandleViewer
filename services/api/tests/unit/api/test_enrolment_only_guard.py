@@ -288,7 +288,7 @@ def test_a_refresh_cookie_alone_reaches_no_operation_the_guard_would_refuse() ->
 
 
 @pytest.mark.parametrize(
-    ("who", "operation", "status"),
+    ("who", "op", "status"),
     [
         ("enrolling", ("POST", "/auth/unlock"), 403),
         ("overlong", ("POST", "/auth/unlock"), 401),
@@ -299,12 +299,13 @@ def test_a_refresh_cookie_alone_reaches_no_operation_the_guard_would_refuse() ->
     ],
 )
 async def test_route_refusal_answers_a_session_the_route_found_as_the_guard_would(
-    who: str, operation: tuple[str, str], status: int | None
+    who: str, op: tuple[str, str], status: int | None
 ) -> None:
-    auth = _Auth()
+    auth, refusals = _Auth(), _refusals(_Audit())
+    auth.enrolment_gate_is_active = False  # its caller reads the gate, once per request
     record = await auth.authenticate_access_token(f"tok-{who}")
 
-    resp = await route_refusal(auth, _refusals(_Audit()), record, operation=operation, ip=None)
+    resp = await route_refusal(auth, refusals, record, operation=op, ip=None, logged_as=op)
 
     assert (None if resp is None else resp.status_code) == status
 
