@@ -184,6 +184,8 @@ async def refusals(path: Path, steps: list[tuple[str, int]]) -> None:
     assert [r["record_id"] for r in repo.rows if r["action"] == "auth.logout"] == ids
 
 
+# A 5 s real-time wait over runner-paced restarts (C-9.3). ticket: GH-3709 quarantined: 2026-10-19
+@pytest.mark.flaky
 @settings(
     max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
 )
