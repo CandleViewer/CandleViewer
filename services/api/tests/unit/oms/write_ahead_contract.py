@@ -183,6 +183,17 @@ class WriteAheadContract:
         states = [(e.from_state, e.to_state) for e in (first, second, added)]
         assert states == [(None, "accepted"), (None, None), (None, None)]
 
+    async def test_a_create_a_step_and_a_fill_leave_the_chart_state_null(self, h: Harness) -> None:
+        """`orders.lifecycle_state` (`0034_order_vocabulary`) has no default, and no write path
+        sets it yet (#847's remaining implementation PR sets it beside `state`): each write leaves
+        it NULL, as returned and as stored, so `ord_lifecycle` holds on every row."""
+        row = await h.order("pending_submit")
+        moved = await h.orders.transition(step(row, "accepted"))
+        done = await h.executions.commit_fill(fill(moved.order, "E1", "0.1"))
+        assert done is not None
+        assert [r.lifecycle_state for r in (row, moved.order, done.order)] == [None, None, None]
+        assert await h.stored(row) == (done.order, [0, 1, 2])
+
     async def test_a_latency_of_zero_is_stored(self, h: Harness) -> None:
         """`oe_latency` refuses a negative `latency_ms` (`_REFUSED`), not zero."""
         row = await h.order("pending_submit")

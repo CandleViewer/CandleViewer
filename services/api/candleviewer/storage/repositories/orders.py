@@ -20,6 +20,9 @@ Writes here are the insert of an order with its first event (`OrderStore.create`
 an event without a state transition (`OrderEventStore.append`). Updates of an existing order
 (state, fills, reject fields) with events that carry `from_state`/`to_state` are E29-T03's
 write-ahead step (`transition`, `ExecutionStore.commit_fill`); E29-T04 adds the 24 Sec.8.4 columns.
+`state` is the persisted form of the B1 chart's state (`ORDER_STATE_OF`), and `lifecycle_state`
+(`0034`) the chart state verbatim. No write path sets `lifecycle_state` yet: `create` and every
+step leave it NULL. #847's remaining implementation PR sets it, beside `state`, on every path.
 
 For the OMS (24 Sec.8.2 S7): an exception from any call means its write is not confirmed. The OMS
 does not accept the order and sends nothing under its id; a commit cut off by a lost connection
@@ -35,6 +38,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Final, Literal, Protocol, get_args, get_type_hints
 from uuid import UUID
 
@@ -43,6 +47,13 @@ from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, r
 OrderState = Literal[
     "new", "pending_submit", "submitted", "accepted", "partially_filled", "filled",
     "pending_cancel", "cancelled", "pending_amend", "rejected", "expired", "untracked",
+    "triggered", "unknown", "quarantined", "killed", "held",
+]  # fmt: skip
+#: The B1 order chart's `lifecycle` states, verbatim (`order_lifecycle_state`, 28 B1).
+LifecycleState = Literal[
+    "draft", "validated", "submitting", "submitted", "triggered", "partially_filled",
+    "cancel_pending", "amend_pending", "unknown", "quarantined", "untracked", "held", "filled",
+    "cancelled", "rejected", "expired", "killed",
 ]  # fmt: skip
 OrderIntent = Literal[
     "entry", "stop_loss", "take_profit", "scale_in", "scale_out", "flatten", "reverse",
@@ -51,7 +62,7 @@ OrderIntent = Literal[
 OrderEventKind = Literal[
     "local_create", "submit_attempt", "ack", "reject", "fill", "partial_fill", "amend_request",
     "amend_ack", "cancel_request", "cancel_ack", "expire", "exchange_push", "reconcile_diff",
-    "error",
+    "error", "kill", "adopt",
 ]  # fmt: skip
 OrderEventSource = Literal["local", "rest", "ws_private", "reconcile", "paper"]
 FillRefusal = Literal["above_qty", "paper_mismatch", "state_mismatch"]
@@ -62,7 +73,19 @@ TriggerBy = Literal["LastPrice", "MarkPrice", "IndexPrice"]
 TpslMode = Literal["Full", "Partial"]
 IdempotencyState = Literal["unsent", "in_flight", "acked", "failed"]
 
-#: The `ix_orders_open` predicate: what `list_open` returns (a unit test pins the index).
+#: 24-internal-schemas.md Sec.8.2: the `order_state` value that persists each chart state. One to
+#: one; six names differ, and `submitted` names a different state on each side, so a reader of
+#: `orders` takes the chart's state from `lifecycle_state` (`ord_lifecycle` admits these pairs
+#: only). `order_events` keeps this value alone: E29-T03's rebuild from events inverts the map.
+ORDER_STATE_OF: Final[Mapping[LifecycleState, OrderState]] = MappingProxyType({
+    "draft": "new", "validated": "pending_submit", "submitting": "submitted",
+    "submitted": "accepted", "triggered": "triggered", "partially_filled": "partially_filled",
+    "cancel_pending": "pending_cancel", "amend_pending": "pending_amend", "unknown": "unknown",
+    "quarantined": "quarantined", "untracked": "untracked", "held": "held", "filled": "filled",
+    "cancelled": "cancelled", "rejected": "rejected", "expired": "expired", "killed": "killed",
+})  # fmt: skip
+#: The `ix_orders_open` predicate: what `list_open` returns (a unit test pins the index). Neither
+#: `untracked` nor `held` is open: B1 treats both as orders the OMS does not own (INV-B1-n).
 OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
     {
         "pending_submit",
@@ -71,6 +94,9 @@ OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
         "partially_filled",
         "pending_cancel",
         "pending_amend",
+        "triggered",
+        "unknown",
+        "quarantined",
     }
 )
 #: The sources of a step the exchange reported, which carries the exchange's message (OM-R02).
@@ -281,6 +307,7 @@ class OrderRow:
     exchange_updated_ts: datetime | None
     last_reconciled_at: datetime | None
     is_paper: bool
+    lifecycle_state: LifecycleState | None
 
 
 @dataclass(frozen=True, slots=True)

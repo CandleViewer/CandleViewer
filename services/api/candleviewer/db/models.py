@@ -1873,6 +1873,9 @@ backups = Table(
 #: OMS core (E29-T01, revision 0029_oms_core): Sec.1.2 enums and Sec.3.3.4-3.3.7. Both
 #: `trade_group_leg_id` columns carry no FK until E28-T01 (#905) creates `trade_group_legs`; the
 #: append-only triggers and the C-5.7 revocations are asserted by the 0029 tests, not autogenerate.
+#: 0034_order_vocabulary (E29-T03) appends to `order_state` and `order_event_kind`, adds
+#: `order_lifecycle_state` (the B1 chart's states verbatim), `orders.lifecycle_state` and the
+#: `ord_lifecycle` CHECK that pairs it with `state` (`ORDER_STATE_OF`).
 ORDER_INTENTS = (
     "entry", "stop_loss", "take_profit", "scale_in", "scale_out", "flatten", "reverse",
     "algo_child",
@@ -1880,16 +1883,25 @@ ORDER_INTENTS = (
 ORDER_STATES = (
     "new", "pending_submit", "submitted", "accepted", "partially_filled", "filled",
     "pending_cancel", "cancelled", "pending_amend", "rejected", "expired", "untracked",
+    "triggered", "unknown", "quarantined", "killed", "held",
 )  # fmt: skip
 ORDER_EVENT_KINDS = (
     "local_create", "submit_attempt", "ack", "reject", "fill", "partial_fill", "amend_request",
     "amend_ack", "cancel_request", "cancel_ack", "expire", "exchange_push", "reconcile_diff",
-    "error",
+    "error", "kill", "adopt",
+)  # fmt: skip
+ORDER_LIFECYCLE_STATES = (
+    "draft", "validated", "submitting", "submitted", "triggered", "partially_filled",
+    "cancel_pending", "amend_pending", "unknown", "quarantined", "untracked", "held", "filled",
+    "cancelled", "rejected", "expired", "killed",
 )  # fmt: skip
 order_intent = ENUM(*ORDER_INTENTS, name="order_intent", metadata=metadata, create_type=False)
 order_state = ENUM(*ORDER_STATES, name="order_state", metadata=metadata, create_type=False)
 order_event_kind = ENUM(
     *ORDER_EVENT_KINDS, name="order_event_kind", metadata=metadata, create_type=False
+)
+order_lifecycle_state = ENUM(
+    *ORDER_LIFECYCLE_STATES, name="order_lifecycle_state", metadata=metadata, create_type=False
 )
 
 #: C-5.9 / Sec.12 class P1 on every numeric(38,18) column of the OMS tables (all but order_events);
@@ -1954,6 +1966,7 @@ orders = Table(
     Column("exchange_updated_ts", TIMESTAMP(timezone=True)),
     Column("last_reconciled_at", TIMESTAMP(timezone=True)),
     Column("is_paper", Boolean, nullable=False, server_default=text("false")),
+    Column("lifecycle_state", order_lifecycle_state),
     CheckConstraint("side IN ('Buy','Sell')", name="ord_side"),
     CheckConstraint("order_type IN ('Market','Limit')", name="ord_type"),
     CheckConstraint("qty > 0", name="ord_qty"),
@@ -1980,6 +1993,16 @@ orders = Table(
         name="ord_link_fmt",
     ),
     CheckConstraint("parent_order_id IS DISTINCT FROM id", name="ord_no_self"),
+    CheckConstraint(
+        "lifecycle_state IS NULL OR (lifecycle_state, state) IN (('draft','new'),"
+        "('validated','pending_submit'),('submitting','submitted'),('submitted','accepted'),"
+        "('triggered','triggered'),('partially_filled','partially_filled'),"
+        "('cancel_pending','pending_cancel'),('amend_pending','pending_amend'),"
+        "('unknown','unknown'),('quarantined','quarantined'),('untracked','untracked'),"
+        "('held','held'),('filled','filled'),('cancelled','cancelled'),('rejected','rejected'),"
+        "('expired','expired'),('killed','killed'))",
+        name="ord_lifecycle",
+    ),
     Index("ux_orders_link", "order_link_id", unique=True),
     Index(
         "ux_orders_exch_id",
@@ -1994,7 +2017,7 @@ orders = Table(
         "symbol",
         postgresql_where=text(
             "state IN ('pending_submit','submitted','accepted','partially_filled',"
-            "'pending_cancel','pending_amend')"
+            "'pending_cancel','pending_amend','triggered','unknown','quarantined')"
         ),
     ),
     Index("ix_orders_leg", "trade_group_leg_id"),

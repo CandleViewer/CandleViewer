@@ -27,6 +27,11 @@ _UP, _DOWN = f"{_PREV}:{_REV}", f"{_REV}:{_PREV}"
 _BLOCKS = ("3.3.4 `orders`", "3.3.5 `order_events`", "3.3.6 `executions`", "3.3.7 `positions`")
 #: The one documented deviation (Sec.3.3.4 note): `trade_group_legs` (E28-T01) does not exist yet.
 _LEG_FK = " REFERENCES trade_group_legs(id) ON DELETE SET NULL"
+#: Added by `0034_order_vocabulary`, whose own test pins them: the column, its CHECK, and
+#: `ix_orders_open` rebuilt with the new open states.
+_LATER = frozenset({"lifecycle_state", "ord_lifecycle", "ix_orders_open"})
+#: 0034 appends to these two (21 Sec.9.3 rule 7), so 0029 created the first n values.
+_CREATED = {"order_state": 12, "order_event_kind": 14}
 _TABLES = {
     t.name: t
     for t in (
@@ -96,7 +101,8 @@ def test_revision_chains_onto_0028() -> None:
 def test_upgrade_creates_each_enum_as_the_plan_doc_and_the_model_declare_it(
     enum: ENUM, name: str
 ) -> None:
-    statement = f"CREATE TYPE {name} AS ENUM ({','.join(repr(v) for v in enum.enums)});"
+    values = enum.enums[: _CREATED.get(name)]
+    statement = f"CREATE TYPE {name} AS ENUM ({','.join(repr(v) for v in values)});"
     assert statement in _norm(_DOC.read_text(encoding="utf-8")) and statement in _up()
     assert enum.name == name and enum.create_type is False  # the migration creates and drops it
 
@@ -212,7 +218,7 @@ def _doc_columns(table: str) -> list[tuple[str, bool, str | None]]:
 def test_models_mirror_the_doc_columns(table: Table) -> None:
     """The `migrations` job autogenerate-diffs the DB against `db.models.metadata`; names,
     nullability and server defaults are pinned against the plan doc here."""
-    got = [(c.name, bool(c.nullable), _default(c)) for c in table.columns]
+    got = [(c.name, bool(c.nullable), _default(c)) for c in table.columns if c.name not in _LATER]
     assert got == _doc_columns(table.name)
 
 
@@ -236,6 +242,7 @@ def test_models_mirror_the_check_constraints(table: Table) -> None:
         for c in table.constraints
         if isinstance(c, CheckConstraint)
     }
+    checks = {name: body for name, body in checks.items() if name not in _LATER}
     assert set(checks) == set(re.findall(r"CONSTRAINT (\w+)\s+CHECK", _doc_table(table.name)))
     for name, body in checks.items():
         assert _norm(f"CONSTRAINT {name} CHECK ({body})") in _up(), name
@@ -277,7 +284,7 @@ def test_models_mirror_the_indexes(table: Table) -> None:
         re.findall(rf"INDEX (\w+)\s+ON {table.name} ", doc)
     )
     for ix in table.indexes:
-        assert _create_index(ix) in _up(), ix.name
+        assert ix.name in _LATER or _create_index(ix) in _up(), ix.name
 
 
 def test_leaves_qty_is_the_stored_generated_column() -> None:
