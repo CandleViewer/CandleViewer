@@ -13,9 +13,12 @@ before the row changes, so a row is `ok` only once the trail binds its digest. W
 unwritten the row ends `failed`, `audit_unavailable`, no digest, and a job `result` it is given
 gains `audit: "unavailable"` first, since that job may already read `succeeded`: the row is the
 truth (#3674). The row's write is tried `WRITE_TRIES` times, so an end holds its job's lane for at
-most one record and that many writes; a success then moves the freshness. A record past its
+most one record, that many writes and a read-back; a success moves the freshness. A record past its
 budget may still land (the writer never interrupts an append it began): the trail may hold a
 record no row followed, never a row it does not explain.
+
+A retry that finds the row already ended (an earlier try applied and lost its answer) reads it
+back within `WRITE_BUDGET_S`, so the freshness still moves (SR-BK8A-04).
 
 A row no end could write stays `running`, as does a job a shutdown cancels (it has no end). At the
 next boot, before anything serves, `close_lost` ends each `running` row the same way, as
@@ -66,6 +69,8 @@ class RunStore(Protocol):
         limit: int,
     ) -> list[port.BackupRow]: ...
 
+    async def get(self, backup_id: UUID) -> port.BackupRow | None: ...
+
     async def insert_running(self, new: port.NewBackup) -> port.BackupRow: ...
 
     async def record_run_finished(
@@ -94,13 +99,14 @@ def run_record(
     }  # fmt: skip
 
 
-async def recorded(record: Awaitable[None], stage: str) -> bool:
+async def recorded(record: Awaitable[None], stage: str, backup_id: UUID) -> bool:
     """One `backup.run` record within its budget; `False`, its class logged, when unwritten."""
     try:
         async with asyncio.timeout(limits.RECORD_BUDGET_S):
             await record
     except Exception as exc:  # not made durable in time (C-2.9)
-        _log().error("backups.run_unrecorded", stage=stage, error=type(exc).__name__)
+        where = {"stage": stage, "backup_id": str(backup_id)}
+        _log().error("backups.run_unrecorded", **where, error=type(exc).__name__)
         return False
     return True
 
@@ -144,7 +150,7 @@ class RunRows:
         state |= {"checksum_sha256": run.checksum_sha256, "error": run.error}
         reason = why or run.error
         record = self._audit.emit("backup.run", **run_record(actor, backup_id, state, reason))
-        if not await recorded(record, "finished"):
+        if not await recorded(record, "finished", backup_id):
             run = port.RunFinished(run.finished_at, "audit_unavailable")  # never `ok`, no digest
             if result is not None:
                 result["audit"] = "unavailable"  # ahead of the row
@@ -156,10 +162,21 @@ class RunRows:
                 where = {"backup_id": str(backup_id), "attempt": attempt}
                 _log().error("backups.run_not_ended", **where, error=type(exc).__name__)
                 continue
+            if row is None and attempt > 1:  # an earlier try may have applied: `get` tells
+                row = await self._reread(backup_id)
             if row is not None and self._freshness is not None:
                 self._freshness.record_success(row)
             return True
         return False  # left `running`: a later boot ends it (`close_lost`)
+
+    async def _reread(self, backup_id: UUID) -> port.BackupRow | None:
+        try:
+            async with asyncio.timeout(limits.WRITE_BUDGET_S):
+                return await self._store.get(backup_id)
+        except Exception as exc:  # the freshness then waits for the next boot's load
+            failure = type(exc).__name__
+            _log().error("backups.run_not_reread", backup_id=str(backup_id), error=failure)
+            return None
 
     async def close_lost(self) -> int:
         """At boot, before this process runs anything, end every `running` row: the process that

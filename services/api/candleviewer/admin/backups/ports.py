@@ -6,7 +6,7 @@ port. M21 may not import `api` (C-3.1), so the admin job store is a port too (`J
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 from uuid import UUID
 
@@ -56,17 +56,23 @@ class JobRunner(Protocol):
 #: The engine ports get a catalogue row's id and stored `location`, never a path a client sent.
 @dataclass(frozen=True, slots=True)
 class RunPlan:
-    location: str  # inside the backup root
-    encrypted: bool
+    location: str  # inside the backup root: an absolute filesystem path
+    encrypted: bool  # a run is refused unless it is, under an alias (SR-091)
+    #: The keyring alias (class S) the artefact is encrypted under; only ever written into the
+    #: row, once (`backups.encryption_ref`), never read back or logged.
+    encryption_ref: str | None = field(default=None, repr=False)
 
 
 class BackupRunner(Protocol):
-    async def plan(self, kind: str) -> RunPlan: ...
+    async def plan(self, kind: str) -> RunPlan:
+        """Within `PLAN_BUDGET_S`; encrypted under a non-empty alias, at an absolute path."""
 
     async def run(
         self, backup_id: UUID, plan: RunPlan, progress: Progress
     ) -> tuple[int, str | None]:
-        """`(size_bytes, checksum_sha256)`; no digest for a directory or a repository (Q8)."""
+        """`(size_bytes, checksum_sha256)`: the size of what the run stored, never the bytes it
+        added, so positive (an unchanged lake's sync reports its repository's size); the SHA-256
+        as 64 lowercase hex, none for a directory or a repository (Q8). Else `internal_error`."""
 
 
 class ScratchVerifier(Protocol):
