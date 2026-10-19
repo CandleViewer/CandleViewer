@@ -20,8 +20,8 @@ In scope, per the ticket brief — four named trust boundaries:
 1. **TB-D1 — Design tool → repo.** Tokens Studio export (or the Agent-delivery-adaptations Penpot
    pipeline, `docs/design/README.md`, `docs/design/_tools/penpot_export.py`) landing token JSON in
    `packages/ui/tokens/*.tokens.json`, and any automation credential that pipeline uses.
-2. **TB-D2 — Third-party build dependencies.** Style Dictionary (token build), Storybook 8 + addons
-   (a11y, theme/density toolbars, test-runner), the icon library, the SVG-to-React compiler, and the
+2. **TB-D2 — Third-party build dependencies.** Style Dictionary (token build), Storybook 10 + addons
+   (docs, a11y, Vitest), the icon library, the SVG-to-React compiler, and the
    visual-regression (VR) tool.
 3. **TB-D3 — CI → artefact publication.** The Storybook static build and VR baselines produced by CI and
    published somewhere a developer or the Owner can view them.
@@ -41,7 +41,7 @@ flowchart LR
 
   subgraph BUILD["TB-D2 · Third-party build dependencies"]
     SD["Style Dictionary<br/>(token build, 6 targets)"]
-    SB["Storybook 8 + addons<br/>(a11y, theme/density, test-runner)"]
+    SB["Storybook 10 + addons<br/>(docs, a11y, Vitest)"]
     ICO["Icon library"]
     SVG["SVG-to-React compiler"]
     VR["VR tool (screenshot diff)"]
@@ -50,7 +50,7 @@ flowchart LR
   REPO -->|"style-dictionary build"| SD
   SD -->|"build/ts/tokens.ts, build/css/*, build/engine/theme-uniforms.json"| APP["Consuming apps<br/>(TB-D4): apps/web, Electron main, chart-engine, Storybook"]
   ICO --> SVG --> APP
-  SB -->|"pnpm --filter @candleviewer/ui build-storybook"| SBSTATIC["Storybook static build<br/>(TB-D3)"]
+  SB -->|"pnpm --filter @candleviewer/ui storybook:build"| SBSTATIC["Storybook static build<br/>(TB-D3)"]
   SB --> VR
 
   subgraph CI["CI (GitHub Actions, hosted runners)"]
@@ -81,12 +81,12 @@ used, leave the network to a third party (flagged hostile in the diagram).
 
 ## 3. Trust boundaries anchored to `04-security-program.md`
 
-| ID (this doc) | Anchor                                 | Elements                                                                                                               |
-| ------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| TB-D1         | TB-8 (upstream → runtime), AC-11       | Design tool export path (Penpot / Tokens Studio), any automation token, `packages/ui/tokens/*.tokens.json`             |
-| TB-D2         | TB-8, AC-11                            | Style Dictionary, Storybook 8 + addons, icon library, SVG-to-React compiler, VR tool — all third-party build-time code |
-| TB-D3         | TB-8c (build artefact publication)     | Storybook static build, VR baselines, their hosting target                                                             |
-| TB-D4         | Library/runtime boundary (new for E05) | Generated token build outputs and CMP-* components consumed by `apps/web`, `apps/desktop`, `packages/chart-engine`     |
+| ID (this doc) | Anchor                                 | Elements                                                                                                                |
+| ------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| TB-D1         | TB-8 (upstream → runtime), AC-11       | Design tool export path (Penpot / Tokens Studio), any automation token, `packages/ui/tokens/*.tokens.json`              |
+| TB-D2         | TB-8, AC-11                            | Style Dictionary, Storybook 10 + addons, icon library, SVG-to-React compiler, VR tool — all third-party build-time code |
+| TB-D3         | TB-8c (build artefact publication)     | Storybook static build, VR baselines, their hosting target                                                              |
+| TB-D4         | Library/runtime boundary (new for E05) | Generated token build outputs and CMP-* components consumed by `apps/web`, `apps/desktop`, `packages/chart-engine`      |
 
 ## 4. STRIDE enumeration
 
@@ -113,7 +113,7 @@ sign-off (acceptance criterion 2).
 | --- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | B1  | Tampering              | A malicious or compromised Style Dictionary (or a transitive dependency of it) executes arbitrary code at token-build time with the ambient CI job's credentials                                    | M   | H   | **High** | Lockfile pinning (`pnpm-lock.yaml`, `RSK-029`'s general controls) applies here too; the token-build CI job runs with **no write credential to the repository and no access to any deployment secret** — least-privilege job token, no `GITHUB_TOKEN` write scope, no cloud/deploy secret in that job's environment | E05-T01 (job scoping), tracked in `docs/plan/backlog/E01.json` least-privilege CI token work (E01-T08) | `E05-Q01`: fixture asserting the token-build CI job's effective permissions are read-only / no-secret-access (job manifest inspection) | Low                                                        |
 | B2  | Tampering              | A typosquatted icon package (e.g. `lucide-react` vs. a near-identical name) is installed instead of the intended one                                                                                | L   | M   | Low      | `pnpm` frozen-lockfile install only (`--frozen-lockfile`); new-dependency PRs require CODEOWNER approval + licence check (`RSK-029` general control, reused here)                                                                                                                                                  | E05-T01/T03 (dependency additions)                                                                     | Existing CI: `pnpm install --frozen-lockfile` fails closed on any lockfile drift, which a typosquat swap would produce                 | Low                                                        |
-| B3  | Tampering              | A compromised Storybook addon executes arbitrary JS inside the Storybook build or dev server, potentially exfiltrating unreleased component source                                                  | L   | M   | Low      | Storybook addon set is a fixed, reviewed allowlist (a11y, theme/density toolbars, test-runner only, per `E05-T03`); npm audit + Dependabot cover the addon tree (`RSK-029`)                                                                                                                                        | E05-T03                                                                                                | Existing CI: `npm audit`/Dependabot gate on Storybook's dependency tree                                                                | Low                                                        |
+| B3  | Tampering              | A compromised Storybook addon executes arbitrary JS inside the Storybook build or dev server, potentially exfiltrating unreleased component source                                                  | L   | M   | Low      | Storybook addon set is a fixed, reviewed allowlist (docs, a11y and Vitest addons only, per `E05-T03`, reviewed on #269; theme/density toolbars are Storybook core); npm audit + Dependabot cover the addon tree (`RSK-029`)                                                                                        | E05-T03                                                                                                | Existing CI: `npm audit`/Dependabot on Storybook's tree; `packages/ui/test/storybook/main.test.ts` pins the addons                     | Low                                                        |
 | B4  | Information disclosure | A VR (visual-regression) tool that is SaaS-hosted uploads screenshots of unreleased trading UI to a third party                                                                                     | M   | H   | **High** | See §6 (Storybook/VR hosting decision): if a SaaS VR tool is used, the Owner's explicit accepted-risk sign-off is required per row, and screenshots are restricted to non-sensitive component stories (no real account data, no live price data — fixtures only, `C-13.5`-equivalent for design assets)            | E05-T03/T09 (VR baseline setup)                                                                        | `E05-Q01`: manual-review checklist item confirming any VR SaaS integration is named here with an Owner acceptance record before use    | Medium (accepted only if Owner signs the residual, see §5) |
 | B5  | Denial of service      | A broken addon or icon-library major-version bump blocks the Storybook/token build for all consumers                                                                                                | L   | L   | Low      | Lockfile pinning; version bumps go through a normal PR with CI green before merge                                                                                                                                                                                                                                  | E05-T01/T03                                                                                            | Existing CI: build job failure blocks only that PR                                                                                     | Low                                                        |
 | B6  | Elevation of privilege | Build-time code (Style Dictionary transform, Storybook addon, SVG compiler) attempts to read files or environment variables outside its expected working set (e.g. `.env`, other packages' secrets) | L   | H   | Medium   | CI job workspace isolation (job runs in its own checkout, no ambient secret env vars beyond what that job declares — same posture as `RSK-029`/`RSK-051`'s CI-governance controls); no design-system CI job declares any secret                                                                                    | E05-T01 (job scoping)                                                                                  | `E05-Q01`: fixture — token-build/Storybook CI job's declared `env:`/`secrets:` block asserted empty                                    | Low                                                        |
@@ -176,7 +176,7 @@ manual-review/N/A reason), satisfying acceptance criterion 2 directly in-table. 
 | -------------------------------------------------------------------------- | ---------------------------------- |
 | `E05-T01` (token source of truth + Style Dictionary build)                 | D1, D2, D3, D4, D5, B1, B2, B5, B6 |
 | `E05-T02` (theme/density/reduced-motion runtime)                           | L2, L3                             |
-| `E05-T03` (Storybook 8 + addons + a11y/test-runner)                        | B2, B3, B4, B5                     |
+| `E05-T03` (Storybook 10 + addons + a11y gate in Vitest)                    | B2, B3, B4, B5                     |
 | `E05-T09` (Storybook CI publish + VR baseline wiring — existing E05 scope) | A1, A2, A3, A4, A5, B4             |
 | `E05-Q01` (follow-up verification ticket, §9)                              | verifies every testable row above  |
 | E09 (server-side RBAC enforcement, cross-epic)                             | L7                                 |
