@@ -20,7 +20,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.statechart.bindings import b01_order as b01
@@ -29,6 +29,7 @@ from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import (
     Charts,
     _done,
+    _fail,
     all_events,
     entry_of,
     exits,
@@ -60,7 +61,7 @@ INVARIANTS: dict[str, str] = {
     "INV-B1-c": "test_inv_b1_c_amend_rejected_never_terminal",
     "INV-B1-d": "test_inv_b1_d_cancel_pending_handles_exec",
     "INV-B1-e": "test_inv_b1_e_unknown_resolved_only_by_recon",
-    "INV-B1-f": "test_inv_b1_f_sl_present_only_from_exchange_read",
+    "INV-B1-f": "test_inv_b1_f_sl_present_only_from_the_exchange_property",
     "INV-B1-g": "deferred:E29",
     "INV-B1-h": "test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted",
     "INV-B1-i": "test_inv_b1_i_kill_never_touches_protection_property",
@@ -93,17 +94,6 @@ def test_inv_b1_e_unknown_resolved_only_by_recon() -> None:
     leaving = {e for e, _g, _t in exits(CHART, "lifecycle.unknown")}
     assert leaving - {"MISMATCH"} <= {e for e in leaving if e.startswith("RECON_")}  # #847: held
     assert "SEND" not in leaving
-
-
-def test_inv_b1_f_sl_present_only_from_exchange_read() -> None:
-    into = [
-        (p, e)
-        for p, _n in walk(CHART)
-        if p.startswith("protection.")
-        for e, _g, t in exits(CHART, p)
-        if t == "order.protection.sl_present"
-    ]
-    assert ("protection.sl_missing", "SL_OBSERVED") in into
 
 
 def test_b01_killed_is_final_terminal_with_cancel_and_audit() -> None:
@@ -296,8 +286,9 @@ def _into(state: str) -> set[tuple[str, str]]:
     return {(p, e) for p, _n in walk(CHART) for e, _g, t in exits(CHART, p) if t == state}
 
 
-def _leaf(interp: Any) -> str:
-    return str(next(s for s in interp.current_state_ids if s.startswith("order.lifecycle.")))[16:]
+def _leaf(interp: Any, region: str = "lifecycle") -> str:
+    head = f"order.{region}."
+    return str(next(s for s in interp.current_state_ids if s.startswith(head)))[len(head) :]
 
 
 @contextlib.asynccontextmanager
@@ -309,7 +300,7 @@ async def _at(
         cancels = _restore_real(mp) if real_kill else []
         for name, service in kw.get("service_mode", {}).items():
             mp.setitem(b01.SERVICES, name, service)
-        res = await park("order", CHART, f"lifecycle.{state}", charts)
+        res = await park("order", CHART, state if "." in state else f"lifecycle.{state}", charts)
         try:
             yield res.interpreter, rec, cancels
         finally:
@@ -472,3 +463,83 @@ async def test_inv_b1_n_kill_never_cancels_an_unowned_order_property(
             assert _leaf(i) == before and cancels == []
             assert rec.actions[mark:] == ["audit_kill_ignored_unowned", _PROT]
             assert i.context["halted_by_kill"] is False
+
+
+# --- #847 slice 1b, chart version 2: the protection region's C-2.6 gaps --------------------------
+
+
+@pytest.mark.parametrize("state", ["submitted", "triggered", "cancel_pending"])
+async def test_b01_one_shot_fill_notifies_the_protection_region(state: str, charts: Charts) -> None:
+    """24 §8.8 rule 2: a first fill straight to `filled` starts the SL deadline, as a partial fill
+    does (version 1 notified only from `partially_filled`'s entry)."""
+    async with _at(state, charts, guards={"exec_new_and_closes": True}) as (i, rec, _c):
+        await i.send("EXEC", wait=True)
+        await settle()
+        assert _leaf(i) == "filled" and rec.actions.count("notify_protection_region") == 1
+
+
+#: B1.8(d), left for #847 slice 5's lock turn: an order that may have filled unwatched ends with no
+#: first-fill notice, or its fills defer (in `killed` for good). A fix fails this pin; edit B1.8(d).
+_NO_NOTICE = dict.fromkeys(("unknown", "quarantined"), "RECON_FOUND_FILLED RECON_FOUND_CANCELLED")
+_FILLS_DEFER = {
+    "untracked": "RECON_FOUND_LIVE RECON_FOUND_PARTIAL RECON_FOUND_FILLED EXEC",
+    "killed": "EXEC",  # a fill that races a KILL
+}
+
+
+def test_b01_first_fill_notice_gaps_are_pinned() -> None:
+    on = {s: node_at(CHART, f"lifecycle.{s}")["on"] for s in (*_NO_NOTICE, *_FILLS_DEFER)}
+    for s, events in _NO_NOTICE.items():
+        assert all("notify_protection_region" not in on[s][e]["actions"] for e in events.split())
+    for s, events in _FILLS_DEFER.items():
+        assert not set(events.split()) & set(on[s])
+
+
+_INTO_SL_PRESENT = {
+    ("protection.sl_pending", "onDone", "sl_attach_ok"),
+    ("protection.sl_missing", "SL_OBSERVED", None),
+}
+_READS = st.lists(st.sampled_from(("SL_OBSERVED", "SL_LOST")), max_size=3)
+
+
+@_HYP
+@given(
+    attach=st.sampled_from(("confirmed", "rejected", "failed")),
+    early=_READS,
+    during=_READS,
+    events=st.lists(st.sampled_from(_EVENTS), max_size=6),
+)
+@example(attach="rejected", early=[], during=["SL_OBSERVED"], events=[])
+@example(attach="failed", early=["SL_OBSERVED"], during=[], events=[])
+@example(attach="confirmed", early=[], during=[], events=["SL_OBSERVED", "SL_LOST"])
+async def test_inv_b1_f_sl_present_only_from_the_exchange_property(
+    attach: str, early: list[str], during: list[str], events: list[str], charts: Charts
+) -> None:
+    """Every other guard allowed: the attach result counts only if `sl_attach_ok` confirms it, a
+    reading before the first fill or during the attach is consumed, never deferred, and after the
+    attach result the last reading decides (C-2.6; the slice 1b review's three replays)."""
+    present = "order.protection.sl_present"
+    arms = {(p, e, g) for p, _n in walk(CHART) for e, g, t in exits(CHART, p) if t == present}
+    assert arms == _INTO_SL_PRESENT
+    gate = asyncio.Event()
+
+    async def _attach(*a: object, **k: object) -> Any:
+        await gate.wait()
+        return await (_fail if attach == "failed" else _done)(*a, **k)
+
+    plan = {**dict.fromkeys(b01.GUARDS, True), "sl_attach_ok": attach == "confirmed"}
+    svc = {"attach_native_sl": _attach}
+    async with _at("protection.not_required", charts, guards=plan, service_mode=svc) as (i, rec, _):
+        for ev in [*early, "FIRST_FILL", *during]:
+            await i.send(ev, wait=True)
+        assert _leaf(i, "protection") == "sl_pending" and i.deferred_count == 0
+        gate.set()
+        on = attach == "confirmed"
+        for ev in ["", *events]:  # "": the attach result itself
+            if ev:
+                await i.send(ev, wait=True)
+            await settle()
+            on = ev == "SL_OBSERVED" or (on and ev != "SL_LOST")
+            assert _leaf(i, "protection") == ("sl_present" if on else "sl_missing")
+            assert i.has_tag("protected") is on
+        assert attach == "failed" or ("sl_attach_ok", attach == "confirmed") in rec.guards

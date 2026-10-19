@@ -1,6 +1,6 @@
 {
   "id": "order",
-  "version": 1,
+  "version": 2,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -148,7 +148,8 @@
                 "target": "#order.lifecycle.filled",
                 "guard": "exec_new_and_closes",
                 "actions": [
-                  "apply_fill"
+                  "apply_fill",
+                  "notify_protection_region"
                 ]
               },
               {
@@ -206,7 +207,8 @@
                 "target": "#order.lifecycle.filled",
                 "guard": "exec_new_and_closes",
                 "actions": [
-                  "apply_fill"
+                  "apply_fill",
+                  "notify_protection_region"
                 ]
               },
               {
@@ -326,7 +328,8 @@
                 "target": "#order.lifecycle.filled",
                 "guard": "exec_new_and_closes",
                 "actions": [
-                  "apply_fill"
+                  "apply_fill",
+                  "notify_protection_region"
                 ]
               },
               {
@@ -724,9 +727,15 @@
           "invoke": {
             "id": "attach_sl",
             "src": "attach_native_sl",
-            "onDone": {
-              "target": "#order.protection.sl_present"
-            },
+            "onDone": [
+              {
+                "target": "#order.protection.sl_present",
+                "guard": "sl_attach_ok"
+              },
+              {
+                "target": "#order.protection.sl_missing"
+              }
+            ],
             "onError": {
               "target": "#order.protection.sl_missing"
             }
@@ -763,6 +772,15 @@
         }
       },
       "on": {
+        "SL_OBSERVED": {
+          "actions": ["record_sl_fact_ignored"]
+        },
+        "SL_LOST": {
+          "actions": ["record_sl_fact_ignored"]
+        },
+        "FIRST_FILL": {
+          "actions": ["record_sl_fact_ignored"]
+        },
         "KILL": {
           "actions": [
             "audit_kill_protection_retained"
