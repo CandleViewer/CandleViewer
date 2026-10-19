@@ -16,12 +16,15 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.audit.access import AuditPrincipal
+from candleviewer.observability import support_bundle as bundle_module
 from candleviewer.observability.bundle_scan import scan_text
 from candleviewer.observability.support_bundle import (
     BundleError,
+    BundleJob,
     BundleSources,
     SupportBundleService,
     build_bundle,
@@ -298,3 +301,90 @@ async def test_timeout_and_unexpected_error_codes(tmp_path: Path) -> None:
     assert job2._task is not None
     await job2._task
     assert job2.error_code == "BUNDLE_FAILED"
+
+
+async def test_a_job_that_dies_after_a_failed_audit_is_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The audit failed, so the export must go (C-2.9); when that fails too, no one awaits it."""
+
+    async def audit_down(job: BundleJob) -> None:
+        raise RuntimeError("audit down")
+
+    def locked(self: Path, *, missing_ok: bool = False) -> None:
+        raise PermissionError("export is locked")
+
+    monkeypatch.setattr(Path, "unlink", locked)
+    svc = SupportBundleService(_sources(), tmp_path)
+    with capture_logs() as logs:
+        job = svc.start(T0, T1, on_complete=audit_down)
+        assert job._task is not None
+        await asyncio.wait({job._task})
+    assert [(e["event"], e["log_level"], e["error"]) for e in logs] == [
+        ("support_bundle_job_failed", "error", "PermissionError")
+    ]
+
+
+async def test_a_cancelled_job_is_not_logged_as_a_failure(tmp_path: Path) -> None:
+    svc = SupportBundleService(_sources(), tmp_path)
+    task = svc.start(T0, T1)._task
+    assert task is not None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    with capture_logs() as logs:
+        svc._settled(task)  # a cancelled task has no exception to read: reading it raises
+    assert logs == []
+
+
+async def test_drain_with_no_job_in_flight_returns_zero_at_once(tmp_path: Path) -> None:
+    assert await SupportBundleService(_sources(), tmp_path).drain() == 0  # `wait` of nothing raises
+
+
+def test_the_drain_default_is_the_five_second_bound_main_relies_on() -> None:
+    assert bundle_module.DRAIN_TIMEOUT_S == 5.0  # `main.py` calls `drain()` with no argument
+    assert SupportBundleService.drain.__defaults__ == (bundle_module.DRAIN_TIMEOUT_S,)
+
+
+async def test_drain_waits_for_the_running_job_and_its_closing_record(tmp_path: Path) -> None:
+    release = asyncio.Event()
+
+    async def on_complete(job: BundleJob) -> None:
+        await release.wait()
+
+    svc = SupportBundleService(_sources(), tmp_path)
+    job = svc.start(T0, T1, on_complete=on_complete)
+    try:
+        drain = asyncio.ensure_future(svc.drain())
+        done, _ = await asyncio.wait({drain}, timeout=0)
+        assert not done
+        with capture_logs() as logs:
+            release.set()
+            assert await drain == 0
+        assert job._task is not None and job._task.done()  # its closing record has run
+        assert svc._tasks == set()  # and the finished job is released
+        assert "support_bundle_job_failed" not in {e["event"] for e in logs}  # it succeeded
+    finally:
+        release.set()  # a failed assertion must not leave the job waiting
+
+
+async def test_drain_gives_up_at_its_bound_logs_the_job_and_never_cancels_it(
+    tmp_path: Path,
+) -> None:
+    release = asyncio.Event()
+
+    async def on_complete(job: BundleJob) -> None:
+        await asyncio.wait_for(release.wait(), 5)  # only bounds the test, if the drain waits on it
+
+    svc = SupportBundleService(_sources(), tmp_path)
+    job = svc.start(T0, T1, on_complete=on_complete)
+    assert job._task is not None
+    try:
+        with capture_logs() as logs:
+            assert await svc.drain(grace_s=0) == 1
+        assert [(e["event"], e["log_level"], e["jobs"]) for e in logs] == [
+            ("support_bundle_left_running", "warning", 1)
+        ]
+    finally:
+        release.set()
+    await job._task  # raises if the drain had cancelled it: its closing record is audited work
+    assert job.status == "succeeded"

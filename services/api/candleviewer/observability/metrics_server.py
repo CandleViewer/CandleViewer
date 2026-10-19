@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-from contextlib import suppress
 from typing import Final
 
+import structlog
 import uvicorn
 from fastapi import FastAPI, Response
 
+from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -61,6 +62,15 @@ def make_metrics_app(registry: CollectorRegistry) -> FastAPI:
     return app
 
 
+def _task_ended(task: asyncio.Task[None]) -> None:
+    """Logs a task that dies as it dies, not when `stop()` finds it (AGENTS.md section 5.2: no
+    silent task). A cancelled task is `stop()`'s doing, not a failure."""
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        structlog.get_logger(__name__).error(
+            "metrics_task_failed", task=task.get_name(), error=type(exc).__name__
+        )
+
+
 class MetricsRuntime:
     """Owns the private listener and the three background metric tasks."""
 
@@ -86,21 +96,22 @@ class MetricsRuntime:
         self._server = uvicorn.Server(config)
         loop_lag = self._r0["event_loop_lag_seconds"]
         self._tasks = [
-            asyncio.create_task(self._server.serve(), name="metrics-listener"),
-            asyncio.create_task(
-                run_loop_lag_sampler(loop_lag, self.metrics.clock), name="metrics-loop-lag"
-            ),
-            asyncio.create_task(run_cardinality_check(self.metrics), name="metrics-cardinality"),
-            asyncio.create_task(run_fallback_snapshots(self.metrics), name="metrics-fallback"),
+            spawn(self._server.serve(), name="metrics-listener"),
+            spawn(run_loop_lag_sampler(loop_lag, self.metrics.clock), name="metrics-loop-lag"),
+            spawn(run_cardinality_check(self.metrics), name="metrics-cardinality"),
+            spawn(run_fallback_snapshots(self.metrics), name="metrics-fallback"),
         ]
+        for task in self._tasks:
+            task.add_done_callback(_task_ended)
 
     async def stop(self) -> None:
+        """Ask the listener to exit, cancel the samplers, await all four: a dead task never keeps
+        another from being awaited (its failure was logged when it happened), and a cancellation
+        of the caller of `stop()` propagates."""
+        tasks, self._tasks = self._tasks, []
         if self._server is not None:
             self._server.should_exit = True
-        for task in self._tasks[1:]:
-            task.cancel()
-        for task in self._tasks:
-            with suppress(asyncio.CancelledError):
-                await task
-        self._tasks = []
         self._server = None
+        for task in tasks[1:]:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

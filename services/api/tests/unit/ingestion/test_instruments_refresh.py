@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.domain.events import InstrumentUpdatedEvent
 from candleviewer.exchange.base.instruments import InstrumentsFetchResult
@@ -392,6 +393,25 @@ async def test_failed_scheduled_refresh_of_a_loaded_catalogue_retries_soon() -> 
         assert sleep.delays[0] >= 43_200.0 and sleep.delays[1] <= RETRY_BACKOFF_MIN_S
         assert sleep.delays[2] >= 43_200.0  # back on the TTL
         assert sched.snapshot().stale_since_us is None  # type: ignore[union-attr]  # loaded
+    finally:
+        await sched.stop(grace_s=1.0)
+
+
+async def test_a_failed_scheduled_refresh_is_logged_and_counted_and_the_schedule_goes_on() -> None:
+    sleep = ParkingSleep()
+    sched, _, _, _ = make([[raw()], RuntimeError("blip"), [raw()]], sleep=sleep, max_retries=1)
+    await sched.start()
+    try:
+        await _settle()
+        before = _count("error")
+        with capture_logs() as logs:
+            sleep.release()  # the TTL elapses; the scheduled refresh fails
+            await _settle()
+        assert [(e["event"], e["log_level"]) for e in logs] == [
+            ("instruments_refresh_failed", "warning")
+        ]
+        assert _count("error") == before + 1
+        assert len(sleep.delays) == 2 and sleep.delays[1] <= RETRY_BACKOFF_MIN_S  # the retry wait
     finally:
         await sched.stop(grace_s=1.0)
 

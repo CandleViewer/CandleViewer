@@ -19,4 +19,4 @@ rules:
       exclude:
         - "**/test_*.py"
         - "**/conftest.py"
-        - "**/observability/**"  # cv.obs owns spawn()/supervision (E04-X02)
+        - "**/observability/context.py" # implements spawn() and the thread offloads (run_in_thread, thread_future, executor_future)

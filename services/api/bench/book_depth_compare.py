@@ -277,7 +277,8 @@ async def _measure_one(
     consumer_task = spawn(consumer(), name="bench-consumer")
     proc_t0 = time.process_time()
     wall_t0 = time.perf_counter()
-    try:
+
+    async def publish_all() -> None:
         for d in deltas:
             loop_t0 = time.perf_counter()
             await bus.publish(topic, d)
@@ -293,12 +294,19 @@ async def _measure_one(
         deadline = time.perf_counter() + 5.0
         while not sub.queue.empty() and time.perf_counter() < deadline:  # noqa: ASYNC110
             await asyncio.sleep(0)
+
+    publisher = spawn(publish_all(), name="bench-publisher")
+    try:
+        # The consumer never returns, so if it ends it has failed: its error ends the run at once.
+        done, _ = await asyncio.wait(
+            {publisher, consumer_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in done:
+            task.result()
     finally:
+        publisher.cancel()
         consumer_task.cancel()
-        try:
-            await consumer_task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(publisher, consumer_task, return_exceptions=True)
     wall_elapsed = time.perf_counter() - wall_t0
     proc_elapsed = time.process_time() - proc_t0
     _current_mem, peak_mem = tracemalloc.get_traced_memory()

@@ -86,6 +86,15 @@ def _fire_hook(name: str) -> None:
         hook()
 
 
+def _log_worker_failure[T](fut: asyncio.Future[T]) -> None:
+    """Logs the failure of a worker whose caller was cancelled: `shield` no longer watches it,
+    so nothing else would retrieve it."""
+    if not fut.cancelled() and (exc := fut.exception()) is not None:
+        structlog.get_logger(__name__).error(
+            "cold_export_worker_failed_after_cancel", error=type(exc).__name__
+        )
+
+
 async def _off_loop[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T:
     """`asyncio.to_thread`, but on cancellation wait for the worker thread to
     finish before re-raising, so cleanup never races a still-running write."""
@@ -93,6 +102,7 @@ async def _off_loop[T](fn: Callable[..., T], *args: object, **kwargs: object) ->
     try:
         return await asyncio.shield(fut)
     except asyncio.CancelledError:
+        fut.add_done_callback(_log_worker_failure)
         await asyncio.wait([fut])
         raise
 

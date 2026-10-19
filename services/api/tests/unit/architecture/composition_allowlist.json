@@ -563,5 +563,10 @@
       "ticket": "E49-K01-F4-baseline"
     }
   },
-  "lifespan_locals": {}
+  "lifespan_locals": {
+    "support_bundle": {
+      "reason": "start() begins an on-demand bundle job, not a lifecycle; the lifespan only drains it",
+      "ticket": "#1822"
+    }
+  }
 }

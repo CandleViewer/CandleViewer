@@ -24,11 +24,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
+import structlog
+
 from candleviewer.observability.bundle_scan import Finding, scan_tree
+from candleviewer.observability.context import spawn
 
 DEFAULT_CAP_BYTES: Final = 200 * 1024 * 1024
 MAX_WINDOW: Final = timedelta(hours=24)
 TIMEOUT_S: Final = 120.0
+DRAIN_TIMEOUT_S: Final = 5.0  # as the neighbouring shutdown drains
 
 #: Config keys safe to ship verbatim. Everything else becomes `<omitted>`
 #: (allow-list, not deny-list: a new secret key is hidden by default).
@@ -270,6 +274,7 @@ class SupportBundleService:
         self._on_event = on_event or (lambda _r, _d: None)
         self._jobs: dict[str, BundleJob] = {}
         self._running: BundleJob | None = None
+        self._tasks: set[asyncio.Task[None]] = set()
 
     def get(self, job_id: str) -> BundleJob | None:
         return self._jobs.get(job_id)
@@ -286,8 +291,28 @@ class SupportBundleService:
         job = BundleJob(id=str(uuid.uuid4()))
         self._jobs[job.id] = job
         self._running = job
-        job._task = asyncio.get_running_loop().create_task(self._run(job, start, end, on_complete))
+        task = job._task = spawn(self._run(job, start, end, on_complete), name="support-bundle")
+        self._tasks.add(task)
+        task.add_done_callback(self._settled)
         return job
+
+    def _settled(self, task: asyncio.Task[None]) -> None:
+        """Nothing awaits a job once the route has answered 202: a raise is logged here."""
+        self._tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            structlog.get_logger(__name__).error(
+                "support_bundle_job_failed", error=type(exc).__name__
+            )
+
+    async def drain(self, grace_s: float = DRAIN_TIMEOUT_S) -> int:
+        """Wait up to `grace_s` for the jobs in flight, their closing audit record included, and
+        never cancel one (audited work). Returns how many still run (logged)."""
+        if not self._tasks:
+            return 0
+        _, left = await asyncio.wait(set(self._tasks), timeout=grace_s)
+        if left:
+            structlog.get_logger(__name__).warning("support_bundle_left_running", jobs=len(left))
+        return len(left)
 
     async def _run(
         self,
