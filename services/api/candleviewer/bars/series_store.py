@@ -28,13 +28,13 @@ a WS snapshot source reads `latest` and `version`.
   was cancelled. A failed read (`bars_series_hydrate_failed_total`) leaves the series as it was;
   a degraded one (SR-E12-11: served, never final) or a live swap leaves it not `hydrated`. An
   `ensure` reads a series that is not `hydrated`, or is `gapped`, again, but never sooner than
-  `retry_after_s` after the last read; nothing else starts a read. Without a reader, a series
-  keeps only what the store has seen live.
+  its re-read interval after the last read: `retry_after_s`, more for a gap that stays (below);
+  nothing else starts a read. Without a reader, a series keeps only what the store has seen live.
 - **Read bound (C-2.18, #2787 D2-G1):** a read takes one of `MAX_CONCURRENT_TAIL_READS` slots,
   shared by every store on the event loop, and gives it back however it ends. The wait for a
   slot is part of the read and counts toward `timeout_s`: a read that cannot start in time fails
-  like a slow one (`bars_series_hydrate_failed_total`; an `ensure` at least `retry_after_s`
-  later reads it again), and
+  like a slow one (`bars_series_hydrate_failed_total`; an `ensure` at least its re-read interval
+  later reads it again: `retry_after_s`, more for a gap that stays, below), and
   the wait never adds to the time a read can take. One read per series waits at most, so at
   most `MAX_SERIES` do, and `timeout_s` sheds them. A series waiting for a slot is a read in
   flight: its other `ensure` calls share it, and the closes seen meanwhile are kept for its
@@ -51,9 +51,10 @@ a WS snapshot source reads `latest` and `version`.
   At most `MAX_HISTORY` closed bars per series and `MAX_SERIES`
   series kept, held or in grace (the process-wide spec cap); rings for at most `MAX_SERIES`
   series, the least recently closed dropped first; at most `MAX_HISTORY` closes kept for a read
-  in flight, the oldest shed first. The sink keeps an expired series current until that sweep.
-  Memory: about 5 KB a close (measured), so 5 MB a series, 2.5 GB at `MAX_SERIES`, and 41 MB of
-  rings.
+  in flight, the oldest shed first; at most `MAX_GAP_RANGES` gap ranges logged per series (4 096
+  at `MAX_SERIES`). The sink keeps an expired series current until that sweep. Memory: about 5 KB
+  a close (measured), so 5 MB a series, 2.5 GB at `MAX_SERIES`, and 41 MB of rings; the logged
+  ranges are under 2 KB a series.
 - **E12-S12 notes:** the generation rule assumes one live emitter per series (a rebuild must emit
   through its own router), and `CAP_NAME` copies `SpecLeases`' literal until `leases` exports it.
 - **`version`** comes from one store-wide counter and moves on every change: a cache key that
@@ -64,16 +65,30 @@ ring (the last `RECENT_CLOSES`). A live close that skips indexes past the rows m
 `gapped` (`bars_series_gap`), and so does a first close above index 0 of a series read clean and
 empty, if its bar opened inside that read's window (#2787 D2-H1a; the bars below one that opened
 before it, as a restored builder's can after a long downtime, lie outside every read); an
-`ensure` re-reads it, no sooner than `retry_after_s` after the last read. The bars it holds newer
-than the stored rows survive the re-read, and so do, when the read withholds rows (SR-E12-11),
-the ones it holds below the newest row (D2-H1b). Not covered: the forming bar is unknown until
-the next `open` or `update` (builders expose none); a held bar whose row a clean read skipped
-(`BarTail.skipped`, malformed rows included) is dropped by that read, which ends `hydrated`
-(#3614); a hole inside the stored rows with no bar held for it (a row skipped or withheld, or one
-the writer never landed) stays a hole and is not flagged; a jump is seen on a close only; a close
-seen before the first clean read (one from the ring, or a live one after a failed or degraded
-read) is judged only by that read's rows, so an empty read leaves it unflagged: the series cannot
-see its junction, and a writer lagging behind it goes unflagged.
+`ensure` re-reads it, no sooner than its re-read interval after the last read. The bars it holds
+newer than the stored rows survive the re-read, and so do, when the read withholds rows
+(SR-E12-11), the ones it holds below the newest row (D2-H1b). A gap that stays (D2-H2): a read
+that finds the series gapped and leaves it so doubles its re-read interval, from `retry_after_s`
+up to `MAX_GAP_BACKOFF` times it (160 s at 5 s), and counts `bars_series_gap_rereads_total`,
+unless a live reset or swap landed during it (the gap it began on is gone: `_Series.resets`).
+`bars_series_gap` is logged once per `(from_index, to_index)`: a series keeps the ranges logged,
+at most `MAX_GAP_RANGES` (the oldest forgotten first). A read that heals the series, or a live
+reset or swap, forgets them and brings the interval back to `retry_after_s`; a gap seen live (a
+close past the newest bar: a hole no read has looked at yet) brings the interval back too, but a
+re-read in flight that leaves the series gapped then doubles it once.
+
+Not covered: the forming bar is unknown until the next `open` or `update` (builders expose none);
+a held bar whose row a clean read skipped (`BarTail.skipped`, malformed rows included) is dropped
+by that read, which ends `hydrated` (#3614); a hole inside the stored rows with no bar held for it
+(a row skipped or withheld, or one the writer never landed) stays a hole and is not flagged; a
+jump is seen on a close only; a close seen before the first clean read (one from the ring, or a
+live one after a failed or degraded read) is judged only by that read's rows, so an empty read
+leaves it unflagged: the series cannot see its junction, and a writer lagging behind it goes
+unflagged; a series with more holes than `MAX_GAP_RANGES` logs each again on every re-read, which
+finds them oldest first; the interval grows for a gap only, so a series whose reads stay degraded
+with no gap (a row withheld every time), or keep failing before a gap has backed it off, is read
+again, with a warning, at each `ensure` `retry_after_s` after the last read; a series freed after
+its grace starts afresh when held again (nothing logged, `retry_after_s`).
 """
 
 from __future__ import annotations
@@ -95,6 +110,7 @@ from candleviewer.bars.errors import SpecCapExceeded
 from candleviewer.bars.leases import CAP_GLOBAL, GRACE_US, Key
 from candleviewer.bars.limits import MAX_CONCURRENT_TAIL_READS, MAX_TAIL, QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import (
+    bars_series_gap_rereads_total,
     bars_series_gaps_total,
     bars_series_hydrate_failed_total,
     bars_series_read_waits_total,
@@ -113,6 +129,10 @@ CAP_NAME: Final = "process-wide"
 RECENT_CLOSES: Final = 16
 #: A series is never read again sooner than this after its last completed read.
 RETRY_AFTER_S: Final = 5.0
+#: A gap that stays doubles its series' re-read interval up to this many `retry_after_s`: 160 s.
+MAX_GAP_BACKOFF: Final = 32
+#: Gap ranges a series logs once each (`bars_series_gap`), the oldest forgotten first.
+MAX_GAP_RANGES: Final = 8
 #: A released series is kept this long: the builder's release grace (US-MKT-005).
 RELEASE_GRACE_S: Final = GRACE_US / 1_000_000
 
@@ -208,10 +228,20 @@ class _Series:
     #: Waiters keep the latest read's result: True after a success, a failure or a timeout,
     #: False after a degraded read or a cancellation.
     attempted: bool = False
-    #: Store-clock time before which no read starts again (set when a read completes).
-    retry_at: float = float("-inf")
+    #: Store-clock time the last read completed (a cancelled one does not): the next starts no
+    #: sooner than `retry_after_s` times `backoff` after it.
+    read_at: float = float("-inf")
     #: A live close skipped indexes past the stored rows: the next `ensure` re-reads.
     gapped: bool = False
+    #: The re-read interval in `retry_after_s`: doubled, up to `MAX_GAP_BACKOFF`, by a read that
+    #: finds the series gapped and leaves it so; 1 again on a gap seen live, and by `_forget_gaps`.
+    backoff: int = 1
+    #: Bumped by `_forget_gaps` (a heal, a live reset or swap): a read that sees it move did not
+    #: re-read the gap it began on, so it neither doubles the interval nor counts (D2-H2).
+    resets: int = 0
+    #: The gap ranges `(from_index, to_index)` logged since it last healed, reset or swapped, each
+    #: once (D2-H2); the oldest is forgotten past `MAX_GAP_RANGES`.
+    logged: deque[tuple[int, int]] = field(default_factory=lambda: deque(maxlen=MAX_GAP_RANGES))
     #: Store-clock time a released series is freed at (None while held).
     expires_at: float | None = None
     #: Store-clock time of its latest release, explicit or queued: its grace counts from it.
@@ -238,6 +268,14 @@ def _holds(s: _Series, bar: Bar) -> bool:
     return held is not None and held.open_time == bar.open_time
 
 
+def _forget_gaps(s: _Series) -> None:
+    """Healed, or reset or swapped live: a gap seen from now on logs and is read afresh (D2-H2),
+    and a read in flight does not back off (`resets`)."""
+    s.logged.clear()
+    s.backoff = 1
+    s.resets += 1
+
+
 def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) -> bool:
     """Fold one emission of `s.generation` into `s` (module docstring); False when it changes
     nothing. With `gaps`, a close that skips indexes past the newest one (past none, so from
@@ -251,6 +289,7 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) 
             _clear(s)  # a bar at or below the newest close re-opened: restarted
             if count:
                 bars_series_resets_total.labels(reason="restart").inc()
+                _forget_gaps(s)  # the gaps logged were the old run's
         s.forming = bar
         return True
     if _holds(s, bar):
@@ -263,15 +302,20 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) 
         _clear(s)  # another bar at or below the newest index: the builder restarted
         if count:
             bars_series_resets_total.labels(reason="restart").inc()
+            _forget_gaps(s)
     elif gaps and (s.closed or (s.hydrated and bar.open_time >= s.since_us)) and i > last + 1:
         # None held: a clean read found no row in the window this bar opened in (D2-H1a).
         s.gapped = True  # emitted before the hold and not stored yet, or lost: re-read
         if count:
             bars_series_gaps_total.inc()
-        _log().warning(
-            "bars_series_gap", spec_hash=bar.spec_hash, symbol=bar.symbol,
-            from_index=last + 1, to_index=i - 1,
-        )  # fmt: skip
+            s.backoff = 1  # a new hole, seen live: read at `retry_after_s` again (D2-H2)
+        gap = (last + 1, i - 1)
+        if gap not in s.logged:  # once per range: a re-read finds it again (D2-H2)
+            s.logged.append(gap)
+            _log().warning(
+                "bars_series_gap", spec_hash=bar.spec_hash, symbol=bar.symbol,
+                from_index=gap[0], to_index=gap[1],
+            )  # fmt: skip
     s.closed[i] = bar
     if len(s.closed) > MAX_HISTORY:
         s.stale.pop(s.closed.popitem(last=False)[0], None)  # a mark leaves with its bar
@@ -287,6 +331,7 @@ def _live(s: _Series, u: BarUpdate, generation: int, *, count: bool = False) -> 
     if generation != s.generation:
         if s.generation is not None:  # naming the first one is not a swap (23 §8.2)
             s.hydrated, s.swapped = False, True  # its rows are read again (ADR-0033)
+            _forget_gaps(s)  # the gaps logged were the old generation's
             if count:
                 bars_series_resets_total.labels(reason="generation_swap").inc()
         _clear(s)
@@ -449,9 +494,10 @@ class SeriesStore:
 
     async def _settle(self, s: _Series, symbol: str, spec: BarSpec) -> None:
         """Wait for the read in flight (its own `timeout_s` bounds it), then read when one is
-        due: the first, a cancelled reader's, or one `retry_after_s` after the last read of a
-        series not hydrated or gapped. A waiter keeps a completed read's result. A cancelled
-        read is not gated, so its waiters never stay live-only (SR-E12-07 bounds the churn)."""
+        due: the first, a cancelled reader's, or one a re-read interval (`retry_after_s`, more for
+        a gap that stays) after the last read of a series not hydrated or gapped. A waiter keeps a
+        completed read's result. A cancelled read is not gated, so its waiters never stay
+        live-only (SR-E12-07 bounds the churn)."""
         woke = False
         while s.replay is not None:  # one read at a time per series
             await s.ready.wait()
@@ -459,18 +505,23 @@ class SeriesStore:
             woke = True
         if woke and s.attempted:
             return
-        if (not s.hydrated or s.gapped) and self._clock() >= s.retry_at:
+        due = s.read_at + self._retry_after_s * s.backoff
+        if (not s.hydrated or s.gapped) and self._clock() >= due:
             await self._hydrate(s, symbol, spec)
 
     async def _hydrate(self, s: _Series, symbol: str, spec: BarSpec) -> None:
         """One read, its fresh `ready` set however it ends. Its replay starts from the ring (the
         closes seen just before it) and takes every close seen during it, in emission order,
-        the wait for a read slot included, which counts toward `timeout_s`."""
+        the wait for a read slot included, which counts toward `timeout_s`. A read that finds
+        the series gapped and leaves it so doubles its re-read interval, unless a live reset or
+        swap landed during it (D2-H2)."""
         if self._tail is None:
             return
         ready = s.ready = asyncio.Event()
         ring = self._recent.get((symbol, spec.spec_hash), ())
         s.replay, s.attempted, s.swapped = deque(ring, maxlen=MAX_HISTORY), False, False
+        gapped = s.gapped  # as it starts: a hole that shows during it is no re-read's
+        resets_at_start = s.resets  # nor is a gap after a live reset or swap during it (D2-H2)
         try:
             async with asyncio.timeout(self._timeout_s):  # the wait for a slot counts toward it
                 slots = _READ_SLOTS.get()
@@ -490,6 +541,11 @@ class SeriesStore:
             s.attempted = not tail.integrity_degraded
             s.hydrated = s.attempted and not s.swapped  # swapped during it: read again (D2-H1c)
             s.since_us = tail.since_us  # with `hydrated`, after the fold (D2-H1a)
+            if not s.gapped:  # healed, or never gapped
+                _forget_gaps(s)
+            elif gapped and s.resets == resets_at_start:  # a re-read, still gapped: back off
+                s.backoff = min(2 * s.backoff, MAX_GAP_BACKOFF)
+                bars_series_gap_rereads_total.inc()
             if tail.integrity_degraded:  # SR-E12-11: its bars are served, never as final
                 _log().warning(
                     "bars_series_hydrate_degraded", spec_hash=spec.spec_hash, symbol=symbol,
@@ -503,7 +559,7 @@ class SeriesStore:
         finally:
             s.replay = None
             ready.set()
-        s.retry_at = self._clock() + self._retry_after_s  # a completed read, not a cancelled one
+        s.read_at = self._clock()  # a completed read, not a cancelled one
 
     def _fold(self, s: _Series, tail: BarTail) -> None:
         """Rebuild `s` in one generation: the one it names (an emission's or an earlier read's: a

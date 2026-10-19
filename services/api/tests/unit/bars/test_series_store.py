@@ -951,7 +951,7 @@ async def test_a_first_close_above_0_after_an_empty_read_is_a_gap_a_re_read_heal
     """D2-H1a: a series read clean and empty holds no bar, so a first live close at index 20
     skips 0..19, in the builder's order (the bar opens and updates first). Read again while the
     writer still lags, it stays gapped; once the writer has landed 0..20, an `ensure`
-    `retry_after_s` later serves them."""
+    its re-read interval later serves them."""
     clock = Clock()
     tail = Tail(now=True)  # an empty read
     store = SeriesStore(tail, clock=clock)
@@ -968,7 +968,7 @@ async def test_a_first_close_above_0_after_an_empty_read_is_a_gap_a_re_read_heal
     await store.ensure(SYM, SPEC)  # storage is still empty: the gap stays
     assert (tail.calls, view(store), store.gapped(SYM, H)) == (2, ([20], 21), True)
     tail.tail = BarTail(rows(*range(21)))  # the writer has landed 0..20
-    clock.t += RETRY_AFTER_S
+    clock.t += 2 * RETRY_AFTER_S  # that re-read left it gapped: its interval doubled (D2-H2)
     await store.ensure(SYM, SPEC)
     assert (tail.calls, view(store)[0], store.gapped(SYM, H)) == (3, list(range(21)), False)
 
@@ -1011,7 +1011,7 @@ async def test_empty_re_reads_keep_a_gap_until_a_window_starts_after_its_bar_ope
     seen = [store.gapped(SYM, H)]
     for start in (21, 22, 23):  # R2 and R3 start after bar 20 opened; the last ensure reads none
         tail.tail = BarTail([], since_us=T0 + start * STEP)
-        clock.t += RETRY_AFTER_S
+        clock.t += 2 * RETRY_AFTER_S  # R2 leaves it gapped: R3 waits twice as long (D2-H2)
         await store.ensure(SYM, SPEC)
         seen.append(store.gapped(SYM, H))
     assert (tail.calls, seen, view(store)) == (3, [True, True, False, False], ([20], 21))

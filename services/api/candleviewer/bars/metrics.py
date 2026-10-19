@@ -94,7 +94,8 @@ bar_emit_sink_errors_total = Counter(
 )
 #: The WS series store (E12-T06 D3): failed reads, by the tape tier's degrade reasons
 #: (`reader.degrade_reason`); live closes past a gap; series resets, by cause; reads that waited
-#: for one of the process-wide read slots (D2-G1, `limits.MAX_CONCURRENT_TAIL_READS`).
+#: for one of the process-wide read slots (D2-G1, `limits.MAX_CONCURRENT_TAIL_READS`); reads that
+#: found a series gapped and left it so (D2-H2).
 bars_series_hydrate_failed_total = Counter(
     "bars_series_hydrate_failed_total",
     "WS series store tail reads that failed (reason: timeout, connection, query_error).",
@@ -113,6 +114,11 @@ bars_series_resets_total = Counter(
 bars_series_read_waits_total = Counter(
     "bars_series_read_waits_total",
     "WS series store tail reads that found every read slot taken and waited for one.",
+)
+bars_series_gap_rereads_total = Counter(
+    "bars_series_gap_rereads_total",
+    "WS series store tail reads that found a series gapped and left it gapped (its re-read"
+    " interval doubles, up to a cap).",
 )
 
 # --- E12-T05 (#398) `/market/klines` + `/market/bars` endpoint series -----------------------
@@ -185,6 +191,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_series_gaps_total",
         "bars_series_resets_total",
         "bars_series_read_waits_total",
+        "bars_series_gap_rereads_total",
         "bar_builder_quarantined_total",
         "bars_restore_gap_total",
         "bars_kline_refused_total",  # bars.kline_rows (#2053)
