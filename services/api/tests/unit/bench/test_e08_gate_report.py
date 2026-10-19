@@ -110,11 +110,12 @@ def test_record_writes_the_74_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_committed_baselines_are_laptop_warn_only_and_cover_every_scenario() -> None:
-    laptops = {"laptop-i7-8550U", "laptop-i7-13850HX"}  # the second recorded soak_bars (#399)
+    expected = {"soak_bars": "laptop-i7-13850HX"}  # recorded on the second laptop (#399)
     for name in SCENARIOS:
         base = gate.load_baseline(name)
         assert base is not None, name
-        assert base["machine_profile"] in laptops and base["gate"] == "warn-only"
+        assert base["machine_profile"] == expected.get(name, "laptop-i7-8550U"), name
+        assert base["gate"] == "warn-only"
         assert all({"p50", "p95", "max"} <= set(m) for m in base["metrics"].values())
 
 

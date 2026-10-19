@@ -53,8 +53,8 @@
       "p95": 0.04933333333333323
     }
   },
-  "note": "Laptop (i7-13850HX, 28 threads, 16 GB, WSL2) smoke-profile numbers from `python -m bench.ingestion.runner soak_bars --profile smoke --record-baseline` (2026-10-19). WARN-only until a CI-runner baseline is recorded (#2825), as for the other scenarios.",
-  "profile_scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s)",
+  "note": "Laptop (i7-13850HX, 28 threads, 16 GB, WSL2) smoke-profile numbers from `python -m bench.ingestion.runner soak_bars --profile smoke --record-baseline` (2026-10-19). WARN-only until a CI-runner baseline is recorded (#2825), as for the other scenarios. `event_loop_lag_ms` is a GC-spike reading, not a steady one: its p95 is the worst of 19 samples (142 ms here, p50 13.7 ms), likely a full collection over the bars held. It is tracked under #3641, and the scenario gives it a wide fail band: it still warns above +10 % like every metric; the 200 % band moves only the fail line, to about 3x (427 ms).",
+  "profile_scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s). Each lane's ring of 8 192 recent trades fills 164 s into the run, 44 s into the sampled window, so that fill is inside it and uses part of the 5 % flatness margin (1.9 % measured)",
   "run_profile": "smoke",
   "scenario": "soak_bars"
 }

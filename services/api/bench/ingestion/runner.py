@@ -83,8 +83,8 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
     }
     v.metrics["_curve"] = {f"{s.t_s:.0f}": s.rss_bytes / 2**20 for s in res.samples}
     if cfg.bars_specs:  # #8 above is a reading at the bars cap only while these checks pass
-        cap = cfg.bars_specs * cfg.bars_per_series
-        v.checks.extend(budgets.check_bars(res.bars_held, n_sym, cap, res.bars_folded))
+        fewest, folded, health = res.bars_fewest, res.bars_folded, res.bars_health
+        v.checks.extend(budgets.check_bars(fewest, cfg.bars_per_series, folded, health))
         before, after = res.rss_bars_bytes
         v.metrics["bars_setup_mb_per_symbol"] = budgets.summary(
             [max(0, after - before) / 2**20 / n_sym]

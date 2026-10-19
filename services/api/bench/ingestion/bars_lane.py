@@ -4,8 +4,8 @@ With `LaneConfig.bars_specs`, each lane composes for its symbol what `create_app
 `bars_enabled` on (`bars_wiring.wire_bars`): a `BarBuilderSet` on the lane's bus, fed by the lane's
 `TradeStream`, emitting through an `EmitRouter` to a `SeriesStore` that holds `bars_specs` series
 (`SPECS`: the per-symbol cap of 32 at most), each hydrated with `bars_per_series` stored bars (the
-1 000-bar cap at most) through the production `BarReader.read_tail`. Each series is subscribed in
-the WS path's order (`ensure`, then `register`) by a system consumer: no per-user cap is measured.
+1 000-bar cap at most) through the production `BarReader.read_tail`. A system consumer hydrates
+each series (`ensure`) and registers it with the bar set (`register`): no per-user cap is measured.
 
 - **Stored tail:** `_Table` answers `read_tail`'s statements as a QuestDB `bars_*` table would. Its
   rows take their values from the closed golden bars (`packages/fixtures/golden/bars`, built by the
@@ -17,9 +17,18 @@ the WS path's order (`ensure`, then `register`) by a system consumer: no per-use
   the stored tail and folds each live close onto it, the oldest bar dropped past the cap.
 - **Clock:** the lane's virtual clock is the set's and the reader's; the engine calls `tick` once a
   second of it (the set's ticker cadence: clock closes, the 60 s state blobs).
-- Not composed: the WS publisher (a small fixed record per series; with no subscriber, no frame),
-  the bar writer (its buffer is bounded process-wide, not per series) and the heal driver (it reads
-  only a series not hydrated or gapped; these hydrate once and take every close in index order).
+- **Not composed**, with what each leaves out of budget #8's figure:
+  - the bar writer: its queue (10 000 rows, about 10-17 MiB full) and its source-precedence map
+    (the last 200 000 row keys, about 70 MiB at that cap, reached after about 15 h with 3
+    symbols). Both are process-wide, not per series: up to about 85 MiB, all on one symbol in a
+    one-symbol process;
+  - the WS publisher (a small fixed record per series; with no subscriber, no frame);
+  - the heal driver (it reads only a series not hydrated or gapped; these hydrate once and take
+    every close in index order);
+  - the tape (`StorageTape`): no watermark replay and no `ahead_of_tape` check on a restore;
+  - `start()`: its `sweep_tmp` and its ticker (the engine drives `tick` directly);
+  - the one set and one store the app shares across symbols: a lane has its own pair per symbol,
+    so `CAP_GLOBAL` (512 series) is never approached.
 """
 
 from __future__ import annotations
@@ -33,7 +42,7 @@ from typing import Final
 
 import orjson
 
-from bench.ingestion.engine import T0_MS
+from bench.ingestion.engine import T0_MS, stop_each
 from candleviewer.bars.builder_set import BarBuilderSet, production_factory
 from candleviewer.bars.emit import EmitRouter
 from candleviewer.bars.leases import CAP_PER_SYMBOL
@@ -132,31 +141,49 @@ class _Table:
 
 class BarsFixture:
     """The specs and the recorded rows, loaded once a run, before the pre-lanes RSS sample (the
-    harness's, not a lane's); `lane` builds one lane's bars path, hydrated."""
+    harness's, not a lane's); `lane` builds one lane's bars path, hydrated. The lanes' state blobs
+    go under `state_root` (a test's `tmp_path`), else to a temp dir each lane removes when it stops.
+    """
 
-    def __init__(self, specs: int, per_series: int) -> None:
+    def __init__(self, specs: int, per_series: int, state_root: Path | None = None) -> None:
         if not 0 < specs <= CAP_PER_SYMBOL or not 0 < per_series <= MAX_HISTORY:
             raise ValueError(f"bars path: 1-{CAP_PER_SYMBOL} specs of 1-{MAX_HISTORY} bars each")
         self.specs, self.per_series, self.templates = SPECS[:specs], per_series, _templates()
+        self.state_root = state_root
 
     async def lane(self, symbol: str, bus: Bus, clock: Callable[[], int]) -> BarsLane:
-        lane = BarsLane(self, symbol, bus, clock)
-        for spec in self.specs:
-            await lane.states.save(_resumed(spec, symbol, self.per_series))
-            lane.holds.append(await lane.store.ensure(symbol, spec))
-            await lane.set.register(spec, symbol, "bench-bars")
+        lane = BarsLane(self, symbol, bus, clock, self.state_root)
+        try:
+            for spec in self.specs:
+                await lane.states.save(_resumed(spec, symbol, self.per_series))
+                lane.holds.append(await lane.store.ensure(symbol, spec))
+                await lane.set.register(spec, symbol, "bench-bars")
+        except BaseException:
+            await stop_each([lane])  # the caller never gets it to stop: its task, holds, temp dir
+            raise
         return lane
 
 
 class BarsLane:
     """One symbol's bar builders and series store (module docstring)."""
 
-    def __init__(self, fx: BarsFixture, symbol: str, bus: Bus, clock: Callable[[], int]) -> None:
+    def __init__(
+        self,
+        fx: BarsFixture,
+        symbol: str,
+        bus: Bus,
+        clock: Callable[[], int],
+        state_root: Path | None = None,
+    ) -> None:
         self.symbol, self._fx = symbol, fx
-        self._dir = tempfile.TemporaryDirectory(prefix="cv-bench-bars-")
+        self._tmp: tempfile.TemporaryDirectory[str] | None = None
+        if state_root is None:
+            self._tmp = tempfile.TemporaryDirectory(prefix="cv-bench-bars-")
+            state_root = Path(self._tmp.name)
+        self._stopped: tuple[int, tuple[str, ...]] | None = None
         reader = BarReader(_Table(fx.templates, symbol, fx.per_series), _no_rebuild, now_us=clock)
         self.store = SeriesStore(reader.read_tail)
-        self.states = StateStore(Path(self._dir.name))
+        self.states = StateStore(state_root)
         self.set = BarBuilderSet(
             bus, "demo", EmitRouter([self.store]), self.states, now_us=clock, factory=FACTORY
         )
@@ -165,22 +192,38 @@ class BarsLane:
     async def tick(self) -> None:
         await self.set.tick()
 
+    def _closed(self, spec: BarSpec) -> list[Bar]:
+        got = self.store.latest(self.symbol, spec.spec_hash, MAX_HISTORY + 1)
+        return [] if got is None else got.closed
+
     def count(self) -> tuple[int, int]:
         """The closed bars the store holds over the lane's series, and the live closes it folded
         past the stored tail (the indexes above its last bar)."""
         held = folded = 0
         for spec in self._fx.specs:
-            got = self.store.latest(self.symbol, spec.spec_hash, MAX_HISTORY + 1)
-            if got is not None and got.closed:
-                held += len(got.closed)
-                folded += max(0, got.closed[-1].index + 1 - self._fx.per_series)
+            closed = self._closed(spec)
+            held += len(closed)
+            if closed:
+                folded += max(0, closed[-1].index + 1 - self._fx.per_series)
         return held, folded
 
-    async def stop(self) -> int:
-        """Stop the set (its queued trades applied, final blobs written); the closes folded."""
-        await self.set.stop()
-        folded = self.count()[1]
-        for hold in self.holds:
-            hold.release()
-        self._dir.cleanup()
-        return folded
+    def fewest(self) -> int:
+        """The fewest closed bars any one of the lane's series holds. A series only grows from its
+        stored tail, so one below it was reset or never hydrated: a sum over the series hides that
+        whenever another has grown past the tail."""
+        return min(len(self._closed(spec)) for spec in self._fx.specs)
+
+    async def stop(self) -> tuple[int, tuple[str, ...]]:
+        """Stop the set (its queued trades applied, final blobs written) and release the holds,
+        once: a second call returns the first's answer. The answer is the live closes folded past
+        the stored tail and the set's health reasons, read after the drain (which can still
+        quarantine a builder): one live builder folds closes whatever the others did."""
+        if self._stopped is None:
+            await self.set.stop()
+            reasons = tuple(str(reason) for reason in self.set.health_reasons())
+            self._stopped = (self.count()[1], reasons)
+            for hold in self.holds:
+                hold.release()
+            if self._tmp is not None:
+                self._tmp.cleanup()
+        return self._stopped

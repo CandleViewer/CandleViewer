@@ -222,22 +222,29 @@ def check_soak(
 
 
 def check_bars(
-    held: Sequence[int], n_symbols: int, cap_per_symbol: int, folded: Sequence[int]
+    fewest: Sequence[int], per_series: int, folded: Sequence[int], unhealthy: Sequence[str]
 ) -> list[Check]:
-    """#399 D2-G4: budget #8's figure is a reading at the bars cap only while the series stores
-    hold every series full at every sample (`held`: closed bars, all lanes) and the bar builders
-    are live: each lane's store folded live closes past its stored tail (`folded`, per lane)."""
-    low = min(held, default=0) / max(1, n_symbols)
+    """#399 D2-G4: budget #8's figure is a reading at the bars cap only while every series stays
+    full and its builders are live.
+
+    `fewest`: at each sample, the fewest closed bars any series held. A series only grows from the
+    `per_series` it was hydrated with, so one below that was reset or never hydrated; a sum over
+    the series would hide it unless `per_series` is the store's own cap (`MAX_HISTORY`), where no
+    series can outgrow another. `folded`: each lane's live closes past its stored tail (one live
+    builder passes it). `unhealthy`: the sticky degraded reasons each lane's bar set reported at
+    its stop (`BarsHealthReason`: a quarantined builder, a dead lane or ticker task, a cold-started
+    state blob, a restore gap, an emit-sink timeout), which the other two cannot see."""
+    low = float(min(fewest, default=0))
     fold = float(min(folded, default=0))
     return [
         Check(
             "bars_store_at_cap",
             "#8",
             low,
-            float(cap_per_symbol),
+            float(per_series),
             "bars",
-            low >= cap_per_symbol,
-            note="closed bars the series store held per symbol, lowest sample",
+            low >= per_series,
+            note="closed bars the fewest-held series had, lowest sample",
         ),
         Check(
             "bars_closes_folded",
@@ -247,6 +254,15 @@ def check_bars(
             "closes",
             fold >= 1.0,
             note="live closes folded past the stored tail, lowest lane",
+        ),
+        Check(
+            "bars_builders_healthy",
+            "#8",
+            float(len(unhealthy)),
+            0.0,
+            "reasons",
+            not unhealthy,
+            note=", ".join(unhealthy) or "no degraded reason from any lane's bar set",
         ),
     ]
 

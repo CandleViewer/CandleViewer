@@ -10,9 +10,12 @@ below 0). The soak lanes run the trade stream and the book state. In `soak_bars`
 the bars path at its cap (#399 D2-G4, `bench/ingestion/bars_lane.py`): bar builders for 32 specs a
 symbol and the WS series store holding each with 1 000 bars, hydrated through the production tail
 read from the recorded golden bars. `bars_setup_mb_per_symbol` is the RSS that building and
-hydrating it added, and `bars_store_at_cap` and `bars_closes_folded` fail a run whose store fell
-below that cap or whose builders folded no close onto it. Aggregation enters this figure when it
-enters the lanes. The whole-process RSS at each sample, imports
+hydrating it added. `bars_store_at_cap`, `bars_closes_folded` and `bars_builders_healthy` fail a
+run in which a series fell below that cap, a lane's builders folded no close onto it, or a lane's
+bar set reported any sticky degraded reason (`BarsHealthReason`: a quarantined builder, a dead lane
+or ticker task, a cold-started state blob, a restore gap, an emit-sink timeout). The bar writer and
+the WS publisher are not in the lanes (`bars_lane.py` gives what each leaves out). Aggregation
+enters this figure when it enters the lanes. The whole-process RSS at each sample, imports
 included, is reported apart as `rss_mb_process`: it warns at +10 % and, once a same-profile
 baseline whose gate is not warn-only records it, fails at +50 % (`gate.record` writes warn-only,
 so the #2825 PR sets it). The smoke profile takes its first sample after an unsampled warm-up

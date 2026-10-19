@@ -26,13 +26,14 @@
     "realtime": false,
     "warmup_s": 120,
     "warmup_wall_s": 2,
-    "scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s)"
+    "scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s). Each lane's ring of 8 192 recent trades fills 164 s into the run, 44 s into the sampled window, so that fill is inside it and uses part of the 5 % flatness margin (1.9 % measured)"
   },
   "tolerances": {
     "ingest_lag_ms": 0.25,
     "rss_mb_per_symbol": 0.1,
     "rss_mb_process": 0.5,
     "vcpu_per_symbol": 0.5,
-    "bars_setup_mb_per_symbol": 0.1
+    "bars_setup_mb_per_symbol": 0.1,
+    "event_loop_lag_ms": 2.0
   }
 }

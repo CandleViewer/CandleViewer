@@ -23,9 +23,11 @@ import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import psutil
+import structlog
 
 from bench.ingestion.budgets import Sample
 from bench.ingestion_soak import Reservoir, SyntheticMarket
@@ -104,6 +106,8 @@ class LaneConfig:
     #: WS series store holding each, hydrated with `bars_per_series` stored bars. 0 = none.
     bars_specs: int = 0
     bars_per_series: int = 0
+    #: Where the bars lanes keep their state blobs (a test's `tmp_path`); None: a temp dir each.
+    bars_state_root: Path | None = None
 
 
 @dataclass(slots=True)
@@ -111,11 +115,13 @@ class LaneResult:
     samples: list[Sample] = field(default_factory=list)
     #: RSS taken once before the market and lanes were built: what budget #8 subtracts.
     rss_pre_lanes_bytes: int = 0
-    #: The bars path: RSS just before it was built and once it was hydrated, the closed bars its
-    #: stores held at each sample (all lanes), and each lane's live closes folded past its tail.
+    #: The bars path: RSS just before it was built and once it was hydrated, the fewest closed
+    #: bars any series held at each sample (all lanes), each lane's live closes folded past its
+    #: tail, and the health reasons its bar set reported when it stopped, as "<symbol>: <reason>".
     rss_bars_bytes: tuple[int, int] = (0, 0)
-    bars_held: list[int] = field(default_factory=list)
+    bars_fewest: list[int] = field(default_factory=list)
     bars_folded: list[int] = field(default_factory=list)
+    bars_health: list[str] = field(default_factory=list)
     injected: dict[str, int] = field(default_factory=dict)
     ingested: dict[str, int] = field(default_factory=dict)
     detected_gap: dict[str, int] = field(default_factory=dict)
@@ -324,6 +330,19 @@ class Lane:
         return self.now_us
 
 
+async def stop_each(lanes: Sequence[BarsLane]) -> Exception | None:
+    """Stop each bars lane under its own guard: one that fails to stop is logged, and the rest
+    still stop. Returns the first such error, for a caller with no error of its own in flight."""
+    failed: Exception | None = None
+    for lane in lanes:
+        try:
+            await lane.stop()  # a lane already stopped answers again, and nothing more
+        except Exception as exc:  # logged; a cancellation propagates
+            structlog.get_logger(__name__).exception("bars_lane_stop_failed", symbol=lane.symbol)
+            failed = failed or exc
+    return failed
+
+
 async def run_lanes(
     cfg: LaneConfig,
     sampler: ProcSampler,
@@ -338,14 +357,37 @@ async def run_lanes(
     RSS is sampled once before the market and lanes are built (`LaneResult.rss_pre_lanes_bytes`).
     A warm-up (`LaneConfig.warmup_s`) runs the lanes unsampled first; `duration_s` is the sampled
     window that follows, and sample times count from its start. The bars path
-    (`LaneConfig.bars_specs`) is built and hydrated after the lanes, inside budget #8's figure."""
+    (`LaneConfig.bars_specs`) is built and hydrated after the lanes, inside budget #8's figure;
+    its lanes stop however the run ends, an error included (`stop_each`: a stop that fails is
+    logged and skips no lane, and is raised only after a run that returned)."""
+    bars: list[BarsLane] = []
+    returned = False
+    try:
+        res = await _drive(cfg, sampler, bars, record_stages, drain_ticks, bind)
+        returned = True
+        return res
+    finally:
+        failed = await stop_each(bars)
+        if returned and failed is not None:
+            raise failed
+
+
+async def _drive(
+    cfg: LaneConfig,
+    sampler: ProcSampler,
+    bars: list[BarsLane],
+    record_stages: bool,
+    drain_ticks: int,
+    bind: Callable[[list[Lane]], None] | None,
+) -> LaneResult:
+    """`run_lanes`' body: the bars lanes it builds go into `bars`, which the caller stops."""
     if cfg.loads and (cfg.warmup_s or cfg.warmup_wall_s):
         raise ValueError("a warm-up would shift the load windows: scenarios with loads take none")
     fixture = None
     if cfg.bars_specs:  # imported and loaded before the pre-lanes sample: the harness's own
         from bench.ingestion.bars_lane import BarsFixture
 
-        fixture = BarsFixture(cfg.bars_specs, cfg.bars_per_series)
+        fixture = BarsFixture(cfg.bars_specs, cfg.bars_per_series, cfg.bars_state_root)
     rss_pre, _ = sampler.sample()  # budget #8's baseline: before the market and lanes exist
     market = SyntheticMarket(cfg.symbols, cfg.seed)
     lanes = [Lane(s, cfg, market, i) for i, s in enumerate(cfg.symbols)]
@@ -354,10 +396,10 @@ async def run_lanes(
     n_ticks = int(cfg.duration_s / cfg.tick_s)
     every = max(1, int(cfg.sample_every_s / cfg.tick_s))
     res = LaneResult(rss_pre_lanes_bytes=rss_pre)
-    bars: list[BarsLane] = []
     if fixture is not None:
         before, _ = sampler.sample()
-        bars = [await fixture.lane(x.sym, x.bus, x.clock) for x in lanes]
+        for x in lanes:
+            bars.append(await fixture.lane(x.sym, x.bus, x.clock))
         res.rss_bars_bytes = (before, sampler.sample()[0])
     per_s = max(1, round(1 / cfg.tick_s))
     sample_cost: list[float] = []
@@ -366,7 +408,7 @@ async def run_lanes(
 
     def held() -> None:
         if bars:
-            res.bars_held.append(sum(b.count()[0] for b in bars))
+            res.bars_fewest.append(min(b.fewest() for b in bars))
 
     async def step(tick: int, feeding: bool) -> None:
         if feeding:
@@ -433,7 +475,9 @@ async def run_lanes(
             res.stage_parts_ms.setdefault(k, []).extend(v.values)
         res.retained += len(lane.retained)
     for b in bars:
-        res.bars_folded.append(await b.stop())
+        folded, reasons = await b.stop()
+        res.bars_folded.append(folded)
+        res.bars_health += [f"{b.symbol}: {reason}" for reason in reasons]
     res.sampling_cost_ms = sum(sample_cost) / len(sample_cost) if sample_cost else 0.0
     res.wall_s = time.perf_counter() - wall0
     return res

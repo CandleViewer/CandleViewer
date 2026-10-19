@@ -9,7 +9,8 @@ name: perf-ingestion-nightly
 # #399 D2-G4: the pack's soak_bars is the soak with the bars path at its cap, bar builders and the
 # WS series store at 32 specs x 1 000 bars a symbol (budget #8). Its smoke runs in both pack
 # steps below: 28 s each on the laptop that recorded its baseline, where soak_steady's takes 7 s
-# (the whole job took 75 s on 19 Oct). Its full run is 24 h of scenario time on the virtual clock.
+# (the whole job took 75 s on 19 Oct, before soak_bars). Its full run is 24 h of scenario time
+# on the virtual clock.
 # A red signal comments on its open issue, or opens one (_nightly-issue.yml, #1849). No
 # workflow-level concurrency group (#3449): the report job has a per-signal group instead.
 on:
