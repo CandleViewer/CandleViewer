@@ -147,6 +147,7 @@ class InMemoryOrderStore:
             **asdict(order), leaves_qty=_EXACT.subtract(order.qty, order.cum_exec_qty),
             created_ts=self._clock(), submitted_ts=None, last_reconciled_at=None, reject_code=None,
             reject_message=None, submit_attempts=0, idempotency_state="unsent",
+            lifecycle_state=None,  # no default, and no write sets it yet, so `ord_lifecycle` holds
         )  # fmt: skip
         row = _at_scale(row, _ORDER_SCALES)
         event = self._event(row, first_event, (None, row.state))
