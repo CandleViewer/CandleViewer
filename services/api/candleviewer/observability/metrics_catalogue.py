@@ -2678,7 +2678,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "denials",
         ("permission",),
-        "Permission-check denials decided by auth.scopes.enforce (audit rbac.denied) or by the "
+        "Permission-check denials decided by auth.scopes.enforce or, once it allowed, by the key "
+        "store's owner gate in api.exchange_keys (both audit rbac.denied), or by the "
         "admin-area guard, admin.http (audit admin.area_entered, outcome denied).",
         "AuthzDeniedSpike (>20/10m, ticket)",
         _L,

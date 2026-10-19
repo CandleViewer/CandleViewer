@@ -23,6 +23,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.metrics import (
     AUTH_EXPORTED_NAMES,
     LOGIN_FAILURE_METHODS,
+    authz_denied_total,
     export_auth_metrics,
     normalise_permission,
 )
@@ -190,6 +191,14 @@ def test_login_failures_catalogue_text_names_exactly_the_audit_rows_it_counts() 
     text = _SPECS["auth_login_failures_total"].help
     assert {t for t in re.findall(r"[a-z_]+\.[a-z_]+", text) if t in AUDIT_ACTIONS} == _COUNTED_ROWS
     assert "cv_ws_auth_failures_total" in text and "cv_ws_auth_failures_total" in _SPECS
+
+
+def test_authz_denied_help_names_its_three_deciders_as_the_catalogue_does() -> None:
+    # #836 slice 2b6 (C-15.2): the exported HELP text is the catalogue's, and both name each site
+    # that counts a denial, as the runbook does: enforce, the key store's gate and the admin guard.
+    (family,) = authz_denied_total.describe()
+    assert family.documentation == _SPECS["authz_denied_total"].help
+    assert all(d in family.documentation for d in ("enforce", "api.exchange_keys", "admin.http"))
 
 
 #: #3415 (SR-029, E09-S03): the one revoke-to-close latency series.

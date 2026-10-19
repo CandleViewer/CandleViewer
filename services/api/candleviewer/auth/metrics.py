@@ -121,7 +121,8 @@ auth_login_failures_total = Counter(
 )
 authz_denied_total = Counter(
     "authz_denied_total",
-    "Permission-check denials decided by auth.scopes.enforce (audit rbac.denied) or by the "
+    "Permission-check denials decided by auth.scopes.enforce or, once it allowed, by the key "
+    "store's owner gate in api.exchange_keys (both audit rbac.denied), or by the "
     "admin-area guard, admin.http (audit admin.area_entered, outcome denied).",
     # closed set: the generated `Permission` vocabulary, or `other` (see `normalise_permission`)
     ["permission"],

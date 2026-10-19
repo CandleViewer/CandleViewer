@@ -646,19 +646,22 @@ To answer a denial:
    `docs/qa/charters/E09-charter-2-rbac-boundaries.md`.
 
 **`authz_denied_total{permission}`** (the catalogue name; there is no `cv_` prefix) counts each
-permission denial decided by one of two deciders. It moves before the audit row is written, so an
+permission denial decided by one of three deciders. It moves before the audit row is written, so an
 audit failure never hides a denial. `permission` is the permission code from a closed set (the
 generated vocabulary plus `other`).
 
 - `auth/scopes.py::enforce` (audit row `rbac.denied`). Only routes that call `enforce` count this
-  way, and today those are all `users:write` routes: `PUT /users/{userId}/roles`, `DELETE /users/{userId}`, the invite routes
+  way, among them the `users:write` routes: `PUT /users/{userId}/roles`, `DELETE /users/{userId}`, the invite routes
   (`POST /users`, `GET /users/invites`, `POST` and `DELETE /users/{userId}/invite`) and the TOTP
-  reset routes.
+  reset routes, and the key routes `createApiKey` (`keys:manage`) and `testApiKey` (`keys:read`).
 - The admin-area guard, `admin/http.py` (audit row `admin.area_entered` with outcome `denied`, not
   `rbac.denied`). Every route on an `admin_router` counts, under the router's permission:
   `admin:read` for `GET /admin/overview` and `GET /admin/capacity` today, and a later router on the
   guard counts under its own `admin:*` code. Only a decided denial counts: not a `401`, a `501` or a
   `503` for a missing audit writer, and not an allowed caller whose audit write fails (a `503`).
+- The key store's owner gate, for `testApiKey` (`api/exchange_keys.py`, audit row `rbac.denied` with
+  reason `not_owner:keys:read:granted_accounts`): a caller `enforce` let through whom the store then
+  refuses (SR-051) counts under `keys:read`, even when its audit row cannot be written.
 
 Not counted:
 
