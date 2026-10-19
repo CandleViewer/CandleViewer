@@ -35,7 +35,7 @@ EntityKind = Literal["open_position", "pending_order", "account"]
 class AccountState:
     environment: str
     enabled: bool = True
-    frozen: bool = False
+    frozen: bool = False  # the reading owner's own grant is frozen: per (owner, account)
     allowed_symbols: frozenset[str] | None = None  # None = no profile restriction (E28)
 
 
@@ -43,7 +43,7 @@ class ScopeState(Protocol):
     """Current-state reads; implementations are in-memory, invalidated on auth/account events."""
 
     def granted_accounts(self, owner: UUID) -> frozenset[UUID]: ...
-    def account(self, account_id: UUID) -> AccountState | None: ...
+    def account(self, owner: UUID, account_id: UUID) -> AccountState | None: ...  # owner's view
     def owner_frozen(self, owner: UUID) -> bool: ...  # E39 manager freeze / kill switch
     def live_gate_open(self) -> bool: ...  # M1 backend configuration layer
     def can_arm_live(self, owner: UUID) -> bool: ...  # seeded rules:arm_live permission
@@ -90,7 +90,7 @@ class ScopeResolver:
             return "manager_frozen"
         if account_id not in st.granted_accounts(owner):
             return "grant_revoked"
-        acct = st.account(account_id)
+        acct = st.account(owner, account_id)
         if acct is None or not acct.enabled:
             return "account_disabled"
         if acct.frozen:
@@ -126,7 +126,7 @@ class ScopeResolver:
         )
         syms: list[str | None] = list(scope.symbols) or list(symbols) or [None]
         for acct in accounts:
-            acct_state = self._state.account(acct)
+            acct_state = self._state.account(owner, acct)
             if acct_state is not None and acct_state.environment != environment:
                 continue  # account belongs to another environment
             for sym in syms:
@@ -172,7 +172,7 @@ class ScopeResolver:
         """403 for any account the caller cannot see; absent == not granted (no leak)."""
         granted = self._state.granted_accounts(caller)
         for acct in account_ids:
-            if acct not in granted or self._state.account(acct) is None:
+            if acct not in granted or self._state.account(caller, acct) is None:
                 await self._audit(
                     "rule_scope_denied", {"caller": str(caller), "account": str(acct)}
                 )
@@ -180,7 +180,7 @@ class ScopeResolver:
 
     def listable_accounts(self, caller: UUID) -> list[UUID]:
         granted = self._state.granted_accounts(caller)
-        return sorted((a for a in granted if self._state.account(a) is not None), key=str)
+        return sorted((a for a in granted if self._state.account(caller, a) is not None), key=str)
 
     async def authorize_environments(
         self, caller: UUID, scope: RuleScope, *, audit_armed: bool = True
