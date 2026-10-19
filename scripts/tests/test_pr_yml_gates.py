@@ -102,6 +102,14 @@ def test_each_gate_is_one_step_wired_to_its_lane(lane: str) -> None:
     assert step["if"] == "${{ !cancelled()" + when + " }}"
 
 
+def test_pin_check_runs_the_repository_mode_that_compares_the_ledger() -> None:
+    # #3580: given paths, check_action_pins.py runs the SR-132 checks alone; with none it also
+    # compares .github/actions-pins.md with every uses: line (CI-PIN-*).
+    (step,) = [s for s in JOBS["gates"]["steps"] if s.get("id") == "pin-check"]
+    runs = [line.split() for line in step["run"].splitlines() if "check_action_pins" in line]
+    assert runs == [["python", "tools/ci/check_action_pins.py"]]
+
+
 def test_gates_job_reads_only_contents_and_has_no_services_or_secrets() -> None:
     gates = JOBS["gates"]
     assert set(gates["outputs"]) == set(GATES)

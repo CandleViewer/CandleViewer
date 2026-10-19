@@ -30,7 +30,7 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │  │                last, as their installs run PR scripts: commitlint*, then gen (generated-code
 │  │                freshness, CI-GEN-001..006)
 │  │                (* pull requests only: they read PR metadata, so a merge group skips them, #3433)
-│  ├─ infra filter: pin-check (SR-132)            (CI-GATE-003, CI-IMG-002, CI-IMG-007..009)
+│  ├─ infra filter: pin-check (SR-132)     (CI-GATE-003, CI-PIN-*, CI-IMG-002, CI-IMG-007..009)
 │  └─ py filter:    statechart-lint, event-coverage, xstate-pin-attestation, machine-hash-lock,
 │                   xstate-contract (tools/statechart/run_xstate_contract.sh, also run nightly)
 ├─ security-review-label (always, #2892) → adds `security-review` when a C-10.2 path is touched,
@@ -182,8 +182,10 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   step holds its log. A red folded job with every scan green means a setup step failed. Re-running
   it re-runs every scan in that job (#3104).
 - `CI-GATE-003` on `pin-check` means an action reference in `.github/workflows/**`
-  is not pinned to a full commit SHA, or a workflow uses `pull_request_target`
-  unsafely. Fix the reference; do not add an exception.
+  or `.github/actions/**` is not pinned to a full commit SHA, or a workflow uses
+  `pull_request_target` unsafely. Fix the reference; do not add an exception. A
+  `CI-PIN-*` line on the same step means `.github/actions-pins.md` disagrees with
+  a `uses:` line, or one of them cannot be read (§4).
 
 ## 4. Triage recipes by error-code family
 
@@ -210,6 +212,36 @@ here, or the check fails the `governance` lane.
   label was missing (an API error: re-run; over the API's 3000 files: split the PR). Never remove
   the label: the job does not re-check after a removal (pr.yml does not run on `unlabeled`), so the
   merge guard is the backstop.
+
+### CI-PIN-* — action-pin ledger (`tools/ci/check_action_pins.py`, `.github/actions-pins.md`)
+
+`pin-check` compares the ledger with every `uses:` line in `.github/workflows/**` and
+`.github/actions/**` (#3580; the rule is the ledger's "Verification" paragraph). Each finding names
+both sides where there are two. Fix the side that is out of date, checked against the upstream
+release the tag names; after a pin bump that is the ledger row, updated in the same PR.
+
+- **CI-PIN-001** (ledger unreadable, fail closed): the file is missing, has no table or a second
+  one, the table is not followed by a blank line, its header does not name each of `Action`,
+  `Pinned SHA`, `Upstream tag` and `Used in` exactly once, or the named row is malformed (a cell
+  count unlike the header's, a value outside backticks, a SHA that is not 40-hex, a file listed
+  twice). Repair the named line.
+- **CI-PIN-002** (no row): add one, naming the action as written before `@`, its SHA, the tag from
+  its `# <tag>` comment and the files that use it.
+- **CI-PIN-003** (more than one row for an action): merge the rows into one.
+- **CI-PIN-004** (SHA differs) / **CI-PIN-005** (tag differs, or the line has no `# <tag>`
+  comment): make the line and the row name the same SHA and the tag it belongs to.
+- **CI-PIN-006** (no `uses:` line names the row's action): remove the row.
+- **CI-PIN-007** / **CI-PIN-008** ("Used in" leaves out a file that uses the action / lists one that
+  does not): correct the cell, naming a workflow by its file name and a composite action by its
+  path from the repository root.
+- **CI-PIN-009** (a `uses:` line the check cannot read, fail closed): write the named step's
+  `uses:` on one line as `uses: <action>@<40-hex sha> # <tag>`, with no flow mapping, anchor,
+  alias, tag, quoted or escaped key, space before the colon, value on the next line, second `@` or
+  text after the reference, and put no anchor on a `uses` scalar. Keep a local action under
+  `.github/actions/`, with a `./` reference that resolves there (no `..` out of the tree), and
+  replace a named symlink in either tree with the files it points to: the runner follows it, the
+  check does not. A line in a `run:` script that only looks like a `uses` key trips it too: move
+  that text into a script file.
 
 ### CI-JS-* — JS/TS lane
 

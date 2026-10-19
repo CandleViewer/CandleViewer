@@ -179,6 +179,9 @@ jobs:
               # The scripts the pin-check gates step runs (#3182).
               - 'tools/ci/check_action_pins.py'
               - 'tools/ci/resolve_image_digests.py'
+              # What check_action_pins.py compares: the pin ledger and composite actions (#3580).
+              - '.github/actions-pins.md'
+              - '.github/actions/**'
               # The CodeQL config the security lane hands codeql-action/init (#3182).
               - '.github/codeql/**'
             image:
@@ -406,13 +409,13 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         run: python scripts/check_backlog_twin_eol.py
-      - name: pin-check (SR-132; CI-GATE-003, CI-IMG-002)
+      - name: pin-check (SR-132; CI-GATE-003, CI-PIN-*, CI-IMG-002)
         id: pin-check
         if: ${{ !cancelled() && needs.changed-paths.outputs.infra == 'true' }}
         continue-on-error: true
         timeout-minutes: 5
         run: |
-          python tools/ci/check_action_pins.py .github/workflows
+          python tools/ci/check_action_pins.py
           python tools/ci/resolve_image_digests.py --check
       - name: statechart-lint (E50-T11; the CV lint set, then the fixtures proving each rule fires)
         id: statechart-lint
