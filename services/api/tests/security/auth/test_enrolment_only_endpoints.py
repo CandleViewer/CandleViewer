@@ -28,7 +28,7 @@ from prometheus_client import REGISTRY
 
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.errors import UserDisabled
-from candleviewer.auth.models import UserRecord
+from candleviewer.auth.models import UserRecord, UserStatus
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import FakeUserRepository
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -290,18 +290,20 @@ def test_enrol_supersedes_the_earlier_pending_method_and_returns_no_codes(stack:
 def test_enrol_creates_nothing_without_its_audit_record_its_user_or_a_live_token(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _must_enrol(stack, "alice")
+    uid = _must_enrol(stack, "alice")
     headers = _enrolment_only(stack, "alice")
     before = dict(_store(stack).methods)
     _fail_on(stack, monkeypatch, "auth.mfa_enroll")
 
     unaudited = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
+    stack.users.add(stack.users.users[str(uid)].model_copy(update={"status": UserStatus.DISABLED}))
+    disabled = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
     monkeypatch.setattr(stack.auth, "find_user", AsyncMock(return_value=None))  # deleted since
     gone = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
     stack.clock.now += timedelta(minutes=13)  # past the 12-minute access token
     expired = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
 
-    assert (unaudited.status_code, gone.status_code, expired.status_code) == (503, 401, 401)
+    assert [r.status_code for r in (unaudited, disabled, gone, expired)] == [503, 401, 401, 401]
     assert _store(stack).methods == before
 
 
