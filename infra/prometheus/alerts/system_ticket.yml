@@ -245,3 +245,24 @@ groups:
         annotations:
           summary: "A user disable failed in its store; none of its steps ran"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-userdisablefailed"
+      - alert: BackupLastSuccessStale
+        # #966 (E42-T05 BK-5, Q16): a backup kind's last success is over 26 h old for a daily kind,
+        # or over 8 days for config_bundle. The API computes the age at scrape (BackupFreshness),
+        # so it keeps growing while nothing succeeds, and a kind still stale when the 22:00-07:00
+        # UTC ticket mute ends is sent then. A kind that never succeeded has no sample and never
+        # fires, and the series is served only once a backup engine records runs
+        # (BACKUPS_CATALOGUED, #3319). No absent() guard until that engine declares its scheduled
+        # kinds: today a guard would stand for good. The thresholds assume daily runs (weekly for
+        # config_bundle) ending within 2 h of their slot; admin/backups/limits.py allows a 24 h
+        # run, so #3319 derives them again from measured durations. A ticket by ruling READY-27:
+        # page promotion pending owner approval (#2701). Its own component, so no page inhibits it.
+        expr: >-
+          cv_backup_last_success_age_seconds{kind!="config_bundle"} > 26*3600
+          or cv_backup_last_success_age_seconds{kind="config_bundle"} > 8*86400
+        for: 15m
+        labels:
+          severity: ticket
+          component: backup
+        annotations:
+          summary: "A backup kind has not succeeded for over 26 h (a daily kind) or 8 days (config_bundle)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-backuplastsuccessstale"

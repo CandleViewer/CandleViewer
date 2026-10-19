@@ -1035,3 +1035,53 @@ tests:
   - eval_time: 10m
     alertname: AuthRevocationLatencyHigh
     exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}
+    values: 92400+60x40
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: BackupLastSuccessStale
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}
+    values: 92400+60x40
+  alert_rule_test:
+  - eval_time: 36m
+    alertname: BackupLastSuccessStale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: backup
+        env: live
+        kind: pg_dump
+      exp_annotations:
+        summary: A backup kind has not succeeded for over 26 h (a daily kind) or 8
+          days (config_bundle)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-backuplastsuccessstale
+- interval: 1m
+  input_series:
+  - series: cv_backup_last_success_age_seconds{env="live",kind="config_bundle"}
+    values: 690000+60x40
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: BackupLastSuccessStale
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_backup_last_success_age_seconds{env="live",kind="config_bundle"}
+    values: 690000+60x40
+  alert_rule_test:
+  - eval_time: 36m
+    alertname: BackupLastSuccessStale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: backup
+        env: live
+        kind: config_bundle
+      exp_annotations:
+        summary: A backup kind has not succeeded for over 26 h (a daily kind) or 8
+          days (config_bundle)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-backuplastsuccessstale

@@ -116,6 +116,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         feature_flags = getattr(app.state, "feature_flags", None)
         if feature_flags is not None:  # E42-T03: a bad `flags.read_budget_ms` refuses boot
             await feature_flags.start()
+        backup_freshness = getattr(app.state, "backup_freshness", None)
+        if backup_freshness is not None:  # E42-T05 BK-5: one bounded load; an outage never fails it
+            await backup_freshness.start()
 
         # Boot self-check (AC1 "safe binding passes", AC3 "public binding
         # degrades"): run once, synchronously, before serving so `net_binding_safe`

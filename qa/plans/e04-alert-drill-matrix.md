@@ -24,6 +24,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | DiskCritical | page | 2m | `docs/plan/07-release-and-prr.md#alert-diskcritical` | synthetic | | | | | | pending |
 | AuditChainVerificationFailed | page | 0m | `docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed` | synthetic | | | | | | pending |
 | AuditVerifyNotPassing | page | 0m | `docs/plan/07-release-and-prr.md#alert-auditverifynotpassing` | synthetic | | | | | | pending |
+| BackupLastSuccessStale | ticket | 15m | `docs/plan/07-release-and-prr.md#alert-backuplastsuccessstale` | synthetic | | | | | | pending (promtool: a daily kind past 26 h fires once held 15 min and is silent a minute before; `config_bundle` past 26 h but under 8 days is silent, and past 8 days fires once held 15 min: `infra/prometheus/tests/system_alerts.test.yml`. Inert until a backup engine records runs, #3319, so the real drill waits for it. A ticket until the owner approves the page, #2701) |
 | KekUnavailable | page | 0m | `docs/ops/runbooks/kek-custody.md#alert-kekunavailable` | synthetic | | | | | | pending |
 | SyntheticAlert | page | 1m | `docs/plan/07-release-and-prr.md#alert-syntheticalert` | synthetic | | | | | | pending |
 | PublicWsDown | ticket | 1m | `docs/plan/07-release-and-prr.md#alert-publicwsdown` | real+synthetic | | | | | | pending |

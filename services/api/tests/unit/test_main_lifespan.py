@@ -166,6 +166,16 @@ async def test_lifespan_starts_and_stops_the_incidents_purge_task() -> None:
     task.stop.assert_awaited_once_with()
 
 
+async def test_lifespan_loads_the_backup_freshness_once_before_serving() -> None:
+    """E42-T05 BK-5: the ages the stale-backup alert reads; `start` bounds its own load."""
+    app = FastAPI()
+    app.state.app_context = _fake_ctx()
+    app.state.backup_freshness = freshness = SimpleNamespace(start=AsyncMock())
+
+    async with _lifespan(app):
+        freshness.start.assert_awaited_once_with()
+
+
 async def test_lifespan_leaves_read_only_mode_on_when_boot_check_trips_the_gate() -> None:
     app = FastAPI()
     ctx = _fake_ctx()

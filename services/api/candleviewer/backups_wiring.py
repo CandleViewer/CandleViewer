@@ -5,7 +5,9 @@
 - BK-4: the catalogue reads (`GET /admin/backups`, `GET /admin/backups/{backupId}`) answer
   `501 not_implemented` on every backend until `BACKUPS_CATALOGUED` is set; then the real backend
   reads the `backups` table over the admin area's one engine, and the fake backend still has no
-  catalogue."""
+  catalogue.
+- BK-5: the backup series are served, and the freshness loaded at boot, only once
+  `BACKUPS_CATALOGUED` is set."""
 
 from __future__ import annotations
 
@@ -18,9 +20,11 @@ import structlog
 
 from candleviewer.admin.backups import ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
+from candleviewer.admin.backups.metrics import BackupFreshness, export_backup_metrics
 from candleviewer.admin.backups.ports import JOB_ERROR_CODES, BackupJobError, JobEnd
 from candleviewer.api.recorder_admin import AdminJobStore, Job
 from candleviewer.auth.step_up import POSITION_SOURCE_NOT_DEPLOYED
+from candleviewer.observability.metrics import CollectorRegistry, ReexportCollector
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.backups_sqlalchemy import SqlAlchemyBackups
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
@@ -82,17 +86,43 @@ class UnknownOpenPositions:
         return None
 
 
+def _catalogue(
+    settings: Settings, system_settings: SystemSettings | None
+) -> SqlAlchemyBackups | None:
+    """The `backups` table on the real backend once catalogued, on the admin area's one engine:
+    shared with the counts, the tier and the incident list (`admin_wiring`), never a second one."""
+    if not (BACKUPS_CATALOGUED and settings.storage_backend == "real"):
+        return None
+    relational = (
+        system_settings.relational
+        if isinstance(system_settings, SqlAlchemySystemSettings)
+        else SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
+    )
+    return SqlAlchemyBackups(relational)
+
+
 def build_admin_backups(
     settings: Settings, *, system_settings: SystemSettings | None
 ) -> BackupCatalogue:
-    """The catalogue reads, on the admin area's one engine: shared with the counts, the tier and
-    the incident list (`admin_wiring`), never a second one."""
-    store = None
-    if BACKUPS_CATALOGUED and settings.storage_backend == "real":
-        relational = (
-            system_settings.relational
-            if isinstance(system_settings, SqlAlchemySystemSettings)
-            else SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
-        )
-        store = SqlAlchemyBackups(relational)
-    return BackupCatalogue(store)
+    """The catalogue reads."""
+    return BackupCatalogue(_catalogue(settings, system_settings))
+
+
+def serve_backup_metrics(
+    settings: Settings, registry: CollectorRegistry
+) -> ReexportCollector | None:
+    """The backup series on `registry` (the scraped one), once `BACKUPS_CATALOGUED` is set. Until
+    then nothing is served: no kind has a sample and no counter moves before an engine records
+    runs, which would read as "nothing to watch"."""
+    if not BACKUPS_CATALOGUED:
+        return None
+    return export_backup_metrics(registry, env=settings.environment.value)
+
+
+def build_backup_freshness(
+    settings: Settings, *, system_settings: SystemSettings | None
+) -> BackupFreshness | None:
+    """The freshness the lifespan loads, over the catalogue the reads use, once catalogued."""
+    if not BACKUPS_CATALOGUED:
+        return None
+    return BackupFreshness(_catalogue(settings, system_settings))

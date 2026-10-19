@@ -249,6 +249,21 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     ),
 }
 
+_DAILY = 'cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}'
+_CONFIG = 'cv_backup_last_success_age_seconds{env="live",kind="config_bundle"}'
+# alert -> cases of (series, values, eval_time, fires, labels the alert keeps from its series).
+LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
+    # #966 Q16: over 26 h (93600 s) for a daily kind, over 8 days (691200 s) for config_bundle,
+    # held 15 min. Each age starts 20 min under its line and grows 60 s a minute, so it is over
+    # from 21 min: silent at 35 min, firing at 36. config_bundle there is over 26 h, and silent.
+    "BackupLastSuccessStale": (
+        (_DAILY, "92400+60x40", "35m", False, {"env": "live", "kind": "pg_dump"}),
+        (_DAILY, "92400+60x40", "36m", True, {"env": "live", "kind": "pg_dump"}),
+        (_CONFIG, "690000+60x40", "35m", False, {"env": "live", "kind": "config_bundle"}),
+        (_CONFIG, "690000+60x40", "36m", True, {"env": "live", "kind": "config_bundle"}),
+    ),
+}
+
 # alert -> [(values, eval_time, fires)]: more cases on the same series (`_xN`: N missed scrapes).
 EXTRA: dict[str, list[tuple[str, str, bool]]] = {
     # #2496 item 3: the page rides out a gap shorter than its 15m window (the restart after a
@@ -349,6 +364,21 @@ def build() -> dict[str, Any]:
                     "input_series": [{"series": s, "values": v} for s, v in case_series.items()],
                     "alert_rule_test": [
                         {"eval_time": at, "alertname": name, "exp_alerts": expected}
+                    ],
+                }
+            )
+    for name, labelled in LABELLED.items():
+        for series, values, at, fires, kept in labelled:
+            alert = {
+                "exp_labels": {**labels_of(name), **kept},
+                "exp_annotations": annotations_of(name),
+            }
+            tests.append(
+                {
+                    "interval": "1m",
+                    "input_series": [{"series": series, "values": values}],
+                    "alert_rule_test": [
+                        {"eval_time": at, "alertname": name, "exp_alerts": [alert] if fires else []}
                     ],
                 }
             )

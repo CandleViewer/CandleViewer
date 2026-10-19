@@ -1436,6 +1436,9 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Feature flags | `cv_flag_push_latency_seconds` | histogram | committed flag write -> last session frame queued; budget 2 s (E42-T03) |
 | Order-entry gate | `cv_order_entry_refusals_total{reason}` | counter | none (dashboard); a maintenance window or the order kill switch shows here (E42-T03) |
 | Order-entry gate | `cv_maintenance_mode` | gauge | 1 while the order gate is engaged: maintenance mode or the order kill switch (E42-T03) |
+| Backups (E42-T05) | `cv_backup_last_success_age_seconds{kind}` | gauge | now minus the last success of each `kind` (the five `BackupKind` values; `ok`, `verified` or `restored`, its artefact not deleted), computed at scrape from a cache loaded once at boot (bounded) and moved forward by each finished run, never a store read; a kind that never succeeded has no sample. `BackupLastSuccessStale` raises a ticket over 26 h for a daily kind and 8 days for `config_bundle`, for 15 min (#966 Q16; page promotion pending owner approval, #2701). Served only once a backup engine records runs (`BACKUPS_CATALOGUED`, #3319) |
+| Backups (E42-T05) | `cv_backup_verify_failures_total` | counter | backup verifications that failed, whatever the check (dashboard); served once catalogued |
+| Backups (E42-T05) | `cv_restore_jobs_total{result}` | counter | restores by `result`: `refused`, `succeeded`, `failed` or `cancelled`, each bound at import; `refused` counts a refused restore, which creates no job (#966 Q17); served once catalogued |
 | Storage | `questdb_write_seconds`, `pg_pool_in_use`, `pg_query_seconds` | histogram/gauge | saturation |
 | Audit verify job (#2111) | `cv_audit_verify_last_ok_timestamp_seconds` / `cv_audit_verify_runs_total{result}` | gauge/counter | the job's start, then the end of each start-up or nightly verify run that passed (0 while no verify runner is wired); runs that ended, by `result`, every result at 0 from the job's start (E09-X04 R-5). `AuditVerifyNotPassing` pages when no start-up or nightly run has passed for 26 h, also across restarts; no runner wired never pages |
 | Security (SR-125) | `auth_login_failures_total{method}`, `auth_lockouts_total`, `auth_stepup_failures_total`, `authz_denied_total{permission}`, `auth_csrf_refused_total{reason}` | counter | brute-force / privilege probing (E09) |
@@ -1511,6 +1514,15 @@ Ticket — `IngestionTopicStale` (> 10 s), `IngestionBookResyncRateHigh` (> 5 / 
 `IngestionFramesRejectedSustained` (> 0.1/s per stream+reason for 10 min),
 `IngestionRateLimitHeadroomExhausted` (≤ 1), `IngestionNeverDropQueueFull`, `IngestionMetricsAbsent`.
 Clock drift warning/critical stay in `clock_sync.yml` (E08-S07).
+
+Backups (E42-T05, #966 Q16): Ticket — `BackupLastSuccessStale` (`system_ticket.yml`,
+`component: backup`) when `cv_backup_last_success_age_seconds{kind}` is over 26 h for a daily kind
+or over 8 days for `config_bundle`, for 15 min; page promotion pending owner approval (#2701). A
+kind that never succeeded has no sample, so the ticket cannot fire for it, and the series is served
+only once a backup engine records runs (`BACKUPS_CATALOGUED`, #3319). It has no `absent()` guard
+until that engine declares its scheduled kinds: a guard would stand for good today. The thresholds
+assume daily runs that end within 2 h of their slot; #3319 derives them again from measured run
+durations.
 
 WS gateway set (E17-T06, `infra/prometheus/alerts/ws_gateway.yml`, `component: gateway`, runbooks in
 `07-release-and-prr.md` section 9, promtool cases in `infra/prometheus/tests/ws_alerts.test.yml`), all

@@ -2352,6 +2352,48 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E42",
         max_series=1,
     ),
+    # --- Backups (E42-T05, #966); admin.backups.metrics, served once BACKUPS_CATALOGUED is set ---
+    _s(
+        "cv_backup_last_success_age_seconds",
+        "gauge",
+        "seconds",
+        ("kind",),
+        "Seconds since the last successful backup of each kind (ok, verified or restored, its "
+        "artefact not deleted): pg_basebackup, pg_dump, questdb_snapshot, parquet_sync or "
+        "config_bundle. No sample for a kind that never succeeded.",
+        "BackupLastSuccessStale (ticket; page promotion pending owner approval, #2701): over "
+        "26 h for a daily kind or 8 days for config_bundle, for 15m; a kind with no sample never "
+        "fires (#966 Q16)",
+        _L,
+        "E42",
+        max_series=5,  # the five kinds
+        exported=True,
+    ),
+    _s(
+        "cv_backup_verify_failures_total",
+        "counter",
+        "verifications",
+        (),
+        "Backup verifications that failed, whatever the check.",
+        "dashboard only",
+        _L,
+        "E42",
+        max_series=1,
+        exported=True,
+    ),
+    _s(
+        "cv_restore_jobs_total",
+        "counter",
+        "restores",
+        ("result",),
+        "Restores by result: refused (a precondition failed, no job created), succeeded, failed or "
+        "cancelled.",
+        "dashboard only; refused counts refusals, which create no job (#966 Q17)",
+        _L,
+        "E42",
+        max_series=4,  # the four results
+        exported=True,
+    ),
     # --- Audit verify job (#2111, E09-X04 R-5) ------------------------------
     _s(
         "cv_audit_verify_last_ok_timestamp_seconds",
