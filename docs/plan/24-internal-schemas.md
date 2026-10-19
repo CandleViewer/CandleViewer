@@ -1327,8 +1327,12 @@ stateDiagram-v2
   [*] --> Draft
   Draft --> Validated: risk + instrument filters pass
   Draft --> Rejected: validation failure (local)
+  Draft --> Untracked: reconciliation found an exchange order with no local row (S9, §8.5 step 3c)
   Validated --> Submitting: transport send begins
   Submitting --> Submitted: exchange ack (retCode 0)
+  Submitting --> Submitted: duplicate id, full match with the row (SR-E29-03)
+  Submitting --> Held: duplicate id held by an order that does not match the row
+  Submitting --> Unknown: duplicate id not verified (no full match yet, §8.3 rule 3)
   Submitting --> Rejected: business reject (retCode != 0, deterministic)
   Submitting --> Unknown: timeout / connection loss / ambiguous response
   Submitted --> PartiallyFilled: execution, leaves_qty > 0
@@ -1337,30 +1341,47 @@ stateDiagram-v2
   Submitted --> AmendPending: amend requested
   Submitted --> Expired: IOC/FOK unfilled, or exchange expiry
   Submitted --> Triggered: conditional order trigger fired
+  Submitted --> Cancelled: cancelled on the exchange
+  Submitted --> Held: the order under our id does not match the row
   Triggered --> PartiallyFilled
   Triggered --> Filled
   Triggered --> CancelPending
+  Triggered --> Expired
+  Triggered --> Cancelled: cancelled on the exchange
   PartiallyFilled --> PartiallyFilled: further partial execution
   PartiallyFilled --> Filled: leaves_qty == 0
   PartiallyFilled --> CancelPending
   PartiallyFilled --> AmendPending
+  PartiallyFilled --> Expired
+  PartiallyFilled --> Cancelled: cancelled on the exchange
   CancelPending --> Cancelled: cancel ack
   CancelPending --> Filled: race - filled before cancel landed
   CancelPending --> PartiallyFilled: partial fill during cancel
+  CancelPending --> Cancelled: cancelled on the exchange
+  CancelPending --> Submitted: cancel refused (retCode != 0)
+  CancelPending --> PartiallyFilled: cancel refused on a partially filled order
   CancelPending --> Unknown: transport failure
   AmendPending --> Submitted: amend ack (prior order updated)
   AmendPending --> PartiallyFilled: amend ack on a partially filled order
-  AmendPending --> Rejected: amend rejected - PRIOR ORDER STAYS LIVE
+  AmendPending --> Submitted: amend rejected - PRIOR ORDER STAYS LIVE (S2)
+  AmendPending --> PartiallyFilled: amend rejected on a partially filled order
+  AmendPending --> Cancelled: cancelled on the exchange
   AmendPending --> Unknown: transport failure
   Unknown --> Submitted: reconciliation found it live
   Unknown --> PartiallyFilled: reconciliation found partial
   Unknown --> Filled: reconciliation found filled
   Unknown --> Cancelled: reconciliation found cancelled
   Unknown --> Rejected: 2 consecutive reconciliation passes found nothing
+  Unknown --> Held: the order under our id does not match the row
+  Untracked --> Submitted: adopted under management (adoption_allowed, D6)
+  Untracked --> Cancelled: reconciliation found it cancelled, or 2 passes found nothing
+  Held --> Rejected: the Owner resolves it after step-up, audited oms.held_resolved (never an adopt)
   Filled --> [*]
   Cancelled --> [*]
   Rejected --> [*]
   Expired --> [*]
+  Killed --> [*]
+  note right of Killed : KILL from any non-terminal state but CancelPending, Untracked and Held
 ```
 
 **Binding transition rules.**
@@ -1376,6 +1397,8 @@ stateDiagram-v2
 | S7  | Postgres is authoritative. If Postgres is unavailable, order entry is blocked — we never accept an order we cannot durably record.                                                                                          |
 | S8  | Every transition writes an append-only `order_events` row before the in-memory state changes (write-ahead), so a crash mid-transition is recoverable.                                                                       |
 | S9  | `untracked` is a distinct state for exchange orders with no local row (manual Bybit-app order, pre-existing, or ours whose row was lost). They are displayed, adoptable by the user, but never auto-managed by rules.       |
+| S10 | An event the current state does not handle (a fill while `Submitting` or `AmendPending` awaits the exchange) is deferred, never dropped (`onUnhandled: "defer"`): every delivered fill is applied or still deferred.        |
+| S11 | No action half-applies a transition: under `actionErrorPolicy: "rollback"` an action that raises (a failed `order_events` write included) aborts the step and restores the prior state and context (S7, S8), and pages.     |
 
 ### 8.3 Idempotency — `orderLinkId` scheme
 

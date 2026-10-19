@@ -12,15 +12,23 @@ one exchange cancel and one audit, `protection` region untouched.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
+import re
+from collections.abc import AsyncIterator
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.config import CV_EVENT_SCHEMAS
 from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import (
     Charts,
+    _done,
     all_events,
     entry_of,
     exits,
@@ -31,7 +39,7 @@ from tests.xstate_contract._harness import (
     settle,
     walk,
 )
-from tests.xstate_contract.membership import check_ledger
+from tests.xstate_contract.membership import _CATALOGUE, check_ledger
 
 CHART = Registry().get("order")
 TERMINALS = ("filled", "cancelled", "rejected", "expired", "killed")
@@ -43,6 +51,8 @@ LIVE = tuple(
 _REAL_KILL_ACTIONS = ("mark_halted_by_kill", "issue_kill_cancel", "skip_kill_cancel")
 _UNSUBMITTED = ("draft", "validated")
 _SL_ACTIONS = {"request_fallback_sl", "arm_sl_deadline", "raise_naked_position_alert"}
+_UNOWNED = ("untracked", "held")
+_EXCHANGE_LIVE = ("submitted", "triggered", "partially_filled", "cancel_pending", "amend_pending")
 
 INVARIANTS: dict[str, str] = {
     "INV-B1-a": "deferred:E29",
@@ -54,11 +64,20 @@ INVARIANTS: dict[str, str] = {
     "INV-B1-g": "deferred:E29",
     "INV-B1-h": "test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted",
     "INV-B1-i": "test_inv_b1_i_kill_never_touches_protection_property",
+    "INV-B1-j": "test_inv_b1_j_result_adopted_only_if_ret_code_ok_property",
+    "INV-B1-k": "test_inv_b1_k_exchange_end_is_never_stranded_property",
+    "INV-B1-l": "test_inv_b1_l_untracked_is_never_managed_property",
+    "INV-B1-m": "test_inv_b1_m_held_is_left_only_by_the_operator_property",
+    "INV-B1-n": "test_inv_b1_n_kill_never_cancels_an_unowned_order_property",
 }
 
 
 def test_b01_invariant_ledger_matches_catalogue() -> None:
     check_ledger(1, INVARIANTS, globals())
+    text = _CATALOGUE.read_text(encoding="utf-8")  # C-2.19: B1.1 is the chart, root keys aside
+    block = re.search(r"### B1\.1 Contract \(normative\)\s*```json\n(.*?)\n```", text, re.S)
+    skip = ("version", "strictConfig", "maxIterations")
+    assert block and json.loads(block[1]) == {k: v for k, v in CHART.items() if k not in skip}
 
 
 def test_inv_b1_c_amend_rejected_never_terminal() -> None:
@@ -72,7 +91,7 @@ def test_inv_b1_d_cancel_pending_handles_exec() -> None:
 
 def test_inv_b1_e_unknown_resolved_only_by_recon() -> None:
     leaving = {e for e, _g, _t in exits(CHART, "lifecycle.unknown")}
-    assert leaving <= {e for e in leaving if e.startswith("RECON_")}
+    assert leaving - {"MISMATCH"} <= {e for e in leaving if e.startswith("RECON_")}  # #847: held
     assert "SEND" not in leaving
 
 
@@ -126,6 +145,8 @@ async def test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted(
         before = len(cancels)  # 1 for the parked cancel_pending invoke, else 0
         await interp.send("KILL", wait=True)
         await settle()
+        if state in _UNOWNED:  # KILL only audits there: INV-B1-n's property
+            return
         assert interp.context["halted_by_kill"] is True
         assert interp.error is None
         if in_flight:  # reuse the in-flight cancel: no second call
@@ -257,3 +278,197 @@ async def test_inv_b1_i_kill_never_touches_protection_property(
             assert "audit_kill_protection_retained" in rec.actions[mark:]
         finally:
             await interp.stop()
+
+
+_HYP = settings(
+    max_examples=20, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+_PROT = "audit_kill_protection_retained"
+_MANAGING = frozenset(
+    "adopt_ack adopt_amend adopt_cancel_ack adopt_recon adopt_untracked apply_fill"
+    " issue_kill_cancel keep_prior_order_live mark_needs_lookup record_cancel_refused"
+    " reserve_rate_token stamp_validated".split()
+)
+_UNTRACKED_EXITS = {("cancelled", "RECON_FOUND_CANCELLED"), ("cancelled", "RECON_MISS")}
+
+
+def _into(state: str) -> set[tuple[str, str]]:
+    return {(p, e) for p, _n in walk(CHART) for e, _g, t in exits(CHART, p) if t == state}
+
+
+def _leaf(interp: Any) -> str:
+    return str(next(s for s in interp.current_state_ids if s.startswith("order.lifecycle.")))[16:]
+
+
+@contextlib.asynccontextmanager
+async def _at(
+    state: str, charts: Charts, real_kill: bool = False, **kw: Any
+) -> AsyncIterator[tuple[Any, Any, list[str]]]:
+    with pytest.MonkeyPatch.context() as mp:
+        rec = instrument("order", mp, "async_def", **kw)
+        cancels = _restore_real(mp) if real_kill else []
+        for name, service in kw.get("service_mode", {}).items():
+            mp.setitem(b01.SERVICES, name, service)
+        res = await park("order", CHART, f"lifecycle.{state}", charts)
+        try:
+            yield res.interpreter, rec, cancels
+        finally:
+            await res.interpreter.stop()
+
+
+async def test_b01_binding_stubs_and_event_schemas() -> None:
+    """Every event has a schema, every guard denies (A6), every audit reaches the hook (C-2.9)."""
+    assert all_events(CHART) <= set(CV_EVENT_SCHEMAS)
+    assert not any(guard() for guard in b01.GUARDS.values())
+    audits, hook = sorted(n for n in b01.ACTIONS if n.startswith("audit_")), AsyncMock()
+    b01.set_audit_hook(hook)
+    try:
+        for name in audits:
+            await b01.ACTIONS[name](None, {}, None, None)
+    finally:
+        b01.set_audit_hook(None)
+    want = [{"audit_kill": "halted_by_kill"}.get(n, n[6:]) for n in audits]
+    assert len(audits) == 9 and [c.args[0] for c in hook.await_args_list] == want
+
+
+@_HYP
+@given(ok=st.booleans(), bad=st.booleans(), full=st.booleans(), dup=st.booleans())
+async def test_b01_place_result_binds_only_an_ack_or_a_full_match_property(
+    ok: bool, bad: bool, full: bool, dup: bool, charts: Charts
+) -> None:
+    """OM-S05 regression (INV-B1-m): with no positive full match, a duplicate-id result never
+    reaches `submitted`; it parks in `unknown`, where a KILL cancels nothing under the id."""
+    names = "ret_code_ok is_link_id_mismatch is_duplicate_link_id_full_match is_duplicate_link_id"
+    plan = dict(zip(names.split(), (ok, bad, full, dup), strict=True))
+    bound = ok or (full and not bad)  # an ack, or a full match no mismatch read refuted
+    want = "submitted" if bound else "held" if bad else "unknown" if dup else "rejected"
+    done = {"place_order": _done}
+    async with _at("submitting", charts, True, guards=plan, service_mode=done) as (i, _r, cancels):
+        await settle()
+        assert _leaf(i) == want
+        await i.send("KILL", wait=True)
+        await settle()
+        assert len(cancels) == bound
+
+
+async def test_b01_kill_then_refused_cancel_keeps_halt_and_one_cancel(charts: Charts) -> None:
+    """INV-B1-h: KILL reuses the in-flight cancel; if the exchange refuses it, the order is live
+    again with `halted_by_kill` set and no second cancel (B18's cancel-all is the backstop)."""
+    gate, calls = asyncio.Event(), [0]
+
+    async def _refused(*_a: object, **_k: object) -> dict[str, Any]:
+        calls[0] += 1
+        await gate.wait()
+        return {}  # `ret_code_ok` denied: the exchange refused the cancel
+
+    done = {"cancel_order": _refused}
+    async with _at("cancel_pending", charts, True, service_mode=done) as (i, rec, _c):
+        await i.send("KILL", wait=True)
+        gate.set()
+        await settle()
+        assert _leaf(i) == "submitted" and i.context["halted_by_kill"] is True and calls == [1]
+        assert rec.actions.count("record_cancel_refused") == 1
+
+
+_RESULTS = {  # invoking state -> (service, adopting action, refusing action)
+    "cancel_pending": ("cancel_order", "adopt_cancel_ack", "record_cancel_refused"),
+    "amend_pending": ("amend_order", "adopt_amend", "keep_prior_order_live"),
+}
+
+
+@_HYP
+@given(state=st.sampled_from(sorted(_RESULTS)), ok=st.booleans(), fills=st.booleans())
+async def test_inv_b1_j_result_adopted_only_if_ret_code_ok_property(
+    state: str, ok: bool, fills: bool, charts: Charts
+) -> None:
+    """INV-B1-j and INV-B1-c's half: ruling 3's regression (a business reject ran adopt_amend)."""
+    src, adopt, refuse = _RESULTS[state]
+    plan = {"ret_code_ok": ok, "has_fills": fills, "ret_code_ok_and_has_fills": ok and fills}
+    async with _at(state, charts, guards=plan, service_mode={src: _done}) as (i, rec, _c):
+        await settle()
+        live = "partially_filled" if fills else "submitted"
+        assert _leaf(i) == ("cancelled" if ok and src == "cancel_order" else live)
+        assert (adopt in rec.actions) is ok and (refuse in rec.actions) is not ok
+
+
+#: INV-B1-k: an end the exchange reports without a fill -> (states that honour it, terminal).
+_ENDS: dict[str, tuple[tuple[str, ...], str]] = {
+    "REMOTE_CANCELLED": (_EXCHANGE_LIVE, "cancelled"),
+    "EXPIRE": (("submitted", "triggered", "partially_filled"), "expired"),
+    "RECON_FOUND_CANCELLED": (("unknown", "quarantined", "untracked"), "cancelled"),
+}
+
+
+@_HYP
+@given(
+    start=st.sampled_from(_EXCHANGE_LIVE),
+    events=st.lists(st.sampled_from(_EVENTS), max_size=4),
+    end=st.sampled_from(sorted(_ENDS)),
+)
+async def test_inv_b1_k_exchange_end_is_never_stranded_property(
+    start: str, events: list[str], end: str, charts: Charts
+) -> None:
+    """Whatever came before, a state that honours the exchange's end reaches the terminal."""
+    async with _at(start, charts) as (i, _r, _c):
+        for ev in [*events, end]:
+            before = _leaf(i)
+            await i.send(ev, wait=True)
+            await settle()
+        states, terminal = _ENDS[end]
+        assert before not in states or _leaf(i) == terminal
+
+
+@_HYP
+@given(events=st.lists(st.sampled_from(_EVENTS), max_size=8), miss=st.booleans(), ok=st.booleans())
+async def test_inv_b1_l_untracked_is_never_managed_property(
+    events: list[str], miss: bool, ok: bool, charts: Charts
+) -> None:
+    """No event before an ADOPT, allowed or not, runs a managing action: commands are refused."""
+    assert _into("order.lifecycle.untracked") == {("lifecycle.draft", "DISCOVERED")}
+    plan = {"second_consecutive_miss": miss, "adoption_allowed": ok}
+    done = {"cancel_order": _done, "amend_order": _done}
+    async with _at("untracked", charts, guards=plan, service_mode=done) as (i, rec, _c):
+        for ev in [*"CANCEL AMEND SEND VALIDATE".split(), *filter("ADOPT".__ne__, events), "ADOPT"]:
+            before = _leaf(i)
+            await i.send(ev, wait=True)
+            await settle()
+            assert ev == "ADOPT" or before == _leaf(i) or (_leaf(i), ev) in _UNTRACKED_EXITS
+        assert rec.actions[1:5] == ["audit_command_refused_unowned"] * 4  # consumed, never deferred
+        assert not (_MANAGING - {"adopt_recon", "adopt_untracked"}) & set(rec.actions)
+
+
+@_HYP
+@given(
+    events=st.lists(st.sampled_from([e for e in _EVENTS if e != "OPERATOR_RESOLVED"]), max_size=8)
+)
+async def test_inv_b1_m_held_is_left_only_by_the_operator_property(
+    events: list[str], charts: Charts
+) -> None:
+    """Every guard allowed: only the operator's OPERATOR_RESOLVED moves it (to rejected)."""
+    sources = {f"lifecycle.{s}" for s in ("submitting", "submitted", "unknown", "quarantined")}
+    assert {p for p, _e in _into("order.lifecycle.held")} == sources
+    async with _at("held", charts, guards=dict.fromkeys(b01.GUARDS, True)) as (i, rec, _c):
+        for ev in [*events, "OPERATOR_RESOLVED"]:
+            assert _leaf(i) == "held"
+            await i.send(ev, wait=True)
+            await settle()
+        assert _leaf(i) == "rejected" and not _MANAGING & set(rec.actions)
+
+
+@_HYP
+@given(state=st.sampled_from(_UNOWNED), events=st.lists(st.sampled_from(_EVENTS), max_size=5))
+async def test_inv_b1_n_kill_never_cancels_an_unowned_order_property(
+    state: str, events: list[str], charts: Charts
+) -> None:
+    """Whatever came before, a KILL on an untracked or held order only audits (SR-E29-06)."""
+    async with _at(state, charts, True) as (i, rec, cancels):
+        for ev in [e for e in events if e != "KILL"]:
+            await i.send(ev, wait=True)
+        await settle()
+        before, mark = _leaf(i), len(rec.actions)
+        await i.send("KILL", wait=True)
+        await settle()
+        if before in _UNOWNED:
+            assert _leaf(i) == before and cancels == []
+            assert rec.actions[mark:] == ["audit_kill_ignored_unowned", _PROT]
+            assert i.context["halted_by_kill"] is False

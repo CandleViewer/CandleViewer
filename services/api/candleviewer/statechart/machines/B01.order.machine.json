@@ -1,5 +1,6 @@
 {
   "id": "order",
+  "version": 1,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -19,6 +20,8 @@
     "filled_qty": "0",
     "leaves_qty": "0",
     "avg_price": null,
+    "cum_exec_value": "0",
+    "fee_paid": "0",
     "seen_exec_ids": [],
     "last_exchange_update": 0,
     "recon_misses": 0,
@@ -51,6 +54,12 @@
                 ]
               }
             ],
+            "DISCOVERED": {
+              "target": "#order.lifecycle.untracked",
+              "actions": [
+                "record_discovered"
+              ]
+            },
             "KILL": {
               "target": "#order.lifecycle.killed",
               "actions": [
@@ -92,10 +101,25 @@
                 ]
               },
               {
+                "target": "#order.lifecycle.held",
+                "guard": "is_link_id_mismatch",
+                "actions": [
+                  "record_mismatch"
+                ]
+              },
+              {
                 "target": "#order.lifecycle.submitted",
+                "guard": "is_duplicate_link_id_full_match",
+                "actions": [
+                  "adopt_ack"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.unknown",
                 "guard": "is_duplicate_link_id",
                 "actions": [
-                  "mark_needs_lookup"
+                  "mark_needs_lookup",
+                  "skip_kill_cancel"
                 ]
               },
               {
@@ -152,6 +176,18 @@
             "EXPIRE": {
               "target": "#order.lifecycle.expired"
             },
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
+            },
+            "MISMATCH": {
+              "target": "#order.lifecycle.held",
+              "actions": [
+                "record_mismatch"
+              ]
+            },
             "TRANSPORT_FAULT": {
               "target": "#order.lifecycle.unknown"
             },
@@ -188,6 +224,15 @@
             ],
             "CANCEL": {
               "target": "#order.lifecycle.cancel_pending"
+            },
+            "EXPIRE": {
+              "target": "#order.lifecycle.expired"
+            },
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
             }
           }
         },
@@ -227,6 +272,15 @@
             },
             "FAULT": {
               "target": "#order.lifecycle.quarantined"
+            },
+            "EXPIRE": {
+              "target": "#order.lifecycle.expired"
+            },
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
             }
           }
         },
@@ -237,12 +291,28 @@
           "invoke": {
             "id": "cancel",
             "src": "cancel_order",
-            "onDone": {
-              "target": "#order.lifecycle.cancelled",
-              "actions": [
-                "adopt_cancel_ack"
-              ]
-            },
+            "onDone": [
+              {
+                "target": "#order.lifecycle.cancelled",
+                "guard": "ret_code_ok",
+                "actions": [
+                  "adopt_cancel_ack"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.partially_filled",
+                "guard": "has_fills",
+                "actions": [
+                  "record_cancel_refused"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.submitted",
+                "actions": [
+                  "record_cancel_refused"
+                ]
+              }
+            ],
             "onError": {
               "target": "#order.lifecycle.unknown",
               "actions": [
@@ -272,6 +342,12 @@
                 ]
               }
             ],
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
+            },
             "KILL": {
               "actions": [
                 "mark_halted_by_kill",
@@ -290,15 +366,31 @@
             "onDone": [
               {
                 "target": "#order.lifecycle.partially_filled",
-                "guard": "has_fills",
+                "guard": "ret_code_ok_and_has_fills",
                 "actions": [
                   "adopt_amend"
                 ]
               },
               {
                 "target": "#order.lifecycle.submitted",
+                "guard": "ret_code_ok",
                 "actions": [
                   "adopt_amend"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.partially_filled",
+                "guard": "has_fills",
+                "actions": [
+                  "keep_prior_order_live",
+                  "notify_amend_rejected"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.submitted",
+                "actions": [
+                  "keep_prior_order_live",
+                  "notify_amend_rejected"
                 ]
               }
             ],
@@ -326,7 +418,13 @@
                   "notify_amend_rejected"
                 ]
               }
-            ]
+            ],
+            "REMOTE_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_remote_cancel"
+              ]
+            }
           }
         },
         "unknown": {
@@ -375,7 +473,13 @@
                   "bump_recon_misses"
                 ]
               }
-            ]
+            ],
+            "MISMATCH": {
+              "target": "#order.lifecycle.held",
+              "actions": [
+                "record_mismatch"
+              ]
+            }
           }
         },
         "quarantined": {
@@ -404,6 +508,105 @@
               "target": "#order.lifecycle.filled",
               "actions": [
                 "adopt_recon"
+              ]
+            },
+            "RECON_FOUND_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_recon"
+              ]
+            },
+            "MISMATCH": {
+              "target": "#order.lifecycle.held",
+              "actions": [
+                "record_mismatch"
+              ]
+            }
+          }
+        },
+        "untracked": {
+          "entry": [
+            "persist_event"
+          ],
+          "on": {
+            "ADOPT": [
+              {
+                "target": "#order.lifecycle.submitted",
+                "guard": "adoption_allowed",
+                "actions": [
+                  "adopt_untracked"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_adoption_denied"
+                ]
+              }
+            ],
+            "RECON_FOUND_CANCELLED": {
+              "target": "#order.lifecycle.cancelled",
+              "actions": [
+                "adopt_recon"
+              ]
+            },
+            "RECON_MISS": [
+              {
+                "target": "#order.lifecycle.cancelled",
+                "guard": "second_consecutive_miss",
+                "actions": [
+                  "set_cancel_missing_remote"
+                ]
+              },
+              {
+                "target": "#order.lifecycle.untracked",
+                "reenter": true,
+                "actions": [
+                  "bump_recon_misses"
+                ]
+              }
+            ],
+            "KILL": {
+              "actions": [
+                "audit_kill_ignored_unowned"
+              ]
+            },
+            "CANCEL": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "AMEND": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "SEND": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            },
+            "VALIDATE": {
+              "actions": [
+                "audit_command_refused_unowned"
+              ]
+            }
+          }
+        },
+        "held": {
+          "entry": [
+            "persist_event",
+            "raise_critical_alert"
+          ],
+          "on": {
+            "OPERATOR_RESOLVED": {
+              "target": "#order.lifecycle.rejected",
+              "actions": [
+                "audit_operator_resolved"
+              ]
+            },
+            "KILL": {
+              "actions": [
+                "audit_kill_ignored_unowned"
               ]
             }
           }

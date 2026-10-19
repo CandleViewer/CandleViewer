@@ -69,7 +69,7 @@ async def mark_halted_by_kill(_i: Any, context: dict[str, Any], _e: Any, _a: Any
 
 
 async def skip_kill_cancel(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """`draft`/`validated` KILL: never submitted, so there is nothing to cancel."""
+    """Nothing of ours to cancel: never sent (`draft`, `validated`), or an unverified duplicate."""
     context["kill_skip_cancel"] = True
 
 
@@ -205,4 +205,39 @@ register_event_schemas(
             "VALIDATE",
         )
     }
+)
+
+
+# --- #847 slice 1: `untracked` and `held` (G-3) and exchange outcomes, chart version 1 ----
+# Stubs until #847 slices 4-5: the guards deny (A6), so a duplicate result parks in `unknown`.
+ACTIONS.update(
+    dict.fromkeys(
+        "adopt_remote_cancel adopt_untracked record_cancel_refused record_discovered"
+        " record_mismatch set_cancel_missing_remote".split(),
+        _noop_action,
+    )
+)
+
+
+def _audited(name: str) -> Callable[..., Awaitable[None]]:
+    async def audit(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+        await _hook(name, context)
+
+    return audit
+
+
+_AUDITED = "adoption_denied command_refused_unowned kill_ignored_unowned operator_resolved"
+ACTIONS.update({f"audit_{name}": _audited(name) for name in _AUDITED.split()})
+
+GUARDS.update(
+    dict.fromkeys(
+        "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch"
+        " ret_code_ok_and_has_fills".split(),
+        _deny_guard,
+    )
+)
+register_event_schemas(
+    dict.fromkeys(
+        ("ADOPT", "DISCOVERED", "MISMATCH", "OPERATOR_RESOLVED", "REMOTE_CANCELLED"), _ANY_PAYLOAD
+    )
 )
