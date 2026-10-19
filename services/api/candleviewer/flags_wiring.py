@@ -10,7 +10,9 @@ a lapsed bound, a flag with no row and an override user deleted after the writer
 `StoreUnavailableError`, nothing written; what `prepare` raises reaches the writer as is.
 
 `FeatureFlagsRuntime` is built without I/O: the registry (an unsafe definition refuses boot), the
-maintenance gate (engaged until its flags are read), the composed order-entry gate, and the store:
+maintenance gate (engaged until its flags are read), no order-entry gate until `create_app`
+composes the one that adds the account check (`compose_order_entry_gate`, #837 W3), so none ever
+holds the maintenance check alone, and the store:
 Postgres on the real backend, in memory at the registry defaults on the fake one. `start()` reads
 `flags.read_budget_ms` (500 ms when unset or unreadable; anything but a whole number of ms from 50
 to 2000 refuses boot), ensures every flag's row, reads `audit.lane_journal_first` once (`LaneFlag`)
@@ -53,7 +55,7 @@ from candleviewer.admin.flags.writes import WRITE_AWAIT_TIMEOUT_S, FlagWriter
 from candleviewer.api.step_up_challenge import ChallengeText, quote_label
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import UserRoleStore
-from candleviewer.domain.order_entry import OrderEntryGate
+from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryGate
 from candleviewer.observability import spawn
 from candleviewer.settings import Settings
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -225,7 +227,7 @@ class FeatureFlagsRuntime:
     ) -> None:
         self.registry = default_registry()  # an unsafe definition refuses boot here
         self.gate = MaintenanceGate()
-        self.order_entry_gate = OrderEntryGate(self.gate)
+        self._order_entry_gate: OrderEntryGate | None = None
         self._relational = relational
         self._repository: Callable[[int], FlagRepository]
         if relational is None:  # the fake backend: in memory, at the registry defaults
@@ -238,6 +240,24 @@ class FeatureFlagsRuntime:
         self._poll: asyncio.Task[None] | None = None
         self._build(DEFAULT_READ_BUDGET_MS)
         self.lane_flag = LaneFlag(self)
+
+    @property
+    def order_entry_gate(self) -> OrderEntryGate:
+        """The one order-entry gate, once `compose_order_entry_gate` has built it. Before that there
+        is none to read, so no holder ever takes a gate without the account check (C-2.21)."""
+        if self._order_entry_gate is None:
+            raise RuntimeError("the order-entry gate is not composed yet: create_app composes it")
+        return self._order_entry_gate
+
+    def compose_order_entry_gate(self, *account_checks: OrderEntryCheck) -> OrderEntryGate:
+        """Build the one gate, the maintenance check first and then `account_checks`: once, and
+        never of the maintenance check alone."""
+        if not account_checks:
+            raise ValueError("the order-entry gate needs the account check")
+        if self._order_entry_gate is not None:
+            raise RuntimeError("the order-entry gate is composed once")
+        self._order_entry_gate = OrderEntryGate(self.gate, *account_checks)
+        return self._order_entry_gate
 
     def _build(self, budget_ms: int) -> None:
         store = StorageFlagStore(self._repository(budget_ms), bound_s=write_bound_s(budget_ms))

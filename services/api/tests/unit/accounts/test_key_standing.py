@@ -34,7 +34,6 @@ DISARMED = KeyStanding(False, DisabledReason.ACCOUNT_DISABLED)
 SWITCHED_OFF = KeyStanding(True, DisabledReason.ACCOUNT_DISABLED)
 IP_REFUSED = KeyStanding(True, DisabledReason.KEY_IP_WHITELIST_MISMATCH)
 US = timedelta(microseconds=1)
-POLICY_CODES = {reason.value for reason in DisabledReason}
 
 
 @dataclass
@@ -91,18 +90,26 @@ def test_no_account_has_a_standing_once_the_last_good_read_is_older_than_its_bou
 
 
 @pytest.mark.parametrize("interval_s", [60.0, HOUR])
-@pytest.mark.parametrize("source", ["passed", "inconclusive", "stored"])
+@pytest.mark.parametrize(
+    ("stored", "results"),
+    [
+        pytest.param(T0 - DAY, {KEY: _check("passed")}, id="passed"),
+        pytest.param(
+            T0 - DAY,
+            {KEY: _check("inconclusive", code="timeout", checked_at=T0 + DAY)},
+            id="inconclusive",
+        ),
+        pytest.param(T0, {}, id="stored"),
+    ],
+)
 def test_a_key_is_active_until_exactly_one_interval_plus_the_grace_after_its_last_pass(
-    source: Outcome | str, interval_s: float
+    stored: datetime, results: dict[UUID, KeyCheck], interval_s: float
 ) -> None:
     """SR-E27-18 at admission, on the job's result (an inconclusive check never moves the last
-    pass) or, for a key it holds none for, the stored pass."""
-    stored = T0 if source == "stored" else T0 - DAY  # the job's result wins when it holds one
+    pass) or, for a key it holds none for, the stored pass. Where the job holds a result, the
+    stored pass is a day older, so only the result can keep the key active."""
     standings, job, clock = _world(key_row(ACC, verified_at=stored), interval_s=interval_s)
-    if source == "passed":
-        job.results[KEY] = _check("passed")
-    elif source == "inconclusive":
-        job.results[KEY] = _check("inconclusive", code="timeout", checked_at=T0 + DAY)
+    job.results.update(results)
     clock.wall += timedelta(seconds=interval_s) + FRESHNESS_GRACE
     assert standings.standing(ACC) == ACTIVE
     clock.wall += US
@@ -123,15 +130,34 @@ def test_with_no_self_check_job_the_stored_columns_decide() -> None:
     assert standings.standing(ACC) == KeyStanding(False, DisabledReason.KEY_WITHDRAW_PERMISSION)
 
 
-@pytest.mark.parametrize("rule", list(Rule))
+#: Each rule a failed key carries and the reason it disables the account by: its own when it is a
+#: key-policy one, otherwise `account_disabled`.
+FAILED_RULES = [
+    (Rule.WITHDRAW_PERMISSION, DisabledReason.KEY_WITHDRAW_PERMISSION),
+    (Rule.PERMISSION_NOT_ALLOWED, DisabledReason.KEY_PERMISSION_NOT_ALLOWED),
+    (Rule.NOT_READ_ONLY, DisabledReason.KEY_NOT_READ_ONLY),
+    (Rule.IP_WHITELIST_MISSING, DisabledReason.KEY_IP_WHITELIST_MISSING),
+    (Rule.IP_WHITELIST_MISMATCH, DisabledReason.KEY_IP_WHITELIST_MISMATCH),
+    (Rule.MISSING_SCOPES, DisabledReason.ACCOUNT_DISABLED),
+    (Rule.UID_MISMATCH, DisabledReason.ACCOUNT_DISABLED),
+    (Rule.NOT_UNIFIED, DisabledReason.ACCOUNT_DISABLED),
+    (Rule.WRONG_ENVIRONMENT, DisabledReason.ACCOUNT_DISABLED),
+    (Rule.KEY_EXPIRED, DisabledReason.ACCOUNT_DISABLED),
+    (Rule.PROBE_FAILED, DisabledReason.ACCOUNT_DISABLED),
+]
+
+
+def test_the_failed_rule_table_lists_every_rule_once() -> None:
+    assert sorted(rule for rule, _ in FAILED_RULES) == sorted(Rule)
+
+
+@pytest.mark.parametrize(("rule", "disabled"), FAILED_RULES)
 def test_a_failed_key_is_never_active_and_disables_the_account_by_its_rule_or_as_switched_off(
-    rule: Rule,
+    rule: Rule, disabled: DisabledReason
 ) -> None:
     """As the job disarms the account on every failure (`selfcheck._failed`)."""
     standings, job, _ = _world()
     job.results[KEY] = _check("failed", code=rule.value)
-    policy = rule.value in POLICY_CODES
-    disabled = DisabledReason(rule.value) if policy else DisabledReason.ACCOUNT_DISABLED
     assert standings.standing(ACC) == KeyStanding(False, disabled)
 
 
@@ -192,8 +218,12 @@ def test_a_rejected_credential_refuses_the_next_order_at_once(
     assert standings.standing(ACC) == expected and _reason(standings) == reason
 
 
-def test_every_refusal_has_a_reaction_and_one_with_none_listed_leaves_no_active_key() -> None:
+def test_every_refusal_has_a_reaction() -> None:
     assert set(REACTIONS) == set(Refusal)
+
+
+def test_a_refusal_with_no_reaction_listed_leaves_no_active_key() -> None:
+    """Fail closed: a refusal code added before its reaction is."""
     standings, _, _ = _world()
     standings.credential_rejected(ACC, cast(Refusal, "a_code_added_later"))
     assert standings.standing(ACC) == NO_KEY
@@ -254,14 +284,26 @@ def test_the_later_pass_of_a_key_that_has_failed_since_does_not_clear_a_rejectio
     assert standings.standing(ACC) == DISARMED  # not SWITCHED_OFF: the other key stays held
 
 
-def test_a_rejection_a_later_pass_cleared_is_dropped_and_never_merges_into_the_next() -> None:
+def test_a_rejection_a_later_pass_cleared_never_merges_into_the_next() -> None:
+    """No read runs between the pass and the next rejection: the 403 reason never depends on
+    whether one did."""
     standings, job, clock = _world()
     standings.credential_rejected(ACC, Refusal.IP_NOT_ALLOWED)
     clock.advance(1)
     job.results[KEY] = _check("passed", last_pass=clock.now())
-    assert standings.standing(ACC) == ACTIVE  # cleared, and dropped as it is read
     standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
     assert standings.standing(ACC) == NO_KEY  # without the cleared refusal's disable
+
+
+def test_a_rejection_a_read_found_cleared_stays_dropped_when_that_key_fails() -> None:
+    standings, job, clock = _world(key_row(ACC), key_row(ACC, key=NEW_KEY))
+    standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
+    clock.advance(1)
+    job.results[NEW_KEY] = _check("passed", key=NEW_KEY, last_pass=clock.now())
+    assert standings.standing(ACC) == ACTIVE  # cleared, and dropped as it is read
+    failed = _check("failed", key=NEW_KEY, last_pass=clock.now(), code="key_ip_whitelist_mismatch")
+    job.results[NEW_KEY] = failed
+    assert standings.standing(ACC) == IP_REFUSED  # the other key stays active: nothing revives
 
 
 def test_a_rejection_is_held_before_it_is_logged_so_a_logging_fault_withholds_nothing(
@@ -296,11 +338,11 @@ def test_a_rejection_of_an_unlisted_account_is_logged_by_its_codes_and_dropped()
 
 
 def test_the_rejections_held_are_bounded_by_the_accounts_the_last_read_listed() -> None:
-    """C-2.18: an account that leaves the read takes its fact with it; it is refused while
-    unlisted, and comes back only with a key that passes."""
+    """C-2.18: an account that leaves the read takes its rejection with it and comes back with
+    none, while one the read keeps listing keeps its own."""
     standings, _, _ = _world(key_row(ACC), key_row(ACC_B))
     standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
     standings.credential_rejected(ACC_B, Refusal.UNKNOWN_KEY)
-    standings.observe([key_row(ACC)])
-    assert set(standings._rejections) == {ACC}
-    assert standings.standing(ACC_B) is None
+    standings.observe([key_row(ACC)])  # ACC_B leaves the read
+    standings.observe([key_row(ACC), key_row(ACC_B)])  # and comes back
+    assert (standings.standing(ACC), standings.standing(ACC_B)) == (NO_KEY, ACTIVE)

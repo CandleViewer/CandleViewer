@@ -139,8 +139,9 @@ _REASON_TEXT: Final = {
 _RANK: Final = {UNAVAILABLE: 0, STALE: 0, FAILED: 1}
 #: `last_error_code` holds a fixed code, never text: a rule, a `KeyProbeError` name or a job code.
 _CODE: Final = re.compile(r"[a-z0-9_]{1,40}")
-#: A verdict's codes: one found in `last_error_code` is a standing failure (decision 3 on #836).
-_RULES: Final = frozenset(rule.value for rule in Rule)
+#: A verdict's codes: one found in `last_error_code` is a standing failure (decision 3 on #836),
+#: here and in the order-entry gate's key standing (`accounts.key_standing`, #837 W3).
+STANDING_FAILURE_CODES: Final = frozenset(rule.value for rule in Rule)
 POLICY_VIOLATION: Final = "security.key_policy_violation"
 #: A disarm's code when a rule code would not fit `ea_disarm_code_fmt` (`_CODE`), so that CHECK
 #: never refuses a force-disable (C-2.8).
@@ -476,7 +477,7 @@ class KeySelfCheck:
         key, last_pass, egress = target.key_id, target.verified_at, self._policy.egress_ip
         logger().warning("key_selfcheck_inconclusive", key_id=str(key), code=code)
         prior = self.results.get(key)
-        if prior is None and target.last_error_code in _RULES:
+        if prior is None and target.last_error_code in STANDING_FAILURE_CODES:
             rule = target.last_error_code
             prior = KeyCheck(key, account_id, now, "failed", rule, None, last_pass, egress)
             self.results[key] = prior

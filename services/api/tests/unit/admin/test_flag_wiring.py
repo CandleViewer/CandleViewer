@@ -34,6 +34,7 @@ from candleviewer.api.step_up import StepUpRefused, step_up_port
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import StepUpMismatch, StepUpRequired
 from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES, StepUpChallenge
+from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.settings import Environment, Settings
 from candleviewer.statechart.bindings import b16_session
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -265,7 +266,7 @@ async def test_an_unreadable_setting_at_boot_falls_back_to_the_default(error: Ex
 
 async def test_start_ensures_the_rows_and_the_poll_opens_the_order_gate() -> None:
     runtime, account = _runtime(), uuid.uuid4()
-    refusal = runtime.order_entry_gate.refusal(account)
+    refusal = runtime.gate.refusal(account)
     assert refusal is not None and refusal.reason == "maintenance"  # unknown: engaged
     await runtime.start()
     poll = runtime._poll
@@ -274,10 +275,42 @@ async def test_start_ensures_the_rows_and_the_poll_opens_the_order_gate() -> Non
             if not runtime.gate.engaged:
                 break
             await asyncio.sleep(0)
-        assert runtime.order_entry_gate.refusal(account) is None
+        assert runtime.gate.refusal(account) is None
     finally:
         await runtime.stop()
     assert runtime._poll is None and poll is not None and poll.done()  # cancelled, awaited
+
+
+class _AccountCheck:
+    def refusal(self, account_id: uuid.UUID) -> OrderEntryRefusal | None:
+        return None
+
+
+def test_the_runtime_serves_no_order_entry_gate_until_one_is_composed() -> None:
+    """#837 W3 (C-2.21): before `create_app` composes it there is no gate to take, so no holder
+    ever gets one without the account check."""
+    runtime = _runtime()
+    with pytest.raises(RuntimeError, match="not composed"):
+        _ = runtime.order_entry_gate
+
+
+def test_the_order_entry_gate_is_never_composed_of_the_maintenance_check_alone() -> None:
+    with pytest.raises(ValueError, match="account check"):
+        _runtime().compose_order_entry_gate()
+
+
+def test_the_runtime_serves_the_gate_it_composes_the_maintenance_check_first() -> None:
+    runtime, check = _runtime(), _AccountCheck()
+    gate = runtime.compose_order_entry_gate(check)
+    assert runtime.order_entry_gate is gate and gate.checks == (runtime.gate, check)
+
+
+def test_the_order_entry_gate_is_composed_once() -> None:
+    """So a holder that took the gate always holds the one the runtime serves."""
+    runtime = _runtime()
+    runtime.compose_order_entry_gate(_AccountCheck())
+    with pytest.raises(RuntimeError, match="once"):
+        runtime.compose_order_entry_gate(_AccountCheck())
 
 
 async def test_a_write_runs_the_gate_then_the_push_then_the_effects(

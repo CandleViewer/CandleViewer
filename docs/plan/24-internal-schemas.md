@@ -1467,11 +1467,39 @@ fills an account slot of `OrderEntryGate(maintenance, *account_checks)`, after t
 maintenance check. It reads only in-memory state, never an interpreter or the network, and
 refuses with the first of:
 
-1. `account_disabled_by_policy`: the key verifier (E27-T03) disabled the account, for a closed
-   `DisabledReason`;
-2. `no_active_key`: the account has no verified active key, or its standing is unknown;
+1. `account_disabled_by_policy`: the account is switched off or its trading is not armed
+   (`trading_enabled` false, as the self-check's force-disable leaves it), one of its keys failed
+   a rule of the key verifier (E27-T03: by the rule's own reason when it is a key-policy one,
+   otherwise `account_disabled`, as the self-check disarms the account on every failure), or a
+   signed call's credential was refused with `permission_denied` or `ip_not_allowed` (§8.6); each
+   is a closed `DisabledReason`;
+2. `no_active_key`: no usable key of the account (`active` or `rotating`) has a recorded pass
+   inside the self-check's window, a signed call's credential was refused as unknown or expired
+   (§8.6), or its standing is unknown (the last good tracking read did not list the account, or
+   is older than `TRACKING_FAULT_AFTER_S`, 60 s);
 3. `account_unhealthy`: the account is not `healthy` or `degraded` (it is `down`, unmonitored, or
    in a state this check does not list), derived from its evidence on every read.
+
+The key standing (`candleviewer.accounts.key_standing`, #837 W3) answers the first two from memory,
+over the accounts and usable keys of the account-health tracking read (every 15 s). Once its last
+good read is older than `TRACKING_FAULT_AFTER_S` (60 s) on the monotonic clock, it refuses every
+account, so reads that keep failing never admit on a frozen list. That is also the tracking loop's
+fault threshold, but `/readyz` reports the loop degraded only at its fourth failed pass in a row:
+at those same 60 s when reads fail at once, up to about 100 s after the last good read when each
+read hangs to its 10 s timeout. The gate refuses first, the safe direction. Freshness is the
+self-check's own rule, `selfcheck.is_fresh` (one interval plus 15 minutes, SR-E27-18), at each
+read, so a stalled check job cannot keep a key active. A rejected credential refuses the next
+order at once, held before it is logged, reported by the signed call that met it (the wallet
+reconciliation now; the submit pipeline's §8.6 branch with #913, which owns the durable reaction).
+Only a later recorded pass of one of the account's keys clears it, never health evidence, and
+never a pass the standing knew when it arrived. A check already in flight then, dated after it by
+a wall-clock step back, can clear it once, until the next signed call meets the refusal again:
+the residual accepted under Option A. A restart forgets it, and the boot self-check judges the key
+afresh. The routes that switch an account off, delete it or revoke a key (#898, E27-S04) must tell
+the standing synchronously, before they return, as `credential_rejected` does, so the next order
+is refused without waiting for the next read; a tracking read already in flight then must not
+undo it. `create_app` builds the one gate, `OrderEntryGate(maintenance, account_check)`, so every
+caller of it reads the account check.
 
 Each reason has one fixed `detail` sentence. It never names an id, a secret, exchange-supplied
 text or the key-policy rule that failed: the 403 also reaches callers without `keys:read`, so that
