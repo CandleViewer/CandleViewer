@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, useLayoutEffect, type JSX } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { composeStory } from "@storybook/react-vite";
+import { composeStory, type Decorator } from "@storybook/react-vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import preview from "../../.storybook/preview.js";
 
@@ -81,6 +81,31 @@ describe("Storybook preview", () => {
     expect(surface()).toEqual(["var(--color-surface-app)", "var(--color-text-primary)"]);
     await act(async () => roots[1]?.unmount());
     expect(surface()).toEqual(["", ""]);
+  });
+
+  it("paints a docs page's inline story on its own root and leaves the page's body alone", async () => {
+    // composeStory renders in the story view; an outermost decorator puts the chain in docs mode,
+    // as a docs page's inline story is (Storybook's renderStoryToElement).
+    const asDocs: Decorator = (Inner) => <Inner viewMode="docs" />;
+    const decorators = [preview.decorators ?? []].flat();
+    const Story = composeStory(
+      { render: () => <Probe /> },
+      { title: "Foundations/Probe" },
+      { ...preview, decorators: [...decorators, asDocs] },
+    );
+    const host = await show(Story);
+    const surface = host.querySelector("p")?.parentElement;
+    expect(surface?.parentElement).toBe(host); // the wrapper is the story's root element
+    expect([surface?.style.backgroundColor, surface?.style.color]).toEqual([
+      "var(--color-surface-app)",
+      "var(--color-text-primary)",
+    ]);
+    const { style } = document.body;
+    expect([style.getPropertyValue("background-color"), style.getPropertyValue("color")]).toEqual([
+      "",
+      "",
+    ]);
+    expect(mounts).toBe(1);
   });
 
   it("fails a story on serious and critical axe violations, never on moderate or minor", () => {

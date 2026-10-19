@@ -128,7 +128,8 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 - Organisation: titles sit under a catalogue band (`Atoms/` .. `ChartEngine/`, see catalogue
   §0.3 rule 8) or `Foundations/`; the `candleviewer/story-title-bands` lint rule fails any other.
   The Theme, Density and Motion toolbars drive the E05-T02 runtime; decorators paint the canvas with
-  `surface.app` and count story mounts (`<output aria-label="Mount count" hidden>`).
+  `surface.app` (on a docs page, a wrapper around each inline story) and count story mounts
+  (`<output aria-label="Mount count" hidden>`).
 - Hosting: internal only, never an internet-reachable host (Pages, a public bucket, a preview
   service). The publish to the Tailscale-only internal host is E05-T09's.
 
