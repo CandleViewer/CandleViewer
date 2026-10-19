@@ -6,6 +6,8 @@ meta-tests can drive each one directly. See `electron_hardening_gate.py` for the
 
 from __future__ import annotations
 
+import itertools
+import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -469,19 +471,284 @@ def check_preload(preload_js: str, allow_list_js: str, main_js: str) -> list[Vio
     return vs
 
 
-def check_packaging(builder_config_text: str) -> list[Violation]:
-    """SR-116: source maps are not shipped to production users."""
-    if re.search(
-        r"^\s*-\s*[\"']?!\*\*/\*\.map[\"']?\s*$", builder_config_text, re.MULTILINE
-    ):
-        return []
-    return [
-        Violation(
-            "SR-116",
-            "electron-builder.yml",
-            "files must exclude source maps ('!**/*.map') from the packaged artefact",
+# SR-116 / SR-174: electron-builder's packaging lists, the pattern that keeps source maps out,
+# and where the packaged main process reads the web app (index.ts resolves
+# dist/main/../../../web/dist from inside app.asar, which is <resources>/web/dist).
+PACKAGING_KEYS = ("files", "extraResources", "extraFiles")
+MAP_EXCLUSION = "!**/*.map"
+WEB_DIST_TO = "web/dist"
+_ITEM = re.compile(r"( *)- +(.*)")
+_FIELD = re.compile(r"( *)(\w+):(?: +(.*))?")
+# A list item or a plain `key:` line. js-yaml also reads tagged (`!!str key:`), quoted or
+# escaped, explicit (`? key`) and `key :` keys, which the gate would not see.
+_LINE = re.compile(r" *(?:-(?:[ \t].*)?|[A-Za-z_][\w-]*:(?:[ \t].*)?)", re.ASCII)
+# A line's head before its value (list dashes, a plain `key:`), and the value tokens that
+# open or close a quoted scalar or flow sequence, open a flow mapping or start a comment.
+_HEAD = re.compile(r" *(?:-[ \t]+)*(?:-$|[A-Za-z_][\w-]*:(?:[ \t]+|$))?", re.ASCII)
+_TOKEN = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^']|'')*'|[\"'\[\]{]|[ \t]#")
+# Control characters other than tab and LF (CRLF is read as LF), U+2028, U+2029, BOM:
+# str.splitlines() breaks lines on some that js-yaml reads as text, js-yaml on a lone CR
+# and js-yaml drops a leading BOM (refused here by name, not as an unreadable line).
+_BREAKS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ufeff]")
+# Plain scalars YAML does not read as a string: a boolean, null, number, date or mapping.
+_NOT_STRING = re.compile(
+    r"(?i)true|false|yes|no|on|off|null|\.?\d.*|\.inf|\.nan|.*:(\s.*)?"
+)
+# A path that names a .map file as electron-builder reads it ('\' is '/', no trailing
+# separator) and as Windows does (no trailing dot or space; ':' opens an NTFS stream).
+_MAP_FILE = re.compile(r"(?i)\.map[. ]*(?::[^/]*)?$")
+# What electron-builder expands or resolves before it uses a pattern or a path: a ${...}
+# macro, or a '..' segment ('\' separates too).
+_UNSAFE = re.compile(r"\$\{|(?:^|[/\\])\.\.(?:[/\\]|$)")
+# The served root below each list's destination: <resources> for extraResources, the
+# install folder (mac: Contents) for extraFiles; files copies into the app folder.
+_SERVED = {"extraResources": WEB_DIST_TO, "extraFiles": "resources/" + WEB_DIST_TO}
+# A normalised `to` the gate can compare with that root: '.' or names of ASCII letters,
+# digits, '.', '_' and '-' that do not end in '.'. Others may name it on disk: win and mac
+# fold case past ASCII, win drops a name's trailing dots and spaces and has 8.3 aliases.
+_PLAIN_TO = re.compile(r"\.|[\w.-]*[\w-](?:/[\w.-]*[\w-])*", re.ASCII)
+
+
+def _uncomment(text: str) -> str:
+    return re.sub(r"(?:^|[ \t])#.*", "", text).strip(" \t")
+
+
+def _closed(line: str) -> bool:
+    """False when a line's value goes on past it or could: a quoted scalar or flow sequence
+    left open (js-yaml reads the next lines into it), a tag, anchor or explicit key, or a
+    flow mapping (keys the gate does not read). A plain or block scalar cannot take in a
+    column-0 key, and _block_list holds a packaging list's lines to their columns."""
+    v, depth = _HEAD.sub("", line, count=1).strip(" \t"), 0
+    if v[:1] in ("!", "&", "?", "{"):
+        return False
+    if v[:1] not in ('"', "'", "["):
+        return True
+    for m in _TOKEN.finditer(v):
+        if m[0] in ('"', "'", "{") or m[0].endswith("#"):
+            return False
+        depth += (m[0] == "[") - (m[0] == "]")
+        if depth == 0:
+            return re.fullmatch(r"(?:[ \t]+#.*)?", v[m.end() :]) is not None
+    return False
+
+
+def _scalar(text: str) -> str | None:
+    """One plain or quoted YAML string; None for anything else (escapes, flow, anchors)."""
+    m = re.fullmatch(r"\"([^\"\\]*)\"|'([^']*)'|([\w./$][^#]*)", _uncomment(text))
+    if m is None or _NOT_STRING.fullmatch(m[3] or ""):
+        return None
+    return next(g for g in m.groups() if g is not None)
+
+
+def _block_list(lines: list[str]) -> list[Any] | str:
+    """A block list of patterns and of {from, to, filter} entries, or why it is unreadable."""
+    items: list[Any] = []
+    top = len(lines[0]) - len(lines[0].lstrip(" ")) if lines else 0
+    # fcol: the column of the open filter's items (-1: none yet, -2: no filter open). YAML
+    # puts a list's items in one column; js-yaml reads a deeper `- ` into a plain item.
+    key_col, fcol = -1, -2
+    for line in lines:
+        col, item = len(line) - len(line.lstrip(" ")), _ITEM.fullmatch(line)
+        if item and col == top:
+            rest = item.group(2)
+            if _FIELD.fullmatch(rest) is None:
+                if (value := _scalar(rest)) is None:
+                    return f"unreadable item {rest.strip()!r}"
+                items.append(value)
+                key_col = -1
+                continue
+            items.append({})
+            key_col = col = len(line) - len(rest)
+            line, item = " " * col + rest, None
+        entry = items[-1] if items and isinstance(items[-1], dict) else None
+        field = _FIELD.fullmatch(line)
+        if entry is not None and field and col == key_col:
+            key, raw = field.group(2), _uncomment(field.group(3) or "")
+            if key not in ("from", "to", "filter") or key in entry:
+                return f"unexpected field {key!r}"
+            fcol = -1 if key == "filter" and raw == "" else -2
+            val = list[str]() if fcol == -1 or raw == "[]" else _scalar(raw)
+            if val is None:
+                return f"unreadable {key} value {raw!r}"
+            entry[key] = [val] if key == "filter" and isinstance(val, str) else val
+        elif entry is not None and item and fcol in (-1, col) and col >= key_col:
+            fcol = col
+            if (value := _scalar(item.group(2))) is None:
+                return f"unreadable filter pattern {item.group(2).strip()!r}"
+            entry["filter"].append(value)
+        else:
+            return f"unreadable line {line.strip()!r}"
+    return items
+
+
+def _packaging_lists(lines: list[str]) -> dict[str, list[Any] | str]:
+    """The top-level PACKAGING_KEYS of electron-builder.yml, each as its list or as the
+    reason it cannot be read."""
+    out: dict[str, list[Any] | str] = {}
+    for i, line in enumerate(lines):
+        m = re.fullmatch(r"(files|extraResources|extraFiles):(?:[ \t](.*))?", line)
+        if m is None:
+            continue
+        key, value = m.group(1), _uncomment(m.group(2) or "")
+        block = list(itertools.takewhile(lambda ln: ln[0] in " \t-", lines[i + 1 :]))
+        if key in out or (value and block):
+            out[key] = "declared twice" if key in out else "a value and a block"
+        elif re.fullmatch(r"\[[ \t]*\]", value):
+            out[key] = []
+        elif value:
+            scalar = _scalar(value)
+            out[key] = [scalar] if scalar is not None else f"unreadable value {value!r}"
+        else:
+            out[key] = _block_list(block)
+    return out
+
+
+def _excludes_maps(patterns: list[str]) -> bool:
+    """True when ordered patterns leave out every .map file. electron-builder applies them in
+    order (minimatch: an odd count of leading '!' excludes) and an include re-adds what it
+    matches, so after the last MAP_EXCLUSION only exclusions may follow. It normalises each
+    pattern first, so they may hold no macro or '..' either: '!${env.X}' or '!x/../**/*.map'
+    can become an include."""
+    if MAP_EXCLUSION not in patterns:
+        return False
+    tail = patterns[len(patterns) - patterns[::-1].index(MAP_EXCLUSION) :]
+    return all(
+        (len(p) - len(p.lstrip("!"))) % 2 == 1 and not _UNSAFE.search(p) for p in tail
+    )
+
+
+def _serves(to: object, root: str | None) -> bool:
+    """True when `to` could write into the served root, `root` below its list's destination
+    (None: not below it): at, inside or above it (absent or empty: the destination), or not
+    _PLAIN_TO once '\\' is '/' and normalised (an absolute, drive, '..' or ${...} path among
+    them); case is ignored, as on win and mac."""
+    t = posixpath.normpath(str(to or ".").replace("\\", "/"))
+    if not _PLAIN_TO.fullmatch(t):
+        return True
+    t, r = t.lower() + "/", f"{root}/"
+    return root is not None and (t == "./" or t.startswith(r) or r.startswith(t))
+
+
+def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violation]:
+    """SR-116: no source map is packaged. SR-174: the web dist is the packaged asset root.
+
+    Reads the top-level files, extraResources and extraFiles of electron-builder.yml as a
+    small YAML subset (block lists of plain or escape-free quoted patterns and of
+    {from, to, filter} entries, or `[]`). Other forms fail closed: these keys anywhere else
+    (a platform section adds to them), `extends`, and any line that is not a comment, a list
+    item or a plain `key:` (_LINE). A list's patterns and each entry's filter must leave out
+    every .map file (_excludes_maps); no filter, or an empty or absent `files`, packages
+    everything, and an entry whose `from` is one file is copied whatever its filter says.
+    One item only may write into <resources>/web/dist, the root the packaged app:// handler
+    serves, or above it: the extraResources copy of the web dist this gate scanned to
+    web/dist (`from` resolves against the config's directory, the project directory of
+    build:installer). extraResources and extraFiles patterns, an absent `to` and a `to` the
+    gate cannot place all count (_serves). Not seen: a ${...} `from` that names one .map
+    file, and files a build hook copies. Lines are split on LF, as js-yaml splits them;
+    also refused: another line break or control character but tab (_BREAKS), a value
+    that goes on past its line (_closed) and a list item off its list's column.
+    """
+    subject = "electron-builder.yml"
+    text = text.replace("\r\n", "\n")
+    if brk := _BREAKS.search(text):
+        n = text.count("\n", 0, brk.start()) + 1
+        msg = (
+            f"cannot read line {n}: it holds U+{ord(brk[0]):04X}; the gate reads lines "
+            "split on LF (or CRLF): use no BOM, no other line break and no control "
+            "character but tab"
         )
-    ]
+        return [Violation("SR-116", subject, msg)]
+    vs: list[Violation] = []
+    # js-yaml's lines (YAML blanks are spaces and tabs), less blank and comment lines.
+    lines = [ln for ln in text.split("\n") if not re.match(r"[ \t]*(?:#|$)", ln)]
+    body = "\n".join(lines)
+    bad = [ln for ln in lines if not _LINE.fullmatch(ln) or not _closed(ln)]
+    if bad:
+        msg = (
+            f"cannot read line {bad[0].strip()!r}: use a list item or a plain 'key:' "
+            "line whose value ends on it, with no tag, anchor, explicit key or flow mapping"
+        )
+        vs.append(Violation("SR-116", subject, msg))
+    if re.search(r"(?m)^extends:", body):
+        msg = "the gate does not follow 'extends': declare the packaging lists here"
+        vs.append(Violation("SR-116", subject, msg))
+    keys = r"(files|extraResources|extraFiles)[\"']?[ \t]*:"
+    nested = re.findall(r"(?m)(?:^[ \t]+[\"']?|^[\"']|[{,][ \t]*[\"']?)" + keys, body)
+    if nested:
+        msg = (
+            f"{sorted(set(nested))} outside the top level (a platform section, a flow "
+            "mapping or a quoted key) is not checked; declare it at the top level"
+        )
+        vs.append(Violation("SR-116", subject, msg))
+    lists = _packaging_lists(lines)
+    writers = 0
+    for key in PACKAGING_KEYS:
+        items = lists.get(key) or (["**/*"] if key == "files" else [])
+        if isinstance(items, str):
+            msg = f"cannot read {key}: {items}; use a block list (see check_packaging)"
+            vs.append(Violation("SR-116", subject, msg))
+            continue
+        patterns = [p for p in items if isinstance(p, str)]
+        entries = [e for e in items if isinstance(e, dict)]
+        writers += key in _SERVED and bool(patterns)
+        writers += sum(_serves(e.get("to"), _SERVED.get(key)) for e in entries)
+        sets = [(f"{key} patterns", patterns)] if patterns else []
+        sets += [
+            (f"{key} entry from {e.get('from')!r}", e.get("filter", []))
+            for e in entries
+        ]
+        for label, pats in sets:
+            if not _excludes_maps(pats):
+                msg = (
+                    f"{label} could package source maps: end its patterns with "
+                    f"'{MAP_EXCLUSION}', with no include, ${{...}} or '..' after it"
+                )
+                vs.append(Violation("SR-116", subject, msg))
+        for e in entries:
+            names = [v for v in (e.get("from"), e.get("to")) if isinstance(v, str)]
+            norm = (posixpath.normpath(v.replace("\\", "/")) for v in names)
+            if any(_MAP_FILE.search(v) for v in norm):
+                msg = (
+                    f"{key} entry from {e.get('from')!r} copies a .map file: an entry "
+                    "whose from is one file is copied whatever its filter says"
+                )
+                vs.append(Violation("SR-116", subject, msg))
+    resources = lists.get("extraResources", [])
+    if isinstance(resources, list) and (
+        writers != 1
+        or not any(
+            isinstance(e, dict)
+            and isinstance(e.get("from"), str)
+            and isinstance(e.get("to"), str)
+            and (config_dir / e["from"]).resolve() == web_dist.resolve()
+            and posixpath.normpath(e["to"]) == WEB_DIST_TO
+            for e in resources
+        )
+    ):
+        msg = (
+            f"extraResources must copy the web dist this gate scanned ({web_dist}) to "
+            f"'{WEB_DIST_TO}', the asset root the packaged app:// handler serves, and "
+            "nothing else may write there or above it: give every other entry a relative "
+            "`to` outside it, of ASCII letters, digits and . _ - with no name ending in "
+            "'.', and use no extraResources or extraFiles patterns"
+        )
+        vs.append(Violation("SR-174", subject, msg))
+    return vs
+
+
+def check_asset_root(index_js: str) -> list[Violation]:
+    """SR-174: the app:// handler reads the root check_packaging puts the web dist at: from
+    <resources>/app.asar/dist/main, ../../../web/dist (one createDistReader call)."""
+    root = posixpath.join("../../..", WEB_DIST_TO)
+    resolve = r"\b(\w+) = path\.resolve\(__dirname, ([\"'])" + re.escape(root) + r"\2\)"
+    m = re.search(resolve, index_js)
+    if m and re.findall(r"\bcreateDistReader\(([^)]*)\)", index_js) == [m[1]]:
+        return []
+    msg = (
+        f"the app:// handler must read one root, path.resolve(__dirname, '{root}'): "
+        f"electron-builder.yml copies the web dist to '{WEB_DIST_TO}'; change both together"
+    )
+    return [Violation("SR-174", "dist/main/index.js", msg)]
 
 
 def extract_meta_csp(html: str) -> str | None:
@@ -672,5 +939,14 @@ def run_all_checks(
         _read(desktop_dist / "preload" / "allowList.js"),
         main_js,
     )
-    vs += check_packaging(_read(builder_config))
+    vs += check_asset_root(_read(desktop_dist / "main" / "index.js"))
+    # Bytes, so a CR reaches check_packaging (read_text would turn it into LF).
+    config = builder_config.read_bytes() if builder_config.is_file() else b""
+    try:
+        text = config.decode("utf-8")
+    except UnicodeDecodeError as e:
+        n = config.count(b"\n", 0, e.start) + 1
+        msg = f"cannot read line {n}: it holds a byte that is not UTF-8"
+        return [*vs, Violation("SR-116", "electron-builder.yml", msg)]
+    vs += check_packaging(text, builder_config.parent, web_dist)
     return vs

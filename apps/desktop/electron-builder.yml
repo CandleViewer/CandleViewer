@@ -6,7 +6,15 @@ directories:
 files:
   - dist/**/*
   - "!**/*.map"
-extraResources: []
+# The web app the app:// handler serves from <resources>/web/dist (#3518). `from` is relative
+# to this package, and electron-builder only warns if it is missing: build apps/web first.
+# Source maps stay out (SR-116); the electron-hardening gate checks both (check_packaging).
+extraResources:
+  - from: ../web/dist
+    to: web/dist
+    filter:
+      - "**/*"
+      - "!**/*.map"
 # Real signing/notarization config, auto-update feed and platform targets
 # are added in E10 once the release pipeline (ADR-0013) is decided.
 win:
