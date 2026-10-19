@@ -5,6 +5,7 @@ that each read, record, submit and restore joins in order."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, cast
 from uuid import UUID
@@ -24,6 +25,20 @@ HANG: Final = object()  # an answer that never comes
 BOUND: Final = 2.0  # seconds, a safety net only: no test waits on it when the guard is right
 Trail = list[str]
 Job = tuple[ports.JobKind, UUID, ports.JobWork, ports.JobDone, ports.Settled]
+#: The precondition matrix (`test_precondition_matrix`, unit and Postgres): each state's answer.
+MAINTENANCE: Final[Mapping[str, object]] = {"on": True, "off": False, "unknown": None}
+POSITIONS: Final[Mapping[str, object]] = {"none": 0, "two": 2, "unknown": None}
+
+
+def expected(maintenance: str, positions: str, ack_open: bool, ack_unknown: bool) -> str:
+    """The contract's answer: `accepted`, the refusing rule, or `503` (raised)."""
+    if maintenance != "on":
+        return "maintenance_mode_required" if maintenance == "off" else "503"
+    if positions == "unknown" and not ack_unknown:
+        return "positions_unknown"
+    if positions == "two" and not ack_open:
+        return "open_positions_unacknowledged"
+    return "accepted"
 
 
 @dataclass(frozen=True, slots=True)

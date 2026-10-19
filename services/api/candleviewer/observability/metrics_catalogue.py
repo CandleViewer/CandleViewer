@@ -2398,8 +2398,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "restores",
         ("result",),
-        "Restores by result: refused (a precondition failed, no job created), succeeded, failed or "
-        "cancelled.",
+        "Restores by result: refused (a precondition failed or could not be evaluated; no job "
+        "created), succeeded, failed or cancelled.",
         "dashboard only; refused counts refusals, which create no job (#966 Q17)",
         _L,
         "E42",

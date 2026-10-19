@@ -47,8 +47,8 @@ verify_failures_total = Counter(
 )
 restore_jobs_total = Counter(
     "cv_restore_jobs_total",
-    "Restores by result: refused (a precondition failed, no job created), succeeded, failed or "
-    "cancelled.",
+    "Restores by result: refused (a precondition failed or could not be evaluated; no job "
+    "created), succeeded, failed or cancelled.",
     ["result"],
 )
 _RESTORES: Final = {result: restore_jobs_total.labels(result) for result in RESTORE_RESULTS}
