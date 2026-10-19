@@ -1,0 +1,6 @@
+# The spike tests use pytest asserts (S101), as services/api/tests/** does in pyproject.toml.
+extend = "../../../pyproject.toml"
+src = ["../../.."]
+
+[lint.extend-per-file-ignores]
+"*.py" = ["S101"]
