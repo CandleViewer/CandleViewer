@@ -41,6 +41,7 @@ Status values: `decided` (binding now), `proposed` (decision deadline stated ins
 | [ADR-0035](ADR-0035-replay-source-and-seek.md)                    | Replay source tier, read-ahead and seek strategy (E26-K01; ticket said ADR-0018, taken)                                       | **proposed** (finalised in E26-T07; owner approval pending)                                 |
 | [ADR-0036](ADR-0036-dev-only-account-fixture-transport.md)        | Dev-only account-fixture transport (`CV_ACCOUNT_FIXTURE`) and its fence (#2893)                                               | **proposed** (orchestrator rulings 2026-10-16; owner ratification pending)                  |
 | [ADR-0037](ADR-0037-journal-first-audit-lane.md)                  | Journal-first audit lane for auth and risk-reducing records (EX-07 exit, #3009)                                               | **accepted (interim)** (main-orchestrator 2026-10-17; owner ratification due before S3)     |
+| [ADR-0038](ADR-0038-desktop-backend-connection.md)                | Desktop shell to backend: address, `app://` allowed origin, CORS and the CSRF token path (#3519)                              | **proposed** (owner decisions D1–D7 due before S0 or S1 merges, whichever is first)         |
 
 ## Writing a new ADR
 
