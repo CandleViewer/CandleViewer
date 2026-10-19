@@ -51,6 +51,7 @@ _STEPS = (
     "workspaces_purge_task",
     "incidents_purge_task",
     "incidents_open_gauge",
+    "users_purge_task",
     "scrub_task",
     "audit_verify_job",
     "admin_jobs",
@@ -72,6 +73,7 @@ _ALERT_TASKS = {
     "workspaces_purge_task": "WorkspacesPurgeTask",
     "incidents_purge_task": "IncidentsPurgeTask",
     "incidents_open_gauge": "OpenIncidentsGauge",
+    "users_purge_task": "UsersPurgeTask",
 }
 
 

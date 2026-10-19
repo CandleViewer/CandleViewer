@@ -352,6 +352,7 @@ from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSo
 from candleviewer.storage.repositories.sessions_sqlalchemy import (
     SqlAlchemySessionRepository,
 )
+from candleviewer.storage.repositories.user_purge_sqlalchemy import SqlAlchemyUserPurgeStore
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import (
     SqlAlchemyUserAdminStore,
@@ -368,6 +369,7 @@ from candleviewer.storage.retention.kline_boundary import (
 from candleviewer.storage.retention.policy import RetentionPolicy, RetentionRule
 from candleviewer.storage.retention.rule_prune import RulePruneTask
 from candleviewer.storage.retention.schedule import RetentionSchedule
+from candleviewer.storage.retention.users_purge_tasks import UsersPurgeTask
 from candleviewer.storage.retention.workspaces_tasks import (
     USER_BUCKETS,
     WorkspacesMetrics,
@@ -707,6 +709,22 @@ def _build_incidents_purge(settings: Settings) -> IncidentsPurgeTask | None:
     )
     return IncidentsPurgeTask(
         SqlAlchemyIncidents(relational), RetentionSchedule.from_settings(settings)
+    )
+
+
+def _build_user_purge(
+    settings: Settings, audit: AuditHandle, clock: Callable[[], datetime] | None
+) -> SqlAlchemyUserPurgeStore | None:
+    """E42-T10 (#2650): the deferred PII purge's store, which `DELETE /users/{userId}?purge=true`
+    schedules on (`users.delete` ahead) and the reaper runs from (`users.anonymise` ahead); `None`
+    on the fake backend, where `?purge=true` answers 501. `clock` is the app's, as the disable
+    cascade's. No I/O here: the engine connects lazily."""
+    if settings.storage_backend != "real":
+        return None
+    return SqlAlchemyUserPurgeStore(
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "user-purge"),
+        audit=_LazyAuditEmitter(audit),
+        clock=clock or (lambda: datetime.now(UTC)),
     )
 
 
@@ -1575,6 +1593,14 @@ def create_app(
             clock=auth_clock,
         )
     app.state.user_disable = user_disable
+    # E42-T10 (#2650): `?purge=true` schedules on the store the reaper runs from; the lifespan
+    # starts the reaper when retention is enabled. Both `None` on the fake backend.
+    user_purge = _build_user_purge(resolved, ctx.audit, auth_clock)
+    app.state.users_purge_task = (
+        None
+        if user_purge is None
+        else UsersPurgeTask(user_purge, RetentionSchedule.from_settings(resolved))
+    )
     # E42-T03: the feature-flag runtime (store, service, writer, push, maintenance); its maintenance
     # gate is the first check of the shared order-entry gate composed below; the lifespan starts it.
     feature_flags = build_feature_flags(
@@ -1632,6 +1658,7 @@ def create_app(
             account_access=account_access_store,
             access_service=access_service,
             user_disable=user_disable,
+            user_purge=user_purge,
         )
     )
     app.include_router(

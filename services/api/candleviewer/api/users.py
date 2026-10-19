@@ -26,9 +26,10 @@ it alone decides an elevated caller.
 
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
-lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key is 422, S7;
-`purge=true` is E42-T10's: 400 until it serves it), then the change. `user_disable=None` fails
-closed with 501. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
+lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key is 422, S7),
+then the change; with `purge=true` the purge's schedule follows it (E42-T10, `_schedule_purge`).
+`user_disable=None` fails closed with 501, and so does `purge=true` with `user_purge=None`, before
+anything changes. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
 (`make_read_only_guard`) answers an un-elevated caller first, so this order is the second line: it
 alone decides an elevated caller.
 
@@ -107,6 +108,12 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserPrecondition,
     UserUpdate,
     UserUpdateAudit,
+)
+from candleviewer.storage.repositories.user_purge import (
+    PurgeAuditUnavailableError,
+    PurgeSchedule,
+    PurgeUserNotDisabledError,
+    PurgeUserNotFoundError,
 )
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
@@ -222,6 +229,20 @@ class UserDisable(Protocol):
         acknowledge_unknown_positions: bool = False,
         precondition: UserPrecondition | None = None,
     ) -> DisableResult: ...
+
+
+class UserPurge(Protocol):
+    """`SqlAlchemyUserPurgeStore.schedule` (E42-T10 S14): a disabled user's purge 90 days out on
+    the injected clock, `users.delete` written ahead; a repeat keeps the first date."""
+
+    async def schedule(
+        self,
+        user_id: uuid.UUID,
+        *,
+        actor_user_id: uuid.UUID,
+        request_id: uuid.UUID | None = None,
+        session_id: uuid.UUID | None = None,
+    ) -> PurgeSchedule: ...
 
 
 class PermissionChangeNotifier(Protocol):
@@ -440,6 +461,37 @@ async def _push_roles(notifier: PermissionChangeNotifier, user_id: uuid.UUID) ->
         _roles_pushed(user_id, "ok")
 
 
+async def _schedule_purge(
+    purge: UserPurge, user_id: uuid.UUID, actor: uuid.UUID, session: uuid.UUID
+) -> Response:
+    """E42-T10 S14, once the disable has committed: the purge, `users.delete` ahead (R5), naming
+    the session that stepped up. The disable is its own audited change and stays if this step is
+    refused, as the refusal says; a retry is the disable's no-op (AC5), then this step."""
+    rid = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
+    try:
+        await purge.schedule(
+            user_id,
+            actor_user_id=actor,
+            request_id=uuid.UUID(rid) if rid else None,
+            session_id=session,
+        )
+    except PurgeUserNotFoundError:
+        return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+    except PurgeUserNotDisabledError:  # a re-enable won the race: nothing scheduled
+        return _registered(ErrorCode.CONFLICT, 409, "the user is no longer disabled; no purge")
+    except PurgeAuditUnavailableError:
+        detail = "the user is disabled, but its purge was not scheduled: the audit record could "
+        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail + "not be written; retry")
+    except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
+        if not is_storage_outage(exc):
+            raise
+        _log().error(
+            "user purge store unavailable", error=type(exc).__name__, target_user_id=str(user_id)
+        )
+        return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+    return Response(status_code=204)
+
+
 def make_users_router(
     store: UserRoleStore | None,
     emitter: _Emitter,
@@ -450,6 +502,7 @@ def make_users_router(
     account_access: AccountAccessStore | None = None,
     access_service: AccountAccessService | None = None,
     user_disable: UserDisable | None = None,
+    user_purge: UserPurge | None = None,
 ) -> APIRouter:
     """`emitter` and `notifier` are mandatory: a role change without an
     audit record (C-2.9) or without a live-socket re-evaluation is refused
@@ -717,11 +770,11 @@ def make_users_router(
             return refusal
         acknowledged = _flag(request, "acknowledge_unknown_positions")
         purge = _flag(request, "purge")
-        if acknowledged is None or purge is None or purge:  # purge=true is E42-T10's (S14)
-            detail = "purge is not available yet"
-            if not purge:
-                detail = "acknowledge_unknown_positions and purge are each true or false"
+        if acknowledged is None or purge is None:
+            detail = "acknowledge_unknown_positions and purge are each true or false"
             return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
+        if purge and user_purge is None:  # E42-T10: no purge store wired, so nothing is disabled
+            return _problem(501, "not_implemented", "Not implemented", "no purge store wired")
         try:
             await user_disable.disable(
                 user_id, actor=principal, acknowledge_unknown_positions=acknowledged
@@ -737,6 +790,8 @@ def make_users_router(
                 target_user_id=str(user_id),
             )
             return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        if purge and user_purge is not None:  # E42-T10 S14: then the purge, 90 days out
+            return await _schedule_purge(user_purge, user_id, principal.user_id, gate)
         return Response(status_code=204)
 
     return router

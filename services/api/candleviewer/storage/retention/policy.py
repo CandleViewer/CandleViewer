@@ -103,3 +103,6 @@ WORKSPACES_SOFT_DELETE_DAYS = 90
 #: `incidents` (21 Sec.7): a `resolved` row is dropped this many months after its `last_seen_at`
 #: (the `system_events` total horizon); open and acknowledged rows are kept (E42-T05).
 INCIDENTS_RESOLVED_MONTHS = 24
+#: A user deleted with `?purge=true` is anonymised this many days after the delete (E42-T10,
+#: US-ADMIN-001, #965 O6): `users.purge_after` is the delete's time plus this window.
+USERS_PURGE_AFTER_DAYS = 90
