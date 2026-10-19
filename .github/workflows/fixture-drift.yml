@@ -58,6 +58,18 @@ jobs:
           uv run --project services/api python tools/fixtures/drift_check.py
           --sample "$RUNNER_TEMP/sample" --report "$RUNNER_TEMP/drift.txt"
 
+      - name: Keep the redacted sample for triage (#3447)
+        # capture_fixture.py redacts every frame and aborts on a leftover secret pattern, and the
+        # sample is public market data. A corpus refresh can copy frames from here when the
+        # recording machine cannot reach the public stream itself.
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fixture-drift-sample
+          path: ${{ runner.temp }}/sample/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Hand the drift report to the issue job (R6)
         id: handoff
         if: failure()
