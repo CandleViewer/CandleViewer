@@ -18,7 +18,7 @@ from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import Metrics
 from candleviewer.settings import Settings
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
-from tests.unit.accounts._fakes import ACC, Dms, FakeClock
+from tests.unit.accounts._fakes import ACC, Dms, FakeClock, Journal
 
 #: `FakeClock` starts its boot-time clock here: a time minus this is seconds into the scenario.
 START = 1_000.0
@@ -143,7 +143,8 @@ class Rig:
     is the production one, which answers every read as unavailable. The socket feeds the runtime
     through `ctx.accounts.account_health`, the path the E29-T05 consumer will use. The runtime
     publishes on the `wallet` topic through `hub`, which no client socket is on until a test
-    registers one (`_wallet_ws.Conn`)."""
+    registers one (`_wallet_ws.Conn`). A `journal` records the dead-man's-switch episodes; rigs
+    sharing one are restarts of one process."""
 
     def __init__(
         self,
@@ -152,6 +153,7 @@ class Rig:
         source: bool = True,
         settings: Settings | None = None,
         metrics: Metrics | None = None,
+        journal: Journal | None = None,
     ) -> None:
         self.clock = FakeClock()
         self.sleeper = Sleeper(self.clock)
@@ -176,6 +178,7 @@ class Rig:
             monitored=self._monitored if source else None,
             release=self._release if source else None,
             topic=self.topic,
+            journal=journal,
         )
         self.accounts.attach_account_health(self.runtime.feed)
         self.ws = FakeWs(self.accounts.account_health, self.sleeper)
