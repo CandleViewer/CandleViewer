@@ -13,6 +13,9 @@ Wires the venue-neutral `book` module to ingestion. Rules:
   re-enters `snapshot_pending` (chart) / re-requests (unsupervised).
 * Write-behind to QuestDB is a bounded queue that drops oldest, never
   blocking the reader.
+* A released symbol's grace (US-MKT-005) ends on the stream's own tick or its
+  next frame, whichever comes first: the topic is dropped and the book
+  forgotten, so a later acquire is served from a fresh snapshot (#3807).
 
 Plain code on the hot path (catalogue 1.2, C-2.20): this module never imports
 the statechart package. B14 health supervision is an injected
@@ -47,7 +50,7 @@ from candleviewer.ingestion.metrics import (
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S, DemandTracker
 from candleviewer.ingestion.rejection import RejectionLog
 from candleviewer.ingestion.ticker_stream import UnknownSymbolError
-from candleviewer.ingestion.watchdog import FeedHealthEvent, prune_unlisted
+from candleviewer.ingestion.watchdog import STALENESS_S, FeedHealthEvent, prune_unlisted
 from candleviewer.ingestion.write_behind import WriteBehindBuffer
 from candleviewer.observability.context import spawn
 from candleviewer.storage.repositories.rows import BookDeltaRow, BookSnapshotRow
@@ -67,6 +70,10 @@ RESYNC_BACKOFF_BASE_S = 0.25
 RESYNC_BACKOFF_CAP_S = 30.0
 #: A book LIVE this long without another resync is healthy: the backoff resets.
 RESYNC_STABLE_S = 5.0
+#: #3807, #2487 F4: a LIVE book that has applied no frame for this long is served `stale`.
+#: The watchdog's book limit, which `25-market-data-trust-contract.md` section 3 applies to
+#: the age of the last applied book update.
+BOOK_STALE_AFTER_S = STALENESS_S["book"]
 _TICK_S = 0.25
 _JITTER = random.SystemRandom().random
 
@@ -180,6 +187,8 @@ class BookStream:
         self._deferred: set[str] = set()
         #: #1919: symbol -> clock() reading when its book last left LIVE.
         self._not_live_since: dict[str, float] = {}
+        #: #3807: symbol -> clock() reading when its active book last applied a frame.
+        self._applied_at: dict[str, float] = {}
         self._bus, self._env = bus, env
         self._set_desired, self._parse = set_desired, parse_frame
         self._topic_for, self._resub = topic_for, resubscribe
@@ -258,9 +267,12 @@ class BookStream:
             if self._supervisor is not None:
                 self._supervisor.detach(key)
         self._first_sub = {k for k in self._first_sub if k[0] != symbol}
+        self._grids = {k: v for k, v in self._grids.items() if k[0] != symbol}
         self._backoff.pop(symbol, None)
         self._deferred.discard(symbol)
         self._not_live_since.pop(symbol, None)
+        self._applied_at.pop(symbol, None)
+        ingest_book_live.labels(symbol=symbol_label(symbol)).set(0.0)  # forgotten: not LIVE
 
     def out_of_live(self, slo_s: float = RESYNC_BACKOFF_CAP_S) -> tuple[str, ...]:
         """#1919: desired symbols whose book has been out of LIVE longer than `slo_s`
@@ -270,12 +282,23 @@ class BookStream:
 
     # ---- reads (GET /market/orderbook) -----------------------------------
     def view(self, symbol: str, depth: int) -> BookView | None:
-        """The maintained book, only while LIVE at `depth` (else `None`)."""
+        """The maintained book, only while LIVE at `depth` (else `None`); `stale` per `is_stale`."""
         tb = self._books.get(symbol)
         if tb is None or depth > tb.active.depth:
             return None
         snap = tb.active.live_snapshot(depth)
-        return None if snap is None else BookView(snap, stale=False)
+        return None if snap is None else BookView(snap, stale=self.is_stale(symbol))
+
+    def is_stale(self, symbol: str) -> bool:
+        """#3807, #2487 F4: True unless `symbol`'s book is LIVE and applied a frame within
+        `BOOK_STALE_AFTER_S`. Read from the last applied frame, never from the subscription:
+        no book, or a book not LIVE, is stale. It covers the watchdog's `stale` too: that
+        watchdog has the same limit and is touched on every routed frame, applied or not."""
+        tb = self._books.get(symbol)
+        at = self._applied_at.get(symbol)
+        if tb is None or at is None or tb.active.phase is not BookPhase.LIVE:
+            return True
+        return self._clock() - at >= BOOK_STALE_AFTER_S
 
     def phase(self, symbol: str) -> BookPhase | None:
         tb = self._books.get(symbol)
@@ -388,7 +411,11 @@ class BookStream:
             if tb is not None:  # C-2.5: a rejected book frame is a gap -> resync, never patch
                 await tb.active.invalidate("rejected_frame")
             return
-        if ev is None or ev.symbol not in self._demand.desired():
+        if ev is None:
+            return
+        if ev.symbol not in self._demand.desired():
+            if ev.symbol in self._books:  # #3807: its grace ran out unsynced: forget it now
+                self.sync()
             return
         # #3806: the grid `ev` was parsed on. No await lies between the parse and this read, so
         # both read the same catalogue tick size.
@@ -405,6 +432,8 @@ class BookStream:
             await tb.active.invalidate("grid")
             return
         await tb.on_event(ev)
+        if ev.depth == tb.active.depth and tb.active.phase is BookPhase.LIVE:
+            self._applied_at[ev.symbol] = self._clock()  # applied: what `is_stale` ages
         if tb.warming is None:
             self.sync()  # a completed tier swap retires the old topic
 
@@ -491,6 +520,7 @@ class BookStream:
     async def _timeout_loop(self) -> None:
         while True:
             await self._sleep(_TICK_S)
+            self.sync()  # #3807: a released symbol's grace ends here, demand change or not
             await self.check_timeouts()
 
     async def start(self) -> None:

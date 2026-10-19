@@ -305,6 +305,12 @@ Ingest-boundary rejections (24-internal-schemas §14.2 rule 10) are counted as
 `reason` enum. A rejected book frame resyncs with reason `rejected_frame`.
 A tick-size change under a LIVE book resyncs it (reason `grid`) before a delta on the new grid is
 applied; so does a level that contradicts the book, which holds one level per price (#3806).
+A released book is forgotten when its grace (US-MKT-005, 30 s) ends, on the stream's 0.25 s tick or
+its next frame, and its `ingest_book_live` reads 0: a read then answers `503` until the fresh
+snapshot it asked for lands, never the frozen book (#3807). A LIVE book that has applied no frame
+for `STALENESS_S["book"]` (2 s, the age of the last applied book update that
+`25-market-data-trust-contract.md` §3 judges) is served with `stale: true`; a book not LIVE is
+never served, and `BookStream.is_stale` counts it stale (#2487 F4).
 
 ### 3.3 Bar Builders
 
