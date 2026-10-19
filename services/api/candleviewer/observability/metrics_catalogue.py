@@ -2434,7 +2434,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "jobs",
         (),
         "Admin jobs (GET /admin/jobs) the API process held at its last clean stop, counted at the "
-        "next boot; a crash is not counted (#966).",
+        "next boot (a crash's are not), and the backup runs that boot ends as lost (#966).",
         "dashboard only",
         _L,
         "E42",

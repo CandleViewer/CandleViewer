@@ -8,6 +8,12 @@
   catalogue.
 - BK-5: the backup series are served, and the freshness loaded at boot, only once
   `BACKUPS_CATALOGUED` is set.
+- BK-8: a run on demand answers `501 not_implemented` until a backup engine is wired (#3319): no
+  `BackupRunner` here. Its runs go through the app's one admission gate, which the composition
+  root builds once for every backups service (BK-9, BK-10, BK-12 and BK-13 take the same one),
+  and count towards `RUNS_PER_HOUR` per user in the rolling-hour limiter the audit verify runs
+  use (in-process: a restart resets it). Once the catalogue is set, the boot pass ends the runs a
+  restart lost and counts them with the jobs it lost (SR-BK7-05).
 - BK-13: the restore guard reads maintenance mode fresh from the flag repository
   (`FlagStoreMaintenance`) and positions stay unknown. Nothing builds it until BK-14 mounts the
   restore after D7 (#3084)."""
@@ -24,10 +30,15 @@ import structlog
 
 from candleviewer.admin.backups import ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
+from candleviewer.admin.backups.gate import BackupJobGate
+from candleviewer.admin.backups.limits import RUNS_PER_HOUR
 from candleviewer.admin.backups.metrics import BackupFreshness, export_backup_metrics
 from candleviewer.admin.backups.ports import JOB_ERROR_CODES, BackupJobError, JobEnd
+from candleviewer.admin.backups.rows import LostCount, LostRuns, RunAudit, RunRows
+from candleviewer.admin.backups.runs import BackupRuns
 from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.service import DEFAULT_READ_BUDGET_MS
+from candleviewer.api.audit_limiter import AuditVerifyLimiter
 from candleviewer.api.recorder_admin import AdminJobStore, Job
 from candleviewer.auth.step_up import POSITION_SOURCE_NOT_DEPLOYED
 from candleviewer.observability.metrics import CollectorRegistry, ReexportCollector
@@ -160,3 +171,22 @@ def build_backup_freshness(
     if not BACKUPS_CATALOGUED:
         return None
     return BackupFreshness(_catalogue(settings, system_settings))
+
+
+def build_backup_runs(
+    settings: Settings,
+    jobs: AdminJobStore,
+    audit: RunAudit,
+    *,
+    gate: BackupJobGate,
+    lost: LostCount,
+    system_settings: SystemSettings | None,
+    freshness: BackupFreshness | None,
+) -> tuple[BackupRuns, LostRuns | None]:
+    """`createBackup`'s service on the catalogue, with no backup engine yet (#3319), through the
+    app's one `gate`; and the boot pass over its lost runs, none until the catalogue is set."""
+    store = _catalogue(settings, system_settings)
+    rows = None if store is None else RunRows(store, audit, lost=lost, freshness=freshness)
+    limit = AuditVerifyLimiter(rate_per_hour=RUNS_PER_HOUR)
+    runs = BackupRuns(rows, None, gate=gate, jobs=AdminJobRunner(jobs), audit=audit, limit=limit)
+    return runs, None if rows is None else LostRuns(rows)

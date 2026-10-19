@@ -176,6 +176,16 @@ async def test_lifespan_loads_the_backup_freshness_once_before_serving() -> None
         freshness.start.assert_awaited_once_with()
 
 
+async def test_lifespan_ends_lost_backup_runs_once_before_serving() -> None:
+    """E42-T05 BK-8 (SR-BK7-05): the runs a restart lost; `start` bounds its own pass."""
+    app = FastAPI()
+    app.state.app_context = _fake_ctx()
+    app.state.backup_lost_runs = lost = SimpleNamespace(start=AsyncMock())
+
+    async with _lifespan(app):
+        lost.start.assert_awaited_once_with()
+
+
 async def test_lifespan_leaves_read_only_mode_on_when_boot_check_trips_the_gate() -> None:
     app = FastAPI()
     ctx = _fake_ctx()

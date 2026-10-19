@@ -101,7 +101,8 @@ class AuditVerifyLimiter:
     """Per-user `POST /admin/audit/verify` runs in a rolling hour (#2446,
     `audit_verify_rate_per_hour`). Only a run that starts counts: the caller checks
     `retry_after` and calls `record_start` once the run's write-ahead record is written, so a
-    `409`, a `429` or a `503` never counts. State is bounded (C-2.18): at most
+    `409`, a `429` or a `503` never counts (`createBackup` also counts a refused plan once its
+    record is written: `503 backup_engine_invalid`). State is bounded (C-2.18): at most
     `tracked_users` users; one with no run in the hour is evicted first, and a new user that
     finds no room is refused rather than let through uncounted."""
 

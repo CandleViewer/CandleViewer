@@ -119,6 +119,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         backup_freshness = getattr(app.state, "backup_freshness", None)
         if backup_freshness is not None:  # E42-T05 BK-5: one bounded load; an outage never fails it
             await backup_freshness.start()
+        lost_runs = getattr(app.state, "backup_lost_runs", None)
+        if lost_runs is not None:  # E42-T05 BK-8: end the runs a restart lost (SR-BK7-05), bounded
+            await lost_runs.start()
 
         # Boot self-check (AC1 "safe binding passes", AC3 "public binding
         # degrades"): run once, synchronously, before serving so `net_binding_safe`
