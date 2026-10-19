@@ -1008,7 +1008,7 @@ class MetricDescriptor(BaseModel):
 | Name                                | Definition                                                            | Params (defaults)                                                 | Confidence |
 | ----------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------- |
 | `delta`                             | Bar `buy_volume - sell_volume`                                        | —                                                                 | exact      |
-| `cvd`                               | Running Σ signed volume from anchor                                   | `anchor` (`session`\|`utc_day`\|`since_load`\|`custom_ts`)        | exact      |
+| `cvd`                               | Running Σ signed volume from anchor                                   | `anchor=session`\|`utc_day` (no `since_load`, `custom_ts` yet)    | exact      |
 | `cvd_slope`                         | Least-squares slope of CVD over N bars                                | `n=10`                                                            | exact      |
 | `min_delta`/`max_delta`             | Intrabar delta extremes                                               | —                                                                 | exact      |
 | `delta_divergence`                  | Price makes new N-bar extreme, CVD does not                           | `n=10`, `pivot_lookback=3`                                        | estimated  |
@@ -1048,8 +1048,8 @@ class MetricDescriptor(BaseModel):
 | ------------------------ | ------------------------------------------------------------- | -------------------------------------------- | ---------- |
 | `price`                  | Last trade price                                              | `source=last\|mark\|index`                   | exact      |
 | `atr`                    | Wilder ATR                                                    | `n=14`                                       | exact      |
-| `ema`, `sma`, `rsi`      | Standard                                                      | `n`                                          | exact      |
-| `swing_high`/`swing_low` | Pivot with `n` bars either side                               | `n=5`                                        | exact      |
+| `ema`, `sma`, `rsi`      | EMA and SMA of the close; Wilder RSI (§7.4)                   | `n` (`ema` 21, `sma` 20, `rsi` 14)           | exact      |
+| `swing_high`/`swing_low` | Confirmed pivot, `depth` bars either side (ZigZag, §7.4)      | `depth=5`, `deviation_pct=0`                 | exact      |
 | `realized_vol`           | Close-close log-return stdev × √periods                       | `n=20`                                       | exact      |
 | `parkinson_vol`          | `σ²=(1/(4N ln2))Σ[ln(H/L)]²`                                  | `n=20`                                       | exact      |
 | `garman_klass_vol`       | `σ²=(1/N)Σ[0.5(ln(H/L))²−(2ln2−1)(ln(C/O))²]`                 | `n=20`                                       | exact      |
@@ -1058,6 +1058,8 @@ class MetricDescriptor(BaseModel):
 | `market_regime`          | enum `trending\|ranging\|volatile\|mixed` from ADX+Hurst+ATR% | thresholds above                             | estimated  |
 
 Regime rule: `adx>25 and hurst>0.55 → trending`; `adx<20 and hurst<0.5 → ranging`; `atr_pct_of_price > volatile_threshold (default 0.02) → volatile` (evaluated first, it overrides); otherwise `mixed`.
+
+**Kernel-bound rows (E13-T02).** `sma`, `ema`, `rsi`, `atr`, `adx`, `swing_high`, `swing_low`, `vwap`, `vwap_band_sigma`, `cvd`, `delta` and `bar_volume` are computed by the M9 indicator kernels (§7.4) from closed bars, and their registry rows are derived from the indicator catalogue (`GET /indicators`): `inputs=("bars",)`, `cadence="on_bar_close"`, the params and `params_schema` of the indicator they read, `warmup_bars` at its defaults (`sma` 20, `ema` 21, `rsi` 15, `atr` 14, `adx` 28, the swings 11, the rest 1) and the kernel's `nullable_when`. That overrides the `trades` input and the live-bar cadence the tables below give `vwap`, `vwap_band_sigma`, `delta` and `bar_volume`: as rule metrics they are closed-bar values. The 19 `client_worker` indicators of the catalogue are not rule metrics (ADR-0034 rule 2).
 
 **Derivatives**
 
@@ -1128,8 +1130,8 @@ Zones are produced by the footprint engine (§4.3) and carry `(bar_id, price_lo_
 | `profile_hvn_distance` / `profile_lvn_distance` | Signed ticks to nearest HVN / LVN                      | `period_id`, `side`                                            | exact      |
 | `profile_single_print_present`                  | A single-print (one-TPO) range exists within `n` ticks | `n=20`                                                         | exact      |
 | `naked_poc_distance`                            | Ticks to nearest untested prior-period POC             | `lookback_periods=20`                                          | exact      |
-| `vwap`                                          | Session/anchored/rolling VWAP value                    | `variant`, `anchor_ts`/`window`                                | exact      |
-| `vwap_band_sigma`                               | Signed distance from VWAP in σ units                   | same + `k`                                                     | exact      |
+| `vwap`                                          | Session VWAP of the typical price, closed bars (§7.4)  | `anchor=session`                                               | exact      |
+| `vwap_band_sigma`                               | Signed distance of the close from VWAP in σ units      | `anchor=session`                                               | exact      |
 | `developing_va_width`                           | `VAH − VAL` of the developing period, in ticks         | `period_id`                                                    | exact      |
 
 **Heatmap / liquidity** (read the `HeatmapColumn` series of §6)

@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from candleviewer.api.rules import make_rules_router
+from candleviewer.orderflow.indicators.catalogue import SERVER_DEFINITIONS, V1_INDICATORS
 from candleviewer.rules.ir.models import ActionType, ComparisonOp, TriggerType
 from candleviewer.rules.ir.schema import to_json_schema
 from candleviewer.rules.vocabulary import (
@@ -25,6 +26,7 @@ from candleviewer.rules.vocabulary import (
 )
 from candleviewer.rules.vocabulary import build as vbuild
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, TRIGGERS
+from candleviewer.rules.vocabulary.metrics import kernel_params_schema
 from candleviewer.rules.vocabulary.registry import DuplicateMetricError
 
 GOLDEN = Path(__file__).parents[2] / "candleviewer/rules/vocabulary/metric_names.golden.txt"
@@ -131,6 +133,73 @@ def test_registry_is_single_source() -> None:
 def test_metric_names_match_golden() -> None:
     golden = GOLDEN.read_text().split()
     assert golden == default_registry().names(), "renamed/removed metric needs an IR upcaster"
+
+
+#: E13-T02: the rule metrics an M9 server kernel computes, and the indicator each reads.
+KERNEL_BOUND = {
+    "delta": "delta", "cvd": "cvd", "bar_volume": "volume", "atr": "atr", "ema": "ema",
+    "sma": "sma", "rsi": "rsi", "swing_high": "zigzag", "swing_low": "zigzag", "adx": "adx",
+    "vwap": "vwap", "vwap_band_sigma": "vwap",
+}  # fmt: skip
+
+
+def test_kernel_bound_metrics_take_their_facts_from_the_indicator_catalogue() -> None:
+    """E13-T02: params, warmup, inputs, cadence, nullable_when and confidence come from the
+    indicator catalogue, and the signal's params_schema is the indicator's own."""
+    signals = {s["id"]: s for s in _vocab()["signals"]}
+    for metric, indicator in KERNEL_BOUND.items():
+        d, definition = default_registry().get(metric), SERVER_DEFINITIONS[indicator]
+        assert d is not None
+        assert d.params == {k: str(v) for k, v in definition.json_defaults().items()}, metric
+        facts = (d.warmup_bars, d.inputs, d.cadence, d.nullable_when, d.confidence)
+        want = (definition.warmup_bars(), ("bars",), "on_bar_close", definition.nullable_when)
+        assert facts == (*want, "exact"), metric
+        assert signals[metric]["params_schema"] == definition.params_schema(), metric
+        assert signals[metric]["requires_recording"] is False, metric
+
+
+def test_kernel_bound_metrics_are_exactly_the_bound_set() -> None:
+    bound = {n for n in default_registry().names() if kernel_params_schema(n) is not None}
+    assert bound == set(KERNEL_BOUND)
+    assert kernel_params_schema("tape_speed") is None
+
+
+def test_kernel_bound_metric_units_are_unchanged_and_agree_with_the_indicator() -> None:
+    units = {m: getattr(default_registry().get(m), "unit", None) for m in KERNEL_BOUND}
+    assert units == {
+        "delta": "qty", "cvd": "qty", "bar_volume": "qty", "atr": "price", "ema": "price",
+        "sma": "price", "rsi": "pct", "swing_high": "price", "swing_low": "price",
+        "adx": "ratio", "vwap": "price", "vwap_band_sigma": "zscore",
+    }  # fmt: skip
+    from_catalogue = {m: SERVER_DEFINITIONS[i].unit for m, i in KERNEL_BOUND.items()}
+    assert units == {**from_catalogue, "vwap_band_sigma": "zscore"}  # vwap's z-score output
+
+
+def test_swing_metrics_keep_the_24_7_2_swing_and_ema_sma_gain_defaults() -> None:
+    reg = default_registry()
+    swing_high, swing_low = reg.get("swing_high"), reg.get("swing_low")
+    assert swing_high is not None and swing_low is not None
+    assert swing_high.params == swing_low.params == {"depth": "5", "deviation_pct": "0"}
+    assert swing_high.warmup_bars == swing_low.warmup_bars == 11
+    defaults = {m: getattr(reg.get(m), "params", None) for m in ("sma", "ema", "rsi")}
+    assert defaults == {"sma": {"n": "20"}, "ema": {"n": "21"}, "rsi": {"n": "14"}}
+    assert getattr(reg.get("rsi"), "warmup_bars", None) == 15  # n + 1 closes
+
+
+def test_a_binding_to_an_output_its_indicator_lacks_is_refused_at_import() -> None:
+    from candleviewer.rules.vocabulary import metrics
+
+    with pytest.raises(ValueError, match="atr has no output upper_1"):
+        metrics._bound(("atr_band", "atr", "upper_1", "ATR band", "price", "", ""))
+
+
+def test_rule_eligibility_is_server_placement_and_no_client_worker_name_is_a_metric() -> None:
+    """ADR-0034 rule 2 and decision D3: every server indicator backs a rule metric, and none of
+    the 19 client_worker indicators enters the rule vocabulary."""
+    assert set(KERNEL_BOUND.values()) == set(SERVER_DEFINITIONS)
+    client_worker = {d.id for d in V1_INDICATORS if d.compute == "client_worker"}
+    assert len(client_worker) == 19
+    assert client_worker & set(default_registry().names()) == set()
 
 
 def test_every_enum_member_is_described() -> None:
