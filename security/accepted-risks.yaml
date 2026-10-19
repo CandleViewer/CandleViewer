@@ -149,7 +149,8 @@ entries:
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
   # #269 (E05-T03) adds vitest browser mode (packages/ui's Storybook a11y gate); its C-10.2 security
-  # review covers the reason's new last clause, for the owner to ratify on #2701.
+  # review covers the reason's new last clause, for the owner to ratify on #2701. packages/ui's
+  # vitest.config.mjs sets that clause's two flags; test/storybook/vitest-project.test.ts pins them.
   - id: "GHSA-82fw-gwwq-j7x9"
     tool: npm-audit
     severity: MEDIUM

@@ -44,6 +44,10 @@ export default defineConfig({
             headless: true,
             provider: "playwright",
             instances: [{ browser: "chromium" }],
+            // No file writes or exec through the browser API (the GHSA-82fw-gwwq-j7x9 register
+            // reason). Vitest turns both on for a localhost server, and addon-vitest's own switch-off
+            // reads the root config's browser block, which this projects layout leaves unset.
+            api: { allowWrite: false, allowExec: false },
           },
         },
       },
