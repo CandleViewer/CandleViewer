@@ -1,14 +1,15 @@
-"""Behavioural contract of the write-ahead step (E29-T03 #847, slice 3 of 7): 24 Sec.8.2 S8 (a
-state commits with its event), S7 (a refused or failed write changes nothing) and S4's durable
-half (a repeated `exec_id` never counts twice). `tests/integration/storage/test_orders_store_pg.py`
-runs it on Postgres; the stores' in-memory fake, which lands with slice 3b, is to run it too.
-Subclasses supply `h`."""
+"""Behavioural contract of the write-ahead step (E29-T03 #847): 24 Sec.8.2 S8 (a state commits
+with its event), S7 (a refused or failed write changes nothing) and S4's durable half (a repeated
+`exec_id` never counts twice); and, so the fake takes only what Postgres takes (C-13.3), the
+constraint an order write meets first, money at its column's scale and events as fresh copies.
+`test_write_ahead_fake.py` runs it on the fake, `tests/integration/storage/test_orders_store_pg.py`
+on Postgres; subclasses supply `h`."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -18,7 +19,7 @@ import pytest
 
 from candleviewer.oms import ExecutionRepository, OrderEventRepository, OrderRepository
 from candleviewer.storage.repositories import orders as port
-from candleviewer.storage.repositories.exchange_payload import REDACTED
+from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
 from candleviewer.storage.repositories.executions import FillTotals, NewExecution, OrderFill
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
@@ -34,13 +35,18 @@ def event(kind: port.OrderEventKind = "ack", **over: Any) -> Event:
     return port.NewOrderEvent(**(base | over))
 
 
+def created() -> Event:
+    """The first event of an order the OMS creates."""
+    return event("local_create", source="local")
+
+
 def step(row: Row, to: port.OrderState, new: Event | None = None, **over: Any) -> Transition:
     base = {"account_id": row.exchange_account_id, "order_id": row.id, "from_state": row.state}
     return port.OrderTransition(**(base | {"to_state": to, "event": new or event()} | over))
 
 
 def fill(row: Row, exec_id: str, qty: str, new: Event | None = None, **over: Any) -> OrderFill:
-    """The fill as slice 4's `apply_execution` would compute it from `row`; `over` changes its
+    """The fill as E29-T03's `apply_execution` would compute it from `row`; `over` changes its
     execution and, as `to_state`, its step."""
     size = Decimal(qty)
     cum = row.cum_exec_qty + size
@@ -66,13 +72,20 @@ class Harness:
     executions: ExecutionRepository
     new_account: Callable[[], UUID]
 
-    async def order(self, state: port.OrderState = "accepted", first: Event | None = None) -> Row:
-        new = port.NewOrder(
-            id=uuid4(), exchange_account_id=self.new_account(), order_link_id=f"ext-{uuid4().hex}",
-            symbol="BTCUSDT", side="Buy", intent="entry", order_type="Limit", qty=QTY, price=PX,
-            stop_loss=Decimal("62000"), state=state,
-        )  # fmt: skip
-        return await self.orders.create(new, first or event("local_create", source="local"))
+    def new_order(self, state: port.OrderState = "accepted", **over: Any) -> port.NewOrder:
+        """An order to create: in a new account, under a new `ext-` link id, unless `over` says."""
+        account = over.pop("exchange_account_id", None) or self.new_account()
+        base: dict[str, Any] = {
+            "id": uuid4(), "exchange_account_id": account, "order_link_id": f"ext-{uuid4().hex}",
+            "symbol": "BTCUSDT", "side": "Buy", "intent": "entry", "order_type": "Limit",
+            "qty": QTY, "price": PX, "stop_loss": Decimal("62000"), "state": state,
+        }  # fmt: skip
+        return port.NewOrder(**(base | over))
+
+    async def order(
+        self, state: port.OrderState = "accepted", first: Event | None = None, **over: Any
+    ) -> Row:
+        return await self.orders.create(self.new_order(state, **over), first or created())
 
     async def stored(self, row: Row) -> tuple[Row | None, list[int]]:
         """The order as stored now, and its events' `seq`s."""
@@ -92,12 +105,22 @@ _REFUSED: dict[str, tuple[Callable[[Harness, Row], Awaitable[object]], type[Exce
                        port.OrderNotFoundError, None),  # C-12.4
     "fill_elsewhere": (lambda h, r: h.executions.commit_fill(
         fill(r, "E1", "0.1", exchange_account_id=_OTHER)), port.OrderNotFoundError, None),
+    "fill_elsewhere_no_qty": (lambda h, r: h.executions.commit_fill(fill(  # locked before a CHECK
+        r, "E1", "0.1", exchange_account_id=_OTHER, exec_qty=Decimal(0))),
+        port.OrderNotFoundError, None),
+    "append_elsewhere": (lambda h, r: h.events.append(_OTHER, r.id, event()),
+                         port.OrderNotFoundError, None),  # C-12.4
     "fill_kind": (lambda h, r: h.orders.transition(step(r, "partially_filled", event("fill"))),
                   ValueError, "commit_fill"),  # a fill comes with its execution (OM-R02)
     "filled": (lambda h, r: h.orders.transition(step(r, "filled", event("exchange_push"))),
                ValueError, "commit_fill"),
     "fill_appended": (lambda h, r: h.events.append(r.exchange_account_id, r.id, event("fill")),
                       ValueError, "commit_fill"),
+    # refused before any statement (`require_no_fill`), so before the account is looked at
+    "fill_appended_elsewhere": (lambda h, r: h.events.append(_OTHER, r.id, event("fill")),
+                                ValueError, "commit_fill"),
+    "filled_elsewhere": (lambda h, r: h.orders.transition(
+        step(r, "filled", event("exchange_push"), account_id=_OTHER)), ValueError, "commit_fill"),
     "above_qty": (lambda h, r: h.executions.commit_fill(fill(r, "E1", "0.4")),
                   port.FillRefused, "above_qty"),  # OM-T04: refused, never clamped
     "paper_mismatch": (lambda h, r: h.executions.commit_fill(fill(r, "E1", "0.1", is_paper=True)),
@@ -108,7 +131,34 @@ _REFUSED: dict[str, tuple[Callable[[Harness, Row], Awaitable[object]], type[Exce
                port.OrderConstraintError, "ex_qty"),
     "no_price": (lambda h, r: h.executions.commit_fill(fill(r, "E1", "0.1", exec_price=Decimal(0))),
                  port.OrderConstraintError, "ex_px"),
+    # Postgres meets the `symbol_code` domain as the row is built, then the CHECKs by name
+    "no_qty_no_price": (lambda h, r: h.executions.commit_fill(fill(
+        r, "E1", "0.1", exec_qty=Decimal(0), exec_price=Decimal(0))), port.OrderConstraintError,
+        "ex_px"),
+    "no_symbol": (lambda h, r: h.executions.commit_fill(fill(
+        r, "E1", "0.1", symbol="btcusdt", exec_qty=Decimal(0))), port.OrderConstraintError,
+        "symbol_code_check"),
 }  # fmt: skip
+_REDELIVER: dict[str, Callable[[Harness, OrderFill], Awaitable[object]]] = {
+    "insert": lambda h, f: h.executions.insert(f.execution),
+    "commit_fill": lambda h, f: h.executions.commit_fill(f),
+}
+_NOBODY, _XID = uuid4(), "exchange-order-1"  # an id no stored order holds; an exchange order id
+#: Orders Postgres refuses beside one holding `_XID` in their account, by the first constraint it
+#: meets (`0029_oms_core`): the `symbol_code` domain, the CHECKs by name, the unique indexes, then
+#: the foreign keys at the statement's end. Each case but the last breaks a later one too.
+_UNSTORABLE: dict[str, dict[str, Any]] = {
+    "symbol_code_check": {"symbol": "btcusdt", "qty": Decimal(0)},
+    "ord_cum": {"cum_exec_qty": QTY + Decimal("0.1"), "stop_loss": Decimal(0)},  # INV-1
+    "ord_limit_px": {"price": Decimal(0), "order_link_id": "ext-adopted"},
+    "ord_link_fmt": {"order_link_id": f"ext-{'0' * 32}\n", "take_profit": Decimal(0)},
+    "ord_no_self": {"id": _NOBODY, "parent_order_id": _NOBODY, "qty": Decimal(0)},
+    "ord_qty": {"qty": Decimal(0), "exchange_order_id": _XID},
+    "ord_sl_px": {"stop_loss": Decimal(0), "take_profit": Decimal(0)},
+    "ord_tp_px": {"take_profit": Decimal(0), "exchange_order_id": _XID},
+    "ux_orders_exch_id": {"exchange_order_id": _XID, "parent_order_id": _NOBODY},
+    "orders_parent_order_id_fkey": {"parent_order_id": _NOBODY},
+}
 
 
 class WriteAheadContract:
@@ -123,11 +173,124 @@ class WriteAheadContract:
         assert (got.source, got.payload) == ("rest", {"code": 0, "headers": REDACTED})
         assert await h.stored(row) == (done.order, [0, 1]) and done.order.state == "accepted"
 
+    async def test_a_create_and_an_append_write_their_events_states(self, h: Harness) -> None:
+        """`OrderStore.create` writes the first event from no state to the order's state, and
+        `OrderEventStore.append` one that moves none (`orders.py`), as stored and as returned."""
+        row = await h.order("accepted")
+        account = row.exchange_account_id
+        added = await h.events.append(account, row.id, event())
+        first, second = await h.events.list_for_order(account, row.id)
+        states = [(e.from_state, e.to_state) for e in (first, second, added)]
+        assert states == [(None, "accepted"), (None, None), (None, None)]
+
+    async def test_a_latency_of_zero_is_stored(self, h: Harness) -> None:
+        """`oe_latency` refuses a negative `latency_ms` (`_REFUSED`), not zero."""
+        row = await h.order("pending_submit")
+        done = await h.orders.transition(step(row, "submitted", event(latency_ms=0)))
+        assert done.event.latency_ms == 0
+
+    async def test_a_reject_is_stored_redacted(self, h: Harness) -> None:
+        """#845 decision 2 on every store: `reject_code` and `ret_code` take the string rule within
+        64 characters, `reject_message` and `ret_msg` the message rule too (18 letters alone pass
+        the string rule)."""
+        row = await h.order("pending_submit")
+        code, text = "1" * (MAX_CODE_CHARS + 1), "bad " + "Qx" * 9
+        said = event("reject", source="rest", payload={"code": 1}, ret_code=code, ret_msg=text)
+        moved = step(row, "rejected", said, reject_code=code, reject_message=text)
+        done = await h.orders.transition(moved)
+        assert (done.order.reject_code, done.order.reject_message) == (OVERSIZE, REDACTED)
+        assert (done.event.ret_code, done.event.ret_msg) == (OVERSIZE, REDACTED)
+        assert await h.stored(row) == (done.order, [0, 1])
+
+    async def test_a_stored_event_never_changes(self, h: Harness) -> None:
+        """C-2.9 (`trg_oe_append` on Postgres): whatever a caller does to what it wrote or was
+        returned, each write and read returns a fresh copy, its payload in `jsonb`'s key order
+        (shortest first)."""
+        row = await h.order("pending_submit")
+        account, said = row.exchange_account_id, {"orderStatus": "New", "code": 0}
+        done = await h.orders.transition(step(row, "submitted", event(source="rest", payload=said)))
+        added = await h.events.append(account, row.id, event())
+        read = await h.events.list_for_order(account, row.id)
+        new, ack = {"orderStatus": "New"}, {"code": 0, "orderStatus": "New"}
+        assert [list(done.event.payload), added.payload] == [["code", "orderStatus"], new]
+        said["code"] = done.event.payload["code"] = added.payload["code"] = read[1].payload["x"] = 9
+        stored = [e.payload for e in await h.events.list_for_order(account, row.id)]
+        assert stored == [new, ack, new]
+
+    async def test_money_is_returned_at_its_columns_scale(self, h: Harness) -> None:
+        """As asyncpg reads numeric(38,18), and numeric(18,10) for `fee_rate`: digit for digit at
+        the column's scale, an order's money, `leaves_qty`, a fill's totals and its execution."""
+        row = await h.order(price=Decimal("63099.80"))
+        done = await h.executions.commit_fill(fill(row, "E1", "0.1", fee_rate=Decimal("0.00055")))
+        stored = await h.executions.get(row.exchange_account_id, "E1")
+        assert done is not None and stored is not None
+        new = done.order
+        got = (row.price, row.leaves_qty, new.avg_price, new.leaves_qty, stored.fee_rate)
+        assert [str(value) for value in got] == [
+            "63099.800000000000000000", "0.300000000000000000", "63000.000000000000000000",
+            "0.200000000000000000", "0.0005500000",
+        ]  # fmt: skip
+
     async def test_an_exchange_reported_order_is_created_with_its_message(self, h: Harness) -> None:
         """OM-R02 from the first state: an adopted order's event carries what the exchange said,
         refused before any statement."""
         with pytest.raises(ValueError, match="OM-R02"):
             await h.order("untracked", event("reconcile_diff", source="reconcile", payload={}))
+
+    @pytest.mark.parametrize("constraint", sorted(_UNSTORABLE))
+    async def test_an_order_postgres_refuses_is_refused_by_name(
+        self, h: Harness, constraint: str
+    ) -> None:
+        """The constraint Postgres reports, and nothing is stored beside the account's order."""
+        row = await h.order(exchange_order_id=_XID)
+        again = h.new_order(exchange_account_id=row.exchange_account_id, **_UNSTORABLE[constraint])
+        with pytest.raises(port.OrderConstraintError) as err:
+            await h.orders.create(again, created())
+        assert err.value.constraint == constraint
+        assert await h.orders.list_open(row.exchange_account_id) == (row,)
+
+    async def test_a_create_meets_its_events_check_before_a_foreign_key(self, h: Harness) -> None:
+        """The first event's `oe_latency` is met as it is inserted, the foreign keys at the end of
+        the statement."""
+        late = event("local_create", source="local", latency_ms=-1)
+        with pytest.raises(port.OrderConstraintError, match="oe_latency"):
+            await h.orders.create(h.new_order(parent_order_id=_NOBODY), late)
+
+    async def test_an_order_postgres_takes_is_stored(self, h: Harness) -> None:
+        """A NULL leaves a CHECK unknown, which passes it, and `ux_orders_exch_id` is per account:
+        a Limit order with no price under one of our ids, a Market one priced 0, one filled to its
+        `qty`, the exchange id in another account, and a take-profit child with no stop."""
+        row = await h.order(exchange_order_id=_XID)
+        mine: dict[str, Any] = {"exchange_account_id": row.exchange_account_id}
+        ours = f"cvl-0{uuid4().hex[:21]}-{uuid4().hex[:4]}-00en"  # `OUR_ID`'s shape
+        news = [
+            h.new_order(**mine, price=None, order_link_id=ours),
+            h.new_order(**mine, order_type="Market", price=Decimal(0)),
+            h.new_order("filled", **mine, cum_exec_qty=QTY),
+            h.new_order(exchange_order_id=_XID),
+            h.new_order(**mine, parent_order_id=row.id, intent="take_profit", stop_loss=None),
+        ]
+        made = [await h.orders.create(new, created()) for new in news]
+        assert [await h.orders.get(n.exchange_account_id, n.id) for n in news] == made
+
+    @pytest.mark.parametrize("retried", [True, False])
+    async def test_a_create_under_a_stored_id_changes_nothing(
+        self, h: Harness, retried: bool
+    ) -> None:
+        """Postgres checks the unique indexes in the order they were made, the key first: a create
+        retried after it landed (24 Sec.8.3 rule 1 reuses its ids), or another account's order
+        under the id and a new link id, meets `orders_pkey`, and the stored order stays."""
+        row = await h.order()
+        mine: dict[str, Any] = {
+            "order_link_id": row.order_link_id,
+            "exchange_account_id": row.exchange_account_id,
+        }
+        again = h.new_order(id=row.id, **(mine if retried else {}))
+        with pytest.raises(port.OrderConstraintError) as err:
+            await h.orders.create(again, created())
+        assert err.value.constraint == "orders_pkey"
+        assert await h.stored(row) == (row, [0])
+        assert await h.orders.get(again.exchange_account_id, row.id) == (row if retried else None)
 
     async def test_a_missed_compare_and_set_writes_nothing(self, h: Harness) -> None:
         row = await h.order("accepted")
@@ -164,6 +327,7 @@ class WriteAheadContract:
         assert done is not None
         new, got, q = done.order, done.event, Decimal("0.1")
         assert (got.kind, got.from_state, got.to_state) == ("partial_fill", "accepted", new.state)
+        assert got.payload == {"execId": "E1"}
         assert (new.state, new.avg_price, new.fee_paid) == ("partially_filled", PX, FEE)
         assert (new.cum_exec_qty, new.leaves_qty, new.cum_exec_value) == (q, 2 * q, Decimal(6300))
         stored = await h.executions.get(row.exchange_account_id, "E1")
@@ -190,12 +354,45 @@ class WriteAheadContract:
         assert None in results and won.order.cum_exec_qty == Decimal("0.1")
         assert await h.stored(row) == (won.order, [0, 1])
 
+    @pytest.mark.parametrize("write", sorted(_REDELIVER))
+    async def test_a_redelivered_fill_meets_its_checks_first(self, h: Harness, write: str) -> None:
+        """Postgres checks a row's CHECKs before its `exec_id` conflict; so does the fake."""
+        row = await h.order("accepted")
+        assert await h.executions.commit_fill(fill(row, "E1", "0.1")) is not None
+        with pytest.raises(port.OrderConstraintError, match="ex_qty"):
+            await _REDELIVER[write](h, fill(row, "E1", "0.1", exec_qty=Decimal(0)))
+
     async def test_a_fill_stored_by_insert_is_never_applied(self, h: Harness) -> None:
         """`insert` is for a fill that moves no order: `commit_fill` then reads it as applied."""
         row = await h.order("accepted")
         assert await h.executions.insert(fill(row, "E1", "0.1").execution)
         assert await h.executions.commit_fill(fill(row, "E1", "0.1")) is None
         assert await h.stored(row) == (row, [0])
+
+    async def test_a_stored_exec_id_is_no_insert_whatever_order_it_names(self, h: Harness) -> None:
+        """`ON CONFLICT DO NOTHING` comes before the order's account is looked at: a stored
+        `exec_id` is False even naming another account's order, and neither account changes."""
+        row, other = await h.order(), await h.order()
+        execution = fill(row, "E1", "0.1").execution
+        assert await h.executions.insert(execution)
+        assert not await h.executions.insert(replace(execution, order_id=other.id))
+        assert [await h.stored(r) for r in (row, other)] == [(row, [0]), (other, [0])]
+        kept = await h.executions.get(row.exchange_account_id, "E1")
+        assert kept is not None and kept.order_id == row.id
+        assert await h.executions.get(other.exchange_account_id, "E1") is None
+
+    @pytest.mark.parametrize("write", sorted(_REDELIVER))
+    async def test_an_exec_id_is_new_in_each_account(self, h: Harness, write: str) -> None:
+        """`ux_exec_id` is per account: the `exec_id` of one account's fill, reported by another
+        account, is a new fill there (stored by `insert`, applied by `commit_fill`), and the first
+        account's fill and order stay as they were."""
+        mine, theirs = await h.order(), await h.order()
+        first = await h.executions.commit_fill(fill(mine, "E1", "0.1"))
+        assert first is not None
+        assert await _REDELIVER[write](h, fill(theirs, "E1", "0.1"))  # True, or the applied step
+        kept = [await h.executions.get(r.exchange_account_id, "E1") for r in (mine, theirs)]
+        assert [x and x.order_id for x in kept] == [mine.id, theirs.id]
+        assert await h.stored(mine) == (first.order, [0, 1])
 
     @pytest.mark.parametrize("state", ["accepted", "partially_filled"])
     async def test_of_two_concurrent_fills_one_wins(self, h: Harness, state: Any) -> None:
@@ -206,9 +403,9 @@ class WriteAheadContract:
         commit = h.executions.commit_fill
         results = await asyncio.gather(*map(commit, fills), return_exceptions=True)
         (i,) = [i for i, r in enumerate(results) if isinstance(r, port.CommittedStep)]
-        won, lost = results[i], fills[1 - i].execution.exec_id
-        assert isinstance(won, port.CommittedStep)
-        assert isinstance(results[1 - i], port.StaleOrderState)
+        won, stale, lost = results[i], results[1 - i], fills[1 - i].execution.exec_id
+        assert isinstance(won, port.CommittedStep) and isinstance(stale, port.StaleOrderState)
+        assert (stale.order_id, stale.expected) == (row.id, state)  # the state it was built on
         assert await h.executions.get(row.exchange_account_id, lost) is None
         again = await h.executions.commit_fill(fill(won.order, lost, "0.1"))
         assert again is not None and again.order.cum_exec_qty == Decimal("0.2")
