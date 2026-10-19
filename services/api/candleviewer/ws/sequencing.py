@@ -862,6 +862,7 @@ def in_scope(
         return True
     if sub.topic.entity_kind is not None:  # §6.4: the whole row, on the scope stored at `sub`
         return machine_refusal(authz.principal, sub.topic.entity_kind, sub.entity) is None
+    # `decide()`'s permission clause, inline: no per-delta `Allow()`; pinned: test_decide_fanout.py
     if family.permission not in authz.principal.permissions:
         return False
     if family.scope is Scope.SELF:
