@@ -87,6 +87,7 @@ Negative / risks:
 ## Validation
 
 - Measure PR feedback time weekly; if the p90 exceeds 15 minutes, rebalance the job matrix.
+  - **#3751 (2026-10-19): the `py` job's pytest lanes are four.** In three green runs that night, `db-chaos-contract` took 15.5 to 20.5 minutes against 15 to 19.3 for `rest` and 12.2 to 15.8 for `unit-heavy`. In its 19-minute run, `tests/integration` took 10.5 minutes, `tests/contract` 4.8 and `tests/chaos` 1.8. It is now two lanes, `db-chaos` (`tests/integration`, `tests/chaos`) and `contract-security`, which also takes `tests/xstate_contract`, `tests/security` and `tests/rules` (4.5 minutes) from `rest`. On those runners the longest lane then runs about 12 test-minutes instead of 17, at the cost of one more job of setup and collection (about 1.5 minutes) per run. `tools/ci/py-test-lanes.json` holds the lanes.
 - Quarterly review of action pins and workflow permissions as part of the security programme.
 - A deliberate "break the protocol" PR must fail the freshness gate (tested once during Sprint 01).
 

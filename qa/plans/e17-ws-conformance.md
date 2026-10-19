@@ -238,7 +238,7 @@ survived there; the closing change fixed both and re-ran them (so did MD). MX an
 - **CI wiring: no workflow change was needed.** The suite already runs in two PR checks: the `contract` job
   (`_job-contract.yml`: `uv run pytest tests/contract -m "not integration" --no-cov`), which `pr.yml` runs when
   `docs/plan/22-api-openapi.yaml`, `docs/plan/23-ws-protocol.md` or `packages/protocol/**` changes; and the `py` job's
-  `db-chaos-contract` lane (`tools/ci/py-test-lanes.json` lists `tests/contract`), on every `services/api/**` change. The one
+  `contract-security` lane (`tools/ci/py-test-lanes.json` lists `tests/contract`; `db-chaos-contract` until #3751), on every `services/api/**` change. The one
   `perf` row (S7's 1 s budget) is deselected from that covered lane and runs uncovered in the `py-perf` job (same trigger;
   `-m "perf and not flaky"`); the `contract` job's `-m` overrides the default deselection, so it runs it too. The
   `integration` job does not run it, because no row needs the docker stack (none is marked `integration`); the ticket's
