@@ -1,7 +1,7 @@
 # E08-C2 Charter: the order book under adversarial subscription patterns
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
-- Tester: AI agent (hcl-worker-2, run8 aa6271c0). **Deviation (honest scope):** no staging build, no WS client against a running gateway, no docker stack and no 90-minute human time box. The session was in-process: existing suites re-run, the demand and book code read, and throwaway probes driven against `BookStream` with the recorded corpus and a fake clock. Items that need a running stack are under "Not probed".
+- Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** no staging build, no WS client against a running gateway, no docker stack and no 90-minute human time box. The session was in-process: existing suites re-run, the demand and book code read, and throwaway probes driven against `BookStream` with the recorded corpus and a fake clock. Items that need a running stack are under "Not probed".
 - No credentials used; no network.
 
 ## Charter
@@ -28,7 +28,7 @@ Explore the book under adversarial subscription patterns (rapid depth changes, s
 
 ## Session metrics
 
-- Time: about 10 minutes of agent time (09:42-09:45 UTC probe and code reading, re-run at 09:50), not a 90-minute human session.
+- Time: about 2 minutes of agent time, 09:42-09:44 UTC (code reading, probe `p2` and its HTTP variant), plus this charter's share of the one suite re-run for all six charters at 09:50 and the debrief, written at 09:57; not a 90-minute human session. Times are from the agent's tool-call log.
 - Tests re-run: book unit suites, book stream, resync backoff, out-of-live, the orderbook contract pack, chaos s01b and s03, delist isolation and the orderbook route: 98 passed, 1 deselected (`perf`), 9.4 s wall.
 - Probes: 1 (with an HTTP variant). 1 promoted.
 

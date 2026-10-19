@@ -1,7 +1,7 @@
 # E08-C6 Charter: the tape under high-cadence bursts
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
-- Tester: AI agent (hcl-worker-2, run8 aa6271c0). **Deviation (honest scope):** no live burst, no staging and no 90-minute human time box. The session was in-process: the trade stream, dispatch-lane, bus and chaos suites re-run, and a throwaway probe pushed synthetic bursts through the production `TradeStream` (`TradeHarness` from the contract pack) on a fake clock. The recorded corpus holds at most two prints per frame, so burst shapes were synthetic.
+- Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** no live burst, no staging and no 90-minute human time box. The session was in-process: the trade stream, dispatch-lane, bus and chaos suites re-run, and a throwaway probe pushed synthetic bursts through the production `TradeStream` (`TradeHarness` from the contract pack) on a fake clock. The recorded corpus holds at most two prints per frame, so burst shapes were synthetic.
 - No credentials used; no network.
 
 ## Charter
@@ -28,7 +28,7 @@ Explore the tape under high-cadence bursts to discover ordering, dedup and trunc
 
 ## Session metrics
 
-- Time: about 10 minutes of agent time (09:48-09:50 UTC probe and code reading, suites re-run at 09:50), not a 90-minute human session.
+- Time: about 2 minutes of agent time, 09:48-09:50 UTC (code reading and probe `p6`, after one read of the dedupe ring at 09:37), plus this charter's share of the one suite re-run for all six charters at 09:50 and the debrief, written at 10:00; not a 90-minute human session. Times are from the agent's tool-call log.
 - Tests re-run: trade stream, per-topic dispatch, the trades contract pack, the bus suite, chaos s04 and s10, the resource-exhaustion abuse cases and the trade app end to end: 118 passed, 1 xfailed (#1893), 1 deselected (`perf`), 8.1 s wall.
 - Probes: 1 (`p6`, three shapes). Not promoted: neither observation is a confirmed defect yet (below).
 

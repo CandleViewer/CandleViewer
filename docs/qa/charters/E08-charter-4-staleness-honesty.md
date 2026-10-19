@@ -1,7 +1,7 @@
 # E08-C4 Charter: staleness and reconnection honesty across every surface
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
-- Tester: AI agent (hcl-worker-2, run8 aa6271c0). **Deviation (honest scope):** the ticket asks for this charter to run once with a screen reader attached and for one session against the Grafana "Ingestion" dashboard. Neither was possible: there is no running stack, no browser, no screen reader, and the E08 screens (SCR-100 to SCR-104, SCR-152) have no E2E or a11y run yet (E08-Q05, #282). The session was in-process over the backend read surfaces (REST bodies, `/readyz`, the bus feed-health signal), plus a static review of `infra/grafana/dashboards/ingestion.json` and `infra/prometheus/alerts/` against the faults the chaos suite injects. "Looks stale" and "announces stale" were not observed by anyone.
+- Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** the ticket asks for this charter to run once with a screen reader attached and for one session against the Grafana "Ingestion" dashboard. Neither was possible: there is no running stack, no browser, no screen reader, and the E08 screens (SCR-100 to SCR-104, SCR-152) have no E2E or a11y run yet (E08-Q05, #282). The session was in-process over the backend read surfaces (REST bodies, `/readyz`, the bus feed-health signal), plus a static review of `infra/grafana/dashboards/ingestion.json` and `infra/prometheus/alerts/` against the faults the chaos suite injects. "Looks stale" and "announces stale" were not observed by anyone.
 - No credentials used; no network.
 
 ## Charter
@@ -31,7 +31,7 @@ Explore staleness and reconnection honesty across every panel to discover any su
 
 ## Session metrics
 
-- Time: about 15 minutes of agent time (suites re-run at 09:50 UTC, probe, dashboard and alert review 09:55-10:05), not a 90-minute human session.
+- Time: about 3 minutes of agent time, 09:54-09:55 UTC (dashboard and alert review) and 09:57-09:59 (probe `p4`, code reading), plus this charter's share of the one suite re-run for all six charters at 09:50 and the debrief, written at 10:00; not a 90-minute human session. Times are from the agent's tool-call log.
 - Tests re-run: ticker and feed-rot contract packs, health and `/readyz`, feed-health end to end, ticker stream, chaos s02 and visible degradation, the pipeline read surface: 60 passed, 3.7 s wall.
 - Probes: 1 (`p4`), plus the charter 2 reproduction. None promoted from this session (F2 is promoted under charter 2).
 

@@ -1,7 +1,7 @@
 # E08-C3 Charter: backfill and coverage with awkward ranges
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
-- Tester: AI agent (hcl-worker-2, run8 aa6271c0). **Deviation (honest scope):** no staging build, no QuestDB, no docker stack and no 90-minute human time box. The session was in-process: the kline backfill, coverage and read suites re-run, the read path read, and throwaway probes driven against `KlineBackfillService` and `KlineReadService` with an in-memory hot tier and a fake venue that only serves bars it has formed.
+- Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** no staging build, no QuestDB, no docker stack and no 90-minute human time box. The session was in-process: the kline backfill, coverage and read suites re-run, the read path read, and throwaway probes driven against `KlineBackfillService` and `KlineReadService` with an in-memory hot tier and a fake venue that only serves bars it has formed.
 - No credentials used; no network.
 
 ## Charter
@@ -29,7 +29,7 @@ Explore backfill and coverage with awkward ranges (future dates, pre-listing dat
 
 ## Session metrics
 
-- Time: about 12 minutes of agent time (09:44-09:47 UTC probes and code reading, re-run at 09:50), not a 90-minute human session.
+- Time: about 3 minutes of agent time, 09:44-09:47 UTC (probes `p3` and `p3b`, code reading), plus this charter's share of the one suite re-run for all six charters at 09:50 and the debrief, written at 09:57; not a 90-minute human session. Times are from the agent's tool-call log.
 - Tests re-run: kline backfill (E08 and E12 suites), coverage, read path, the kline contract pack, pagination, klines adapter, the klines route and its OpenAPI contract: 182 passed, 1 deselected (`perf`), 6.1 s wall.
 - Probes: 2 (seven range shapes, then the read path). 1 promoted.
 
@@ -47,4 +47,6 @@ F3 is also an input-validation gap (security review, round 1). The window comes 
 
 ## Regression recommendation
 
-Keep `test_f3_...` as a strict `xfail` until #3808 is fixed. Add the exactly-one-page and overlapping-concurrent shapes of probe `p3` as plain tests when the backfill suite is next touched; both pass today.
+Keep `test_f3_...` as a strict `xfail` until #3808 is fixed.
+
+**Deviation: two passing probe shapes not promoted.** Probe `p3`'s exactly-one-page and overlapping-concurrent windows checked oracles O1 and O3 and passed. They were not promoted: they found no defect, and their home, the E08 backfill suite (`services/api/tests/unit/ingestion/test_kline_backfill.py`), is the code the in-progress fix for #3808 changes, so this change leaves that suite to it. The page arithmetic is pinned already by `services/api/tests/contract/bybit/test_contract_kline.py::test_exact_multiple_of_limit_terminates_without_a_phantom_row`. Recommendation: the #3808 fix, or the next change to that suite, adds both shapes as plain tests.

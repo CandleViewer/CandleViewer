@@ -1,7 +1,7 @@
 # E08-C5 Charter: clock and timestamp behaviour across DST, host sleep and skew
 
 - Ticket: E08-Q06 (#283) · Format: session-based test management · Date: 2026-10-19
-- Tester: AI agent (hcl-worker-2, run8 aa6271c0). **Deviation (honest scope):** no real host sleep or resume, no WSL clock jump, no staging and no 90-minute human time box. The session was in-process: the clock and event-window suites and chaos s08 re-run on a virtual clock, E08 modules searched for local or naive time, and a throwaway probe of event timestamps, including an instant on a DST transition.
+- Tester: AI agent (hcl-worker-2). **Deviation (honest scope):** no real host sleep or resume, no WSL clock jump, no staging and no 90-minute human time box. The session was in-process: the clock and event-window suites and chaos s08 re-run on a virtual clock, E08 modules searched for local or naive time, and a throwaway probe of event timestamps, including an instant on a DST transition.
 - No credentials used; no network.
 
 ## Charter
@@ -29,7 +29,7 @@ Explore clock and timestamp behaviour across DST, host sleep and skew to discove
 
 ## Session metrics
 
-- Time: about 8 minutes of agent time (09:47-09:48 UTC search and probe, suites re-run at 09:50), not a 90-minute human session.
+- Time: under a minute of agent time, 09:47-09:48 UTC (the search and probe `p5`), plus this charter's share of the one suite re-run for all six charters at 09:50 and the debrief, written at 10:00; not a 90-minute human session. Times are from the agent's tool-call log.
 - Tests re-run: clock guard, clock REST fetcher, event window, server time, 10002 re-measure, the clock contract pack and chaos s08: 73 passed, 2.0 s wall.
 - Probes: 1 (`p5`), not promoted: its DST case passes and its `ts_ingest` case is already #3033.
 
