@@ -2017,7 +2017,7 @@ orders = Table(
         "symbol",
         postgresql_where=text(
             "state IN ('pending_submit','submitted','accepted','partially_filled',"
-            "'pending_cancel','pending_amend','triggered','unknown','quarantined','held')"
+            "'pending_cancel','pending_amend','triggered','unknown','quarantined')"
         ),
     ),
     Index("ix_orders_leg", "trade_group_leg_id"),

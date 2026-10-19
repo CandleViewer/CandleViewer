@@ -319,7 +319,7 @@ def test_a_letters_only_key_in_the_exchange_message_is_never_bound(name: str) ->
 
 def test_list_open_renders_the_open_states_as_literals_for_the_partial_index() -> None:
     sql = _sql(_STATEMENTS["list_open_statement"])
-    assert "orders.state IN ('accepted', 'held', 'partially_filled', 'pending_amend', " in sql
+    assert "orders.state IN ('accepted', 'partially_filled', 'pending_amend', " in sql
     assert "orders.symbol = $" in sql and sql.endswith("ORDER BY orders.created_ts, orders.id")
     assert "orders.symbol" not in _sql(mod.list_open_statement(ACCOUNT, None)).split("WHERE")[1]
 
@@ -409,12 +409,24 @@ def test_a_step_or_fill_no_column_holds_is_refused_as_it_is_built(built: str) ->
 
 
 @pytest.mark.parametrize("state", ["triggered", "unknown", "quarantined", "killed", "held"])
-def test_a_step_may_enter_and_leave_each_state_0033_adds(state: Any) -> None:
+def test_a_step_may_enter_each_state_0033_adds(state: Any) -> None:
     """OM-T04 reads `OrderState`, so each value `0033_order_vocabulary` adds is a step's new state
-    and its compare-and-set like any other (the store checks vocabulary; legality is B1's)."""
+    like any other (the store checks vocabulary; legality is B1's)."""
     into = _bound(mod.transition_statement(step(_HELD, state)))
-    out = _bound(mod.transition_statement(step(_HELD, "cancelled", from_state=state)))
-    assert (into[0], into[-1], out[0], out[-1]) == (state, "accepted", "cancelled", state)
+    assert (into[0], into[-1]) == (state, "accepted")
+
+
+@pytest.mark.parametrize(
+    ("state", "to_state"),
+    [("triggered", "cancelled"), ("unknown", "cancelled"), ("quarantined", "cancelled"),
+     ("held", "rejected")],
+)  # fmt: skip
+def test_a_step_may_leave_each_non_final_state_0033_adds(state: Any, to_state: Any) -> None:
+    """Each of them but `killed` is also a step's compare-and-set state, left as B1 leaves it
+    (`REMOTE_CANCELLED`, `RECON_FOUND_CANCELLED`, `OPERATOR_RESOLVED`). `killed` is final in B1,
+    so no step leaves it (INV-2; 24 Sec.8.2 S6)."""
+    out = _bound(mod.transition_statement(step(_HELD, to_state, from_state=state)))
+    assert (out[0], out[-1]) == (to_state, state)
 
 
 def test_a_fill_may_leave_triggered_the_one_added_state_with_an_exec_arm() -> None:

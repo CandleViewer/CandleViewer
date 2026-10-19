@@ -164,7 +164,7 @@
     },
     "0033_order_vocabulary": {
       "path": "services/api/candleviewer/migrations/versions/0033_order_vocabulary.py",
-      "sha256": "60d8b7aae6426658024a8b0bb2c0697e5b625fefbf83e5acdbdd522753f6afa2",
+      "sha256": "b82a833ab2624de3a75ae6590922020554b2e6ea1995fde455e8fcb7bc73f8d1",
       "down_revision": "0032_backups_write_once"
     }
   }

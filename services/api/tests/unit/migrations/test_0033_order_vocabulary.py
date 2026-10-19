@@ -1,16 +1,22 @@
 """`0033_order_vocabulary` (E29-T03 #847, slice 2): offline render, plan-doc parity, the model
-mirror, and a downgrade that restores 0029's types and indexes exactly.
-Real Postgres: `tests/integration/storage/test_order_vocabulary_migration.py`."""
+mirror, the online rerun's skip over a fake `op`, and a downgrade that restores 0029's types and
+indexes exactly. Real Postgres: `tests/integration/storage/test_order_vocabulary_migration.py`."""
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
+import pytest
 from sqlalchemy import CheckConstraint
 
 from candleviewer.db import models
@@ -97,6 +103,69 @@ def test_the_values_are_committed_before_the_transaction_that_uses_them() -> Non
             "SET LOCAL lock_timeout = DEFAULT; UPDATE alembic_version",
         ],
     )
+
+
+def _load() -> ModuleType:
+    """The revision module, to run `upgrade()` over a fake `op` (as `test_0003_audit_log.py`)."""
+    path = _ROOT / "candleviewer" / "migrations" / "versions" / f"{_REV}.py"
+    spec = importlib.util.spec_from_file_location("_0033_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _OnlineOp:
+    """`op` online (no `--sql`) over a database whose two types hold `present`; keeps what ran."""
+
+    as_sql = False
+
+    def __init__(self, present: list[tuple[str, str]]) -> None:
+        self.present = present
+        self.executed: list[str] = []
+
+    def get_context(self) -> _OnlineOp:
+        return self
+
+    def get_bind(self) -> _OnlineOp:
+        return self
+
+    @contextmanager
+    def autocommit_block(self) -> Iterator[None]:
+        self.executed.append("<autocommit>")
+        yield
+        self.executed.append("</autocommit>")
+
+    def exec_driver_sql(self, statement: str) -> list[tuple[str, str]]:
+        assert "FROM pg_enum" in statement
+        return self.present
+
+    def execute(self, statement: Any) -> None:
+        self.executed.append(str(statement))
+
+
+def test_the_added_values_are_type_and_label_pairs_in_the_plan_docs_order() -> None:
+    """Each `ADD VALUE` is built from its (type, label) pair; nothing parses SQL text back."""
+    pairs = [("order_state", v) for v in _ADDED_STATES]
+    pairs += [("order_event_kind", v) for v in _ADDED_KINDS]
+    assert list(_load()._ADDED) == pairs
+
+
+def test_a_rerun_adds_in_the_block_only_the_pairs_the_types_lack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Online, a failed run's committed values are skipped by (type, label): `order_state` still
+    gets `held` though `order_event_kind` holds that label. The rest run in the autocommit block,
+    in order, each built from its pair."""
+    module = _load()
+    present = [("order_state", "triggered"), ("order_state", "unknown")]
+    fake = _OnlineOp([*present, ("order_event_kind", "held")])
+    monkeypatch.setattr(module, "op", fake)
+    module.upgrade()
+    block = fake.executed[
+        fake.executed.index("<autocommit>") + 1 : fake.executed.index("</autocommit>")
+    ]
+    assert block == ["SET lock_timeout = '5s';", *_ADDS[len(present) :], "RESET lock_timeout;"]
 
 
 def test_the_ddl_is_the_plan_doc_verbatim_and_touches_nothing_else() -> None:

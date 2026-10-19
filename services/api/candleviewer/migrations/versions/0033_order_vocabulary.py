@@ -15,13 +15,17 @@ vocabulary grows by additions only (C-5.1), so REST and WS keep their names. DDL
   `orders.lifecycle_state` an order's, so no reader of `orders` inverts the mapping (whose
   `submitted` is the chart's `submitting`). `ord_lifecycle` admits only the pairs of that mapping,
   so the two columns never disagree. No default, so no rewrite (Sec.9.3 rule 2); no backfill, as
-  nothing writes `orders` yet (E29-T04 wires the OMS) and E29-T03's transition is to write both.
-* `ix_orders_open`, which `list_open` reads, is rebuilt with the four new non-terminal values.
+  nothing writes `orders` yet (E29-T04 wires the OMS). No write path sets the column yet: #847's
+  remaining implementation PR sets it, beside `state`, on every path.
+* `ix_orders_open`, which `list_open` reads, is rebuilt with three of the four new non-terminal
+  values: `held`, like `untracked`, holds an order the OMS does not own (B1's INV-B1-n), so it is
+  not open.
 
 Postgres 16 refuses a new enum value in the transaction that added it (55P04) and the index names
-them, so the `ADD VALUE`s commit in an autocommit block first; the rest is one transaction with
-the version stamp. A failure after the block keeps the values (none can be dropped), so the block
-skips a value the type already holds and a rerun completes (`--sql` renders all seven). The index
+them, so the `ADD VALUE`s commit in an autocommit block first (Sec.9.3 rule 6); the rest is one
+transaction with the version stamp. A failure after the block keeps the values (none can be
+dropped), so the block skips a value the type already holds and a rerun completes (`--sql`
+renders all seven). Each `ADD VALUE` is built from its (type, label) pair in `_ADDED`. The index
 is not built CONCURRENTLY: that waits for every transaction of the database holding an older
 snapshot, and a second booting API process holds one while it waits for the `cv_migrations`
 advisory lock (`migrations/boot.py`), so the two boots would wait on each other. The plain build
@@ -50,8 +54,8 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     with op.get_context().autocommit_block():
         op.execute("SET lock_timeout = '5s';")
-        for statement in _not_yet_added(_ADD_VALUES):
-            op.execute(statement)
+        for pair in _not_yet_added(_ADDED):
+            op.execute(_add_value(pair))
         op.execute("RESET lock_timeout;")
     op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(_LIFECYCLE_TYPE_SQL)
@@ -59,13 +63,19 @@ def upgrade() -> None:
     op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
-def _not_yet_added(statements: tuple[str, ...]) -> tuple[str, ...]:
-    """The `ADD VALUE`s whose label the type lacks. Online, a rerun skips the labels a failed run
-    committed; offline (`--sql`) there is no database to read, so all of them are rendered."""
+def _not_yet_added(added: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+    """The (type, label) pairs whose label the type lacks. Online, a rerun skips the labels a
+    failed run committed; offline (`--sql`) there is no database to read, so all are rendered."""
     if op.get_context().as_sql:
-        return statements
+        return added
     present = {(str(t), str(v)) for t, v in op.get_bind().exec_driver_sql(_PRESENT_SQL)}
-    return tuple(s for s in statements if (s.split()[2], s.split()[5].strip("';")) not in present)
+    return tuple(pair for pair in added if pair not in present)
+
+
+def _add_value(pair: tuple[str, str]) -> str:
+    """The `ADD VALUE` of one `_ADDED` pair; both parts are this module's constants, never input."""
+    enum_type, label = pair
+    return f"ALTER TYPE {enum_type} ADD VALUE '{label}';"
 
 
 def downgrade() -> None:
@@ -75,15 +85,15 @@ def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
-# 21-database-schema.md Sec.1.2, verbatim. Static literals: SQL built at runtime trips bandit B608.
-_ADD_VALUES = (
-    "ALTER TYPE order_state      ADD VALUE 'triggered';",
-    "ALTER TYPE order_state      ADD VALUE 'unknown';",
-    "ALTER TYPE order_state      ADD VALUE 'quarantined';",
-    "ALTER TYPE order_state      ADD VALUE 'killed';",
-    "ALTER TYPE order_state      ADD VALUE 'held';",
-    "ALTER TYPE order_event_kind ADD VALUE 'kill';",
-    "ALTER TYPE order_event_kind ADD VALUE 'adopt';",
+# 21-database-schema.md Sec.1.2's seven `ADD VALUE`s, as (type, label) pairs in their order there.
+_ADDED: tuple[tuple[str, str], ...] = (
+    ("order_state", "triggered"),
+    ("order_state", "unknown"),
+    ("order_state", "quarantined"),
+    ("order_state", "killed"),
+    ("order_state", "held"),
+    ("order_event_kind", "kill"),
+    ("order_event_kind", "adopt"),
 )
 # The labels the two types hold, named as `ALTER TYPE` resolves them (through the search path).
 _PRESENT_SQL = (
@@ -101,7 +111,7 @@ ALTER TABLE orders ADD COLUMN lifecycle_state order_lifecycle_state;
 ALTER TABLE orders ADD CONSTRAINT ord_lifecycle CHECK (lifecycle_state IS NULL OR (lifecycle_state, state) IN (('draft','new'),('validated','pending_submit'),('submitting','submitted'),('submitted','accepted'),('triggered','triggered'),('partially_filled','partially_filled'),('cancel_pending','pending_cancel'),('amend_pending','pending_amend'),('unknown','unknown'),('quarantined','quarantined'),('untracked','untracked'),('held','held'),('filled','filled'),('cancelled','cancelled'),('rejected','rejected'),('expired','expired'),('killed','killed')));
 DROP INDEX ix_orders_open;
 CREATE INDEX ix_orders_open      ON orders (exchange_account_id, symbol)
-  WHERE state IN ('pending_submit','submitted','accepted','partially_filled','pending_cancel','pending_amend','triggered','unknown','quarantined','held');
+  WHERE state IN ('pending_submit','submitted','accepted','partially_filled','pending_cancel','pending_amend','triggered','unknown','quarantined');
 """
 
 _REFUSE_SQL = """

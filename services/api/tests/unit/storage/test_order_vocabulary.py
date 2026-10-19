@@ -72,11 +72,14 @@ def test_the_mapping_has_no_many_to_one_case_and_six_names_differ() -> None:
 
 
 def test_the_open_states_are_every_live_chart_state() -> None:
-    """`list_open` sees every order the chart has not ended, but a draft (never written) and an
-    untracked order (`ix_orders_untracked`; never managed, S9)."""
+    """`list_open` sees every order the chart has not ended, except in three states: `draft`, never
+    written, and `untracked` and `held`, which B1 treats as orders the OMS does not own (INV-B1-n;
+    SR-E29-03 and SR-E29-12). An untracked order is never managed (S9, `ix_orders_untracked`), and
+    only the operator's `OPERATOR_RESOLVED` leaves `held` (INV-B1-m)."""
     chart = _chart()
     ended = {name for name, node in chart.items() if node.get("type") == "final"}
-    live = [s for s in get_args(LifecycleState) if s not in {*ended, "draft", "untracked"}]
+    left_out = {"draft", "untracked", "held"}
+    live = [s for s in get_args(LifecycleState) if s not in ended | left_out]
     assert OPEN_STATES == {ORDER_STATE_OF[s] for s in live}
 
 
