@@ -12,7 +12,9 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 
 from candleviewer.app import build_app_context, create_app
+from candleviewer.bars.heal_driver import HealDriver
 from candleviewer.bars.models import BarSpec
+from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars_wiring import BarsRuntime, wire_bars
 from candleviewer.bus.models import Topic
 from candleviewer.main import _lifespan
@@ -62,6 +64,44 @@ def test_flag_off_by_default_builds_no_runtime(tmp_path: Path) -> None:
 def test_flag_on_builds_runtime_with_state_root(tmp_path: Path) -> None:
     app = create_app(_settings(tmp_path, enabled=True))
     assert isinstance(app.state.bars_runtime, BarsRuntime)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_the_heal_driver_comes_with_the_flag_over_the_wired_store(
+    tmp_path: Path, enabled: bool
+) -> None:
+    """#2787 P4b: with `bars_enabled` off nothing holds a heal driver, so no task can start; on,
+    the bars runtime owns one over the WS series store the gateway serves."""
+    app = create_app(_settings(tmp_path, enabled=enabled))
+    runtime = getattr(app.state, "bars_runtime", None)
+    heal = getattr(runtime, "heal", None)
+    if not enabled:
+        assert (runtime, heal) == (None, None)
+        return
+    assert isinstance(heal, HealDriver) and heal._store is app.state.ws_registry.services.series
+
+
+async def test_the_lifespan_runs_the_heal_driver_task_and_stops_it_before_the_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2787 P4b: the driver's one task runs while the app serves and is gone after it; the
+    runtime stops it first, so no read is in flight when the set, writer and sink stop."""
+    ctx = build_app_context(_settings(tmp_path, enabled=False))
+    app = FastAPI()
+    app.state.app_context = ctx
+    runtime = wire_bars(ctx, now_us=lambda: T0, series=SeriesStore())
+    app.state.bars_runtime = runtime
+    order: list[str] = []
+    assert runtime.heal is not None
+    _trace_stop(monkeypatch, runtime.heal, "heal", order)
+    _trace_stop(monkeypatch, runtime.builder_set, "set", order)
+
+    def names() -> set[str]:
+        return {t.get_name() for t in asyncio.all_tasks()}
+
+    async with _lifespan(app):
+        assert "bars-heal-driver" in names()
+    assert "bars-heal-driver" not in names() and order[:2] == ["stop:heal", "stop:set"]
 
 
 async def test_lifespan_register_publish_shutdown_flushes_blobs_and_rows(

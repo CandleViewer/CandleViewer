@@ -40,6 +40,7 @@
 ["bars_endpoint_param_rejected_total", "counter", ["reason"], "live", "E12"]
 ["bars_endpoint_rows_returned_total", "counter", ["endpoint_group"], "live", "E12"]
 ["bars_endpoint_source_tier_total", "counter", ["endpoint_group", "stream"], "live", "E12"]
+["bars_heal_refresh_total", "counter", ["result"], "live", "E12"]
 ["bars_kline_refused_total", "counter", ["reason"], "live", "E12"]
 ["bars_late_trade_dropped_total", "counter", ["symbol", "reason"], "live", "E12"]
 ["bars_partial_series_total", "counter", ["kind"], "live", "E12"]

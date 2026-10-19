@@ -1045,6 +1045,21 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_heal_refresh_total",
+        "counter",
+        "refreshes",
+        ("result",),
+        "Heal driver refreshes of held WS bars series (result: repaired; unchanged = no repair, a"
+        " failed read included; timeout = cut by the driver's bound; error = the refresh raised;"
+        " tick_error = a tick raised before any refresh).",
+        "timeout, error or tick_error above 0 = a refresh that hung past the store's read timeout"
+        " and its reader's unwind (8 s), or raised, or a tick that raised: a defect, see the log",
+        _L,
+        "E12",
+        max_series=5,
+        exported=True,
+    ),
+    _s(
         "bars_endpoint_rows_returned_total",
         "counter",
         "bars",
