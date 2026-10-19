@@ -32,6 +32,25 @@ const started = () => {
   const handle = startShell({ wsUrl: WS_URL, fetchImpl, port });
   return { port, fetchImpl, handle };
 };
+/** `SharedWorker` or `Worker` (the other one absent): what it made and has not had let go of, and what happened to it, in order. */
+function stubWorkers(kind: "SharedWorker" | "Worker") {
+  const live = new Set<object>();
+  const events: string[] = [];
+  const post = (message: { t: string }): void => void events.push(`post ${message.t}`);
+  const release = (worker: object): void => void (live.delete(worker), events.push("close"));
+  class Fake {
+    readonly port = { postMessage: post, onmessage: null as unknown, close: () => release(this) };
+    postMessage = post;
+    onmessage: unknown = null;
+    terminate = (): void => release(this);
+    constructor() {
+      live.add(this);
+    }
+  }
+  vi.stubGlobal("SharedWorker", kind === "SharedWorker" ? Fake : undefined);
+  vi.stubGlobal("Worker", kind === "Worker" ? Fake : undefined);
+  return { live, events };
+}
 
 beforeEach(() => resetShellState());
 afterEach(() => {
@@ -98,6 +117,7 @@ describe("startShell", () => {
     expect(getActiveClient()).toBeNull();
     const { handle } = started();
     expect(getActiveClient()).not.toBeNull();
+    expect(getActiveClient()?.diagnostics()).toBeUndefined(); // the worker's counters are reachable from the app's client
     handle.stop();
     expect(getActiveClient()).toBeNull();
   });
@@ -121,6 +141,34 @@ describe("startShell", () => {
     expect(getActiveClient()).not.toBeNull();
     second.handle.stop();
     expect(getActiveClient()).toBeNull();
+  });
+
+  it.each(["SharedWorker", "Worker"] as const)(
+    "lets go of the worker of the shell it replaces, and of the last one when it stops: one live %s",
+    (kind) => {
+      const { live, events } = stubWorkers(kind);
+      const options = { wsUrl: WS_URL, fetchImpl: vi.fn().mockResolvedValue(jsonResponse({})) };
+      startShell(options);
+      const second = startShell(options);
+      expect(live.size).toBe(1);
+      second.stop();
+      expect(live.size).toBe(0);
+      // each shell stops its client, which posts `stop`, and only then lets go of its port
+      expect(events.filter((e) => e === "post stop" || e === "close")).toEqual([
+        "post stop",
+        "close",
+        "post stop",
+        "close",
+      ]);
+    },
+  );
+
+  it("lets go only of the port it opened: one a caller gives is the caller's", () => {
+    const { port, handle } = started();
+    const close = vi.fn();
+    Object.assign(port, { close });
+    handle.stop();
+    expect(close).not.toHaveBeenCalled();
   });
 
   it("reads the backend unreachable and still runs the REST bootstrap when no worker can be started (a CSP SecurityError)", async () => {

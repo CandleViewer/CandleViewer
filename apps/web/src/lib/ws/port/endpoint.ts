@@ -7,6 +7,8 @@ export interface PortLike {
   postMessage(message: unknown, transfer: ArrayBuffer[]): void;
   /** Starts delivery of the port's messages: `handler` gets each message's data. */
   listen(handler: (data: unknown) => void): void;
+  /** Lets go of the port: a message port is closed, a dedicated worker is terminated. The shell calls it for the port it opened. */
+  close?(): void;
 }
 
 /** What `MessagePort`, `Worker` and a dedicated worker's scope have in common. Assigning `onmessage` starts a `MessagePort`. */
@@ -15,12 +17,13 @@ export interface MessageEndpoint {
   onmessage: ((event: MessageEvent) => unknown) | null;
 }
 
-export function portOf(endpoint: MessageEndpoint): PortLike {
+export function portOf(endpoint: MessageEndpoint, close?: () => void): PortLike {
   return {
     postMessage: (message, transfer) => endpoint.postMessage(message, transfer),
     listen: (handler) => {
       endpoint.onmessage = (event) => handler(event.data);
     },
+    ...(close !== undefined && { close }),
   };
 }
 
