@@ -29,7 +29,8 @@ a WS snapshot source reads `latest` and `version`.
   a degraded one (SR-E12-11: served, never final) or a live swap leaves it not `hydrated`. An
   `ensure` reads a series that is not `hydrated`, or is `gapped`, again, but never sooner than
   its re-read interval after the last read: `retry_after_s`, more for a gap that stays (below);
-  nothing else starts a read. Without a reader, a series keeps only what the store has seen live.
+  the heal driver's `refresh` (below) is the only other trigger, by the same rules. Without a
+  reader, a series keeps only what the store has seen live.
 - **Read bound (C-2.18, #2787 D2-G1):** a read takes one of `MAX_CONCURRENT_TAIL_READS` slots,
   shared by every store on the event loop, and gives it back however it ends. The wait for a
   slot is part of the read and counts toward `timeout_s`: a read that cannot start in time fails
@@ -40,6 +41,26 @@ a WS snapshot source reads `latest` and `version`.
   flight: its other `ensure` calls share it, and the closes seen meanwhile are kept for its
   fold. A read that finds every slot taken counts `bars_series_read_waits_total`, whether or
   not it then gets one.
+- **Heal driver and repairs (#2787 D2-H1):** `due(now)` lists, earliest first, at most `limit`
+  held series that are not complete (not `hydrated`, or `gapped`) and not reading, whose re-read
+  interval has passed by `now` (the store's clock); `refresh` reads one as `ensure` would,
+  without holding it. A completed read repairs a series (23 §7.4 `history_repair`) when it adds
+  or replaces a bar the series serves and loses none it held. A held bar below the oldest bar the
+  series keeps is lost too, unless no read could hold it there: it opened before the read's
+  window (`BarTail.since_us`), or the series is full, so the 1 000-bar cap leaves it deeper than
+  any `history`. Whoever started that read, the store then calls the repair hook (`on_repair`,
+  set once; nothing sets it until `BarsRuntime` wires the WS publisher's `history_repair`) with
+  `min_history`, the depth of the newest bar it added or replaced, newest first and the forming
+  bar 1, as `latest` counts `history`. A depth it cannot count (the walk raised, or gave less
+  than 1) goes out as 1, counted (`bars_series_repair_failed_total{reason="depth"}`) and logged
+  at error: extra snaps, never a skipped repair. A hook that raises is counted (`reason="hook"`)
+  and logged, and the read stands. The call is the last step of the read that changes state,
+  after its fold and bookkeeping: the clock is read before the fold and the logs come after the
+  call, so nothing between them awaits or can raise. That keeps the call cancellation-safe (no
+  cancellation can land between the fold and the call) and `min_history` exact (until the call,
+  older bars only move away from the newest, barring a reset, so a late call could only reach
+  more subscribers). A first read reaches nobody: its holders take their first `snap` after it.
+  `bars_series_incomplete_in_use` counts the held series that are not complete, at scrape time.
 - **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. A hold collected
   unreleased is released as of its collection: its finalizer only queues it, and the next
   `ensure` applies the queue before its sweep. An unheld series is kept `release_grace_s` (the
@@ -79,22 +100,27 @@ re-read in flight that leaves the series gapped then doubles it once.
 
 Not covered: the forming bar is unknown until the next `open` or `update` (builders expose none);
 a held bar whose row a clean read skipped (`BarTail.skipped`, malformed rows included) is dropped
-by that read, which ends `hydrated` (#3614); a hole inside the stored rows with no bar held for it
+by that read, which ends `hydrated` (#3614), and a read that loses a held bar repairs nothing, even
+if it adds bars (§7.4); a read that hit its row limit with a skipped row is not `full`, so a held
+bar the limit cut counts as lost and the repair is skipped (P4b, the driver slice, is to treat
+`fetched >= MAX_HISTORY` like a full series); a hole inside the stored rows with no bar held for it
 (a row skipped or withheld, or one the writer never landed) stays a hole and is not flagged; a
 jump is seen on a close only; a close seen before the first clean read (one from the ring, or a
 live one after a failed or degraded read) is judged only by that read's rows, so an empty read
 leaves it unflagged: the series cannot see its junction, and a writer lagging behind it goes
-unflagged; a series with more holes than `MAX_GAP_RANGES` logs each again on every re-read, which
-finds them oldest first; the interval grows for a gap only, so a series whose reads stay degraded
-with no gap (a row withheld every time), or keep failing before a gap has backed it off, is read
-again, with a warning, at each `ensure` `retry_after_s` after the last read; a series freed after
-its grace starts afresh when held again (nothing logged, `retry_after_s`).
+unflagged (the heal driver skips it too, #3660); a series with more holes than `MAX_GAP_RANGES`
+logs each again on every re-read, which finds them oldest first; the interval grows for a gap
+only, so a series whose reads stay degraded with no gap (a row withheld every time), or keep
+failing before a gap has backed it off, is read again, with a warning, `retry_after_s` after the
+last read, at the next `ensure` or the heal driver's next `refresh`; a series freed after its
+grace starts afresh when held again (nothing logged, `retry_after_s`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import functools
+import heapq
 import itertools
 import time
 import weakref
@@ -113,7 +139,9 @@ from candleviewer.bars.metrics import (
     bars_series_gap_rereads_total,
     bars_series_gaps_total,
     bars_series_hydrate_failed_total,
+    bars_series_incomplete_in_use,
     bars_series_read_waits_total,
+    bars_series_repair_failed_total,
     bars_series_resets_total,
     bars_spec_cap_rejected_total,
 )
@@ -138,6 +166,9 @@ RELEASE_GRACE_S: Final = GRACE_US / 1_000_000
 
 #: `(symbol, spec, limit) -> BarTail`: `BarReader.read_tail`.
 TailRead = Callable[[str, BarSpec, int], Awaitable[BarTail]]
+#: `(symbol, spec, min_history)` after a read repaired a series (module docstring): the WS
+#: publisher's `history_repair`, whose result the store ignores. Synchronous: it never awaits.
+RepairHook = Callable[[str, BarSpec, int], object]
 #: A close as emitted, with its generation.
 Close = tuple[BarUpdate, int]
 
@@ -213,6 +244,8 @@ def _log() -> Any:
 @dataclass(slots=True)
 class _Series:
     version: int
+    #: The spec its first `ensure` named: with the key's symbol, what a `refresh` reads.
+    spec: BarSpec
     refs: int = 0
     generation: int | None = None  # set by the first emission, or by a read
     closed: OrderedDict[int, Bar] = field(default_factory=OrderedDict)  # index -> bar
@@ -274,6 +307,64 @@ def _forget_gaps(s: _Series) -> None:
     s.logged.clear()
     s.backoff = 1
     s.resets += 1
+
+
+def _incomplete(s: _Series) -> bool:
+    """Not `hydrated`, or `gapped`: read again once its re-read interval has passed."""
+    return not s.hydrated or s.gapped
+
+
+def _repair_depth(s: _Series, before: dict[int, Bar], since_us: int) -> int | None:
+    """§7.4 `min_history` of a fold that turned `before` (index -> bar) into `s`: the depth of the
+    newest bar it added or replaced among those `s` serves, newest first and the forming bar 1, as
+    `latest` counts `history`. None when it added or replaced none, or lost a bar `s` held (no
+    repair, §7.4). A held bar below `s`'s oldest is not lost when no read could hold it there: it
+    opened before the read's window (`since_us`), or `s` is full, so the 1 000-bar cap leaves it
+    deeper than any `history`. Exact for the window and for the cap, not for a read that hit its
+    row limit with a skipped row (module docstring, "Not covered")."""
+    forming = int(s.forming is not None)
+    served = itertools.islice(reversed(s.closed.values()), MAX_HISTORY - forming)
+    for depth, bar in enumerate(served, 1 + forming):
+        was = before.get(bar.index)
+        if was is not bar and was != bar:  # added or replaced: a bar kept keeps its object
+            oldest, full = next(iter(s.closed)), len(s.closed) >= MAX_HISTORY
+            lost = any(  # gone, and not below `oldest` out of the read's reach
+                i not in s.closed and (i > oldest or (b.open_time >= since_us and not full))
+                for i, b in before.items()
+            )
+            return None if lost else depth
+    return None
+
+
+def _counted_depth(
+    s: _Series, before: dict[int, Bar], since_us: int
+) -> tuple[int | None, Exception | int | None]:
+    """`_repair_depth`, guarded, never raising: a depth it cannot count (it raised, or came out
+    below 1) is 1, never a skipped repair (P11's caller contract: extra snaps, never a miss), and
+    counted (`reason="depth"`). The second item is the fault, which `_hydrate` logs after the
+    hook: the exception, or the depth below 1."""
+    try:
+        depth = _repair_depth(s, before, since_us)
+    except Exception as exc:  # broad on purpose: a repair whose depth fails still goes out
+        bars_series_repair_failed_total.labels(reason="depth").inc()
+        return 1, exc
+    if depth is not None and depth < 1:
+        bars_series_repair_failed_total.labels(reason="depth").inc()
+        return 1, depth
+    return depth, None
+
+
+def _call_repair(hook: RepairHook, symbol: str, spec: BarSpec, depth: int) -> None:
+    """Call the repair hook. One that raises never fails the read: counted (`reason="hook"`) and
+    logged. A `CancelledError` is no `Exception`, so it is raised, never swallowed."""
+    try:
+        hook(symbol, spec, depth)
+    except Exception as exc:  # broad on purpose: the read stands, whatever the hook did
+        bars_series_repair_failed_total.labels(reason="hook").inc()
+        _log().warning(
+            "bars_series_repair_failed", spec_hash=spec.spec_hash, symbol=symbol,
+            min_history=depth, error_type=type(exc).__name__, error=str(exc)[:120],
+        )  # fmt: skip
 
 
 def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) -> bool:
@@ -382,11 +473,70 @@ class SeriesStore:
         self._versions = itertools.count(1)
         #: Holds collected unreleased, with the time: one entry per hold at most (`_lose`).
         self._lost: deque[tuple[_Series, float]] = deque()
+        self._on_repair: RepairHook | None = None
+        ref = weakref.ref(self)  # the gauge keeps no store alive
+
+        def incomplete() -> float:  # on the scrape's thread; a store collected reads 0
+            store = ref()
+            return 0.0 if store is None else float(store.incomplete_count())
+
+        bars_series_incomplete_in_use.set_function(incomplete)  # the store built last (one app)
+
+    def on_repair(self, hook: RepairHook) -> None:
+        """Set the repair hook (module docstring), once: the WS publisher's `history_repair`,
+        which `BarsRuntime` is to wire (#2787 D2-H1). A second call raises `RuntimeError`."""
+        if self._on_repair is not None:
+            raise RuntimeError("the series store's repair hook is set already")
+        self._on_repair = hook
 
     def series_count(self) -> int:
         """Series kept: held, or released and in their grace (an expired one until the next
         `ensure` sweeps it)."""
         return len(self._series)
+
+    def incomplete_count(self) -> int:
+        """Held series that are not complete: not `hydrated`, or `gapped`. The gauge
+        `bars_series_incomplete_in_use` reads it at scrape time, off the loop, so it counts over a
+        copy of the series taken in one step (`tuple`, one C call under the GIL): the loop never
+        resizes the map under it. O(series); nothing on the emit path."""
+        return sum(1 for s in tuple(self._series.values()) if s.refs and _incomplete(s))
+
+    def due(self, now: float, *, limit: int = MAX_CONCURRENT_TAIL_READS) -> list[Key]:
+        """The heal driver's list (module docstring): at most `limit` held series that are not
+        complete and not reading, whose re-read interval has passed by `now` (the store's clock),
+        the earliest due first. Pure and synchronous: no I/O, no await, nothing changed. Empty
+        without a reader. O(series).
+
+        For the driver (#2787 P4b): run fewer `refresh` calls at once than there are read slots
+        (`MAX_CONCURRENT_TAIL_READS`), so a subscriber's first read still finds one, and never
+        time out a `refresh` sooner than the store's `timeout_s`: a cancelled read sets no next
+        read time, so the series would be due again at once."""
+        if self._tail is None:
+            return []
+        due = [(self._next_read(s), k) for k, s in self._series.items() if self._due(s, now)]
+        return [k for _, k in heapq.nsmallest(limit, due)]
+
+    async def refresh(self, symbol: str, spec_hash: str) -> bool:
+        """The heal driver's read: reads the series now if `due` would list it, by `ensure`'s
+        rules (a slot, `timeout_s`, the re-read interval, one read per series), without holding
+        it. True when the read repaired the series (and called the repair hook, if set). False
+        when it read nothing (not held, reading, complete or not due), or the read changed
+        nothing, lost a bar, or failed: a failure takes the store's failure path (counted and
+        logged), never raised. A cancellation is raised. A series that becomes complete is read
+        once; one that stays incomplete is due again each re-read interval (`due` has the
+        driver's two rules)."""
+        s = self._series.get((symbol, spec_hash))
+        if s is None or not self._due(s, self._clock()):
+            return False
+        return await self._hydrate(s, symbol, s.spec)
+
+    def _next_read(self, s: _Series) -> float:
+        """Store-clock time the next read of `s` is due: its re-read interval after the last."""
+        return s.read_at + self._retry_after_s * s.backoff
+
+    def _due(self, s: _Series, now: float) -> bool:
+        """For the heal driver: `s` is held, not reading, not complete, and a read of it is due."""
+        return bool(s.refs) and s.replay is None and _incomplete(s) and now >= self._next_read(s)
 
     async def emit(self, emission: BarEmission) -> None:
         """`BarSink`: O(1) per update of a series the store does not keep; never awaits."""
@@ -417,7 +567,7 @@ class SeriesStore:
         """Keep the series and bring it up to date (module docstring); release the `Hold` when
         done with it. Raises `SpecCapExceeded` (counted, nothing held) when `MAX_SERIES` series
         are kept; a failed or cancelled `ensure` holds nothing either and starts no grace."""
-        s = self._keep((symbol, spec.spec_hash))
+        s = self._keep((symbol, spec.spec_hash), spec)
         hold = Hold(symbol, spec.spec_hash, functools.partial(self._release, s, None),
                     functools.partial(self._lose, s))  # fmt: skip
         try:
@@ -427,7 +577,7 @@ class SeriesStore:
             raise
         return hold
 
-    def _keep(self, key: Key) -> _Series:
+    def _keep(self, key: Key, spec: BarSpec) -> _Series:
         while self._lost:  # holds collected unreleased: released as of their collection
             self._release(*self._lost.popleft())
         now = self._clock()
@@ -441,7 +591,7 @@ class SeriesStore:
             if len(self._series) >= MAX_SERIES:
                 bars_spec_cap_rejected_total.labels(reason=CAP_NAME).inc()
                 raise SpecCapExceeded(CAP_NAME, MAX_SERIES, len(self._series))
-            s = self._series[key] = _Series(next(self._versions))
+            s = self._series[key] = _Series(next(self._versions), spec)
             for u, gen in self._recent.get(key, ()):
                 _live(s, u, gen)  # the closes seen before this hold, by the sink rules
         s.refs += 1
@@ -505,23 +655,26 @@ class SeriesStore:
             woke = True
         if woke and s.attempted:
             return
-        due = s.read_at + self._retry_after_s * s.backoff
-        if (not s.hydrated or s.gapped) and self._clock() >= due:
+        if _incomplete(s) and self._clock() >= self._next_read(s):
             await self._hydrate(s, symbol, spec)
 
-    async def _hydrate(self, s: _Series, symbol: str, spec: BarSpec) -> None:
+    async def _hydrate(self, s: _Series, symbol: str, spec: BarSpec) -> bool:
         """One read, its fresh `ready` set however it ends. Its replay starts from the ring (the
         closes seen just before it) and takes every close seen during it, in emission order,
         the wait for a read slot included, which counts toward `timeout_s`. A read that finds
         the series gapped and leaves it so doubles its re-read interval, unless a live reset or
-        swap landed during it (D2-H2)."""
+        swap landed during it (D2-H2). True when it repaired the series: it then calls the repair
+        hook, the last step of the read that changes state (module docstring)."""
         if self._tail is None:
-            return
+            return False
         ready = s.ready = asyncio.Event()
         ring = self._recent.get((symbol, spec.spec_hash), ())
         s.replay, s.attempted, s.swapped = deque(ring, maxlen=MAX_HISTORY), False, False
         gapped = s.gapped  # as it starts: a hole that shows during it is no re-read's
         resets_at_start = s.resets  # nor is a gap after a live reset or swap during it (D2-H2)
+        depth: int | None = None  # the repair's `min_history`
+        fault: Exception | int | None = None  # a depth not counted, logged after the hook
+        dropped = skipped = 0  # rows withheld and skipped, logged after the hook
         try:
             async with asyncio.timeout(self._timeout_s):  # the wait for a slot counts toward it
                 slots = _READ_SLOTS.get()
@@ -530,14 +683,17 @@ class SeriesStore:
                 async with slots:  # given back however the read ends
                     tail = await self._tail(symbol, spec, MAX_HISTORY)
         except Exception as exc:  # broad on purpose: any read failure leaves the series as it was
-            s.attempted = True
+            s.read_at, s.attempted = self._clock(), True  # a completed read, not a cancelled one
             bars_series_hydrate_failed_total.labels(reason=degrade_reason(exc)).inc()
             _log().warning(
                 "bars_series_hydrate_failed", spec_hash=spec.spec_hash, symbol=symbol,
                 error_type=type(exc).__name__, error=str(exc)[:120],
             )  # fmt: skip
         else:
+            s.read_at = self._clock()  # pre-fold: nothing after the fold can raise until the hook
+            before = dict(s.closed)  # what `s` served: a repair is judged against it
             self._fold(s, tail)
+            depth, fault = _counted_depth(s, before, tail.since_us)
             s.attempted = not tail.integrity_degraded
             s.hydrated = s.attempted and not s.swapped  # swapped during it: read again (D2-H1c)
             s.since_us = tail.since_us  # with `hydrated`, after the fold (D2-H1a)
@@ -546,20 +702,33 @@ class SeriesStore:
             elif gapped and s.resets == resets_at_start:  # a re-read, still gapped: back off
                 s.backoff = min(2 * s.backoff, MAX_GAP_BACKOFF)
                 bars_series_gap_rereads_total.inc()
-            if tail.integrity_degraded:  # SR-E12-11: its bars are served, never as final
-                _log().warning(
-                    "bars_series_hydrate_degraded", spec_hash=spec.spec_hash, symbol=symbol,
-                    dropped=tail.dropped,
-                )  # fmt: skip
-            if tail.skipped:
-                _log().info(
-                    "bars_series_rows_skipped", spec_hash=spec.spec_hash, symbol=symbol,
-                    skipped=tail.skipped,
-                )  # fmt: skip
+            dropped, skipped = tail.dropped, tail.skipped
         finally:
             s.replay = None
             ready.set()
-        s.read_at = self._clock()  # a completed read, not a cancelled one
+        if depth is not None and self._on_repair is not None:  # no await since the fold
+            _call_repair(self._on_repair, symbol, spec, depth)
+        if isinstance(fault, Exception):
+            _log().error(
+                "bars_series_repair_depth_failed", spec_hash=spec.spec_hash, symbol=symbol,
+                error_type=type(fault).__name__, error=str(fault)[:120],
+            )  # fmt: skip
+        elif fault is not None:
+            _log().error(
+                "bars_series_repair_depth_failed", spec_hash=spec.spec_hash, symbol=symbol,
+                depth=fault,
+            )  # fmt: skip
+        if dropped:  # SR-E12-11: its bars are served, never as final
+            _log().warning(
+                "bars_series_hydrate_degraded", spec_hash=spec.spec_hash, symbol=symbol,
+                dropped=dropped,
+            )  # fmt: skip
+        if skipped:
+            _log().info(
+                "bars_series_rows_skipped", spec_hash=spec.spec_hash, symbol=symbol,
+                skipped=skipped,
+            )  # fmt: skip
+        return depth is not None
 
     def _fold(self, s: _Series, tail: BarTail) -> None:
         """Rebuild `s` in one generation: the one it names (an emission's or an earlier read's: a
