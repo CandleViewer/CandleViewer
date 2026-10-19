@@ -74,6 +74,8 @@ class TestInMemoryStore(WriteAheadContract):
         mine, theirs = row.exchange_account_id, other.exchange_account_id
         assert await h.executions.insert(fill(row, "E1", "0.1").execution)
         assert await h.orders.get_by_link_id(mine, row.order_link_id) == row
+        assert await h.orders.get_by_link_id(theirs, row.order_link_id) is None
+        assert await h.orders.get(theirs, row.id) is None
         assert [await h.orders.list_open(a) for a in (mine, theirs)] == [(row,), ()]
         assert await h.orders.list_open(mine, symbol="ETHUSDT") == ()
         assert await h.events.list_for_order(theirs, row.id) == ()
@@ -112,9 +114,19 @@ class TestInMemoryStore(WriteAheadContract):
         assert [e.seq for e in await h.events.list_for_order(account, row.id, after_seq=0)] == [1]
 
     async def test_an_unbounded_page_is_refused(self, h: Harness) -> None:
+        row, page = await h.order(), port.MAX_EVENT_PAGE + 1
+        with pytest.raises(ValueError, match="after_seq"):
+            await h.events.list_for_order(row.exchange_account_id, row.id, limit=page)
+
+    async def test_an_empty_page_is_refused(self, h: Harness) -> None:
         row = await h.order()
         with pytest.raises(ValueError, match="after_seq"):
             await h.events.list_for_order(row.exchange_account_id, row.id, limit=0)
+
+    async def test_a_page_before_the_first_event_is_refused(self, h: Harness) -> None:
+        row = await h.order()
+        with pytest.raises(ValueError, match="after_seq"):
+            await h.events.list_for_order(row.exchange_account_id, row.id, after_seq=-2)
 
     async def test_an_insert_stores_a_fill_once(self, h: Harness) -> None:
         row = await h.order()

@@ -108,6 +108,8 @@ _REFUSED: dict[str, tuple[Callable[[Harness, Row], Awaitable[object]], type[Exce
     "fill_elsewhere_no_qty": (lambda h, r: h.executions.commit_fill(fill(  # locked before a CHECK
         r, "E1", "0.1", exchange_account_id=_OTHER, exec_qty=Decimal(0))),
         port.OrderNotFoundError, None),
+    "append_elsewhere": (lambda h, r: h.events.append(_OTHER, r.id, event()),
+                         port.OrderNotFoundError, None),  # C-12.4
     "fill_kind": (lambda h, r: h.orders.transition(step(r, "partially_filled", event("fill"))),
                   ValueError, "commit_fill"),  # a fill comes with its execution (OM-R02)
     "filled": (lambda h, r: h.orders.transition(step(r, "filled", event("exchange_push"))),
@@ -170,6 +172,22 @@ class WriteAheadContract:
         assert (got.seq, got.from_state, got.to_state) == (1, "pending_submit", "accepted")
         assert (got.source, got.payload) == ("rest", {"code": 0, "headers": REDACTED})
         assert await h.stored(row) == (done.order, [0, 1]) and done.order.state == "accepted"
+
+    async def test_a_create_and_an_append_write_their_events_states(self, h: Harness) -> None:
+        """`OrderStore.create` writes the first event from no state to the order's state, and
+        `OrderEventStore.append` one that moves none (`orders.py`), as stored and as returned."""
+        row = await h.order("accepted")
+        account = row.exchange_account_id
+        added = await h.events.append(account, row.id, event())
+        first, second = await h.events.list_for_order(account, row.id)
+        states = [(e.from_state, e.to_state) for e in (first, second, added)]
+        assert states == [(None, "accepted"), (None, None), (None, None)]
+
+    async def test_a_latency_of_zero_is_stored(self, h: Harness) -> None:
+        """`oe_latency` refuses a negative `latency_ms` (`_REFUSED`), not zero."""
+        row = await h.order("pending_submit")
+        done = await h.orders.transition(step(row, "submitted", event(latency_ms=0)))
+        assert done.event.latency_ms == 0
 
     async def test_a_reject_is_stored_redacted(self, h: Harness) -> None:
         """#845 decision 2 on every store: `reject_code` and `ret_code` take the string rule within
@@ -362,6 +380,19 @@ class WriteAheadContract:
         kept = await h.executions.get(row.exchange_account_id, "E1")
         assert kept is not None and kept.order_id == row.id
         assert await h.executions.get(other.exchange_account_id, "E1") is None
+
+    @pytest.mark.parametrize("write", sorted(_REDELIVER))
+    async def test_an_exec_id_is_new_in_each_account(self, h: Harness, write: str) -> None:
+        """`ux_exec_id` is per account: the `exec_id` of one account's fill, reported by another
+        account, is a new fill there (stored by `insert`, applied by `commit_fill`), and the first
+        account's fill and order stay as they were."""
+        mine, theirs = await h.order(), await h.order()
+        first = await h.executions.commit_fill(fill(mine, "E1", "0.1"))
+        assert first is not None
+        assert await _REDELIVER[write](h, fill(theirs, "E1", "0.1"))  # True, or the applied step
+        kept = [await h.executions.get(r.exchange_account_id, "E1") for r in (mine, theirs)]
+        assert [x and x.order_id for x in kept] == [mine.id, theirs.id]
+        assert await h.stored(mine) == (first.order, [0, 1])
 
     @pytest.mark.parametrize("state", ["accepted", "partially_filled"])
     async def test_of_two_concurrent_fills_one_wins(self, h: Harness, state: Any) -> None:

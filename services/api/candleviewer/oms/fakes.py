@@ -84,7 +84,7 @@ class _StoredEvent(NamedTuple):
     row: EventRow
     payload: str
 
-    def read(self) -> EventRow:
+    def fresh(self) -> EventRow:
         """A fresh copy, as each Postgres read is, its payload as `jsonb` returns it."""
         return replace(self.row, payload=json.loads(self.payload, object_pairs_hook=_jsonb_object))
 
@@ -159,7 +159,7 @@ class InMemoryOrderStore:
         port.require_no_fill(step.event, step.to_state)
         row, event = self._moved(step)
         self._commit(row, event)
-        return Step(row, event.read())
+        return Step(row, event.fresh())
 
     async def get(self, account_id: UUID, order_id: UUID) -> Row | None:
         row = self._orders.get(order_id)
@@ -179,7 +179,7 @@ class InMemoryOrderStore:
         port.require_no_fill(event)
         stored = self._event(self._owned(account_id, order_id), event, (None, None))
         self._commit(stored)
-        return stored.read()
+        return stored.fresh()
 
     async def list_for_order(
         self, account_id: UUID, order_id: UUID, *, after_seq: int = -1, limit: int = _PAGE
@@ -187,7 +187,7 @@ class InMemoryOrderStore:
         if after_seq < -1 or not 1 <= limit <= _PAGE:
             raise ValueError(f"after_seq must be >= -1 and limit 1..{_PAGE}")
         events = self._events[order_id] if await self.get(account_id, order_id) else []
-        return tuple(e.read() for e in events if e.row.seq > after_seq)[:limit]
+        return tuple(e.fresh() for e in events if e.row.seq > after_seq)[:limit]
 
     def _commit_fill(self, fill: OrderFill) -> Step | None:
         """Postgres's order: the lock in the account, the execution's CHECKs, its `exec_id`
@@ -202,7 +202,7 @@ class InMemoryOrderStore:
             raise port.StaleOrderState(step.order_id, step.from_state)
         row, event = self._moved(step, asdict(fill.totals))
         self._commit(row, event, stored)
-        return Step(row, event.read())
+        return Step(row, event.fresh())
 
     def _insert(self, execution: NewExecution) -> bool:
         stored = self._execution(execution)
@@ -244,7 +244,7 @@ class InMemoryOrderStore:
             "id": next(self._ids), "order_id": order.id, "order_link_id": order.order_link_id,
             "seq": len(self._events.get(order.id, ())), "kind": event.kind, "source": event.source,
             "from_state": states[0], "to_state": states[1], "event_ts": event.event_ts,
-            "payload": {}, "latency_ms": event.latency_ms,  # `_StoredEvent.read` fills `payload`
+            "payload": {}, "latency_ms": event.latency_ms,  # `_StoredEvent.fresh` fills `payload`
             "ret_code": xp.redact_exchange_text(event.ret_code, max_chars=xp.MAX_CODE_CHARS),
             "ret_msg": xp.redact_exchange_text(event.ret_msg, message=True),
             "recv_ts": self._clock(),
