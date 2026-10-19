@@ -472,6 +472,22 @@ async def test_a_quarantine_landing_just_before_the_manifest_read_is_refused(
         )
 
 
+async def test_a_quarantine_landing_just_before_the_coverage_manifest_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same race on the coverage `auto` routes on (`archived`, via `_manifested`): it too
+    reads the manifest first and looks for the mark second. A coverage that looked for the mark
+    first would report the shrunk manifest's half as the whole hour, and `auto` would route the
+    rest to a tier that may no longer hold it."""
+    root = tmp_path / "cold"
+    registry = await _halves(root, generated_rows())
+    second = sorted((root / "trades").rglob("part-*.parquet"))[1]
+    quarantine_before_next_read(monkeypatch, second.name)
+
+    with pytest.raises(ColdReplayReadError, match="quarantined part"):
+        await ParquetRecordedReader(registry).archived(SYMBOL, StreamKind.TRADES, FIRST_HOUR)
+
+
 def _count_verifications(monkeypatch: pytest.MonkeyPatch) -> list[ColdPaths]:
     calls: list[ColdPaths] = []
     real = verify_partition

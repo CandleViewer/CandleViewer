@@ -5,6 +5,7 @@ crash-point resume reconciliation."""
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import pyarrow as pa
@@ -226,6 +227,40 @@ def test_a_part_found_missing_marks_its_partition_too(tmp_path: Path) -> None:
     assert store.has_quarantined_part(part, tmp_path)
 
 
+@pytest.mark.parametrize("part_present", [True, False], ids=["part-moved", "part-missing"])
+def test_a_quarantine_marks_its_partition_before_it_shrinks_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part_present: bool
+) -> None:
+    """#3477: a reader reads the manifest, then looks for the mark (`read_with_quarantine`). It
+    can only refuse a partition whose manifest is already shrunk if `quarantine` made the mark
+    first: marked second, a read landing between the two would serve what is left as the whole
+    partition. Whether the part moves or is already gone, the mark is there at the shrink."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    mirror = tmp_path / "_quarantine" / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    dest = part / "part-0000.parquet"
+    if part_present:
+        rows, sha = _write_sample(dest, [1]), sha256_of(dest)
+    else:  # the entry names a part that is gone: quarantined by its entry alone
+        rows, sha = 1, "0" * 64
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry(dest.name, sha, rows, "trades", "r", 1)])
+    marked_at_write: list[bool] = []
+    real_write = ManifestStore.write
+
+    def watching_write(
+        self: ManifestStore, partition_dir: Path, cold_root: Path, entries: list[ManifestEntry]
+    ) -> None:
+        marked_at_write.append(mirror.is_dir())
+        real_write(self, partition_dir, cold_root, entries)
+
+    monkeypatch.setattr(ManifestStore, "write", watching_write)
+
+    store.quarantine(part, tmp_path, dest.name)
+
+    assert marked_at_write == [True]  # one write, the shrink, and the mark was already there
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lstat semantics")
 def test_a_mirror_that_cannot_be_looked_up_is_never_taken_for_none(tmp_path: Path) -> None:
     """Fail closed: only a mirror that does not exist clears the partition."""
     part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
