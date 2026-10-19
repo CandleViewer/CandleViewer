@@ -21,6 +21,7 @@ from candleviewer.audit.lane import (
     LaneFacade,
     LaneLockUnavailable,
     boot_lane,
+    build_lane,
     links_work,
     lock_lane,
 )
@@ -69,6 +70,7 @@ class AuditService:
         self.lane_lock_failures = 0  # READY-21: a `lane.lock` that held the lane (S4a's metric)
         self.lane_link_failures = 0  # a failed hard-link probe that held the lane (S4a's metric)
         self._lane: AuditLane | None = None
+        self._lane_closed = True  # no lane, or it closed cleanly: `lane.lock` may go (#2250)
         self._lane_lock: FileIO | None = None
         self._facade: LaneFacade | None = None
 
@@ -114,8 +116,9 @@ class AuditService:
         ADR-0037 (#3009): it first runs the lane key loader off the loop; its refusals refuse boot,
         the environment form on every backend. With keys and a real backend it takes `lane.lock`
         before the writer, which an unanchored directory or another holder refuses (any other lock
-        error holds the lane), and boots the lane after the fold-in (`boot_lane`); a volume that
-        fails the hard-link probe holds it too."""
+        error holds the lane), and boots the lane after the fold-in (`boot_lane`), kept from before
+        its `open()` so that a `stop()` after a cancelled boot waits for it; a volume that fails the
+        hard-link probe holds it too."""
         if self._writer is not None:
             # Two writers on one WAL file would truncate each other's in-flight frames.
             raise RuntimeError("AuditService.start(): a writer is already running; stop() first")
@@ -147,7 +150,9 @@ class AuditService:
                 wal, held = ctx.settings.audit_wal_path, self._lane_lock is None
                 if not held and not await run_in_thread(links_work, wal):
                     held, self.lane_link_failures = True, self.lane_link_failures + 1
-                self._lane = await boot_lane(wal, keys, self._writer, held)
+                lane = self._lane = build_lane(wal, keys, self._writer)
+                self._lane_closed = False
+                await boot_lane(lane, held)
             self._facade = LaneFacade(self._writer, self._lane, lambda: self._journal_first())
 
     async def stop(self, grace_s: float) -> None:
@@ -156,9 +161,10 @@ class AuditService:
         close that fails or overruns is logged critical and the writer stops all the same; what
         the lane did not confirm drains at the next boot. Each lock outlives what it guards
         (#2250): after the writer stopped, and `lane.lock` only after the lane closed too, so a
-        step that failed leaves its lock to the process's exit."""
+        step that failed leaves its lock to the process's exit, whatever a later `stop()` finds."""
         loop, self._facade = asyncio.get_running_loop(), None
-        deadline, closed = loop.time() + grace_s, await self._close_lane(grace_s / 2)
+        deadline = loop.time() + grace_s
+        await self._close_lane(grace_s / 2)
         try:
             if self._writer is not None:
                 await self._writer.stop(max(deadline - loop.time(), 0.0))
@@ -168,26 +174,27 @@ class AuditService:
                 self._query.close()
             self._query, self._started = None, False
             if self._writer is None:
-                if closed and self._lane_lock is not None:  # a second cv-api may boot from here on
+                if self._lane_closed and self._lane_lock is not None:  # a second cv-api may boot
                     self._lane_lock.close()
                     self._lane_lock = None
                 if self._run_lock is not None:  # the CLI may run from here on
                     self._run_lock.close()
                     self._run_lock = None
 
-    async def _close_lane(self, bound_s: float) -> bool:
-        """Close the lane within `bound_s`; False when that failed or overran, logged critical."""
+    async def _close_lane(self, bound_s: float) -> None:
+        """Close the lane within `bound_s`. One that fails or overruns is logged critical and
+        stays unclosed (`_lane_closed`), for this `stop()` and every later one."""
         lane, self._lane = self._lane, None
         if lane is None:
-            return True
+            return
         try:
             async with asyncio.timeout(bound_s):
                 await lane.close()
         except Exception as exc:  # `TimeoutError` among them: the writer stops all the same
-            _log().critical("audit lane close failed; the writer stops all the same",
-                            error=type(exc).__name__)  # fmt: skip
-            return False
-        return True
+            message = "audit lane close failed; the writer stops all the same"
+            _log().critical(message, error=type(exc).__name__)
+            return
+        self._lane_closed = True
 
     def health(self) -> HealthReport:
         """Report module health. Scaffold modules report `ok` when constructed."""

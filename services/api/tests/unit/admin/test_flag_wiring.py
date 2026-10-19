@@ -170,24 +170,48 @@ async def test_the_lane_flag_runs_one_refresh_at_a_time() -> None:
 
 async def test_stop_cancels_the_lane_flags_refresh_and_starts_no_other() -> None:
     """A refresh in flight at stop is cancelled before the engine goes (C-2.18)."""
-    runtime = _runtime()
+    runtime, ended = _runtime(), list[bool]()
     await runtime.start()
     store = FakeFlagStore()
     store.hold = asyncio.Event()  # the refresh is still reading when the runtime stops
     runtime.service = FlagService(runtime.registry, store, clock=Clock())
     runtime.lane_flag()
     task = runtime.lane_flag._task
+
+    async def dispose() -> None:  # the real backend's engine
+        ended.append(task is not None and task.done())
+
+    runtime._relational = cast(Any, SimpleNamespace(dispose=dispose))
     await runtime.stop()
-    assert task is not None and task.cancelled()
+    assert task is not None and task.cancelled() and ended == [True]
     assert runtime.lane_flag() is False and runtime.lane_flag._task is task
 
 
-async def test_start_reads_the_lane_flag_once() -> None:
+async def test_a_restarted_runtime_refreshes_the_lane_flag_again() -> None:
+    """SR-S2B2B1-02: `stop()` closes the flag, and a `start()` after it opens it again."""
     runtime = _runtime()
-    runtime.lane_flag.value = True
+    await runtime.start()
+    await runtime.stop()
     await runtime.start()
     try:
-        assert runtime.lane_flag.value is False  # the stored value
+        runtime.lane_flag()
+        assert runtime.lane_flag._task is not None
+    finally:
+        await runtime.stop()
+
+
+async def test_start_reads_the_lane_flag_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime, reads = _runtime(), list[None]()
+    runtime.lane_flag.value, refresh = True, runtime.lane_flag.refresh
+
+    async def counted() -> None:
+        reads.append(None)
+        await refresh()
+
+    monkeypatch.setattr(runtime.lane_flag, "refresh", counted)
+    await runtime.start()
+    try:
+        assert runtime.lane_flag.value is False and len(reads) == 1  # the stored value, read once
     finally:
         await runtime.stop()
 

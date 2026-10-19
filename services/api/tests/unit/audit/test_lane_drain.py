@@ -942,6 +942,8 @@ async def test_lane_pause_after_a_refused_hand_over_counts_again(
     await lane.close()
     await stopped(writer)
 
+    assert lane.paused_batches == 2
+
 
 async def test_lane_start_cancelled_while_a_resumed_lane_opens_stops_it(tmp_path: Path) -> None:
     """The open is shielded and runs on after its caller is cancelled; it still ends with the
