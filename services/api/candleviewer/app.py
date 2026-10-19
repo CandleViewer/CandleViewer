@@ -1479,6 +1479,7 @@ def create_app(
         bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
         audit=_LazyAuditEmitter(ctx.audit),
         instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
+        qty_step=lambda sym: _catalogue_qty_step(ctx, sym),
         series=bars_series,
         snapshots=default_snapshot_router(
             {"machines": machine_states, "book": book_snapshot_source(ctx), **snapshot_adapters}
@@ -2152,6 +2153,7 @@ def create_app(
             trade_totals=trade_totals_source(ctx),
             principal_resolver=audit_resolver,
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
+            qty_step=lambda sym: _catalogue_qty_step(ctx, sym),  # SR-E12-03 volume/delta floor
             now_us=lambda: time.time_ns() // 1000,
         )
     )
@@ -2502,6 +2504,15 @@ def _catalogue_tick_size(ctx: AppContext, symbol: str) -> Decimal | None:
     snap = scheduler.snapshot() if scheduler is not None else None
     inst = snap.get(symbol) if snap is not None else None
     return None if inst is None else inst.tick_size
+
+
+def _catalogue_qty_step(ctx: AppContext, symbol: str) -> Decimal | None:
+    """`symbol`'s lot step for SR-E12-03's `volume`/`delta` floor, read per call (a catalogue may
+    attach after boot). `None` (no catalogue or snapshot yet, or not listed): refused, not 1."""
+    scheduler = ctx.ingestion.instruments
+    snap = scheduler.snapshot() if scheduler is not None else None
+    inst = snap.get(symbol) if snap is not None else None
+    return None if inst is None else inst.qty_step
 
 
 def _catalogue_scales(ctx: AppContext, symbol: str) -> tuple[int, int] | None:

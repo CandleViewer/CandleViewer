@@ -16,8 +16,9 @@ class BarSpecError(BarsError, ValueError):
 
 
 class BarParamOutOfRange(BarSpecError):
-    """SR-E12-03: a well-formed `param` outside the floor and ceiling of its bar type. The message
-    names the bound (never the client's text), so REST and WS show the same sentence."""
+    """SR-E12-03: a well-formed `param` outside the floor and ceiling of its bar type, or with no
+    known qty step to floor it by. The message names the bound or that reason (never the client's
+    text), so REST and WS show the same sentence."""
 
 
 class BarServiceStopping(BarsError):

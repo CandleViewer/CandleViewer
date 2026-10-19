@@ -4,8 +4,11 @@ upstream reference counting and the bar-series lease (pure asyncio; fake clock, 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import uuid
+from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -32,6 +35,7 @@ from candleviewer.ws.permissions import (
     handle_unsub,
 )
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED
+from candleviewer.ws.topics import FAMILIES, parse_topic
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.unit.bars._set_harness import make_set
 
@@ -1209,3 +1213,138 @@ def test_replay_footprint_param_is_bounded_with_no_bar_service_and_replay_bars_i
     assert (fp["error"]["code"], bars["error"]["code"]) == ("invalid_topic_format", "unknown_topic")
     assert fp["error"]["message"].endswith("must be between 100 and 1000000.")
     assert conn.by_id == {}
+
+
+# -- #2720: SR-E12-03's volume/delta floor of 10 x the symbol's qty_step (BR-29) ---------------
+
+#: BTCUSDT gets a lot step of 1 here (not its real 0.001), so its floor of 10 exceeds the static 1.
+_STEPS = {"BTCUSDT": Decimal(1), "ETHUSDT": Decimal("0.001")}
+
+
+def _step(symbol: str) -> Decimal | None:
+    return _STEPS.get(symbol)
+
+
+def _no_lookup(symbol: str) -> Decimal | None:
+    raise AssertionError("only volume and delta ask the catalogue for a step")
+
+
+@pytest.mark.parametrize("family", ["bars", "footprint"])
+@pytest.mark.parametrize("bar_type", ["volume", "delta"])
+@pytest.mark.parametrize("param", ["1", "9"])
+def test_volume_and_delta_below_ten_qty_steps_are_refused_naming_the_floor(
+    family: str, bar_type: str, param: str
+) -> None:
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_step))
+    (r,) = _sub(conn, f"{family}.BTCUSDT.{bar_type}.{param}")
+    assert (r["ok"], r["error"]["code"]) == (False, "invalid_topic_format")
+    assert r["error"]["message"] == (
+        f"param for bar_type {bar_type} must be at least 10 (10 x this symbol's qty step of 1)."
+    )
+    assert bars.registered == [] and conn.by_id == {}
+
+
+def test_volume_and_delta_at_ten_qty_steps_are_accepted_and_leased() -> None:
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_step))
+    assert all(r["ok"] for r in _sub(conn, "bars.BTCUSDT.volume.10", "bars.BTCUSDT.delta.10"))
+    assert len(bars.registered) == 2
+
+
+def test_a_fractional_qty_step_floors_at_ten_steps_on_ws_too() -> None:
+    """The issue's second row (step 0.5, floor 5), which REST pins as well."""
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=lambda _s: Decimal("0.5")))
+    below, at = _sub(conn, "bars.BTCUSDT.delta.4", "bars.BTCUSDT.delta.5")
+    assert (below["ok"], at["ok"], len(bars.registered)) == (False, True, 1)
+    assert below["error"]["message"] == (
+        "param for bar_type delta must be at least 5 (10 x this symbol's qty step of 0.5)."
+    )
+
+
+@pytest.mark.parametrize(
+    "family", sorted(f.family for f in FAMILIES.values() if any("param" in s for s in f.shapes))
+)
+def test_every_family_with_a_param_segment_names_a_bar_series(family: str) -> None:
+    """The floor gates on a topic that has a `bar_type` segment, not on a list of families, so a
+    family with these segments (`indicators`: E13-T02, #426, and 23 §6.1's `indicators` bullet) is
+    floored once it is served."""
+    topic = parse_topic(f"{family}.BTCUSDT.volume.1")
+    assert (topic.bar_type, topic.param) == ("volume", "1")
+
+
+def test_the_floor_follows_the_bar_series_a_topic_names_not_its_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `bars`-shaped family under another name is floored and takes a builder lease: the gate
+    follows the topic's `bar_type`, not its family. 23 §6.1's `indicators` bullet (E13-T02, #426)
+    holds an `indicators` series as a live `bars.*` one is held, under the same param bounds."""
+    probe = dataclasses.replace(FAMILIES["bars"], family="probe")  # `bars`' shape, a new name
+    monkeypatch.setattr("candleviewer.ws.topics.FAMILIES", {**FAMILIES, "probe": probe})
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_step))
+    below, at = _sub(conn, "probe.BTCUSDT.volume.9", "probe.BTCUSDT.volume.10")
+    got = (below["ok"], below.get("error", {}).get("code"), at["ok"])
+    assert got == (False, "invalid_topic_format", True)
+    assert len(bars.registered) == 1
+
+
+@pytest.mark.parametrize("topic", ["bars.BTCUSDT.volume.1", "footprint.BTCUSDT.delta.1"])
+def test_ws_authorisation_comes_before_the_floor_and_the_catalogue_read(topic: str) -> None:
+    """As on REST: a caller without `marketdata:read` learns nothing of the floor and the
+    catalogue's step is not asked; the permitted caller's same subscribe does ask."""
+    asked: list[str] = []
+
+    def step(symbol: str) -> Decimal | None:
+        asked.append(symbol)
+        return Decimal(1)
+
+    bars = _Bars()
+    denied = ConnectionAuthz(
+        _mgr(A, perms=frozenset({Permission.ORDERS_READ})), _services(bars=bars, qty_step=step)
+    )
+    (r,) = _sub(denied, topic)
+    assert (r["ok"], r.get("error", {}).get("code")) == (False, "forbidden")
+    assert "at least" not in r["error"]["message"] and "qty step" not in r["error"]["message"]
+    assert asked == [] and bars.registered == [] and denied.by_id == {}
+    _sub(ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=step)), topic)
+    assert asked == ["BTCUSDT"]  # control: with the permission, the same topic does reach the read
+
+
+def test_the_volume_floor_is_per_symbol() -> None:
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars(), qty_step=_step))
+    btc, eth = _sub(conn, "bars.BTCUSDT.volume.5", "bars.ETHUSDT.volume.5")
+    assert (btc["ok"], eth["ok"]) == (False, True)  # 10 x 1 = 10 > 5; 10 x 0.001 = 0.01 <= 5
+
+
+def test_replay_volume_below_ten_qty_steps_is_refused_with_no_bar_service() -> None:
+    """The replay half of `served` (as for the tick bound above): no lease, the floor holds."""
+    conn = ConnectionAuthz(_mgr(A), _services(qty_step=_step))
+    (r,) = _sub(conn, "bars.BTCUSDT.volume.1", replay_session_id=RS)
+    assert (r["ok"], r["error"]["code"]) == (False, "invalid_topic_format")
+    assert r["error"]["message"].startswith("param for bar_type volume must be at least 10 (")
+
+
+@pytest.mark.parametrize("bar_type", ["volume", "delta"])
+@pytest.mark.parametrize(
+    "steps", [None, lambda _s: None], ids=["no-catalogue-wired", "symbol-not-in-catalogue"]
+)
+def test_volume_and_delta_are_refused_when_the_qty_step_is_unknown(
+    bar_type: str, steps: Callable[[str], Decimal | None] | None
+) -> None:
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=steps))
+    (r,) = _sub(conn, f"bars.BTCUSDT.{bar_type}.50")
+    assert (r["ok"], r["error"]["code"]) == (False, "invalid_topic_format")
+    assert "the qty step of this symbol is not known" in r["error"]["message"]
+    assert bars.registered == [] and conn.by_id == {}
+
+
+def test_other_bar_types_need_no_qty_step() -> None:
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_no_lookup))
+    topics = ("bars.BTCUSDT.time.5", "bars.BTCUSDT.tick.100", "bars.BTCUSDT.range.2",
+              "footprint.BTCUSDT.tick.100")  # fmt: skip
+    assert all(r["ok"] for r in _sub(conn, *topics))
+    assert len(bars.registered) == len(topics)

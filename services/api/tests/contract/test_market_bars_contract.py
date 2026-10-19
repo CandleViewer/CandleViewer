@@ -10,12 +10,14 @@ what this tests. The fake `RowFetcher` evaluates the reader's parameterised SQL 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, ClassVar
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from candleviewer.api._generated.openapi_models import KlineResponse, Problem
 from candleviewer.api.contract_conformance import load_openapi_spec
@@ -118,6 +120,18 @@ class _Fetch:
 async def _noop(*a: object) -> None: ...
 
 
+#: The catalogue's `qty_step` per listed symbol (`rest/instruments_before.json`: BTCUSDT 0.001).
+_STEPS: dict[str, Decimal] = {"BTCUSDT": Decimal("0.001")}
+
+
+def _step(symbol: str) -> Decimal | None:
+    return _STEPS.get(symbol)
+
+
+def _no_lookup(symbol: str) -> Decimal | None:
+    raise AssertionError("only volume and delta ask the catalogue for a step")
+
+
 class _Resolver:
     def __init__(self, perms: frozenset[str] | None) -> None:
         self._perms = perms
@@ -136,6 +150,7 @@ def _client(
     *, perms: frozenset[str] | None = frozenset({"marketdata:read"}),
     recording_us: int | None = _T0, fetch: _Fetch | None = None, wired: bool = True,
     recording_wired: bool = True, totals: TradeTotalsSource | None = _tape_totals,
+    qty_step: Callable[[str], Decimal | None] | None = _step,
 ) -> TestClient:  # fmt: skip
     reader = BarReader(fetch or _Fetch(), _noop)
 
@@ -148,7 +163,7 @@ def _client(
             lambda: reader if wired else None,
             recording_started_at_us=started if recording_wired else None, trade_totals=totals,
             principal_resolver=_Resolver(perms), symbol_listed=lambda s: s == "BTCUSDT",
-            now_us=lambda: _NOW,
+            qty_step=qty_step, now_us=lambda: _NOW,
         )
     )  # fmt: skip
     return TestClient(app, client=("127.0.0.1", 50000))
@@ -274,6 +289,98 @@ class TestRefusals:
     def test_reader_not_composed_is_503(self) -> None:
         q = {**_P, "bar_type": "tick", "param": "100"}
         _problem(_client(wired=False).get("/market/bars", params=q), 503, "store_unavailable")
+
+
+class TestVolumeDeltaQtyStepFloor:
+    """SR-E12-03 / BR-29 (#2720): `volume` and `delta` floor at 10 x the symbol's catalogue
+    `qty_step`; an unknown step refuses them (never 1). Refused as every SR-E12-03 bound is: 400."""
+
+    @staticmethod
+    def _rejected(reason: str) -> float:
+        got = REGISTRY.get_sample_value("bars_endpoint_param_rejected_total", {"reason": reason})
+        return got or 0.0
+
+    @pytest.mark.parametrize("bar_type", ["volume", "delta"])
+    @pytest.mark.parametrize(
+        ("step", "param", "floor"), [("1", "1", "10"), ("1", "9", "10"), ("0.5", "4", "5")]
+    )
+    def test_below_ten_qty_steps_is_400_naming_the_floor_with_no_read(
+        self, bar_type: str, step: str, param: str, floor: str
+    ) -> None:
+        fetch, before = _Fetch(), self._rejected("out_of_range")
+        client = _client(qty_step=lambda _s: Decimal(step), fetch=fetch)
+        q = {**_P, "bar_type": bar_type, "param": param}
+        body = _problem(client.get("/market/bars", params=q), 400, "validation_failed")
+        assert body["detail"] == (
+            f"param for bar_type {bar_type} must be at least {floor} "
+            f"(10 x this symbol's qty step of {step})."
+        )
+        assert fetch.calls == 0 and self._rejected("out_of_range") == before + 1
+
+    @pytest.mark.parametrize("bar_type", ["volume", "delta"])
+    @pytest.mark.parametrize(("step", "param"), [("1", "10"), ("1", "11"), ("0.5", "5")])
+    def test_at_and_above_ten_qty_steps_is_served(
+        self, bar_type: str, step: str, param: str
+    ) -> None:
+        fetch = _Fetch()
+        q = {**_P, "bar_type": bar_type, "param": param}
+        resp = _client(qty_step=lambda _s: Decimal(step), fetch=fetch).get("/market/bars", params=q)
+        assert resp.status_code == 200 and fetch.calls > 0
+
+    @pytest.mark.parametrize("bar_type", ["volume", "delta"])
+    @pytest.mark.parametrize(
+        ("steps", "symbol"),
+        [(None, "BTCUSDT"), (_step, "NOPEUSDT")],
+        ids=["no-catalogue-wired", "symbol-not-in-catalogue"],
+    )
+    def test_unknown_qty_step_refuses_volume_and_delta(
+        self, bar_type: str, steps: Callable[[str], Decimal | None] | None, symbol: str
+    ) -> None:
+        fetch = _Fetch()
+        q = {**_P, "symbol": symbol, "bar_type": bar_type, "param": "50"}
+        resp = _client(qty_step=steps, fetch=fetch).get("/market/bars", params=q)
+        body = _problem(resp, 400, "validation_failed")
+        assert "the qty step of this symbol is not known" in body["detail"]
+        assert symbol not in resp.text and fetch.calls == 0
+
+    @pytest.mark.parametrize(
+        ("perms", "status", "code"),
+        [(None, 401, "unauthenticated"), (frozenset({"orders:read"}), 403, "forbidden")],
+    )
+    def test_authorisation_comes_before_the_floor_and_the_catalogue_read(
+        self, perms: frozenset[str] | None, status: int, code: str
+    ) -> None:
+        """A caller who may not read bars learns nothing of the floor, and nothing is looked up."""
+        asked: list[str] = []
+
+        def step(symbol: str) -> Decimal | None:
+            asked.append(symbol)
+            return Decimal(1)
+
+        fetch, q = _Fetch(), {**_P, "bar_type": "volume", "param": "1"}
+        resp = _client(perms=perms, qty_step=step, fetch=fetch).get("/market/bars", params=q)
+        _problem(resp, status, code)
+        assert asked == [] and fetch.calls == 0
+        assert "at least" not in resp.text and "qty step" not in resp.text
+
+    @pytest.mark.parametrize(
+        ("bar_type", "param"), [("time", "1"), ("tick", "100"), ("range", "20"), ("renko", "20")]
+    )
+    def test_other_bar_types_need_no_qty_step(self, bar_type: str, param: str) -> None:
+        q = {**_P, "bar_type": bar_type, "param": param}
+        assert _client(qty_step=_no_lookup).get("/market/bars", params=q).status_code == 200
+
+    @pytest.mark.parametrize(("bar_type", "param"), [("volume", "0.001"), ("delta", "0.009")])
+    def test_btcusdt_fractional_params_are_malformed_and_one_is_above_its_floor(
+        self, bar_type: str, param: str
+    ) -> None:
+        """BTCUSDT's step is 0.001 (floor 0.01), but a dot is never part of a param (`from_wire`):
+        the fractional values below it are refused as malformed; the smallest one, 1, is served."""
+        fetch = _Fetch()
+        client, q = _client(fetch=fetch), {**_P, "bar_type": bar_type, "param": param}
+        _problem(client.get("/market/bars", params=q), 400, "validation_failed")
+        assert fetch.calls == 0
+        assert client.get("/market/bars", params={**q, "param": "1"}).status_code == 200
 
 
 class TestPaginationAndRbac:

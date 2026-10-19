@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 from prometheus_client import generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 
+import candleviewer.app as app_module
+from candleviewer.api.market_bars import make_market_bars_router
 from candleviewer.app import _catalogue_scales, create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
@@ -167,6 +169,42 @@ def test_bars_scales_are_the_places_of_the_catalogue_tick_size_and_qty_step() ->
     assert got == [(1, 3), (0, 0), None]
     bare: Any = SimpleNamespace(ingestion=SimpleNamespace(instruments=None))
     assert _catalogue_scales(bare, "BTCUSDT") is None
+
+
+def _attach_catalogue(app: Any, steps: dict[str, Decimal] | None) -> None:
+    """The scheduler's reader surface: `{symbol: instrument}`, or `None` before its snapshot."""
+    snap = None if steps is None else {s: SimpleNamespace(qty_step=d) for s, d in steps.items()}
+    app.state.app_context.ingestion.attach_instruments(SimpleNamespace(snapshot=lambda: snap))
+
+
+#: BTCUSDT's lot step is 1 here (really 0.001): its volume/delta floor of 10 exceeds the static 1.
+_STEPS = {"BTCUSDT": Decimal(1), "ETHUSDT": Decimal("0.001")}
+
+
+def test_ws_services_read_the_catalogue_qty_step() -> None:
+    """#2720: the SR-E12-03 volume/delta floor reads the live catalogue, attached after boot."""
+    app = create_app(_settings())
+    step = app.state.ws_registry.services.qty_step
+    assert step("BTCUSDT") is None  # no catalogue yet: unknown, never a default of 1
+    _attach_catalogue(app, None)
+    assert step("BTCUSDT") is None  # attached, but its first snapshot is not in
+    _attach_catalogue(app, _STEPS)
+    got = (step("BTCUSDT"), step("ETHUSDT"), step("NOPEUSDT"))
+    assert got == (Decimal(1), Decimal("0.001"), None)
+
+
+def test_market_bars_router_reads_the_catalogue_qty_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return make_market_bars_router(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "make_market_bars_router", spy)
+    app = create_app(_settings())
+    assert seen["qty_step"]("BTCUSDT") is None  # no catalogue yet
+    _attach_catalogue(app, _STEPS)
+    assert seen["qty_step"]("BTCUSDT") == Decimal(1) and seen["qty_step"]("NOPEUSDT") is None
 
 
 def test_welcome_carries_settings_build_info(world: tuple[TestClient, _Kill]) -> None:

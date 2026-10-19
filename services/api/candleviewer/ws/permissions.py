@@ -27,6 +27,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Final, Literal, Protocol
 
 import structlog
@@ -50,7 +51,7 @@ from candleviewer.bars.errors import (
 )
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.series_store import Hold
-from candleviewer.bars.spec import check_param_bounds, from_wire
+from candleviewer.bars.spec import check_param_bounds, from_wire, qty_step_for
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
@@ -199,6 +200,9 @@ class SubscriptionServices:
     audit: AuditSink | None = None
     clock: Callable[[], float] = time.monotonic
     instrument_known: Callable[[str], bool] | None = None
+    #: SR-E12-03 (#2720): a symbol's lot step from the instrument catalogue, `None` when unknown.
+    #: `volume`/`delta` bars floor at 10 x it; unwired or unknown, they are refused (never 1).
+    qty_step: Callable[[str], Decimal | None] | None = None
     #: E17-S03: owning-module snapshot port and shared render cache; `None` until wired, in
     #: which case subscriptions stay `snapshot_pending` and no `snap` is emitted.
     snapshots: SnapshotSource | None = None
@@ -310,13 +314,17 @@ class Subscription:
         return frozenset(out)
 
 
-def _bar_spec(sub: Subscription) -> tuple[BarSpec | None, dict[str, Any] | None]:
-    """A `bars.*`/`footprint.*` topic's spec, or its refusal (§6.1, SR-E12-03): an unbuildable
-    spec, or a `param` outside its kind's bounds, naming the bound and never the series."""
+def _bar_spec(
+    sub: Subscription, qty_step: Callable[[str], Decimal | None] | None
+) -> tuple[BarSpec | None, dict[str, Any] | None]:
+    """The spec of a topic that names a bar series (`bars.*`, `footprint.*`, ...), or its refusal
+    (§6.1, SR-E12-03): an unbuildable spec, or a `param` outside its kind's bounds (`volume`/`delta`
+    floor at 10 x the symbol's `qty_step`), naming the bound and never the series."""
     bar_type = sub.topic.bar_type or ""
     try:
         spec = from_wire(bar_type, sub.topic.param or "")
-        check_param_bounds(spec, bar_type)
+        step = qty_step_for(bar_type, sub.topic.symbol or "", qty_step)
+        check_param_bounds(spec, bar_type, qty_step=step)
     except BarParamOutOfRange as exc:
         return None, _fail(sub.ch, "invalid_topic_format", str(exc))
     except BarsError:
@@ -642,6 +650,7 @@ class ConnectionAuthz:
         (`register` checks again; `user=` the authenticated principal id, never a client value);
         the upstream refs (`bars.*`: its symbol's trades). `_drop` releases what was taken, on a
         refusal, an `unsub`, a revocation or the socket's end.
+        A topic that names a bar series (`bars.*`, `footprint.*`, ...) is bounded and leased alike.
 
         #2896: a change that ends `sub` during these awaits (a revocation, §9.5, or the socket's
         end) releases only what was taken before it, and `release_all` no longer sees `sub`. What
@@ -694,12 +703,14 @@ class ConnectionAuthz:
             self._drop(sub)
             return _fail(sub.ch, "unknown_topic", _UNSERVED)
         spec: BarSpec | None = None
-        if family in {"bars", "footprint"}:
+        # The topic has a `bar_type` segment (`bars`, `footprint`): its spec is bounded and, where a
+        # builder serves it, leased. A series that only an option names (`metrics`) is not seen.
+        if sub.topic.bar_type is not None:
             refused = self._bars_refusal(sub) if family == "bars" else None
             # SR-E12-03 for live and replay alike, wherever a builder could serve the series.
             served = sub.replay_session_id is not None or self.services.bars is not None
             if refused is None and served:
-                spec, refused = _bar_spec(sub)
+                spec, refused = _bar_spec(sub, self.services.qty_step)
             if refused is not None:
                 self._drop(sub)
                 return refused
