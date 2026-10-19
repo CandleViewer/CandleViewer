@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { Duplex } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13,7 +12,7 @@ import type { HardeningFlags } from "../src/main/shellPort.js";
 // browser-engine assumptions A1 to A11 of ADR-0038. Each measurement is logged as one
 // `CV-PROBE {json}` line, then pinned as S2 measured it (ADR-0038 Amendment 1): a change, for
 // example from an Electron bump, fails with the assumption's id and the record's consequence.
-// Loopback only (C-13.5).
+// Loopback only, no other network (C-13.7).
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_ENTRY = path.join(__dirname, "../dist/main/index.js");
 const SHELL_PORT_MODULE = path.join(__dirname, "../dist/main/shellPort.js");
@@ -238,24 +237,14 @@ function acceptUpgrade(req: http.IncomingMessage, socket: Duplex, sockets: Set<D
   socket.once("data", () => socket.destroy());
 }
 
-/** Resolves the bound port, or null when the port is taken. */
-function listenOn(server: http.Server, port: number): Promise<number | null> {
+/** Binds 127.0.0.1:8000. The meta CSP admits no other port, so a taken port fails the harness. */
+function listen(server: http.Server): Promise<void> {
   return new Promise((resolve, reject) => {
-    const onError = (error: NodeJS.ErrnoException): void => {
-      server.off("listening", onListening);
-      if (error.code === "EADDRINUSE") {
-        resolve(null);
-      } else {
-        reject(error);
-      }
-    };
-    const onListening = (): void => {
-      server.off("error", onError);
-      resolve((server.address() as AddressInfo).port);
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(port, "127.0.0.1");
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      const taken = "harness: 127.0.0.1:8000 is taken; the meta CSP admits no other port";
+      reject(error.code === "EADDRINUSE" ? new Error(taken) : error);
+    });
+    server.listen(PREFERRED_PORT, "127.0.0.1", () => resolve());
   });
 }
 
@@ -270,15 +259,10 @@ async function startFixture() {
     seen.push(seenOf(req, true));
     acceptUpgrade(req, socket, sockets);
   });
-  const preferred = await listenOn(server, PREFERRED_PORT);
-  const port = preferred ?? (await listenOn(server, 0));
-  if (port === null) {
-    throw new Error("the fixture could not listen on 127.0.0.1");
-  }
+  await listen(server);
   const forProbe = (id: string) => seen.filter((entry) => entry.probe === id);
   return {
-    port,
-    preferredPortBusy: preferred === null,
+    port: PREFERRED_PORT,
     seen,
     forProbe,
     /** Probe cookie names sent by the request with this id and method; null if none arrived. */
@@ -302,8 +286,8 @@ function launchEnv(backendOrigin: string, configHome: string): Record<string, st
       env[key] = value;
     }
   }
-  // On Linux XDG_CONFIG_HOME gives the run its own profile: an empty cookie jar at the start, and
-  // nothing left in a developer's profile afterwards.
+  // XDG_CONFIG_HOME (Linux) and the --user-data-dir launch argument give the run its own profile:
+  // an empty cookie jar at the start, and nothing left in a developer's profile afterwards.
   return { ...env, CV_BACKEND_ORIGIN: backendOrigin, XDG_CONFIG_HOME: configHome };
 }
 
@@ -437,6 +421,9 @@ async function broadcastBetweenWindows(app: ElectronApplication, win: Page): Pro
   opened.catch(() => undefined); // awaited below; this only keeps an early exit from leaving it unhandled
   const windowId = await app.evaluate(
     ({ BrowserWindow }, { prefs, url }) => {
+      // A6's probe window: HARDENED_WEB_PREFERENCES plus webviewTag:false and show:false, created
+      // from the main process only inside this test and destroyed in its finally.
+      // nosemgrep: cv-electron-unsafe-webprefs reason=A6-probe-second-window-hardened-prefs-main-process-test-only-destroyed-in-finally owner=@CandleViewer/security review=2027-04-16
       const second = new BrowserWindow({
         show: false,
         webPreferences: { ...prefs, webviewTag: false },
@@ -502,19 +489,12 @@ test.describe("Backend connection probe (#3519 S2): ADR-0038 A1 to A11 as measur
       fixture.forProbe(id).flatMap((entry) => (entry.origin === APP_ORIGIN ? [] : [entry.origin]));
     const response200 = expect.objectContaining({ outcome: "response", status: 200 });
     try {
-      expect(fixture.port).toBeGreaterThan(0);
-      const { port, preferredPortBusy } = fixture;
-      probe("harness", "fixture", {
-        port,
-        preferredPortBusy,
-        metaCspAdmits: port === PREFERRED_PORT,
-      });
-      expect(
-        preferredPortBusy,
-        "harness: 127.0.0.1:8000 is taken; the meta CSP admits no other port",
-      ).toBe(false);
+      expect(fixture.port, "harness: the fixture listens on 127.0.0.1:8000").toBe(PREFERRED_PORT);
+      probe("harness", "fixture", { port: fixture.port });
 
-      const shell = await electron.launch({ args: [MAIN_ENTRY], env: launchEnv(base, configHome) });
+      const profile = `--user-data-dir=${path.join(configHome, "user-data")}`;
+      const env = launchEnv(base, configHome);
+      const shell = await electron.launch({ args: [MAIN_ENTRY, profile], env });
       app = shell;
       const win = await shell.firstWindow();
       const consoleLines: string[] = [];
@@ -587,7 +567,11 @@ test.describe("Backend connection probe (#3519 S2): ADR-0038 A1 to A11 as measur
         "the ws://127.0.0.1 upgrade opens": [socket, { outcome: "open" }],
       });
       const origins = ["a1-get", "a1-post", "a1-ws"].flatMap(foreign);
-      pin("A1", { "Origin is app://candleviewer on GET, preflight, POST, WS": [origins, []] });
+      const postMethods = fixture.forProbe("a1-post").map((entry) => entry.method);
+      pin("A1", {
+        "Origin is app://candleviewer on GET, preflight, POST, WS": [origins, []],
+        "the preflight and the POST both arrive": [postMethods, ["OPTIONS", "POST"]],
+      });
       const readable = [get.page, post.page].map((page) =>
         "csrfHeaderReadable" in page ? page.csrfHeaderReadable : "no response (see A8)",
       );
