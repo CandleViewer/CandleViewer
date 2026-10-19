@@ -72,6 +72,9 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | GADefectForecastSlipping | ticket | 3d | `docs/plan/07-release-and-prr.md#alert-gadefectforecastslipping` | synthetic | | | | | | pending (promtool unit/firing test: #1844 follow-up) |
 | GADefectArrivalExceedsClosure | ticket | 1h | `docs/plan/07-release-and-prr.md#alert-gadefectarrivalexceedsclosure` | synthetic | | | | | | pending (promtool unit/firing test: #1844 follow-up) |
 | GADefectSLABreached | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-gadefectslabreached` | synthetic | | | | | | pending (promtool unit/firing test: #1844 follow-up) |
+| AccountDown | page | 0m | `docs/plan/07-release-and-prr.md#alert-accountdown` | synthetic | | | | | | pending (promtool: an account down after it was up fires and holds while it stays down, a down that recovered between two scrapes fires through the transition counter; back up past the 5 m window, never connected since boot and degraded stay silent: `infra/prometheus/tests/system_alerts.test.yml`) |
+| KeyRotationWarn | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-keyrotationwarn` | synthetic | | | | | | pending (promtool: a warn notice fires on the first evaluation, still firing at 9 h 49 m, resolved at 9 h 52 m once the `keep_firing_for` hold ends; a flat count and an overdue notice stay silent: `infra/prometheus/tests/system_alerts.test.yml`) |
+| KeyRotationOverdue | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-keyrotationoverdue` | synthetic | | | | | | pending (promtool: as KeyRotationWarn on overdue notices; resolved between two daily notices and fired again by the next; a warn notice stays silent: `infra/prometheus/tests/system_alerts.test.yml`) |
 
 ## Execution status and exception request (2026-10-02)
 

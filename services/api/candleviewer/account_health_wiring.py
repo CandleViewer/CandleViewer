@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol, cast, get_args
@@ -63,6 +64,7 @@ from candleviewer.accounts.health import (
     HealthTransition,
     SystemClock,
 )
+from candleviewer.accounts.key_age import RotationState
 from candleviewer.accounts.key_standing import KeyStandings, SelfCheckResults
 from candleviewer.accounts.order_gate import AccountHealthCheck
 from candleviewer.accounts.wallet import (
@@ -88,7 +90,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 
 if TYPE_CHECKING:
     from candleviewer.accounts.service import AccountHealthFeed
-    from candleviewer.observability.metrics import Metrics
+    from candleviewer.observability.metrics import BoundedMetric, Metrics
     from candleviewer.settings import Settings
     from candleviewer.ws.sequencing import SnapshotBody
 
@@ -125,6 +127,20 @@ LOG_EVERY_S: Final = 60.0
 OLD_SNAPSHOT_DECISIONS: Final = "cv_wallet_sizing_old_snapshot_total"
 #: The open episodes the boot replays, at most (C-2.18; the latest per account): more stay open.
 REPLAY_BATCH: Final = 100
+#: Every state and reason a monitored account can read (`AccountHealthMonitor.view`): each reason
+#: belongs to one state. A test drives a monitor through all five.
+HEALTH_SERIES: Final[tuple[tuple[HealthState, HealthReason], ...]] = (
+    (HealthState.HEALTHY, "ws_heartbeat"),
+    (HealthState.DEGRADED, "rest_only"),
+    (HealthState.DEGRADED, "ws_silent"),
+    (HealthState.DOWN, "no_success"),
+    (HealthState.DOWN, "never_connected"),
+)
+#: `WalletPoll.result`: how a reconciliation read ended.
+RECONCILE_RESULTS: Final = ("ok", "failed", "rejected")
+#: The key-age notices (`cv_key_rotation_notices_total{state}`): a key entering warn, and an
+#: overdue key once a day.
+NOTICE_STATES: Final = (RotationState.WARN, RotationState.OVERDUE)
 
 MonitoredAccounts = Callable[[], Awaitable[frozenset[UUID]]]
 Release = Callable[[], Awaitable[None]]
@@ -205,6 +221,42 @@ class _Loop:
         return _passes(LOG_EVERY_S, self.every_s)
 
 
+@dataclass(frozen=True, slots=True)
+class HealthSeries:
+    """The catalogue series the runtime sets and counts (#837 W6), per state, reason and result and
+    never per account (SR-125's allow-list; the log lines name the account): each committed
+    transition, whichever call commits it, under the state entered; at each tick, the monitored
+    accounts per state and reason and the age of the oldest wallet snapshot; each reconciliation
+    read by how it ended. `bind` registers them on the app's metrics and binds every child, the
+    key-age notices and states too (the key-age job's), so each reads 0 from boot and `increase()`
+    sees the first event (the AccountDown page reads both health series)."""
+
+    states: BoundedMetric
+    transitions: BoundedMetric
+    wallet_age: BoundedMetric
+    reconciles: BoundedMetric
+
+    @classmethod
+    def bind(cls, metrics: Metrics) -> HealthSeries:
+        r0 = register_r0(metrics)
+        series = cls(
+            r0["cv_account_health_state"],
+            r0["cv_account_health_transitions_total"],
+            r0["cv_wallet_snapshot_age_seconds"],
+            r0["cv_wallet_reconcile_total"],
+        )
+        for state, reason in HEALTH_SERIES:
+            series.states.labels(state, reason)
+            series.transitions.labels(state, reason)
+        for result in RECONCILE_RESULTS:
+            series.reconciles.labels(result)
+        for notice in NOTICE_STATES:
+            r0["cv_key_rotation_notices_total"].labels(notice)
+        for rotation in RotationState:
+            r0["cv_keys_rotation_state"].labels(rotation)
+        return series
+
+
 class AccountHealthRuntime:
     """The running monitor, wallet cache and reconciler, with the loops that drive them. `monitor`
     and `wallets` are for the readers (the order-entry gate, the read models); the private-WS
@@ -230,6 +282,7 @@ class AccountHealthRuntime:
         monitored: MonitoredAccounts | None,
         *,
         topic: WalletTopic[SnapshotBody],
+        series: HealthSeries,
         release: Release | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         episodes: EpisodeStore | None = None,
@@ -239,6 +292,7 @@ class AccountHealthRuntime:
         self.order_entry_check = AccountHealthCheck(monitor, standings, wallets)
         self._monitored, self._release, self._episodes = monitored, release, episodes
         self._sleep = sleep
+        self._series = series  # the catalogue series it sets and counts
         self._tracked: set[UUID] = set()
         self._booted = False  # a tracking pass has worked: the boot's replay is done
         self._replay: asyncio.Task[tuple[DmsEpisodeRow, ...]] | None = None  # the last replay read
@@ -280,8 +334,10 @@ class AccountHealthRuntime:
         return refreshed
 
     def _moved(self, transition: HealthTransition | None) -> HealthTransition | None:
-        """Publish the health of an account whose state a call just committed, on `wallet`."""
+        """Count the transition a call just committed, under the state entered and its reason,
+        and publish the account's health on `wallet`."""
         if transition is not None:
+            self._series.transitions.labels(transition.to_state, transition.reason).inc()
             self.topic.health_changed(transition.account_id)
         return transition
 
@@ -422,10 +478,23 @@ class AccountHealthRuntime:
         for transition in self.monitor.tick():  # the monitor logs each one and owes the hook
             self._moved(transition)
         self.topic.stale_check()
+        self._census()
+
+    def _census(self) -> None:
+        """Set the health gauge, every state and reason (0 for one no account reads), and the age
+        of the oldest wallet snapshot (0 with none monitored), from the accounts the cache tracks:
+        the monitor's, since tracking adds and drops an account in both."""
+        silence = self.wallets.silence_s()
+        views = (self.monitor.view(account_id) for account_id in silence)
+        held = Counter((view.state, view.reason) for view in views if view is not None)
+        for state, reason in HEALTH_SERIES:
+            self._series.states.labels(state, reason).set(held[(state, reason)])
+        self._series.wallet_age.child().set(max(silence.values(), default=0.0))
 
     async def _reconcile(self) -> None:
         polls = await self._reconciler.run_due()  # a read's `rest_ok` went through `rest_ok` above
         for poll in polls:
+            self._series.reconciles.labels(poll.result).inc()
             if poll.refreshed:
                 self.topic.balance_refreshed(poll.account_id)
 
@@ -575,6 +644,7 @@ def wire_account_health(
         standings,
         monitored,
         topic=topic,
+        series=HealthSeries.bind(metrics),
         release=release,
         sleep=sleep,
         episodes=journal,

@@ -610,6 +610,80 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E27",
         max_series=1,
     ),
+    # --- Account health, wallet freshness and key age (E27-T04, #837): per state, never account
+    # SR-125's allow-list admits no identifier label: the log lines name the account.
+    _s(
+        "cv_account_health_state",
+        "gauge",
+        "accounts",
+        ("state", "reason"),
+        "Monitored accounts by health state and its reason, set at each health tick; every pair "
+        "is set, 0 when none. One that never connected since boot reads down, never_connected.",
+        "down with no_success above 0 = AccountDown (page)",
+        _L,
+        "E27",
+        max_series=5,
+    ),
+    _s(
+        "cv_account_health_transitions_total",
+        "counter",
+        "transitions",
+        ("state", "reason"),
+        "Committed health transitions by the state entered and its reason; the "
+        "account.health_changed log line names the account.",
+        "any into down = AccountDown (page)",
+        _L,
+        "E27",
+        max_series=5,
+    ),
+    _s(
+        "cv_wallet_snapshot_age_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "Age of the oldest wallet snapshot of the monitored accounts (since its last refresh, or "
+        "since monitoring began for one with none), set at each health tick; 0 when none is.",
+        "dashboard; lines at CV_WALLET_STALE_S and CV_WALLET_RECONCILE_S",
+        _L,
+        "E27",
+        max_series=1,
+    ),
+    _s(
+        "cv_wallet_reconcile_total",
+        "counter",
+        "reads",
+        ("result",),
+        "REST wallet reconciliation reads by result: ok, failed (no figures) or rejected (the "
+        "exchange refused the credential).",
+        "dashboard; failed is expected until E29 binds the wallet read",
+        _L,
+        "E27",
+        max_series=3,
+    ),
+    _s(
+        "cv_key_rotation_notices_total",
+        "counter",
+        "notices",
+        ("state",),
+        "Key-age notices: one per active key entering warn and one a day per overdue key "
+        "(US-ACCT-005); a key is never disabled for its age.",
+        "warn = KeyRotationWarn, overdue = KeyRotationOverdue (tickets)",
+        _L,
+        "E27",
+        max_series=2,
+    ),
+    _s(
+        "cv_keys_rotation_state",
+        "gauge",
+        "keys",
+        ("state",),
+        "Active keys of the process environment by rotation state (ok, warn, overdue), set at "
+        "each key-age evaluation.",
+        "dashboard",
+        _L,
+        "E27",
+        max_series=3,
+    ),
     # --- Stored-key self-check (E27-T03, #836): the job and its watchdog, real backend only ---
     _s(
         "cv_key_verification_total",

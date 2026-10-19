@@ -1387,6 +1387,9 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Credential broker (M2) | `cv_kek_load_seconds` / `cv_kek_load_failures_total{reason}` / `cv_kek_version_state` / `cv_credential_borrow_seconds` / `cv_credential_borrow_total{stage,result}` / `cv_credential_rewrap_rows_total` / `cv_dek_cache_hits_total` / `cv_credential_touch_failures_total` / `cv_kek_degraded_state` / `cv_process_hardening_failures_total` / `cv_credential_outcome_audit_failures_total` | histogram / counter / gauge | KEK load and failure; `cv_kek_degraded_state`=1 while latched (pages `KekUnavailable`), borrow latency (2 ms p99 budget) and outcome, re-wrap progress, DEK cache hits (E27-T02) |
 | Accounts (M13) | `cv_accounts_rows{env,kind}` / `cv_api_keys_rows{env,state}` | gauge | Rows of the process `env` (it scopes the SQL too, §7.1): non-deleted accounts per `account_kind`, every key row per `key_status`; all enum values set each 60 s (0 when absent). `AccountsService`, real backend only (#2314, E27-T01) |
 | Accounts (M13) | `cv_wallet_sizing_old_snapshot_total` | counter | Risk-based sizing decisions taken on a wallet snapshot older than `CV_WALLET_RECONCILE_S`; each is refused (sizing never uses a snapshot that old) and logged with `wallet_snapshot_age_seconds`. Sustained growth = sizing asked for while the wallet feed is dead (E27 threat model KV-T13; E27-T04, #837) |
+| Accounts (M13) | `cv_account_health_state{state,reason}` / `cv_account_health_transitions_total{state,reason}` | gauge / counter | Monitored accounts per health state and reason, every pair set at each health tick (0 when none), and committed transitions by the state entered and its reason: per state, never per account (SR-125's allow-list; the `account.health_changed` log line names the account). A down account whose reason is `no_success` (it was up), or any transition into down, pages `AccountDown`; one that never connected since boot reads `never_connected` and does not page (E27-T04, #837) |
+| Accounts (M13) | `cv_wallet_snapshot_age_seconds` / `cv_wallet_reconcile_total{result}` | gauge / counter | Age of the oldest wallet snapshot of the monitored accounts (since its last refresh, or since monitoring began for one with none), set at each health tick, 0 with none; REST reconciliation reads by `result`: `ok`, `failed` (no figures) or `rejected` (the credential was refused). A `failed` read every heartbeat window per account that is not healthy is expected until E29 binds the wallet read (E27-T04, #837) |
+| Accounts (M13) | `cv_key_rotation_notices_total{state}` / `cv_keys_rotation_state{state}` | counter / gauge | Key-age notices, one per active key entering `warn` and one a day per `overdue` key (the `KeyRotationWarn` and `KeyRotationOverdue` tickets), and the active keys per rotation state (`ok`, `warn`, `overdue`); a key is never disabled for its age (US-ACCT-005; E27-T04, #837) |
 | Accounts (M13) | `cv_key_verification_total{result,rule}` | counter | One per key check of the stored-key self-check (E27-T03, #836): `result` passed, failed (`rule` its first failing rule) or inconclusive (`rule` none); an on-demand test (`testApiKey`) counts its verdict, a pass or a failure |
 | Accounts (M13) | `cv_key_verification_seconds` | histogram | One stored key's verification, the self-check's or a test's verdict, both signed calls; edges at the 3 s import target, the 5 s call bound and the 12 s key deadline |
 | Accounts (M13) | `cv_key_selfcheck_runs_total{result}` | counter | Self-check runs: passed, failed (a key failed), inconclusive (a key had no verdict) or error (the run could not complete). No egress IP, a check unfinished (past its deadline, or a row the model refuses) and a row of another environment each latch `accounts.key_selfcheck_unavailable`; an unreadable key list latches only at boot or once a known key is past its window, so it alone can leave the gate open |
@@ -1553,6 +1556,19 @@ The Market data dashboard (12.4) has a WS gateway row: open connections, fan-out
 line, resyncs by reason against the 1 and 5 an hour lines (23 §16.3) and closes by reason. Connection
 class and queue depth (series in 12.1: per process, flag on), bandwidth per connection and overflow actions
 (`cv_ws_overflow_total`, wired behind the backpressure flag by E17-T03, #412) are #571's to add.
+
+Accounts set (E27-T04, #837, `infra/prometheus/alerts/accounts.yml`, runbooks in
+`07-release-and-prr.md` section 9, promtool cases generated into
+`infra/prometheus/tests/system_alerts.test.yml`): Page — `AccountDown` (component `account_health`),
+an account went down after it was up (no private-WS or REST success for 30 s: `cv_account_health_state`
+down with `no_success`) or any transition into down in the last 5 minutes
+(`cv_account_health_transitions_total`), held while it stays down; an account that never connected
+since boot does not page. Ticket — `KeyRotationWarn` and `KeyRotationOverdue` (component
+`key_rotation`, held past quiet hours as the WS any-event tickets are): a rise of
+`cv_key_rotation_notices_total` under `warn` (a key entered the warning window) or `overdue`
+(counted once a day per overdue key); a key is never disabled for its age. The two components are
+their own, so the page-over-ticket inhibit rule never lets an account page hide a key ticket. Labels
+are per state, never per account.
 
 ---
 

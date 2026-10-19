@@ -272,3 +272,34 @@ groups:
         annotations:
           summary: "Expected metric cv_user_lifecycle_steps_total is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #837 (E27-T04): the series behind the AccountDown page and the KeyRotationWarn and
+      # KeyRotationOverdue tickets. The account health runtime binds every state, reason and
+      # result when it is built, on both backends (account_health_wiring.py), so each reads 0 from
+      # process start; these fire only if the series are unscraped.
+      - alert: ExpectedMetricMissingCvAccountHealthState
+        expr: absent(cv_account_health_state)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_account_health_state is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingCvAccountHealthTransitionsTotal
+        expr: absent(cv_account_health_transitions_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_account_health_transitions_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingCvKeyRotationNoticesTotal
+        expr: absent(cv_key_rotation_notices_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_key_rotation_notices_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"

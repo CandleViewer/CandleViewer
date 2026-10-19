@@ -23,7 +23,7 @@ Register a health probe through `health_probes.py` so it appears in `/healthz` a
 | ------- | -------------------------------------------------------------------------------------------------------------- |
 | Rule    | Add to `infra/prometheus/alerts/*.yml` with `severity` of `page` or `ticket`, a `component`, and `runbook_url` |
 | Runbook | Add a section to `07-release-and-prr.md` section 9 with all seven elements; no credentials                     |
-| Test    | Cases in `<area>_alerts.test.yml`, listed in `_job-py.yml` (`system_*.yml`: edit `gen_promtool_tests.py`)      |
+| Test    | Cases in `<area>_alerts.test.yml`, in `_job-py.yml` (`system_*.yml`, `accounts.yml`: `gen_promtool_tests.py`)  |
 | Review  | Architect reviewer; page severity also needs the owner                                                         |
 
 An alert without a runbook is not allowed (ADR-0014 section 6); CI enforces it.
