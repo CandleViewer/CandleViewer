@@ -26,6 +26,7 @@ from tests._e08_regression_pack import (
     MARKER,
     NIGHTLY_ONLY_MARKERS,
     PACK_PATHS,
+    WITHHELD_MARKERS,
     is_pack_path,
     is_tagged,
 )
@@ -53,6 +54,11 @@ RUN_BY_OTHER_LANE: Final[Mapping[str, str]] = {
     "tests/security/ingestion/test_resource_exhaustion.py::"
     "test_huge_exponent_levels_rejected_cheaply": "perf",
 }
+# For failure messages: the markers the default -m deselects, every marker the pack withholds, and
+# those it withholds although the default -m selects them (today exchange_smoke).
+_DESELECTED: Final = "/".join(sorted(NIGHTLY_ONLY_MARKERS))
+_WITHHELD: Final = "/".join(sorted(WITHHELD_MARKERS))
+_WITHHELD_ONLY: Final = "/".join(sorted(WITHHELD_MARKERS - NIGHTLY_ONLY_MARKERS))
 _DEFECT_ROW: Final = re.compile(r"^\|\s*#(\d+)\s*\|\s*(P\d)\s*\|")
 _DEFECT_RESULT: Final = re.compile(
     r"^Result: (\d+) fixed P0/P1 defects \((\d+) P0, (\d+) P1\)", flags=re.MULTILINE
@@ -262,8 +268,8 @@ def test_every_test_the_pack_cites_exists_and_is_selected_by_the_marker(
         if not (API_ROOT / relative).is_file()
     ]
     problems += [
-        f"{what}: not selected by -m {MARKER} (no such test, a perf/fuzz/harness test, or outside "
-        "the pack paths)"
+        f"{what}: not selected by -m {MARKER} (no such test, a {_WITHHELD} item, or outside the "
+        "pack paths)"
         for what in uncovered(well_formed, selected_by_marker, RUN_BY_OTHER_LANE)
     ]
 
@@ -303,9 +309,12 @@ def test_marker_over_the_whole_tree_selects_what_the_default_lane_selects_in_the
     assert selected_by_marker
     assert not leaked, (
         f"selected by -m {MARKER} but not by the default -m in the pack paths (a test tagged by "
-        f"hand outside them, or a perf/fuzz/harness item): {leaked}"
+        f"hand outside them, or a {_DESELECTED} item): {leaked}"
     )
-    assert not missed, f"selected by the default -m in the pack paths, not by -m {MARKER}: {missed}"
+    assert not missed, (
+        f"selected by the default -m in the pack paths, not by -m {MARKER} (a {_WITHHELD_ONLY} "
+        f"item, which the marker withholds, or a test the tagging hook missed): {missed}"
+    )
 
 
 def test_marker_selects_pack_files_and_nothing_else_through_a_real_collect_only_run() -> None:
