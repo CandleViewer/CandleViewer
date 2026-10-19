@@ -82,7 +82,16 @@ class ScratchVerifier(Protocol):
 
 
 class ArtefactRemover(Protocol):
-    async def remove(self, backup_id: UUID, location: str) -> None: ...
+    async def remove(self, backup_id: UUID, location: str) -> None:
+        """Remove the artefact at the row's stored `location`, and nothing else. It resolves the
+        location as BK-6a's reader does (`storage/backup_artefacts.py`): absolute, canonical and
+        inside `CV_BACKUP_ROOT`, or refused by raising before any I/O; then walked `O_NOFOLLOW` at
+        every component, a symbolic link or another device than the root's refused by raising
+        before anything is removed. A directory artefact's contents are removed without following
+        a symbolic link, and nothing on a device other than the root's. A delete cancels it past
+        `REMOVE_BUDGET_S`, under the admission lock, so it is cancel-safe: none of its work runs on
+        once it returns or is cancelled. One already gone counts as removed, so a delete retried
+        after its mark failed completes."""
 
 
 class RestoreExecutor(Protocol):

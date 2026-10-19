@@ -1,7 +1,7 @@
 """Unit (E42-T05, #966 BK-5): the backup metrics. The freshness is now minus each kind's last
-success, read at scrape from a cache that `start()` loads once, within its budget, and
-`record_success()` moves forward; labels are closed sets; nothing is served until
-`BACKUPS_CATALOGUED` is set."""
+success, read at scrape from a cache that `start()` loads once, within its budget,
+`record_success()` moves forward and `recompute()` reloads for a kind whose last success was
+deleted (BK-12); labels are closed sets; nothing is served until `BACKUPS_CATALOGUED` is set."""
 
 from __future__ import annotations
 
@@ -275,6 +275,75 @@ async def test_a_failed_load_never_fails_boot_and_logs_only_the_class(error: Exc
     assert "driver text" not in repr(logs)
     freshness.record_success(row(1))  # a later success still counts
     assert set(_ages(gauge)) == {"pg_dump"}
+
+
+async def test_recomputing_after_its_kinds_last_success_reloads_that_kind_alone() -> None:
+    store = _Last({"pg_dump": NOW - _H, "config_bundle": NOW - 100 * _H})
+    freshness, gauge = _freshness(store)
+    await freshness.start()
+    store.last = {"pg_dump": NOW - 30 * _H, "config_bundle": NOW - 2 * _H}  # after a delete
+    await freshness.recompute(row(1, finished_at=NOW - _H))
+    assert _ages(gauge) == {"pg_dump": 108000.0, "config_bundle": 360000.0}
+
+
+@pytest.mark.parametrize(
+    ("gone", "store"),
+    [(row(2, finished_at=NOW - 2 * _H), True), (row(3, finished_at=None), True),
+     (row(4, kind="config_bundle", finished_at=None), True), (row(1, finished_at=NOW - _H), False)],
+    ids=["older", "unfinished", "kind-not-held", "no-store"],
+)  # fmt: skip
+async def test_recomputing_after_anything_else_reads_nothing(gone: Any, store: bool) -> None:
+    last = _Last({"pg_dump": NOW - _H})
+    freshness, gauge = _freshness(last if store else None)
+    freshness.record_success(row(1, finished_at=NOW - _H))
+    with capture_logs() as logs:  # nothing tried, so nothing failed: no store is no read at all
+        await freshness.recompute(gone)
+    assert (last.calls, _ages(gauge), logs) == (0, {"pg_dump": 3600.0}, [])
+
+
+async def test_recomputing_after_a_kinds_only_success_leaves_no_sample() -> None:
+    store = _Last({"pg_dump": NOW - _H})
+    freshness, gauge = _freshness(store)
+    await freshness.start()
+    store.last = {}
+    await freshness.recompute(row(1, finished_at=NOW - _H))
+    assert _ages(gauge) == {}  # as for a kind that never succeeded: not 0, not +Inf
+    freshness.record_success(row(2, finished_at=NOW - 3 * _H))  # a later success binds it again
+    assert _ages(gauge) == {"pg_dump": 10800.0}
+
+
+async def test_a_success_recorded_during_the_reload_is_kept() -> None:
+    freshness: BackupFreshness
+
+    class During(_Last):  # a run ends while the reload reads
+        async def last_success_by_kind(self) -> dict[Any, datetime]:
+            freshness.record_success(row(9, finished_at=NOW - timedelta(minutes=1)))
+            return await super().last_success_by_kind()
+
+    freshness, gauge = _freshness(During({"pg_dump": NOW - 30 * _H}))
+    freshness.record_success(row(1, finished_at=NOW - _H))
+    await freshness.recompute(row(1, finished_at=NOW - _H))
+    assert _ages(gauge) == {"pg_dump": 60.0}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [StorageTierUnavailable("driver text"), StorageQueryFailed("42501"), TimeoutError(),
+     RuntimeError("driver text")],
+    ids=["outage", "refused", "over-budget", "bug"],
+)  # fmt: skip
+async def test_a_failed_reload_keeps_the_age_and_logs_only_the_class(error: Exception) -> None:
+    store = _Last({"pg_dump": NOW - _H})
+    freshness, gauge = _freshness(store, budget_s=0.05)
+    await freshness.start()
+    store.error = error
+    with capture_logs() as logs:
+        async with asyncio.timeout(_BOUND):
+            await freshness.recompute(row(1, finished_at=NOW - _H))
+    assert _ages(gauge) == {"pg_dump": 3600.0} and "driver text" not in repr(logs)
+    assert [(e["event"], e["kind"], e["error"]) for e in logs] == [
+        ("backups.freshness_not_reloaded", "pg_dump", type(error).__name__)
+    ]
 
 
 @pytest.mark.parametrize(

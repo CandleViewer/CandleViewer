@@ -37,7 +37,17 @@ LINK_RECORD_BUDGET_S: Final = 2.0  # one `backup.downloaded` record
 RUNS_PER_HOUR: Final = 4
 PLAN_BUDGET_S: Final = 2.0  # the engine's `plan`, under the admission lock
 RECORD_BUDGET_S: Final = 2.0  # one `backup.run` record
+#: A catalogue write, a run's end (BK-8) or a delete's mark (BK-12), and its tries: each write is
+#: guarded (a run ends only while `running`, a mark lands only while `deleted_at IS NULL`), so a
+#: try after a commit lost on the way back changes nothing.
 WRITE_BUDGET_S: Final = 2.0  # one catalogue write; the store caps each statement at 1 s itself
-WRITE_TRIES: Final = 2  # a run's end: each update ends a row only while `running`, so retry-safe
+WRITE_TRIES: Final = 2
 LOST_READ_BUDGET_S: Final = 2.0  # the boot pass's one page of `running` rows
 LOST_RUNS_LIMIT: Final = 16  # `running` rows a boot ends; any more wait for the next boot
+#: Under the admission lock `deleteBackup` (BK-12) waits on the catalogue twice (the row and the
+#: usable count, `READ_BUDGET_S` each), on its `backup.deleted` records, the engine's `remove`, the
+#: guarded mark (`WRITE_BUDGET_S`, `WRITE_TRIES` times) and the freshness reload (`READ_BUDGET_S`).
+#: A healthy delete holds the lock for milliseconds; with every budget spent, 22 s, past
+#: `ADMIT_WAIT_S`, so an admission waiting meanwhile is refused `503 store_unavailable`, retryable.
+DELETE_RECORD_BUDGET_S: Final = 2.0  # one `backup.deleted` record, as `AUDIT_TIMEOUT_S`
+REMOVE_BUDGET_S: Final = 10.0  # the engine's `remove` of one artefact: a backstop for a hung engine

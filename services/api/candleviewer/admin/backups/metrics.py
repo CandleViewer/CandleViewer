@@ -10,7 +10,8 @@ the five `BackupKind` values and `result` one of the four `RESTORE_RESULTS`.
   stale-backup alert (`BackupLastSuccessStale`) cannot fire for it (Q16: its `absent()` guards come
   with the engine's schedule, #3319). Every finished run, a scheduled one included, must reach
   `record_success()`: a run the catalogue records without it leaves the age stale-high until the
-  next boot.
+  next boot. A success that leaves the catalogue's successes (a delete, BK-12) reaches
+  `recompute()`, which reloads its kind, so the age never reads fresher than the catalogue.
 - `cv_backup_verify_failures_total`: verifications that failed.
 - `cv_restore_jobs_total{result}`: restores by result, a refusal counted as `refused` although it
   creates no job (Q17). Every result is bound at import, so a first one after a restart is an
@@ -88,10 +89,10 @@ class LastSuccesses(Protocol):
 
 
 class BackupFreshness:
-    """The cache behind `cv_backup_last_success_age_seconds{kind}`: each kind's last success,
-    which only ever moves forward. It is the store's `last_success_by_kind` at boot; after that
-    only `record_success` moves it, so a failed verification or a delete leaves it ahead of the
-    store until the next boot (BK-9 and BK-12 reload the kind)."""
+    """The cache behind `cv_backup_last_success_age_seconds{kind}`: each kind's last success. It
+    is the store's `last_success_by_kind` at boot; after that `record_success` moves it forward,
+    and `recompute` reloads a kind whose last success was deleted (BK-12) or, with BK-9, failed a
+    verification."""
 
     def __init__(
         self,
@@ -130,6 +131,30 @@ class BackupFreshness:
         kept = row.deleted_at is None
         if row.status in SUCCESS_STATUSES and row.finished_at is not None and kept:
             self._advance(row.kind, row.finished_at)
+
+    async def recompute(self, row: BackupRow) -> None:
+        """`row` is a success no longer. When it held its kind's last success, that kind's is read
+        again within the budget: an older success, or no sample when none is left. A success
+        recorded meanwhile is newer, so it stays. A failed or slow read is logged with its class
+        and keeps the cache as it was; nothing raises. Callers hold the backups admission lock,
+        so two recomputations never interleave."""
+        kind, held = row.kind, self._last.get(row.kind)
+        if self._store is None or held is None or row.finished_at != held:
+            return  # not its kind's last success: the age stands
+        try:
+            async with asyncio.timeout(self._budget_s):
+                loaded = (await self._store.last_success_by_kind()).get(kind)
+        except Exception as exc:  # an outage, a stall or a refused read: logged, never raised
+            log = structlog.get_logger(__name__)
+            log.error("backups.freshness_not_reloaded", kind=kind, error=type(exc).__name__)
+            return
+        if self._last.get(kind) != held:  # `record_success` moved it on during the read
+            return
+        if loaded is None:
+            del self._last[kind]
+            self._gauge.remove(kind)
+        else:
+            self._last[kind] = loaded
 
     def age_s(self, kind: str) -> float:
         """Now minus the kind's last success; a scrape calls it, and it does no I/O."""
