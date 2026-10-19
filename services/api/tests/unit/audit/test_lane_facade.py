@@ -1,6 +1,6 @@
-"""ADR-0037 S2b-2a (#3009): the façade (decisions 1, 2 and 12) and the `AuditService` wiring
-(start: writer, fold-in, lane; stop: the lane first). A silent lane or sink is an event that never
-fires, and a deadline is ordered against the loop's own timers. Files only in `tmp_path`."""
+"""ADR-0037 S2b-2a and S2b-2b (#3009): the façade (decisions 1, 2 and 12) and the `AuditService`
+wiring (start: writer, fold-in, lane; stop: the lane first). A silent lane or sink is an event that
+never fires, and a deadline is ordered against the loop's own timers. Files only in `tmp_path`."""
 
 from __future__ import annotations
 
@@ -348,9 +348,9 @@ async def test_service_stop_runs_on_past_a_lane_close_that_fails(
     lock = svc._lane_lock
     with capture_logs() as logs:
         async with asyncio.timeout(WAIT_S):
-            await svc.stop(0.2)
-    assert not svc.is_active and len(graces) == 1 and graces[0] <= 0.2
-    assert (0.05 <= graces[0] <= 0.15) if failure == "overruns" else (graces[0] > 0.1)  # the rest
+            await svc.stop(1.0)
+    assert not svc.is_active and len(graces) == 1 and graces[0] <= 1.0
+    assert (0.3 <= graces[0] <= 0.7) if failure == "overruns" else (graces[0] > 0.5)  # the rest
     error = "OSError" if failure == "raises" else "TimeoutError"
     assert ("critical", error) in [(e["log_level"], e.get("error")) for e in logs]
     hold_run_lock(journal_dir(str(wal)), exclusive=True).close()  # the run lock is gone
@@ -362,24 +362,66 @@ async def test_service_stop_runs_on_past_a_lane_close_that_fails(
     lock.close()
 
 
+@pytest.mark.parametrize("lane_closes", [True, False], ids=["lane-closed", "lane-close-failed"])
 async def test_service_stop_keeps_both_locks_when_the_writer_stop_fails(
-    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch, lane_closes: bool
 ) -> None:
+    """A second `stop()` releases the run lock once the writer stops, and `lane.lock` only if the
+    first one closed the lane (SR-S2B2B1-01)."""
     svc, _ = await started(tmp_path, repo)
-    locks, stop = (svc._lane_lock, svc._run_lock), AuditWriter.stop
+    locks, lane, stop = (svc._lane_lock, svc._run_lock), svc._lane, AuditWriter.stop
 
     async def failing(writer: AuditWriter, grace_s: float = 5.0) -> None:
         raise AuditWriterStopped()
 
+    async def unclosed(lane: AuditLane) -> None:
+        raise OSError("the close failed")
+
     monkeypatch.setattr(AuditWriter, "stop", failing)
+    if not lane_closes:
+        monkeypatch.setattr(AuditLane, "close", unclosed)
     with pytest.raises(AuditWriterStopped):
         await svc.stop(1)
     assert svc._query is None and not svc._started
     assert (svc._lane_lock, svc._run_lock) == locks
     assert all(lock is not None and not lock.closed for lock in locks)
     monkeypatch.setattr(AuditWriter, "stop", stop)
-    await svc.stop(1)  # the writer stops now, and both locks go
-    assert all(lock is not None and lock.closed for lock in locks)
+    await svc.stop(1)  # the writer stops now: the run lock goes, `lane.lock` with a closed lane
+    assert [lock is not None and lock.closed for lock in locks] == [lane_closes, True]
+    if not lane_closes and lane is not None and locks[0] is not None:
+        monkeypatch.undo()
+        await lane.close()
+        locks[0].close()
+
+
+async def test_service_stop_after_a_boot_cancelled_in_the_lanes_open_keeps_lane_lock(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SR-S2B2B1-01: the shielded open runs on in its thread after `start()` is cancelled; `stop()`
+    waits for it within half its grace and, past that, keeps `lane.lock` from a second holder."""
+    parked, release, boot = threading.Event(), threading.Event(), lj.LaneFiles.boot
+
+    def parking(files: lj.LaneFiles) -> tuple[list[str], bytes | None, bytes | None]:
+        parked.set()
+        release.wait(WAIT_S)
+        return boot(files)
+
+    monkeypatch.setattr(lj.LaneFiles, "boot", parking)
+    wal, svc = tmp_path / "audit" / "a.wal", AuditService(repo, lane_keys=lambda: KEYS)
+    starting = asyncio.create_task(svc.start(ctx(wal)))
+    await asyncio.to_thread(parked.wait, WAIT_S)
+    starting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    lane, lock = svc._lane, svc._lane_lock
+    await svc.stop(0.2)  # the open, still parked, overruns the lane's 0.1 s
+    with pytest.raises(LaneBootRefused, match="held"):
+        lock_lane(str(wal))
+    assert lock is not None and not lock.closed and svc._lane_lock is lock
+    release.set()
+    assert lane is not None
+    await lane.close()  # once the open has ended
+    lock.close()
 
 
 @pytest.mark.parametrize(
@@ -461,11 +503,14 @@ def denied(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_service_holds_the_lane_when_its_lock_fails_otherwise(
     tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """READY-21: a lock error but another holder holds the lane, logged critical and counted."""
+    """READY-21: a lock error but another holder holds the lane, logged critical and counted; the
+    hard-link probe runs only under `lane.lock`, so not here."""
+    probes: list[str] = []
     denied(monkeypatch)
+    monkeypatch.setattr("candleviewer.audit.service.links_work", probes.append)
     with capture_logs() as logs:
         svc, _ = await started(tmp_path, repo)
-    assert svc.lane_lock_failures == 1 and svc._lane is not None
+    assert svc.lane_lock_failures == 1 and svc._lane is not None and probes == []
     assert svc._lane.journal.refusal == "held"
     assert ("critical", "PermissionError") in [(e["log_level"], e.get("error")) for e in logs]
     await svc.stop(1)
@@ -511,7 +556,8 @@ async def test_service_holds_the_lane_on_a_volume_without_hard_links(
         svc, wal = await started(tmp_path, repo)
     assert svc.lane_link_failures == 1 and svc._lane is not None
     assert svc._lane.journal.refusal == "held" and svc.lane_lock_failures == 0
-    assert ("critical", "PermissionError") in [(e["log_level"], e.get("error")) for e in logs]
+    lines = [(e["log_level"], e.get("error"), e.get("errno")) for e in logs]
+    assert ("critical", "PermissionError", "EPERM") in lines
     assert sorted(os.listdir(lane_dir(str(wal)))) == ["lane.lock"]
     with pytest.raises(LaneBootRefused, match="held"):
         lock_lane(str(wal))

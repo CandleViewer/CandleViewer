@@ -327,26 +327,33 @@ def links_work(audit_wal_path: str) -> bool:
         finally:
             for path in (link, probe):
                 path.unlink(missing_ok=True)
-    except OSError as exc:
-        _log().critical("audit lane hard-link probe failed; it holds", error=type(exc).__name__)
+    except OSError as exc:  # the errno tells no hard links from a full or read-only volume
+        code = errno.errorcode.get(exc.errno or 0)
+        _log().critical(
+            "audit lane hard-link probe failed; it holds", error=type(exc).__name__, errno=code
+        )
         return False
     return True
 
 
-async def boot_lane(
-    audit_wal_path: str, keys: tuple[bytes, bytes | None], writer: aw.AuditWriter, held: bool
+def build_lane(
+    audit_wal_path: str, keys: tuple[bytes, bytes | None], writer: aw.AuditWriter
 ) -> AuditLane:
+    """The lane, not yet booted: its owner keeps it before `boot_lane()`, so a `stop()` after a
+    boot cancelled inside `open()` waits for that open, which runs on in its thread (#2250)."""
+    journal = lj.LaneJournal(lj.LaneFiles(lane_dir(audit_wal_path)), lj.LaneKeys(*keys))
+    return AuditLane(journal, writer)
+
+
+async def boot_lane(lane: AuditLane, held: bool) -> None:
     """The lane at boot, after the writer and the break-glass fold-in. Without `lane.lock`
     (`held`) it holds unopened; a failed `start()` leaves it held or stopped (S2a2b). Either way
     it refuses every append, the façade falls back, and boot goes on."""
-    journal = lj.LaneJournal(lj.LaneFiles(lane_dir(audit_wal_path)), lj.LaneKeys(*keys))
-    lane = AuditLane(journal, writer)
     if held:
-        journal.hold()
+        lane.journal.hold()
     else:
         with contextlib.suppress(lj.LaneError, OSError):
             await lane.start()
-    return lane
 
 
 class LaneFacade:

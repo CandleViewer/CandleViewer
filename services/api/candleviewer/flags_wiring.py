@@ -281,6 +281,7 @@ class FeatureFlagsRuntime:
         if budget_ms != self.budget_ms:
             self._build(budget_ms)  # the service refuses a budget outside 50-2000 ms
         await self.service.start()
+        self.lane_flag.reopen()  # after a `stop()`, calls refresh in the background again
         await self.lane_flag.refresh()  # a boot during an outage keeps the catalogue default
         if self._poll is None:
             self._poll = spawn(self.controller.run(), name="feature-flag-maintenance-poll")
@@ -312,9 +313,14 @@ class LaneFlag:
             self._task = spawn(self.refresh(), name="audit-lane-flag")
         return self.value
 
+    def reopen(self) -> None:
+        """`FeatureFlagsRuntime.start()`: undo a `close()`, so calls refresh again."""
+        self._closed = False
+
     async def close(self) -> None:
-        """`FeatureFlagsRuntime.stop()`: cancel a refresh in flight and start no other, so every
-        task stays owned (C-2.18); a later call returns the last value read."""
+        """`FeatureFlagsRuntime.stop()`: cancel the refresh task in flight and start no other
+        until `start()` runs again (C-2.18); a later call returns the last value read. A load
+        the flag service shields runs on, within its read budget, as for the maintenance poll."""
         self._closed, task = True, self._task
         if task is not None:
             task.cancel()
