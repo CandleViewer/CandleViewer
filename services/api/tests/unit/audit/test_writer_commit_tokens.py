@@ -13,12 +13,14 @@ import json
 import os
 import tempfile
 import uuid
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
+from audit_waits import guarded
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
@@ -33,13 +35,14 @@ from candleviewer.audit.writer import AuditUnavailable, AuditWriter
 
 class _ObservedRepository(FakeAuditRepository):
     """At every insert attempt, records `committed_through()`, the record id being inserted
-    and the ids already stored; refuses the ids in `refuse` (a record Postgres keeps failing)."""
+    and the ids already stored; refuses the ids in `refuse` (a record Postgres keeps failing).
+    `first_attempt[record_id]` is set by that record's first insert attempt: tests wait on it."""
 
     def __init__(self) -> None:
         super().__init__()
         self.writer: AuditWriter | None = None
         self.refuse: set[str] = set()
-        self.attempted = asyncio.Event()  # set by the first insert attempt
+        self.first_attempt: defaultdict[str, asyncio.Event] = defaultdict(asyncio.Event)
         self.attempts: list[tuple[int, str, frozenset[str]]] = []
 
     def snapshot(self) -> tuple[int, frozenset[str]]:
@@ -49,16 +52,42 @@ class _ObservedRepository(FakeAuditRepository):
     async def insert(self, record: dict[str, Any]) -> None:
         through, stored = self.snapshot()
         self.attempts.append((through, record["record_id"], stored))
-        self.attempted.set()
+        self.first_attempt[record["record_id"]].set()
         if record["record_id"] in self.refuse:
             raise ConnectionError("insert refused")
         await super().insert(record)
 
 
 def _writer(repo: _ObservedRepository, path: Path, **kw: Any) -> AuditWriter:
-    w = AuditWriter(repo, str(path / "audit.wal"), clock=FakeClock(), sleep=repo.retry_sleep, **kw)
+    kw.setdefault("sleep", repo.retry_sleep)
+    w = AuditWriter(repo, str(path / "audit.wal"), clock=FakeClock(), **kw)
     repo.writer = w
     return w
+
+
+class _FakeBackoff:
+    """The insert retry's back-off on fake time: `sleep(delay)` parks until `advance()` reaches
+    its deadline, so a refused record is retried only when the test moves the time. With
+    `retry_sleep`, which returns at once while Postgres is up, the flusher retried a refused
+    record in a busy loop on the event loop, as fast as the runner let it (#3654)."""
+
+    def __init__(self) -> None:
+        self._now = 0.0
+        self._parked: list[tuple[float, asyncio.Future[None]]] = []
+
+    async def sleep(self, delay: float) -> None:
+        wake = asyncio.get_running_loop().create_future()
+        self._parked.append((self._now + delay, wake))
+        await wake
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+        due = [wake for deadline, wake in self._parked if deadline <= self._now]
+        assert due, "no parked retry was due"  # a flusher that stopped retrying fails here at once
+        self._parked = [(deadline, wake) for deadline, wake in self._parked if deadline > self._now]
+        for wake in due:
+            if not wake.done():  # cancelled with a stopped flusher
+                wake.set_result(None)
 
 
 def _never_ahead(repo: _ObservedRepository, ids: list[str]) -> None:
@@ -122,7 +151,7 @@ async def test_writer_a_refused_insert_holds_committed_through_back_across_a_flu
     ids = [str(b.record_id) for b in built]
     repo.refuse = {ids[1]}  # Postgres is back, but token 2's insert keeps failing
     repo.down = False
-    await asyncio.wait_for(died.wait(), 5)  # the flusher gave up on it: fail closed
+    await guarded(died.wait(), w._task)  # the flusher gave up on it: fail closed
     assert w.committed_through() == 1 and [r["record_id"] for r in repo.rows] == ids[:1]
     with pytest.raises(AuditUnavailable):
         await w.ingest(w.build("auth.logout", actor_label="refused"))
@@ -248,7 +277,8 @@ async def test_writer_refuses_an_append_to_a_full_wal_while_a_batch_is_in_flight
     w, new = await _writer_over_a_full_wal(repo, tmp_path, "ab")
     repo.down = True
     assert await w.ingest(new[0]) == 1
-    await asyncio.wait_for(repo.attempted.wait(), 5)  # the flusher parks in its insert's retry
+    first = repo.first_attempt[str(new[0].record_id)]
+    await guarded(first.wait(), w._task)  # the flusher parks in its insert's retry
     with pytest.raises(AuditUnavailable):
         await w.ingest(new[1])
     assert w._wal.committed_offset() > 0  # the prefix is still there: nothing was compacted
@@ -287,40 +317,38 @@ async def test_writer_a_backlog_from_an_earlier_process_takes_no_token(tmp_path:
     _never_ahead(repo, [str(first.record_id)])
 
 
-# A 5 s real-time wait over runner-paced retries (C-9.3). ticket: GH-3654 quarantined: 2026-10-18
-@pytest.mark.flaky
 async def test_writer_a_replayed_backlogs_commit_leaves_the_depth_at_this_processs_records(
     tmp_path: Path,
 ) -> None:
     """`buffer_depth` counts only this process's records: committing a batch of an earlier
-    run's frames leaves this process's three uncommitted records in it (#3009 S2a2c paces on it)."""
+    run's frames leaves this process's three uncommitted records in it (#3009 S2a2c paces on it).
+    Each step waits for an insert attempt, and a refused insert is retried only when the test
+    moves the back-off's fake time, so the flusher never spins ahead of the test (#3654)."""
     clock, old = FakeClock(), AuditWal(tmp_path / "audit.wal")
     backlog = [str(_emission(f"old{i}", clock).record_id) for i in range(10)]
     for i, record_id in enumerate(backlog):
         old.append(
             json.loads(_emission(f"old{i}", clock).model_dump_json()) | {"record_id": record_id}
         )
-    repo = _ObservedRepository()
-    w = _writer(repo, tmp_path, flush_batch_size=10)  # the backlog is one batch
+    repo, backoff = _ObservedRepository(), _FakeBackoff()
+    w = _writer(repo, tmp_path, flush_batch_size=10, sleep=backoff.sleep)  # the backlog: one batch
     new = [w.build("auth.logout", actor_label=str(i)) for i in range(3)]
     repo.refuse = {backlog[0]}  # Postgres stalls on the backlog
     await w.start()
-    await asyncio.wait_for(repo.attempted.wait(), 5)
+    await guarded(repo.first_attempt[backlog[0]].wait(), w._task)  # refused: its retry parks
     for record in new:
         await w.ingest(record)
     repo.refuse = {str(r.record_id) for r in new}  # the backlog goes in; the new records wait
-    await asyncio.wait_for(_attempted(repo, str(new[0].record_id)), 5)
+    backoff.advance(30)  # the back-off's cap: the parked retry is due
+    first = repo.first_attempt[str(new[0].record_id)]
+    await guarded(first.wait(), w._task)  # the backlog's batch is committed
     depth = w.buffer_depth
     repo.refuse.clear()
+    backoff.advance(30)
     await w.flush(5)
     await w.stop(1)
 
     assert (depth, w.buffer_depth, w.committed_through()) == (3, 0, 3)
-
-
-async def _attempted(repo: _ObservedRepository, record_id: str) -> None:
-    while all(attempt[1] != record_id for attempt in repo.attempts):  # noqa: ASYNC110 - no event
-        await asyncio.sleep(0)
 
 
 async def test_writer_a_restart_that_rereads_confirmed_records_counts_them_once(
@@ -341,7 +369,7 @@ async def test_writer_a_restart_that_rereads_confirmed_records_counts_them_once(
     repo.refuse = {ids[1]}  # Postgres keeps refusing the second record
     # Concurrent, so the flusher reads the three frames as one batch.
     assert list(await asyncio.gather(*(w.ingest(b) for b in built))) == [1, 2, 3]
-    await asyncio.wait_for(died.wait(), 5)  # record 1 stored and confirmed, record 2 refused
+    await guarded(died.wait(), w._task)  # record 1 stored and confirmed, record 2 refused
     assert w.committed_through() == 1
     repo.refuse.clear()
     await w.start()
@@ -373,7 +401,7 @@ async def test_writer_a_failing_commit_compaction_does_not_move_the_base(
     assert [await w.ingest(b) for b in built] == [1, 2, 3]
     _fail_first_compaction(w, monkeypatch)
     repo.down = False
-    await asyncio.wait_for(died.wait(), 5)  # the first commit could not compact: the flusher died
+    await guarded(died.wait(), w._task)  # the first commit could not compact: the flusher died
     assert w.committed_through() == 1
     await w.start()
     await w.flush(5)
@@ -517,7 +545,7 @@ async def test_writer_a_restart_counts_a_dead_batchs_confirmed_records_in_its_de
     built = [w.build("auth.logout", actor_label=str(i)) for i in range(4)]
     repo.refuse = {str(built[2].record_id)}
     await asyncio.gather(*(w.ingest(b) for b in built))  # one batch
-    await asyncio.wait_for(died.wait(), 5)
+    await guarded(died.wait(), w._task)
     repo.refuse.clear()
     await w.start()
     depth = w.buffer_depth
@@ -527,13 +555,11 @@ async def test_writer_a_restart_counts_a_dead_batchs_confirmed_records_in_its_de
     assert (depth, w.buffer_depth, w.committed_through()) == (4, 0, 4)
 
 
-# A 5 s real-time wait over runner-paced retries (C-9.3). ticket: GH-3729 quarantined: 2026-10-19
-@pytest.mark.flaky
 async def test_writer_a_commit_takes_only_its_own_records_out_of_the_depth(tmp_path: Path) -> None:
     """Each cursor commit takes out of `buffer_depth` only the records confirmed since the last
     one: after a first batch commits, a second batch's commit leaves the third record counted."""
-    repo = _ObservedRepository()
-    w = _writer(repo, tmp_path, flush_batch_size=1)
+    repo, backoff = _ObservedRepository(), _FakeBackoff()
+    w = _writer(repo, tmp_path, flush_batch_size=1, sleep=backoff.sleep)
     await w.start()
     built = [w.build("auth.logout", actor_label=str(i)) for i in range(3)]
     await w.ingest(built[0])
@@ -541,10 +567,13 @@ async def test_writer_a_commit_takes_only_its_own_records_out_of_the_depth(tmp_p
     repo.refuse = {str(built[1].record_id), str(built[2].record_id)}
     for record in built[1:]:
         await w.ingest(record)
+    await guarded(repo.first_attempt[str(built[1].record_id)].wait(), w._task)  # it parks
     repo.refuse = {str(built[2].record_id)}  # the second goes in and commits; the third waits
-    await asyncio.wait_for(_attempted(repo, str(built[2].record_id)), 5)
+    backoff.advance(30)  # the second's parked retry is due
+    await guarded(repo.first_attempt[str(built[2].record_id)].wait(), w._task)
     depth = w.buffer_depth
     repo.refuse.clear()
+    backoff.advance(30)
     await w.flush(5)
     await w.stop(1)
 
