@@ -52,6 +52,7 @@ _OK = SPEC["paths"]["/exchange-accounts/{accountId}/keys/{keyId}/test"]["post"][
 _SPENT: dict[str, Any] = _OK["content"]["application/json"]["examples"]["wsBudgetSpent"]["value"]
 #: The store gate's refusal whose `rbac.denied` the sink refused (`World`: a `RuntimeError`).
 _UNAUDITED = {"event": "key_test_denial_unaudited", "error": "RuntimeError", "log_level": "warning"}
+_UNAUDITED |= {"actor_user_id": str(UUID(int=96)), "account_id": str(ACCT)}  # "reader", refused
 
 
 class OwnerOnly(Reads):
@@ -240,7 +241,7 @@ async def test_the_store_gates_refusal_is_audited_as_enforce_audits_its_own() ->
 )
 async def test_a_refusal_that_cannot_be_audited_is_still_a_403(who: str, logged: list[Any]) -> None:
     """Each layer counts its denial before the record (SR-125); the store gate's lost record is a
-    warning naming the error's class alone (C-12.6)."""
+    warning naming the refused actor, the account and the error's class, never its text (C-12.6)."""
     route, counted = Route(), keys_read_denials()
     route.w.fail_audit = True  # a test never answers on an audit record
     with capture_logs() as logs:

@@ -195,21 +195,22 @@ def _untested(exc: AccountsError) -> JSONResponse:
     return _problem(problem_code(exc), "The key was not tested.")
 
 
-async def _not_owner(audit: _Emitter, actor: Importer) -> None:
+async def _not_owner(audit: _Emitter, actor: Importer, account_id: uuid.UUID) -> None:
     """`rbac.denied` for a caller the store's live-owner gate refused once `enforce` let it
-    through (SR-051), with `enforce`'s fields and its reason's shape (`audit` names the account).
+    through (SR-051), with `enforce`'s fields and its reason's shape, naming the account.
     Counted before the record, as `enforce` counts (SR-125), so a lost record never hides it: a
-    refusal whose record fails is still a 403, logged by the error's class alone (C-12.6)."""
+    refusal whose record fails is still a 403, logged by actor, account and error class (C-12.6)."""
     authz_denied_total.labels(permission=normalise_permission(Permission.KEYS_READ)).inc()
     try:
-        await audit.emit(
+        await _OnAccount(audit, account_id).emit(
             "rbac.denied", actor_label=str(actor.user_id), actor_user_id=actor.user_id,
             actor_ip=actor.ip, session_id=None, outcome="denied", severity="warning",
             reason=_NOT_OWNER, request_id=actor.request_id,
         )  # fmt: skip
     except (AuditError, RuntimeError) as exc:  # RuntimeError: the audit writer is not started
         log = structlog.get_logger(__name__)  # per call: a module logger pins a stale chain (#2008)
-        log.warning("key_test_denial_unaudited", error=type(exc).__name__)
+        ids = {"actor_user_id": str(actor.user_id), "account_id": str(account_id)}
+        log.warning("key_test_denial_unaudited", **ids, error=type(exc).__name__)
 
 
 def _actor(principal: PrincipalSnapshot, request: Request) -> Importer:
@@ -325,7 +326,7 @@ def make_exchange_keys_router(
         try:
             done = await tests.run(account_id, key_id, actor, include_ws=include_ws)
         except AccountScopeDeniedError as exc:  # SR-051: the store's live-owner gate refused
-            await _not_owner(_OnAccount(audit, account_id), actor)
+            await _not_owner(audit, actor, account_id)
             return _untested(exc)
         except AccountsError as exc:
             return _untested(exc)
