@@ -523,7 +523,7 @@ async def test_a_failed_or_timed_out_read_leaves_the_series_live_and_says_so(
         async with asyncio.timeout(1.0):  # a bound: a lost store timeout fails here, not hangs
             await store.ensure(SYM, SPEC)
     await emit(store, up("close", 4), up("open", 5))
-    assert view(store) == ([4], 5) and not store.hydrated(SYM, H)
+    assert view(store) == ([4], 5) and not store.hydrated(SYM, H) and not store.gapped(SYM, H)
     assert events(logs, "bars_series_hydrate_failed") == [{
         "event": "bars_series_hydrate_failed", "log_level": "warning", "spec_hash": H,
         "symbol": SYM, "error_type": error_type, "error": str(error or "")[:120],
@@ -759,19 +759,130 @@ async def test_a_re_read_keeps_the_live_bars_storage_still_lacks() -> None:
     assert (tail.calls, view(store)[0]) == (2, [*range(10), *range(14, 50)])
 
 
-async def test_a_re_read_keeps_a_live_amendment_the_ring_has_rolled_out() -> None:
-    """A held bar replaces its stored twin: bar 2's amended close has left the 16-close ring and
-    the writer still holds the original."""
+@pytest.mark.parametrize("amended", [2, 4], ids=["inner-row", "newest-row"])
+@pytest.mark.parametrize("clean", [False, True], ids=["degraded", "clean"])
+async def test_a_re_read_keeps_a_live_amendment_the_ring_has_rolled_out(
+    clean: bool, amended: int
+) -> None:
+    """A held bar replaces its stored twin: its amended close has left the 16-close ring and the
+    writer still holds the original. A degraded re-read merges an inner row's twin (bar 2) into
+    its rows; the newest row's twin (bar 4), and every twin on a clean re-read, is put over its
+    row after the rows. A clean re-read ends `hydrated`: a stale twin would be served as final."""
     clock = Clock()
     tail = Tail(now=True)
     tail.tail = BarTail(rows(*range(5)), dropped=1)  # degraded: the next ensure reads again
     store = SeriesStore(tail, clock=clock)
     await store.ensure(SYM, SPEC)
-    await emit(store, up("close", 2, amended=True, close="102"))
+    await emit(store, up("close", amended, amended=True, close="102"))
     await emit(store, *(up("close", i) for i in range(5, 5 + 2 * RECENT_CLOSES)))
+    if clean:
+        tail.tail = BarTail(rows(*range(5)))
     clock.t += RETRY_AFTER_S
     await store.ensure(SYM, SPEC)
-    assert tail.calls == 2 and closes(store)[2] == (2, "102")
+    assert tail.calls == 2 and closes(store)[amended] == (amended, "102")
+    assert store.hydrated(SYM, H) == clean
+
+
+@pytest.mark.parametrize(
+    ("stored", "rebuilt", "served", "gap"),
+    [(12, [], list(range(12)), False), (10, [], [*range(10), 11], True),
+     (10, [(7, bar(12))], [*range(10), 11], True)],
+    ids=["landed", "lagging", "lagging-rebuild-ahead"],
+)  # fmt: skip
+async def test_a_degraded_re_read_keeps_a_held_bar_whose_row_it_withheld(
+    stored: int, rebuilt: list[tuple[int, Bar]], served: list[int], gap: bool
+) -> None:
+    """D2-H1b: rows 0..9 are held and a live close at 11 flags a gap; the re-read withholds row 5
+    (SR-E12-11) and returns 0..4 and 6..11 (or 6..9: the writer still lags). Bar 5, which the
+    store holds, is still served, a gap still open stays flagged, and the series stays not
+    `hydrated`: it is read again later. An unflipped rebuild's row newer than bar 11 (generation
+    7) moves no bound: the merge stops at the series' own newest row, so bar 11 is still checked
+    for the gap below it."""
+    clock = Clock()
+    tail = Tail(rows(*range(10)), now=True)
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 11))
+    assert store.gapped(SYM, H)
+    tail.tail = BarTail([*rows(*range(5), *range(6, stored)), *rebuilt], dropped=1)
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, view(store)[0], store.gapped(SYM, H)) == (2, served, gap)
+    assert not store.hydrated(SYM, H)
+
+
+@pytest.mark.parametrize(
+    "reread",
+    [BarTail([], dropped=3), BarTail(rows(0, 1, gen=7), dropped=1)],
+    ids=["every-row-withheld", "only-another-generations-rows"],
+)
+async def test_a_degraded_re_read_with_no_row_of_the_series_keeps_every_held_bar(
+    reread: BarTail,
+) -> None:
+    """D2-H1b with nothing to merge into: a page-wide checksum failure withholds every row
+    (SR-E12-11), or the read finds only another generation's (an unflipped rebuild's). The
+    `ensure` raises nothing, every held bar stays, the gap at 10 stays flagged, and the series
+    stays not `hydrated`."""
+    clock = Clock()
+    tail = Tail(rows(*range(10)), now=True)
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 11))
+    tail.tail = reread
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, generation(store), view(store)[0]) == (2, 0, [*range(10), 11])
+    assert store.gapped(SYM, H) and not store.hydrated(SYM, H)
+
+
+async def test_a_degraded_re_read_keeps_a_withheld_bar_among_bars_sharing_an_open_time() -> None:
+    """D2-H1b merges by `(open_time, index)`: non-time bars can share an open time (renko bricks),
+    so held bar 7 goes between rows 6 and 8. After row 9 it would read as a restart and drop 6."""
+    clock = Clock()
+    shared = [(0, bar(i, shift=6 - i)) for i in range(6, 10)]  # bars 6..9 open at once
+    tail = Tail(now=True)
+    tail.tail = BarTail(shared, dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail([shared[0], *shared[2:]], dropped=1)  # row 7 withheld
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, view(store)) == (2, ([6, 7, 8, 9], None))
+
+
+async def test_a_degraded_re_read_over_two_stored_runs_drops_the_older_runs_held_bars() -> None:
+    """Legacy generation-0 history can hold two runs (a cold start reused `index`). The first read
+    withheld the newer run's rows, so the store holds the older run's bars; the re-read returns
+    the newer run. Merged by `(open_time, index)`, the held bars sort before it, and its first row
+    restarts the series and drops them, as with no merge: only the newer run is served."""
+    clock = Clock()
+    older, newer = rows(*range(10)), [(0, bar(i, shift=20, close="120")) for i in (0, 1)]
+    tail = Tail(now=True)
+    tail.tail = BarTail(older, dropped=2)  # the newer run's rows are withheld
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail([*older[:5], *older[6:], *newer], dropped=1)  # row 5 withheld
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, closes(store)) == (2, [(0, "120"), (1, "120")])
+
+
+async def test_held_bars_of_a_newer_run_than_the_rows_keep_their_gap_check() -> None:
+    """The store holds the newer run (a cold start seen live, with a gap at 2), and the re-read
+    withholds that run's rows, so its newest row is the older run's bar 9. The held bars opened
+    after it: they are folded after the rows by the gap rules, not merged into them by `index`
+    below 9. The first restarts the series, and the hole at 2 stays flagged."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(*range(10)), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    await emit(store, *(up("close", i, shift=20, close="120") for i in (0, 1, 3)))
+    tail.tail = BarTail(rows(*range(10)), dropped=2)  # the newer run's rows 0 and 1 withheld
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, closes(store)) == (2, [(0, "120"), (1, "120"), (3, "120")])
+    assert store.gapped(SYM, H) and not store.hydrated(SYM, H)
 
 
 @pytest.mark.parametrize("other", [7, 3], ids=["higher", "lower"])
@@ -836,6 +947,88 @@ async def test_a_live_close_that_skips_an_index_after_the_read_flags_a_gap() -> 
     assert counted("bars_series_gaps_total") == before + 1
 
 
+async def test_a_first_close_above_0_after_an_empty_read_is_a_gap_a_re_read_heals() -> None:
+    """D2-H1a: a series read clean and empty holds no bar, so a first live close at index 20
+    skips 0..19, in the builder's order (the bar opens and updates first). Read again while the
+    writer still lags, it stays gapped; once the writer has landed 0..20, an `ensure`
+    `retry_after_s` later serves them."""
+    clock = Clock()
+    tail = Tail(now=True)  # an empty read
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    before = counted("bars_series_gaps_total")
+    with capture_logs() as logs:
+        await emit(store, up("open", 20))
+        await emit(store, up("update", 20))
+        await emit(store, up("close", 20), up("open", 21))
+    assert store.gapped(SYM, H) and view(store) == ([20], 21)
+    assert [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")] == [(0, 19)]
+    assert counted("bars_series_gaps_total") == before + 1
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)  # storage is still empty: the gap stays
+    assert (tail.calls, view(store), store.gapped(SYM, H)) == (2, ([20], 21), True)
+    tail.tail = BarTail(rows(*range(21)))  # the writer has landed 0..20
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, view(store)[0], store.gapped(SYM, H)) == (3, list(range(21)), False)
+
+
+@pytest.mark.parametrize(("after_open_us", "gap"), [(1, False), (0, True)], ids=["after", "at"])
+async def test_a_first_close_after_an_empty_read_is_a_gap_only_if_it_opened_in_the_window(
+    after_open_us: int, gap: bool
+) -> None:
+    """D2-H1a: a clean empty read says only that no row lies in its window, which takes the rows
+    that opened at or after `since_us`. A restored builder keeps its index, so after a long
+    downtime its first close can be bar 500, which opened before that window (here 1 µs before
+    it, and closed inside it): the bars below it opened earlier still, outside every read, so it
+    is no gap. A bar that opened at the window's start lies inside it: a gap from index 0."""
+    tail = Tail(now=True)
+    tail.tail = BarTail([], since_us=T0 + 500 * STEP + after_open_us)  # bar 500's open, or 1 µs on
+    store = SeriesStore(tail)
+    await store.ensure(SYM, SPEC)
+    before = counted("bars_series_gaps_total")
+    with capture_logs() as logs:
+        await emit(store, up("update", 500))
+        await emit(store, up("close", 500), up("open", 501))
+    assert view(store) == ([500], 501) and store.gapped(SYM, H) == gap
+    logged = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
+    assert logged == ([(0, 499)] if gap else [])
+    assert counted("bars_series_gaps_total") == before + gap
+
+
+async def test_empty_re_reads_keep_a_gap_until_a_window_starts_after_its_bar_opened() -> None:
+    """D2-H1a over clean empty reads while the writer never lands bars 0..19. Bar 20 opened inside
+    R1's window: a gap. R2's window starts after bar 20 opened, but R2's fold judges by R1's (the
+    read `hydrated` came from), so the gap stays; R3's fold judges by R2's and clears it. Then the
+    series is `hydrated` and not `gapped`, so a later `ensure` reads nothing."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail([], since_us=T0)  # R1: bar 20 opens inside its window
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("open", 20))
+    await emit(store, up("close", 20), up("open", 21))
+    seen = [store.gapped(SYM, H)]
+    for start in (21, 22, 23):  # R2 and R3 start after bar 20 opened; the last ensure reads none
+        tail.tail = BarTail([], since_us=T0 + start * STEP)
+        clock.t += RETRY_AFTER_S
+        await store.ensure(SYM, SPEC)
+        seen.append(store.gapped(SYM, H))
+    assert (tail.calls, seen, view(store)) == (3, [True, True, False, False], ([20], 21))
+
+
+async def test_index_0_is_next_after_an_empty_read_so_closes_0_and_1_are_no_gap_and_3_is() -> None:
+    """D2-H1a's boundary: on a series read clean and empty, a first close at 0 skips nothing."""
+    store = SeriesStore(Tail(now=True))
+    await store.ensure(SYM, SPEC)
+    before = counted("bars_series_gaps_total")
+    await emit(store, up("close", 0))
+    await emit(store, up("close", 1))
+    assert not store.gapped(SYM, H) and counted("bars_series_gaps_total") == before
+    await emit(store, up("close", 3))
+    assert store.gapped(SYM, H) and counted("bars_series_gaps_total") == before + 1
+
+
 async def test_an_older_close_the_rows_lack_is_not_mistaken_for_a_restart() -> None:
     """A row the writer missed, or the run before a cold start, sits in the recent closes. Folded
     after newer rows it must not reset the series; the hole stays as storage has it."""
@@ -868,12 +1061,14 @@ async def test_an_unflipped_rebuilds_rows_do_not_displace_the_live_generations()
 
 
 async def test_only_the_newest_generations_recent_closes_are_folded() -> None:
-    """A swap among the closes seen live: the earlier generation's are not the series' bars."""
+    """A swap among the closes seen live: the earlier generation's are not the series' bars. The
+    swap came before the read, which clears D2-H1c's flag as it starts, so the read hydrates."""
     store = SeriesStore(Tail(now=True))
     await emit(store, up("close", 5))
     await emit(store, up("close", 7), generation=1)
     await store.ensure(SYM, SPEC)
     assert generation(store) == 1 and view(store) == ([7], None) and not store.gapped(SYM, H)
+    assert store.hydrated(SYM, H)
 
 
 async def test_an_old_generations_close_never_overwrites_a_bar_of_the_new_one() -> None:
@@ -897,6 +1092,41 @@ async def test_a_generation_swap_during_the_read_keeps_only_the_new_generation()
     tail.gate.set()
     await task
     assert generation(store) == 1 and view(store) == ([], 0) and not store.hydrated(SYM, H)
+
+
+async def test_a_swap_after_the_first_naming_inside_a_first_read_leaves_it_not_hydrated() -> None:
+    """D2-H1c: no generation is named when the read starts; the live builder names 3, then swaps
+    to 4, while the read is in flight. Its rows are 3's, so the series is read again, for 4's."""
+    clock = Clock()
+    tail = Tail(rows(0, 1, gen=3))
+    store = SeriesStore(tail, clock=clock)
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    await emit(store, up("close", 2), generation=3)  # the first naming: not a swap
+    await emit(store, up("close", 0, shift=5), generation=4)  # a swap
+    tail.gate.set()
+    await task
+    assert (generation(store), view(store), store.hydrated(SYM, H)) == (4, ([0], None), False)
+    tail.tail = BarTail(rows(0, 1, gen=4, shift=5))
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, view(store), store.hydrated(SYM, H)) == (2, ([0, 1], None), True)
+
+
+async def test_a_read_after_a_live_swap_between_reads_hydrates_the_new_generation() -> None:
+    """D2-H1c's flag is cleared as a read starts: a swap after one read ended only sends the series
+    to be read again, and that read, which no swap interrupts, hydrates it."""
+    clock = Clock()
+    tail = Tail(rows(0, 1), now=True)
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 0, shift=5), generation=1)  # the swap: read again
+    assert not store.hydrated(SYM, H)
+    tail.tail = BarTail(rows(0, 1, gen=1, shift=5))  # the new generation's rows
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, generation(store), view(store)) == (2, 1, ([0, 1], None))
+    assert store.hydrated(SYM, H)
 
 
 async def hydrated(

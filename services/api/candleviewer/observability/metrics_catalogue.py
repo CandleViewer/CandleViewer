@@ -871,7 +871,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "closes",
         (),
-        "Live closes that skipped indexes past a held WS series' newest bar (re-read next).",
+        "Live closes that skipped indexes past a held WS series' newest bar, or from index 0 when"
+        " a clean read found no row in its window (re-read next).",
         "sustained = bar writer lagging the live builders",
         _L,
         "E12",
