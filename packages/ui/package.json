@@ -20,15 +20,16 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
-    "test:cov": "vitest run --coverage",
+    "test": "vitest run --project unit",
+    "test:cov": "vitest run --project unit --coverage",
     "build": "pnpm run build:tokens && tsup",
     "build:tokens": "node scripts/build-tokens.mjs",
     "contrast:gate": "node ../../tools/contrast/generate.mjs && node ../../tools/contrast/data-ink.mjs --check && node ../../tools/contrast/no-hue-alone.mjs",
     "contrast:data-ink": "node ../../tools/contrast/data-ink.mjs",
     "size": "echo \"@candleviewer/ui: size-limit wired alongside E05 components\"",
-    "storybook": "storybook dev -p 6006 -c .storybook",
-    "storybook:build": "storybook build -c .storybook -o storybook-static"
+    "storybook": "storybook dev -p 6006 --host 127.0.0.1 -c .storybook --disable-telemetry --no-version-updates",
+    "storybook:build": "storybook build -c .storybook -o storybook-static --disable-telemetry",
+    "storybook:test": "vitest run --project storybook"
   },
   "devDependencies": {
     "@candleviewer/config": "workspace:*",
@@ -48,11 +49,12 @@
     "eslint-plugin-react": "^7.37.3",
     "eslint-plugin-react-hooks": "^5.1.0",
     "style-dictionary": "^5.6.1",
-    "storybook": "^8.6.19",
-    "@storybook/react": "^8.6.19",
-    "@storybook/react-vite": "^8.6.19",
-    "@storybook/addon-a11y": "^8.6.19",
-    "@storybook/addon-essentials": "^8.4.7",
-    "@storybook/test": "^8.4.7"
+    "storybook": "^10.6.2",
+    "@storybook/react-vite": "^10.6.2",
+    "@storybook/addon-a11y": "^10.6.2",
+    "@storybook/addon-docs": "^10.6.2",
+    "@storybook/addon-vitest": "^10.6.2",
+    "@vitest/browser": "^3.2.6",
+    "playwright": "^1.64.1"
   }
 }

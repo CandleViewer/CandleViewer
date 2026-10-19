@@ -135,6 +135,8 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: "node_modules" },
+    // packages/ui's `storybook:build` output (gitignored): bundled chunks, not source modules.
+    exclude: { path: "(^|/)storybook-static/" },
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {
       exportsFields: ["exports"],

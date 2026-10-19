@@ -11,7 +11,9 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { tokenRows } from "../../src/docs/TokenTables.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, "..", "..");
@@ -48,6 +50,20 @@ function makeSandbox() {
   return dir;
 }
 
+/**
+ * The `tokens` tree a generated `build/ts/tokens.ts` exports, as the Foundations page imports it.
+ * The sandbox lies outside the folders Vite may load from, so the module is transpiled and Node
+ * imports it natively, as a data: URL.
+ */
+async function generatedTokens(file: string): Promise<object> {
+  const { outputText } = ts.transpileModule(readFileSync(file, "utf-8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  const url = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`;
+  const { tokens } = (await import(/* @vite-ignore */ url)) as { tokens: object };
+  return tokens;
+}
+
 // The real `build/` feeds `dist/` (tsup's `onSuccess`) and other lanes, and `ui#build` may run beside the
 // tests, so nothing here builds into or deletes it: the builds run in a temp copy.
 describe("token build integration (real Style Dictionary run)", () => {
@@ -78,6 +94,36 @@ describe("token build integration (real Style Dictionary run)", () => {
       expect(existsSync(full), `missing artefact: ${rel}`).toBe(true);
       expect(readFileSync(full, "utf-8").length).toBeGreaterThan(0);
     }
+  });
+
+  it("emits every theme bundle the Storybook preview imports, each under its data-theme", () => {
+    runBuild(ui);
+    const preview = readFileSync(path.join(UI_ROOT, ".storybook", "theme-bundles.ts"), "utf-8");
+    const bundles = [
+      ...preview.matchAll(/^import "\.\.\/build\/(css\/tokens\.([\w-]+)\.css)";$/gm),
+    ];
+    expect(bundles.map((match) => match[2])).toEqual(["dark", "light", "high-contrast"]);
+    for (const [, rel = "", theme] of bundles) {
+      const css = readFileSync(path.join(buildDir, rel), "utf-8");
+      expect(css).toContain(`[data-theme="${theme}"] {`);
+    }
+  });
+
+  it("gives the Foundations page a row for every theme bundle property but --size-icon", async () => {
+    runBuild(ui);
+    // The page renders tokenRows(tokens) from build/ts/tokens.ts, and says it cannot drift from it.
+    const tokens = await generatedTokens(path.join(buildDir, "ts", "tokens.ts"));
+    const rows = new Set(tokenRows(tokens).map(({ property }) => property));
+    const declared = (theme: string) => {
+      const css = readFileSync(path.join(buildDir, "css", `tokens.${theme}.css`), "utf-8");
+      return new Set([...css.matchAll(/^\s*(--[\w-]+):/gm)].map(([, name = ""]) => name));
+    };
+    const dark = declared("dark");
+    // Only --size-icon, a CSS leaf beside size.icon.*, has no place in the nested tree.
+    expect([...dark].filter((name) => !rows.has(name))).toEqual(["--size-icon"]);
+    expect([...rows].filter((name) => !dark.has(name))).toEqual([]);
+    // The light and high-contrast bundles define the same properties, as the page says.
+    expect([declared("light"), declared("high-contrast")]).toEqual([dark, dark]);
   });
 
   it("is byte-identical across two consecutive runs (deterministic build)", () => {

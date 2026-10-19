@@ -5,9 +5,18 @@ name: _job-a11y
 # tools/a11y/gates.py: exit 1 = violation (A11Y-G0xx), exit 3 = infrastructure
 # error (A11Y-INFRA). Break-glass: CV_A11Y_INFRA_WAIVER_UNTIL (repo variable,
 # ISO-8601 UTC, max 24h ahead) waives infra errors only, never violations.
+# E05-T03 (#269): the `storybook` job runs beside it and fails the same check: play functions and
+# axe per story (CI-A11Y-002), a fail-closed fixture (CI-A11Y-003), a 10 min budget (CI-A11Y-004).
+# storybook-nightly.yml sets `storybook_only` to run that job alone on `main` every night; pr.yml
+# keeps the default and runs both.
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      storybook_only:
+        description: "Skip the a11y job and run the storybook job alone (storybook-nightly.yml)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,6 +24,7 @@ permissions:
 jobs:
   a11y:
     name: a11y
+    if: ${{ !inputs.storybook_only }}
     runs-on: ubuntu-latest
     # Two numbers: the 12 min (720 s) PR budget (AC) is MEASURED by the in-step budget
     # gate from after install/build. timeout-minutes is only a backstop above it, since
@@ -133,4 +143,91 @@ jobs:
         with:
           name: a11y-reports
           path: reports/a11y/
+          retention-days: 14
+
+  storybook:
+    name: storybook
+    runs-on: ubuntu-latest
+    # The 10 min (600 s) budget (AC) is measured over the whole job by its last step; timeout-minutes
+    # is only the backstop above it. No secret and no write scope (E05 STRIDE B1, B6).
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Start the budget clock
+        run: date +%s > "$RUNNER_TEMP/storybook-start"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step after the checkout pushes or fetches, so it keeps no git credentials (#3449).
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the design tokens, then the static Storybook
+        run: |
+          pnpm --filter @candleviewer/ui run build:tokens
+          pnpm --filter @candleviewer/ui run storybook:build
+
+      # packages/ui's playwright is apps/web's (one in the lockfile): the lanes' browser build.
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run play functions and axe on every story (CI-A11Y-002)
+        # bash adds pipefail: a summary that cannot read the report, or counts no passed story,
+        # sets rc as a red run does.
+        shell: bash
+        run: |
+          report="$GITHUB_WORKSPACE/reports/storybook-a11y"
+          set +e
+          pnpm --filter @candleviewer/ui run storybook:test --reporter=default --reporter=json \
+            --outputFile.json="$report/results.json"
+          rc=$?
+          set -e
+          node packages/ui/scripts/storybook-a11y.mjs summary "$report/results.json" | tee -a "$GITHUB_STEP_SUMMARY" || rc=1
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::CI-A11Y-002 a play function failed or a story has a serious or critical axe violation (the log names the story, the rule and the element), or no story passed: the run broke before any story or skipped them all (docs/ci-runbook.md)"
+            exit 1
+          fi
+
+      # Fail closed: on `.storybook/__fixtures__/` alone, a 2:1-contrast button must fail the gate.
+      - name: "Self-test: the gate fails closed on its fixture (CI-A11Y-003)"
+        run: |
+          report="$GITHUB_WORKSPACE/reports/storybook-a11y"
+          set +e
+          CV_STORYBOOK_A11Y_FIXTURES=1 pnpm --filter @candleviewer/ui run storybook:test \
+            --reporter=default --reporter=json --outputFile.json="$report/fixtures.json"
+          rc=$?
+          set -e
+          if ! node packages/ui/scripts/storybook-a11y.mjs selftest "$report/fixtures.json" "$rc"; then
+            echo "::error::CI-A11Y-003 the a11y gate passed or misreported its low-contrast fixture: it is blind (docs/ci-runbook.md)"
+            exit 1
+          fi
+          echo "- Self-test: the gate failed closed on its 2:1-contrast fixture" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Budget: the job finishes within 10 minutes (CI-A11Y-004)"
+        run: |
+          elapsed=$(( $(date +%s) - $(cat "$RUNNER_TEMP/storybook-start") ))
+          echo "- Storybook job: $elapsed s of its 600 s budget" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$elapsed" -gt 600 ]; then
+            echo "::error::CI-A11Y-004 the Storybook job took $elapsed s, over its 600 s budget (docs/ci-runbook.md)"
+            exit 1
+          fi
+
+      # The a11y report only (each story's axe results). Publishing the static build is not yet
+      # scheduled: the E05 threat model's accepted A4 residual (E05-X01, #215).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: storybook-a11y-report
+          path: reports/storybook-a11y/
           retention-days: 14

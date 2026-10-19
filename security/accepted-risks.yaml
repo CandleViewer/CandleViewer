@@ -133,6 +133,7 @@ entries:
   # The gates block from High only and never read these entries (re-scored High or above, a
   # finding outgrows its entry and blocks, the tauri alert in the alert gate too), so
   # check_accepted_risk_expiry.py enforces their dates.
+  # #269 (Storybook 10) dropped addon-actions and its uuid@9: GHSA-w5hq-g745-h8pq's entry is gone.
   - id: "GHSA-wrjc-x8rr-h8h6"
     tool: npm-audit
     severity: MEDIUM
@@ -147,17 +148,13 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
+  # #269 (E05-T03) adds vitest browser mode (packages/ui's Storybook a11y gate); its C-10.2 security
+  # review covers the reason's new last clause, for the owner to ratify on #2701. packages/ui's
+  # vitest.config.mjs sets that clause's two flags; test/storybook/vitest-project.test.ts pins them.
   - id: "GHSA-82fw-gwwq-j7x9"
     tool: npm-audit
     severity: MEDIUM
-    reason: "vitest and @vitest/mocker 3.2.7, test-only, never shipped; fixed only in 4.1.11, a major (#1819 test-stack step). Reached through the mocker plugins on a dev server's socket; no package uses them or vitest browser mode. Also covers Dependabot alerts 35, 37, 41, 43, 45, 47 and 49"
-    approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
-    expires: "2026-11-20"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"
-  - id: "GHSA-w5hq-g745-h8pq"
-    tool: npm-audit
-    severity: MEDIUM
-    reason: "uuid 9.0.1 under Storybook addon-actions (packages/ui, dev-only); fixed only in 11.1.1, two majors on, and addon-actions 8.6 (latest 8.x) still needs ^9. The flaw is in v3/v5/v6 with a caller buffer; addon-actions calls only v4()"
+    reason: "vitest and @vitest/mocker 3.2.7, test-only, never shipped; fixed only in 4.1.11, a major (#1819 test-stack step). Reached without authentication through the public mocker plugins on a dev server's socket, which no package uses. packages/ui's browser-mode project (#269) registers mocks over vitest's token-authenticated browser RPC on a localhost-bound server, with the browser API's file writes and exec off. Also covers Dependabot alerts 35, 37, 41, 43, 45, 47 and 49"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-11-20"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/1819"

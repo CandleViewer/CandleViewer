@@ -372,6 +372,7 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | E2E (web)                                                           | `pnpm e2e`                                                                                                    |
 | E2E (Electron)                                                      | `pnpm e2e:desktop`                                                                                            |
 | Accessibility scan                                                  | `pnpm test:a11y`                                                                                              |
+| Storybook play functions + axe (headless Chromium)                  | `pnpm --filter @candleviewer/ui storybook:test`                                                               |
 | Load test                                                           | `k6 run tests/load/api-ws.js`                                                                                 |
 | Ingestion soak                                                      | `locust -f tests/load/ingestion_soak.py`                                                                      |
 | Chaos suite                                                         | `pnpm chaos`                                                                                                  |

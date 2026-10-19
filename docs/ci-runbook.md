@@ -48,7 +48,10 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      a11y-axe smoke, e2e-electron on release/* heads
 │                                      (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
 ├─ _job-a11y.yml  (e2e filter)       → the a11y lane: tools/a11y/gates.py over axe, keyboard, trees,
-│                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
+│                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*);
+│                                      beside it the `storybook` job: the Storybook build, play
+│                                      functions and axe per story, the fail-closed fixture and
+│                                      its 10 min budget (CI-A11Y-002..004)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, register
@@ -76,14 +79,16 @@ on demand / release branch (.github/workflows/deploy-staging.yml)
 disabled until a trusted producer exists (.github/workflows/coverage-ratchet.yml, #3508)
 └─ coverage-ratchet       → baseline-raise PR from a push-to-main coverage run (CI-COV-*)
 
-scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-nightly.yml, e2e-nightly.yml)
+scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-, e2e- and storybook-nightly.yml)
 ├─ governance             → bypass-register check                        (CI-PROT-004)
 ├─ governance-drift       → break-glass / register staleness detection   (CI-PROT-004)
 ├─ cold-cache             → py and web suites with no caches, non-required (CI-BUILD-001)
 ├─ a11y-nightly           → a11y sweep of every manifest route, non-required (see below)
-└─ e2e-nightly            → _job-e2e.yml on main, e2e-electron included, non-required; a red
-                            scheduled run comments on its tracker issue or opens one
-                            (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001; below)
+├─ e2e-nightly            → _job-e2e.yml on main, e2e-electron included, non-required; a red
+│                           scheduled run comments on its tracker issue or opens one
+│                           (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001; below)
+└─ storybook-nightly      → _job-a11y.yml's storybook job alone on main, non-required; a red
+                            scheduled run is reported as e2e-nightly's is (CI-A11Y-002..004; below)
 
 release tag (.github/workflows/release.yml)
 └─ compute-version → finalize-and-release → build-sign-installer         (CI-REL-001..004)
@@ -103,11 +108,13 @@ guards.
 **Dependency-only PRs (#3182).** A PR that changes only `pnpm-lock.yaml`, the root `package.json`
 or `pnpm-workspace.yaml` (a transitive `axe-core` or Playwright bump, say) starts `js`, `security`
 and `coverage-thresholds` but not `e2e` or `a11y`. The manifests stay out of the `e2e` filter on
-purpose: they would put seven more jobs (four `e2e-web` shards, `e2e-staging`, `a11y-axe`, `a11y`)
-on every bump. The accepted controls are two nightlies on `main`, each a named artefact of the
-release checklist (`docs/plan/07-release-and-prr.md` §4.1): the `a11y-nightly.yml` sweep and
-`e2e-nightly.yml`, which runs the `e2e` lane's own jobs (next paragraph). So a bump that breaks the
-Playwright suite turns a nightly red within a day, and a release cut needs both green on its tip.
+purpose: they would put eight more jobs (four `e2e-web` shards, `e2e-staging`, `a11y-axe`, `a11y`,
+`storybook`) on every bump. The accepted controls are three nightlies on `main`, each a named
+artefact of the release checklist (`docs/plan/07-release-and-prr.md` §4.1): the `a11y-nightly.yml`
+sweep, `e2e-nightly.yml`, which runs the `e2e` lane's own jobs, and `storybook-nightly.yml`, which
+runs `_job-a11y.yml`'s `storybook` job (next paragraphs). So a bump that breaks the Playwright suite
+or the Storybook gate (a transitive `axe-core` under `@storybook/addon-a11y`, say) turns a nightly
+red within a day, and a release cut needs all three green on its tip.
 The decision covers those three files only. A backend manifest (`services/api/uv.lock`,
 `pyproject.toml`) skips `migrations`, `contract` and `rule-roundtrip`. The nightly
 `cold-cache.yml` runs the `services/api` pytest, `tests/contract` included (the contract job's
@@ -141,6 +148,23 @@ minutes each (medians over 11 green `pr.yml` runs on 2026-10-17 and 18), and `e2
 minute (62 s in that job). The total is at most 140 if every job reaches its 20-minute cap
 (`CV_CI_TIMEOUT_MINUTES`). Standard hosted runners are free on this public repository, so the cost
 is seven runner slots for about two minutes.
+
+**Nightly Storybook gate (#269).** `storybook-nightly.yml` calls `_job-a11y.yml` on `main` daily at
+02:13 UTC and on demand, with the lane's `storybook_only` input set, so only its `storybook` job
+runs: the Storybook build, every story's play function and axe check, the fail-closed fixture and
+the 600 s budget (CI-A11Y-002..004). The lane's `a11y` job is skipped, as `a11y-nightly.yml` sweeps
+every route; `pr.yml` keeps the input's default and runs both jobs. The nightly is not a required
+check (C-9.1 is unchanged), but a red one blocks the next release (C-9.2): the release checklist
+needs a green run on the `main` tip being cut (`docs/plan/07-release-and-prr.md` §4.1). Its
+`storybook-nightly-report` job, the only one that can write (`issues: write`, no checkout), reports
+a red scheduled run as `e2e-nightly.yml` does: while the repository variable
+`CV_STORYBOOK_NIGHTLY_TRACKER_ISSUE` is unset, each red night opens a `qa`, `area/design-system`,
+`priority/p1` issue; set it to an open issue's number (an owner/admin action, as for
+`CV_E2E_NIGHTLY_TRACKER_ISSUE`) and each red night comments on that issue instead. A value that is
+not a positive integer fails the report job and files nothing. No concurrency group (#3449). A
+manual run (`gh workflow run storybook-nightly.yml`) runs the same job and files no report. Triage
+the red job by its code (§4, CI-A11Y-002..004). Cost: one job a night, within its 600 s budget and
+capped by its 15-minute timeout.
 
 **Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
 `perf-storage-nightly.yml` (`perf-storage`) and `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
@@ -386,6 +410,22 @@ index alone, removing nothing.
   report artifact, find the new violation's rule id and selector, fix the
   markup (see `docs/plan/05-accessibility-standard.md`) — never suppress a
   rule repo-wide to unblock one PR.
+- **CI-A11Y-002** (Storybook stories failed, `_job-a11y.yml`'s `storybook` job, in `pr.yml` and
+  `storybook-nightly.yml`): a story's play function threw, or axe found a serious or critical
+  violation in it. The log names the story, the rule and the element; the job summary counts passed
+  stories' violations by impact and names the rules failed stories broke, and the
+  `storybook-a11y-report` artifact holds the Vitest JSON reports. A summary with no passed story
+  fails too: the run broke before any story (install, browser launch, config: read the log's first
+  error) or skipped every one (the `perf` tag, and `tags.skip` in `packages/ui/vitest.config.mjs`).
+  Reproduce: `build:tokens`, then `storybook:test` in `packages/ui` (its README). Fix the
+  component, not the gate.
+- **CI-A11Y-003** (the gate self-test): run on `packages/ui/.storybook/__fixtures__/` alone
+  (`CV_STORYBOOK_A11Y_FIXTURES=1`), the gate did not fail the 2:1-contrast button naming
+  `color-contrast` and `#a11y-gate-fixture`, so it cannot be trusted. Check `parameters.a11y` in
+  `.storybook/preview.ts` and the fixture.
+- **CI-A11Y-004** (Storybook job over its 600 s budget): the job summary records the measured time.
+  Look for a slow step (install, browser download, build); a story count that has outgrown the
+  budget needs sharding (`vitest --shard`), not a higher number.
 
 ### CI-BUILD-* — workspace build prerequisites (`tools/ci/check_built_exports.mjs`)
 

@@ -35,23 +35,26 @@ export function ColorConventionLegend({
 }: ColorConventionLegendProps): JSX.Element {
   const buy = colourName("buy", palette, convention);
   const sell = colourName("sell", palette, convention);
+  // The group names the legend; its rows stay list items of a real list (axe `listitem`).
   return (
-    <ul
+    <div
       role="group"
       aria-label={`${view} colour legend`}
       data-palette={palette}
       data-convention={convention}
     >
-      <SwatchLegendItem
-        color="var(--color-buy-default)"
-        glyph="▲"
-        label={`${buy} = buy / bid / up`}
-      />
-      <SwatchLegendItem
-        color="var(--color-sell-default)"
-        glyph="▼"
-        label={`${sell} = sell / ask / down`}
-      />
-    </ul>
+      <ul>
+        <SwatchLegendItem
+          color="var(--color-buy-default)"
+          glyph="▲"
+          label={`${buy} = buy / bid / up`}
+        />
+        <SwatchLegendItem
+          color="var(--color-sell-default)"
+          glyph="▼"
+          label={`${sell} = sell / ask / down`}
+        />
+      </ul>
+    </div>
   );
 }

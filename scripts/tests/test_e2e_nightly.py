@@ -280,6 +280,7 @@ def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
                     remote.append(step["name"])
     lanes = [(LANE_FILE, job) for job in EVERY_CALL | {"e2e-electron"}]
     lanes += [(A11Y_LANE, "a11y")] * 2  # its own tree, then the PR base's baseline file
+    lanes += [(A11Y_LANE, "storybook")]  # #269: the Storybook gate beside it
     assert sorted((name, job) for name, job, _ in checkouts) == sorted(lanes)
     kept = [c for c in checkouts if c[2] not in ({"persist-credentials": False}, BASE_CHECKOUT)]
     assert kept == []

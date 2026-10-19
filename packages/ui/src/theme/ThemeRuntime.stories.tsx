@@ -1,6 +1,7 @@
-import { memo, useLayoutEffect, useRef, useState, type JSX } from "react";
-import type { Meta, StoryObj } from "@storybook/react";
-import { expect, userEvent, within } from "@storybook/test";
+import { memo, useState, type JSX } from "react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, userEvent, within } from "storybook/test";
+import { withMountCount } from "../../.storybook/decorators.js";
 import {
   DENSITIES,
   MOTION_OVERRIDES,
@@ -24,17 +25,6 @@ const PAGE = {
   minHeight: "100vh",
   padding: "var(--space-inset-md)",
 };
-
-let mounts = 0;
-/** Counts mounts, not renders (a layout effect, so the value exists before the play function reads it). */
-function MountProbe(): JSX.Element {
-  const out = useRef<HTMLOutputElement>(null);
-  useLayoutEffect(() => {
-    mounts += 1;
-    if (out.current) out.current.value = String(mounts);
-  }, []);
-  return <output ref={out} aria-label="Mount count" />;
-}
 
 interface ChoiceProps<T extends string | number> {
   readonly legend: string;
@@ -89,7 +79,6 @@ function Playground(): JSX.Element {
       <button type="button" onClick={() => toggleHighContrastAnnounced(store)}>
         Toggle high contrast (Ctrl+Shift+H)
       </button>
-      <MountProbe />
     </main>
   );
 }
@@ -171,7 +160,12 @@ function Reflow(): JSX.Element {
   );
 }
 
-const meta: Meta = { title: "Theme/Runtime", parameters: { layout: "fullscreen" } };
+// The preview's global `withMountCount` wraps this one and counts; this one counts only without it.
+const meta: Meta = {
+  title: "Foundations/Theme runtime",
+  parameters: { layout: "fullscreen" },
+  decorators: [withMountCount],
+};
 export default meta;
 type Story = StoryObj;
 
@@ -225,8 +219,13 @@ export const TextScaleReflow: Story = {
   },
 };
 
-/** One-frame budget: the median of 30 warmed theme and density switches over 500 rows stays within 16.6 ms. */
+/**
+ * One-frame budget: the median of 30 warmed theme and density switches over 500 rows stays within 16.6 ms.
+ * Tagged `perf`: a wall-clock budget is not a pass/fail check on a shared CI runner, so the storybook
+ * Vitest project skips it (#269); on a quiet machine run `CV_STORYBOOK_PERF=1 storybook:test`.
+ */
 export const StyleRecalcBenchmark: Story = {
+  tags: ["perf"],
   render: () => <Benchmark />,
   play: async ({ canvasElement }) => {
     const ui = within(canvasElement);

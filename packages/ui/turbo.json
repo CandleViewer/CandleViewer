@@ -8,8 +8,10 @@
         "tokens/**",
         "scripts/**",
         "contrast/**",
+        "eslint-rules/**",
         ".storybook/**",
         "vitest.config.mjs",
+        "package.json",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
@@ -25,8 +27,10 @@
         "tokens/**",
         "scripts/**",
         "contrast/**",
+        "eslint-rules/**",
         ".storybook/**",
         "vitest.config.mjs",
+        "package.json",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
@@ -46,7 +50,12 @@
     },
     "typecheck": {
       "tags": ["typecheck"],
-      "inputs": ["$TURBO_EXTENDS$", "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"]
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "eslint-rules/*.d.mts",
+        "package.json",
+        "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"
+      ]
     }
   }
 }
