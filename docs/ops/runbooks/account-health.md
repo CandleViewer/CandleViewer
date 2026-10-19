@@ -46,6 +46,11 @@ hook's lines are `account.dms_hook_failed`, `account.dms_hook_stuck` and `accoun
 restart reads every account as `never_connected`, which resolves an open page: read the account's
 state (07 command 1) before treating it as recovered.
 
+The episode journal's failures are `account.dms_journal_failed` (critical for a record, which a kill
+would lose; error for a resolve, whose row the next boot replays once more), counted in
+`cv_account_dms_journal_failures_total`. The hook is called all the same; a rise means Postgres is
+refusing the writes (`PostgresDown`), and nothing alerts on it yet.
+
 ## Symptom: `/readyz` reports the `accounts` check degraded on an account-health loop
 
 The detail names the loop: `the account-health-tick loop ended`, or `the account-health-tracking

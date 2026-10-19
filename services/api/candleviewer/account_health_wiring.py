@@ -238,15 +238,17 @@ class HealthSeries:
     """The catalogue series the runtime sets and counts (#837 W6), per state, reason and result and
     never per account (SR-125's allow-list; the log lines name the account): each committed
     transition, whichever call commits it, under the state entered; at each tick, the monitored
-    accounts per state and reason and the age of the oldest wallet snapshot; each reconciliation
-    read by how it ended. `bind` registers them on the app's metrics and binds every child, the
-    key-age notices and states too (the key-age job's), so each reads 0 from boot and `increase()`
-    sees the first event (the AccountDown page reads both health series)."""
+    accounts per state and reason, the age of the oldest wallet snapshot and the growth of the
+    monitor's failed journal writes; each reconciliation read by how it ended. `bind` registers
+    them on the app's metrics and binds every child, the key-age notices and states too (the
+    key-age job's), so each reads 0 from boot and `increase()` sees the first event (the
+    AccountDown page reads both health series)."""
 
     states: BoundedMetric
     transitions: BoundedMetric
     wallet_age: BoundedMetric
     reconciles: BoundedMetric
+    journal_failures: BoundedMetric
 
     @classmethod
     def bind(cls, metrics: Metrics) -> HealthSeries:
@@ -256,6 +258,7 @@ class HealthSeries:
             r0["cv_account_health_transitions_total"],
             r0["cv_wallet_snapshot_age_seconds"],
             r0["cv_wallet_reconcile_total"],
+            r0["cv_account_dms_journal_failures_total"],
         )
         for state, reason in HEALTH_SERIES:
             series.states.labels(state, reason)
@@ -307,6 +310,7 @@ class AccountHealthRuntime:
         self._monitored, self._release, self._episodes = monitored, release, episodes
         self._sleep = sleep
         self._series = series  # the catalogue series it sets and counts
+        self._journal_failures = 0  # the monitor's `journal_failures` as the series has it
         self._tracked: set[UUID] = set()
         self._booted = False  # a tracking pass has worked: the boot's replay is done
         self._replay: asyncio.Task[tuple[DmsEpisodeRow, ...]] | None = None  # the last replay read
@@ -491,8 +495,17 @@ class AccountHealthRuntime:
     async def _tick(self) -> None:
         for transition in self.monitor.tick():  # the monitor logs each one and owes the hook
             self._moved(transition)
+        self._count_journal_failures()
         self.topic.stale_check()
         self._census()
+
+    def _count_journal_failures(self) -> None:
+        """Add the journal writes the monitor has failed since the last tick to the series (the
+        monitor keeps the running total, `journal_failures`)."""
+        failed = self.monitor.journal_failures
+        if failed > self._journal_failures:
+            self._series.journal_failures.child().inc(failed - self._journal_failures)
+            self._journal_failures = failed
 
     def _census(self) -> None:
         """Set the health gauge, every state and reason (0 for one no account reads), and the age

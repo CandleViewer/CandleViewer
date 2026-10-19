@@ -265,7 +265,9 @@ class AccountHealthMonitor:
         self._dms_timeout_s = dms_timeout_s
         self._rng = rng if rng is not None else random.SystemRandom()  # retry jitter only
         self._journal, self._journal_timeout_s = journal, journal_timeout_s
-        self.journal_failures = 0  # writes that failed, timed out or were skipped; W6 exports it
+        # writes that failed, timed out or were skipped: the health runtime counts its growth in
+        # `cv_account_dms_journal_failures_total` at each tick
+        self.journal_failures = 0
         self._accounts: dict[UUID, _Account] = {}
         self._calls: dict[UUID, asyncio.Task[None]] = {}  # the latest call per account id
         self._watchers: set[asyncio.Task[None]] = set()  # one per call: ends with it or abandons it

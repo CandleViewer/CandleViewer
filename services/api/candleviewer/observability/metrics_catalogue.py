@@ -685,6 +685,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E27",
         max_series=3,
     ),
+    # The dead-man's-switch episode journal (W5's `journal_failures`): one series, no label.
+    _s(
+        "cv_account_dms_journal_failures_total",
+        "counter",
+        "writes",
+        (),
+        "Dead-man's-switch episode journal writes, record or resolve, that failed, timed out or "
+        "were skipped while an earlier one was unwinding; the hook is called all the same, and a "
+        "failed record leaves its episode to a kill (KV-T12).",
+        "none yet; the account.dms_journal_failed log line names the account",
+        _L,
+        "E27",
+        max_series=1,
+    ),
     # --- Stored-key self-check (E27-T03, #836): the job and its watchdog, real backend only ---
     _s(
         "cv_key_verification_total",
