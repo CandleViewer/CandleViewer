@@ -267,10 +267,12 @@ class BookStream:
             if self._supervisor is not None:
                 self._supervisor.detach(key)
         self._first_sub = {k for k in self._first_sub if k[0] != symbol}
+        self._grids = {k: v for k, v in self._grids.items() if k[0] != symbol}
         self._backoff.pop(symbol, None)
         self._deferred.discard(symbol)
         self._not_live_since.pop(symbol, None)
         self._applied_at.pop(symbol, None)
+        ingest_book_live.labels(symbol=symbol_label(symbol)).set(0.0)  # forgotten: not LIVE
 
     def out_of_live(self, slo_s: float = RESYNC_BACKOFF_CAP_S) -> tuple[str, ...]:
         """#1919: desired symbols whose book has been out of LIVE longer than `slo_s`
@@ -280,8 +282,7 @@ class BookStream:
 
     # ---- reads (GET /market/orderbook) -----------------------------------
     def view(self, symbol: str, depth: int) -> BookView | None:
-        """The maintained book, only while LIVE at `depth` (else `None`); `stale` per
-        `is_stale`."""
+        """The maintained book, only while LIVE at `depth` (else `None`); `stale` per `is_stale`."""
         tb = self._books.get(symbol)
         if tb is None or depth > tb.active.depth:
             return None

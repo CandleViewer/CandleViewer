@@ -11,6 +11,8 @@ fake clock, no network (C-13.5, C-13.7).
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from decimal import Decimal
 
 import httpx
@@ -23,6 +25,7 @@ from candleviewer.api.orderbook import make_orderbook_router
 from candleviewer.book.models import BookPhase
 from candleviewer.bus.bus import Bus
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
+from candleviewer.ingestion.metrics import ingest_book_live, symbol_label
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S
 from candleviewer.ingestion.watchdog import STALENESS_S
 from candleviewer.orderbook_wiring import BookStream
@@ -36,18 +39,21 @@ LIMIT_S = STALENESS_S["book"]  # the watchdog's book limit: no new SLO
 
 
 class _Rig:
-    """A `BookStream` on the corpus with a fake clock; `tick()` runs its scripted ticks."""
+    """A `BookStream` on the corpus with a fake clock, the catalogue's tick size wired as
+    `app.wire_public_ws` wires it; `ticked()` runs its scripted ticks."""
 
     def __init__(self, ticks: tuple[float, ...] = ()) -> None:
         self.t = 0.0
+        self.tick = Decimal("0.1")  # BTCUSDT's tick size in the catalogue
         self.desired: list[set[str]] = []
+        self.slept: list[float] = []
         self._ticks = list(ticks)
         self._parked = asyncio.Event()
         self.stream = BookStream(
             bus=Bus(),
             env="live",
             set_desired=lambda topics: self.desired.append(set(topics)),
-            parse_frame=lambda f: parse_book_frame(f, lambda _s: Decimal("0.1")),
+            parse_frame=lambda f: parse_book_frame(f, lambda _s: self.tick),
             topic_for=book_topic,
             resubscribe=self._resubscribe,
             is_listed=lambda s: s == "BTCUSDT",
@@ -55,24 +61,31 @@ class _Rig:
             clock=lambda: self.t,
             now_us=lambda: 0,
             sleep=self._sleep,
+            tick_size=lambda _s: self.tick,
         )
 
     @staticmethod
     async def _resubscribe(_topic: str) -> None:
         return None
 
-    async def _sleep(self, _delay: float) -> None:
+    async def _sleep(self, delay: float) -> None:
+        self.slept.append(delay)
         if self._ticks:  # the next tick runs at this clock reading
             self.t = self._ticks.pop(0)
             return
         self._parked.set()
         await asyncio.Event().wait()  # until stop() cancels the loop
 
-    async def tick(self) -> None:
-        """Start the stream and return once every scripted tick has run."""
+    @contextlib.asynccontextmanager
+    async def ticked(self) -> AsyncIterator[None]:
+        """Start the stream, run every scripted tick, and stop it on exit, a failure too."""
         await self.stream.start()
-        async with asyncio.timeout(5):  # hang guard only
-            await self._parked.wait()
+        try:
+            async with asyncio.timeout(5):  # hang guard only
+                await self._parked.wait()
+            yield
+        finally:
+            await self.stream.stop()
 
     async def feed(self, raw: list[str]) -> None:
         for frame in raw:
@@ -93,6 +106,10 @@ class _Viewer:
 class _Resolver:
     def resolve(self, request: Request) -> _Viewer:
         return _Viewer()
+
+
+def _live_gauge() -> float:
+    return float(ingest_book_live.labels(symbol=symbol_label("BTCUSDT"))._value.get())
 
 
 async def _get_orderbook(stream: BookStream) -> httpx.Response:
@@ -123,10 +140,11 @@ async def test_f2_a_released_book_is_never_served_frozen_as_live_after_its_grace
 async def test_the_tick_alone_ends_a_released_books_grace(at: float, kept: bool) -> None:
     rig = _Rig(ticks=(at,))
     await rig.live_then_released()  # then no frame and no demand change
-    await rig.tick()
-    assert (rig.stream.engine("BTCUSDT") is not None) is kept
-    assert (TOPIC in rig.desired[-1]) is kept
-    await rig.stream.stop()
+    async with rig.ticked():
+        assert (rig.stream.engine("BTCUSDT") is not None) is kept
+        assert (TOPIC in rig.desired[-1]) is kept
+        assert _live_gauge() == (1.0 if kept else 0.0)  # a forgotten book is not counted LIVE
+        assert max(rig.slept) <= 0.25  # a grace ends at most one 0.25 s tick late
 
 
 @pytest.mark.parametrize("hold", ["reacquired_in_grace", "second_consumer"])
@@ -139,39 +157,54 @@ async def test_a_book_still_held_outlives_the_grace(hold: str) -> None:
     if hold == "reacquired_in_grace":
         rig.t = DEFAULT_GRACE_S - 10
         rig.stream.acquire(WS, "BTCUSDT")
-    await rig.tick()
-    assert engine is not None and rig.stream.engine("BTCUSDT") is engine
-    assert TOPIC in rig.desired[-1]
-    await rig.stream.stop()
+    async with rig.ticked():
+        assert engine is not None and rig.stream.engine("BTCUSDT") is engine
+        assert TOPIC in rig.desired[-1]
 
 
 async def test_a_new_subscription_after_idle_gets_a_fresh_snapshot_not_the_frozen_book() -> None:
     """Gherkin 2: the engine the WS book snapshot reads (#2196) is rebuilt from a new snapshot."""
     rig = _Rig(ticks=(DEFAULT_GRACE_S + 1,))
     await rig.live_then_released()
-    await rig.tick()
-    rig.t = 3600.0
-    rig.stream.acquire(WS, "BTCUSDT")  # a new WS book subscription after idle
-    assert TOPIC in rig.desired[-1] and rig.stream.engine("BTCUSDT") is None
-    await rig.feed(BOOK[4000:4010])  # the new subscription's snapshot (u=1) and deltas
+    async with rig.ticked():
+        rig.t = 3600.0
+        rig.stream.acquire(WS, "BTCUSDT")  # a new WS book subscription after idle
+        assert TOPIC in rig.desired[-1] and rig.stream.engine("BTCUSDT") is None
+        await rig.feed(BOOK[4000:4010])  # the new subscription's snapshot (u=1) and deltas
 
-    engine = rig.stream.engine("BTCUSDT")
-    assert engine is not None and engine.phase is BookPhase.LIVE and engine.last_u == 10
-    view = rig.stream.view("BTCUSDT", 50)
-    assert view is not None and view.snapshot.update_id == 10
-    await rig.stream.stop()
+        engine = rig.stream.engine("BTCUSDT")
+        assert engine is not None and engine.phase is BookPhase.LIVE and engine.last_u == 10
+        view = rig.stream.view("BTCUSDT", 50)
+        assert view is not None and view.snapshot.update_id == 10
+
+
+async def test_a_forgotten_book_takes_its_grid_with_it() -> None:
+    """#3806's per-book grid goes with the book: the rebuilt book keeps the deltas it gets
+    before its snapshot, though the tick size changed while the symbol was idle."""
+    rig = _Rig(ticks=(DEFAULT_GRACE_S + 1,))
+    await rig.live_then_released()  # snapshotted on grid 0.1
+    async with rig.ticked():
+        rig.tick = Decimal("0.05")  # the catalogue halves the tick size meanwhile
+        rig.stream.acquire(WS, "BTCUSDT")
+        await rig.feed(BOOK[1:3])  # deltas before the new snapshot: buffered, not refused
+        await rig.feed(BOOK[:1])  # the snapshot replays them
+        engine = rig.stream.engine("BTCUSDT")
+        assert engine is not None and engine.phase is BookPhase.LIVE and engine.last_u == 3
 
 
 async def test_a_rest_read_after_the_grace_is_never_the_frozen_book() -> None:
-    """Gherkin 1 through `GET /market/orderbook`: the tick at 31 s had dropped the book."""
+    """Gherkin 1 through `GET /market/orderbook`: the tick at 31 s had forgotten the book, so the
+    read answers 503 until the fresh snapshot it asked for, and is then served from that."""
     rig = _Rig(ticks=(DEFAULT_GRACE_S + 1,))
     await rig.live_then_released()
-    await rig.tick()
+    async with rig.ticked():
+        r = await _get_orderbook(rig.stream)
+        assert r.status_code == 503 and "resynchronising" in r.text  # never u=100 as live
+        assert TOPIC in rig.desired[-1]  # the read subscribed the topic again
+        await rig.feed(BOOK[4000:4010])  # its fresh snapshot (u=1) and deltas
 
-    r = await _get_orderbook(rig.stream)
-    assert r.status_code == 503  # resynchronising until a fresh snapshot: never u=100 as live
-    assert TOPIC in rig.desired[-1]  # the read subscribed the topic again
-    await rig.stream.stop()
+        r = await _get_orderbook(rig.stream)
+        assert r.status_code == 200 and r.json()["u"] == 10 and r.json()["stale"] is False
 
 
 # ---- #2487 F4: a served book's `stale` comes from its last applied frame -------------------
@@ -207,7 +240,7 @@ async def test_only_frames_the_served_tier_takes_keep_it_fresh() -> None:
 
 
 async def test_is_stale_whenever_the_book_is_not_live() -> None:
-    """The invariant #3806 relies on: no book, or a book not LIVE, is stale."""
+    """No book, or a book not LIVE, is stale."""
     rig = _Rig()
     assert rig.stream.is_stale("BTCUSDT")  # no book yet
     rig.stream.acquire(WS, "BTCUSDT")
