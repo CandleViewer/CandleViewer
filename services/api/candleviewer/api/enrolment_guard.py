@@ -10,13 +10,14 @@ operational routes) are left alone whatever bearer they carry, so sign-in stays 
 `AuthService.classify`, read from the user's state on every request (no session flag). A
 request without a bearer, or whose bearer has no live session, is left to the route (401, or
 a pre-session operation), and so is one whose user is gone or disabled: the route revokes that
-session (#2911, SR-029). A route that finds its session by the `cv_refresh` cookie, which the
-guard never reads, answers it as the guard would through `route_refusal` (`POST /auth/unlock`).
-A session lookup or a classification that fails answers `503 store_unavailable`: deny by default
-(C-12.4). A session that was not minted enrolment-only (its expiry lies beyond
-`ENROLMENT_ONLY_LIFETIME`, Q7, or it proved a second factor) gets 401 like an expired session,
-except on `POST /auth/logout`. One past its expiry never reaches the class: the session lookup
-refuses it (#3183), so its route answers 401, uncounted here.
+session (#2911, SR-029). A session lookup or a classification that fails answers
+`503 store_unavailable`: deny by default (C-12.4). A session that was not minted enrolment-only
+(its expiry lies beyond `ENROLMENT_ONLY_LIFETIME`, Q7, or it proved a second factor) gets 401
+like an expired session, except on `POST /auth/logout`. One past its expiry never reaches the
+class: the session lookup refuses it (#3183), so its route answers 401, uncounted here.
+
+A route that finds its session itself, as `POST /auth/unlock` does by the `cv_refresh` cookie
+the guard never reads, answers it through `route_refusal`, the guard's own verdict ladder.
 
 The guard is inert only while `AuthService.enrolment_gate_is_active` is false: no session store
 is wired, so nothing authenticates. Wired without the user store, every classification fails and
@@ -126,13 +127,6 @@ class _Auth(Protocol):
 
     @property
     def sessions(self) -> _Sessions: ...
-
-    async def classify(self, session: SessionRecord) -> SessionClass: ...
-
-
-class _Classifier(Protocol):
-    @property
-    def enrolment_gate_is_active(self) -> bool: ...
 
     async def classify(self, session: SessionRecord) -> SessionClass: ...
 
@@ -383,47 +377,40 @@ def make_enrolment_only_guard(
         except Exception as exc:  # fail closed: a session that cannot be read reaches nothing
             refusals.unclassified(exc, channel="http", method=method, path=template)
             return _unavailable()
-        try:
-            verdict = await auth.classify(record)
-        except Exception as exc:  # fail closed: an unclassified session reaches no handler
-            refusals.unclassified(exc, channel="http", method=method, path=template, record=record)
-            return _unavailable()
-        operation = (request.method, path)
-        if verdict is SessionClass.FULL or verdict is SessionClass.USER_INACTIVE:  # inactive: #2911
-            return await call_next(request)
-        if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED and operation != _SIGN_OUT:
-            refusals.expired(record, channel="http", method=method, path=template)
-            return _problem(_EXPIRED)
-        if operation in ENROLMENT_OPERATIONS:
-            return await call_next(request)
-        ip = source_ip(request.scope)
-        await refusals.refused(record, channel="http", method=method, path=template, ip=ip)
-        return _problem(_REFUSED)
+        operation, ip = (request.method, path), source_ip(request.scope)
+        refused = await route_refusal(
+            auth, refusals, record, operation=operation, ip=ip, logged_as=(method, template)
+        )
+        return await call_next(request) if refused is None else refused
 
     return enrolment_only_guard
 
 
 async def route_refusal(
-    auth: _Classifier,
+    auth: _Auth,
     refusals: EnrolmentRefusals,
     record: SessionRecord,
     *,
     operation: tuple[str, str],
     ip: str | None,
+    logged_as: tuple[str, str] | None = None,
 ) -> JSONResponse | None:
-    """The guard's answer to *record*, the session a route found itself, as by the `cv_refresh`
+    """The guard's answer to *record*: the one verdict ladder of the middleware, for the session
+    its bearer names, and of a route that found its session itself, as by the `cv_refresh`
     cookie that no bearer guard sees (`POST /auth/unlock`, contract "Idle lock"). *operation* is
-    (METHOD, route template). `None` lets the route go on: a full session, a disabled or deleted
-    user's (#2911 is the route's), or an enrolment-only one on an allow-listed operation."""
+    (METHOD, path) as the allow-list reads it; *logged_as* the (bounded method, route template)
+    its counts, log lines and audit row name, *operation* by default. `None` lets the route go
+    on: a full session, a disabled or deleted user's (#2911 is the route's), or an
+    enrolment-only one on an allow-listed operation."""
     if not auth.enrolment_gate_is_active:
         return None  # no session store: nothing authenticates, so no such session exists
-    method, path = operation
+    method, path = logged_as if logged_as is not None else operation
     try:
         verdict = await auth.classify(record)
-    except Exception as exc:  # fail closed, as the guard does
+    except Exception as exc:  # fail closed: an unclassified session reaches no handler
         refusals.unclassified(exc, channel="http", method=method, path=path, record=record)
         return _unavailable()
-    if verdict is SessionClass.FULL or verdict is SessionClass.USER_INACTIVE:
+    if verdict is SessionClass.FULL or verdict is SessionClass.USER_INACTIVE:  # inactive: #2911
         return None
     if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED and operation != _SIGN_OUT:
         refusals.expired(record, channel="http", method=method, path=path)
