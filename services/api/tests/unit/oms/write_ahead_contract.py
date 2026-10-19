@@ -18,6 +18,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from candleviewer.oms import ExecutionRepository, OrderEventRepository, OrderRepository
+from candleviewer.oms.execution import apply_fields
+from candleviewer.oms.order_steps import OrderStepWriter
+from candleviewer.oms.recovery import RebuiltOrder, rebuild
+from candleviewer.statechart.bindings.b01_order import GATES, PASSED, Step
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
 from candleviewer.storage.repositories.executions import FillTotals, NewExecution, OrderFill
@@ -63,6 +68,65 @@ def fill(row: Row, exec_id: str, qty: str, new: Event | None = None, **over: Any
     new = new or event("fill" if cum == row.qty else "partial_fill", payload={"execId": exec_id})
     moved = step(row, to, new, account_id=execution.exchange_account_id)
     return OrderFill(step=moved, execution=execution, totals=totals)
+
+
+def named(done: OrderFill) -> OrderFill:
+    """*done* with its step naming the chart state its `to_state` persists, as B1's writer does."""
+    chart = port.LIFECYCLE_STATE_OF[done.step.to_state]
+    return replace(done, step=replace(done.step, lifecycle_state=chart))
+
+
+async def b1_order(h: Harness, *, rejected: bool) -> Row:
+    """An order whose steps B1's step writer wrote (`OrderStepWriter`, as `persist_event` hands
+    them over): sent and acked, filled in part, amended and filled; or refused by the exchange."""
+    order = h.new_order("pending_submit")
+    writer = OrderStepWriter(h.orders, h.executions, clock=lambda: T0)
+    writer.expect(order)
+    ids = {"order_id": str(order.id), "order_link_id": order.order_link_id}
+    ids |= {"account_id": str(order.exchange_account_id), "symbol": order.symbol, "side": "buy"}
+    terms = {"qty": "0.3", "price": "63000", "trigger_price": None, "take_profit": None}
+    ctx: dict[str, Any] = ids | terms | {"stop_loss": "62000", "reduce_only": False}
+    ctx |= {"filled_qty": "0", "cum_exec_value": "0", "avg_price": None, "fee_paid": "0"}
+    ctx |= {"exchange_order_id": None, "reject_code": None}
+
+    async def write(frm: str | None, to: str, trigger: str, said: dict[str, Any]) -> None:
+        order_ids = (ids["order_id"], ids["account_id"], ids["order_link_id"])
+        await writer(Step(*order_ids, frm, to, trigger, said, dict(ctx)))
+
+    async def filled(frm: str, to: str, exec_id: str, qty: str) -> None:
+        execution = ids | {"exec_id": exec_id, "exchange_order_id": "x-b1", "exec_type": "trade"}
+        execution |= {"qty": qty, "price": "63000", "fee": "0", "fee_rate": "0.0002"}
+        held = {k: Decimal(ctx[k]) for k in ("qty", "filled_qty", "cum_exec_value", "fee_paid")}
+        fill = {"qty": Decimal(qty), "price": PX, "fee": Decimal(0), "fee_rate": Decimal("0.0002")}
+        after = apply_fields(held, fill)
+        ctx.update({k: str(v) for k, v in after.items() if k != "qty"})
+        await write(frm, to, "EXEC", execution)
+
+    order_fields = ids | terms | {"stop_loss": "62000", "reduce_only": False}
+    gates = dict.fromkeys(GATES, PASSED)
+    await write(None, "validated", "VALIDATE", {"gates": gates, "order": order_fields})
+    await write("validated", "submitting", "SEND", {})
+    if rejected:
+        ctx["reject_code"] = "RATE_LIMITED"
+        said = {"ok": False, "error_code": "RATE_LIMITED"}
+        await write("submitting", "rejected", "done.invoke.place", said)
+    else:
+        ctx["exchange_order_id"] = "x-b1"
+        await write(
+            "submitting",
+            "submitted",
+            "done.invoke.place",
+            {"ok": True, "exchange_order_id": "x-b1"},
+        )
+        await filled("submitted", "partially_filled", "E1", "0.1")
+        await write("partially_filled", "amend_pending", "AMEND", {"price": "64000"})
+        ctx["price"] = "64000"
+        said = {"ok": True, "terms": {"price": "64000"}}
+        await write("amend_pending", "partially_filled", "done.invoke.amend", said)
+        await filled("partially_filled", "filled", "E2", "0.2")
+    row = await h.orders.get(order.exchange_account_id, order.id)
+    assert row is not None
+    return row
 
 
 @dataclass(frozen=True)
@@ -201,11 +265,30 @@ class WriteAheadContract:
         row = await h.order("pending_submit", lifecycle_state="validated")
         bind = step(row, "submitted", lifecycle_state="submitting", exchange_order_id="x-1")
         moved = await h.orders.transition(bind)
-        done = await h.executions.commit_fill(fill(moved.order, "E1", "0.1"))
+        done = await h.executions.commit_fill(named(fill(moved.order, "E1", "0.1")))
         assert done is not None and row.lifecycle_state == "validated"
         assert (moved.order.lifecycle_state, moved.order.exchange_order_id) == ("submitting", "x-1")
-        assert done.order.lifecycle_state == "submitting"  # a fill's step that names none keeps it
+        assert (done.order.lifecycle_state, done.order.exchange_order_id) == (
+            "partially_filled",
+            "x-1",
+        )
         assert (await h.stored(row))[0] == done.order
+
+    @pytest.mark.parametrize("write", ["transition", "commit_fill"])
+    async def test_a_step_that_leaves_the_chart_state_behind_is_refused(
+        self, h: Harness, write: str
+    ) -> None:
+        """`ord_lifecycle` (wave 286's carried item): a step that names no chart state moves
+        `state` away from the `lifecycle_state` the row holds, a pair the mapping does not admit,
+        so it is refused by name, with nothing written, on either store."""
+        row = await h.order("accepted", lifecycle_state="submitted")
+        with pytest.raises(port.OrderConstraintError, match="ord_lifecycle"):
+            if write == "transition":
+                await h.orders.transition(step(row, "pending_cancel"))
+            else:
+                await h.executions.commit_fill(fill(row, "E1", "0.1"))
+        assert await h.stored(row) == (row, [0])
+        assert await h.executions.get(row.exchange_account_id, "E1") is None
 
     async def test_a_step_binding_an_id_another_order_holds_changes_nothing(
         self, h: Harness
@@ -231,6 +314,43 @@ class WriteAheadContract:
         with pytest.raises(port.OrderConstraintError, match="ord_cum"):
             await h.orders.transition(moved)
         assert (await h.stored(row))[0] == filled.order
+
+    @pytest.mark.parametrize("write", ["create", "transition", "commit_fill", "insert"])
+    async def test_text_holding_nul_is_refused_with_nothing_written(
+        self, h: Harness, write: str
+    ) -> None:
+        """lows-847s3b (security r2 Low 2): exchange text the redaction never sees (an
+        `exec_id`, an `exchange_order_id`) cannot hold NUL in Postgres text. The statement is
+        refused whole (SQLSTATE 22021 as the server decodes the value), so a hostile push is a
+        write that fails every retry, never one the fake takes (C-13.3), and nothing is written."""
+        row, nul = await h.order(), "x\x001"
+        with pytest.raises(StorageQueryFailed):
+            if write == "create":
+                await h.order(exchange_order_id=nul, id=(late := uuid4()))
+            elif write == "transition":
+                await h.orders.transition(step(row, "submitted", exchange_order_id=nul))
+            elif write == "commit_fill":
+                await h.executions.commit_fill(fill(row, nul, "0.1"))
+            else:
+                await h.executions.insert(fill(row, nul, "0.1").execution)
+        assert await h.stored(row) == (row, [0])
+        assert await h.executions.get(row.exchange_account_id, nul) is None
+        if write == "create":
+            assert await h.orders.get(row.exchange_account_id, late) is None
+
+    @pytest.mark.parametrize("rejected", [False, True])
+    async def test_the_fold_of_an_orders_events_equals_its_row(
+        self, h: Harness, rejected: bool
+    ) -> None:
+        """OM-T03 on every store, Postgres included (the ticket's rebuild against a populated
+        Postgres): the events B1's steps wrote rebuild the row alone, its state, bound id, amended
+        terms, fill totals and reject columns as the store returns them."""
+        row = await b1_order(h, rejected=rejected)
+        events = await h.events.list_for_order(row.exchange_account_id, row.id)
+        assert rebuild(events) == RebuiltOrder.of_row(row)
+        assert (row.state, row.reject_code) == (
+            ("rejected", "RATE_LIMITED") if rejected else ("filled", None)
+        )
 
     async def test_a_latency_of_zero_is_stored(self, h: Harness) -> None:
         """`oe_latency` refuses a negative `latency_ms` (`_REFUSED`), not zero."""

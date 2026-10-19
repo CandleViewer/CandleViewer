@@ -16,8 +16,9 @@
 Every step stores the chart state in `lifecycle_state` beside `state` (24 Sec.8.2 mapping), the
 exchange order id the machine bound (SR-E29-03), the terms an accepted amend changed (S2: only once
 the exchange accepts them), the event's kind and source (an exchange source carries its message,
-OM-R02) and the result's code on the event, a reject's included, so a fold of the events can
-rebuild the reject columns.
+OM-R02) and the result's code on the event. A step into `rejected` stores its reject code as the
+event's `ret_code` and as `reject_code` alike (`OrderTransition`), so a fold of the events rebuilds
+the reject columns (`oms.recovery`).
 """
 
 from __future__ import annotations
@@ -126,7 +127,8 @@ class OrderStepWriter:
         if step.from_state is None:
             return await self._create(step, account, order_id, to_state)
         kind, source = event_kind(step)
-        reject = _text(step.context.get("reject_code")) if to_state == "rejected" else None
+        rejected = to_state == "rejected"
+        reject = _text(step.context.get("reject_code")) if rejected else None
         move = OrderTransition(
             account_id=account,
             order_id=order_id,
@@ -137,7 +139,7 @@ class OrderStepWriter:
                 source=source,
                 event_ts=self._clock(),
                 payload=step.payload,
-                ret_code=reject or _text(step.payload.get("error_code")),
+                ret_code=reject if rejected else _text(step.payload.get("error_code")),
             ),
             reject_code=reject,
             lifecycle_state=to_state,

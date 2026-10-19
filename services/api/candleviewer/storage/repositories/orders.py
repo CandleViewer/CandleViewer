@@ -77,7 +77,8 @@ IdempotencyState = Literal["unsent", "in_flight", "acked", "failed"]
 #: 24-internal-schemas.md Sec.8.2: the `order_state` value that persists each chart state. One to
 #: one; six names differ, and `submitted` names a different state on each side, so a reader of
 #: `orders` takes the chart's state from `lifecycle_state` (`ord_lifecycle` admits these pairs
-#: only). `order_events` keeps this value alone: E29-T03's rebuild from events inverts the map.
+#: only). `order_events` keeps this value alone: a reader of events maps it back through
+#: `LIFECYCLE_STATE_OF`.
 ORDER_STATE_OF: Final[Mapping[LifecycleState, OrderState]] = MappingProxyType({
     "draft": "new", "validated": "pending_submit", "submitting": "submitted",
     "submitted": "accepted", "triggered": "triggered", "partially_filled": "partially_filled",
@@ -85,6 +86,12 @@ ORDER_STATE_OF: Final[Mapping[LifecycleState, OrderState]] = MappingProxyType({
     "quarantined": "quarantined", "untracked": "untracked", "held": "held", "filled": "filled",
     "cancelled": "cancelled", "rejected": "rejected", "expired": "expired", "killed": "killed",
 })  # fmt: skip
+#: The inverse of `ORDER_STATE_OF` (21-database-schema.md Sec.3.3.5): the chart state each
+#: `order_state` value persists, which E29-T03's rebuild of an order from its `order_events` reads
+#: off each event's `to_state`. Exact, as the map is one to one.
+LIFECYCLE_STATE_OF: Final[Mapping[OrderState, LifecycleState]] = MappingProxyType(
+    {stored: chart for chart, stored in ORDER_STATE_OF.items()}
+)
 #: The `ix_orders_open` predicate: what `list_open` returns (a unit test pins the index). Neither
 #: `untracked` nor `held` is open: B1 treats both as orders the OMS does not own (INV-B1-n).
 OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
@@ -254,7 +261,9 @@ class OrderTransition:
     `terms` an accepted amend changed (`AMENDABLE`) are set when given; the row's CHECKs and
     `ux_orders_exch_id` still apply (a `qty` under `cum_exec_qty` is `ord_cum`'s). Built only from
     the columns' values, so every store refuses anything else alike, before any statement
-    (OM-T04)."""
+    (OM-T04). The reject columns are the event's: a step into `rejected` names its event's
+    `ret_code` and `ret_msg` as them, and no other step names any, so a fold of the order's events
+    rebuilds them (OM-T03)."""
 
     account_id: UUID
     order_id: UUID
@@ -273,6 +282,10 @@ class OrderTransition:
         if any(value not in values for value, values in zip(given, _LITERALS, strict=True)):
             raise ValueError("a step's states, kind and source must be values of their columns")
         require_lifecycle(self.lifecycle_state, self.to_state)
+        rejected = self.to_state == "rejected"
+        said = (self.event.ret_code, self.event.ret_msg) if rejected else (None, None)
+        if (self.reject_code, self.reject_message) != said:
+            raise ValueError("a step's reject columns are its event's, on a step into rejected")
         if not set(self.terms) <= set(AMENDABLE):
             raise ValueError("a step changes only the terms an amend may change")
         for name, value in self.terms.items():

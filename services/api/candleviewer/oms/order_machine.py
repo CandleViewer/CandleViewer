@@ -17,6 +17,9 @@ Statecharts record; this synchronous code enforces (C-2.21), before any send:
   the position to B8.
 * **S9, SR-E29-12.** A rule, an algo or a group never acts on an `untracked` order, and only a
   user resolves a hold or adopts (D6). A chain-trip latched machine refuses order-path commands.
+* **Recovery (A7).** After a restart, `hydrate` rebuilds an order from its `order_events`, checks
+  the fold against its row (OM-T03) and replays the recorded steps on a fresh machine, writing,
+  auditing, notifying and sending nothing for them (24 Sec.8.2 "Recovery", `oms.recovery`).
 
 The binding's effects go through what this facade wires (`b01_order.set_ports`, `set_audit_hook`,
 `set_fill_core`); its notices come back through the outbox (CV-C25), which the facade takes after
@@ -53,12 +56,19 @@ from candleviewer.statechart.gateway import Gateway, GatewayError, receipt_is_co
 from candleviewer.statechart.persistence import ChainTripLatch, MachineKey
 from candleviewer.statechart.plugins import MachineEventSink, Pager, cv_plugins
 from candleviewer.statechart.plugins._base import LogPager
-from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrder
+from candleviewer.storage.repositories.orders import (
+    LIFECYCLE_STATE_OF,
+    MAX_EVENT_PAGE,
+    NewOrder,
+    OrderEventRow,
+    OrderRow,
+)
 
 from .errors import (
     POST_TERMINAL_PUSH,
     IllegalTransition,
     OrderBufferFull,
+    OrderHistoryRefused,
     OrderMachinesFull,
     OrderNotLoaded,
     OrderStepRefused,
@@ -66,11 +76,13 @@ from .errors import (
 )
 from .execution import apply_fields
 from .order_steps import OrderStepWriter, event_kind
-from .repository import OrderRepository
+from .recovery import RebuiltOrder, Replayed, rebuild, recorded_outcomes, replay_plan
+from .repository import OrderEventRepository, OrderRepository
 
 __all__ = [
     "B1_AUDITS",
     "MAX_HELD",
+    "MAX_HISTORY",
     "MAX_MACHINES",
     "Actor",
     "CommandEvent",
@@ -102,6 +114,11 @@ MAX_HELD: Final = 256
 #: Settle rounds per turn (C-2.18): each takes one notice, refusal, held push or KILL; the rest
 #: waits for a turn the facade schedules.
 SETTLE_ROUNDS: Final = 4 * MAX_HELD
+#: Events of one order hydration reads (C-2.18): past them the order is refused, never cut short.
+#: An order holds at most `b01.MAX_FILLS` fills, each one event, and a few steps besides.
+MAX_HISTORY: Final = 32 * MAX_EVENT_PAGE
+#: Seconds a replayed step may take to commit (its send, or its invoke's recorded answer).
+REPLAY_STEP_TIMEOUT: Final = 5.0
 #: Await each send's macrostep, so a step B1 rolled back reaches the caller (S7). Safe: the facade
 #: sends from its own calls and tasks, never from a B1 action, so the CV-C51 self-receipt hang
 #: cannot arise (as `rules.lifecycle` and `auth.session_chart` do).
@@ -134,8 +151,8 @@ _REFUSALS: Final = frozenset({"audit_command_refused_unowned", "audit_operator_c
 #: The context keys the facade reads after each committed step: its plain view (C-2.20).
 _VIEW: Final = (
     "order_link_id", "symbol", "exchange_order_id", "filled_qty", "halted_by_kill", "recon_misses",
+    "event_seq",
 )  # fmt: skip
-_CHART_STATE_OF: Final = {stored: chart for chart, stored in ORDER_STATE_OF.items()}
 ANOMALY: Final = "oms.reconcile_anomaly"
 
 #: B1's audit records (`b01_order`'s hook names, catalogue B1.6) and the registered M19 action,
@@ -220,6 +237,7 @@ class OrderMachinePorts:
     publish: MachinePublisher
     notices: OrderNotices
     sink: MachineEventSink
+    events: OrderEventRepository
 
 
 def _arms(spec: object) -> list[Mapping[str, Any]]:
@@ -243,20 +261,22 @@ def _acts(arm: Mapping[str, Any]) -> bool:
 @dataclass(frozen=True, slots=True)
 class Legality:
     """B1's static table, read from the committed chart (C-2.19): the `lifecycle` edges a step may
-    commit (24 Sec.8.2's diagram, the KILL note's arms included), the events each state has an arm
-    for that is not a refusal, the final states, and the states with a request in flight, which
-    defer what they do not handle (24 Sec.8.2 S10)."""
+    commit (24 Sec.8.2's diagram, the KILL note's arms included), the triggers of each edge (an
+    event, or a service's `done.invoke.<id>` or `error.platform.<id>`), which hydration replays,
+    the events each state has an arm for that is not a refusal, the final states, and the states
+    with a request in flight, which defer what they do not handle (24 Sec.8.2 S10)."""
 
     edges: frozenset[tuple[str, str]]
     handled: Mapping[str, frozenset[str]]
     finals: frozenset[str]
     in_flight: frozenset[str]
+    triggers: Mapping[tuple[str, str], frozenset[str]]
 
     @classmethod
     def of(cls, chart: Mapping[str, Any]) -> Legality:
         region = chart["states"]["lifecycle"]
         shared: Mapping[str, Any] = region.get("on") or {}
-        edges: set[tuple[str, str]] = set()
+        triggers: dict[tuple[str, str], set[str]] = {}
         handled: dict[str, frozenset[str]] = {}
         for name, node in region["states"].items():
             # A state's own arms shadow the region's: every guarded B1 group ends unguarded.
@@ -264,17 +284,23 @@ class Legality:
                 event: _arms(spec) for event, spec in {**shared, **(node.get("on") or {})}.items()
             }
             invoke = node.get("invoke") or {}
-            results = [arm for key in ("onDone", "onError") for arm in _arms(invoke.get(key, []))]
-            for arm in [*results, *(arm for group in groups.values() for arm in group)]:
-                if (target := _lifecycle_leaf(arm.get("target"))) is not None:
-                    edges.add((name, target))
+            results = {
+                f"{kind}.{invoke['id']}": _arms(invoke.get(key, []))
+                for kind, key in (("done.invoke", "onDone"), ("error.platform", "onError"))
+                if invoke
+            }
+            for trigger, arms in {**groups, **results}.items():
+                for arm in arms:
+                    if (target := _lifecycle_leaf(arm.get("target"))) is not None:
+                        triggers.setdefault((name, target), set()).add(trigger)
             handled[name] = frozenset(e for e, group in groups.items() if any(map(_acts, group)))
         states = region["states"]
         return cls(
-            edges=frozenset(edges),
+            edges=frozenset(triggers),
             handled=MappingProxyType(handled),
             finals=frozenset(n for n, node in states.items() if node.get("type") == "final"),
             in_flight=frozenset(n for n, node in states.items() if "invoke" in node),
+            triggers=MappingProxyType({edge: frozenset(t) for edge, t in triggers.items()}),
         )
 
     def require_edge(self, source: str, target: str) -> None:
@@ -334,6 +360,13 @@ def _outruns(push: Mapping[str, Any], filled: object) -> bool:
         return False
 
 
+def _holds_fills(view: Mapping[str, Any]) -> bool:
+    try:
+        return Decimal(str(view.get("filled_qty") or "0")) > 0
+    except InvalidOperation:
+        return False
+
+
 def _summary(view: Mapping[str, Any]) -> dict[str, Any]:
     """23 Sec.6.4's `context_summary` for `order`: `symbol`, `halted_by_kill`, `recon_misses`."""
     summary = {
@@ -373,6 +406,12 @@ class _Order:
     kill_sent_at: int = -1
     published: dict[str, Any] | None = None
     task: asyncio.Task[None] | None = None
+    #: While hydration replays the order: the recorded steps not yet replayed (`_persist`).
+    replaying: deque[Replayed] | None = None
+    #: A replayed step that left the record, for `_replayed` to raise.
+    replay_fault: OrderHistoryRefused | None = None
+    #: Set by every committed step, for `_replayed` to wait on.
+    moved: asyncio.Event = field(default_factory=asyncio.Event)
 
     @property
     def key(self) -> str:
@@ -471,6 +510,38 @@ class OrderMachines:
         payload = {"order": fields} | ({} if pass_id is None else {"pass_id": pass_id})
         return await self._first(order, environment, "DISCOVERED", payload)
 
+    async def hydrate(self, account_id: UUID, order_id: UUID, *, environment: str) -> str:
+        """After a restart (A7), the order's machine from its `order_events` (24 Sec.8.2
+        "Recovery"), as the composition root (E29-T04) calls it for each order the account holds
+        open: the fold of its events must equal its row (OM-T03); a fresh machine then replays each
+        recorded step, which writes, audits, notifies and sends nothing, and an invoke the record
+        does not answer resumes once the replay ends (SR-E29-15). An order that holds fills has its
+        first fill notified again, so the stop is confirmed from an exchange read (24 Sec.8.8 rule
+        2). A final order gets no machine (MUST-11: S6 reads its row). Answers the lifecycle state;
+        `OrderNotLoaded` when the account holds no such order, and `OrderHistoryRefused`, logged
+        and paged with nothing kept, when its history does not rebuild its row or replay on B1."""
+        if (live := self._live(account_id, order_id)) is not None:
+            async with self._holding(live):  # a hydration under way ends first
+                if live.interp is not None:
+                    return live.lifecycle
+        row = await self._ports.orders.get(account_id, order_id)
+        if row is None:
+            raise OrderNotLoaded("no order of the account has this id")
+        try:
+            history = await self._history(account_id, order_id)
+            rebuilt = rebuild(history)
+            if rebuilt != RebuiltOrder.of_row(row):
+                raise OrderHistoryRefused("the order's events do not rebuild its row (OM-T03)")
+            if rebuilt.lifecycle_state in self.legality.finals:
+                return rebuilt.lifecycle_state
+            plan = replay_plan(history, self.legality.triggers)
+            return await self._replay(row, environment, plan, rebuilt)
+        except OrderHistoryRefused as exc:
+            link = row.order_link_id
+            logger().critical("oms_order_history_refused", order_link_id=link, reason=str(exc))
+            self._pager.raise_alert("page", "oms_order_history_refused", machine_kind=MACHINE)
+            raise
+
     async def command(
         self,
         account_id: UUID,
@@ -560,7 +631,7 @@ class OrderMachines:
     ) -> str:
         """Build the order's machine and send its first event. A machine whose first step was
         refused is dropped again, so a refused order leaves nothing behind (S7)."""
-        o = await self._open(order, environment, event)
+        o = await self._open(order.id, order.exchange_account_id, environment, event)
         self._ports.steps.expect(order)
         try:
             async with self._holding(o):
@@ -571,15 +642,23 @@ class OrderMachines:
             await self._close(o, publish=False)
             raise
 
-    async def _open(self, order: NewOrder, environment: str, event: str) -> _Order:
+    async def _open(
+        self,
+        order_id: UUID,
+        account_id: UUID,
+        environment: str,
+        event: str,
+        *,
+        replaying: deque[Replayed] | None = None,
+    ) -> _Order:
         """The order's machine, with the plugin triple, which writes ahead on the order lane (24
         Sec.17.6), and the facade's observer. Its scope is the stored order's account (OM-I02)."""
-        if (known := self._orders.get(order.id)) is not None:
+        if (known := self._orders.get(order_id)) is not None:
             raise self._refuse(known.lifecycle, event)
         if len(self._orders) >= self._max:
             raise OrderMachinesFull(f"{self._max} order machines are live")
-        o = _Order(order.id, order.exchange_account_id, environment)
-        self._orders[order.id] = o
+        o = _Order(order_id, account_id, environment, replaying=replaying)
+        self._orders[order_id] = o
         triple = cv_plugins(
             machine_kind=MACHINE,
             lane=LANE,
@@ -596,7 +675,7 @@ class OrderMachines:
                 MACHINE, clock=default_clock(), lane=LANE, plugins=plugins, registry=self._registry
             )
         except BaseException:
-            del self._orders[order.id]
+            del self._orders[order_id]
             raise
         o.interp = built.interpreter
         self._gateway.register(o.key, o.interp, kind="order", lane=LANE, metrics=triple[1])
@@ -613,6 +692,103 @@ class OrderMachines:
                 self._publish(o, interp, last=True)
             await interp.stop()
 
+    async def _history(self, account_id: UUID, order_id: UUID) -> list[OrderEventRow]:
+        """Every event of the order, page by page, in `seq` order; past `MAX_HISTORY` it is
+        refused rather than read in part (C-2.18)."""
+        events: list[OrderEventRow] = []
+        while len(events) <= MAX_HISTORY:
+            after = events[-1].seq if events else -1
+            page = await self._ports.events.list_for_order(
+                account_id, order_id, after_seq=after, limit=MAX_EVENT_PAGE
+            )
+            events.extend(page)
+            if len(page) < MAX_EVENT_PAGE:
+                return events
+        raise OrderHistoryRefused(f"the order has more than {MAX_HISTORY} events")
+
+    async def _replay(
+        self, row: OrderRow, environment: str, plan: tuple[Replayed, ...], rebuilt: RebuiltOrder
+    ) -> str:
+        """Hydration's replay, under the order's lock: each recorded step sent, or answered by
+        the machine's own invoke, and committed before the next (`_persist` answers its `seq`);
+        then the machine must hold the order its events rebuild (`_recovered`)."""
+        link = row.order_link_id
+        b01.begin_replay(link, recorded_outcomes(plan))
+        o: _Order | None = None
+        try:
+            o = await self._open(
+                row.id, row.exchange_account_id, environment, "hydrate", replaying=deque(plan)
+            )
+            async with self._holding(o):
+                for step in plan:
+                    if step.answered:
+                        await self._replayed(o, step.row.seq)
+                    else:
+                        try:
+                            await self._send_order(o, step.trigger, step.row.payload)
+                        except OrderStepRefused:
+                            raise o.replay_fault or OrderHistoryRefused(
+                                f"the replayed {step.trigger} at seq {step.row.seq} was refused"
+                            ) from None
+                        self._took(o, step)
+                self._recovered(o, rebuilt)
+                o.replaying = None
+                b01.end_replay(link)
+                self._publish(o, o.interp)
+                if o.protection == "not_required" and _holds_fills(o.view):
+                    await self._send_order(o, "FIRST_FILL", {})  # 24 Sec.8.8 rule 2, again
+                await self._settle(o)
+                return o.lifecycle
+        except BaseException:
+            b01.end_replay(link)
+            if o is not None:
+                await self._close(o, publish=False)
+            raise
+
+    async def _replayed(self, o: _Order, seq: int) -> None:
+        """Until the recorded step at *seq* has committed: a replayed step that left the record
+        raises its `OrderHistoryRefused`, as does one that does not commit in time."""
+        try:
+            async with asyncio.timeout(REPLAY_STEP_TIMEOUT):
+                while True:
+                    if (fault := o.replay_fault) is not None:
+                        raise fault
+                    done = o.view.get("event_seq")
+                    if type(done) is int and done >= seq:
+                        return
+                    o.moved.clear()
+                    await o.moved.wait()
+        except TimeoutError:
+            raise OrderHistoryRefused(f"the replayed step at seq {seq} did not commit") from None
+
+    def _took(self, o: _Order, step: Replayed) -> None:
+        """A sent event's step commits within its send, or the replay left the record there (a
+        guard denied it, or it was deferred)."""
+        done = o.view.get("event_seq")
+        if type(done) is not int or done < step.row.seq:
+            raise OrderHistoryRefused(
+                f"the replayed {step.trigger} at seq {step.row.seq} moved nothing"
+            )
+
+    def _recovered(self, o: _Order, rebuilt: RebuiltOrder) -> None:
+        """The replayed machine holds the order its events rebuild: every recorded step replayed,
+        the state, the bound id, the fills applied in order, and the money and terms."""
+        ctx = o.interp.context
+
+        def money(key: str) -> Decimal | None:
+            raw = ctx.get(key)
+            return None if raw is None else Decimal(str(raw))
+
+        keys = ("qty", "filled_qty", "cum_exec_value", "avg_price", "fee_paid", *b01.TERMS)
+        held: list[object] = [o.lifecycle, ctx.get("exchange_order_id")]
+        held += [tuple(ctx.get("seen_exec_ids") or ()), *map(money, keys)]
+        fold: list[object] = [rebuilt.lifecycle_state, rebuilt.exchange_order_id, rebuilt.exec_ids]
+        fold += [rebuilt.qty, rebuilt.cum_exec_qty, rebuilt.cum_exec_value, rebuilt.avg_price]
+        fold += [rebuilt.fee_paid, rebuilt.price, rebuilt.trigger_price, rebuilt.take_profit]
+        fold += [rebuilt.stop_loss]
+        if o.replaying or held != fold:
+            raise OrderHistoryRefused("the replayed machine is not the order its events rebuild")
+
     def _live(self, account_id: UUID, order_id: UUID) -> _Order | None:
         """The order's live machine, if the account holds it: another account's order is not
         found, as an unknown one is (no oracle, C-12.4)."""
@@ -621,7 +797,7 @@ class OrderMachines:
 
     async def _stored(self, account_id: UUID, order_id: UUID) -> str | None:
         row = await self._ports.orders.get(account_id, order_id)
-        return None if row is None else row.lifecycle_state or _CHART_STATE_OF.get(row.state)
+        return None if row is None else row.lifecycle_state or LIFECYCLE_STATE_OF[row.state]
 
     async def _unloaded(
         self, account_id: UUID, order_id: UUID, event: str, payload: Mapping[str, Any]
@@ -848,10 +1024,14 @@ class OrderMachines:
         box = [dict(n) for n in raw if isinstance(n, Mapping)] if isinstance(raw, list) else []
         fresh = [n for n in box if type(n.get("seq")) is int and n["seq"] > o.cursor]
         if fresh:
-            o.notices.extend(fresh)
+            if o.replaying is None:  # a replayed step's notices went out when it happened
+                o.notices.extend(fresh)
             o.cursor = fresh[-1]["seq"]
         if len(box) > 1:
             ctx["outbox"] = box[-1:]
+        o.moved.set()
+        if o.replaying is not None:
+            return
         self._publish(o, interp)
         if not o.busy and (o.notices or o.denied or o.held or self._kill_lost(o) or self._done(o)):
             self._schedule(o)
@@ -900,9 +1080,33 @@ class OrderMachines:
         source = step.from_state or "draft"
         if (source, step.to_state) not in self.legality.edges:
             raise self._refuse(source, step.to_state)
+        order_id = _uuid(step.order_id)
+        o = None if order_id is None else self._orders.get(order_id)
+        if o is not None and o.replaying is not None:
+            return self._replay_step(o, step)
         seq = await self._ports.steps(step)
         self._transitions.labels(source, step.to_state, event_kind(step)[1]).inc()
         return seq
+
+    def _replay_step(self, o: _Order, step: b01.Step) -> int:
+        """A replayed step writes nothing and answers its row's `seq`: it must be the next step
+        the record holds, by its states, kind and source (24 Sec.8.2 "Recovery")."""
+        replaying = o.replaying or deque()
+        row = replaying[0].row if replaying else None
+        try:
+            kind = event_kind(step)
+        except ValueError:
+            kind = None
+        if row is not None:
+            frm = None if row.from_state is None else LIFECYCLE_STATE_OF[row.from_state]
+            want = (frm, replaying[0].state, (row.kind, row.source))
+            if (step.from_state, step.to_state, kind) == want:
+                replaying.popleft()
+                return row.seq
+        at = "past its end" if row is None else f"at seq {row.seq}"
+        o.replay_fault = OrderHistoryRefused(f"the replay left the record {at}")
+        o.moved.set()
+        raise o.replay_fault
 
     async def _audited(self, name: str, context: dict[str, Any]) -> None:
         """B1's audit hook: one of its records, written ahead under `B1_AUDITS` (C-2.9). A refused
@@ -910,6 +1114,9 @@ class OrderMachines:
         It never raises (a rollback would undo a KILL): a lost record pages."""
         order_id = _uuid(context.get("order_id"))
         o = None if order_id is None else self._orders.get(order_id)
+        if o is not None and o.replaying is not None:  # audited when the step happened
+            logger().info("oms_b1_record_replayed", record=name)
+            return
         denied = context.get("denied")
         reason = str(denied.get("reason") or "") if isinstance(denied, Mapping) else ""
         if o is not None and name == "guard_denied" and isinstance(denied, Mapping):

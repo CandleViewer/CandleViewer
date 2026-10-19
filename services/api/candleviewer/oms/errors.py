@@ -48,6 +48,12 @@ class OrderStepRefused(OmsError):
         self.failure = failure
 
 
+class OrderHistoryRefused(OmsError):
+    """An order's `order_events` do not rebuild its row, or do not replay on B1 (threat model
+    OM-T03; 24 Sec.8.2 "Recovery"): the order is not hydrated, nothing is written, and the facade
+    pages. Names the fault in the history, never a value from it."""
+
+
 class OrderNotLoaded(OmsError):
     """No machine in this process holds the order, and its stored row is not final (or the account
     holds no such order): nothing was sent."""

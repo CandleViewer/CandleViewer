@@ -258,7 +258,8 @@ _SECRET_EVENT = _event(
 _HELD = cast(Any, SimpleNamespace(id=ORDER, exchange_account_id=ACCOUNT, state="accepted"))
 _HELD.order_link_id, _HELD.qty = LINK, Decimal("0.3")
 _HELD.cum_exec_qty = _HELD.cum_exec_value = _HELD.fee_paid = 0
-_STEP = step(_HELD, "rejected", reject_code="10004", reject_message=_SECRET_EVENT.ret_msg)
+_RETURNED = event(ret_code="10004", ret_msg=_SECRET_EVENT.ret_msg)  # a reject is its event's
+_STEP = step(_HELD, "rejected", _RETURNED, reject_code="10004", reject_message=_RETURNED.ret_msg)
 _FILL = fill(_HELD, "E1", "0.1")
 _STATEMENTS: dict[str, Any] = {
     "create_statement": mod.create_statement(_new_order(), _SECRET_EVENT),
@@ -387,9 +388,42 @@ def test_a_step_is_a_compare_and_set_with_its_reject_redacted() -> None:
 def test_a_reject_is_redacted_like_ret_code_and_ret_msg(given: dict[str, Any], stored: str) -> None:
     """#845 decision 2: `reject_code` takes the string rule within 64 characters, and
     `reject_message` the message rule too (its 18 letters alone pass the string rule)."""
-    moved = step(_HELD, "rejected", **given)
+    said = replace(event(), **{_RET[name]: value for name, value in given.items()})
+    moved = step(_HELD, "rejected", said, **given)
     assert moved.changes() == {"state": "rejected"} | dict.fromkeys(given, stored)
     assert _bound(mod.transition_statement(moved))[:2] == ["rejected", stored]
+
+
+#: Each reject column and the event field it is (`OrderTransition`, OM-T03).
+_RET = {"reject_code": "ret_code", "reject_message": "ret_msg"}
+
+
+@pytest.mark.parametrize(
+    ("to", "given", "said"),
+    [("rejected", {"reject_code": "10004"}, {}),  # the column with no event field
+     ("rejected", {"reject_message": "refused"}, {"ret_msg": "said otherwise"}),
+     ("rejected", {}, {"ret_code": "10004"}),  # an event field with no column
+     ("cancelled", {"reject_code": "10004"}, {"ret_code": "10004"})],  # not into rejected
+)  # fmt: skip
+def test_the_reject_columns_are_the_events_or_the_step_is_refused(
+    to: Any, given: dict[str, Any], said: dict[str, Any]
+) -> None:
+    """lows-847s3 Low 3 (OM-T03): a step into `rejected` names its event's `ret_code` and
+    `ret_msg` as its reject columns, and no other step names any, before any statement; so a
+    fold of the events rebuilds both columns."""
+    with pytest.raises(ValueError, match="reject columns are its event's"):
+        step(_HELD, to, replace(event(), **said), **given)
+
+
+def test_the_bound_reject_columns_are_the_bound_event_fields() -> None:
+    """lows-847s3 Low 3: the UPDATE binds the reject columns the event's insert binds as
+    `ret_code` and `ret_msg`, each redacted alike (#845 decision 2)."""
+    code, text = _KEY, _REJECTED_TEXT
+    said_so = event(ret_code=code, ret_msg=text)
+    moved = step(_HELD, "rejected", said_so, reject_code=code, reject_message=text)
+    said = mod._event_values(moved.event)
+    assert _bound(mod.transition_statement(moved))[1:3] == [said["ret_code"], said["ret_msg"]]
+    assert (said["ret_code"], said["ret_msg"]) == (REDACTED, REDACTED)
 
 
 @pytest.mark.parametrize(

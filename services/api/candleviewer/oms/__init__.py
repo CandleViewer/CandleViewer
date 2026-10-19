@@ -31,6 +31,10 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
 - The OMS facade (E29-T03): `OrderMachines` (`order_machine`), one B1 machine per order behind a
   keyed lock, with legality from the chart's static table (`IllegalTransition`), S5, S6
   (`ReconcileAnomaly`), S9, the outbox, the publish port and eviction. E29-T04 wires its ports.
+- Recovery (E29-T03): `rebuild`, the fold of an order's `order_events` that equals its row, and
+  `replay_plan` (`recovery`), with which `OrderMachines.hydrate` replays an order's recorded steps
+  on a fresh machine after a restart; a history that does not rebuild its row raises
+  `OrderHistoryRefused` (`errors`).
 
 `service.py` (the lifecycle contract) and `models.py` are still the E02-T05 scaffold: the
 supervisor can construct and sequence the module, and `start()` builds the `Validator`, but

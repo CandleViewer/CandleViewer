@@ -7,21 +7,16 @@ from __future__ import annotations
 import asyncio
 import re
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Mapping
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import pytest
-from prometheus_client import generate_latest
 from structlog.testing import capture_logs
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
-from candleviewer.observability.metrics import Metrics
-from candleviewer.oms import ExecutionRepository, OrderRepository
 from candleviewer.oms.errors import (
     IllegalTransition,
     OrderBufferFull,
@@ -30,188 +25,42 @@ from candleviewer.oms.errors import (
     OrderStepRefused,
     ReconcileAnomaly,
 )
-from candleviewer.oms.fakes import InMemoryExecutionStore, InMemoryOrderStore
 from candleviewer.oms.order_machine import (
     B1_AUDITS,
     MAX_HELD,
     Actor,
     CommandEvent,
     Legality,
-    OrderAuditRecord,
-    OrderMachinePorts,
-    OrderMachines,
-    OrderNotice,
 )
-from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import DegradedLatchError
-from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories.orders import NewOrder
-from tests.xstate_contract.b01_ports import Commands
+from tests.unit.oms.order_rig import (
+    ACCOUNT,
+    GATES,
+    NOW_US,
+    OTHER,
+    READ_BACK,
+    Rig,
+    build_rig,
+    fill_of,
+    gated,
+    order_of,
+)
 
-T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
-NOW_US = 1_789_134_000_000_000
-ACCOUNT, OTHER = UUID(int=0xA1), UUID(int=0xA2)
-GATES = dict.fromkeys(b01.GATES, b01.PASSED)
 CHART = Registry().get("order")
 LEGALITY = Legality.of(CHART)
 STATES = tuple(CHART["states"]["lifecycle"]["states"])
 PLAN = Path(__file__).resolve().parents[5] / "docs" / "plan"
-READ_BACK = {"ok": True, "position": {"updated_time": 100, "stop_loss": "62000", "size": "1"}}
-
-
-def _order(n: int = 1, **over: Any) -> NewOrder:
-    """Order *n* of the account, as E29-T04's pipeline registers it."""
-    link = f"cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-{n:02d}en"  # 24 Sec.8.3's example id, numbered
-    fields: dict[str, Any] = {"id": UUID(int=n), "exchange_account_id": ACCOUNT}
-    fields |= {"order_link_id": link, "symbol": "BTCUSDT", "side": "Buy", "intent": "entry"}
-    fields |= {"order_type": "Limit", "qty": Decimal(1), "price": Decimal(63000)}
-    return NewOrder(**fields | {"stop_loss": Decimal(62000)} | over)
-
-
-def _fill(order: NewOrder, exec_id: str, qty: str, **over: Any) -> dict[str, Any]:
-    """An `EXEC` of *order* (24 Sec.8.1), on the exchange order its place ack bound (`_placed`)."""
-    pairing = {"order_id": str(order.id), "order_link_id": order.order_link_id}
-    pairing |= {"account_id": str(ACCOUNT), "symbol": order.symbol, "side": "buy"}
-    fill = {"exec_id": exec_id, "exchange_order_id": f"x{order.id.int}", "qty": qty}
-    fill["exec_type"] = "trade"
-    fill |= {"price": "63000", "fee": "0", "fee_rate": "0.0002", "ts_exec": NOW_US}
-    return pairing | fill | over
-
-
-def _gate(reply: Mapping[str, Any]) -> tuple[asyncio.Event, Callable[..., Awaitable[object]]]:
-    """A port reply held until the event is set: the request stays in flight."""
-    gate = asyncio.Event()
-
-    async def held(_command: b01.Command) -> Mapping[str, Any]:
-        await gate.wait()
-        return reply
-
-    return gate, held
-
-
-async def _placed(command: b01.Command) -> Mapping[str, Any]:
-    """The exchange accepts order *n* as `x<n>`, one exchange order each (`ux_orders_exch_id`)."""
-    return {"ok": True, "exchange_order_id": f"x{UUID(command.order['order_id']).int}"}
-
-
-async def _read_back(_command: b01.Command) -> Mapping[str, Any]:
-    return READ_BACK
-
-
-@dataclass
-class _Audit:
-    records: list[OrderAuditRecord] = field(default_factory=list)
-    refuse: bool = False
-
-    async def write(self, record: OrderAuditRecord) -> None:
-        if self.refuse:
-            raise RuntimeError("the audit WAL refused the record")
-        self.records.append(record)
-
-    def reasons(self, action: str) -> list[str]:
-        return [r.reason for r in self.records if r.action == action]
-
-
-@dataclass
-class _Publish:
-    calls: list[tuple[UUID, UUID, dict[str, Any], bool]] = field(default_factory=list)
-    refuse: bool = False
-
-    def publish(
-        self, order_id: UUID, account_id: UUID, payload: Mapping[str, Any], *, last: bool
-    ) -> None:
-        if self.refuse:
-            raise RuntimeError("the registry refused the payload")
-        self.calls.append((order_id, account_id, dict(payload), last))
-
-
-@dataclass
-class _Notices:
-    got: list[OrderNotice] = field(default_factory=list)
-    refuse: bool = False
-
-    async def notify(self, notice: OrderNotice) -> None:
-        if self.refuse:
-            raise RuntimeError("the notice route is down")
-        self.got.append(notice)
-
-    def kinds(self) -> list[str]:
-        return [n.kind for n in self.got]
-
-
-@dataclass
-class _Pager:
-    calls: list[str] = field(default_factory=list)
-
-    def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
-        self.calls.append(summary)
-
-
-@dataclass
-class Rig:
-    facade: OrderMachines
-    orders: OrderRepository
-    store: InMemoryOrderStore
-    commands: Commands
-    audit: _Audit
-    publish: _Publish
-    notices: _Notices
-    pager: _Pager
-    metrics: Metrics
-    fills: InMemoryExecutionStore
-
-    async def start(self, order: NewOrder | None = None) -> str:
-        return await self.facade.start(
-            order or _order(), environment="demo", gates=GATES, rate_reservation="rr-1"
-        )
-
-    async def submitted(self, order: NewOrder | None = None) -> NewOrder:
-        """The order sent and acked as `x1`: `submitted`."""
-        order = order or _order()
-        await self.start(order)
-        await self.facade.command(ACCOUNT, order.id, "SEND", actor="user")
-        await self.quiet()
-        assert self.facade.state(order.id) == ("submitted", "not_required")
-        return order
-
-    async def quiet(self) -> None:
-        """Until the in-flight invokes answered and the facade's turns settled them."""
-        for _ in range(4):
-            for _ in range(64):
-                await asyncio.sleep(0)
-            await self.facade.idle()
-
-    def context(self, order: NewOrder) -> dict[str, Any]:
-        context: dict[str, Any] = self.facade._orders[order.id].interp.context
-        return context
-
-    def count(self, name: str, **labels: str) -> float:
-        lines = generate_latest(self.metrics.registry).decode().splitlines()
-        wanted = [f'{key}="{value}"' for key, value in labels.items()]
-        return sum(
-            float(line.rsplit(" ", 1)[1])
-            for line in lines
-            if line.startswith(name + "{") and all(w in line for w in wanted)
-        )
 
 
 @pytest.fixture
 async def rig(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Rig]:
     monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
-    store = InMemoryOrderStore(clock=lambda: T0)
-    orders = OrderRepository(store)
-    fills = InMemoryExecutionStore(store)
-    writer = OrderStepWriter(orders, ExecutionRepository(fills), clock=lambda: T0)
-    commands = Commands(on_place=_placed, on_attach=_read_back)
-    audit, publish, notices, pager = _Audit(), _Publish(), _Notices(), _Pager()
-    sink = InMemoryMachineEventSink()
-    ports = OrderMachinePorts(writer, orders, commands, audit, publish, notices, sink)
-    metrics = Metrics("dev")
-    facade = OrderMachines(ports, metrics=metrics, pager=pager, now_us=lambda: NOW_US)
-    yield Rig(facade, orders, store, commands, audit, publish, notices, pager, metrics, fills)
-    await facade.stop()
+    out = build_rig()
+    yield out
+    await out.facade.stop()
 
 
 # --- AC1: the whole transition matrix, against 24 Sec.8.2 ----------------------------------------
@@ -274,7 +123,7 @@ def test_a_command_is_legal_exactly_where_24_lists_it(command: str, legal: set[s
 async def test_an_illegal_command_is_refused_before_any_send(rig: Rig) -> None:
     """AC1 through the facade: refused synchronously and counted, with nothing sent, written or
     deferred, so a stray operator decision is never kept for a later hold (INV-B1-m)."""
-    order = _order()
+    order = order_of()
     await rig.start(order)
     refused: tuple[tuple[CommandEvent, Actor], ...] = (
         ("CANCEL", "user"),
@@ -307,9 +156,9 @@ async def test_cancel_loses_the_race_to_a_fill(rig: Rig) -> None:
     """AC2 (S3, INV-B1-d): a full execution in `cancel_pending` fills the order with no error to
     the caller; its row records the lost race (`pending_cancel` to `filled`) and the stop starts."""
     order = await rig.submitted()
-    gate, rig.commands.on_cancel = _gate({"ok": True})
+    gate, rig.commands.on_cancel = gated({"ok": True})
     assert await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user") == "cancel_pending"
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "1"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
     await rig.quiet()
     events = await rig.store.list_for_order(ACCOUNT, order.id)
     assert (events[-1].from_state, events[-1].to_state) == ("pending_cancel", "filled")
@@ -322,7 +171,7 @@ async def test_amend_rejection_does_not_move_the_stop(rig: Rig) -> None:
     """AC3 (S2): the exchange rejects the amend of an order at 63000, so it is `submitted` again
     at 63000 with its row unchanged, and the UI is told (`amend_rejected`)."""
     order = await rig.submitted()
-    gate, rig.commands.on_amend = _gate({"ok": True})
+    gate, rig.commands.on_amend = gated({"ok": True})
     await rig.facade.command(ACCOUNT, order.id, "AMEND", {"price": "64000"}, actor="user")
     reject = {"error_code": "PRICE_OUT_OF_BOUNDS"}
     await rig.facade.push(ACCOUNT, order.id, "AMEND_REJECTED", reject)
@@ -339,10 +188,10 @@ async def test_duplicate_fill_never_double_counts(rig: Rig) -> None:
     """AC4 (S4): E1 for 0.4 delivered twice leaves `filled_qty` at 0.4 with one execution
     stored; a repeat is no anomaly (no FAULT, no record, no count)."""
     order = await rig.submitted()
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.4"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
     await rig.quiet()
     published = len(rig.publish.calls)
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.4"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
     await rig.quiet()
     assert len(rig.publish.calls) == published  # an unchanged state is not published again
     row = await rig.orders.get(ACCOUNT, order.id)
@@ -357,13 +206,13 @@ async def test_terminal_state_is_immutable(rig: Rig) -> None:
     """AC5 (S6): a push for a filled order raises ReconcileAnomaly once `oms.reconcile_anomaly`
     is written; it is counted and changes nothing, and a late fill hands the position to B8."""
     order = await rig.submitted()
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "1"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
     await rig.quiet()
     before = await rig.store.list_for_order(ACCOUNT, order.id)
     with pytest.raises(ReconcileAnomaly) as raised:
         await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": 1})
     with pytest.raises(ReconcileAnomaly):
-        await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e2", "0.1"))
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.1"))
     assert (raised.value.code, raised.value.state) == ("POST_TERMINAL_PUSH", "filled")
     assert rig.audit.reasons("oms.reconcile_anomaly") == ["POST_TERMINAL_PUSH"] * 2
     assert rig.count("oms_reconcile_anomaly_total") == 2
@@ -378,11 +227,11 @@ async def test_a_fill_for_a_final_machine_still_alive_is_b1s_anomaly(rig: Rig) -
     """INV-B1-o: while the stop of a filled order is attached its machine lives, and a later fill
     reaches it: B1 consumes it under its own S6 record, and the caller gets ReconcileAnomaly."""
     order = await rig.submitted()
-    gate, rig.commands.on_attach = _gate(READ_BACK)
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "1"))
+    gate, rig.commands.on_attach = gated(READ_BACK)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
     assert rig.facade.state(order.id) == ("filled", "sl_pending")
     with pytest.raises(ReconcileAnomaly):
-        await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e2", "0.5"))
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.5"))
     with pytest.raises(ReconcileAnomaly):
         await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", {"updated_time": 9})
     reasons = rig.audit.reasons("oms.reconcile_anomaly")
@@ -404,7 +253,7 @@ async def test_s5_an_older_push_is_ignored_and_a_fill_never_is(rig: Rig) -> None
     await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": 200})
     await rig.facade.push(ACCOUNT, order.id, "EXPIRE", {"updated_time": 150})
     assert rig.facade.state(order.id) == ("triggered", "not_required")
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.4", ts_exec=1))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4", ts_exec=1))
     await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": 300})
     await rig.quiet()
     assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
@@ -418,7 +267,7 @@ async def _unknown(rig: Rig) -> NewOrder:
         raise TimeoutError
 
     rig.commands.on_place = ambiguous
-    order = _order()
+    order = order_of()
     await rig.start(order)
     await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
     await rig.quiet()
@@ -430,8 +279,8 @@ async def test_a_fill_before_the_bind_waits_then_applies_in_exec_order(rig: Rig)
     """SR-E29-03 (slice 4's SL2): the fills of an unbound order wait in the reorder buffer, and
     apply in `(ts_exec, seq)` order once reconciliation binds it; `unknown` paged meanwhile."""
     order = await _unknown(rig)
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e2", "0.2", ts_exec=2))
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.2", ts_exec=1))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.2", ts_exec=2))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.2", ts_exec=1))
     assert rig.context(order)["seen_exec_ids"] == []
     assert rig.facade._tasks == set()  # a held push waits; no turn spins on it
     found = {"exchange_order_id": "x1"}
@@ -446,9 +295,9 @@ async def test_the_reorder_buffer_is_bounded(rig: Rig, monkeypatch: pytest.Monke
     """C-2.18: past `MAX_HELD` a push is refused, for its sender to resync (24 Sec.8.5 step 2)."""
     monkeypatch.setattr("candleviewer.oms.order_machine.MAX_HELD", 1)
     order = await _unknown(rig)
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.2"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.2"))
     with pytest.raises(OrderBufferFull):
-        await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e2", "0.2"))
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.2"))
     assert MAX_HELD == 256
 
 
@@ -459,7 +308,7 @@ async def test_an_exchange_end_waits_for_the_fills_it_reports(rig: Rig) -> None:
     end = {"cum_exec_qty": "0.4", "updated_time": 10}
     await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", end)
     assert rig.facade.state(order.id) == ("submitted", "not_required")
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.4"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
     await rig.quiet()
     events = await rig.store.list_for_order(ACCOUNT, order.id)
     assert [e.to_state for e in events][-2:] == ["partially_filled", "cancelled"]
@@ -474,7 +323,7 @@ async def test_s9_no_rule_algo_or_group_acts_on_an_untracked_order(rig: Rig) -> 
     """S9, SR-E29-12: a rule, an algo or a group is refused on an `untracked` order, only a user
     may ask to adopt it (D6 denies every adoption until E45-S01), and reconciliation's finding is
     recorded."""
-    found = _order(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
+    found = order_of(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
     assert await rig.facade.discover(found, environment="demo") == "untracked"
     managers: tuple[Actor, ...] = ("rule", "algo", "group")
     events: tuple[CommandEvent, ...] = ("CANCEL", "ADOPT", "RECON_FOUND_LIVE")
@@ -495,7 +344,7 @@ async def test_each_step_is_published_scoped_to_the_orders_account(rig: Rig) -> 
     the stored order's account as its scope; an unchanged payload is not published again, and the
     one the order ends with is the entity's last once its machine is evicted."""
     order = await rig.submitted()
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "1"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
     await rig.quiet()
     assert {(o, a) for o, a, _p, _l in rig.publish.calls} == {(order.id, ACCOUNT)}
     seen = [(p["state"], p["regions"]["protection"], last) for _o, _a, p, last in rig.publish.calls]
@@ -532,7 +381,7 @@ async def test_a_full_registry_refuses_a_new_order_and_keeps_every_live_one(rig:
     rig.facade._max = 1
     order = await rig.submitted()
     with pytest.raises(OrderMachinesFull):
-        await rig.start(_order(2))
+        await rig.start(order_of(2))
     assert await rig.orders.get(ACCOUNT, UUID(int=2)) is None
     assert rig.facade.state(order.id) == ("submitted", "not_required")
     with pytest.raises(IllegalTransition):
@@ -545,7 +394,7 @@ async def test_another_accounts_order_is_not_found(rig: Rig) -> None:
     with pytest.raises(OrderNotLoaded):
         await rig.facade.command(OTHER, order.id, "CANCEL", actor="user")
     with pytest.raises(OrderNotLoaded):
-        await rig.facade.push(OTHER, order.id, "EXEC", _fill(order, "e1", "1"))
+        await rig.facade.push(OTHER, order.id, "EXEC", fill_of(order, "e1", "1"))
     await rig.facade.push(OTHER, order.id, "SL_LOST", {"updated_time": 1, "size": "1"})
     assert rig.commands.kinds() == ["place"] and rig.context(order)["seen_exec_ids"] == []
 
@@ -559,12 +408,12 @@ async def test_a_kill_whose_cancel_a_fill_outran_is_sent_again(rig: Rig) -> None
     KILL again: the order is `killed` with one cancel through the audited cancel service
     (SR-E29-06), and the loss is audited and logged at ERROR."""
     order = await rig.submitted()
-    gate, rig.commands.on_cancel = _gate({"ok": True})
+    gate, rig.commands.on_cancel = gated({"ok": True})
     await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user")
     assert await rig.facade.kill("kill switch engaged") == ()
     assert rig.facade.state(order.id) == ("cancel_pending", "not_required")
     with capture_logs() as logs:
-        await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.4"))
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
         await rig.quiet()
     assert sorted(rig.commands.kinds()) == ["attach_stop", "cancel", "kill_cancel", "place"]
     assert "kill_cancel_lost" in rig.audit.reasons("orders.cancel")
@@ -578,7 +427,7 @@ async def test_a_hostile_execution_quarantines_the_order(rig: Rig) -> None:
     """OM-T04 (#3804's deviation 8): an EXEC of another exchange order is refused by B1, and as it
     is neither a repeat nor early, answered with FAULT: quarantined, audited and counted."""
     order = await rig.submitted()
-    hostile = _fill(order, "e1", "0.4", exchange_order_id="x-foreign")
+    hostile = fill_of(order, "e1", "0.4", exchange_order_id="x-foreign")
     await rig.facade.push(ACCOUNT, order.id, "EXEC", hostile)
     await rig.quiet()
     assert rig.facade.state(order.id) == ("quarantined", "not_required")
@@ -591,7 +440,7 @@ async def test_a_hostile_execution_quarantines_the_order(rig: Rig) -> None:
 async def test_a_hostile_execution_pages_where_its_state_cannot_quarantine(rig: Rig) -> None:
     order = await rig.submitted()
     await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": 1})
-    hostile = _fill(order, "e1", "0.4", exchange_order_id="x-foreign")
+    hostile = fill_of(order, "e1", "0.4", exchange_order_id="x-foreign")
     await rig.facade.push(ACCOUNT, order.id, "EXEC", hostile)
     assert rig.facade.state(order.id) == ("triggered", "not_required")
     assert rig.pager.calls == ["oms_hostile_exec_not_quarantined"]
@@ -669,7 +518,7 @@ async def test_a_lost_stop_pages_and_hands_the_position_to_b8(rig: Rig) -> None:
     """C-2.6: a protection fact reaches the live machine; a lost stop alerts and hands the
     position to B8 (`request_fallback_sl`)."""
     order = await rig.submitted()
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.4"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
     await rig.quiet()
     lost = {"updated_time": 200, "stop_loss": None, "size": "0.4"}
     await rig.facade.push(ACCOUNT, order.id, "SL_LOST", lost)
@@ -697,7 +546,7 @@ async def test_a_turn_stops_at_a_failure_and_the_next_step_retries(
     """A release whose step is refused waits in the buffer again, and the turn stops, logged;
     the order's next step releases it (S7: nothing was applied meanwhile)."""
     order = await _unknown(rig)
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "0.2"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.2"))
     real = rig.fills.commit_fill
 
     async def refused_once(fill: Any) -> Any:
@@ -717,7 +566,7 @@ async def test_a_turn_stops_at_a_failure_and_the_next_step_retries(
 async def test_a_hostile_fill_whose_fault_is_refused_leaves_the_order_as_it_was(rig: Rig) -> None:
     order = await rig.submitted()
     rig.store.fail_next(RuntimeError("Postgres is down"))
-    hostile = _fill(order, "e1", "0.4", exchange_order_id="x-foreign")
+    hostile = fill_of(order, "e1", "0.4", exchange_order_id="x-foreign")
     await rig.facade.push(ACCOUNT, order.id, "EXEC", hostile)
     assert rig.facade.state(order.id) == ("submitted", "not_required")
 
@@ -738,7 +587,7 @@ async def test_a_caller_that_waited_out_an_eviction_takes_the_evicted_path(rig: 
         await asyncio.sleep(0)
         await rig.facade._close(o, publish=False)
     for waited in (push, cancel):
-        with pytest.raises(OrderNotLoaded):  # its row is live: slice 7 hydrates it
+        with pytest.raises(OrderNotLoaded):  # its row is live: `hydrate` brings it back
             await waited
     assert await kill == ()
     await rig.facade.idle()
@@ -748,8 +597,8 @@ async def test_a_caller_that_waited_out_an_eviction_takes_the_evicted_path(rig: 
 
 async def test_idle_waits_for_a_turn_and_stop_cancels_one(rig: Rig) -> None:
     order = await rig.submitted()
-    gate, rig.commands.on_attach = _gate(READ_BACK)
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "1"))
+    gate, rig.commands.on_attach = gated(READ_BACK)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
     gate.set()
     for _ in range(1_000):
         if rig.facade._tasks:
@@ -757,10 +606,10 @@ async def test_idle_waits_for_a_turn_and_stop_cancels_one(rig: Rig) -> None:
         await asyncio.sleep(0)
     await rig.facade.idle()
     assert rig.facade.state(order.id) is None
-    second = _order(2)
+    second = order_of(2)
     await rig.submitted(second)
-    gate, rig.commands.on_attach = _gate(READ_BACK)
-    await rig.facade.push(ACCOUNT, second.id, "EXEC", _fill(second, "e2", "1"))
+    gate, rig.commands.on_attach = gated(READ_BACK)
+    await rig.facade.push(ACCOUNT, second.id, "EXEC", fill_of(second, "e2", "1"))
     gate.set()
     for _ in range(1_000):
         if rig.facade._tasks:
@@ -808,7 +657,7 @@ async def test_a_refused_validation_writes_nothing_and_ends_at_once(rig: Rig) ->
     """24 Sec.8.4: a verdict that refused the order (here E32-T01's native stop) ends it
     `rejected` with no row; the machine is evicted and its last payload published."""
     refused = GATES | {"native_stop": b01.FAILED}
-    state = await rig.facade.start(_order(), environment="demo", gates=refused)
+    state = await rig.facade.start(order_of(), environment="demo", gates=refused)
     assert state == "rejected" and rig.facade.state(UUID(int=1)) is None
     assert await rig.orders.get(ACCOUNT, UUID(int=1)) is None
     assert rig.publish.calls[-1][3] is True and rig.commands.sent == []
@@ -821,7 +670,7 @@ async def test_a_turn_past_its_rounds_hands_the_rest_to_the_next(
     monkeypatch.setattr("candleviewer.oms.order_machine.SETTLE_ROUNDS", 1)
     order = await _unknown(rig)
     for exec_id, ts in (("e1", 1), ("e2", 2)):
-        await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, exec_id, "0.2", ts_exec=ts))
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, exec_id, "0.2", ts_exec=ts))
     found = {"exchange_order_id": "x1"}
     await rig.facade.command(ACCOUNT, order.id, "RECON_FOUND_LIVE", found, actor="system")
     assert rig.context(order)["seen_exec_ids"] == ["e1"]
@@ -833,7 +682,7 @@ async def test_each_committed_step_is_counted_by_state_and_source(rig: Rig) -> N
     """`oms_state_transitions_total{from,to,source}`: one per written row, by chart state and the
     event's source (24 Sec.8.2), the first row from `draft`."""
     order = await rig.submitted()
-    await rig.facade.push(ACCOUNT, order.id, "EXEC", _fill(order, "e1", "1"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
     steps = (
         ("draft", "validated", "local"),
         ("validated", "submitting", "local"),

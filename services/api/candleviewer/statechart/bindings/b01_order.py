@@ -21,6 +21,13 @@ The effects go through what the OMS facade wires (`set_ports`, `set_audit_hook`,
 * The notices (`notify_*`, `emit_terminal`, the alerts, the `request_*` hand-offs) go to the
   bounded `outbox` in context, which the facade drains: no action sends to its own machine
   (CV-C25), and a rolled-back step takes its notices with it (CV-C02).
+* Hydration (24 Sec.8.2 "Recovery"): the facade replays an order's recorded steps on a fresh
+  machine between `begin_replay` and `end_replay`, as B16 replays its already-audited events. The
+  replay is marked here, by order, not by a `replay` key in each payload: B1's closed schemas take
+  none, and no push could claim one. The persist port answers each replayed step's recorded `seq`
+  with nothing written, and the facade audits and notifies nothing for it; a service answers the
+  outcome the record holds, and one the record does not answer waits for the replay to end, so
+  nothing is sent again for a step the record holds (S8, SR-E29-15).
 
 KILL (owner decision #1778 item X, option a): root `lifecycle.on.KILL` lands in the final
 `lifecycle.killed`, whose entry marks the order `halted_by_kill`, audits (write-ahead, C-2.9),
@@ -576,8 +583,9 @@ async def persist_event(i: Any, context: dict[str, Any], event: Any, _a: Any) ->
     async with asyncio.timeout(CV_PERSIST_TIMEOUT):
         seq = await _ports.persist(step)
     context.update(persisted_state=to_state, event_seq=seq)
-    if (kind := _INVOKES.get(str(to_state))) is not None:
-        _remember((_id(step.order_link_id) or "", f"{kind}:{seq}"))
+    link = _id(step.order_link_id) or ""
+    if (kind := _INVOKES.get(str(to_state))) is not None and link not in _REPLAYS:
+        _remember((link, f"{kind}:{seq}"))  # a replayed step begins no attempt: it is resumed
 
 
 # --- Services: the command port, once per attempt (S1, SR-E29-15) -----------------------------
@@ -601,6 +609,34 @@ def _remember(key: tuple[str, str]) -> _Attempt:
     while len(_ATTEMPTS) > MAX_ATTEMPTS:
         _ATTEMPTS.popitem(last=False)
     return attempt
+
+
+#: Orders being replayed from their `order_events` (`begin_replay`), by `order_link_id`: an invoke
+#: the record does not answer waits on the order's gate until the replay ends, and a recorded step
+#: that leaves its state first cancels it with nothing sent.
+_REPLAYS: dict[str, asyncio.Event] = {}
+
+
+def begin_replay(order_link_id: str, outcomes: Mapping[str, Mapping[str, Any] | str]) -> None:
+    """Hydration starts: *outcomes* are the order's recorded service outcomes, keyed as `_command`
+    keys an attempt (`<kind>:<event_seq>`), each the result mapping or the class name of what the
+    call raised. A replayed invoke answers its outcome with nothing sent; `persist_event` begins no
+    attempt meanwhile, so an invoke the record does not answer runs once the replay ends, as a
+    request this process did not begin: a `place` looks the id up before it sends (SR-E29-15)."""
+    _REPLAYS[order_link_id] = asyncio.Event()
+    for key, outcome in outcomes.items():
+        attempt = _remember((order_link_id, key))
+        if isinstance(outcome, str):
+            attempt.result, attempt.failure = None, outcome
+        else:
+            attempt.result, attempt.failure = dict(outcome), None
+
+
+def end_replay(order_link_id: str) -> None:
+    """Hydration ended, or failed: an invoke waiting on the order's gate runs now."""
+    gate = _REPLAYS.pop(order_link_id, None)
+    if gate is not None:
+        gate.set()
 
 
 def _forget(context: Mapping[str, Any]) -> None:
@@ -644,6 +680,8 @@ async def _command(
         raise RecordedFailureError(f"{kind} failed before ({attempt.failure}); nothing is resent")
     if attempt is not None and attempt.result is not None:
         return attempt.result
+    if (gate := _REPLAYS.get(key[0])) is not None:
+        await gate.wait()  # unanswered by the record: after the replay, unless a step cancels it
     command = Command(kind=kind, key=":".join(key), order=_view(context), terms=dict(terms or {}))
     resumed, attempt = attempt is None, attempt or _remember(key)
     try:

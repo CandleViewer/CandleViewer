@@ -102,6 +102,8 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
 
 def test_b01_invariant_ledger_matches_catalogue() -> None:
     check_ledger(1, INVARIANTS, globals())
+    deferred = [inv for inv, where in INVARIANTS.items() if "deferred:" in str(where)]
+    assert deferred == []  # #847: no B1 invariant waits for a later epic's bindings
     text = _CATALOGUE.read_text(encoding="utf-8")  # C-2.19: B1.1 is the chart, root keys aside
     block = re.search(r"### B1\.1 Contract \(normative\)\s*```json\n(.*?)\n```", text, re.S)
     skip = ("version", "strictConfig", "maxIterations")
