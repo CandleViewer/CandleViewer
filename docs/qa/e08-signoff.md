@@ -1,6 +1,6 @@
 # E08 QA sign-off evidence pack (R0 exit)
 
-Ticket: E08-Q06 (#283) for epic E08 (#35, Bybit adapter and ingestion skeleton). Prepared 2026-10-19 by hcl-worker-2 (AI agent, run8 aa6271c0) on main `4b5e1b6c` plus this change, and updated after review round 1 on main `99564c65`. QA supplies the evidence and a **proposed** verdict (section 12); the verdict line is the owner's, and so is the R0 release decision (`docs/plan/07-release-and-prr.md`). Security is referenced here, not signed off (section 9).
+Ticket: E08-Q06 (#283) for epic E08 (#35, Bybit adapter and ingestion skeleton). Prepared 2026-10-19 by hcl-worker-2 (AI agent, run8 aa6271c0) on main `4b5e1b6c` plus this change, and updated after review rounds 1 (main `99564c65`) and 2 (main `374ba52d`; GitHub state queried again at 13:22 UTC). QA supplies the evidence and a **proposed** verdict (section 12); the verdict line is the owner's, and so is the R0 release decision (`docs/plan/07-release-and-prr.md`). Security is referenced here, not signed off (section 9).
 
 Reference note: the ticket points at `docs/plan/30-release-roadmap.md` §5 for the R0 exit criteria; R0's are in §4.3 (§5 is R1). The E08-relevant R0 exit items are #5 (24 h ingestion of three or more symbols, memory flat within ±5 %), #6 (data readable from QuestDB and archivable to Parquet) and #10 (Grafana shows ingestion and a synthetic alert fires).
 
@@ -8,30 +8,32 @@ Reference note: the ticket points at `docs/plan/30-release-roadmap.md` §5 for t
 
 | Area                              | State on 2026-10-19                                                                         | Evidence                                                 |
 | --------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Scripted regression (E08 pack)    | green: 2091 passed, 8 strict `xfail`s, 0 failed                                             | section 2; `qa/plans/e08-regression-pack.md` section D   |
-| Fixed P0/P1 defects with a case   | 24 of 24                                                                                    | `qa/plans/e08-regression-pack.md` section B              |
-| Exploratory charters              | 6 of 6 debriefed in-process (deviation); 3 new P0 candidates, 1 P1 candidate                | section 3; `docs/qa/charters/E08-charter-*.md`           |
+| Scripted regression (E08 pack)    | green under CI's Hypothesis profile: 2094 passed, 8 strict `xfail`s, 0 failed               | section 2; `qa/plans/e08-regression-pack.md` section D   |
+| Fixed P0/P1 defects with a case   | 26 of 26                                                                                    | `qa/plans/e08-regression-pack.md` section B              |
+| Exploratory charters              | 6 of 6 debriefed in-process, one tester (deviation); F1-F3 filed as P0 #3806-#3808          | section 3; `docs/qa/charters/E08-charter-*.md`           |
 | Cross-epic handshake              | 28 checks green; D2 fixed in the doc, D1 needs a decision, gaps G1 and G2, ledger gap L1    | section 4; `services/api/tests/qa/test_e08_handshake.py` |
-| Chaos (E08-Q03, #280)             | suite green in the pack; #280 is still open on GitHub                                       | section 5                                                |
+| Chaos (E08-Q03, #280)             | suite green in the pack; #280 closed 2026-10-19 after its independent QA pass               | section 5                                                |
 | Performance (E08-Q04)             | budget #13 fails nightly; flatness failed today (fix #3799 not re-measured); no 24 h soak   | section 6                                                |
 | Accessibility (E08-Q05, #282)     | not run: no E2E, axe or screen-reader result for any E08 screen                             | section 7                                                |
 | Coverage (E08 modules, pack only) | 96.97 % lines, 91.60 % branches                                                             | section 8                                                |
 | Security deliverables             | X01, X02, X03 closed with QA passes; X02 long fuzz in no CI lane; no security sign-off      | section 9                                                |
-| Open defects                      | 2 open P1 bugs (#2523 E08, #2167 E12), 3 P0 and 1 P1 candidates not yet filed, P2/P3 listed | section 10                                               |
+| Open defects                      | P0 #3806-#3808 (from the charters), P1 #2523 (E08) and #2167 (E12) open; P2s and P3s listed | section 10                                               |
 | **Proposed verdict**              | **FAIL today**; conditional pass once B1-B4 close, with B5-B10 as named conditions          | section 12                                               |
 
 ## 2. Scripted results
 
-Command (from `services/api`): `uv run pytest -p no:randomly --no-cov -m e08_regression`. The marker covers the E08 suites by path (`services/api/tests/_e08_regression_pack.py`), and its guard (`services/api/tests/qa/test_e08_regression_pack.py`) holds the pack document and the path list together.
+Command (from `services/api`): `HYPOTHESIS_PROFILE=ci uv run pytest -p no:randomly --no-cov -m e08_regression`. The marker covers the E08 suites by path (`services/api/tests/_e08_regression_pack.py`), and its guard (`services/api/tests/qa/test_e08_regression_pack.py`) holds the pack document and the path list together.
 
 | Run                                                                                               | Result                                             | Time                           |
 | ------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------ |
+| 2026-10-19, `374ba52d` + this change after round 2, `HYPOTHESIS_PROFILE=ci`, loopback-only        | 2094 passed, 8 xfailed, 0 failed, 29652 deselected | 197.7 s tests, 3 min 30 s wall |
+| 2026-10-19, `67df0b0d` + this change, default `dev` profile (before the pin), loopback-only       | 2093 passed, 8 xfailed, **1 failed** (#1900)       | 181.8 s tests, 3 min 11 s wall |
 | 2026-10-19, `99564c65` + this change after review round 1, loopback-only namespace, Python 3.14.4 | 2091 passed, 8 xfailed, 0 failed, 29435 deselected | 174.6 s tests, 3 min 3 s wall  |
 | 2026-10-19, `4b5e1b6c` + this change before review round 1, same namespace and Python             | 1981 passed, 8 xfailed, 0 failed, 29180 deselected | 186.0 s tests, 3 min 17 s wall |
 | 2026-10-19, `c21b2eb3` + the first commit (before the handshake and findings files)               | 1952 passed, 5 xfailed, 0 failed, 28789 deselected | 120.3 s tests, 2 min 11 s wall |
 | 2026-10-19, `c21b2eb3` + the first three commits, with coverage (section 8)                       | 1979 passed, 8 xfailed, 0 failed, 28846 deselected | 133.7 s tests, 2 min 23 s wall |
 
-The eight strict `xfail`s are five open defects (#1896 twice, #1900, #1893, all P2) and the three charter findings F1-F3 (section 3). Python 3.14.4 is the author's interpreter; CI uses 3.12. Runs are author runs by an agent, not an independent QA run. The guard: 67 passed (about 1 min). About 3 minutes in all, so the pack fits a nightly budget without a split.
+The eight strict `xfail`s are five that pin three open P2 defects (#1896 three times, #1900, #1893) and the three charter findings F1-F3, now the P0 bugs #3806, #3807 and #3808 (section 3). The one failure of the `dev`-profile run is `services/api/tests/security/ingestion/test_fuzz_parsers.py::test_parser_fuzz_bounded[book]`: Hypothesis drew `ts: Infinity`, which open #1900 lets escape the book parser as `OverflowError`, as in #2267 (item 16). CI's `py` lane sets `HYPOTHESIS_PROFILE=ci` (derandomised), where the test passes, so the pack's command now sets it too; until #1900 is fixed, a `dev`-profile run of the pack can fail the same way. Python 3.14.4 is the author's interpreter; CI uses 3.12. Runs are author runs by an agent, not an independent QA run. The guard: 67 passed (about 1 min). About 3 minutes in all, so the pack fits a nightly budget without a split.
 
 E08-Q01 cases: the stable subset that E08-Q02 automated runs in the pack; `services/api/tests/contract/bybit/test_contract_q01_mapping.py::test_every_owned_case_is_tested_or_deferred_with_a_ticket` keeps the plan and the pack in step. Deferred: C07, D02, E05, E07, E08, F02 to #1878 (WS gateway, data-coverage route). Not automated: A05-A07, C05, F05 and every client half, which E08-Q05 owns (#282, not run).
 
@@ -39,7 +41,7 @@ Scheduling (deviation): no CI job selects `-m e08_regression` on its own, the sa
 
 ## 3. Exploratory debrief
 
-Six sessions, run in-process by an AI agent on 2026-10-19 (about 1.5 h of agent time in all, not six 90-minute human sessions; no staging, docker, browser or screen reader). Every finding is either reported for filing or recorded with a reason.
+Six sessions, run in-process by one AI agent on 2026-10-19 (about 1.5 h of agent time in all, not six 90-minute human sessions; no staging, docker, browser or screen reader). Every finding is either filed (the coordinator filed F1-F3 as #3806-#3808 and moved F4 into #3807 and #2487) or recorded with a reason. Test-plan deviation: the ticket asks for two different testers where possible and at least one session by an engineer outside E08; one tester ran all six, an agent that has also worked on E08 tickets, so neither holds (section 12).
 
 | Charter                                                            | Tests re-run          | Probes | Findings   |
 | ------------------------------------------------------------------ | --------------------- | ------ | ---------- |
@@ -50,17 +52,17 @@ Six sessions, run in-process by an AI agent on 2026-10-19 (about 1.5 h of agent 
 | `docs/qa/charters/E08-charter-5-clock-and-timestamps.md`           | 73 passed             | 1      | none new   |
 | `docs/qa/charters/E08-charter-6-tape-bursts.md`                    | 118 passed, 1 xfailed | 1      | F6-1, F6-2 |
 
-| Id   | Finding                                                                                                         | Severity (E08-Q01 §0.1)                           | Disposition                                                                                   |
-| ---- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| F1   | A catalogue tick-size change on a live book applies later deltas on a second price grid, silently               | P0 candidate                                      | reported for filing; strict `xfail` `services/api/tests/qa/test_e08_charter_findings.py` (F1) |
-| F2   | A released book whose grace runs out keeps its upstream topic and is served frozen with `stale: false`          | P0 candidate                                      | reported for filing; strict `xfail` (F2)                                                      |
-| F3   | A klines window read before its bars exist is cached as covered; later reads return no rows and no hole         | P0 candidate (P1 if the owner rates exposure low) | reported for filing, with the `security` label for triage (see below); strict `xfail` (F3)    |
-| F4   | `GET /market/orderbook` hard-codes `stale: false`; a stalled book topic is served as live                       | P1 candidate                                      | reported; the WS half is #2487 (P1, open)                                                     |
-| F6-1 | 24 §2.1 names `md_duplicate_trades_total` and `md_out_of_order_total`; neither exists, inversions pass silently | P3                                                | recorded (doc or counter, owner's choice)                                                     |
-| F6-2 | A trade frame over the 2 000-print cap is dropped whole without a gap event                                     | open question                                     | recorded; P0 if the venue can push more than 2 000 prints in one frame                        |
-| O-1  | Catalogue freshness has no dashboard panel and no alert                                                         | P3                                                | recorded for the E08-T06 owner                                                                |
+| Id   | Finding                                                                                                         | Severity (E08-Q01 §0.1) | Disposition                                                                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
+| F1   | A catalogue tick-size change on a live book applies later deltas on a second price grid, silently               | P0 (filed)              | #3806 (in progress); strict `xfail` `services/api/tests/qa/test_e08_charter_findings.py` (F1)  |
+| F2   | A released book whose grace runs out keeps its upstream topic and is served frozen with `stale: false`          | P0 (filed)              | #3807 (in progress); strict `xfail` (F2)                                                       |
+| F3   | A klines window read before its bars exist is cached as covered; later reads return no rows and no hole         | P0 (filed)              | #3808 (in progress), no `security` label at the round-2 query (see below); strict `xfail` (F3) |
+| F4   | `GET /market/orderbook` hard-codes `stale: false`; a stalled book topic is served as live                       | P1                      | REST half in #3807's scope, WS half in #2487 (P1); no promoted test (a code read, charter 4)   |
+| F6-1 | 24 §2.1 names `md_duplicate_trades_total` and `md_out_of_order_total`; neither exists, inversions pass silently | P3                      | recorded (doc or counter, owner's choice)                                                      |
+| F6-2 | A trade frame over the 2 000-print cap is dropped whole without a gap event                                     | open question           | named condition B10 (section 12); P0 if the venue can push more than 2 000 prints in one frame |
+| O-1  | Catalogue freshness has no dashboard panel and no alert                                                         | P3                      | recorded for the E08-T06 owner                                                                 |
 
-F3 is also an input-validation gap. The window comes from the client on an authenticated route: `services/api/candleviewer/api/market.py` refuses only a `from` after `to` and a window over 400 days, and the coverage entry such a read leaves behind is shared by every reader of that symbol and interval in the process. Design requirement for the fix: the read path never records coverage past the present (clamp the backfill window to now; rejecting such a window would need a 22-api change, because the 400-day cap is the route's only window refusal). The triggers are ordinary client behaviour (a clock ahead of the exchange, a viewport past the last bar) and callers must be authenticated, so it is recommended for the same `security` triage the E08-X02 robustness defects #1893 and #1896 got, not for private handling.
+F3 is also an input-validation gap. The window comes from the client on an authenticated route: `services/api/candleviewer/api/market.py` refuses only a `from` after `to` and a window over 400 days, and the coverage entry such a read leaves behind is shared by every reader of that symbol and interval in the process. Design requirement for the fix: the read path never records coverage past the present (clamp the backfill window to now; rejecting such a window would need a 22-api change, because the 400-day cap is the route's only window refusal). The triggers are ordinary client behaviour (a clock ahead of the exchange, a viewport past the last bar) and callers must be authenticated. The coordinator filed it publicly as #3808, which had no `security` label at the round-2 query; the round-1 suggestion of the same `security` triage the E08-X02 robustness defects #1893 and #1896 got stays an open note for the coordinator.
 
 The Grafana session the ticket asks for became a static review of `infra/grafana/dashboards/ingestion.json` and `infra/prometheus/alerts/` (charter 4); the screen-reader run of charter 4 did not happen (section 7).
 
@@ -86,7 +88,7 @@ The Grafana session the ticket asks for became a static review of `infra/grafana
 
 ## 5. Chaos (E08-Q03, #280)
 
-The eleven scenarios (`services/api/tests/chaos/ingestion/`, s01 to s11 plus s01b, the visible-degradation pair and the rig guards) run in the pack in-process without docker and passed in every run of section 2. The [independent QA re-run of 2026-10-15](https://github.com/basiltt/CandleViewer/issues/280#issuecomment-6203304093) recorded 50 passed in 20 of 20 runs (3 fixed order, 17 shuffled) on main `16071506`, the four mutation records of #1976 (PR #2582) and rig parity through `IngestionService.start()` (#2583); its board status was set to Done that day, but **#280 is still open on GitHub**. Its nightly lane stays owner-waived (#1778 item P) and is not added here either (section 2).
+The eleven scenarios (`services/api/tests/chaos/ingestion/`, s01 to s11 plus s01b, the visible-degradation pair and the rig guards) run in the pack in-process without docker and passed in every run of section 2. The [independent QA re-run of 2026-10-15](https://github.com/basiltt/CandleViewer/issues/280#issuecomment-6203304093) recorded 50 passed in 20 of 20 runs (3 fixed order, 17 shuffled) on main `16071506`, the four mutation records of #1976 (PR #2582) and rig parity through `IngestionService.start()` (#2583); its board status was set to Done that day, and the orchestrator [closed #280 on 2026-10-19](https://github.com/basiltt/CandleViewer/issues/280#issuecomment-6265765836) to match, so the E08-Q03 dependency has run and is closed. Its nightly lane stays owner-waived (#1778 item P) and is not added here either (section 2).
 
 ## 6. Performance (E08-Q04) against budgets #5, #6, #8, #11, #12, #13
 
@@ -129,53 +131,53 @@ The whole `services/api` package is held to the floor on every PR by CI (C-9.4);
 ## 9. Security deliverables (referenced, not signed off)
 
 - **E08-X01** STRIDE (#187): closed 2026-09-28, [QA pass recorded 2026-09-29](https://github.com/basiltt/CandleViewer/issues/187#issuecomment-5881005142); that record marks the security-engineer sign-off as deferred, and no "Security sign-off" comment exists on #187 or #35.
-- **E08-X02** abuse cases (#290): closed 2026-10-06 with a QA pass; the suite (`services/api/tests/security/ingestion/`) runs in the pack, apart from its long parser-fuzz session (`fuzz` marker, opt-in `CV_FUZZ_LONG=1`), which no CI lane runs: `fuzz-nightly` (for example run 39228860502, 2026-10-19, green) fuzzes only the WS binary-frame decoders, and #3523 recorded the gap (item 5) before it was closed as not planned. Author run of the long session on 2026-10-19 (`066c4449`, Python 3.14.4, 20 000 examples per parser, 243 s): ticker and trade passed; the book leg failed on the non-finite timestamp case of open #1900, which the pack already pins with a checked-in regression frame, so no new failure class. Residuals: #1893, #1896, #1900 (P2, strict `xfail`s), and #1895 (P2), which the findings register records as fixed by #2339 but is still open.
+- **E08-X02** abuse cases (#290): closed 2026-10-06 with a QA pass; the suite (`services/api/tests/security/ingestion/`) runs in the pack, apart from its long parser-fuzz session (`fuzz` marker, opt-in `CV_FUZZ_LONG=1`), which no CI lane runs: `fuzz-nightly` (for example run 39228860502, 2026-10-19, green) fuzzes only the WS binary-frame decoders, and #3523 recorded the gap (item 5) before it was closed as not planned. Author run of the long session on 2026-10-19 (`066c4449`, Python 3.14.4, 20 000 examples per parser, 243 s): ticker and trade passed; the book leg failed on the non-finite timestamp case of open #1900, which the pack already pins with a checked-in regression frame, so no new failure class. Residuals: #1893, #1896, #1900 (P2, strict `xfail`s). #1895 (P2) was [closed on 2026-10-19](https://github.com/basiltt/CandleViewer/issues/1895#issuecomment-6265764127): the signer holds no key since PR #2352, the fix for #2339, which section B of the pack doc maps to its cases.
 - **E08-X03** SAST, SCA, secrets and the vocabulary-leak gate (#226): closed 2026-09-29 with a QA pass. Not re-run for this pack; `sast`, `sca` and `secrets-scan` are required checks on every PR (C-9.1). Accepted risks in E08 scope: the three `cv-adapter-isolation` rows for the applied migration `services/api/candleviewer/migrations/versions/0004_instruments.py` in `security/accepted-risks.yaml` (owner security, expiring 2026-12-31, #1778). This change adds one in-source suppression of the same rule, for the contract pack's directory name in `services/api/tests/_e08_regression_pack.py` (class B5-b-harness, review 2026-12-31; the class goes from 42 to 43 markers).
 - The epic DoD line "sign-off comment from Security engineer" is **not met**.
 
-## 10. Open defects in E08 scope (GitHub, 2026-10-19)
+## 10. Open defects in E08 scope (GitHub, 2026-10-19 13:22 UTC)
 
-| Issue                  | Sev      | Summary                                                                 | Disposition                                                             |
-| ---------------------- | -------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| F1, F2, F3 (not filed) | P0 cand. | section 3                                                               | **blocking**; coordinator to file                                       |
-| F4 (not filed)         | P1 cand. | REST order book never `stale` (WS half #2487)                           | **blocking** unless the owner rates it lower                            |
-| #2523                  | P1       | cold klines p95 above the 150 ms budget #13                             | **blocking** (budget #13 is hard)                                       |
-| #2167                  | P1       | bar builders rebuild 1M prints in 28-39 s (E12 scope, `area/ingestion`) | not E08's verdict; E12                                                  |
-| #3431                  | none     | perf pack regression, memory flatness                                   | closed by #3799 (harness fix), not re-measured yet                      |
-| #1893, #1896, #1900    | P2       | X02 residuals (pump yield, malformed catalogue row, `ts` Infinity)      | fix before release or owner acceptance (`03-testing-strategy.md` §11.3) |
-| #1895                  | P2       | signer repr                                                             | fixed by #2339; close-candidate                                         |
-| #1933, #3033, #2844    | P2       | funding-interval default, book `ts_ingest`, a wall-clock test flake     | fix before release or owner acceptance                                  |
-| #2703                  | P3       | 503 not declared on `/instruments`                                      | fixed by #2772; close-candidate                                         |
-| L1 (not filed)         | P3       | three statechart invariants still `deferred:E08` (section 4)            | recorded for the coordinator                                            |
-| #2863, #3287           | P3       | 10016 mapping; `/market/bars` read timeout (`post-ga`)                  | backlog                                                                 |
-| #1862, #1899           | none     | crossed corpus fixture; order-dependent contract test                   | needs triage (no priority)                                              |
+| Issue               | Sev  | Summary                                                                                                                                                                           | Disposition                                                             |
+| ------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| #3806, #3807, #3808 | P0   | F1, F2 and F3 (section 3); #3807 also holds F4's REST half (the REST order book is never `stale`)                                                                                 | **blocking**; in progress (B1-B4)                                       |
+| #2487               | P1   | F4's WS half: the WS `book` stale flag under a stalled upstream (E17 evidence, `type/test`; [split](https://github.com/basiltt/CandleViewer/issues/2487#issuecomment-6266106887)) | not E08's verdict; E17                                                  |
+| #2523               | P1   | cold klines p95 above the 150 ms budget #13                                                                                                                                       | **blocking** (budget #13 is hard)                                       |
+| #2167               | P1   | bar builders rebuild 1M prints in 28-39 s (E12 scope, `area/ingestion`)                                                                                                           | not E08's verdict; E12                                                  |
+| #3431               | none | perf pack regression, memory flatness                                                                                                                                             | closed by #3799 (harness fix), not re-measured yet                      |
+| #1893, #1896, #1900 | P2   | X02 residuals (pump yield, malformed catalogue row, `ts` Infinity)                                                                                                                | fix before release or owner acceptance (`03-testing-strategy.md` §11.3) |
+| #1933, #3033, #2844 | P2   | funding-interval default, book `ts_ingest`, a wall-clock test flake                                                                                                               | fix before release or owner acceptance                                  |
+| L1 (not filed)      | P3   | three statechart invariants still `deferred:E08` (section 4)                                                                                                                      | recorded for the coordinator                                            |
+| #2863, #3287        | P3   | 10016 mapping; `/market/bars` read timeout (`post-ga`)                                                                                                                            | backlog                                                                 |
+| #1862, #1899        | none | crossed corpus fixture; order-dependent contract test                                                                                                                             | needs triage (no priority)                                              |
 
-Open E08 children besides bugs: #280 (open, board Done), #282, #283, the design tickets E08-D05 to E08-D14, #2825 (`needs-owner`) and the follow-up tasks #1849, #1872, #1878, #1879, #1949, #1958 to #1960, #1966, #1967, #1974, #1977. The epic DoD's 100 % child rollup is not met.
+Closed since the round-1 pack, all on 2026-10-19: #280 (E08-Q03, section 5), #1895 (section 9) and #2703 (the 503 declarations landed with #2772). Open E08 children besides bugs: #282, #283, the design tickets E08-D05 to E08-D14, #2825 (`needs-owner`) and the follow-up tasks #1849, #1872, #1878, #1879, #1949, #1958 to #1960, #1966, #1967, #1974, #1977. The epic DoD's 100 % child rollup is not met.
 
 ## 11. Not tested
 
 - Anything in a browser or with assistive technology (E08-Q05, #282); the Grafana session with real faults; any staging or docker run; the QuestDB and Parquet round trips (CI `integration`; R0 exit #6 not assessed here); a synthetic alert firing end to end (R0 exit #10, E04 drill).
 - The 24 h soak, the full perf profile and k6 (#2825).
 - The E08-X02 long fuzz session in any CI lane (one author run, section 9); the statechart invariants INV-B13-e and INV-B14-b (L1).
-- Live-venue behaviour: maximum trade-frame size (F6-2), real tick-size changes (F1), real host sleep.
+- Live-venue behaviour: maximum trade-frame size (F6-2, condition B10), real tick-size changes (F1, #3806), real host sleep.
 
 ## 12. Proposed verdict and conditions
 
-**Proposed: FAIL as of 2026-10-19.** The scripted pack is green and every fixed P0/P1 defect has a case, but three P0 candidates are open, a hard budget fails nightly and the a11y verdict does not exist. An unconditional pass would itself be a process defect (ticket AC). Once B1-B4 close, re-run the pack and propose a **conditional pass** with B5-B10 as named conditions.
+**Proposed: FAIL as of 2026-10-19.** The scripted pack is green and every fixed P0/P1 defect has a case, but the charters' three P0 bugs are open (#3806, #3807, #3808), a hard budget fails nightly and the a11y verdict does not exist. An unconditional pass would itself be a process defect (ticket AC). Once B1-B4 close, re-run the pack and propose a **conditional pass** with B5-B10 as named conditions.
 
-| Id  | Condition                                                                           | Ticket                         |
-| --- | ----------------------------------------------------------------------------------- | ------------------------------ |
-| B1  | F1 fixed, or re-rated by the owner with a recorded reason                           | to be filed by the coordinator |
-| B2  | F2 fixed, or re-rated                                                               | to be filed                    |
-| B3  | F3 fixed (no coverage recorded past the present), or re-rated                       | to be filed                    |
-| B4  | F4 fixed or folded into #2487 with the REST flag in scope                           | #2487 or a new issue           |
-| B5  | budget #13 met, or an owner-accepted exception                                      | #2523                          |
-| B6  | the 24 h soak run once with memory flat within ±5 % (R0 exit #5)                    | #2825                          |
-| B7  | E08-Q05 run: axe green on the E08 screens and one screen-reader pass                | #282                           |
-| B8  | security-engineer sign-off comment on #35 (STRIDE finalised, X02 residuals triaged) | #187, #290                     |
-| B9  | drift D1 decided (envelope added, or C6 amended)                                    | to be filed                    |
-| B10 | #280 closed on GitHub to match its board status                                     | #280                           |
+| Id  | Condition                                                                                                           | Ticket                               |
+| --- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| B1  | F1 fixed, or re-rated by the owner with a recorded reason                                                           | #3806                                |
+| B2  | F2 fixed, or re-rated                                                                                               | #3807                                |
+| B3  | F3 fixed (no coverage recorded past the present), or re-rated                                                       | #3808                                |
+| B4  | F4's REST half fixed: `GET /market/orderbook` reports `stale` for a stalled book                                    | #3807 (the WS half is #2487)         |
+| B5  | budget #13 met, or an owner-accepted exception                                                                      | #2523                                |
+| B6  | the 24 h soak run once with memory flat within ±5 % (R0 exit #5)                                                    | #2825                                |
+| B7  | E08-Q05 run: axe green on the E08 screens and one screen-reader pass                                                | #282                                 |
+| B8  | security-engineer sign-off comment on #35 (STRIDE finalised, X02 residuals triaged)                                 | #187, #290                           |
+| B9  | drift D1 decided (envelope added, or C6 amended)                                                                    | to be filed                          |
+| B10 | F6-2 answered: the E08 tech lead confirms no venue trade frame exceeds 2 000 prints, or a refused frame marks a gap | to be filed if a frame can exceed it |
+
+Before the verdict is posted (ticket Test plan), two steps have not happened: the Architect's review of this pack, and a charter session by an engineer outside E08 (one agent ran all six, section 3). The independent QA review of this branch (an agent reviewer separate from the author, two rounds; it reproduced the pack, the guard's mutations, the defect query and the perf figures) is offered as the second-QA review. The DoD's "scheduled nightly" is a recorded deviation (section 2).
 
 ## 13. Proposed QA comment for #35 (for the owner to post or amend)
 
-> QA verdict for E08 (proposed by E08-Q06, #283): **fail** as of 2026-10-19. Evidence: `docs/qa/e08-signoff.md`. The E08 regression pack (`-m e08_regression`) is green apart from eight strict xfails pinning open defects and new findings, and all 24 P0/P1 defects fixed in the epic map to a regression case. Exploratory charters found three P0 candidates (F1 tick-size change on a live book, F2 a frozen book served as live after its grace, F3 a klines window cached as covered before its bars exist, also recommended for security triage) and one P1 candidate (F4 order book `stale` never set). Budget #13 fails nightly (#2523), the 24 h soak has not run (#2825), E08-Q05 has not run (#282), and no security-engineer sign-off is recorded. The verdict becomes a conditional pass when B1-B4 close, with B5-B10 tracked as named conditions.
+> QA verdict for E08 (proposed by E08-Q06, #283): **fail** as of 2026-10-19. Evidence: `docs/qa/e08-signoff.md`. The E08 regression pack (`HYPOTHESIS_PROFILE=ci`, `-m e08_regression`) is green apart from eight strict xfails pinning open defects, and all 26 fixed P0/P1 defects in E08's scope (the pack's section B) map to a regression case. The exploratory charters found three P0 bugs, now filed: #3806 (a tick-size change on a live book), #3807 (a released book served frozen as live; it also takes F4's REST half, the order book's `stale` flag) and #3808 (a klines window cached as covered before its bars exist). Budget #13 fails nightly (#2523), the 24 h soak has not run (#2825), E08-Q05 has not run (#282), and no security-engineer sign-off is recorded; E08-Q03 (#280) is closed. The verdict becomes a conditional pass when B1-B4 close, with B5-B10 tracked as named conditions.
