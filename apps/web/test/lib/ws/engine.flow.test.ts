@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { b64, bookSnapshot, FLAG_PARTIAL } from "./support/cvwb";
 import { assertEngineOrder } from "./support/engineEvents";
 import { BASELINE_DEADLINE_MS, LEDGER_MAX } from "../../../src/lib/ws/core/engine";
+import { REFUSED_BACKOFF_MS } from "../../../src/lib/ws/core/flowControl";
 import { INITIAL_WS_STATE, reduce } from "../../../src/lib/ws/state/reducer";
 import { BOOK, engineHarness, RS, spec } from "./support/engineHarness";
 import type { FakeGateway, Json } from "./support/fakeGateway";
@@ -15,6 +16,10 @@ const topicsOf = (frame: Json | undefined) =>
   ((frame?.["p"] as Json)["topics"] as (string | { ch: string })[]).map((t) =>
     typeof t === "string" ? t : t.ch,
   );
+
+/** The streams a `ctl` retuned and to what, in the order the frames left: `rs` is undefined for the live one. */
+const streamCtls = (gateway: FakeGateway) =>
+  gateway.latest.of("ctl").map((f) => [f["rs"], (f["p"] as Json)["throttle_ms"]]);
 
 /** The id the server gave the first subscription of the book. */
 const bookSub = (conn: { subs(): { ch: string; id: string }[] }) =>
@@ -413,7 +418,7 @@ describe("live and replay streams of one ch (11)", () => {
     expect([t.got(), t.got(BOOK, RS)]).toEqual([[], ["d:2"]]);
   });
 
-  it("does not unsubscribe a ch while another stream of it is wanted; when none is, each held stream gets an unsub of its own (5.3, #3398)", async () => {
+  it("lets go of a stream when its last consumer leaves, whatever its twin does: each held stream gets an unsub of its own (5.3, #3398)", async () => {
     const t = engineHarness();
     const live = t.engine.consume(spec(BOOK));
     const replay = t.engine.consume(spec(BOOK), RS);
@@ -421,12 +426,14 @@ describe("live and replay streams of one ch (11)", () => {
     t.got(BOOK, RS);
     live.release();
     await t.advance(300);
-    expect(t.gateway.latest.of("unsub")).toEqual([]);
+    // the gateway ends the stream an `unsub` names (its `rs`): the live one goes alone
+    expect(t.gateway.latest.of("unsub").map((f) => [topicsOf(f), f["rs"]])).toEqual([
+      [[BOOK], undefined],
+    ]);
     t.gateway.latest.delta(BOOK, {}, RS);
     expect(t.got(BOOK, RS)).toEqual(["d:2"]); // the replay stream was not taken down with it
     replay.release();
     await t.advance(300);
-    // the gateway ends the stream an `unsub` names (its `rs`), so each one has a frame, and the server holds neither
     const unsubs = t.gateway.latest.of("unsub");
     expect(unsubs.map((f) => [topicsOf(f), f["rs"]])).toEqual([
       [[BOOK], undefined],
@@ -478,6 +485,101 @@ describe("live and replay streams of one ch (11)", () => {
     expect([live.status, replay.status]).toEqual(["live", "revoked"]);
     t.gateway.latest.delta(BOOK);
     expect(t.got()).toEqual(["snap:1", "d:2"]);
+  });
+
+  it.each([
+    ["replay", RS],
+    ["live", undefined],
+  ] as const)(
+    "a revoked that names the %s stream ends it alone: its twin stays held, flowing and retuned, and it can be consumed again (#3439)",
+    async (name, rs) => {
+      const t = engineHarness();
+      const handles = {
+        live: t.engine.consume(spec(BOOK)),
+        replay: t.engine.consume(spec(BOOK), RS),
+      };
+      await t.start();
+      t.gateway.latest.revokeStream(BOOK, rs, "permission_revoked");
+      const twin = name === "live" ? "replay" : "live";
+      const twinRs = rs === undefined ? RS : undefined;
+      expect([handles[name].status, handles[twin].status]).toEqual(["revoked", "live"]);
+      t.gateway.latest.delta(BOOK, {}, twinRs);
+      expect(t.got(BOOK, twinRs)).toEqual(["snap:1", "d:2"]);
+      t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+      await t.advance(300);
+      expect(streamCtls(t.gateway)).toEqual([[twinRs, 1_000]]); // none for the ended stream: the gateway would say not_subscribed
+      t.engine.consume(spec(BOOK), rs); // a sub of its own: no duplicate_subscription, and the twin is not subscribed again
+      await t.advance(300);
+      expect(t.gateway.latest.of("sub").map((f) => (f["p"] as Json)["replay_session_id"])).toEqual([
+        undefined,
+        RS,
+        rs,
+      ]);
+    },
+  );
+
+  it("waits for the unsub_ok of each stream: the reply of its twin lets neither a new sub of it go (#3439)", async () => {
+    const t = engineHarness({ hold: ["unsub_ok"] });
+    const live = t.engine.consume(spec(BOOK));
+    const replay = t.engine.consume(spec(BOOK), RS);
+    await t.start();
+    live.release();
+    replay.release();
+    await t.advance(300);
+    const conn = t.gateway.latest;
+    expect(conn.of("unsub")).toHaveLength(2);
+    conn.releaseHeld(1); // the live stream's unsub_ok
+    t.engine.consume(spec(BOOK), RS); // the session again, before its own reply
+    await t.advance(300);
+    expect(conn.of("sub")).toHaveLength(2); // so not subscribed yet: the old subscription's frames could still come
+    const late = { price_scale: 1, qty_scale: 1, stale: false };
+    conn.send({
+      t: "snap",
+      ch: BOOK,
+      rs: RS,
+      s: 9,
+      e: "j",
+      p: late,
+      meta: { reason: "client_resync", source: "replay" },
+    });
+    expect(t.got(BOOK, RS)).not.toContain("snap:9"); // the old subscription's, and not the new one's baseline
+    conn.releaseHeld(); // its own unsub_ok
+    await t.advance(300);
+    expect(conn.of("sub")).toHaveLength(3);
+  });
+
+  it("an unsub_ok that is due holds back its own stream alone: its twin is subscribed again at once, and its frames flow (#3439)", async () => {
+    const t = engineHarness({ hold: ["unsub_ok"] });
+    const live = t.engine.consume(spec(BOOK));
+    const replay = t.engine.consume(spec(BOOK), RS);
+    await t.start();
+    t.got();
+    live.release();
+    await t.advance(300);
+    const conn = t.gateway.latest;
+    conn.releaseHeld(); // the live stream's unsub_ok
+    replay.release();
+    await t.advance(300); // the replay stream's unsub is out, and its reply held
+    t.engine.consume(spec(BOOK)); // the live stream again
+    await t.advance(300);
+    expect(conn.of("sub")).toHaveLength(3); // not waiting for the twin's reply
+    conn.delta(BOOK);
+    expect(t.got()).toEqual(["snap:1", "d:2"]); // and not taken for frames of the old subscription
+  });
+
+  it("an unsub_ok that answers no request of ours still ends the wait for its ch: nothing waits for it any more", async () => {
+    const t = engineHarness({ hold: ["unsub_ok"] });
+    const first = t.engine.consume(spec(BOOK), RS);
+    await t.start();
+    first.release();
+    await t.advance(100); // its unsub is out, and the reply is held
+    t.engine.consume(spec(BOOK), RS); // behind that unsub_ok
+    await t.advance(300);
+    const conn = t.gateway.latest;
+    expect(conn.of("sub")).toHaveLength(1);
+    conn.send({ t: "unsub_ok", id: "no-such-request", p: { results: [{ ch: BOOK, ok: true }] } });
+    await t.advance(300);
+    expect(conn.of("sub")).toHaveLength(2);
   });
 });
 
@@ -585,6 +687,17 @@ describe("a reply for a subscription that is gone (5.2, 5.3)", () => {
     await t.advance(300);
     expect([again.status, t.got()]).toEqual(["live", ["snap:1"]]);
     expect([again.subId === oldId, again.subId === bookSub(conn)]).toEqual([false, true]);
+  });
+
+  it("a revoked of the old subscription that is still in flight ends nothing of the stream that replaced it (5.2)", async () => {
+    const { t, conn, again } = await replaced("sub_ok+unsub_ok");
+    const p = { reason: "permission_revoked", message: "m", sub_id: bookSub(conn) };
+    conn.send({ t: "revoked", ch: BOOK, p }); // sent before the server read our unsub
+    conn.releaseHeld(); // the old sub_ok, then the unsub_ok
+    await t.advance(300);
+    conn.releaseHeld(); // the new sub_ok and snapshot
+    await t.advance(300);
+    expect([again.status, t.got()]).toEqual(["live", ["snap:1"]]);
   });
 
   it("a retune confirmed late does not retune the stream that replaced its subscription", async () => {
@@ -738,6 +851,24 @@ describe("a subscription the gateway refuses (5.2)", () => {
 });
 
 describe("edges of the stream plane", () => {
+  it("asks for no baseline of a stream the server does not hold: one its pane let go, or one it ended (#3439)", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec("trades.BTCUSDT", { paneId: "p1" }));
+    t.engine.consume(spec(BOOK, { paneId: "p2" }));
+    t.engine.consume(spec("bars.BTCUSDT.time.1", { paneId: "p3" }));
+    await t.start();
+    t.engine.setPane("p1", { visibility: "collapsed", tabHidden: false });
+    await t.advance(300); // let go
+    t.gateway.latest.revoke(BOOK, "permission_revoked"); // ended
+    t.engine.rebaseline("trades.BTCUSDT");
+    t.engine.rebaseline(BOOK);
+    await t.advance(1_000);
+    expect(t.gateway.latest.of("resync")).toEqual([]);
+    t.engine.rebaseline("bars.BTCUSDT.time.1"); // held: asked for
+    await t.advance(100);
+    expect(t.gateway.latest.of("resync")).toHaveLength(1);
+  });
+
   it("a stop closes the socket, forgets every stream and the resyncs still waiting, and never reconnects", async () => {
     const t = engineHarness();
     t.engine.consume(spec(BOOK));
@@ -829,6 +960,20 @@ describe("edges of the stream plane", () => {
     await t.advance(300);
     expect(t.gateway.latest.of("sub")).toHaveLength(2); // not stuck behind the unsub
     expect(t.gateway.problems.splice(0)).toEqual([`${BOOK} subscribed twice`]); // the server still held the first
+  });
+
+  it("an unsub the gateway refuses for a replay stream does not hold that stream back either (#3439)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined); // invalid_options is a client bug (10.3)
+    const t = engineHarness();
+    const first = t.engine.consume(spec(BOOK), RS);
+    await t.start();
+    t.gateway.failUnsubs(1);
+    first.release();
+    await t.advance(100);
+    t.engine.consume(spec(BOOK), RS);
+    await t.advance(300);
+    expect(t.gateway.latest.of("sub")).toHaveLength(2);
+    expect(t.gateway.problems.splice(0)).toEqual([`${BOOK} subscribed twice`]);
   });
 
   it("a stream released before its snapshot has no baseline deadline left", async () => {
@@ -933,6 +1078,30 @@ describe("edges of the stream plane", () => {
     expect(t.engine.counters.streams).toBe(1); // what nobody wants and the lost connection held is not kept
     await t.advance(800);
     expect(topicsOf(t.gateway.latest.of("sub")[0])).toEqual([BOOK]);
+  });
+
+  it("keeps nothing in flow control of a heatmap that came and went before its sub left, whatever its replay session (C-2.18)", async () => {
+    const t = engineHarness();
+    const handles = Array.from({ length: 50 }, (_, i) =>
+      t.engine.consume(
+        spec("heatmap.BTCUSDT"),
+        `bb000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      ),
+    );
+    expect(t.engine.counters.flowEntries).toBe(50); // offline: wanted, and nothing is subscribed
+    for (const handle of handles) handle.release();
+    expect(t.engine.counters.flowEntries).toBe(0);
+  });
+
+  it("keeps nothing in flow control of a stream whose options were not believed once its consumer left during an outage (C-2.18)", async () => {
+    const t = engineHarness({ bloatEffective: true }); // flow control is handed `{}`: no throttle named
+    const handle = t.engine.consume(spec("trades.BTCUSDT"), RS);
+    await t.start();
+    expect(t.engine.counters.flowEntries).toBe(1); // what the sub_ok confirmed
+    t.gateway.latest.close(1011);
+    handle.release(); // gone before the next connection
+    await t.advance(1_000);
+    expect(t.engine.counters.flowEntries).toBe(0);
   });
 });
 
@@ -1140,18 +1309,76 @@ describe("panes and what they show (8.5, C8)", () => {
     expect(throttles(t.gateway)).toEqual([["trades.BTCUSDT", 1_000]]); // nothing to retune: it runs at its own pace
   });
 
-  it("a retune of a ch with a live and a replay stream lands on the live one, the one the gateway takes", async () => {
+  it("a retune of a ch with a live and a replay stream is a ctl for each, naming its stream (#3439)", async () => {
     const t = engineHarness();
     const replay = t.engine.consume(spec("trades.BTCUSDT"), RS); // first in the table
     const live = t.engine.consume(spec("trades.BTCUSDT"));
     await t.start();
     t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false });
     await t.advance(300);
+    expect(streamCtls(t.gateway)).toEqual([
+      [RS, 1_000],
+      [undefined, 1_000],
+    ]);
     expect([live.effective, replay.effective]).toEqual([
       { throttle_ms: 1_000 },
+      { throttle_ms: 1_000 },
+    ]);
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
+    await t.advance(300);
+    expect([live.effective, replay.effective]).toEqual([
+      { throttle_ms: 100 },
       { throttle_ms: 100 },
     ]);
   });
+
+  it.each([
+    ["live", undefined, RS],
+    ["replay", RS, undefined],
+  ])(
+    "a ctl the gateway denied is asked for again for the %s stream alone (#3439)",
+    async (_name, denied, twin) => {
+      const t = engineHarness();
+      t.engine.consume(spec("trades.BTCUSDT"), denied); // first in the table: its ctl leaves first
+      t.engine.consume(spec("trades.BTCUSDT"), twin);
+      await t.start();
+      t.gateway.deny(1);
+      t.engine.setPane("p1", { visibility: "visible", tabHidden: true });
+      await t.advance(500);
+      expect(streamCtls(t.gateway)).toEqual([
+        [denied, 1_000], // denied
+        [twin, 1_000],
+        [denied, 1_000], // asked for again
+      ]);
+    },
+  );
+
+  it.each([
+    ["live", undefined, RS],
+    ["replay", RS, undefined],
+  ])(
+    "a ctl the rebuild budget refused holds the %s stream alone: its twin goes on, and it is asked again when its wait is over",
+    async (_name, refused, twin) => {
+      vi.spyOn(console, "error").mockImplementation(() => undefined); // resync_rate_limited has no 10.3 treatment yet (#3149)
+      const t = engineHarness();
+      t.engine.consume(spec("trades.BTCUSDT"), refused); // first in the table: its ctl leaves first
+      t.engine.consume(spec("trades.BTCUSDT"), twin);
+      await t.start();
+      t.gateway.refuseCtls(1);
+      for (const tabHidden of [true, false, true]) {
+        t.engine.setPane("p1", { visibility: "visible", tabHidden });
+        await t.advance(100);
+      }
+      expect(streamCtls(t.gateway)).toEqual([
+        [refused, 1_000], // refused
+        [twin, 1_000],
+        [twin, 100],
+        [twin, 1_000], // the refused stream waits
+      ]);
+      await t.advance(REFUSED_BACKOFF_MS);
+      expect(streamCtls(t.gateway).at(-1)).toEqual([refused, 1_000]);
+    },
+  );
 
   it("a stream a remounting consumer takes over is still slowed when its tab is hidden", async () => {
     const t = engineHarness();
@@ -1256,6 +1483,25 @@ describe("a heatmap's bucket follows its pane (6.1.1)", () => {
     });
     await t.advance(5_000);
     expect(t.gateway.latest.of("ctl")).toEqual([]);
+  });
+
+  it("derives the bucket of each stream's sub from its own pane: a replay heatmap beside a live one (#3439)", async () => {
+    const t = engineHarness();
+    t.engine.setPane("p1", size(1190));
+    t.engine.setPane("p2", size(601));
+    t.engine.consume(spec(HEATMAP, { paneId: "p1" }));
+    t.engine.consume(spec(HEATMAP, { paneId: "p2" }), RS);
+    await t.start();
+    const buckets = t.gateway.latest
+      .of("sub")
+      .map((f) => [
+        (f["p"] as Json)["replay_session_id"],
+        (topicsEntry(f)?.["opts"] as Json)["time_bucket_ms"],
+      ]);
+    expect(buckets).toEqual([
+      [undefined, 1_000],
+      [RS, 5_000],
+    ]);
   });
 
   it("a bucket the user chose is sent as it is, and never retuned", async () => {

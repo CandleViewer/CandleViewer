@@ -10,6 +10,13 @@ import { checkSequence, type SeqCheckResult } from "@candleviewer/protocol";
  */
 export const topicKey = (ch: string, rs?: string | undefined): string => `${ch}#${rs ?? "live"}`;
 
+/** The `(ch, rs)` of a `topicKey`: `#` is outside the topic alphabet, so the first one splits it. */
+export function splitKey(key: string): { readonly ch: string; readonly rs: string | undefined } {
+  const at = key.indexOf("#");
+  const rs = key.slice(at + 1);
+  return { ch: key.slice(0, at), rs: rs === "live" ? undefined : rs };
+}
+
 /** `pending`: no baseline yet. `resyncing`: the baseline was lost and a new `snap` is awaited. */
 export type StreamState = "pending" | "live" | "resyncing";
 

@@ -43,8 +43,9 @@ const refused = (code = "replay_session_not_found") =>
 const ctlOk = (effective: object, resnapshot = false) =>
   control("ctl_ok", { effective, ...(resnapshot && { resnapshot }) }, { ch: BOOK });
 const unsubOk = (ok = true) => control("unsub_ok", { results: [{ ch: BOOK, ok }] });
-const revoked = (reason: string, extra: object = {}, ch = BOOK) =>
-  control("revoked", { reason, message: "m", ...extra }, { ch });
+/** `over` is the envelope: a replay stream's `revoked` names it by `rs` (9.5, #3218). */
+const revoked = (reason: string, extra: object = {}, ch = BOOK, over: object = {}) =>
+  control("revoked", { reason, message: "m", ...extra }, { ch, ...over });
 
 const spec = (over: Partial<ConsumerSpec> = {}): ConsumerSpec => ({
   ch: BOOK,
@@ -808,14 +809,31 @@ describe("a control reply names a ch, not a stream (23 11, #572)", () => {
     expect([got().length, host.resync.mock.calls.length]).toEqual([20, 0]); // 20 deltas, no reset
   });
 
-  it("replay_session_ended ends the replay streams only; any other reason ends both", () => {
-    const { registry, liveHandle, replayHandle, got } = pair();
-    registry.onRevoked(revoked("replay_session_ended"));
-    expect([replayHandle.status, liveHandle.status]).toEqual(["revoked", "live"]);
-    expect([got(), got(BOOK, RS)]).toEqual([[], ["reset:revoked"]]);
-    const both = pair();
-    both.registry.onRevoked(revoked("session_revoked"));
-    expect([both.liveHandle.status, both.replayHandle.status]).toEqual(["revoked", "revoked"]);
+  /** What a `revoked` of `reason` leaves of the live and the replay stream when it names the replay one (`rs`), or the live one (none). */
+  const endedBy = (reason: string, rs?: string, extra: object = {}) => {
+    const { registry, liveHandle, replayHandle } = pair();
+    registry.onRevoked(revoked(reason, extra, BOOK, rs === undefined ? {} : { rs }));
+    return [liveHandle.status, replayHandle.status];
+  };
+
+  it("a revoked ends or narrows the stream it names and no other (#3439)", () => {
+    expect(endedBy("replay_session_ended", RS)).toEqual(["live", "revoked"]);
+    expect(endedBy("permission_revoked", RS)).toEqual(["live", "revoked"]); // a replay one, whatever the reason
+    expect(endedBy("session_revoked")).toEqual(["revoked", "live"]); // no rs: the live stream
+    expect(endedBy("replay_session_ended")).toEqual(["live", "live"]); // never a live stream, not even in a frame that names none
+    expect(endedBy("account_scope_changed", RS, { resubscribe_allowed: true })).toEqual([
+      "live",
+      "resyncing",
+    ]);
+  });
+
+  it("a revoked that names another subscription than the stream's is an old one's, and ends nothing (#3439)", () => {
+    const { registry, liveHandle } = pair();
+    registry.onSubOk(subOk({}, BOOK, { sub_id: "s_01" }), LIVE);
+    registry.onRevoked(revoked("session_revoked", { sub_id: "s_09" }));
+    expect(liveHandle.status).toBe("live");
+    registry.onRevoked(revoked("session_revoked", { sub_id: "s_01" }));
+    expect(liveHandle.status).toBe("revoked");
   });
 });
 

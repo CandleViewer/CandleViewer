@@ -142,8 +142,10 @@ export interface SubscriptionRegistry {
   /** Concerns only a stream with no baseline yet: what it holds of a chunk set is the old subscription's. */
   onUnsubOk(frame: ControlOf<"unsub_ok">, to: RequestScope): void;
   /**
-   * Names a `ch` too. `replay_session_ended` ends replay streams only; every other reason reaches
-   * each stream of the `ch`, live and replay. With two replay streams of one `ch` it ends both.
+   * The frame names the subscription it concerns (9.5, #3218): its `ch`, the envelope `rs` of a replay
+   * one (none for the live one), and `p.sub_id`. It ends or narrows that stream and no other, and
+   * not an older subscription of it (a `sub_id` that is not the stream's); `replay_session_ended`
+   * never reaches a live stream.
    */
   onRevoked(frame: ControlOf<"revoked">): void;
   /** A `snap` or `d` that decoded. `decodeMs` is the caller's decode time; the CVWB check here is added. */
@@ -435,21 +437,20 @@ export function createSubscriptionRegistry(options: RegistryOptions): Subscripti
 
     onRevoked(frame) {
       if (frame.ch === undefined) return;
+      const rec = records.get(topicKey(frame.ch, frame.rs));
+      if (rec === undefined || rec.revoked) return;
+      if (frame.p.reason === "replay_session_ended" && rec.rs === undefined) return;
+      const { sub_id: pinned } = frame.p;
+      if (pinned !== undefined && rec.subId !== undefined && rec.subId !== pinned) return; // an older subscription's
       // 9.5: only a narrowing the server says it kept some accounts for continues.
-      const narrowed =
-        frame.p.reason === "account_scope_changed" && frame.p.resubscribe_allowed === true;
-      for (const rec of named(frame.ch)) {
-        if (frame.p.reason === "replay_session_ended" && rec.rs === undefined) continue;
-        if (!narrowed) {
-          end(rec);
-          continue;
-        }
-        // Rows of a removed account must not outlive the narrowing, and with the backpressure flag
-        // off the gateway sends no `reconfigure` snap, so one is asked for. A tail of the set held
-        // now must not assemble into one.
-        assembler.discard(rec.key);
-        lose(rec, "narrowed", "state_corrupt");
+      if (frame.p.reason !== "account_scope_changed" || frame.p.resubscribe_allowed !== true) {
+        return end(rec);
       }
+      // Rows of a removed account must not outlive the narrowing, and with the backpressure flag
+      // off the gateway sends no `reconfigure` snap, so one is asked for. A tail of the set held
+      // now must not assemble into one.
+      assembler.discard(rec.key);
+      lose(rec, "narrowed", "state_corrupt");
     },
 
     onData(frame, decodeMs) {

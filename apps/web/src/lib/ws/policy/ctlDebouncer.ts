@@ -23,9 +23,8 @@ export interface CtlDebouncerOptions {
 }
 
 /**
- * Keyed by `ch` alone, as `ctl` is on the wire: 23 11 lets a live and a replay subscription share a `ch`
- * (told apart by `sub_id`, and replay frames carry `rs`) while `ctl` carries no `sub_id`, so S4 decides
- * how a replay one is keyed (a #572 candidate). The geometry is ONE per key: with two panes or tabs on
+ * Keyed by whatever names a stream to the caller (flow control: `topicKey(ch, rs)`, since 23 11 lets a live
+ * and a replay stream share a `ch`, #3439). The geometry is ONE per key: with two panes or tabs on
  * one heatmap `ch`, each one's resize would flip the bucket back and forth, a re-snapshot every time,
  * so S4 aggregates them (the widest pane decides) before it calls `resize`.
  */
