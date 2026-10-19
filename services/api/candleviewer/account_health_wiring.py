@@ -38,8 +38,9 @@ and a balance delta on each refresh, pushed or read, and when the tick finds a r
 turned stale.
 
 `order_entry_check` is the account check of the app's one gate, `OrderEntryGate(maintenance,
-order_entry_check)` (#837 W3), over the monitor, the key standing (`accounts.key_standing`) and the
-cache; the reconciler reports a rejected credential to the standing, never as health evidence.
+order_entry_check)` (#837 W3): it refuses on the key standing (`accounts.key_standing`) and the
+monitor's health, and the cache feeds only its sizing flag. The reconciler reports a rejected
+credential to the standing, never as health evidence.
 """
 
 from __future__ import annotations
@@ -280,9 +281,9 @@ class AccountHealthRuntime:
     tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped;
     `episodes` is the journal the boot replays (the monitor writes it). `standings` is the key
     standing: the reconciler reports a rejected credential to it, and `order_entry_check`, the
-    account check of the app's order-entry gate, reads it with the monitor and the cache. `topic`
-    is the `wallet` topic it publishes on. Meant for one event loop, the one that runs the loops and
-    the hook calls."""
+    account check of the app's order-entry gate, reads it with the monitor (the cache feeds only
+    the check's sizing flag). `topic` is the `wallet` topic it publishes on. Meant for one event
+    loop, the one that runs the loops and the hook calls."""
 
     def __init__(
         self,

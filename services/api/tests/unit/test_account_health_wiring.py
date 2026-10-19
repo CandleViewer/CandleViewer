@@ -249,6 +249,17 @@ async def test_the_tracking_loop_reads_at_start_and_then_every_refresh_interval(
     await rig.close()
 
 
+async def test_the_key_standing_lapses_a_minute_after_the_last_good_read() -> None:
+    """24-internal-schemas.md section 8.4.1 says 60 s: written here, not read from
+    `TRACKING_FAULT_AFTER_S`, so that the bound and the contract cannot move apart."""
+    rig = Rig()
+    rig.runtime.standings.observe([key_row(ACC, verified_at=rig.clock.now())])
+    rig.clock.advance(60.0)
+    assert rig.runtime.standings.standing(ACC) is not None
+    rig.clock.advance(0.001)
+    assert rig.runtime.standings.standing(ACC) is None
+
+
 async def test_without_a_repository_a_refresh_tracks_nothing() -> None:
     rig = Rig(source=False)
     await rig.runtime.refresh_tracking()

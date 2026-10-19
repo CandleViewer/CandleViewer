@@ -171,8 +171,11 @@ class KeyStandings:
     def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
         """Hold the section 8.6 reaction to `refusal` for the account, at once and before it is
         logged, so a logging fault never withholds it (C-2.21). A second rejection adds its
-        reaction to a first still in force, and the fact then needs a pass after both; a first
-        that a later pass has cleared adds nothing, whether or not a read dropped it already."""
+        reaction to a first still in force, and the fact then needs a pass after both. A first
+        that a later pass has cleared adds nothing once a standing read has dropped it, or while
+        that pass is still in evidence (the job's result, or the stored pass of the last read). If
+        the pass leaves the evidence before any standing read, the first is in force again and
+        merges: the 403 reason can differ, and both refuse."""
         account = self._accounts.get(account_id)
         if account is not None:
             keys = self._judge(account)
@@ -192,7 +195,8 @@ class KeyStandings:
         )
 
     def _held(self, account_id: UUID, keys: Iterable[_Judged]) -> _Rejection | None:
-        """The account's rejection while it is in force; one a later pass has cleared is dropped."""
+        """The account's rejection while it is in force; one that a later pass in `keys` clears is
+        dropped. `keys` is the evidence now: a pass no longer in it clears nothing."""
         rejection = self._rejections.get(account_id)
         if rejection is not None and _passed_since(rejection, keys):
             del self._rejections[account_id]

@@ -1790,9 +1790,10 @@ def create_app(
     app.state.account_health = account_health
     ctx.accounts.attach_account_health(account_health.feed)
     # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and
-    # then the account check (key standing, health, wallet), synchronous and never flag-gated
-    # (C-2.21, C-4.14). The flag runtime holds no gate until this composes it, so no holder ever
-    # takes one without the account check; the runtime and `app.state` serve this one.
+    # then the account check (key standing and health; the wallet only feeds its sizing flag),
+    # synchronous and never flag-gated (C-2.21, C-4.14). The flag runtime holds no gate until this
+    # composes it, so no holder ever takes one without the account check; the runtime and
+    # `app.state` serve this one.
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check
     )
