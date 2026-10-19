@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Final, Literal, Protocol
 from uuid import UUID
 
+from candleviewer.admin.backups.artefact_port import OpenArtefact
 from candleviewer.admin.errors import AdminError
-from candleviewer.storage.repositories.backups import BACKUP_ERROR_CODES, BackupErrorCode
+from candleviewer.storage.repositories.backups import BACKUP_ERROR_CODES, BackupErrorCode, BackupRow
 from candleviewer.storage.repositories.backups import VerifyMethod as VerifyMethod  # BK-3a's
 
 JobKind = Literal["backup", "backup_verify", "backup_restore"]  # `Job.kind` values
@@ -76,9 +78,21 @@ class BackupRunner(Protocol):
 
 
 class ScratchVerifier(Protocol):
-    async def verify(self, backup_id: UUID, location: str, progress: Progress) -> VerifyMethod:
-        """Restore into scratch and assert, after the digest check; returns the `verify_method`,
-        and a failed assertion raises `BackupJobError("verify_failed")`."""
+    async def verify(
+        self, backup_id: UUID, location: str, artefact: OpenArtefact | None, progress: Progress
+    ) -> VerifyMethod:
+        """Restore into scratch and assert, once the digest matched. `artefact` is the file the
+        job hashed, still open: read it through `stream()` only, never by reopening `location`,
+        so no file swapped in after the hash is decrypted (Q7); `None` for a directory or a
+        repository, which this checks at `location` itself (Q8), so it is that backup's only
+        integrity gate: it first resolves `location`, without following a symbolic link, to a
+        directory inside the backup root (`CV_BACKUP_ROOT`) before reading anything, else fails
+        conclusively (SR-BK9-02). Returns the `verify_method`. Any content failure (a failed
+        assertion, content corrupt or unexpected) raises `BackupJobError("verify_failed")`,
+        conclusive (SR-CD2-02); only the environment's faults are inconclusive: an unreadable
+        volume or store (`ArtefactUnreadable`, `StorageTierUnavailable`,
+        `BackupJobError("store_unavailable")`) or a timeout. The job takes anything else it raises
+        as `verify_failed` too. It bounds the wait and, cancelled, closes the artefact."""
 
 
 class ArtefactRemover(Protocol):
@@ -119,3 +133,39 @@ class OpenPositions(Protocol):
 class RunEvidence(Protocol):
     async def bound_digest(self, backup_id: UUID) -> str | None:
         """The digest the run's finished `backup.run` record bound; `None` when none did."""
+
+
+@dataclass(frozen=True, slots=True)
+class RunRecord:
+    """What a backup's newest successful `backup.run` record at `stage: finished` bound."""
+
+    digest: str | None  # `checksum_sha256`: none for a directory or a repository (Q8)
+    covers_to: datetime | None = None  # the threat model's §6 step 3 reads it from the record
+
+
+class RunRecords(Protocol):
+    async def run_record(self, backup_id: UUID) -> RunRecord | None:
+        """Read from the append-only trail, never the row; `None` when no such record is found,
+        or none whose chain checks out."""
+
+
+#: A verification's conclusive failures: only these are recorded on the row (contract-D); any
+#: other end of its job (`store_unavailable`, `audit_unavailable`, `internal_error`) is no evidence.
+CONCLUSIVE: Final = frozenset(
+    {"checksum_mismatch", "checksum_unbound", "artefact_missing", "verify_failed"}
+)
+
+
+class Outcomes(Protocol):
+    async def record_verify_outcome(
+        self, backup_id: UUID, *, method: VerifyMethod, at: datetime, error: BackupErrorCode | None
+    ) -> BackupRow | None: ...  # BK-3's guarded write
+
+
+class Freshness(Protocol):
+    """BK-5's `BackupFreshness` with BK-12's `recompute` (bounded, never raising, locked). The job
+    contains a failure of either and bounds `recompute`, so neither changes its end."""
+
+    def record_success(self, row: BackupRow) -> None: ...
+
+    async def recompute(self, row: BackupRow) -> None: ...
