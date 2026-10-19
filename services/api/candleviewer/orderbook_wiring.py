@@ -13,6 +13,9 @@ Wires the venue-neutral `book` module to ingestion. Rules:
   re-enters `snapshot_pending` (chart) / re-requests (unsupervised).
 * Write-behind to QuestDB is a bounded queue that drops oldest, never
   blocking the reader.
+* A released symbol's grace (US-MKT-005) ends on the stream's own tick or its
+  next frame, whichever comes first: the topic is dropped and the book
+  forgotten, so a later acquire is served from a fresh snapshot (#3807).
 
 Plain code on the hot path (catalogue 1.2, C-2.20): this module never imports
 the statechart package. B14 health supervision is an injected
@@ -388,7 +391,11 @@ class BookStream:
             if tb is not None:  # C-2.5: a rejected book frame is a gap -> resync, never patch
                 await tb.active.invalidate("rejected_frame")
             return
-        if ev is None or ev.symbol not in self._demand.desired():
+        if ev is None:
+            return
+        if ev.symbol not in self._demand.desired():
+            if ev.symbol in self._books:  # #3807: its grace ran out unsynced: forget it now
+                self.sync()
             return
         # #3806: the grid `ev` was parsed on. No await lies between the parse and this read, so
         # both read the same catalogue tick size.
@@ -491,6 +498,7 @@ class BookStream:
     async def _timeout_loop(self) -> None:
         while True:
             await self._sleep(_TICK_S)
+            self.sync()  # #3807: a released symbol's grace ends here, demand change or not
             await self.check_timeouts()
 
     async def start(self) -> None:
