@@ -493,4 +493,15 @@ describe("decodeHeatmapColumn", () => {
     });
     expect(() => decodeHeatmapColumn(header)).toThrow(BinaryFrameError);
   });
+
+  // E17-R-21 (§3.4): a heatmap frame is one column; a whole, valid body does not change that.
+  it.each([0, 2, 0xffffffff])("rejects a header record_count of %i", (recordCount) => {
+    const header = buildHeader({ bodyKind: BODY_KIND.HEATMAP_COLUMN, recordCount });
+    const prefix = new DataView(new ArrayBuffer(24));
+    prefix.setBigInt64(12, 1n, true); // price_step; row_count 0
+    const frame = concatBuffers(header, prefix);
+    expect(() => decodeHeatmapColumn(frame)).toThrow(`record_count=${recordCount}, expected 1`);
+    header.setUint32(12, 1, true);
+    expect(decodeHeatmapColumn(concatBuffers(header, prefix)).rows).toEqual([]);
+  });
 });

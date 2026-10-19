@@ -244,9 +244,9 @@ If an emission cannot be built even structured (a value no valid bar has: not fi
 
 **body_kind 5 — footprint.** Requires header `format_version = 2` (#2529); a `format_version = 1` footprint body (8-byte group prefixes without identity) is no longer sent. `record_count` per-bar groups, each opening with a 28-byte prefix, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `u32 cell_count`, `u8 flags`, then 3 reserved zero bytes; then `cell_count` × 33 bytes: `i64 price`, `u64 bid_volume`, `u64 ask_volume`, `u32 trades`, `u8 flags` (bit0 buy-imbalance, bit1 sell-imbalance, bit2 in-stack, bit3 POC). The group `flags` byte works like kind 4's: bit0 `confirm` (1 = the bar is closed, 0 = still forming), the binary twin of §14.4 `confirm`; bits 1–7 are reserved, 0 on send and ignored on receive, so a later flag is additive. The version is bumped rather than the fields appended because the group prefix has a fixed stride: a v1 decoder reading 8-byte prefixes from a body with 28-byte prefixes would take `generation` for `ts_offset_ms` and `cell_count` and misread every group without noticing. v2 replaces v1 with no deprecation entry and no dual-serve release (C-6.3) because no footprint frame was ever produced (the footprint snapshot source is still pending in `ws_wiring.PENDING_ADAPTERS`, #2197), as with the precedents #2019, #2380 and #2400. Body kinds 1–3 and 6 stay at `format_version = 1`.
 
-**body_kind 6 — heatmap column.** One time-bucket column: `u32 ts_offset_ms`, `i64 price_min`, `i64 price_step`, `u32 row_count`, then `row_count` × 16 bytes: `u64 bid_size`, `u64 ask_size`. The renderer uploads this straight into a texture row.
+**body_kind 6 — heatmap column.** One time-bucket column: `u32 ts_offset_ms`, `i64 price_min`, `i64 price_step`, `u32 row_count`, then `row_count` × 16 bytes: `u64 bid_size`, `u64 ask_size`. The renderer uploads this straight into a texture row. The header's `record_count` counts the one column, so it is 1; any other value is `frame_malformed` (#415).
 
-**Reserved record bytes.** Bars (85 B) and footprint cells (33 B) records end in 4 reserved zero bytes after `flags` (the listed fields total 81 B / 29 B), and each footprint group prefix (28 B) ends in 3 after its `flags` (25 B listed); the encoder writes zeros and decoders ignore them. The byte layout of every kind is declared once in `packages/protocol/cvwb-layout.json` (E17-T02).
+**Reserved record bytes.** Bars (85 B) and footprint cells (33 B) records end in 4 reserved zero bytes after `flags` (the listed fields total 81 B / 29 B), and each footprint group prefix (28 B) ends in 3 after its `flags` (25 B listed); the encoder writes zeros and decoders ignore them. So do the header's `reserved` bytes and its `flags` bits 4–7: 0 on send, ignored on receive (#415). The byte layout of every kind is declared once in `packages/protocol/cvwb-layout.json` (E17-T02).
 
 **Client obligations.** A client MUST validate `magic` and `format_version` (and MUST reject, as `frame_malformed`, a `(body_kind, format_version)` pair it does not know — e.g. a v1 decoder receiving v2 bars; the code is `frame_malformed` on the wire and decoders MAY surface the more specific diagnostic `unsupported_format_version` locally, which maps to `frame_malformed` in §10), and MUST treat a body whose length disagrees with `record_count` as a protocol error (`frame_malformed`, §10) and resync. For fixed-stride bodies (body_kind 4, bars) the rule is exact: body length MUST equal `24 + record_count × record_size`; both a short body and trailing bytes are `frame_malformed`. Forward compatibility is carried by `format_version`, not by trailing bytes. Variable-layout body kinds continue to ignore trailing bytes after the last declared record.
 
@@ -368,7 +368,7 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
 
 `limits.max_inbound_frame_bytes` applies once `auth_ok` is sent. Until then a frame may be at most 8 KiB, and a MessagePack frame at most 72 values (§3.6).
 
-`clock_skew_ms` = server time minus the client's `clock_ms`. The UI surfaces a warning above ±2 000 ms because a skewed client mis-renders "bar closes in N seconds" countdowns.
+`clock_skew_ms` = server time minus the client's `clock_ms`. The UI surfaces a warning above ±2 000 ms because a skewed client mis-renders "bar closes in N seconds" countdowns. A `clock_ms` that is not a §13 `epochMs` (an integer from 0 to 2^53 - 1) is ignored as if absent, so the `welcome` then has no `clock_skew_ms`; a `ping`'s `client_ms` likewise, and its `pong` then has no `rtt_hint_ms` (§9.1, #415).
 
 `features.coalescing` reports whether this server coalesces (§8.2). It mirrors `CV_WS_BACKPRESSURE_ENABLED` (§4.3, §8.4): `true` while the flag is on, `false` while it is off, and the flag is switched on only once the §8 mechanisms are all wired and the chaos scenarios have passed (§8.4 Rollout). The `welcome` example above shows a server with the flag on. The schema is unchanged: §13.3 already types every `features` value as a boolean.
 
@@ -1824,7 +1824,12 @@ Shared definitions used throughout:
     },
     "symbol": { "type": "string", "pattern": "^[A-Z0-9]{2,20}USDT$" },
     "uuid": { "type": "string", "format": "uuid" },
-    "epochMs": { "type": "integer", "minimum": 0, "description": "Epoch milliseconds, UTC." },
+    "epochMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Epoch milliseconds, UTC."
+    },
     "seq": { "type": ["integer", "null"], "minimum": 0 },
     "topic": {
       "type": "string",

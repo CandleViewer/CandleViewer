@@ -239,6 +239,16 @@ def test_encode_header_derives_version_and_counts() -> None:
     assert encode(Frame(BARS))[4] == 2
 
 
+@pytest.mark.parametrize("count", [0, 2, 0xFFFFFFFF])
+def test_decode_heatmap_column_with_a_record_count_other_than_one_is_malformed(count: int) -> None:
+    """E17-R-21 (§3.4): one column a frame. The same valid column, re-stamped, is refused."""
+    raw = bytearray(encode(Frame(HEATMAP_COLUMN, ((1, 2),), prefix=(0, 0, 1))))
+    assert decode(bytes(raw)).records == ((1, 2),)
+    struct.pack_into("<I", raw, 12, count)
+    with pytest.raises(FrameMalformedError, match=f"record_count={count}, expected 1"):
+        decode(bytes(raw))
+
+
 # --- body_kind 5 v2: the bar key on every footprint group (#2529) ------------------------
 
 _CELL = (6_500_000, 10, 20, 3, 0b1001)

@@ -234,10 +234,10 @@ describe("validateCvwb (C10)", () => {
     expect(result).toMatchObject({ t: "decode_error", code: "frame_malformed", diagnostic });
   });
 
-  it("cvwb corpus: all 71 cases match `expect` and none throws (SR-128, WS-D10)", () => {
+  it("cvwb corpus: all 74 cases match `expect` and none throws (SR-128, WS-D10)", () => {
     type Seed = { name: string; expect: "ok" | "malformed"; hex: string };
     const corpus = JSON.parse(repoFile("tests/fuzz/ws-frames/corpus.json")) as Seed[];
-    expect(corpus).toHaveLength(71);
+    expect(corpus).toHaveLength(74);
     const outcome = (hex: string) =>
       "ok" in validateCvwb(Buffer.from(hex, "hex")) ? "ok" : "malformed";
     expect(corpus.filter((c) => outcome(c.hex) !== c.expect).map((c) => c.name)).toEqual([]);

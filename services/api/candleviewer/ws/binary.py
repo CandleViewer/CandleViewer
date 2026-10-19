@@ -288,6 +288,8 @@ def decode(data: bytes | bytearray | memoryview) -> Frame:
     avail = n - off
     # SR-128: every wire count is checked against `avail` before it sizes anything.
     if kind.body_prefix is not None:
+        if count != 1:  # E17-R-21: a heatmap frame is one column, and its header counts it (§3.4)
+            raise FrameMalformedError(f"{kind.name}: record_count={count}, expected 1")
         _fits(1, kind.body_prefix.size, avail, kind.name)
         *prefix, row_count = _st(kind.body_prefix).unpack_from(view, off)
         off += kind.body_prefix.size

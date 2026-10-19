@@ -67,6 +67,9 @@ RATE_PER_MINUTE: Final = 300
 PONG_BUDGET_PER_S: Final = 4
 #: §8.5: the most of them at once, so `pong`s that arrive together still fit (two seconds' worth).
 PONG_BUDGET_BURST: Final = 8
+#: §13 `epochMs` (#415, E17-R-10): the largest epoch-ms value a client field may carry, 2**53 - 1,
+#: the largest integer a JSON number holds exactly; the schema states it as its `maximum`.
+MAX_EPOCH_MS: Final = 2**53 - 1
 
 LIMITS_BLOCK: Final[dict[str, int]] = {
     "max_subscriptions": MAX_SUBSCRIPTIONS,
@@ -469,6 +472,19 @@ def welcome_features(*, coalescing: bool) -> dict[str, bool]:
     return {**FEATURES, "coalescing": coalescing}
 
 
+def client_epoch_ms(value: object) -> int | None:
+    """A client's §13 `epochMs` field (`hello.clock_ms`, `ping.client_ms`): an int, not a bool,
+    from 0 to `MAX_EPOCH_MS`. Any other value counts as absent, as one of another type always
+    did (#415, E17-R-10)."""
+    return value if type(value) is int and 0 <= value <= MAX_EPOCH_MS else None
+
+
+def clamp_ms(value: int) -> int:
+    """A difference the server computes from a client's `epochMs` (`clock_skew_ms`,
+    `rtt_hint_ms`), held to plus or minus `MAX_EPOCH_MS`."""
+    return max(-MAX_EPOCH_MS, min(MAX_EPOCH_MS, value))
+
+
 def welcome_payload(
     *,
     encoding: str,
@@ -483,7 +499,7 @@ def welcome_payload(
     heartbeat_timeout_s: float = HEARTBEAT_TIMEOUT_S,
 ) -> dict[str, Any]:
     """§4.2 body. `clock_skew_ms` = server time - client `clock_ms` (reported, never corrected);
-    omitted when the client sent no integer clock."""
+    omitted when the client sent no §13 `epochMs` clock (`client_epoch_ms`)."""
     p: dict[str, Any] = {
         "protocol": "cv.v1",
         "encoding": encoding,
@@ -500,8 +516,8 @@ def welcome_payload(
         "limits": dict(LIMITS_BLOCK),
         "features": dict(features),
     }
-    if isinstance(client_clock_ms, int) and not isinstance(client_clock_ms, bool):
-        p["clock_skew_ms"] = server_time_ms - client_clock_ms
+    if (clock_ms := client_epoch_ms(client_clock_ms)) is not None:
+        p["clock_skew_ms"] = clamp_ms(server_time_ms - clock_ms)
     return p
 
 

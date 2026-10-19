@@ -18,9 +18,10 @@ name: fuzz-nightly
 # splits the budget evenly over its targets, 1 s at least, and hands the share to the suite as
 # CV_FUZZ_SECONDS, how long EACH target runs; a target stops at the first run that ends past its
 # share, a few seconds late.
-#   python      the budget / the fuzz-marked tests `pytest --collect-only` finds in the folder: 9 at
-#               this writing (4 decoder, 5 parser), so 200 s each (Saturday 1200 s). A new fuzz
-#               test is counted by the next run; none collected leaves pytest to fail the job
+#   python      the budget / the fuzz-marked tests `pytest --collect-only` finds in the folder: 10
+#               at this writing (4 decoder, 5 parser, 1 JSON client-frame), so 180 s each (Saturday
+#               1080 s). A new fuzz test is counted by the next run; none collected leaves pytest to
+#               fail the job
 #   typescript  the budget / 2 projects: 900 s each (Saturday 5400 s)
 # Cost: two jobs, so about 60 runner-minutes of fuzzing a night and 6 runner-hours on Saturday,
 # plus setup. scripts/tests/test_fuzz_nightly_budget.py pins the split, the selection and the
