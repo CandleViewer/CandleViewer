@@ -585,10 +585,12 @@ index alone, removing nothing.
   unless the source pin itself is the mistake. `--check --offline` re-runs
   the ledger part without registry calls.
 - **CI-IMG-008** (pin ledger count, #3571): the "All N pins" line of `PINS.md`
-  is missing or does not count the table's rows. Fix the number.
-- **CI-IMG-009** (pin ledger unreadable, #3571): `PINS.md` is missing, its
-  table lacks an Image, Tag or Digest column or the separator row, or a row's
-  cells cannot be read. The check fails closed; restore the table's shape.
+  is missing, appears more than once, or does not count the table's rows. Keep
+  one such line and fix the number.
+- **CI-IMG-009** (pin ledger unreadable, #3571): `PINS.md` is missing or not
+  UTF-8, its header lacks an Image, Tag or Digest column or names one twice,
+  its separator row is missing or has a different cell count, or a row's cells
+  cannot be read. The check fails closed; restore the table's shape.
 
 ### CI-SPIKE-* — spike containment (`tools/ci/check_spike_containment.py`)
 

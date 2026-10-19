@@ -205,20 +205,21 @@ def source_pins(root: Path) -> dict[Pin, list[str]]:
 
 def read_ledger(
     root: Path,
-) -> tuple[list[tuple[Pin, int]], int, tuple[int, int] | None]:
-    """Return the ledger's (pin, line) rows, its header line and the "All N pins" (N, line)."""
+) -> tuple[list[tuple[Pin, int]], int, list[tuple[int, int]]]:
+    """Return the ledger's (pin, line) rows, its header line and each "All N pins" (N, line)."""
     try:
         lines = (root / LEDGER).read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise LedgerError(f"{LEDGER}: cannot read ({type(exc).__name__})") from exc
     head = next((n for n, s in enumerate(lines) if s.startswith("|")), None)
     if head is None:
         raise LedgerError(f"{LEDGER}: no table")
     cols = _cells(lines[head])
-    if not {"Image", "Tag", "Digest"} <= set(cols):
-        raise LedgerError(f"{LEDGER}:{head + 1}: header lacks Image, Tag or Digest")
-    if head + 1 == len(lines) or not SEPARATOR_RE.fullmatch(lines[head + 1].strip()):
-        raise LedgerError(f"{LEDGER}:{head + 2}: no separator row under the header")
+    if any(cols.count(c) != 1 for c in ("Image", "Tag", "Digest")):
+        raise LedgerError(f"{LEDGER}:{head + 1}: header needs one Image, Tag, Digest")
+    sep = lines[head + 1].strip() if head + 1 < len(lines) else ""
+    if not SEPARATOR_RE.fullmatch(sep) or len(_cells(sep)) != len(cols):
+        raise LedgerError(f"{LEDGER}:{head + 2}: no separator row matching the header")
     rows: list[tuple[Pin, int]] = []
     for n in range(head + 2, len(lines)):
         if not lines[n].startswith("|"):
@@ -234,16 +235,16 @@ def read_ledger(
         if m is None:
             raise LedgerError(f"{LEDGER}:{n + 1}: cannot read the image, tag or digest")
         rows.append(((m.group("repo"), m.group("tag") or "", m.group("digest")), n + 1))
-    counts = (
+    counts = [
         (int(c[1]), n + 1) for n, s in enumerate(lines) if (c := COUNT_RE.match(s))
-    )
-    return rows, head + 1, next(counts, None)
+    ]
+    return rows, head + 1, counts
 
 
 def check_ledger(root: Path) -> list[str]:
     """Compare ``PINS.md`` with the source pins, one row per pin (CI-IMG-007..009); offline."""
     try:
-        rows, head, count = read_ledger(root)
+        rows, head, counts = read_ledger(root)
     except LedgerError as exc:
         return [f"CI-IMG-009 {exc}"]
     src = source_pins(root)
@@ -274,11 +275,14 @@ def check_ledger(root: Path) -> list[str]:
         f"CI-IMG-007 {', '.join(src[p])} {_ref(p)}: no row in the table at {LEDGER}:{head}"
         for p in sorted(unrowed)
     ]
-    if count is None:
+    if not counts:
         errors.append(f"CI-IMG-008 {LEDGER}: no 'All N pins' count line")
-    elif count[0] != len(rows):
+    elif len(counts) > 1:
+        places = ", ".join(f"{LEDGER}:{n}" for _, n in counts)
+        errors.append(f"CI-IMG-008 {places}: more than one 'All N pins' count line")
+    elif counts[0][0] != len(rows):
         errors.append(
-            f"CI-IMG-008 {LEDGER}:{count[1]}: says All {count[0]} pins; "
+            f"CI-IMG-008 {LEDGER}:{counts[0][1]}: says All {counts[0][0]} pins; "
             f"the table at {LEDGER}:{head} lists {len(rows)}"
         )
     return errors

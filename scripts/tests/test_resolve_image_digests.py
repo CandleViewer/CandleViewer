@@ -202,6 +202,10 @@ def test_ledger_duplicate_row_fails(
             f"{LEDGER}:7: says All 2 pins; the table at {LEDGER}:3 lists 1",
         ),
         ("Every pin is verified.", f"{LEDGER}: no 'All N pins' count line"),
+        (
+            "All 1 pins are verified.\nAll 5 pins are verified.",
+            f"{LEDGER}:7, {LEDGER}:8: more than one 'All N pins' count line",
+        ),
     ],
 )
 def test_ledger_count_line_must_count_the_rows(
@@ -216,6 +220,14 @@ def test_ledger_count_line_must_count_the_rows(
     assert f"CI-IMG-008 {want}" in err
 
 
+def _two_digest_columns(s: str) -> str:
+    """A second Digest column that is right while the first one is wrong."""
+    s = s.replace("Registry |", "Registry | Digest |").replace(
+        "--- |\n", "--- | --- |\n", 1
+    )
+    return s.replace(f"| {REAL2} | Docker Hub |", f"| {REAL} | Docker Hub | {REAL2} |")
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -223,6 +235,9 @@ def test_ledger_count_line_must_count_the_rows(
         lambda s: s.replace(f"{REAL2} |", f"{REAL2[:-1]} |"),
         lambda s: s.replace("| Docker Hub |", "|"),
         lambda s: s.replace("| --- | --- | --- | --- |\n", ""),
+        lambda s: s.replace("| --- | --- | --- | --- |", "| --- | --- | --- |"),
+        _two_digest_columns,
+        lambda s: s.replace("Hub", "H\xfcb").encode("latin-1"),
         lambda s: "# Pins\n\nAll 0 pins are verified.\n",
         None,
     ],
@@ -231,6 +246,9 @@ def test_ledger_count_line_must_count_the_rows(
         "short-digest",
         "short-row",
         "no-separator",
+        "short-separator",
+        "two-digest-columns",
+        "not-utf8",
         "no-table",
         "no-file",
     ],
@@ -238,14 +256,15 @@ def test_ledger_count_line_must_count_the_rows(
 def test_ledger_unreadable_table_fails_closed(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    mutate: Callable[[str], str] | None,
+    mutate: Callable[[str], str | bytes] | None,
 ) -> None:
     _tree(tmp_path, REAL2)
     f = tmp_path / LEDGER
     if mutate is None:
         f.unlink()
     else:
-        f.write_text(mutate(f.read_text(encoding="utf-8")), encoding="utf-8")
+        out = mutate(f.read_text(encoding="utf-8"))
+        f.write_bytes(out if isinstance(out, bytes) else out.encode())
     rc, err = _check(tmp_path, capsys)
     assert rc == 1
     assert f"CI-IMG-009 {LEDGER}" in err
