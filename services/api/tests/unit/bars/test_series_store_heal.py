@@ -594,6 +594,8 @@ async def test_a_clean_read_with_no_row_flags_a_held_bar_above_0_and_the_driver_
             clock.t += 2 * RETRY_AFTER_S
             await store.refresh(SYM, H)
     gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
+    # `[flagged]` pins residual 1 (recorded, not fixed): the degraded read in between forgot the
+    # logged hole, so this clean read warns of (0, 19) a second time, as alternating reads do.
     assert (view(store), store.gapped(SYM, H), gaps) == (([20], 21), True, [(0, 19)])
     assert counted("bars_series_gaps_total") == counts  # logged, not counted, by design
     hook = Hook(store)

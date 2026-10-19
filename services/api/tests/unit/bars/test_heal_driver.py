@@ -360,16 +360,21 @@ MISSES = pytest.mark.parametrize("miss", ["failed", "degraded"])
 async def test_reads_that_keep_missing_back_off_up_to_160_s(miss: str) -> None:
     """5, 10, 20, 40, 80, then 160 s, where it stays: each miss after the first doubles the
     interval, for the driver's `refresh` as for `ensure`. A read that keeps skipping a malformed
-    row (#3614: never `hydrated`) backs off the same way, never re-read at the floor."""
+    row (#3614: never `hydrated`) backs off the same way, never re-read at the floor. Its log
+    differs: a failed or degraded streak logs its first read only, a skipping read each time."""
     clock, tail = Clock(), missing(Tail(now=True), miss)
     store = SeriesStore(tail, clock=clock)
-    _held = await store.ensure(SYM, SPEC)
-    for k, wait in enumerate((1, 2, 4, 8, 16, 32, 32)):
-        clock.t += wait * RETRY_AFTER_S - 0.5
-        assert store.due(clock.t) == [] and not await store.refresh(SYM, H)
-        clock.t += 0.5
-        assert store.due(clock.t) == [(SYM, H)] and not await store.refresh(SYM, H)
-        assert tail.calls == k + 2
+    with capture_logs() as logs:
+        _held = await store.ensure(SYM, SPEC)
+        for k, wait in enumerate((1, 2, 4, 8, 16, 32, 32)):
+            clock.t += wait * RETRY_AFTER_S - 0.5
+            assert store.due(clock.t) == [] and not await store.refresh(SYM, H)
+            clock.t += 0.5
+            assert store.due(clock.t) == [(SYM, H)] and not await store.refresh(SYM, H)
+            assert tail.calls == k + 2
+    event = "bars_series_rows_skipped" if miss == "skipped" else f"bars_series_hydrate_{miss}"
+    logged = [e["event"] for e in logs if e["event"] == event]
+    assert logged == [event] * (tail.calls if miss == "skipped" else 1)
     assert MAX_GAP_BACKOFF * RETRY_AFTER_S == 160
 
 
