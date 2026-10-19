@@ -9,7 +9,7 @@ is. Exit 1 with a diff naming the stream and the field.
     python tools/fixtures/drift_check.py --write-expectations   # refresh baseline
 
 The scheduled workflow `.github/workflows/fixture-drift.yml` runs it on a sample
-captured by `capture_fixture.py` and opens an issue on failure.
+captured by `capture_fixture.py` and reports a failure on one open issue (#1849).
 """
 
 from __future__ import annotations

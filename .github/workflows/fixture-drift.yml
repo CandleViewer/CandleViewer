@@ -4,8 +4,10 @@ name: fixture-drift
 # Captures a small fresh sample from Bybit's PUBLIC stream (no credentials,
 # no secrets referenced) with tools/fixtures/capture_fixture.py, compares its
 # field presence + JSON types to packages/fixtures/bybit/<date>/schema_expectations.json
-# and opens an issue naming the stream and field on drift. Scheduled/manual only:
-# never runs on pull_request and is not a required check (C-9.1 unchanged).
+# and reports the stream and field on drift: a comment on the open fixture-drift issue, or a
+# new one (_nightly-issue.yml, #1849). Scheduled/manual only: never runs on pull_request and is
+# not a required check (C-9.1 unchanged). No workflow-level concurrency group (#3449): it would let
+# a manual run replace a pending scheduled one; the report job has a per-signal group instead.
 
 on:
   schedule:
@@ -25,7 +27,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      issues: write
+    outputs:
+      report: ${{ steps.handoff.outputs.report }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -55,19 +58,31 @@ jobs:
           uv run --project services/api python tools/fixtures/drift_check.py
           --sample "$RUNNER_TEMP/sample" --report "$RUNNER_TEMP/drift.txt"
 
-      - name: Open an issue on drift (R6)
+      - name: Hand the drift report to the issue job (R6)
+        id: handoff
         if: failure()
         env:
-          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ runner.temp }}/drift.txt
         run: |
           set -euo pipefail
-          touch "$RUNNER_TEMP/drift.txt"
-          {
-            echo "Bybit payload drift (or the drift job itself failed). Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo
-            echo '```'
-            cat "$RUNNER_TEMP/drift.txt"
-            echo '```'
-          } > "$RUNNER_TEMP/body.md"
-          gh issue create --title "fixture-drift: Bybit payload drift $(date -u +%F)" \
-            --label "area/ingestion" --label "priority/p1" --body-file "$RUNNER_TEMP/body.md"
+          eof=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          { echo "report<<$eof"; head -c 60000 "$REPORT" 2>/dev/null || echo "(no report produced)"
+            echo; echo "$eof"; } >> "$GITHUB_OUTPUT"
+
+  drift-issue:
+    needs: drift
+    # always(): runs after the red drift job, capture and network failures included, as before.
+    if: ${{ always() && needs.drift.result == 'failure' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: fixture-drift
+      title-prefix: "fixture-drift: Bybit payload drift"
+      labels: area/ingestion,priority/p1
+      body: |
+        Bybit payload drift (or the drift job itself failed). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+        ```
+        ${{ needs.drift.outputs.report }}
+        ```

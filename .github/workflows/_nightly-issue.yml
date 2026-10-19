@@ -1,0 +1,89 @@
+name: nightly-issue
+
+# #1849: the one writer of the nightlies' regression reports, called once per signal by
+# fixture-drift.yml, perf-storage-nightly.yml and perf-ingestion-nightly.yml. It comments on the
+# newest open issue github-actions[bot] opened with the signal's title prefix and all its labels,
+# or opens "<prefix> (YYYY-MM-DD)": one open issue per signal. Only the bot's issues count, as no
+# account can take its login (`[` is not a login character), while a title search on a public
+# repository matches anyone's issue. It reads the REST listing, not the lagging search API.
+# Two runs of one signal that finish together queue on the per-signal group, so the second finds
+# the issue the first opened; only this seconds-long job waits, unlike a workflow-level group
+# (#3449). As in e2e-nightly.yml's report, no checkout or action shares the job with the write
+# token, values reach the script through env only, and a bad input files nothing and fails the job.
+
+on:
+  workflow_call:
+    inputs:
+      signal:
+        description: "Slug naming the signal: the job's concurrency group and log lines"
+        type: string
+        required: true
+      title-prefix:
+        description: "Stable title prefix; a new issue is titled '<prefix> (YYYY-MM-DD)'"
+        type: string
+        required: true
+      labels:
+        description: "Comma-separated label names; a matching open issue carries them all"
+        type: string
+        required: true
+      body:
+        description: "The new issue's body or the comment, capped at 60000 bytes"
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  report:
+    name: report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    concurrency:
+      group: nightly-issue-${{ inputs.signal }}
+      cancel-in-progress: false
+    steps:
+      - name: Comment on the signal's open issue, or open one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SIGNAL: ${{ inputs.signal }}
+          TITLE_PREFIX: ${{ inputs.title-prefix }}
+          LABELS: ${{ inputs.labels }}
+          BODY: ${{ inputs.body }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=nightly-issue::Input $1 $2: nothing was filed."; exit 1; }
+          [[ "$SIGNAL" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail signal "is not a lowercase slug"
+          [[ -n "$TITLE_PREFIX" && "$TITLE_PREFIX" != *[[:cntrl:]]* ]] ||
+            fail title-prefix "is empty or not one line"
+          [[ "$LABELS" =~ ^[A-Za-z0-9._/-]+(,[A-Za-z0-9._/-]+)*$ ]] ||
+            fail labels "is not comma-separated label names"
+          # The newest open issue (not a pull request) the bot opened with the prefix and every
+          # label. pipefail: a failed listing fails the job, and nothing is filed.
+          number=$(gh api -X GET "repos/$GH_REPO/issues" -f state=open -f labels="$LABELS" \
+            -f per_page=100 --paginate --slurp | python3 -I -c '
+          import json, os, sys
+          prefix = os.environ["TITLE_PREFIX"]
+          print(max((issue["number"] for page in json.load(sys.stdin) for issue in page
+                     if issue.get("pull_request") is None
+                     and (issue.get("user") or {}).get("login") == "github-actions[bot]"
+                     and issue["title"].startswith(prefix)), default=""))')
+          body="$RUNNER_TEMP/nightly-issue-body.md"
+          printf '%s\n' "$BODY" > "$body"
+          if [ "$(wc -c < "$body")" -gt 60000 ]; then # GitHub refuses over 65536 characters
+            head -c 60000 "$body" > "$body.cut"
+            printf '\n\n(Truncated at 60000 bytes: the run has the rest.)\n' >> "$body.cut"
+            mv "$body.cut" "$body"
+          fi
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file "$body"
+            echo "$SIGNAL: commented on issue #$number."
+          else
+            args=(--title "$TITLE_PREFIX ($(date -u +%F))")
+            IFS=, read -r -a names <<< "$LABELS"
+            for name in "${names[@]}"; do args+=(--label "$name"); done
+            gh issue create "${args[@]}" --body-file "$body"
+            echo "$SIGNAL: opened an issue."
+          fi

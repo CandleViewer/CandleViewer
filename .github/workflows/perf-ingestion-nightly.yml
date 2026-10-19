@@ -6,6 +6,8 @@ name: perf-ingestion-nightly
 # FAIL > per-metric band, only against a same-machine-profile, non-warn-only baseline: the
 # committed baselines are laptop numbers, so this only WARNs until a CI-runner baseline is
 # recorded). Weekly (Sun) and on dispatch with profile=full: 24 h soak + k6. Never on PRs.
+# A red signal comments on its open issue, or opens one (_nightly-issue.yml, #1849). No
+# workflow-level concurrency group (#3449): the report job has a per-signal group instead.
 on:
   schedule:
     - cron: "37 3 * * *"
@@ -18,13 +20,16 @@ on:
         default: smoke
 permissions:
   contents: read
-  issues: write
 jobs:
   ingestion-soak:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CV_ENV: test
+    outputs:
+      soak-regressed: ${{ steps.sync.outcome == 'success' && (steps.soak.outcome == 'failure' || steps.burst.outcome == 'failure') }}
+      pack-regressed: ${{ steps.sync.outcome == 'success' && (steps.pack.outcome == 'failure' || steps.pack_tests.outcome == 'failure') }}
+      report: ${{ steps.handoff.outputs.report }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -38,14 +43,6 @@ jobs:
         id: burst
         working-directory: services/api
         run: uv run python bench/ingestion_soak.py burst --burst-s 60 --out ingestion-burst.json
-      - name: Open ticket on soak/burst regression
-        if: failure() && (steps.soak.outcome == 'failure' || steps.burst.outcome == 'failure') && steps.sync.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue create --title "perf: ingestion nightly soak/burst regression ($(date -u +%F))" \
-            --label perf --label area/ingestion \
-            --body "perf-ingestion-nightly failed. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Artifact: ingestion-soak-results."
       - name: E08-Q04 harness self-tests + scenario smokes (harness marker)
         id: pack_tests
         if: always() && steps.sync.outcome == 'success'
@@ -58,18 +55,16 @@ jobs:
         env:
           CV_BENCH_MACHINE_PROFILE: ci-ubuntu-latest
         run: uv run python -m bench.ingestion.runner all --profile smoke --out-dir bench/reports
-      - name: Open defect on perf-pack regression (diff attached)
-        if: failure() && (steps.pack.outcome == 'failure' || steps.pack_tests.outcome == 'failure') && steps.sync.outcome == 'success'
+      - name: Hand the gate diff to the issue job
+        id: handoff
+        if: failure()
         env:
-          GH_TOKEN: ${{ github.token }}
-        working-directory: services/api
+          REPORT: services/api/bench/reports/gate-diff.md
         run: |
-          { echo "E08-Q04 perf pack failed (budget breach or regression vs bench/baselines/e08)."
-            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID (artifact: ingestion-soak-results)."
-            echo "Baselines were not modified by this run."; echo
-            cat bench/reports/gate-diff.md 2>/dev/null || echo "(no gate diff produced)"; } > /tmp/body.md
-          gh issue create --title "perf: E08-Q04 ingestion perf pack regression ($(date -u +%F))" \
-            --label perf --label area/ingestion --label type/bug --body-file /tmp/body.md
+          set -euo pipefail
+          eof=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          { echo "report<<$eof"; head -c 60000 "$REPORT" 2>/dev/null || echo "(no report produced)"
+            echo; echo "$eof"; } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -90,6 +85,9 @@ jobs:
     env:
       CV_ENV: test
       CV_BENCH_MACHINE_PROFILE: bench-runner
+    outputs:
+      failed: ${{ steps.pack.outcome == 'failure' }}
+      report: ${{ steps.handoff.outputs.report }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -100,19 +98,63 @@ jobs:
         id: pack
         working-directory: services/api
         run: uv run python -m bench.ingestion.runner all --profile full --out-dir bench/reports
-      - name: Open defect on full-profile failure (diff attached)
-        if: failure() && steps.pack.outcome == 'failure'
+      - name: Hand the gate diff to the issue job
+        id: handoff
+        if: failure()
         env:
-          GH_TOKEN: ${{ github.token }}
-        working-directory: services/api
+          REPORT: services/api/bench/reports/gate-diff.md
         run: |
-          { echo "E08-Q04 full-profile perf pack failed. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; echo
-            cat bench/reports/gate-diff.md 2>/dev/null; } > /tmp/body.md
-          gh issue create --title "perf: E08-Q04 full perf pack failed ($(date -u +%F))" \
-            --label perf --label area/ingestion --label type/bug --body-file /tmp/body.md
+          set -euo pipefail
+          eof=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          { echo "report<<$eof"; head -c 60000 "$REPORT" 2>/dev/null || echo "(no report produced)"
+            echo; echo "$eof"; } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: e08-perf-pack-full
           path: services/api/bench/reports/
           if-no-files-found: ignore
+
+  ingestion-soak-issue:
+    needs: ingestion-soak
+    if: ${{ always() && needs.ingestion-soak.outputs.soak-regressed == 'true' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: perf-ingestion-soak
+      title-prefix: "perf: ingestion nightly soak/burst regression"
+      labels: perf,area/ingestion
+      body: "perf-ingestion-nightly failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: ingestion-soak-results."
+
+  perf-pack-issue:
+    needs: ingestion-soak
+    if: ${{ always() && needs.ingestion-soak.outputs.pack-regressed == 'true' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: perf-e08-q04-pack
+      title-prefix: "perf: E08-Q04 ingestion perf pack regression"
+      labels: perf,area/ingestion,type/bug
+      body: |
+        E08-Q04 perf pack failed (budget breach or regression vs bench/baselines/e08).
+        Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (artifact: ingestion-soak-results).
+        Baselines were not modified by this run.
+
+        ${{ needs.ingestion-soak.outputs.report }}
+
+  perf-pack-full-issue:
+    needs: perf-pack-full
+    if: ${{ always() && needs.perf-pack-full.outputs.failed == 'true' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: perf-e08-q04-full
+      title-prefix: "perf: E08-Q04 full perf pack failed"
+      labels: perf,area/ingestion,type/bug
+      body: |
+        E08-Q04 full-profile perf pack failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+        ${{ needs.perf-pack-full.outputs.report }}

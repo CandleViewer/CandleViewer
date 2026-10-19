@@ -45,4 +45,4 @@ go through Git LFS.
 - Secret scan: `node packages/fixtures/scripts/verify.mjs` (scans `bybit/`) and
   `python scripts/check_secrets_hygiene.py fixtures`, both already in CI.
 - Drift: `python tools/fixtures/drift_check.py --sample <dir>`, run nightly by
-  `.github/workflows/fixture-drift.yml`, which opens an issue on drift.
+  `.github/workflows/fixture-drift.yml`, which reports drift on its one open issue (#1849).
