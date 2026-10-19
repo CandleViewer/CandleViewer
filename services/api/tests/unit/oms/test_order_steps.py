@@ -271,3 +271,20 @@ async def test_an_execution_without_its_time_takes_the_steps(
     await writer(_step("submitted", "partially_filled", "EXEC", timeless, **FILLED))
     stored = await InMemoryExecutionStore(db).get(ACCOUNT, "e1")
     assert stored is not None and stored.exec_ts == T0
+
+
+@pytest.mark.parametrize(
+    ("ok", "stored"), [(True, (Decimal(64000), Decimal(1))), (False, (Decimal(63000), Decimal(1)))]
+)
+async def test_an_accepted_amend_writes_its_terms(
+    ok: bool, stored: tuple[Decimal, Decimal], writer: OrderStepWriter, db: InMemoryOrderStore
+) -> None:
+    """S2: the row takes an amend's terms only once the exchange accepted them, as the machine
+    adopted them; a refused amend writes nothing of its terms."""
+    await _submitted(writer)
+    await writer(_step("submitted", "amend_pending", "AMEND", {"price": "64000"}))
+    result = {"ok": ok, "terms": {"price": "64000"}}
+    price = "64000" if ok else "63000"
+    await writer(_step("amend_pending", "submitted", "done.invoke.amend", result, price=price))
+    row = await db.get(ACCOUNT, ORDER_ID)
+    assert row is not None and (row.price, row.qty) == stored

@@ -669,3 +669,26 @@ async def test_a_full_match_binds_the_id_its_lookup_found() -> None:
     ctx = _ctx()
     await b01.adopt_ack(None, ctx, _dup(FOUND), None)
     assert ctx["exchange_order_id"] == "x9"
+
+
+@pytest.mark.parametrize("fills", [[], ["e1"]])
+async def test_an_amend_sends_the_terms_its_event_staged(
+    fills: list[str], book: Book, charts: Charts
+) -> None:
+    """S2's positive path on the library, through the real amend service and the command port:
+    AMEND's terms are staged in context (an invoke reads the context, not the event), sent once,
+    and adopted from the ack into the live state the order came from."""
+    async with _machine(charts, "lifecycle.draft", AuditTap()) as interp:
+        await _send(interp, "VALIDATE", **VALIDATE)
+        await _send(interp, "SEND")
+        for exec_id in fills:
+            await _send(interp, "EXEC", **_exec(exec_id, "0.4"))
+        await _send(interp, "AMEND", price="64000", stop_loss="62500")
+        amend = book.commands.sent[-1]
+        assert (amend.kind, amend.terms) == ("amend", {"price": "64000", "stop_loss": "62500"})
+        assert (interp.context["price"], interp.context["stop_loss"]) == ("64000", "62500")
+        live = "partially_filled" if fills else "submitted"
+        assert f"order.lifecycle.{live}" in interp.current_state_ids
+        assert interp.context["amend_terms"] is None
+        row = await book.store.get(ACCOUNT, ORDER_ID)  # the row holds what the exchange accepted
+        assert row is not None and (row.price, row.stop_loss) == (Decimal(64000), Decimal(62500))

@@ -165,6 +165,17 @@ def test_lifecycle_state_comes_only_with_the_state_it_maps_to(
         require_lifecycle(chart, state)
 
 
+@pytest.mark.parametrize(
+    ("terms", "error"),
+    [({"side": Decimal(1)}, "only the terms"), ({"price": Decimal("1E-19")}, "price does not fit")],
+)
+def test_a_step_changes_only_amendable_terms_the_columns_hold(
+    terms: dict[str, Decimal], error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        step(_HELD, "accepted", terms=terms)
+
+
 def test_require_aware_refuses_only_a_naive_datetime() -> None:
     require_aware("event_ts", datetime(2026, 10, 16, tzinfo=timezone(timedelta(hours=-3))))
     with pytest.raises(ValueError, match="event_ts must be a timezone-aware"):

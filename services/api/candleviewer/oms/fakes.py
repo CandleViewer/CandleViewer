@@ -31,7 +31,7 @@ _PAGE = port.MAX_EVENT_PAGE
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{4,20}")
 #: The CHECKs (`0029_oms_core`) a value of the types can break, each true where SQL's is false: a
 #: NULL leaves a CHECK unknown, which passes it.
-_ORDER_CHECKS: Final[dict[str, Callable[[port.NewOrder], bool]]] = {
+_ORDER_CHECKS: Final[dict[str, Callable[[port.NewOrder | Row], bool]]] = {
     "ord_cum": lambda o: not 0 <= o.cum_exec_qty <= o.qty,
     "ord_limit_px": lambda o: o.order_type == "Limit" and o.price is not None and o.price <= 0,
     "ord_link_fmt": lambda o: not any(p.fullmatch(o.order_link_id) for p in (OUR_ID, EXT_ID)),
@@ -231,14 +231,17 @@ class InMemoryOrderStore:
         if order.state != step.from_state:
             raise port.StaleOrderState(step.order_id, step.from_state)
         changes: dict[str, Any] = {**step.changes(), **(totals or {})}
+        row = replace(order, **changes)
+        for name, broken in sorted(_ORDER_CHECKS.items()):  # an UPDATE meets the CHECKs first,
+            if broken(row):
+                raise port.OrderConstraintError(name)
         bound = changes.get("exchange_order_id")
-        if bound is not None and any(
+        if bound is not None and any(  # then the unique index
             (r.exchange_account_id, r.exchange_order_id) == (order.exchange_account_id, bound)
             for r in self._orders.values()
             if r.id != order.id
         ):
-            raise port.OrderConstraintError("ux_orders_exch_id")  # as the UPDATE meets the index
-        row = replace(order, **changes)
+            raise port.OrderConstraintError("ux_orders_exch_id")
         leaves = _EXACT.subtract(row.qty, row.cum_exec_qty)
         row = _at_scale(replace(row, leaves_qty=leaves), _ORDER_SCALES)
         return row, self._event(row, step.event, (step.from_state, step.to_state))

@@ -217,6 +217,21 @@ class WriteAheadContract:
             await h.orders.transition(step(row, "submitted", exchange_order_id="x-1"))
         assert await h.stored(row) == (row, [0])
 
+    async def test_an_accepted_amend_stores_its_terms(self, h: Harness) -> None:
+        """S2: a step stores the terms an accepted amend changed; a `qty` under the filled quantity
+        is `ord_cum`'s to refuse, and nothing is written (#847)."""
+        row = await h.order("pending_amend")
+        terms = {"price": Decimal("64000"), "stop_loss": Decimal("62500"), "qty": Decimal("0.2")}
+        done = await h.orders.transition(step(row, "accepted", terms=terms))
+        stored = (done.order.price, done.order.stop_loss, done.order.qty, done.order.leaves_qty)
+        assert stored == (Decimal(64000), Decimal(62500), Decimal("0.2"), Decimal("0.2"))
+        filled = await h.executions.commit_fill(fill(done.order, "E1", "0.1"))
+        assert filled is not None
+        moved = step(filled.order, "pending_amend", terms={"qty": Decimal("0.05")})
+        with pytest.raises(port.OrderConstraintError, match="ord_cum"):
+            await h.orders.transition(moved)
+        assert (await h.stored(row))[0] == filled.order
+
     async def test_a_latency_of_zero_is_stored(self, h: Harness) -> None:
         """`oe_latency` refuses a negative `latency_ms` (`_REFUSED`), not zero."""
         row = await h.order("pending_submit")

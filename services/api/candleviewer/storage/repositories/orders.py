@@ -106,6 +106,8 @@ EXCHANGE_SOURCES: Final = frozenset[OrderEventSource]({"rest", "ws_private", "re
 FILL_KINDS: Final = frozenset[OrderEventKind]({"fill", "partial_fill"})
 #: The values a step's `from_state`, `to_state`, `kind` and `source` may take (OM-T04).
 _LITERALS: Final = tuple(map(get_args, (OrderState, OrderState, OrderEventKind, OrderEventSource)))
+#: The order terms an accepted amend may change (22-api-openapi.yaml `AmendOrderRequest`).
+AMENDABLE: Final = ("qty", "price", "trigger_price", "take_profit", "stop_loss")
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
 UX_ORDERS_LINK: Final = "ux_orders_link"
 #: Upper bound of one `list_for_order` page.
@@ -247,10 +249,11 @@ def require_no_fill(event: NewOrderEvent, to_state: OrderState | None = None) ->
 class OrderTransition:
     """A write-ahead step (24 Sec.8.2 S8): `state` moves to `to_state` only while the row holds
     `from_state` (compare-and-set), and `event` is appended with both states, in one transaction.
-    `reject_code`, `reject_message`, `lifecycle_state` (the chart state `to_state` persists) and
-    `exchange_order_id` (the exchange's id for the order, once B1 binds it, SR-E29-03) are set
-    when given; `ux_orders_exch_id` refuses an id another order of the account holds. Built only
-    from the columns' values, so every store refuses anything else alike, before any statement
+    `reject_code`, `reject_message`, `lifecycle_state` (the chart state `to_state` persists),
+    `exchange_order_id` (the exchange's id for the order, once B1 binds it, SR-E29-03) and the
+    `terms` an accepted amend changed (`AMENDABLE`) are set when given; the row's CHECKs and
+    `ux_orders_exch_id` still apply (a `qty` under `cum_exec_qty` is `ord_cum`'s). Built only from
+    the columns' values, so every store refuses anything else alike, before any statement
     (OM-T04)."""
 
     account_id: UUID
@@ -262,6 +265,7 @@ class OrderTransition:
     reject_message: str | None = None
     lifecycle_state: LifecycleState | None = None
     exchange_order_id: str | None = None
+    terms: Mapping[str, Decimal] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         require_exchange_record(self.event)
@@ -269,6 +273,10 @@ class OrderTransition:
         if any(value not in values for value, values in zip(given, _LITERALS, strict=True)):
             raise ValueError("a step's states, kind and source must be values of their columns")
         require_lifecycle(self.lifecycle_state, self.to_state)
+        if not set(self.terms) <= set(AMENDABLE):
+            raise ValueError("a step changes only the terms an amend may change")
+        for name, value in self.terms.items():
+            require_money(name, value)
 
     def changes(self) -> dict[str, object]:
         """The columns it sets, the exchange's text redacted like `ret_msg` (#845 decision 2)."""
@@ -277,6 +285,7 @@ class OrderTransition:
             values["lifecycle_state"] = self.lifecycle_state
         if self.exchange_order_id is not None:
             values["exchange_order_id"] = self.exchange_order_id
+        values.update(self.terms)
         if self.reject_code is not None:
             values["reject_code"] = redact_exchange_text(self.reject_code, max_chars=MAX_CODE_CHARS)
         if self.reject_message is not None:

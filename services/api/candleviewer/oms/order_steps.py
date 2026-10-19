@@ -14,9 +14,10 @@
   A `filled` step needs its execution: the store refuses `filled` without one (OM-R02).
 
 Every step stores the chart state in `lifecycle_state` beside `state` (24 Sec.8.2 mapping), the
-exchange order id the machine bound (SR-E29-03), the event's kind and source (an exchange source
-carries its message, OM-R02) and the result's code on the event, a reject's included, so a fold of
-the events can rebuild the reject columns.
+exchange order id the machine bound (SR-E29-03), the terms an accepted amend changed (S2: only once
+the exchange accepts them), the event's kind and source (an exchange source carries its message,
+OM-R02) and the result's code on the event, a reject's included, so a fold of the events can
+rebuild the reject columns.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from candleviewer.storage.repositories.executions import (
     OrderFill,
 )
 from candleviewer.storage.repositories.orders import (
+    AMENDABLE,
     FILL_KINDS,
     ORDER_STATE_OF,
     LifecycleState,
@@ -140,6 +142,7 @@ class OrderStepWriter:
             reject_code=reject,
             lifecycle_state=to_state,
             exchange_order_id=_text(step.context.get("exchange_order_id")),
+            terms=_amended(step),
         )
         if kind not in FILL_KINDS:
             return (await self._orders.transition(move)).event.seq
@@ -215,6 +218,16 @@ def _kind_of(step: Step) -> tuple[OrderEventKind, OrderEventSource]:
     if source in ("ws_private", "reconcile") and declared in _SOURCES:
         source = cast(OrderEventSource, declared)
     return kind, source
+
+
+def _amended(step: Step) -> dict[str, Decimal]:
+    """An accepted amend's terms as the machine adopted them (`adopt_amend`): the context's value
+    of each term the result names, so a refused one writes the prior value back unchanged."""
+    result, ctx = step.payload, step.context
+    named = result.get("terms") if step.event == "done.invoke.amend" else None
+    if result.get("ok") is not True or not isinstance(named, Mapping):
+        return {}
+    return {key: _decimal(ctx.get(key)) for key in AMENDABLE if key in named and ctx.get(key)}
 
 
 def _same(column: Decimal | None, raw: object) -> bool:
