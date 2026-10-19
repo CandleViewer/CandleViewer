@@ -51,7 +51,10 @@ afterEach(() => {
 /** The ways a report could print an input (whitespace removed, as the report is). */
 function forms(entry: { form: string; canon: Buffer }): string[] {
   const { canon } = entry;
-  if (entry.form === "text") return [canon.toString("utf16le")];
+  if (entry.form === "text") {
+    const text = canon.toString("utf16le");
+    return [text, JSON.stringify(text).slice(1, -1)]; // as it is, and as a JSON string would show it
+  }
   const b64 = canon.toString("base64");
   return [
     canon.toString("hex"),
@@ -89,6 +92,7 @@ export default {
       CI: "true",
       NO_COLOR: "1",
       CV_FUZZ_EXAMPLES: "200",
+      CV_FUZZ_SECONDS: "0", // the example count, whatever time box this run's shell exports
       CV_FUZZ_SEED: String(SEED),
       CV_FUZZ_ARTIFACT_DIR: join(scratch, "out"),
       PLANTED_LOG: join(scratch, "seen.jsonl"),

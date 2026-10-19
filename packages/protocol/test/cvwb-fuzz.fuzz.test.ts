@@ -5,8 +5,7 @@
 // truncation, every power-of-two count, a 256 KiB frame) are cvwb-exhaustive.test.ts, in the unit lane.
 // A failure reports only its target and a sha256 digest of (seed, input), as the Python suite does:
 // the pair goes to CV_FUZZ_ARTIFACT_DIR, which CI uploads only encrypted (fuzz-nightly.yml).
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -20,6 +19,7 @@ import {
   decodeHeatmapColumn,
   decodeTrades,
 } from "../src/runtime/index.js";
+import { breach, report, untyped } from "./support/fuzzReport.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const corpus = JSON.parse(
@@ -28,15 +28,16 @@ const corpus = JSON.parse(
 const SEEDS = corpus.map((s) => Uint8Array.from(Buffer.from(s.hex, "hex")));
 const N = Number(process.env["CV_FUZZ_EXAMPLES"] ?? 20_000);
 const SECONDS = Number(process.env["CV_FUZZ_SECONDS"] ?? 0);
-if (!(SECONDS >= 0)) throw new Error("CV_FUZZ_SECONDS must be a number of seconds");
+if (!(Number.isFinite(SECONDS) && SECONDS >= 0)) {
+  throw new Error("CV_FUZZ_SECONDS must be a finite number of seconds, 0 or more");
+}
 const BOX = SECONDS > 0 ? `${SECONDS} s of` : String(N);
 const TIMEOUT = SECONDS > 0 ? (SECONDS + 120) * 1000 : 600_000;
 const SEED = BigInt(process.env["CV_FUZZ_SEED"] ?? 0xc0ffee); // up to 64 bits
-// Per-decode sanity bounds (not perf asserts): inputs are <= ~300 B, so 16 MiB of heap growth or
-// 50 ms is a count sizing an allocation/loop. GC is not forced (no --expose-gc in the vitest pool),
-// hence the loose heap bound; the targeted SR-128 test below is the precise check.
-const MAX_DECODE_HEAP = 16 * 1024 * 1024;
-const MAX_DECODE_MS = 50;
+// Per-decode caps: a trip-wire for a future allocation or loop sized from a count in the input,
+// not a perf assert. Inputs are <= ~300 B, so 16 MiB or 50 ms means a count sized it; the targeted
+// SR-128 test below is the precise check.
+const CAPS = { ms: 50, bytes: 16 * 1024 * 1024 };
 const INTERESTING = [0, 1, 2, 0x7fffffff, 0x80000000, 0xffffffff, 0xfffffffe];
 const DECODERS = [
   decodeBookSnapshot,
@@ -81,53 +82,26 @@ function mutate(seed: Uint8Array, rnd: () => number): Uint8Array {
   return buf;
 }
 
-/** What a failure may say about a thrown value: its class, never its message. */
-function kindOf(e: unknown): string {
-  return e instanceof Error ? e.constructor.name : typeof e;
-}
-
-/** Why a case failed: a fixed phrase, or a thrown value, of which only the class is said. */
-type Reason =
-  | "decode exceeded time cap"
-  | "decode exceeded heap cap"
-  | "count not rejected up front"
-  | { thrown: unknown };
-
 /** Fails with the target and the digest alone; the (seed, input) pair goes to the artefact dir. */
-function fail(reason: Reason, decode: { name: string }, data: Uint8Array): never {
-  const what = typeof reason === "string" ? reason : `non-typed throw (${kindOf(reason.thrown)})`;
-  const digest = createHash("sha256").update(`${SEED}:`).update(data).digest("hex");
-  const dir = process.env["CV_FUZZ_ARTIFACT_DIR"];
-  if (dir) {
-    mkdirSync(dir, { recursive: true });
-    const input = Buffer.from(data).toString("base64");
-    writeFileSync(
-      join(dir, `${decode.name}-${digest}.json`),
-      JSON.stringify({ seed: String(SEED), target: decode.name, input }),
-    );
-  }
-  throw new Error(`${what}: ${decode.name} sha256=${digest}`);
+function fail(why: string, decode: { name: string }, data: Uint8Array): never {
+  throw new Error(report(why, decode.name, data, `${SEED}:`, { seed: String(SEED) }));
 }
 
-it(`decoders throw only BinaryFrameError over ${BOX} mutated inputs`, { timeout: TIMEOUT }, () => {
+const TITLE = `decoders throw only BinaryFrameError over ${BOX} mutated inputs`;
+// A box of 60 s or more must hand the event loop back now and then: while the loop holds it,
+// vitest's worker-to-runner RPC times out ("Timeout calling onTaskUpdate", and the run exits 1).
+const YIELD_EVERY = 5_000;
+it(TITLE, { timeout: TIMEOUT }, async () => {
   // the digest takes the whole seed; the PRNG state is folded from it
   const rnd = prng(Number(BigInt.asUintN(32, SEED ^ (SEED >> 32n))));
   const end = performance.now() + SECONDS * 1000;
   let runs = 0;
   for (let i = 0; SECONDS > 0 ? performance.now() < end : i < N; i++, runs++) {
+    if (runs % YIELD_EVERY === 0) await new Promise<void>((resolve) => setImmediate(resolve));
     const data = mutate(SEEDS[Math.floor(rnd() * SEEDS.length)] ?? new Uint8Array(0), rnd);
     for (const decode of DECODERS) {
-      const heap0 = process.memoryUsage().heapUsed;
-      const t0 = performance.now();
-      try {
-        decode(data);
-      } catch (e) {
-        if (!(e instanceof BinaryFrameError)) fail({ thrown: e }, decode, data);
-      }
-      if (performance.now() - t0 > MAX_DECODE_MS) fail("decode exceeded time cap", decode, data);
-      if (process.memoryUsage().heapUsed - heap0 > MAX_DECODE_HEAP) {
-        fail("decode exceeded heap cap", decode, data);
-      }
+      const why = breach(decode, data, CAPS);
+      if (why) fail(why, decode, data);
     }
   }
   expect(runs).toBeGreaterThan(0); // a malformed time box or count must not pass by running nothing
@@ -177,7 +151,7 @@ it("every wire count that cannot fit is rejected up front (SR-128), per site and
         try {
           site.decode(data);
         } catch (e) {
-          if (!(e instanceof BinaryFrameError)) fail({ thrown: e }, site.decode, data);
+          if (!(e instanceof BinaryFrameError)) fail(untyped(e), site.decode, data);
           msg = e.message;
         }
         if (!/exceeds/.test(msg)) fail("count not rejected up front", site.decode, data);

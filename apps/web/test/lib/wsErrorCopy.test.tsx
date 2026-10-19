@@ -36,6 +36,7 @@ const copy = (): string =>
     .join(" ");
 
 it("no WS error code puts a request, connection or build id into the default copy", () => {
+  expect(WS_ERROR_CODES.length).toBeGreaterThan(20); // an emptied registry must not pass vacuously
   for (const code of WS_ERROR_CODES) {
     const { unmount } = render(<WsErrorHost />);
     act(() => void handleWsError({ t: "err", p: { code, message: MESSAGE, ...IDS } }));

@@ -15,6 +15,7 @@ import * as P from "@candleviewer/protocol";
 import { expect, it } from "vitest";
 import { decodeFrame, isTopic, validateCvwb } from "../../../src/lib/ws/protocol/codec";
 import { MAX_ID_LENGTH } from "../../../src/lib/ws/protocol/frames";
+import { checked, kindOf } from "./support/fuzzCaps";
 
 const CORPORA = fileURLToPath(new URL("../../../../../tests/fuzz/ws-frames/", import.meta.url));
 const corpus = (file: string): number[][] =>
@@ -26,16 +27,20 @@ const BINARY_SEEDS = [...CVWB, ...corpus("msgpack-client.json")];
 
 const N = Number(process.env["CV_FUZZ_EXAMPLES"] ?? 20_000);
 const SECONDS = Number(process.env["CV_FUZZ_SECONDS"] ?? 0);
-if (!(SECONDS >= 0)) throw new Error("CV_FUZZ_SECONDS must be a number of seconds");
+if (!(Number.isFinite(SECONDS) && SECONDS >= 0)) {
+  throw new Error("CV_FUZZ_SECONDS must be a finite number of seconds, 0 or more");
+}
 const SEED = BigInt(process.env["CV_FUZZ_SEED"] ?? 0xc0ffee); // up to 64 bits
-// Per-call sanity bounds, not perf asserts: a count that sized an allocation or a loop would blow
-// them. GC is not forced, hence the loose allocation bound.
-const MAX_DECODE_MS = 500;
-const MAX_DECODE_BYTES = 64 * 1024 * 1024;
+// Per-call caps: a trip-wire for a future allocation or loop sized from a count in the input
+// (every count is checked against the buffer first today, SR-128), not a perf assert. The inputs are
+// a few KiB, so a legitimate call stays far inside both. GC is not forced, so a heap delta can only
+// under-report. A time trip is run once more before it fails (support/fuzzCaps.ts).
+const CAPS = { ms: 500, bytes: 64 * 1024 * 1024 };
 
 const FRAMES = [
   '{"t":"auth_ok","id":"c-2","p":{"user_id":"u","session_id":"s","token_expires_at_ms":1,"roles":["owner"],"permissions":[],"account_scope":[],"kill_switch":{"engaged":true,"scope":"accounts","exchange_account_ids":["a1"]}}}',
-  // a welcome one limit short: refused as it stands, and edits to its nested fields reach their guards
+  // a welcome two limits short: refused as it stands, and edits to its nested fields reach
+  // their guards
   '{"t":"welcome","p":{"connection_id":"c","server_time_ms":1,"heartbeat":{"interval_ms":1,"timeout_ms":2},"limits":{"max_subscriptions":200}}}',
   '{"t":"permission_change","p":{"roles":["viewer"],"account_scope":["a1"]}}',
   '{"t":"sub_ok","id":"c-3","p":{"results":[{"ch":"book.BTCUSDT.50","ok":true},{"ch":"orders","ok":false}]}}',
@@ -122,9 +127,6 @@ const bytesCase = (b: Uint8Array, arg: unknown = b): Case => ({
   arg,
 });
 
-/** What a failure may say about a thrown value: its class, never its message. */
-const kindOf = (e: unknown): string => (e instanceof Error ? e.constructor.name : typeof e);
-
 /** Fails with the target and the digest alone; the (seed, input) pair goes to the artefact dir. */
 function fail(why: string, target: string, c: Case): never {
   const digest = createHash("sha256").update(`${SEED}:${c.form}:`).update(c.canon).digest("hex");
@@ -143,40 +145,53 @@ function fail(why: string, target: string, c: Case): never {
   throw new Error(label);
 }
 
-/** Heap plus external memory (the backing store of a typed array): what a decode allocated. */
-const used = (): number => {
-  const m = process.memoryUsage();
-  return m.heapUsed + m.external;
-};
-
-/** One call of a target: a throw, a long run or an allocation jump is a failure. */
+/** One call of a target: a throw, a long run, an allocation jump or a touch of the prototype fails. */
 function run<T>(target: string, c: Case, call: () => T): T {
-  const before = used();
-  const t0 = performance.now();
-  let out: T;
-  try {
-    out = call();
-  } catch (e) {
-    return fail(`non-typed throw (${kindOf(e)})`, target, c);
-  }
-  if (performance.now() - t0 > MAX_DECODE_MS) fail("decode exceeded time cap", target, c);
-  if (used() - before > MAX_DECODE_BYTES) fail("decode exceeded allocation cap", target, c);
-  return out;
+  const r = checked(call, CAPS);
+  if (!r.ok) return fail(r.why, target, c);
+  if (Object.keys(Object.prototype).length > 0) fail("prototype touched", target, c);
+  return r.out;
 }
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const WIRE = ["envelope", "payload"]; // what `decodeFrame` refuses with; `validateCvwb`'s are below
 const BODY = ["cvwb", "unsupported_body_kind", "unsupported_format_version"];
+const INT = String.raw`\d+`; // a header integer
+const FITS = String.raw`count=${INT} x ${INT} bytes exceeds the ${INT} bytes left in the buffer`;
+/**
+ * What `validateCvwb` may say: the decoders' own diagnostics (src/runtime/index.ts), which are fixed
+ * words and header integers, never payload bytes, and the codec's fallback for an untyped throw.
+ */
+const DIAGNOSTICS = [
+  String.raw`binary frame too short for the ${INT}-byte common header \(got ${INT} bytes\)`,
+  String.raw`bad magic 0x[0-9a-f]+, expected 0x[0-9a-f]+ \("CVWB"\)`,
+  String.raw`unknown body_kind ${INT}`,
+  String.raw`unsupported \(body_kind=${INT}, format_version=${INT}\); expected format_version ${INT}`,
+  String.raw`(?:book levels|trades|footprint groups|footprint group ${INT}|heatmap rows): ${FITS}`,
+  String.raw`(?:book|trade|bar) record ${INT} runs past the buffer \(record_count=${INT}\)`,
+  String.raw`footprint group ${INT} prefix runs past the buffer \(record_count=${INT}\)`,
+  String.raw`footprint cell ${INT} in group ${INT} runs past the buffer \(cell_count=${INT}\)`,
+  String.raw`heatmap row ${INT} runs past the buffer \(row_count=${INT}\)`,
+  String.raw`invalid (?:book|trade) side byte ${INT} at record ${INT}`,
+  String.raw`book snapshot missing its ${INT}-byte xu/xseq trailer`,
+  String.raw`bars body is ${INT} bytes, expected ${INT} for record_count=${INT}`,
+  "heatmap column body shorter than its fixed prefix",
+  "binary body is undecodable",
+];
+const DIAGNOSTIC = new RegExp(`^(?:${DIAGNOSTICS.join("|")})$`);
 
-/** A typed `frame_malformed` whose message is safe to log: plain words, none of the input. */
+/**
+ * A typed `frame_malformed` whose message is safe to log: a `decodeFrame` refusal is plain words, a
+ * `validateCvwb` one is a known decoder diagnostic.
+ */
 function isTypedMalformed(r: unknown, diagnostics: string[]): boolean {
   if (!isRec(r)) return false;
   const { t, code, diagnostic, message, ch, id } = r;
   if (t !== "decode_error" || code !== "frame_malformed") return false;
   if (typeof diagnostic !== "string" || !diagnostics.includes(diagnostic)) return false;
   const text = typeof message === "string" ? message : "";
-  if (!(WIRE.includes(diagnostic) ? /^[\w. -]{1,80}$/.test(text) : text.length <= 200))
-    return false;
+  const shape = WIRE.includes(diagnostic) ? /^[\w. -]{1,80}$/ : DIAGNOSTIC;
+  if (text.length > 200 || !shape.test(text)) return false;
   return (
     (ch === undefined || isTopic(ch)) &&
     (id === undefined || (typeof id === "string" && id.length <= MAX_ID_LENGTH))
@@ -186,7 +201,8 @@ function isTypedMalformed(r: unknown, diagnostics: string[]): boolean {
 /** `validateCvwb` accepts exactly what one of the protocol decoders accepts, and refuses in type. */
 function checkCvwb(c: Case): void {
   const arg = c.arg as ArrayBuffer | ArrayBufferView;
-  const verdict = run("validateCvwb", c, () => validateCvwb(arg));
+  const verdict: unknown = run("validateCvwb", c, () => validateCvwb(arg));
+  if (!isRec(verdict)) fail("not a verdict", "validateCvwb", c);
   const view = ArrayBuffer.isView(arg) ? arg : new Uint8Array(arg);
   const accepted = DECODERS.some((decode) => {
     try {
@@ -202,13 +218,19 @@ function checkCvwb(c: Case): void {
 
 const timeout = SECONDS > 0 ? (SECONDS + 120) * 1000 : 600_000;
 const box = SECONDS > 0 ? `${SECONDS} s` : `${N} inputs`;
-it(`decodeFrame and validateCvwb refuse only with frame_malformed over ${box}`, { timeout }, () => {
+const title = `decodeFrame and validateCvwb refuse only with frame_malformed over ${box}`;
+// A box of 60 s or more must hand the event loop back now and then: while the loop holds it,
+// vitest's worker-to-runner RPC times out ("Timeout calling onTaskUpdate", and the run exits 1).
+const YIELD_EVERY = 5_000;
+it(title, { timeout }, async () => {
+  expect(DECODERS).toHaveLength(6); // found by name: a renamed decoder must not pass vacuously
   // the digest takes the whole seed; the PRNG state is folded from it
   const rnd = prng(Number(BigInt.asUintN(32, SEED ^ (SEED >> 32n))));
   const pick = <T>(list: readonly T[]): T => list[Math.floor(rnd() * list.length)] as T;
   const end = performance.now() + SECONDS * 1000;
   let runs = 0;
   for (let i = 0; SECONDS > 0 ? performance.now() < end : i < N; i++, runs++) {
+    if (runs % YIELD_EVERY === 0) await new Promise<void>((resolve) => setImmediate(resolve));
     if (rnd() < 0.5) {
       const bytes = Uint8Array.from(mutate(pick(BINARY_SEEDS), 8, BYTE_TOKENS, rnd));
       const c = bytesCase(bytes, rnd() < 0.5 ? bytes : bytes.slice().buffer);
@@ -222,7 +244,8 @@ it(`decodeFrame and validateCvwb refuse only with frame_malformed over ${box}`, 
     const c = textCase(rnd() < 0.5 ? edited : mutateJson(seed, rnd));
     const frame: unknown = run("decodeFrame", c, () => decodeFrame(c.arg));
     if (isTypedMalformed(frame, WIRE)) continue;
-    const { t, ch, size, body } = frame as Record<string, unknown>;
+    if (!isRec(frame)) fail("not a frame", "decodeFrame", c);
+    const { t, ch, size, body } = frame;
     const data = t === "snap" || t === "d";
     const sound = KINDS.test(String(t)) && (!data || (isTopic(ch) && size === c.canon.length / 2));
     if (!sound) fail("neither a frame nor a typed refusal", "decodeFrame", c);
@@ -231,5 +254,4 @@ it(`decodeFrame and validateCvwb refuse only with frame_malformed over ${box}`, 
     }
   }
   expect(runs).toBeGreaterThan(0); // a malformed time box or count must not pass by running nothing
-  expect(Object.keys(Object.prototype).length).toBe(0); // no input reached the prototype
 });
