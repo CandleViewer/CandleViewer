@@ -205,8 +205,9 @@ def _violations(bundle: Path, schema_id: str, doc: Any) -> list[tuple[str, str, 
 
 
 def _emitted_permission_change(new: PrincipalSnapshot) -> dict[str, Any]:
-    """The frame `ConnectionAuthz.apply_snapshot` really emits when `new` replaces a snapshot."""
-    conn = ConnectionAuthz(_snap("viewer", VIEWER))
+    """The frame `ConnectionAuthz.apply_snapshot` really emits when `new` replaces a snapshot of
+    the same user (a connection refuses another user's, #415)."""
+    conn = ConnectionAuthz(PrincipalSnapshot(new.user_id, frozenset({"viewer"}), VIEWER))
     frames = conn.apply_snapshot(VersionedSnapshot(new, conn.version + 1), 1)
     assert frames is not None
     frame = frames[0]

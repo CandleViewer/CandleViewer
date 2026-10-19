@@ -7,8 +7,9 @@
 - `ConnectionAuthz`: per-connection subscription manager. `sub` (partial success, results in
   request order, clamped `effective`), idempotent `unsub`, `ctl` (retune / resnapshot), the §16.2
   limits and §6.2 silent account-scope narrowing. `apply_snapshot` re-evaluates every live
-  subscription after a role/grant change and returns the `revoked` frames (§9.5, S7). With the
-  backpressure flag on, `on_drop` hears of every subscription an operation ends or resets.
+  subscription after a role/grant change and returns the `revoked` frames (§9.5, S7); it
+  refuses another user's snapshot (`SnapshotUserMismatch`, #415). With the backpressure
+  flag on, `on_drop` hears of every subscription an operation ends or resets.
 - `ConnectionRegistry`: live sockets per user; role/grant change, kill-switch transition and
   user-disabled fan-out. A disabled user is also remembered for one access-token lifetime, so a
   socket that registers after the per-user close is refused (#3413).
@@ -45,7 +46,7 @@ from candleviewer.bars.spec import check_param_bounds, from_wire
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from candleviewer.ws.errors import build_ws_error
+from candleviewer.ws.errors import WsError, build_ws_error
 from candleviewer.ws.limits import (
     DENIAL_AUDIT_WINDOW_S,
     DENIAL_AUDITS_PER_WINDOW,
@@ -214,6 +215,13 @@ class VersionedSnapshot:
 
     principal: PrincipalSnapshot
     version: int
+
+
+class SnapshotUserMismatch(WsError):
+    """#415 (§4.3): a permission snapshot whose principal is another user than the connection's
+    (at a first `auth`, the token's). `apply_snapshot` raises it before it changes anything, and
+    the gateway before a first `auth` builds a connection from it; an `auth` that meets it is
+    refused as the gateway refuses another user's token (`user_mismatch`)."""
 
 
 def topic_family(topic: str) -> str:
@@ -856,7 +864,11 @@ class ConnectionAuthz:
         subscription. Lost permission or every account -> the subscription is removed; a partial
         scope loss narrows it in place (`removed_accounts`, `resubscribe_allowed: true`) and the
         rest of the connection continues untouched. SR-189: `None`, and nothing changes, when
-        `new` is older than the applied snapshot (a read begun before a grant change)."""
+        `new` is older than the applied snapshot (a read begun before a grant change). #415:
+        `SnapshotUserMismatch`, and nothing changes, when `new` is another user's, whatever its
+        version: a connection keeps the user it authenticated as (§4.3)."""
+        if new.principal.user_id != self.principal.user_id:
+            raise SnapshotUserMismatch("a permission snapshot of another user")
         if new.version < self.version:
             return None
         self.principal, self.version = new.principal, new.version
@@ -1123,7 +1135,8 @@ class ConnectionRegistry:
         self, authz: ConnectionAuthz, snap: VersionedSnapshot, now_ms: int, *, event: SnapshotEvent
     ) -> list[dict[str, Any]]:
         """`authz.apply_snapshot`. An older snapshot is refused, counted and audited (best
-        effort, like every WS audit write) and yields no frames (SR-189)."""
+        effort, like every WS audit write) and yields no frames (SR-189). A snapshot of another
+        user raises `SnapshotUserMismatch` first, with no count and no row (#415)."""
         frames, refused = self._swap(authz, snap, now_ms, event)
         await self._write_rows(refused)
         return frames

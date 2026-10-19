@@ -34,6 +34,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   disabled since its lookup, `user_disabled` as above) closes at once with its own
   `bye` (`4403`): not a failure, and nothing is registered. It is logged, and an
   enrolment-only one audited, with the socket's source address.
+  The principal must be the token's user's, or the `auth` fails as `user_mismatch` (#415):
+  a first `auth` checks it before it registers, `apply_snapshot` every later snapshot.
 - **Connect rate** (§4.3, #2558): a new socket's first successful `auth` is counted per user
   (`GatewayHub.admit_connect`, `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` per sliding minute). Past the
   limit the socket gets `bye client_rate_limited` + `4429` instead of `auth_ok`: it never
@@ -41,7 +43,9 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   not counted.
 - **In-place re-auth** (§4.1): a later `auth` re-validates and swaps the
   principal without touching subscriptions. The old session stays registered
-  with the hub until the new one is accepted.
+  with the hub until the new one is accepted. It keeps the user, checked twice: the token's
+  user here and the snapshot's by `ConnectionAuthz.apply_snapshot` (#415). Either check
+  alone refuses another user as one failed `auth` (`user_mismatch`).
 - **Heartbeats / deadlines** (§9.1): the writer checks a `Watchdog` before
   every dequeue and every send, not only when idle, on the injected clocks
   (auth timeout, token expiry on both clocks, unsolicited `ping`, heartbeat
@@ -188,6 +192,7 @@ from candleviewer.ws.outbound import Spanned
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
+    SnapshotUserMismatch,
     Subscription,
     audit_rebuild_refusal,
     auth_ok_payload,
@@ -1280,6 +1285,8 @@ def make_ws_router(
                 failure = "token_expired"  # never `auth_ok` an identity that is already dead
                 raise PermissionError("access token already expired")
             if conn.authz is None:  # SR-189: register, then re-check, under the auth deadline
+                if snap.principal.user_id != user_id:  # #415: built from the token's user only
+                    raise SnapshotUserMismatch("a permission snapshot of another user")
                 conn.authz = ConnectionAuthz(
                     snap.principal,
                     registry.services,
@@ -1317,7 +1324,9 @@ def make_ws_router(
             if refused.audit is not None:
                 await refused.audit(source_ip)
             return
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, SnapshotUserMismatch):  # #415: a snapshot of another user, from
+                failure = "user_mismatch"  # any check, is refused as another user's token is
             if not reauth and conn.authz is not None:  # the SR-189 re-check failed: undo
                 registry.unregister(conn.authz)
                 conn.authz = None

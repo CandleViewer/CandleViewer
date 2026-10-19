@@ -119,7 +119,9 @@ row of `POST /auth/mfa/recovery` and per `auth.recovery_codes_exhausted`. It doe
 attempt refused while the account is locked (the `auth.account_locked` rows above), for a success,
 or for the WebSocket gateway's `auth.login_failed` rows (actor `ws`, reason `ws_auth_failed`,
 written on the third failed `auth` frame of a connection): `cv_ws_auth_failures_total{reason}`
-counts those, one per failed frame.
+counts those, one per failed frame. Its `user_mismatch` reason on a first `auth`, or on a re-`auth`
+whose token names the socket's own user, means the principal store answered for another user: a
+server fault to investigate, not a client error.
 Every method is listed at 0 from process start. The `AuthLoginFailureSpike` rule reads it
 (`sum(increase(...[10m])) > 10`); `sum by (method) (increase(auth_login_failures_total[10m]))`
 shows which factor is attacked.
