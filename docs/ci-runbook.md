@@ -396,9 +396,10 @@ index alone, removing nothing.
   function threw, or axe found a serious or critical violation in it. The log names the story, the
   rule and the element; the job summary counts passed stories' violations by impact and names the
   rules failed stories broke, and the `storybook-a11y-report` artifact holds the Vitest JSON
-  reports. No story counted, or a step stopped at its summary line, means the run broke before any
-  story (install, browser launch, config): read the log's first error. Reproduce: `build:tokens`,
-  then `storybook:test` in `packages/ui` (its README). Fix the component, not the gate.
+  reports. A summary with no passed story fails too: the run broke before any story (install,
+  browser launch, config: read the log's first error) or skipped every one (the `perf` tag, and
+  `tags.skip` in `packages/ui/vitest.config.mjs`). Reproduce: `build:tokens`, then
+  `storybook:test` in `packages/ui` (its README). Fix the component, not the gate.
 - **CI-A11Y-003** (the gate self-test): run on `packages/ui/.storybook/__fixtures__/` alone
   (`CV_STORYBOOK_A11Y_FIXTURES=1`), the gate did not fail the 2:1-contrast button naming
   `color-contrast` and `#a11y-gate-fixture`, so it cannot be trusted. Check `parameters.a11y` in

@@ -84,9 +84,10 @@ def test_storybook_job_runs_beside_a11y_hardened_and_uploads_only_the_a11y_repor
 def test_run_and_budget_steps_fail_with_their_codes() -> None:
     run = _run("run")
     (shell,) = [s.get("shell") for s in _job()["steps"] if s.get("name") == STEPS["run"]]
-    assert shell == "bash"  # pipefail: a summary that cannot read the report fails the step
+    assert shell == "bash"  # pipefail: a summary that cannot read the report sets rc too
     assert "storybook:test --reporter=default --reporter=json" in run
-    assert re.search(r'rc=\$\?\n.*\n.*storybook-a11y\.mjs summary "\$report/results\.json"', run)
+    summary = r'storybook-a11y\.mjs summary "\$report/results\.json" \|.* \|\| rc=1\n'
+    assert re.search(r"rc=\$\?\n.*\n.*" + summary, run)
     assert re.search(r'if \[ "\$rc" -ne 0 \]; then\n.*CI-A11Y-002.*\n\s+exit 1', run)
     budget = r'if \[ "\$elapsed" -gt 600 \]; then\n.*CI-A11Y-004.*\n\s+exit 1'
     assert re.search(budget, _run("budget"))
@@ -99,10 +100,8 @@ def test_the_lanes_and_packages_ui_share_one_playwright_build() -> None:
     assert len(versions) == 1, versions
 
 
-@pytest.mark.parametrize(("pnpm", "node"), [(1, 0), (1, 1), (0, 1)])
-def test_self_test_fails_the_job_unless_the_fixture_failed_the_gate(
-    tmp_path: Path, pnpm: int, node: int
-) -> None:
+def _fake_tools(tmp_path: Path, pnpm: int, node: int) -> dict[str, str]:
+    """An environment whose `pnpm` and `node` are stand-ins exiting with the given statuses."""
     _needs("bash")
     (tmp_path / "bin").mkdir()
     for fake in ("pnpm", "node"):
@@ -111,6 +110,30 @@ def test_self_test_fails_the_job_unless_the_fixture_failed_the_gate(
     path = f"{tmp_path / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"
     env = {"PATH": path, "GITHUB_WORKSPACE": str(tmp_path), "CALLS": str(tmp_path / "calls")}
     env |= {"PNPM_EXIT": str(pnpm), "NODE_EXIT": str(node), "GITHUB_STEP_SUMMARY": "/dev/null"}
+    return env
+
+
+@pytest.mark.parametrize(("pnpm", "node"), [(0, 0), (1, 0), (0, 1), (1, 1)])
+def test_run_step_fails_with_its_code_on_a_red_run_or_a_red_summary(
+    tmp_path: Path, pnpm: int, node: int
+) -> None:
+    """A red summary (no story passed, or no report) fails the step as a red Vitest run does."""
+    env = _fake_tools(tmp_path, pnpm, node)
+    script = ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _run("run")]  # shell: bash
+    proc = subprocess.run(script, env=env, capture_output=True, text=True, timeout=60, check=False)
+    red = pnpm != 0 or node != 0
+    assert (proc.returncode != 0, "CI-A11Y-002" in proc.stdout) == (red, red), proc
+    (run, fixtures), (summary, _) = map(json.loads, (tmp_path / "calls").read_text().splitlines())
+    report = f"{tmp_path}/reports/storybook-a11y/results.json"
+    assert (run[-1], fixtures) == (f"--outputFile.json={report}", None)  # the stories alone
+    assert summary[1:] == ["summary", report]
+
+
+@pytest.mark.parametrize(("pnpm", "node"), [(1, 0), (1, 1), (0, 1)])
+def test_self_test_fails_the_job_unless_the_fixture_failed_the_gate(
+    tmp_path: Path, pnpm: int, node: int
+) -> None:
+    env = _fake_tools(tmp_path, pnpm, node)
     script = ["bash", "-e", "-c", _run("self-test")]
     proc = subprocess.run(script, env=env, capture_output=True, text=True, timeout=60, check=False)
     assert (proc.returncode != 0, "CI-A11Y-003" in proc.stdout) == (node != 0, node != 0), proc
@@ -146,6 +169,14 @@ def test_summary_counts_the_stories_and_axe_violations_by_impact(tmp_path: Path)
     assert (rc, stories) == (0, "- Storybook stories: 3 (1 passed, 1 failed, 1 skipped)")
     assert impacts.endswith(" in passed stories: critical 0, serious 1, moderate 0, minor 1")
     assert blocking == "- blocking axe violations in failed stories: 1 (color-contrast)"
+
+
+def test_summary_fails_closed_when_no_story_passed(tmp_path: Path) -> None:
+    """Vitest exits 0 when every story is skipped; the summary does not."""
+    rc, out = _report(tmp_path, "summary", ("perf", "skipped", [], ""), ("b--1", "skipped", [], ""))
+    assert rc == 1
+    assert out.splitlines()[0] == "- Storybook stories: 2 (0 passed, 0 failed, 2 skipped)"
+    assert out.splitlines()[-1] == "- no story passed: the gate checked nothing"
 
 
 @pytest.mark.parametrize(

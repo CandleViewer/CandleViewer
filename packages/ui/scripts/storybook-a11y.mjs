@@ -1,6 +1,7 @@
 // E05-T03: the Storybook a11y gate's CI reports, from the storybook Vitest project's JSON report
 // (`--reporter=json`), where a passed story test carries axe's results in `meta.reports`.
-//   summary <results.json>              story counts, axe violations by impact, failing rules
+//   summary <results.json>              story counts, axe violations by impact, failing rules;
+//                                       exit 1 if no story passed (the gate checked nothing)
 //   selftest <fixtures.json> <status>   exit 0 only if the run on `.storybook/__fixtures__/`
 //                                       (CV_STORYBOOK_A11Y_FIXTURES=1) failed closed
 
@@ -39,6 +40,11 @@ if (command === "summary") {
       `- blocking axe violations in failed stories: ${blocking.length}` +
       (blocking.length > 0 ? ` (${[...new Set(blocking)].join(", ")})` : ""),
   );
+  // Fail closed on a run that checked nothing: Vitest exits 0 when every story is skipped.
+  if (count("passed") === 0) {
+    console.log("- no story passed: the gate checked nothing");
+    process.exitCode = 1;
+  }
 } else if (command === "selftest") {
   // The gate failed closed if the 2:1-contrast button failed it naming the rule and the element.
   const button = tests.find((test) => test.id.endsWith("--low-contrast-button"));

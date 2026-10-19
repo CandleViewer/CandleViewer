@@ -151,7 +151,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # `pnpm install` runs dependency lifecycle scripts, and no step pushes or fetches (#3449).
+          # No step after the checkout pushes or fetches, so it keeps no git credentials (#3449).
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -175,7 +175,8 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run play functions and axe on every story (CI-A11Y-002)
-        # bash adds pipefail: a summary that cannot read the report fails the step.
+        # bash adds pipefail: a summary that cannot read the report, or counts no passed story,
+        # sets rc as a red run does.
         shell: bash
         run: |
           report="$GITHUB_WORKSPACE/reports/storybook-a11y"
@@ -184,9 +185,9 @@ jobs:
             --outputFile.json="$report/results.json"
           rc=$?
           set -e
-          node packages/ui/scripts/storybook-a11y.mjs summary "$report/results.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          node packages/ui/scripts/storybook-a11y.mjs summary "$report/results.json" | tee -a "$GITHUB_STEP_SUMMARY" || rc=1
           if [ "$rc" -ne 0 ]; then
-            echo "::error::CI-A11Y-002 a play function failed or a story has a serious or critical axe violation (the log names the story, the rule and the element), or, with no story counted, the run broke before any story (docs/ci-runbook.md)"
+            echo "::error::CI-A11Y-002 a play function failed or a story has a serious or critical axe violation (the log names the story, the rule and the element), or no story passed: the run broke before any story or skipped them all (docs/ci-runbook.md)"
             exit 1
           fi
 
