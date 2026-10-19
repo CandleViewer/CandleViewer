@@ -4,7 +4,7 @@
 # `pip install --require-hashes --only-binary=:all: -r tools/ci/requirements-semgrep.txt`.
 # Semgrep 1.181.0 parses PEP 695 type parameters and `type` aliases, which 1.99.0 skipped; 1.178.0
 # would also parse them but caps PyJWT below 2.14, which has open advisories. Semgrep pins
-# mcp==1.29.0 (advisory GHSA-84m7-p3x7-pcfv, in the MCP HTTP server, which CI never starts).
+# mcp==1.30.0 (advisory GHSA-84m7-p3x7-pcfv, in the MCP HTTP server, which CI never starts).
 # Keep PyYAML equal to scripts/requirements-ci.txt (scripts/tests/test_security_lane.py checks).
 # Regenerate everything below this header, resolved for the runner's CPython 3.12:
 #   printf 'semgrep==1.181.0\nPyYAML==6.0.2\n' | uv pip compile - --python-version 3.12 \
@@ -458,7 +458,7 @@ markdown-it-py==4.2.0 \
     --hash=sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49 \
     --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
     # via rich
-mcp==1.29.0 \
+mcp==1.30.0 \
     --hash=sha256:52d01f334de1868cc3bb2d6604931126a67631f99a6c5d3b82ba47290315ec36 \
     --hash=sha256:f5a075bb611f23d6f4d080c6a1699fa62772eebc562ba9e66b306ddde1c755f7
     # via semgrep
