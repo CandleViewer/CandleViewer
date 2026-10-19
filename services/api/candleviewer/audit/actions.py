@@ -193,6 +193,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # E42-T05 BK-10 (SR-E42-11): a download link issued, or refused after its step-up grant
         # was spent (`admin/backups/downloads.py`); BK-11's fetch writes it at `stage: served`.
         "backup.downloaded",
+        # E42-T05 BK-12 (SR-E42-11): a backup's artefact deleted, its row kept, or the delete
+        # refused or failed after its step-up grant was spent (`admin/backups/deletion.py`).
+        "backup.deleted",
         "env.switch_live",
         "admin.audit_read",
         "admin.audit_verify",

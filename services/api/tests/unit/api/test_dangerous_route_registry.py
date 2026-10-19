@@ -408,7 +408,6 @@ def test_sub_application_tripwire_catches_a_mounted_dangerous_route() -> None:
         ("DELETE", "/admin/kill/{id}"),
         ("PUT", "/users/{userId}/password"),
         ("DELETE", "/admin/audit/{eventId}"),
-        ("DELETE", "/admin/backups/{backupId}"),  # deleteBackup: in no 04 §7.2.2 row yet
         # #2738: the recording and recorder prefixes are swept whole, not only today's paths.
         ("POST", "/recording/symbols/{recordedSymbolId}/pin"),  # E16-T08 says POST; contract PUT
         ("DELETE", "/recording/retention-policies/{policyId}"),
@@ -507,6 +506,16 @@ def test_issue_backup_download_is_handler_gated_because_its_grant_binds_one_requ
     assert dangerous_action_class("POST", _concrete(path)) is None
     assert ("POST", path, "backups") in HANDLER_GATED_ROUTES and not _ungated("POST", path)
     assert ("POST", path) in served_operations(create_app()) - _PENDING_HANDLER_GATES
+
+
+def test_delete_backup_is_handler_gated_because_its_grant_binds_one_request() -> None:
+    """04 §7.2.2 row 52 (E42-T05 BK-12): each delete spends one fresh `backups` code, bound to the
+    request its handler validated, so no path row may gate it; it is served, never pending."""
+    path = "/admin/backups/{backupId}"
+    assert DANGEROUS_PATH_PATTERN.match(path)
+    assert dangerous_action_class("DELETE", _concrete(path)) is None
+    assert ("DELETE", path, "backups") in HANDLER_GATED_ROUTES and not _ungated("DELETE", path)
+    assert ("DELETE", path) in served_operations(create_app()) - _PENDING_HANDLER_GATES
 
 
 def test_recorder_purge_is_handler_gated_not_middleware_gated() -> None:

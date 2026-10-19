@@ -586,6 +586,10 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # #3085 startViewAs (SR-025, 04 §7.2.2 row 40b): RBAC and the five view-as refusals come
     # before the gate, so only the handler can gate it. Not mounted yet: pending in the test.
     ("POST", "/admin/view-as", "users"),
+    # deleteBackup (04 §7.2.2 row 52, E42-T05 BK-12): `backups`, no-grace, as restore. One fresh
+    # code per delete, which the handler spends after the 404 and the 501, bound to the request
+    # it validated; each `backup.deleted` record after the spend names its `challenge_id`.
+    ("DELETE", "/admin/backups/{backupId}", "backups"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two

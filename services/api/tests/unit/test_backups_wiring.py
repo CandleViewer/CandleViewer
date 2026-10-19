@@ -2,7 +2,8 @@
 positions. BK-4: the catalogue reads answer `501` on every backend until `BACKUPS_CATALOGUED` is
 set (Q3); once it is, what each backend serves. BK-8: a run answers `501` until an engine is
 wired, through the app's one admission gate. BK-10: the link issue needs that and a backup root,
-and then reads artefacts there."""
+and then reads artefacts there. BK-12: a delete answers `501` until an artefact remover is wired,
+on the same gate; the remover's port states its bounds."""
 
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from candleviewer.admin.backups import limits, ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.downloads import LinkNotUsable, LinkRecord
 from candleviewer.admin.backups.gate import BackupJobGate
+from candleviewer.admin.backups.metrics import BackupFreshness
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobErrorCode, OpenPositions
 from candleviewer.admin.backups.rows import LostRuns
 from candleviewer.admin.errors import OpsNotWired, PositionsUnknownError
@@ -36,6 +38,7 @@ from candleviewer.storage.repositories import backups
 from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
 from tests.unit.admin._admin_fakes import AuditSpy, principal
 from tests.unit.admin._backup_fakes import Store, row
+from tests.unit.admin._delete_fakes import Remover, Trail
 from tests.unit.admin._run_fakes import Lost
 
 _PATH = "/srv/cv/backups/2026-10-18/pg_dump.age"
@@ -287,3 +290,75 @@ def test_create_app_builds_one_admission_gate_and_the_link_issue_takes_it(
     monkeypatch.setattr(app_module, "build_backup_downloads", spy)
     app = create_app()
     assert built == seen == [app.state.backups_gate]
+
+
+@pytest.mark.parametrize("catalogued", [False, True])
+@pytest.mark.parametrize("backend", ["fake", "real"])
+def test_a_delete_answers_501_until_an_artefact_remover_is_wired(
+    backend: Literal["fake", "real"],
+    catalogued: bool,
+    engines: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wiring, "BACKUPS_CATALOGUED", catalogued)
+    gate, settings = BackupJobGate(), Settings(storage_backend=backend)
+    fresh, remover = BackupFreshness(None), Remover(gate, [])
+
+    def build(**passed: Any) -> Any:
+        return wiring.build_backup_deletion(
+            settings, gate=gate, audit=Trail(), system_settings=None, freshness=fresh, **passed
+        )
+
+    assert (build(), engines) == (None, [])  # no remover until #3319: nothing built, no engine
+    deletion = build(remover=remover)  # what the engine's PR passes
+    served = catalogued and backend == "real"
+    assert (deletion is not None, engines) == (served, ["admin"] if served else [])
+    if deletion is not None:  # the app's one gate, never its own; BK-5's freshness
+        assert (deletion._gate, deletion._freshness, deletion._remover) == (gate, fresh, remover)
+
+
+def test_the_remover_the_engine_passes_is_confined_and_cancel_safe() -> None:
+    """SR-BK12A-01 and SR-BK12A-R3-02: the engine (#3319) implements `ArtefactRemover.remove`
+    against its text: what is refused before any I/O, what the walk refuses before anything is
+    removed, and how a directory artefact goes."""
+    doc = " ".join((ports.ArtefactRemover.remove.__doc__ or "").split())
+    for clause in (
+        "`location`, and nothing else",
+        "absolute, canonical and inside `CV_BACKUP_ROOT`, or refused by raising before any I/O",
+        "walked `O_NOFOLLOW` at every component",
+        "a symbolic link or another device than the root's refused by raising",
+        "before anything is removed",
+        "contents are removed without following a symbolic link",
+        "and nothing on a device other than the root's",
+        "so it is cancel-safe",
+        "counts as removed",
+    ):
+        assert clause in doc, clause
+
+
+def test_create_app_builds_one_admission_gate_and_the_delete_takes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One lock per process (Q6, SR-BK0-08): fails on a second gate or another gate passed; the
+    delete recomputes the freshness the lifespan loads."""
+    built: list[BackupJobGate] = []
+    init = BackupJobGate.__init__
+
+    def counted(self: BackupJobGate, **kwargs: Any) -> None:
+        built.append(self)
+        init(self, **kwargs)
+
+    seen: list[dict[str, Any]] = []
+    build = wiring.build_backup_deletion
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(wiring, "BACKUPS_CATALOGUED", True)  # so BK-5 builds a freshness
+    monkeypatch.setattr(BackupJobGate, "__init__", counted)
+    monkeypatch.setattr(app_module, "build_backup_deletion", spy)
+    app = create_app()
+    assert built == [kwargs["gate"] for kwargs in seen] == [app.state.backups_gate]
+    assert seen[0]["freshness"] is app.state.backup_freshness is not None
+    assert ("DELETE", "/admin/backups/{backupId}") in served_operations(app)
