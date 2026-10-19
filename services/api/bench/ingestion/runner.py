@@ -48,6 +48,8 @@ def _lane_cfg(sc: Scenario, **over: Any) -> LaneConfig:
         warmup_wall_s=float(p.get("warmup_wall_s", 0.0)),
         loads=loads,
         realtime=bool(p.get("realtime", False)),
+        bars_specs=int(p.get("bars_specs", 0)),
+        bars_per_series=int(p.get("bars_per_series", 0)),
     )
     for k, v in over.items():
         setattr(cfg, k, v)
@@ -80,6 +82,13 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
         },
     }
     v.metrics["_curve"] = {f"{s.t_s:.0f}": s.rss_bytes / 2**20 for s in res.samples}
+    if cfg.bars_specs:  # #8 above is a reading at the bars cap only while these checks pass
+        cap = cfg.bars_specs * cfg.bars_per_series
+        v.checks.extend(budgets.check_bars(res.bars_held, n_sym, cap, res.bars_folded))
+        before, after = res.rss_bars_bytes
+        v.metrics["bars_setup_mb_per_symbol"] = budgets.summary(
+            [max(0, after - before) / 2**20 / n_sym]
+        )
     return v
 
 

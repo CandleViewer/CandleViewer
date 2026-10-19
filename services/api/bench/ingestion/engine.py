@@ -23,7 +23,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import psutil
 
@@ -37,6 +37,9 @@ from candleviewer.exchange.base.trade_print import TradePrint
 from candleviewer.exchange.bybit.trades import parse_trade_frame, trade_topic
 from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
 from candleviewer.observability.latency import StageStamps, stage_durations
+
+if TYPE_CHECKING:
+    from bench.ingestion.bars_lane import BarsLane
 
 #: Corpus envelope epoch (the clean public-trade captures start at ts=1700000000000).
 T0_MS = 1_700_000_000_000
@@ -97,6 +100,10 @@ class LaneConfig:
     drop_detected: bool = False
     drop_symbol: str = ""
     leak: bool = False
+    #: The bars path (`bars_lane`, #399 D2-G4): bar builders for this many specs per symbol and the
+    #: WS series store holding each, hydrated with `bars_per_series` stored bars. 0 = none.
+    bars_specs: int = 0
+    bars_per_series: int = 0
 
 
 @dataclass(slots=True)
@@ -104,6 +111,11 @@ class LaneResult:
     samples: list[Sample] = field(default_factory=list)
     #: RSS taken once before the market and lanes were built: what budget #8 subtracts.
     rss_pre_lanes_bytes: int = 0
+    #: The bars path: RSS just before it was built and once it was hydrated, the closed bars its
+    #: stores held at each sample (all lanes), and each lane's live closes folded past its tail.
+    rss_bars_bytes: tuple[int, int] = (0, 0)
+    bars_held: list[int] = field(default_factory=list)
+    bars_folded: list[int] = field(default_factory=list)
     injected: dict[str, int] = field(default_factory=dict)
     ingested: dict[str, int] = field(default_factory=dict)
     detected_gap: dict[str, int] = field(default_factory=dict)
@@ -307,6 +319,10 @@ class Lane:
     def backlog(self) -> int:
         return len(self.buffer) + len(self.inbound)
 
+    def clock(self) -> int:
+        """The lane's virtual time (µs), the bars path's clock."""
+        return self.now_us
+
 
 async def run_lanes(
     cfg: LaneConfig,
@@ -321,9 +337,15 @@ async def run_lanes(
 
     RSS is sampled once before the market and lanes are built (`LaneResult.rss_pre_lanes_bytes`).
     A warm-up (`LaneConfig.warmup_s`) runs the lanes unsampled first; `duration_s` is the sampled
-    window that follows, and sample times count from its start."""
+    window that follows, and sample times count from its start. The bars path
+    (`LaneConfig.bars_specs`) is built and hydrated after the lanes, inside budget #8's figure."""
     if cfg.loads and (cfg.warmup_s or cfg.warmup_wall_s):
         raise ValueError("a warm-up would shift the load windows: scenarios with loads take none")
+    fixture = None
+    if cfg.bars_specs:  # imported and loaded before the pre-lanes sample: the harness's own
+        from bench.ingestion.bars_lane import BarsFixture
+
+        fixture = BarsFixture(cfg.bars_specs, cfg.bars_per_series)
     rss_pre, _ = sampler.sample()  # budget #8's baseline: before the market and lanes exist
     market = SyntheticMarket(cfg.symbols, cfg.seed)
     lanes = [Lane(s, cfg, market, i) for i, s in enumerate(cfg.symbols)]
@@ -332,9 +354,19 @@ async def run_lanes(
     n_ticks = int(cfg.duration_s / cfg.tick_s)
     every = max(1, int(cfg.sample_every_s / cfg.tick_s))
     res = LaneResult(rss_pre_lanes_bytes=rss_pre)
+    bars: list[BarsLane] = []
+    if fixture is not None:
+        before, _ = sampler.sample()
+        bars = [await fixture.lane(x.sym, x.bus, x.clock) for x in lanes]
+        res.rss_bars_bytes = (before, sampler.sample()[0])
+    per_s = max(1, round(1 / cfg.tick_s))
     sample_cost: list[float] = []
     lag_window: deque[float] = deque(maxlen=64)
     wall0 = time.perf_counter()
+
+    def held() -> None:
+        if bars:
+            res.bars_held.append(sum(b.count()[0] for b in bars))
 
     async def step(tick: int, feeding: bool) -> None:
         if feeding:
@@ -342,6 +374,9 @@ async def run_lanes(
                 lane.feed(tick)
         t_tick = time.perf_counter()
         await asyncio.gather(*(lane.work(tick, record_stages) for lane in lanes))
+        if bars and (tick + 1) % per_s == 0:  # the bar set's ticker cadence, on the lane clock
+            for b in bars:
+                await b.tick()
         spent = time.perf_counter() - t_tick
         lag_window.append(spent * 1000)
         if cfg.realtime and feeding:
@@ -363,6 +398,7 @@ async def run_lanes(
             sum(lane.storage_bytes for lane in lanes),
         )
     )
+    held()
     for tick in range(first, first + n_ticks + drain_ticks):
         feeding = tick < first + n_ticks
         await step(tick, feeding)
@@ -382,6 +418,7 @@ async def run_lanes(
                 )
             )
             sample_cost.append((time.perf_counter() - t_s0) * 1000)
+            held()
     for lane in lanes:
         await lane.settle()
         res.injected[lane.sym] = lane.injected
@@ -395,6 +432,8 @@ async def run_lanes(
         for k, v in lane.parts.items():
             res.stage_parts_ms.setdefault(k, []).extend(v.values)
         res.retained += len(lane.retained)
+    for b in bars:
+        res.bars_folded.append(await b.stop())
     res.sampling_cost_ms = sum(sample_cost) / len(sample_cost) if sample_cost else 0.0
     res.wall_s = time.perf_counter() - wall0
     return res

@@ -5,10 +5,11 @@ beside the budget so the report can print both (AC 1). Hard vs soft follows the 
 
 Budget #8 is per symbol (06 §2: book state, bar builders, rolling aggregation buffers):
 `rss_per_symbol_mb` is the RSS the lanes add, i.e. the sample minus the RSS taken before they were
-built, per symbol. The soak lanes run the trade stream and the book state; bar builders and
-aggregation enter this figure when they enter the lanes. `rss_process_mb` is the whole-process RSS
-at each sample, imports included, reported beside it so that growth in what is imported is not
-read as per-symbol growth.
+built, per symbol. The soak lanes run the trade stream and the book state; with `bars_specs` they
+also run the bars path, bar builders and the WS series store (`soak_bars` at the 32-spec cap, #399
+D2-G4; `check_bars` says when the figure is a reading at that cap). Aggregation enters this figure
+when it enters the lanes. `rss_process_mb` is the whole-process RSS at each sample, imports
+included, reported beside it so that growth in what is imported is not read as per-symbol growth.
 """
 
 from __future__ import annotations
@@ -216,6 +217,36 @@ def check_soak(
             "ratio",
             dev <= tolerance,
             note=f"max deviation from the t={at:.0f}s baseline sample",
+        ),
+    ]
+
+
+def check_bars(
+    held: Sequence[int], n_symbols: int, cap_per_symbol: int, folded: Sequence[int]
+) -> list[Check]:
+    """#399 D2-G4: budget #8's figure is a reading at the bars cap only while the series stores
+    hold every series full at every sample (`held`: closed bars, all lanes) and the bar builders
+    are live: each lane's store folded live closes past its stored tail (`folded`, per lane)."""
+    low = min(held, default=0) / max(1, n_symbols)
+    fold = float(min(folded, default=0))
+    return [
+        Check(
+            "bars_store_at_cap",
+            "#8",
+            low,
+            float(cap_per_symbol),
+            "bars",
+            low >= cap_per_symbol,
+            note="closed bars the series store held per symbol, lowest sample",
+        ),
+        Check(
+            "bars_closes_folded",
+            "#8",
+            fold,
+            1.0,
+            "closes",
+            fold >= 1.0,
+            note="live closes folded past the stored tail, lowest lane",
         ),
     ]
 

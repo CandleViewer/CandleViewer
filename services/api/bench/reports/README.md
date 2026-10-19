@@ -6,18 +6,25 @@ gitignored; `e08-sample.md` is the committed laptop smoke sample (machine profil
 
 How the soak reads memory (06-performance §2, budget #8): `rss_mb_per_symbol` is the RSS the
 symbol lanes add, per symbol (the RSS sampled before the lanes are built is subtracted, never
-below 0). The soak lanes run the trade stream and the book state; bar builders and aggregation
-enter this figure when they enter the lanes. The whole-process RSS at each sample, imports
+below 0). The soak lanes run the trade stream and the book state. In `soak_bars` they also run
+the bars path at its cap (#399 D2-G4, `bench/ingestion/bars_lane.py`): bar builders for 32 specs a
+symbol and the WS series store holding each with 1 000 bars, hydrated through the production tail
+read from the recorded golden bars. `bars_setup_mb_per_symbol` is the RSS that building and
+hydrating it added, and `bars_store_at_cap` and `bars_closes_folded` fail a run whose store fell
+below that cap or whose builders folded no close onto it. Aggregation enters this figure when it
+enters the lanes. The whole-process RSS at each sample, imports
 included, is reported apart as `rss_mb_process`: it warns at +10 % and, once a same-profile
 baseline whose gate is not warn-only records it, fails at +50 % (`gate.record` writes warn-only,
 so the #2825 PR sets it). The smoke profile takes its first sample after an unsampled warm-up
 (`warmup_s`, `warmup_wall_s` in `scenarios/soak_steady.json`, which says why 120 s).
 
 `HARNESS_VERSION` is `e08-q04/2` and the gate compares no baseline recorded by another version.
-Every baseline committed so far is `e08-q04/1`, and `rss_mb_per_symbol` in
+The six E08 baselines are `e08-q04/1`, and `rss_mb_per_symbol` in
 `baselines/e08/soak_steady.json` and `e08-sample.md` is whole-process RSS divided by the symbol
-count, so the gate shows no rows (the hard checks still judge each run) until a baseline is
-recorded again (#2825). Record it on a fresh checkout through the nightly's own entry point
+count, so for them the gate shows no rows (the hard checks still judge each run) until a baseline
+is recorded again (#2825). `baselines/e08/soak_bars.json` is `e08-q04/2`, recorded on a second
+laptop (`laptop-i7-13850HX`) and warn-only like the rest: the gate compares it and can only WARN.
+Record a baseline on a fresh checkout through the nightly's own entry point
 (`python -m bench.ingestion.runner`): the lane-added figure is a small difference of two large
 numbers, and warm bytecode caches read about 10 % higher than cold ones (paired runs, 5 each:
 3.4 to 3.5 MB per symbol warm against 3.14 to 3.21 cold).

@@ -2,10 +2,14 @@ name: perf-ingestion-nightly
 # E08-T06: ingestion soak (30-minute canary) + 5x burst regression. Recorded-not-gating
 # in R0 (30-release-roadmap 4.4): runs nightly, never on PRs. Synthetic feed only - no
 # network egress to the exchange (C-13.5). The 24 h demo soak is a manual run (exception #1778 A).
-# E08-Q04: + the six-scenario perf pack (bench/ingestion) vs bench/baselines/e08 (WARN > 10 %,
+# E08-Q04: + the seven-scenario perf pack (bench/ingestion) vs bench/baselines/e08 (WARN > 10 %,
 # FAIL > per-metric band, only against a same-machine-profile, non-warn-only baseline: the
 # committed baselines are laptop numbers, so this only WARNs until a CI-runner baseline is
 # recorded). Weekly (Sun) and on dispatch with profile=full: 24 h soak + k6. Never on PRs.
+# #399 D2-G4: the pack's soak_bars is the soak with the bars path at its cap, bar builders and the
+# WS series store at 32 specs x 1 000 bars a symbol (budget #8). Its smoke runs in both pack
+# steps below: 28 s each on the laptop that recorded its baseline, where soak_steady's takes 7 s
+# (the whole job took 75 s on 19 Oct). Its full run is 24 h of scenario time on the virtual clock.
 # A red signal comments on its open issue, or opens one (_nightly-issue.yml, #1849). No
 # workflow-level concurrency group (#3449): the report job has a per-signal group instead.
 on:
@@ -48,7 +52,7 @@ jobs:
         if: always() && steps.sync.outcome == 'success'
         working-directory: services/api
         run: uv run pytest tests/unit/bench -m "harness and not flaky" -q -p no:randomly --no-cov
-      - name: E08-Q04 perf pack (six scenarios, smoke profile) + regression gate
+      - name: E08-Q04 perf pack (seven scenarios, smoke profile) + regression gate
         id: pack
         if: always() && steps.sync.outcome == 'success'
         working-directory: services/api
@@ -76,12 +80,13 @@ jobs:
           if-no-files-found: ignore
 
   perf-pack-full:
-    # E08-Q04 full profile: 24 h 1x soak (3 symbols) + 10-symbol aggregate + burst + k6 REST.
+    # E08-Q04 full profile: 24 h 1x soak (3 symbols) + 10-symbol aggregate + burst + k6 REST,
+    # and soak_bars: 24 h of scenario time, about 3 h on the laptop that recorded its baseline.
     # GitHub-hosted jobs cap at 6 h, so this targets the self-hosted bench runner (E04 bench
     # environment); dispatch-only until that runner is registered.
     if: github.event_name == 'workflow_dispatch' && inputs.profile == 'full'
     runs-on: [self-hosted, bench]
-    timeout-minutes: 1740 # 24 h soak + 1 h aggregate + latency 30 m + rest/burst; report must run
+    timeout-minutes: 2100 # 24 h soak + 6 h soak_bars + 1 h aggregate + 30 m latency + rest/burst
     env:
       CV_ENV: test
       CV_BENCH_MACHINE_PROFILE: bench-runner

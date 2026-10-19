@@ -1,0 +1,60 @@
+{
+  "gate": "warn-only",
+  "harness_version": "e08-q04/2",
+  "higher_is_better": [],
+  "machine_profile": "laptop-i7-13850HX",
+  "metrics": {
+    "bars_setup_mb_per_symbol": {
+      "count": 1.0,
+      "max": 145.61458333333334,
+      "p50": 145.61458333333334,
+      "p95": 145.61458333333334
+    },
+    "event_loop_lag_ms": {
+      "count": 19.0,
+      "max": 142.4491619982291,
+      "p50": 13.719213980948552,
+      "p95": 142.4491619982291
+    },
+    "ingest_lag_ms": {
+      "count": 12600.0,
+      "max": 3.5827009996864945,
+      "p50": 0.10145799024030566,
+      "p95": 0.23415798204950988
+    },
+    "queue_depth": {
+      "count": 19.0,
+      "max": 0.0,
+      "p50": 0.0,
+      "p95": 0.0
+    },
+    "rss_mb_per_symbol": {
+      "count": 19.0,
+      "max": 161.51041666666666,
+      "p50": 161.36458333333334,
+      "p95": 161.51041666666666
+    },
+    "rss_mb_process": {
+      "count": 19.0,
+      "max": 532.55078125,
+      "p50": 532.11328125,
+      "p95": 532.55078125
+    },
+    "sampling_cost_ms": {
+      "count": 19.0,
+      "max": 0.11645966151263565,
+      "p50": 0.11645966151263565,
+      "p95": 0.11645966151263565
+    },
+    "vcpu_per_symbol": {
+      "count": 18.0,
+      "max": 0.04933333333333323,
+      "p50": 0.036666666666666715,
+      "p95": 0.04933333333333323
+    }
+  },
+  "note": "Laptop (i7-13850HX, 28 threads, 16 GB, WSL2) smoke-profile numbers from `python -m bench.ingestion.runner soak_bars --profile smoke --record-baseline` (2026-10-19). WARN-only until a CI-runner baseline is recorded (#2825), as for the other scenarios.",
+  "profile_scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s)",
+  "run_profile": "smoke",
+  "scenario": "soak_bars"
+}
