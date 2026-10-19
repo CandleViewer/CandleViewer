@@ -136,6 +136,20 @@ minute (62 s in that job). The total is at most 140 if every job reaches its 20-
 (`CV_CI_TIMEOUT_MINUTES`). Standard hosted runners are free on this public repository, so the cost
 is seven runner slots for about two minutes.
 
+**Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
+`perf-storage-nightly.yml` (`perf-storage`) and `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
+`perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full`) report a red signal
+through `_nightly-issue.yml`, from scheduled and manual runs alike. Its `report` job comments on the
+newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
+labels, or opens one titled `<prefix> (YYYY-MM-DD)`, so a lasting drift or regression keeps one
+issue with a comment per red night. Close the issue when the cause is fixed: the next red night
+opens a new one. An issue anyone else opens under the same title, and a pull request, are ignored.
+Two runs of one signal that finish together queue on the report job's `nightly-issue-<signal>`
+concurrency group, so the second comments on the issue the first opened. The workflows have no
+workflow-level group, which would let a manual run replace a pending scheduled run (#3449). Only
+the report jobs can write (`issues: write`, no checkout, no action), and a malformed input fails the
+job and files nothing.
+
 ## 3. Reading the `ci-required` resolver summary
 
 `pr.yml`'s `ci-required` job is the only job branch protection actually

@@ -1,18 +1,27 @@
 name: perf-storage-nightly
-# Recorded-not-gating in R0 (30-release-roadmap 4.4): runs nightly, never on PRs.
+# Recorded-not-gating in R0 (30-release-roadmap 4.4): runs nightly, never on PRs. A red perf gate
+# comments on the signal's open issue, or opens one (_nightly-issue.yml, #1849). No workflow-level
+# concurrency group (#3449): the report job has a per-signal group instead.
 on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch: {}
 permissions:
   contents: read
-  issues: write
 jobs:
   storage-perf:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       CV_ENV: test
+    outputs:
+      # A report only for a perf-gate exit, as each harness step recorded it in `rc` (#3429): 1
+      # from the proxy harness (a warm p95 over baseline) or 1 from the real-engine pytest run (a
+      # perf test failed), after a `uv sync` that succeeded. Any other exit fails the job without
+      # one: pytest's 2 (interrupted or collection error), 3 (internal), 4 (usage) or 5 (nothing
+      # collected), a kill signal, a failed `uv sync`. Exit 1 is also what an uncaught harness
+      # error or a fixture error (docker not reachable) gives: those report too.
+      regressed: ${{ steps.sync.outcome == 'success' && (steps.proxy.outputs.rc == '1' || steps.real.outputs.rc == '1') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -21,7 +30,8 @@ jobs:
       - name: Proxy harness (DuckDB shapes, regression gate)
         id: proxy
         # Exit 1 is the harness's regression gate (a warm p95 over baseline). The exit code is
-        # recorded as the step output `rc` for the ticket step below, and the step fails with it.
+        # recorded as the step output `rc` for the job's `regressed` output, and the step fails
+        # with it.
         run: |
           rc=0
           uv run --project services/api python tests/perf/storage/harness.py \
@@ -41,18 +51,6 @@ jobs:
             -m "integration and perf and not flaky" --no-cov -p no:randomly || rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           exit "$rc"
-      - name: Open ticket on >20% regression
-        # Opens an issue only for a perf-gate exit, as each harness step recorded it in `rc`: 1 from
-        # the proxy harness (a warm p95 over baseline) or 1 from the real-engine pytest run (a perf
-        # test failed), after a `uv sync` that succeeded. Any other exit fails the job without a
-        # ticket: pytest's 2 (interrupted or collection error), 3 (internal), 4 (usage) or 5
-        # (nothing collected), a kill signal, a failed `uv sync`. Exit 1 is also what an uncaught
-        # harness error or a fixture error (docker not reachable) gives: those open one too.
-        if: failure() && (steps.proxy.outputs.rc == '1' || steps.real.outputs.rc == '1') && steps.sync.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue create             --title "perf: storage nightly regression >20% ($(date -u +%F))"             --label perf --label area/backend-platform             --body "storage-perf-nightly failed the 20% baseline gate. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Artifact: storage-perf-results."
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -60,3 +58,15 @@ jobs:
           path: |
             results.json
             services/api/build/reports/storage-perf.json
+
+  storage-perf-issue:
+    needs: storage-perf
+    if: ${{ always() && needs.storage-perf.outputs.regressed == 'true' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: perf-storage
+      title-prefix: "perf: storage nightly regression >20%"
+      labels: perf,area/backend-platform
+      body: "storage-perf-nightly failed the 20% baseline gate. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: storage-perf-results."
