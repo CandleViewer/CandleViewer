@@ -276,10 +276,11 @@ info:
     `Idempotency-Key` (client-generated UUIDv4) is stored with the request fingerprint for 24 h.
     Replay with the same key + same body returns the original response and
     `Idempotency-Replayed: true`. Same key + different body → `409` with code
-    `idempotency_key_reuse`. Exception (E42-T05): a `409` or `503` with which `createBackup` or
-    `restoreBackup` refuses to start (a precondition, another backup or restore still running,
-    or a dependency or the engine unavailable) is not stored under the key, so the same key and
-    body are evaluated afresh once the cause clears.
+    `idempotency_key_reuse`. Exception (E42-T05): any answer but a `2xx` with which
+    `createBackup` or `restoreBackup` refuses to start (a precondition, another backup or restore
+    still running, the hourly limit, a dependency that is unavailable, or a backup engine that
+    is not wired or is invalid) is not stored under the key, so the same key and body are
+    evaluated afresh once the cause clears.
 
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
@@ -9598,25 +9599,42 @@ paths:
         `GET /admin/jobs/{Backup.id}`, which reports `kind: backup`. When the run's
         `stage: finished` record cannot be written, the row ends `failed` with
         `error: audit_unavailable`, and the job may read `succeeded` only if its `result` then also
-        carries `audit: "unavailable"`: the row is the truth. The run is audited as
-        `backup.run` ahead of the response. While a backup or a restore is running, a new run is
+        carries `audit: "unavailable"`: the row is the truth. A client takes a run's outcome from
+        its row (`getBackup`), not from the job's `status`: a `succeeded` job is final only once
+        the row has left `running`. The run is audited as `backup.run` ahead of the response.
+        While a backup or a restore is running, a new run is
         `409 conflict` with rule `backup_or_restore_running` and starts nothing. A run that
         cannot take the backups admission lock (`deleteBackup`) within its wait is
         `503 store_unavailable` with `Retry-After`, before any record, and starts nothing.
+        Order (E42-T05): the first of these that applies answers, and no record is written before
+        the plan: no backup engine wired, `501 not_implemented`; the hourly limit,
+        `429 rate_limited` (checked before the lock and again once it is held, so it still comes
+        ahead of the `409`); the backups admission lock, `503 store_unavailable`; a running backup
+        or restore, `409 conflict`; the engine's plan, `503 backup_engine_invalid` when it is not
+        encrypted under a key alias, whatever else it breaks, or `503 store_unavailable` when the
+        engine cannot plan the run; then the `requested` record and the start.
         Records (E42-T05): `backup.run` is written with `after_state.stage: requested` before the
         `202` (when it cannot be written the answer is `503 audit_unavailable` and nothing
         starts) and again with `stage: finished` when the run ends, carrying the outcome,
         `size_bytes` and `checksum_sha256`; the catalogue row becomes `ok` only after that record
         is written, so the digest of every single-file artefact is bound in the append-only log,
-        and `verifyBackup` and `restoreBackup` check the artefact against it. `note` is kept in
-        the `requested` record's `reason` and nowhere else; the row records
-        `triggered_by: manual` and the caller. A run whose backup engine plan has
-        `encrypted: false` breaks the rule that backups are always encrypted, so it is refused
-        fail closed: its failure record (`backup.run`, `outcome: failure`) is written first, then
-        the answer is `503 backup_engine_invalid`, nothing starts, and runs stay refused this way
-        until the engine configuration is fixed. A user may start at most 4 runs in a rolling hour,
-        else `429 rate_limited` with `Retry-After`. Until a backup engine is wired the operation
-        answers `501 not_implemented`, writes no record and starts nothing.
+        and `verifyBackup` and `restoreBackup` check the artefact against it. `note` is kept in the
+        `requested` record's `reason` and nowhere else; the row records `triggered_by: manual` and
+        the caller. A run whose backup engine plan (what the engine reports for the run: the
+        artefact's location, whether it is encrypted and under which key alias) is not encrypted
+        under a key alias (`encrypted: false`, or no alias named) breaks the rule that backups are
+        always encrypted, so it is refused fail closed: its failure record (`backup.run`,
+        `stage: refused`, `outcome: failure`) is written first, then the answer is
+        `503 backup_engine_invalid`, nothing starts, and runs stay refused this way until the engine
+        configuration is fixed. A run refused as `backup_engine_invalid` writes one record, with
+        `stage: refused`, instead of the `requested` and `finished` ones. When that failure record
+        cannot be written, the answer is `503 audit_unavailable` and nothing starts. A user may
+        start at most
+        4 runs in a rolling hour, else `429 rate_limited` with `Retry-After`. A run refused as
+        `backup_engine_invalid` counts as a start, once its record is written, and the limit is
+        checked before the plan, so past it the answer is `429 rate_limited`, not
+        `503 backup_engine_invalid`. Until a backup engine is wired the operation answers
+        `501 not_implemented`, writes no record and starts nothing.
       x-rbac: { permissions: [backups:write], scope: none }
       x-idempotency: recommended
       parameters:
@@ -9696,12 +9714,16 @@ paths:
         in `backup_not_usable`, which also admits an `ok` backup that was never verified. The
         three conflicts are evaluated and the row marked under the backups admission lock, one
         delete at a time. The backups admission lock is the one process-wide lock that admits a
-        run, a verification, a restore and a delete one at a time (#966 Q6; BK-7 builds it).
+        run, a verification, a restore, a delete and a download-link issue one at a time (#966
+        Q6; BK-7 builds it).
         An admission that cannot take that lock within its wait is `503 store_unavailable` with
         `Retry-After`. A run or a verification then writes no record and starts nothing; a delete
         or a restore is refused after its grant is spent, so the grant is gone, its failure record
-        (`backup.deleted` or `backup.restore`, `outcome: failure`) is written first, and the
-        operator steps up again to retry.
+        (`backup.deleted` or `backup.restore`, `outcome: failure`) is written ahead of the `503`,
+        and the operator steps up again to retry. A download-link issue is refused the same way
+        after its grant is spent, with a record of its own (`issueBackupDownload`). When a delete's
+        failure record cannot be written, for this `503` or for any `409 conflict` after the grant
+        is spent, the answer is `503 audit_unavailable` and the grant stays spent.
         The challenge's `action_summary` template is
         `Delete the artefact of backup '<backupId>' (<kind>)` and `target` is null; the
         `backup.deleted` record names the `challenge_id` of the grant it spent. If the artefact
@@ -9732,10 +9754,13 @@ paths:
         Restores into an isolated scratch database/namespace, runs integrity assertions (row counts,
         hash-chain verification, migration version) and discards it. Never touches live data.
         Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and
-        sets `verified_at`, or ends `failed` with a stable `error` code (`checksum_mismatch` when
-        the stored digest does not match) and records the failed verification on the backup row
-        (`status: failed`, `error`). A failed re-verify leaves `verified_at` at the last successful
-        verification. Either outcome is audited as `backup.verified`.
+        sets `status: verified` and `verified_at` and clears `error`, whatever the status was
+        before (`restored` included: the latest outcome wins), or ends `failed` with a stable
+        `error` code (`checksum_mismatch` when the stored digest does not match) and records the
+        failed verification on the backup row (`status: failed`, `error`), except for
+        `store_unavailable`, which leaves the row unchanged. A failed re-verify leaves
+        `verified_at` at the last successful verification. Either outcome is audited as
+        `backup.verified`.
         Integrity first (E42-T05): when the backup's kind produces a single-file artefact, the job
         hashes that file and compares its SHA-256 with `checksum_sha256` and with the digest the
         run's `backup.run` record bound, before anything is decrypted or restored. A mismatch is
@@ -9743,7 +9768,12 @@ paths:
         missing or whose `location` does not resolve, without following a symbolic link, to a
         regular file inside the backup root is `artefact_missing`. A directory or repository
         artefact (such as a QuestDB snapshot or a restic repository) is checked by the backup
-        engine's own verifier instead. A failed scratch-restore assertion is `verify_failed`.
+        engine's own verifier instead. A failed scratch-restore assertion is `verify_failed`. An
+        artefact that exists but cannot be read (for instance an I/O error on the backup volume) is
+        `store_unavailable`: the job ends `failed` and `backup.verified` (`stage: finished`,
+        `outcome: failure`, `error: store_unavailable`) is still written, but the row keeps its
+        `status`, `error` and `verified_at`, since an unreadable store makes the verification
+        inconclusive, not evidence against the backup.
         `backup.verified` is written with `after_state.stage: requested` before the `202` (when
         it cannot be written the answer is `503 audit_unavailable` and nothing is scheduled), and
         with `stage: finished`, the outcome and the `error` code when the job ends, before the row
@@ -9751,7 +9781,9 @@ paths:
         recorded with `encrypted: false` is `409 conflict` with rule `backup_not_usable`. One
         verification runs at a time: while another is running a new one is `409 conflict` with
         rule `verify_running`, and while a restore is running, with rule
-        `backup_or_restore_running`. A user may start at most 12 verifications in a rolling hour,
+        `backup_or_restore_running`. A verification that cannot take the backups admission lock
+        (`deleteBackup`) within its wait is `503 store_unavailable` with `Retry-After`, before any
+        record, and schedules nothing. A user may start at most 12 verifications in a rolling hour,
         else `429 rate_limited` with `Retry-After`. Until a verifier is wired the operation
         answers `501 not_implemented` and schedules nothing.
       x-rbac: { permissions: [backups:write], scope: none }
@@ -9789,7 +9821,9 @@ paths:
         kept equal by `tests/xstate_contract/test_b16.py`), so each link
         spends one code; without one the route answers `403 step_up_required` with `action_class`
         set to `backups`. Issuing is audited as `backup.downloaded` with `after_state.stage: issued`
-        at severity `error` before the response. The link appears only in this response body: access
+        at severity `error` before the response; when that record cannot be written, the link is
+        never sent: the answer is `503 audit_unavailable` and the grant stays spent. The link
+        appears only in this response body: access
         logs, traces, metrics labels and audit fields record the route template, never the link or
         its token. It carries a one-time token, and fetching it is a `GET` that the token itself
         authenticates, served as the issuing user (`downloadBackup`). Only a backup with `status` `ok`,
@@ -9800,10 +9834,23 @@ paths:
         any challenge, and `backup_not_usable` after the grant is spent, as on `restoreBackup`; a
         backup whose artefact was deleted, that is recorded with `encrypted: false`, or whose
         artefact is not a single file is not usable. A refusal after the grant is spent is audited
-        as `backup.downloaded` with `stage: issued` and `outcome: failure`; every record names the
+        as `backup.downloaded` with `stage: issued` and `outcome: failure` and a `reason`:
+        `backup_not_usable` for the `409`, `links_full` for a full link store and
+        `store_unavailable` for any other `503 store_unavailable` after the spend (the lock wait, or
+        a catalogue or artefact store that fails or is too slow); every record names the
         `challenge_id` of the grant it spent, and the record of an issued link also names its
-        `after_state.link_id`, an id minted with the link that the fetch's records repeat, never
-        the token or its hash. The challenge's `action_summary` template is
+        `after_state.link_id`, an id minted with the link that the fetch's records repeat, never the
+        token or its hash. An issue that cannot take the backups admission lock (`deleteBackup`)
+        within its wait is `503 store_unavailable` with `Retry-After`, after the grant is spent, so
+        the grant is gone, its failure record (`backup.downloaded`, `stage: issued`,
+        `outcome: failure`, `reason: store_unavailable`) is written ahead of the `503`, and the
+        operator steps up again to retry. A catalogue or artefact store that fails or is too slow
+        once the lock is held ends the same way, with the same record. An issue that finds the link
+        store full (1024 links live; `downloadBackup` states the bounds) is refused the same way:
+        `503 store_unavailable` with `Retry-After`, `reason: links_full`, a code that here also
+        covers the in-process link store. When that failure record cannot be written, for any of
+        these `503`s or for the `409`, the answer is `503 audit_unavailable` and the grant stays
+        spent. The challenge's `action_summary` template is
         `Issue a 5-minute download link for backup '<backupId>' (<kind>)` and `target` is null.
         The token carries 256 bits from a CSPRNG (43 base64url characters) and is the only
         credential the fetch needs: `downloadBackup` needs no `Authorization` header, so a
@@ -9868,9 +9915,10 @@ paths:
         echoes the path; and every response, refusals included, sends `Referrer-Policy: no-referrer`
         and `Cache-Control: no-store`. The token comes from a CSPRNG with at least 128 bits of
         entropy, is stored only as a hash, is compared in constant time, and is single-use and
-        short-lived (5 minutes). An expired or already used token is `410 gone` whether or not the
-        request carries a bearer token, and `404 not_found` when it carries another user's; an
-        unknown token is `404 not_found`. Telling a used token from an unknown one discloses
+        short-lived (5 minutes). An expired or already used token is `410 gone` while the link is
+        remembered, whether or not the request carries a bearer token, and `404 not_found` when it
+        carries another user's; an unknown token is `404 not_found`. Telling a used token from an
+        unknown one discloses
         nothing, since a token cannot be guessed (256 bits, `issueBackupDownload`). At most
         10 fetches per user per hour, else `429 rate_limited`.
         Serving (E42-T05): the token is the credential, so the `GET` needs no `Authorization`
@@ -9900,7 +9948,19 @@ paths:
         refused miss from that address in the minute, writes it. A live matching token then meets
         the hourly limit of the user it was issued to, the one check before the spend: over it, the
         answer is `429 rate_limited`, nothing is spent and nothing is recorded. The token is then
-        spent, so a refused fetch spends it too. The link follows its issuing
+        spent, so a refused fetch spends it too. A spent or expired link is remembered for at most 1
+        hour after its spend, or after its expiry if it was never spent: while it is remembered, an
+        expired or used token is `410 gone` and a spent one presented again for the first time is
+        recorded once as `link_reused`, as above; after that its token is unknown, so a fetch is
+        `404 not_found` and no `link_reused` record is written. Links are held in the memory of the
+        one API process
+        (ADR-0004), as jobs are (`getJob`), so a restart forgets every link, live or spent: one
+        issued before it is unknown, a fetch is `404 not_found`, and the link shows as an `issued`
+        record with no `served` record. At most 1024 links are live at once, every user's together;
+        an issue that finds 1024 live is refused (`issueBackupDownload`). The spent or expired ones
+        are kept as well, the newest 1024 issued, and the oldest issued are forgotten first, so a
+        token can be `404 not_found` with no record before its hour is up. The link follows its
+        issuing
         session's family across rotation (`issueBackupDownload`), so a rotation does not end it,
         and it ends with the events that end the grant that minted it, not with the grant's
         60-second expiry or its use: after the family's session logged out, idle-locked or turned
@@ -9949,7 +10009,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "410":
-          description: "The link expired or was already used, or it ended with the events that end the grant that minted it, not with the grant's 60-second expiry or its use: after the family's session logged out, idle-locked or turned read-only, after the family was revoked other than by a rotation or expired, or after its user was disabled (`code: gone`). Every cause gets the same body, the `used` example; only the record's `reason` names it."
+          description: "The link expired or was already used, or it ended with the events that end the grant that minted it, not with the grant's 60-second expiry or its use: after the family's session logged out, idle-locked or turned read-only, after the family was revoked other than by a rotation or expired, or after its user was disabled (`code: gone`). Every cause gets the same body, the `used` example; only the record's `reason` names it. A link is `410 gone` only while it is remembered (`downloadBackup`); after that its token is unknown and the fetch is `404 not_found`."
           headers:
             Cache-Control: { schema: { type: string, const: no-store } }
             Referrer-Policy: { schema: { type: string, const: no-referrer } }
@@ -9984,8 +10044,11 @@ paths:
         Uniform polling surface for every `202`-returning endpoint in this API. An unknown or
         evicted job id is `404 not_found`. `error` carries a stable code, never a message. An
         `audit_export` job is visible only to the user who requested it (anyone else gets
-        `404 not_found`); its `result` is an `AuditExportResult` once `status` is `succeeded`.
-        Jobs are held in the memory of the one API process (ADR-0004), so a restart loses every
+        `404 not_found`); its `result` is an `AuditExportResult` once `status` is `succeeded`. A
+        `backup` job's `result` carries `audit: "unavailable"` when the run's `stage: finished`
+        record could not be written (`createBackup`), and a run's outcome is its row's
+        (`getBackup`), not the job's `status`. Jobs are held in the memory of the one API process
+        (ADR-0004), so a restart loses every
         job, finished ones included, while the objects jobs act on persist (a backup run's
         catalogue row, `getBackup`). Every `404` here carries rule `job_unknown` (E42-T05),
         whatever the cause, so it never tells a lost or evicted job from one that was never
@@ -18015,9 +18078,11 @@ components:
         error:
           type: ["string", "null"]
           description: >
-            Why the run or its latest verification failed, as a stable code such as
-            `checksum_mismatch` (E42-T05), never an exception message, a path or key material.
-            Stored in `backups.error_message`; `null` when nothing failed.
+            Why the run or its latest conclusive verification failed, as a stable code such as
+            `checksum_mismatch` (E42-T05), never an exception message, a path or key material. A
+            passing verification clears it and an inconclusive one (`store_unavailable`) leaves it
+            as it was (`verifyBackup`). Stored in `backups.error_message`; `null` when nothing
+            failed.
         deleted_at:
           type: ["string", "null"]
           format: date-time
@@ -18056,8 +18121,10 @@ components:
           description: >-
             Kind-specific outcome once `status` is `succeeded`, otherwise null. For
             `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then`
-            below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, and
-            for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is
+            below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, plus
+            `audit: "unavailable"` when the run's `stage: finished` record could not be written
+            (`createBackup`), and for `kind: backup_verify` it is `{backup_id, verify_method}`,
+            where `verify_method` is
             `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of
             `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the
             restore contract (#3084).
