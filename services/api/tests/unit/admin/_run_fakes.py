@@ -12,18 +12,26 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from fastapi import FastAPI, Request
+
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.metrics import BackupFreshness
 from candleviewer.admin.backups.ports import JobDone, JobKind, JobWork, RunPlan
 from candleviewer.admin.backups.rows import Actor, RunRows
 from candleviewer.admin.backups.runs import BackupRuns
+from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
+from candleviewer.api.admin_backups import make_admin_backup_runs_router
+from candleviewer.api.error_redaction import install_error_redaction
+from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.api.recorder_admin import AdminJobStore
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.backups_wiring import AdminJobRunner
 from candleviewer.observability.metrics import Gauge
 from candleviewer.storage.repositories.backups import BackupKind, BackupRow, NewBackup, RunFinished
-from tests.unit.admin._admin_fakes import principal
+from tests.unit.admin._admin_fakes import AuditSpy, principal
 from tests.unit.admin._backup_fakes import row
+from tests.unit.api._job_poll import mount_job_poll
 
 NOW = datetime(2026, 10, 18, 20, 0, tzinfo=UTC)
 DIGEST = "ab" * 32
@@ -263,3 +271,27 @@ class World(Ledger):
         async with asyncio.timeout(BOUND):
             await self.jobs.settled.wait()
         self.jobs.settled.clear()
+
+
+class Resolver:
+    """`x-role` names an `_admin_fakes` actor, the owner holding `backups:write`; any other value
+    is an unauthenticated caller."""
+
+    async def resolve(self, request: Request) -> AuditPrincipal | None:
+        role = request.headers.get("x-role", "")
+        if role not in ("owner", "manager", "viewer"):
+            return None
+        who = principal(role)
+        writes = who.permissions | {"backups:write"}
+        return replace(who, permissions=writes) if role == "owner" else who
+
+
+def run_app(w: World, cache: IdempotencyCache | None = None) -> tuple[FastAPI, AuditSpy]:
+    """`createBackup` over `w`, as `create_app` mounts it, with the job poll beside it."""
+    spy, app = AuditSpy(), FastAPI()
+    app.add_exception_handler(AdminAreaRefused, admin_area_refused_handler)
+    install_error_redaction(app)
+    route = make_admin_backup_runs_router(w.runs, resolver=Resolver(), audit=spy, idempotency=cache)
+    app.include_router(route)
+    mount_job_poll(app, w.jobs.store, Resolver())
+    return app, spy

@@ -35,6 +35,7 @@ from candleviewer.account_health_wiring import wire_account_health
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.account_access import AccountAccessService
+from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.flags.metrics import export_flag_metrics
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
@@ -81,7 +82,7 @@ from candleviewer.api import (
     make_ticker_router,
     make_trades_router,
 )
-from candleviewer.api.admin_backups import make_admin_backups_router
+from candleviewer.api.admin_backups import make_admin_backup_runs_router, make_admin_backups_router
 from candleviewer.api.admin_capacity import make_admin_capacity_router
 from candleviewer.api.admin_jobs import LostJobsCount, make_admin_jobs_router
 from candleviewer.api.admin_kek import make_admin_kek_router
@@ -164,6 +165,7 @@ from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test
 from candleviewer.backups_wiring import (
     build_admin_backups,
     build_backup_freshness,
+    build_backup_runs,
     serve_backup_metrics,
 )
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
@@ -1936,6 +1938,24 @@ def create_app(
     # BK-5: the backup series and the freshness the lifespan loads, also only once catalogued.
     app.state.backup_metrics = serve_backup_metrics(resolved, ctx.metrics)
     app.state.backup_freshness = build_backup_freshness(resolved, system_settings=admin_settings)
+    # BK-8: a backup run (`backups:write`), `501` until a backup engine is wired, through the one
+    # admission gate every backups service shares (BK-9, BK-10, BK-12 and BK-13 take this one); at
+    # boot the lifespan ends the runs a restart lost (SR-BK7-05), counted with the jobs it lost.
+    backups_gate = app.state.backups_gate = BackupJobGate()
+    backup_runs, app.state.backup_lost_runs = build_backup_runs(
+        resolved,
+        admin_jobs,
+        _LazyAuditEmitter(ctx.audit),
+        gate=backups_gate,
+        lost=metrics_facade.get("cv_admin_jobs_lost_on_restart_total").child(),
+        system_settings=admin_settings,
+        freshness=app.state.backup_freshness,  # BK-5's: a success moves the served gauge
+    )
+    app.include_router(
+        make_admin_backup_runs_router(
+            backup_runs, resolver=audit_resolver, audit=_LazyAuditEmitter(ctx.audit)
+        )
+    )
     # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
     retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)
     app.state.retention_manager = retention_manager

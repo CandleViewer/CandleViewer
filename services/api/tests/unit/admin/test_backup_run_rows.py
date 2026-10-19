@@ -175,6 +175,7 @@ async def test_an_insert_that_fails_ends_its_request_then_is_503(
 ) -> None:
     monkeypatch.setattr(limits, "WRITE_BUDGET_S", 0.05)
     w = Ledger()
+    w.faults.raises["get"] = OSError("read")  # never read: a first try's None is no lost answer
     if case == "hangs":
         w.faults.hangs.add("insert")
     else:
