@@ -1,21 +1,32 @@
 """candleviewer.statechart.bindings.b01_order — MachineLogic for B1 `order`
-(#1650, E50). Chart: `machines/B01.order.machine.json`.
+(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 3.
 
-E29-T03 implements the fill, validation and ack guards (pure, total, deny by default; catalogue
-A6) and context actions; the rest stay idempotent no-ops for its later slices.
-Statecharts record, synchronous code enforces (C-2.21): `VALIDATE` carries the verdicts of the
-checks run before it (`gates`) and the order. `EXEC` carries a 24-internal-schemas.md Sec.8.1
-`Execution` and its `exchange_order_id`; services answer a Sec.14.4 `OrderAck` (an amend's adds
-its `terms`) and raise on an ambiguous outcome, so `onError` lands in `unknown` (S1). Money is
-canonical decimal text in context, like the chart's `"qty": "0"`: a snapshot stays plain JSON.
+Guards are pure, total and deny by default (catalogue A6). Statecharts record, synchronous code
+enforces (C-2.21): `VALIDATE` carries the verdicts of the checks run before it (`gates`) and the
+order. `EXEC` carries a 24-internal-schemas.md Sec.8.1 `Execution` and its `exchange_order_id`.
+Money is canonical decimal text in context, like the chart's `"qty": "0"`: a snapshot stays plain
+JSON. Every event has a closed payload schema (`SCHEMAS`), registered for this machine only.
 
-KILL semantics (owner decision #1778 item X, option a): root `lifecycle.on.KILL`
-lands in the final `lifecycle.killed`, whose entry marks the order
-`halted_by_kill`, audits (write-ahead, C-2.9), then issues the exchange cancel
-through the same `cancel_order` service the `cancel_pending` invoke uses —
-skipped for never-submitted `draft`/`validated`; `cancel_pending` keeps its
-in-flight cancel instead of sending a second one. The cancel outcome is NOT
-trusted here — reconciliation re-syncs the true exchange state (C-2.10, C-2.5).
+The effects go through what the OMS facade wires (`set_ports`, `set_audit_hook`,
+`set_fill_core`), as the statechart package imports no `oms` module (C-3.1):
+
+* `persist_event` hands each `lifecycle` step to the write-ahead store inside
+  `asyncio.timeout(CV_PERSIST_TIMEOUT)`. A refused or timed-out write raises, and
+  `actionErrorPolicy: "rollback"` leaves configuration and context as they were (24 Sec.8.2 S7,
+  S8, S11). It is the one action that raises by design; the rest are total (A1).
+* The services call the OMS's command port (E29-T04), which answers a Sec.14.4 `OrderAck` and
+  raises on an ambiguous outcome, so `onError` lands in `unknown` (S1). Each is idempotent under
+  re-entry: a rollback that re-arms an invoke gets the recorded outcome, never a second send, and
+  a `place` this process did not begin looks the id up before it sends (SR-E29-15).
+* The notices (`notify_*`, `emit_terminal`, the alerts, the `request_*` hand-offs) go to the
+  bounded `outbox` in context, which the facade drains: no action sends to its own machine
+  (CV-C25), and a rolled-back step takes its notices with it (CV-C02).
+
+KILL (owner decision #1778 item X, option a): root `lifecycle.on.KILL` lands in the final
+`lifecycle.killed`, whose entry marks the order `halted_by_kill`, audits (write-ahead, C-2.9),
+then cancels through the OMS's audited cancel service (SR-E29-06), unless the order was never
+sent or is an unverified duplicate; `cancel_pending` keeps its in-flight cancel instead of sending
+a second one. The cancel outcome is not trusted here: reconciliation re-syncs the exchange (C-2.5).
 The `protection` region is untouched by KILL (C-2.6): it only audits.
 """
 
@@ -23,15 +34,22 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
 from decimal import Context, Decimal
-from typing import Any, Final
+from typing import Any, Final, Literal, Protocol
 
 import structlog
 
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.statechart.bindings import register_binding_module
-from candleviewer.statechart.config import CV_KILL_CANCEL_TIMEOUT, register_event_schemas
+from candleviewer.statechart.config import (
+    CV_KILL_CANCEL_TIMEOUT,
+    CV_PERSIST_TIMEOUT,
+    register_event_schemas,
+)
 
 
 def logger() -> Any:
@@ -67,16 +85,92 @@ def set_fill_core(core: FillCore | None) -> None:
     _core = core
 
 
-async def _noop_action(*_args: object, **_kwargs: object) -> None:
-    return None
+CommandKind = Literal["place", "cancel", "kill_cancel", "amend", "attach_stop", "lookup"]
 
 
-def _deny_guard(*_args: object, **_kwargs: object) -> bool:
-    return False
+@dataclass(frozen=True, slots=True)
+class Step:
+    """One `lifecycle` step for its write-ahead row (24 Sec.8.2 S8), as `persist_event` hands it
+    to the OMS: the lifecycle state of the last committed row (`from_state`, None before the row
+    exists) and the state entered, the trigger (an event name, or `done.invoke.<id>` and
+    `error.platform.<id>` for a service's result) with its payload, and the context it leaves."""
+
+    order_id: str | None
+    account_id: str | None
+    order_link_id: str | None
+    from_state: str | None
+    to_state: str
+    event: str
+    payload: Mapping[str, Any]
+    context: Mapping[str, Any]
 
 
-async def _idempotent_service(*_args: object, **_kwargs: object) -> None:
-    return None
+@dataclass(frozen=True, slots=True)
+class Command:
+    """A request to the OMS's command port. `key` names one attempt (the order, the command and
+    the `event_seq` of the step that entered its state), stable across a rollback's re-entry, so
+    the port can deduplicate on it. `order` is the context's view of the order; `terms` an
+    amend's requested terms or the stop an attach asks for."""
+
+    kind: CommandKind
+    key: str
+    order: Mapping[str, Any]
+    terms: Mapping[str, Any]
+
+
+class CommandPort(Protocol):
+    """The OMS's exchange side (E29-T04 implements it, through its audited, budget-drawing
+    services, SR-E29-06). Each answers a 24 Sec.14.4 `OrderAck` as a mapping (`ok`, `error_code`,
+    `exchange_order_id`; an attach adds the `position` row it read back) and raises on an
+    ambiguous outcome (a timeout, a transport error, an HTTP 5xx, `UNKNOWN_STATE`,
+    `TRANSPORT_ERROR`, `SERVICE_UNAVAILABLE`), so the order reaches `unknown` (S1). `lookup`
+    answers the order found under the `order_link_id` in realtime and history (24 Sec.8.3 rule
+    3), or an empty mapping. `cancel` serves a KILL's cancel too (`kind` `kill_cancel`)."""
+
+    async def place(self, command: Command) -> Mapping[str, Any]: ...
+
+    async def cancel(self, command: Command) -> Mapping[str, Any]: ...
+
+    async def amend(self, command: Command) -> Mapping[str, Any]: ...
+
+    async def attach_stop(self, command: Command) -> Mapping[str, Any]: ...
+
+    async def lookup(self, command: Command) -> Mapping[str, Any]: ...
+
+
+#: The write-ahead store: commits the step's `order_events` row (with its execution for a fill)
+#: and answers the row's `seq`; it raises, with nothing written, when it refuses (S7).
+PersistPort = Callable[[Step], Awaitable[int]]
+
+
+def _wall_us() -> int:
+    return time.time_ns() // 1_000
+
+
+@dataclass(frozen=True, slots=True)
+class OrderPorts:
+    """What the OMS facade wires into B1. Unwired, `persist_event` refuses every step past
+    `draft` and the services raise, so an order goes nowhere it cannot be recorded (S7)."""
+
+    persist: PersistPort | None = None
+    commands: CommandPort | None = None
+    now_us: Callable[[], int] = _wall_us
+
+
+_ports = OrderPorts()
+
+
+def set_ports(ports: OrderPorts | None) -> None:
+    global _ports
+    _ports = ports or OrderPorts()
+
+
+class PortMissingError(RuntimeError):
+    """B1 needs a port the OMS facade has not wired."""
+
+
+class RecordedFailureError(RuntimeError):
+    """A re-entered invoke whose command already failed: it fails again, with nothing resent."""
 
 
 #: `VALIDATE`'s verdicts (each `PASSED`: a bool could read as "engaged"), the order's identity, the
@@ -88,21 +182,60 @@ FAILED: Final = "fail"
 FACTS: Final = ("order_id", "order_link_id", "account_id", "symbol", "side")
 TERMS: Final = ("price", "trigger_price", "take_profit", "stop_loss")
 PAIRING: Final = ("exchange_order_id", *FACTS)
-#: The local reject code T03 sets: the native-stop refusal, which E32-T01 decides.
+#: The OMS codes the binding records (24 Sec.8.6): the native-stop refusal E32-T01 decides, and
+#: two reconciliation passes that found nothing (Sec.8.5).
 NATIVE_STOP_REQUIRED: Final = "NATIVE_STOP_REQUIRED"
+UNRESOLVED_AFTER_RECONCILE: Final = "UNRESOLVED_AFTER_RECONCILE"
 #: Bounds on what a payload may put into context (C-2.18): fills per order, id text, and money as
 #: 22's `Decimal` text (C6: no exponent, space or `_`) with numeric(38,18)'s 20 + 18 digits.
 MAX_FILLS: Final = 10_000
 MAX_TEXT: Final = 64
 _MONEY: Final = re.compile(r"-?[0-9]{1,20}(\.[0-9]{1,18})?")
+#: Deadlines (A2), absolute microseconds the OMS's scheduler fires: the stop is confirmed within
+#: 2 s of the first fill (24 Sec.8.8 rule 2), and an order still `unknown` pages at 60 s (Sec.8.5).
+SL_DEADLINE_US: Final = 2_000_000
+RECON_DEADLINE_US: Final = 60_000_000
+#: Notices the facade has not drained (C-2.18): past it the oldest is dropped, logged at ERROR.
+OUTBOX_MAX: Final = 64
+#: Command outcomes this process keeps for re-entry, the oldest dropped first (C-2.18).
+MAX_ATTEMPTS: Final = 4096
 REPEAT: Final = "a repeat exec_id (S4)"
+#: An EXEC before the bind waits in the facade's reorder buffer (SR-E29-03), never a FAULT.
+UNBOUND: Final = "the order has no bound exchange_order_id yet"
 _REJECT_CODES: Final = frozenset(code.value for code in OmsErrorCode)
+_DUPLICATE: Final = OmsErrorCode.DUPLICATE_CLIENT_ID.value
+#: Codes 24 Sec.8.6 routes to retry, poll or reconcile: the command port raises them (S1), so one
+#: recorded as a reject is logged at ERROR.
+_AMBIGUOUS: Final = frozenset({"TRANSPORT_ERROR", "SERVICE_UNAVAILABLE", "UNKNOWN_STATE"})
+#: The invoking `lifecycle` states and the command each one's service sends.
+_INVOKES: Final = {"submitting": "place", "cancel_pending": "cancel", "amend_pending": "amend"}
+#: The states whose step creates the order's row: `validated` (24 Sec.8.4) and `untracked`.
+_FIRST_ROWS: Final = frozenset({"validated", "untracked"})
+_READINGS: Final = ("SL_OBSERVED", "SL_LOST")
 
 
 def _fields(event: Any) -> Mapping[str, Any]:
-    """An `Event`'s payload or an `onDone` result, when it is a mapping; else empty."""
-    value = event.payload if hasattr(event, "payload") else getattr(event, "data", event)
+    """An `Event`'s payload or an `onDone` result, when it is a mapping; else empty. A failed
+    service's event carries the exception, never data (CV-C21)."""
+    if hasattr(event, "payload"):
+        value = event.payload
+    elif hasattr(event, "error"):
+        value = None
+    else:
+        value = getattr(event, "data", event)
     return value if isinstance(value, Mapping) else {}
+
+
+def _name(event: Any) -> str:
+    kind = getattr(event, "type", "")
+    return kind if isinstance(kind, str) else ""
+
+
+def _leaf(interp: Any, region: str = "lifecycle") -> str | None:
+    """The machine's active leaf in *region*; an entry action sees the state it enters."""
+    head = f"order.{region}."
+    ids = getattr(interp, "current_state_ids", ())
+    return next((s[len(head) :] for s in ids if isinstance(s, str) and s.startswith(head)), None)
 
 
 def _id(raw: object) -> str | None:
@@ -123,6 +256,13 @@ def _text(value: Decimal) -> str:
     return "0" if out == "-0" else out
 
 
+def _same(a: object, b: object) -> bool:
+    """Two money values agree: both absent, or equal amounts (`ValueError` if malformed)."""
+    if a is None or b is None:
+        return a is None and b is None
+    return _money(a) == _money(b)
+
+
 def _positives(raw: object, keys: tuple[str, ...]) -> dict[str, Decimal]:
     """*raw*'s money for *keys*, each above zero (absent or null: skipped), else `ValueError`."""
     if not isinstance(raw, Mapping):
@@ -133,33 +273,61 @@ def _positives(raw: object, keys: tuple[str, ...]) -> dict[str, Decimal]:
     return out
 
 
+def _filled(context: Mapping[str, Any]) -> bool:
+    try:
+        return _money(context.get("filled_qty", "0")) > 0
+    except ValueError:
+        return False
+
+
+def _misses(context: Mapping[str, Any]) -> int:
+    value = context.get("recon_misses", 0)
+    return value if type(value) is int and value >= 0 else 0
+
+
+def _code(event: Any) -> str | None:
+    code = _fields(event).get("error_code")
+    return code if isinstance(code, str) and len(code) <= MAX_TEXT else None
+
+
 def _gates(event: Any) -> Mapping[str, Any]:
     gates = _fields(event).get("gates")
     return gates if isinstance(gates, Mapping) else {}
 
 
-def _validated(event: Any) -> dict[str, str | None] | None:
+def _order(order: Mapping[str, Any]) -> dict[str, Any]:
+    """An order's identity and terms as context values, else `ValueError`."""
+    facts = {key: _id(order.get(key)) for key in FACTS}
+    terms = _positives(order, ("qty", *TERMS))
+    reduce_only = order.get("reduce_only", False)
+    if "qty" not in terms or None in facts.values() or not isinstance(reduce_only, bool):
+        raise ValueError("the order has no qty, a malformed identity or a reduce_only not a bool")
+    stamped = {**facts, **dict.fromkeys(TERMS), **{key: _text(v) for key, v in terms.items()}}
+    return stamped | {"leaves_qty": stamped["qty"], "reduce_only": reduce_only}
+
+
+def _validated(event: Any) -> dict[str, Any] | None:
     """The order as context values when every verdict is `PASSED`; `ValueError` if malformed."""
     order = _fields(event).get("order")
     if not isinstance(order, Mapping) or any(_gates(event).get(g) != PASSED for g in GATES):
         return None
-    facts = {key: _id(order.get(key)) for key in FACTS}
-    terms = _positives(order, ("qty", *TERMS))
-    if "qty" not in terms or None in facts.values():
-        raise ValueError("the order has no qty, or a malformed identity")
-    stamped = {**facts, **dict.fromkeys(TERMS), **{key: _text(v) for key, v in terms.items()}}
-    return stamped | {"leaves_qty": stamped["qty"]}
+    return _order(order)
 
 
-def _admit(context: Mapping[str, Any], event: Any) -> tuple[str, Mapping[str, Decimal | None]]:
-    """`(exec_id, the order's totals after it)` for a new trade EXEC of this order, else a
-    `ValueError` saying why: `REPEAT` (S4), another order's (SR-E29-03) or hostile (OM-T04)."""
-    p, seen = _fields(event), context.get("seen_exec_ids")
+def _admit(
+    context: Mapping[str, Any], p: Mapping[str, Any]
+) -> tuple[str, Mapping[str, Decimal | None]]:
+    """`(exec_id, the order's totals after it)` for a new trade execution *p* of this order, else
+    a `ValueError` saying why: `REPEAT` (S4), `UNBOUND`, another order's (SR-E29-03) or hostile
+    (OM-T04)."""
+    seen = context.get("seen_exec_ids")
     exec_id = _id(p.get("exec_id"))
     if exec_id is None or not isinstance(seen, list):
         raise ValueError("the execution has no exec_id, or the order no seen_exec_ids")
     if exec_id in seen:
         raise ValueError(REPEAT)
+    if _id(context.get("exchange_order_id")) is None:
+        raise ValueError(UNBOUND)
     if p.get("exec_type") != "trade" or any(
         _id(p.get(key)) is None or p.get(key) != context.get(key) for key in PAIRING
     ):
@@ -171,6 +339,48 @@ def _admit(context: Mapping[str, Any], event: Any) -> tuple[str, Mapping[str, De
     fill = {key: _money(p.get(key)) for key in ("qty", "price", "fee", "fee_rate")}
     totals = ("qty", "filled_qty", "cum_exec_value", "fee_paid")
     return exec_id, _core({key: _money(context.get(key, "0")) for key in totals}, fill)
+
+
+def _apply(context: dict[str, Any], p: Mapping[str, Any]) -> None:
+    """S4: an admitted execution's totals, and its `exec_id` in `seen_exec_ids` (INV-B1-b)."""
+    try:
+        exec_id, totals = _admit(context, p)
+    except ValueError:
+        return
+    context.update(
+        {key: None if value is None else _text(value) for key, value in totals.items()},
+        seen_exec_ids=[*context["seen_exec_ids"], exec_id],
+    )
+
+
+def _bind(context: dict[str, Any], raw: object, mismatch: str) -> None:
+    """Record the exchange order id once; a different one later is logged, never adopted."""
+    new, known = _id(raw), context.get("exchange_order_id")
+    if new is not None and known is None:
+        context["exchange_order_id"] = new
+    elif new is not None and new != known:
+        logger().error(mismatch, order_link_id=context.get("order_link_id"))
+
+
+def _post(context: dict[str, Any], kind: str, **detail: Any) -> None:
+    """Queue a notice for the OMS facade (CV-C25). It lives in context, so a rolled-back step
+    takes it back (CV-C02); `seq` orders it for the facade's cursor; at most `OUTBOX_MAX`."""
+    raw = context.get("outbox")
+    box = (
+        [dict(entry) for entry in raw if isinstance(entry, Mapping)]
+        if isinstance(raw, list)
+        else []
+    )
+    last = box[-1].get("seq") if box else -1
+    box.append({"seq": last + 1 if type(last) is int else 0, "kind": kind, **detail})
+    if len(box) > OUTBOX_MAX:
+        dropped = box.pop(0)
+        link = context.get("order_link_id")
+        logger().error("b01_outbox_overflow", order_link_id=link, dropped=dropped.get("kind"))
+    context["outbox"] = box
+
+
+# --- Guards: pure, total, deny by default (A6) ------------------------------------------------
 
 
 def _total(name: str, check: Callable[[], bool]) -> bool:
@@ -195,7 +405,7 @@ def exec_new_and_partial(context: dict[str, Any], event: Any) -> bool:
 def _closes(context: Mapping[str, Any], event: Any) -> bool | None:
     """Whether a new EXEC fills the order; None when it is refused (the deny arm says why)."""
     try:
-        return _admit(context, event)[1]["leaves_qty"] == 0
+        return _admit(context, _fields(event))[1]["leaves_qty"] == 0
     except ValueError:
         return None
 
@@ -217,8 +427,58 @@ def ret_code_ok_and_has_fills(context: dict[str, Any], event: Any) -> bool:
 
 def is_duplicate_link_id(context: dict[str, Any], event: Any) -> bool:
     """The exchange already holds this `order_link_id`: accepted, never resent (24 Sec.8.3)."""
-    duplicate = OmsErrorCode.DUPLICATE_CLIENT_ID.value
-    return _total("is_duplicate_link_id", lambda: _fields(event).get("error_code") == duplicate)
+    return _total("is_duplicate_link_id", lambda: _fields(event).get("error_code") == _DUPLICATE)
+
+
+def _found(event: Any) -> Mapping[str, Any] | None:
+    """The order a duplicate-id `place` result's lookup found under our id, or None."""
+    result = _fields(event)
+    found = result.get("lookup")
+    if result.get("error_code") != _DUPLICATE or not isinstance(found, Mapping) or not found:
+        return None
+    return found
+
+
+def _full_match(context: Mapping[str, Any], found: Mapping[str, Any]) -> bool:
+    """SR-E29-03: the found order is the row's, field for field; its type is `limit` exactly
+    when the row has a price (`ValueError` on malformed money, which the guard denies)."""
+    order_type = "limit" if context.get("price") is not None else "market"
+    return (
+        _id(found.get("exchange_order_id")) is not None
+        and all(found.get(key) == context.get(key) for key in FACTS[1:])
+        and found.get("order_type") == order_type
+        and found.get("reduce_only") is context.get("reduce_only")
+        and all(_same(found.get(k), context.get(k)) for k in ("qty", "price", "trigger_price"))
+        and _same(found.get("stop_loss"), context.get("stop_loss"))
+    )
+
+
+def is_duplicate_link_id_full_match(context: dict[str, Any], event: Any) -> bool:
+    """A duplicate-id result whose lookup found our order as the row describes it (SR-E29-03):
+    adopted, never resent (24 Sec.8.3 rule 3); a failed, empty or partial lookup is a denial."""
+
+    def check() -> bool:
+        found = _found(event)
+        return found is not None and _full_match(context, found)
+
+    return _total("is_duplicate_link_id_full_match", check)
+
+
+def is_link_id_mismatch(context: dict[str, Any], event: Any) -> bool:
+    """A duplicate-id result whose lookup found an order under our id that is not the row's:
+    the order is held for the operator (SR-E29-03), never adopted."""
+
+    def check() -> bool:
+        found = _found(event)
+        return found is not None and not _full_match(context, found)
+
+    return _total("is_link_id_mismatch", check)
+
+
+def second_consecutive_miss(context: dict[str, Any], event: Any) -> bool:
+    """A second `RECON_MISS` with no finding between them: `recon_misses` counts the earlier
+    ones, and `adopt_recon` and `record_remote_state` reset it (24 Sec.8.5)."""
+    return _total("second_consecutive_miss", lambda: _misses(context) >= 1)
 
 
 def passes_all_gates(context: dict[str, Any], event: Any) -> bool:
@@ -227,12 +487,221 @@ def passes_all_gates(context: dict[str, Any], event: Any) -> bool:
     return _total("passes_all_gates", lambda: _validated(event) is not None)
 
 
+def adoption_allowed(context: dict[str, Any], event: Any) -> bool:
+    """Denies every adoption until E45-S01 records the Owner's decision D6 (B1.5, SR-E29-12)."""
+    return False
+
+
+def _reading(raw: object) -> dict[str, Any]:
+    """A protection reading (B1.5) as context values: the position row's exchange time
+    (`updated_time`, ms), its stop and its size; `ValueError` if malformed."""
+    if not isinstance(raw, Mapping):
+        raise ValueError("a reading is not a mapping")
+    when, stop = raw.get("updated_time"), raw.get("stop_loss")
+    if type(when) is not int or when < 0:
+        raise ValueError("a reading has no exchange time")
+    size = _text(_money(raw.get("size")))
+    return {
+        "updated_time": when,
+        "stop_loss": None if stop is None else _text(_money(stop)),
+        "size": size,
+    }
+
+
+def _covers(context: Mapping[str, Any], reading: Mapping[str, Any]) -> bool:
+    """The reading shows the stop the OMS requested and recorded (SR-E29-06) on an open
+    position, which a Full-mode stop covers whole."""
+    requested, stop = context.get("stop_loss"), reading["stop_loss"]
+    if requested is None or stop is None:
+        return False
+    return _money(stop) == _money(requested) and _money(reading["size"]) > 0
+
+
+def sl_attach_ok(context: dict[str, Any], event: Any) -> bool:
+    """The attach result's read-back shows the requested stop on the open position, and no
+    `SL_LOST` the exchange stamped after that read-back was recorded meanwhile (INV-B1-f). The
+    call's own acknowledgement is no evidence: a result without a read-back is a denial."""
+
+    def check() -> bool:
+        back = _reading(_fields(event).get("position"))
+        last = context.get("sl_reading")
+        later = (
+            isinstance(last, Mapping)
+            and last.get("kind") == "SL_LOST"
+            and int(last["updated_time"]) > back["updated_time"]
+        )
+        return _covers(context, back) and not later
+
+    return _total("sl_attach_ok", check)
+
+
+def sl_observed_ok(context: dict[str, Any], event: Any) -> bool:
+    """`SL_OBSERVED` counts as `sl_attach_ok`'s read-back does: the requested stop on the open
+    position (INV-B1-f); another stop, or a flat position, leaves `sl_missing` as it is."""
+    return _total("sl_observed_ok", lambda: _covers(context, _reading(_fields(event))))
+
+
+# --- The write-ahead step (S7, S8, S11) -------------------------------------------------------
+
+
+def _step_payload(event: Any) -> dict[str, Any]:
+    """What the step's row records of its trigger: the payload or the service's result, and for a
+    failed service only the exception's class (CV-C21: `event.error`, never its message)."""
+    fault = getattr(event, "error", None)
+    if isinstance(fault, BaseException):
+        return {"error": type(fault).__name__}
+    return dict(_fields(event))
+
+
+async def persist_event(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """S8: the step's `order_events` row is committed before the machine moves on. Nothing is
+    written in `draft`, nor for a step that leaves it with no row (`rejected`, `killed`): the
+    first row is `validated`'s (24 Sec.8.4) or `untracked`'s. A refused or timed-out write raises,
+    so `actionErrorPolicy: "rollback"` restores the configuration and context (S7, S11)."""
+    to_state, from_state = _leaf(i), context.get("persisted_state")
+    if to_state in (None, "draft") or (from_state is None and to_state not in _FIRST_ROWS):
+        return
+    if _ports.persist is None:
+        raise PortMissingError("no write-ahead store is wired, so no step may commit (S7)")
+    step = Step(
+        order_id=context.get("order_id"),
+        account_id=context.get("account_id"),
+        order_link_id=context.get("order_link_id"),
+        from_state=from_state,
+        to_state=str(to_state),
+        event=_name(event),
+        payload=_step_payload(event),
+        context=dict(context),
+    )
+    async with asyncio.timeout(CV_PERSIST_TIMEOUT):
+        seq = await _ports.persist(step)
+    context.update(persisted_state=to_state, event_seq=seq)
+    if (kind := _INVOKES.get(str(to_state))) is not None:
+        _remember((_id(step.order_link_id) or "", f"{kind}:{seq}"))
+
+
+# --- Services: the command port, once per attempt (S1, SR-E29-15) -----------------------------
+
+
+@dataclass(slots=True)
+class _Attempt:
+    """A command attempt this process knows: begun by a step it committed (`persist_event`), or
+    resumed by the service; and how it ended (a result, or the class of what it raised)."""
+
+    result: Mapping[str, Any] | None = None
+    failure: str | None = None
+
+
+_ATTEMPTS: OrderedDict[tuple[str, str], _Attempt] = OrderedDict()
+
+
+def _remember(key: tuple[str, str]) -> _Attempt:
+    attempt = _ATTEMPTS.setdefault(key, _Attempt())
+    _ATTEMPTS.move_to_end(key)
+    while len(_ATTEMPTS) > MAX_ATTEMPTS:
+        _ATTEMPTS.popitem(last=False)
+    return attempt
+
+
+def _forget(context: Mapping[str, Any]) -> None:
+    link = _id(context.get("order_link_id")) or ""
+    for key in [key for key in _ATTEMPTS if key[0] == link]:
+        del _ATTEMPTS[key]
+
+
+def _view(context: Mapping[str, Any]) -> dict[str, Any]:
+    keys = (*FACTS, "exchange_order_id", "qty", "filled_qty", *TERMS, "reduce_only")
+    return {key: context.get(key) for key in keys}
+
+
+async def _dispatch(port: CommandPort, command: Command, *, resumed: bool) -> Mapping[str, Any]:
+    if command.kind != "place":
+        call = {"cancel": port.cancel, "amend": port.amend, "attach_stop": port.attach_stop}
+        return dict(await call[command.kind](command))
+    look = replace(command, kind="lookup")
+    if resumed:  # the attempt may have left before this process began: look first (SR-E29-15)
+        found = dict(await port.lookup(look))
+        if found:
+            return {"ok": False, "error_code": _DUPLICATE, "lookup": found}
+    result = dict(await port.place(command))
+    if result.get("error_code") == _DUPLICATE and "lookup" not in result:
+        result["lookup"] = dict(await port.lookup(look))  # success-after-lookup, Sec.8.3 rule 3
+    return result
+
+
+async def _command(
+    context: Mapping[str, Any], kind: CommandKind, terms: Mapping[str, Any] | None = None
+) -> Mapping[str, Any]:
+    """*kind* once per attempt: a re-entered invoke gets the recorded outcome, a recorded failure
+    fails again, and only a `place` this process did not begin looks the id up first."""
+    port = _ports.commands
+    if port is None:
+        raise PortMissingError(f"no command port is wired for {kind}")
+    attempt_of = "once" if kind == "attach_stop" else context.get("event_seq")
+    key = (_id(context.get("order_link_id")) or "", f"{kind}:{attempt_of}")
+    attempt = _ATTEMPTS.get(key)
+    if attempt is not None and attempt.failure is not None:
+        raise RecordedFailureError(f"{kind} failed before ({attempt.failure}); nothing is resent")
+    if attempt is not None and attempt.result is not None:
+        return attempt.result
+    command = Command(kind=kind, key=":".join(key), order=_view(context), terms=dict(terms or {}))
+    resumed, attempt = attempt is None, attempt or _remember(key)
+    try:
+        result = await _dispatch(port, command, resumed=resumed)
+    except Exception as exc:  # recorded, then raised: `onError` lands in `unknown` (S1)
+        attempt.failure = type(exc).__name__
+        raise
+    attempt.result = result
+    return result
+
+
+async def place_order(_i: Any, context: dict[str, Any], _e: Any) -> Mapping[str, Any]:
+    """`submitting`'s invoke: the order's create, once per attempt (S1, SR-E29-15)."""
+    return await _command(context, "place")
+
+
+async def cancel_order(_i: Any, context: dict[str, Any], _e: Any) -> Mapping[str, Any]:
+    """`cancel_pending`'s invoke: the cancel, once per attempt."""
+    return await _command(context, "cancel")
+
+
+async def amend_order(_i: Any, context: dict[str, Any], _e: Any) -> Mapping[str, Any]:
+    """`amend_pending`'s invoke: the terms `stage_amend` staged; with none, a local refusal and no
+    exchange call, so the prior order stays live (S2). The result names the terms it sent."""
+    terms = context.get("amend_terms")
+    if not isinstance(terms, Mapping) or not terms:
+        return {"ok": False, "error_code": OmsErrorCode.INSTRUMENT_FILTER.value}
+    return {**await _command(context, "amend", terms), "terms": dict(terms)}
+
+
+async def attach_native_sl(_i: Any, context: dict[str, Any], _e: Any) -> Mapping[str, Any]:
+    """`sl_pending`'s invoke: the stop the OMS requested, attached and read back (24 Sec.8.8 rule
+    2). Without a requested stop nothing is sent (SR-E29-06): the result is not `sl_attach_ok`,
+    so the region reaches `sl_missing`, which alerts and hands the position to B8."""
+    stop = context.get("stop_loss")
+    if stop is None:
+        return {"ok": False, "error_code": NATIVE_STOP_REQUIRED}
+    return await _command(context, "attach_stop", {"stop_loss": stop})
+
+
+# --- Context actions --------------------------------------------------------------------------
+
+
 async def stamp_validated(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """Pin the validated order (identity, `qty`, `TERMS`) into context; nothing is filled yet."""
-    if (validated := _validated(event)) is None:  # unreachable behind `passes_all_gates`
+    """Pin the validated order (identity, `qty`, `TERMS`, `reduce_only`); nothing is filled yet."""
+    try:
+        validated = _validated(event)
+    except ValueError:
+        validated = None  # unreachable behind `passes_all_gates`
+    if validated is None:
         logger().error("b01_stamp_refused")
         return
     context.update(validated)
+
+
+async def reserve_rate_token(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """Records the reservation the synchronous rate governor made before `VALIDATE` (C-2.21)."""
+    context["rate_reservation"] = _id(_fields(event).get("rate_reservation"))
 
 
 async def set_local_reject(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
@@ -244,30 +713,47 @@ async def set_local_reject(_i: Any, context: dict[str, Any], event: Any, _a: Any
 
 async def apply_fill(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """S4: an admitted EXEC's totals, and its `exec_id` in `seen_exec_ids` (INV-B1-b)."""
-    try:
-        exec_id, totals = _admit(context, event)
-    except ValueError:
-        return
-    context.update(
-        {key: None if value is None else _text(value) for key, value in totals.items()},
-        seen_exec_ids=[*context["seen_exec_ids"], exec_id],
-    )
+    _apply(context, _fields(event))
 
 
 async def adopt_ack(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """A place or cancel ack (`adopt_ack`, `adopt_cancel_ack`): the exchange's order id, recorded
-    once; a different one later is logged, never adopted."""
+    """A place ack, or a duplicate-id result whose lookup fully matched (SR-E29-03): the exchange
+    order id, recorded once; a different one later is logged, never adopted."""
+    result = _fields(event)
+    found = result.get("lookup")
+    raw = result.get("exchange_order_id")
+    if raw is None and isinstance(found, Mapping):
+        raw = found.get("exchange_order_id")
+    _bind(context, raw, "b01_exchange_order_id_mismatch")
+
+
+async def adopt_cancel_ack(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """A cancel ack binds nothing (SR-E29-03, OM-S05): its id is compared with the bound one,
+    and a mismatch, or an ack for an order with no bound id, is logged at ERROR."""
     new, known = _id(_fields(event).get("exchange_order_id")), context.get("exchange_order_id")
-    if new is not None and known is None:
-        context["exchange_order_id"] = new
+    if known is None:
+        logger().error("b01_cancel_ack_unbound", order_link_id=context.get("order_link_id"))
     elif new is not None and new != known:
         logger().error("b01_exchange_order_id_mismatch", order_link_id=context.get("order_link_id"))
+
+
+async def stage_amend(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """`AMEND`'s requested terms, for the amend service: an invoke reads the context, not the event
+    that entered its state. Malformed terms stage nothing, and the service refuses them locally."""
+    try:
+        terms = {key: _text(v) for key, v in _positives(_fields(event), ("qty", *TERMS)).items()}
+    except Exception:  # A1: a malformed amend stages nothing
+        terms = {}
+    if not terms:
+        logger().error("b01_amend_not_staged", order_link_id=context.get("order_link_id"))
+    context["amend_terms"] = terms or None
 
 
 async def adopt_amend(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """An accepted amend's `terms`, all or none; any other result keeps the prior order (S2) and
     logs why. Never raises: on this `onDone` arm a rollback would send the amend again."""
     result = _fields(event)
+    context["amend_terms"] = None
     try:
         if result.get("ok") is not True:
             raise ValueError("the amend ack is not ok")
@@ -283,14 +769,215 @@ async def adopt_amend(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> 
     context.update({key: _text(value) for key, value in terms.items()}, leaves_qty=_text(leaves))
 
 
+async def keep_prior_order_live(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """S2: the amend is refused, so the order stands as it was; the staged terms are dropped."""
+    context["amend_terms"] = None
+    logger().warning(
+        "b01_amend_rejected", order_link_id=context.get("order_link_id"), error_code=_code(event)
+    )
+
+
 async def map_reject_code(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """The ack's 24 Sec.8.6 code (the adapter maps it, C-2.2); else `EXCHANGE_UNKNOWN`."""
+    """The ack's 24 Sec.8.6 code (the adapter maps it, C-2.2); else `EXCHANGE_UNKNOWN`. A code
+    Sec.8.6 routes to retry, poll or reconcile is the port's to raise (S1): one recorded here is
+    logged at ERROR, as the order may be live on the exchange."""
     code = _fields(event).get("error_code")
     known = isinstance(code, str) and code in _REJECT_CODES
     context["reject_code"] = code if known else OmsErrorCode.EXCHANGE_UNKNOWN.value
+    if code in _AMBIGUOUS:
+        link = context.get("order_link_id")
+        logger().error("b01_ambiguous_outcome_recorded_as_reject", order_link_id=link, code=code)
 
 
-# --- KILL arm (#1650) ----------------------------------------------------------------
+async def record_transport_fault(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """S1: the outcome is ambiguous, so the order waits in `unknown` for reconciliation."""
+    fault = getattr(event, "error", None)
+    what = type(fault).__name__ if isinstance(fault, BaseException) else _name(event)
+    logger().error("b01_transport_fault", order_link_id=context.get("order_link_id"), fault=what)
+
+
+async def mark_needs_lookup(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """An unverified duplicate: reconciliation must look the id up before anything binds it."""
+    context["needs_lookup"] = True
+
+
+async def record_cancel_refused(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """INV-B1-j: the exchange refused the cancel, so the order is live again."""
+    link = context.get("order_link_id")
+    logger().warning("b01_cancel_refused", order_link_id=link, error_code=_code(event))
+
+
+async def adopt_remote_cancel(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """The exchange ended the order without our cancel (INV-B1-k). The push is checked against
+    the bound id and, as the facade sends it only once every execution is applied, against
+    `filled_qty`; a disagreement is logged at ERROR for reconciliation."""
+    p, link = _fields(event), context.get("order_link_id")
+    known, cum = context.get("exchange_order_id"), p.get("cum_exec_qty")
+    if _id(p.get("exchange_order_id")) not in (None, known):
+        logger().error("b01_exchange_order_id_mismatch", order_link_id=link)
+    try:
+        outran = cum is not None and _money(cum) != _money(context.get("filled_qty", "0"))
+    except ValueError:
+        outran = True
+    if outran:
+        logger().error("b01_remote_cancel_outran_fills", order_link_id=link)
+
+
+async def record_mismatch(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """SR-E29-03: an order under our id does not match the row. Nothing is taken from it; `held`
+    pages on entry and waits for the operator."""
+    p = _fields(event)
+    found = p.get("lookup")
+    other = p.get("exchange_order_id")
+    if other is None and isinstance(found, Mapping):
+        other = found.get("exchange_order_id")
+    link = context.get("order_link_id")
+    logger().error("b01_link_id_mismatch", order_link_id=link, exchange_order_id=_id(other))
+
+
+async def record_discovered(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """`DISCOVERED`: reconciliation found an exchange order with no local row (24 Sec.8.5 step
+    3c). Its identity, terms and exchange order id are recorded as found; it is never managed
+    (S9, SR-E29-12)."""
+    order = _fields(event).get("order")
+    try:
+        if not isinstance(order, Mapping) or _id(order.get("exchange_order_id")) is None:
+            raise ValueError("the discovered order has no exchange_order_id")
+        found = _order(order)
+    except Exception:  # A1: an order we cannot read stays unrecorded; its row write refuses it
+        logger().error("b01_discovered_order_refused")
+        return
+    context.update(found, exchange_order_id=order["exchange_order_id"])
+
+
+async def adopt_untracked(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """`ADOPT` passed `adoption_allowed` (deny-all until E45-S01 records D6): the order is managed
+    from here as it was discovered; the adoption's own audit record is its route's (SR-E29-12)."""
+    context["needs_lookup"] = False
+    logger().warning("b01_untracked_adopted", order_link_id=context.get("order_link_id"))
+
+
+async def adopt_recon(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """Reconciliation found the order (after its SR-E29-03 full match, INV-B1-m): it binds the
+    exchange order id, applies an execution it carries as an EXEC would be (S4), restarts
+    `recon_misses`, and lets a KILL cancel the order again (INV-B1-h). It adopts no totals
+    without their execution (OM-R02)."""
+    p = _fields(event)
+    context.update(kill_skip_cancel=False, needs_lookup=False, recon_misses=0)
+    _bind(context, p.get("exchange_order_id"), "b01_exchange_order_id_mismatch")
+    execution = p.get("execution")
+    if isinstance(execution, Mapping):
+        _apply(context, execution)
+
+
+async def record_remote_state(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """`untracked` heard from the exchange (INV-B1-l): the order exists, so `recon_misses`
+    restarts. The fact is logged; no managing action runs (SR-E29-12)."""
+    context["recon_misses"] = 0
+    link = context.get("order_link_id")
+    logger().info("b01_untracked_order_seen", order_link_id=link, trigger=_name(event))
+
+
+async def bump_recon_misses(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """A reconciliation pass found no record of the order (24 Sec.8.5)."""
+    context["recon_misses"] = _misses(context) + 1
+
+
+async def set_reject_unresolvable(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """24 Sec.8.5: two consecutive passes found nothing, so the order ends `rejected`."""
+    context["reject_code"] = UNRESOLVED_AFTER_RECONCILE
+    logger().warning("b01_unresolved_after_reconcile", order_link_id=context.get("order_link_id"))
+
+
+async def set_cancel_missing_remote(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """24 Sec.8.5: two passes found no record of an `untracked` order, so it ends `cancelled`."""
+    logger().warning("b01_untracked_missing_remote", order_link_id=context.get("order_link_id"))
+
+
+async def record_sl_fact_ignored(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """INV-B1-f: a protection fact the leaf does not act on is consumed, never deferred. A reading
+    is kept in `sl_reading` when it is the latest by exchange time, so a loss during the attach
+    still decides the attach's result (`sl_attach_ok`)."""
+    kind = _name(event)
+    if kind not in _READINGS:
+        return
+    try:
+        reading = _reading(_fields(event)) | {"kind": kind}
+    except Exception:  # A1: a malformed reading is dropped, never kept
+        logger().error("b01_sl_reading_refused", order_link_id=context.get("order_link_id"))
+        return
+    last = context.get("sl_reading")
+    if isinstance(last, Mapping) and type(last.get("updated_time")) is int:
+        if last["updated_time"] > reading["updated_time"]:
+            return
+    context["sl_reading"] = reading
+
+
+async def arm_sl_deadline(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """A2: the stop must be confirmed by this absolute time (24 Sec.8.8 rule 2); the OMS's
+    scheduler sends `SL_DEADLINE` then."""
+    context["sl_deadline_us"] = _ports.now_us() + SL_DEADLINE_US
+
+
+async def arm_recon_deadline(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """A2: the time an order still `unknown` pages (24 Sec.8.5)."""
+    context["recon_deadline_us"] = _ports.now_us() + RECON_DEADLINE_US
+
+
+# --- Notices, through the outbox (CV-C25) -----------------------------------------------------
+
+
+async def notify_protection_region(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """INV-B1-o: asks the facade for `FIRST_FILL` when the order holds a fill or is handling an
+    EXEC; the region consumes a repeat, so no flag tracks the first fill."""
+    if _name(event) == "EXEC" or _filled(context):
+        _post(context, "first_fill")
+
+
+async def notify_amend_rejected(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """S2: the UI is told the amend was refused and the prior order stands."""
+    _post(context, "amend_rejected", error_code=_code(event))
+
+
+async def emit_terminal(i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """The order ended: the facade publishes it and evicts the machine (MUST-11)."""
+    _post(context, "terminal", state=_leaf(i))
+    _forget(context)
+
+
+async def raise_unknown_alert(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """S1: an order in `unknown` is an incident; it pages once `recon_deadline_us` passes."""
+    logger().error("b01_order_unknown", order_link_id=context.get("order_link_id"))
+    _post(context, "alert", alert="order_unknown")
+
+
+async def raise_critical_alert(i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """`quarantined` and `held` page (P1): the order's exchange state is not trusted."""
+    state = _leaf(i)
+    logger().critical(
+        "b01_order_untrusted", order_link_id=context.get("order_link_id"), state=state
+    )
+    _post(context, "alert", alert=f"order_{state}")
+
+
+async def raise_naked_position_alert(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """C-2.6: the stop is not confirmed, the `SL_ATTACH_FAILED` alert (B1.8)."""
+    logger().critical("b01_position_naked", order_link_id=context.get("order_link_id"))
+    _post(context, "alert", alert="SL_ATTACH_FAILED")
+
+
+async def request_reconciliation(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """`quarantined` asks the reconciler for the order's exchange state (24 Sec.8.5)."""
+    _post(context, "request_reconciliation")
+
+
+async def request_fallback_sl(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """Hands the position to B8, which attaches a fallback stop and reads it back (24 Sec.8.8
+    rule 3) or pages (INV-B8-d)."""
+    _post(context, "request_fallback_sl")
+
+
+# --- KILL arm (#1650) and the audits (C-2.9) --------------------------------------------------
 
 
 async def mark_halted_by_kill(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
@@ -302,31 +989,28 @@ async def skip_kill_cancel(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -
     context["kill_skip_cancel"] = True
 
 
-async def adopt_recon(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """Reconciliation has bound the order, so a KILL cancels it again (INV-B1-h); adopting the
-    reconciled totals and exchange order id is #847 slice 5's."""
-    context["kill_skip_cancel"] = False
-
-
-async def issue_kill_cancel(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """At most one exchange cancel per order, only if submitted (INV-B1-h): via the
-    chart's own `cancel_order` service (the same client order id, C-2.10), bounded by
-    `CV_KILL_CANCEL_TIMEOUT`. Failure or timeout is audited, never raised: rolling
-    back would un-kill the order. Reconciliation re-syncs the exchange (C-2.5).
-
-    E29: route through the audited OMS cancel service instead of calling the
-    binding's service from an action (review #2133)."""
+async def issue_kill_cancel(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """At most one exchange cancel per KILL, and only if the order was sent (INV-B1-h): through
+    the OMS's audited cancel service (SR-E29-06; the same client order id, C-2.10), bounded by
+    `CV_KILL_CANCEL_TIMEOUT`. Failure or timeout is audited, never raised: rolling back would
+    un-kill the order. Reconciliation re-syncs the exchange (C-2.5)."""
     if context.get("kill_skip_cancel"):
-        await _hook("kill_no_cancel_unsubmitted", context)
+        unverified = context.get("needs_lookup") is True
+        why = "unverified_duplicate" if unverified else "unsubmitted"
+        await _hook(f"kill_no_cancel_{why}", context)
         return
+    link = context.get("order_link_id")
+    command = Command(kind="kill_cancel", key=f"{link}:kill_cancel", order=_view(context), terms={})
     try:
+        if _ports.commands is None:
+            raise PortMissingError("no command port is wired for the kill cancel")
         async with asyncio.timeout(CV_KILL_CANCEL_TIMEOUT):
-            await SERVICES["cancel_order"](i, context, event)
+            await _ports.commands.cancel(command)
     except TimeoutError:
-        logger().error("b01_kill_cancel_timeout")
+        logger().error("b01_kill_cancel_timeout", order_link_id=link)
         await _hook("kill_cancel_timeout", context)
     except Exception as exc:  # audited; reconciliation re-syncs
-        logger().error("b01_kill_cancel_failed", error=type(exc).__name__)
+        logger().error("b01_kill_cancel_failed", order_link_id=link, failure=type(exc).__name__)
         await _hook("kill_cancel_failed", context)
 
 
@@ -350,118 +1034,43 @@ async def audit_kill_protection_retained(
 
 
 async def audit_guard_denied(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """B1's one deny arm, an EXEC's: logged and audited once with its `exec_id` and why; all but
-    `REPEAT` is hostile (OM-T04), at ERROR for the OMS to answer with `FAULT`."""
-    detail = {"exec_id": _id(_fields(event).get("exec_id")), "reason": ""}
+    """B1's one deny arm, an EXEC's: logged and audited once with its `exec_id` and why. A repeat
+    (S4) and an EXEC before the bind are expected, at INFO: an `UNBOUND` one waits in the facade's
+    reorder buffer (SR-E29-03), never a `FAULT`. Anything else is hostile (OM-T04), at ERROR, for
+    the OMS to answer with `FAULT`."""
+    p = _fields(event)
+    detail = {"exec_id": _id(p.get("exec_id")), "reason": ""}
     try:
-        _admit(context, event)
+        _admit(context, p)
     except ValueError as exc:
         detail["reason"] = str(exc)
-    log = logger().info if detail["reason"] == REPEAT else logger().error
+    log = logger().info if detail["reason"] in (REPEAT, UNBOUND) else logger().error
     log("b01_exec_refused", order_link_id=context.get("order_link_id"), **detail)
     await _hook("guard_denied", {**context, "denied": detail})
 
 
-_STUB_ACTIONS = (
-    "arm_recon_deadline",
-    "arm_sl_deadline",
-    "bump_recon_misses",
-    "emit_terminal",
-    "keep_prior_order_live",
-    "mark_needs_lookup",
-    "notify_amend_rejected",
-    "notify_protection_region",
-    "persist_event",
-    "raise_critical_alert",
-    "raise_naked_position_alert",
-    "raise_unknown_alert",
-    "record_transport_fault",
-    "request_fallback_sl",
-    "request_reconciliation",
-    "reserve_rate_token",
-    "set_reject_unresolvable",
-)
-
-ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
-    **{name: _noop_action for name in _STUB_ACTIONS},
-    "adopt_ack": adopt_ack,
-    "adopt_amend": adopt_amend,
-    "adopt_cancel_ack": adopt_ack,
-    "adopt_recon": adopt_recon,
-    "apply_fill": apply_fill,
-    "map_reject_code": map_reject_code,
-    "set_local_reject": set_local_reject,
-    "stamp_validated": stamp_validated,
-    "audit_guard_denied": audit_guard_denied,
-    "audit_kill": audit_kill,
-    "audit_kill_cancel_in_flight": audit_kill_cancel_in_flight,
-    "audit_kill_ignored_terminal": audit_kill_ignored_terminal,
-    "audit_kill_protection_retained": audit_kill_protection_retained,
-    "issue_kill_cancel": issue_kill_cancel,
-    "mark_halted_by_kill": mark_halted_by_kill,
-    "skip_kill_cancel": skip_kill_cancel,
-}
-
-GUARDS: dict[str, Callable[..., bool]] = {
-    "exec_new_and_closes": exec_new_and_closes,
-    "exec_new_and_partial": exec_new_and_partial,
-    "has_fills": has_fills,
-    "is_duplicate_link_id": is_duplicate_link_id,
-    "passes_all_gates": passes_all_gates,
-    "ret_code_ok": ret_code_ok,
-    "ret_code_ok_and_has_fills": ret_code_ok_and_has_fills,
-}
-
-SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {
-    "amend_order": _idempotent_service,
-    "attach_native_sl": _idempotent_service,
-    "cancel_order": _idempotent_service,
-    "place_order": _idempotent_service,
-}
-
-register_binding_module("order", __name__)
-
-#: Permissive payload schemas (B2-B9 shape), this machine's own; E29 tightens them.
-_ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
-register_event_schemas(
-    "order",
-    {
-        name: _ANY_PAYLOAD
-        for name in (
-            "AMEND",
-            "AMEND_REJECTED",
-            "CANCEL",
-            "EXEC",
-            "EXPIRE",
-            "FAULT",
-            "FIRST_FILL",
-            "KILL",
-            "RECON_FOUND_CANCELLED",
-            "RECON_FOUND_FILLED",
-            "RECON_FOUND_LIVE",
-            "RECON_FOUND_PARTIAL",
-            "RECON_MISS",
-            "SEND",
-            "SL_DEADLINE",
-            "SL_LOST",
-            "SL_OBSERVED",
-            "TRANSPORT_FAULT",
-            "TRIGGERED",
-            "VALIDATE",
-        )
+async def audit_reconcile_anomaly(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """S6 (INV-B1-o): an EXEC for an order that is held or final changes nothing. It is logged
+    and audited as a `ReconcileAnomaly` with its `exec_id`, and the order stays as it is."""
+    detail = {
+        "trigger": _name(event),
+        "state": _leaf(i),
+        "exec_id": _id(_fields(event).get("exec_id")),
     }
-)
+    logger().error("b01_reconcile_anomaly", order_link_id=context.get("order_link_id"), **detail)
+    await _hook("reconcile_anomaly", {**context, "anomaly": detail})
 
 
-# --- #847 slice 1: `untracked` and `held` (G-3) and exchange outcomes, chart version 1 ----
-# Stubs until #847 slices 4-5: the guards deny (A6), so a duplicate result parks in `unknown`.
-ACTIONS.update(
-    dict.fromkeys(
-        "adopt_remote_cancel adopt_untracked record_cancel_refused record_discovered"
-        " record_mismatch set_cancel_missing_remote".split(),
-        _noop_action,
+async def audit_operator_command_refused(
+    i: Any, context: dict[str, Any], event: Any, _a: Any
+) -> None:
+    """INV-B1-m: `OPERATOR_RESOLVED` outside `held`, or `ADOPT` outside `untracked`, is refused and
+    audited, never kept for a later state."""
+    refused = {"trigger": _name(event), "state": _leaf(i)}
+    logger().warning(
+        "b01_operator_command_refused", order_link_id=context.get("order_link_id"), **refused
     )
-)
+    await _hook("operator_command_refused", {**context, "refused": refused})
 
 
 def _audited(name: str) -> Callable[..., Awaitable[None]]:
@@ -471,24 +1080,169 @@ def _audited(name: str) -> Callable[..., Awaitable[None]]:
     return audit
 
 
+ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
+    "adopt_ack": adopt_ack,
+    "adopt_amend": adopt_amend,
+    "adopt_cancel_ack": adopt_cancel_ack,
+    "adopt_recon": adopt_recon,
+    "adopt_remote_cancel": adopt_remote_cancel,
+    "adopt_untracked": adopt_untracked,
+    "apply_fill": apply_fill,
+    "arm_recon_deadline": arm_recon_deadline,
+    "arm_sl_deadline": arm_sl_deadline,
+    "audit_guard_denied": audit_guard_denied,
+    "audit_kill": audit_kill,
+    "audit_kill_cancel_in_flight": audit_kill_cancel_in_flight,
+    "audit_kill_ignored_terminal": audit_kill_ignored_terminal,
+    "audit_kill_protection_retained": audit_kill_protection_retained,
+    "audit_operator_command_refused": audit_operator_command_refused,
+    "audit_reconcile_anomaly": audit_reconcile_anomaly,
+    "bump_recon_misses": bump_recon_misses,
+    "emit_terminal": emit_terminal,
+    "issue_kill_cancel": issue_kill_cancel,
+    "keep_prior_order_live": keep_prior_order_live,
+    "map_reject_code": map_reject_code,
+    "mark_halted_by_kill": mark_halted_by_kill,
+    "mark_needs_lookup": mark_needs_lookup,
+    "notify_amend_rejected": notify_amend_rejected,
+    "notify_protection_region": notify_protection_region,
+    "persist_event": persist_event,
+    "raise_critical_alert": raise_critical_alert,
+    "raise_naked_position_alert": raise_naked_position_alert,
+    "raise_unknown_alert": raise_unknown_alert,
+    "record_cancel_refused": record_cancel_refused,
+    "record_discovered": record_discovered,
+    "record_mismatch": record_mismatch,
+    "record_remote_state": record_remote_state,
+    "record_sl_fact_ignored": record_sl_fact_ignored,
+    "record_transport_fault": record_transport_fault,
+    "request_fallback_sl": request_fallback_sl,
+    "request_reconciliation": request_reconciliation,
+    "reserve_rate_token": reserve_rate_token,
+    "set_cancel_missing_remote": set_cancel_missing_remote,
+    "set_local_reject": set_local_reject,
+    "set_reject_unresolvable": set_reject_unresolvable,
+    "skip_kill_cancel": skip_kill_cancel,
+    "stage_amend": stage_amend,
+    "stamp_validated": stamp_validated,
+}
 _AUDITED = "adoption_denied command_refused_unowned kill_ignored_unowned operator_resolved"
 ACTIONS.update({f"audit_{name}": _audited(name) for name in _AUDITED.split()})
 
-GUARDS.update(
-    dict.fromkeys(
-        "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch"
-        " second_consecutive_miss".split(),
-        _deny_guard,
-    )
-)
-register_event_schemas(
-    "order",
-    dict.fromkeys(
-        ("ADOPT", "DISCOVERED", "MISMATCH", "OPERATOR_RESOLVED", "REMOTE_CANCELLED"), _ANY_PAYLOAD
-    ),
-)
+GUARDS: dict[str, Callable[..., bool]] = {
+    "adoption_allowed": adoption_allowed,
+    "exec_new_and_closes": exec_new_and_closes,
+    "exec_new_and_partial": exec_new_and_partial,
+    "has_fills": has_fills,
+    "is_duplicate_link_id": is_duplicate_link_id,
+    "is_duplicate_link_id_full_match": is_duplicate_link_id_full_match,
+    "is_link_id_mismatch": is_link_id_mismatch,
+    "passes_all_gates": passes_all_gates,
+    "ret_code_ok": ret_code_ok,
+    "ret_code_ok_and_has_fills": ret_code_ok_and_has_fills,
+    "second_consecutive_miss": second_consecutive_miss,
+    "sl_attach_ok": sl_attach_ok,
+    "sl_observed_ok": sl_observed_ok,
+}
 
-# --- #847 slice 1b, chart version 2 (C-2.6, INV-B1-f): the attach result counts only if its
-# read-back confirms the stop (fail-closed until slice 5), and no protection reading is deferred.
-GUARDS["sl_attach_ok"] = _deny_guard
-ACTIONS["record_sl_fact_ignored"] = _noop_action
+SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {
+    "amend_order": amend_order,
+    "attach_native_sl": attach_native_sl,
+    "cancel_order": cancel_order,
+    "place_order": place_order,
+}
+
+register_binding_module("order", __name__)
+
+
+# --- Closed event schemas (E29 threat model, T03 row; 28 B1.8 version 3 (g)) ------------------
+
+
+def _closed(**properties: dict[str, Any]) -> dict[str, Any]:
+    """A closed payload: these keys only, each typed; none required, so an empty payload still
+    reaches the guards, which deny what they cannot use (A6)."""
+    return {"type": "object", "additionalProperties": False, "properties": properties}
+
+
+_DECIMAL: Final = r"^-?[0-9]{1,20}(\.[0-9]{1,18})?$"  # the guards re-check with `fullmatch`
+_TEXT: Final = {"type": "string", "minLength": 1, "maxLength": MAX_TEXT}
+_MONEY_TEXT: Final = {"type": "string", "pattern": _DECIMAL}
+_MONEY_OR_NULL: Final = {"type": ["string", "null"], "pattern": _DECIMAL}
+_COUNT: Final = {"type": "integer", "minimum": 0}
+_FLAG: Final = {"type": "boolean"}
+_VERDICT: Final = {"enum": [PASSED, FAILED]}
+_SIDE: Final = {"enum": ["buy", "sell"]}
+#: Where an exchange fact came from, which its write-ahead row records (24 Sec.8.2 S8, OM-R02).
+_SOURCE: Final = {"enum": ["rest", "ws_private", "reconcile", "paper"]}
+_TERMS: Final = {"qty": _MONEY_TEXT} | dict.fromkeys(TERMS, _MONEY_OR_NULL)
+#: The order as 24 Sec.8.1 names it: identity, terms and, for one found on the exchange, its id.
+_ORDER: Final = _closed(
+    **dict.fromkeys(FACTS[:-1], _TEXT),
+    side=_SIDE,
+    **_TERMS,
+    reduce_only=_FLAG,
+    exchange_order_id=_TEXT,
+)
+#: A 24 Sec.8.1 `Execution`, with the exchange order id it pairs on (SR-E29-03).
+_EXECUTION: Final = _closed(
+    **dict.fromkeys(("exec_id", "exchange_order_id", *FACTS[:-1], "fee_currency"), _TEXT),
+    side=_SIDE,
+    **dict.fromkeys(("qty", "price", "fee", "fee_rate"), _MONEY_TEXT),
+    closed_pnl=_MONEY_OR_NULL,
+    exec_type={"enum": ["trade", "funding", "adl_trade", "bust_trade", "settle"]},
+    is_maker=_FLAG,
+    **dict.fromkeys(("ts_exec", "ts_ingest", "seq"), _COUNT),
+    source=_SOURCE,
+)
+#: An order push the exchange sent: the order's status and cumulative fill when it changed.
+_PUSH: Final = _closed(
+    exchange_order_id=_TEXT,
+    order_link_id=_TEXT,
+    order_status=_TEXT,
+    cum_exec_qty=_MONEY_TEXT,
+    updated_time=_COUNT,
+    source=_SOURCE,
+)
+#: A protection reading (B1.5): the position row's exchange time, stop and size.
+_READING: Final = _closed(updated_time=_COUNT, stop_loss=_MONEY_OR_NULL, size=_MONEY_TEXT)
+#: A reconciliation finding, sent after its SR-E29-03 full match (INV-B1-m).
+_FOUND: Final = _closed(exchange_order_id=_TEXT, execution=_EXECUTION, pass_id=_TEXT)
+_REASON: Final = _closed(reason=_TEXT)
+
+SCHEMAS: Final[dict[str, dict[str, Any]]] = {
+    "ADOPT": _closed(
+        gates=_closed(
+            **{g: _VERDICT for g in ("validator", "kill_switch", "live_gate", "native_stop")}
+        ),
+        decided_by=_TEXT,
+    ),
+    "AMEND": _closed(**_TERMS),
+    "AMEND_REJECTED": _closed(error_code=_TEXT, source=_SOURCE),
+    "CANCEL": _closed(),
+    "DISCOVERED": _closed(order=_ORDER, pass_id=_TEXT),
+    "EXEC": _EXECUTION,
+    "EXPIRE": _PUSH,
+    "FAULT": _closed(reason=_TEXT, exec_id=_TEXT),
+    "FIRST_FILL": _closed(),
+    "KILL": _REASON,
+    "MISMATCH": _closed(exchange_order_id=_TEXT, pass_id=_TEXT),
+    "OPERATOR_RESOLVED": _closed(decided_by=_TEXT, reason=_TEXT),
+    "RECON_FOUND_CANCELLED": _FOUND,
+    "RECON_FOUND_FILLED": _FOUND,
+    "RECON_FOUND_LIVE": _FOUND,
+    "RECON_FOUND_PARTIAL": _FOUND,
+    "RECON_MISS": _closed(pass_id=_TEXT),
+    "REMOTE_CANCELLED": _PUSH,
+    "SEND": _closed(),
+    "SL_DEADLINE": _closed(),
+    "SL_LOST": _READING,
+    "SL_OBSERVED": _READING,
+    "TRANSPORT_FAULT": _REASON,
+    "TRIGGERED": _PUSH,
+    "VALIDATE": _closed(
+        gates=_closed(**{g: _VERDICT for g in GATES}),
+        order=_ORDER,
+        rate_reservation=_TEXT,
+    ),
+}
+register_event_schemas("order", SCHEMAS)

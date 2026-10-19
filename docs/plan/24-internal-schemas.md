@@ -1345,6 +1345,7 @@ class Order(BaseModel):
 ```python
 class Execution(BaseModel):        # immutable fill record
     exec_id: str                   # exchange execId — dedupe key
+    exchange_order_id: str         # the exchange's orderId: B1 pairs a fill on it (SR-E29-03)
     order_id: OrderId
     order_link_id: OrderLinkId     # its order's id, normalised (§14.2 rule 11)
     account_id: AccountId
@@ -1411,6 +1412,8 @@ stateDiagram-v2
   Submitted --> Triggered: conditional order trigger fired
   Submitted --> Cancelled: cancelled on the exchange
   Submitted --> Held: the order under our id does not match the row
+  Submitted --> Unknown: transport fault after the send
+  Submitted --> Quarantined: an action faulted (FAULT)
   Triggered --> PartiallyFilled
   Triggered --> Filled
   Triggered --> CancelPending
@@ -1422,6 +1425,7 @@ stateDiagram-v2
   PartiallyFilled --> AmendPending
   PartiallyFilled --> Expired
   PartiallyFilled --> Cancelled: cancelled on the exchange
+  PartiallyFilled --> Quarantined: an action faulted (FAULT)
   CancelPending --> Cancelled: cancel ack
   CancelPending --> Filled: race - filled before cancel landed
   CancelPending --> PartiallyFilled: partial fill during cancel
@@ -1440,10 +1444,18 @@ stateDiagram-v2
   Unknown --> Filled: reconciliation found filled
   Unknown --> Cancelled: reconciliation found cancelled
   Unknown --> Rejected: 2 consecutive reconciliation passes found nothing
+  Unknown --> Unknown: one reconciliation pass found nothing
   Unknown --> Held: the order under our id does not match the row
+  Quarantined --> Submitted: reconciliation found it live
+  Quarantined --> PartiallyFilled: reconciliation found partial
+  Quarantined --> Filled: reconciliation found filled
+  Quarantined --> Cancelled: reconciliation found cancelled
+  Quarantined --> Held: the order under our id does not match the row
   Untracked --> Submitted: adopted under management (adoption_allowed, D6)
   Untracked --> Cancelled: reconciliation found it cancelled, or 2 passes found nothing
-  Held --> Rejected: the Owner resolves it after step-up, audited oms.held_resolved (never an adopt)
+  Untracked --> Untracked: one reconciliation pass found nothing
+  Untracked --> Filled: reconciliation found it filled
+  Held --> Rejected: the operator resolves it (OPERATOR_RESOLVED, never an adopt)
   Filled --> [*]
   Cancelled --> [*]
   Rejected --> [*]
@@ -1454,19 +1466,19 @@ stateDiagram-v2
 
 **Binding transition rules.**
 
-| #   | Rule                                                                                                                                                                                                                        |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1  | `Unknown` is entered on **any** post-send transport failure. There is **no blind resubmission** from `Unknown` — resolution comes only from reconciliation (§8.5).                                                          |
-| S2  | An amend rejection leaves the prior order live and unchanged. The UI is told explicitly, because a user who believes a stop moved when it did not is in danger.                                                             |
-| S3  | A fill arriving for an order in `CancelPending` wins: cancel lost the race, state becomes `PartiallyFilled`/`Filled`.                                                                                                       |
-| S4  | Executions are deduped by `exec_id`; a repeated `exec_id` never double-counts `filled_qty`.                                                                                                                                 |
-| S5  | Out-of-order private-WS pushes are ordered by `(ts_exec, seq)`; a push describing a state older than `last_exchange_update` is ignored except for fills, which are always applied (they are additive and dedupe-protected). |
-| S6  | Terminal states are immutable. A post-terminal exchange push raises `ReconcileAnomaly`, is audited and alerted, and does not mutate the order.                                                                              |
-| S7  | Postgres is authoritative. If Postgres is unavailable, order entry is blocked — we never accept an order we cannot durably record.                                                                                          |
-| S8  | Every transition writes an append-only `order_events` row before the in-memory state changes (write-ahead), so a crash mid-transition is recoverable.                                                                       |
-| S9  | `untracked` is a distinct state for exchange orders with no local row (manual Bybit-app order, pre-existing, or ours whose row was lost). They are displayed, adoptable by the user, but never auto-managed by rules.       |
-| S10 | An event the current state does not handle (a fill while `Submitting` or `AmendPending` awaits the exchange) is deferred, never dropped (`onUnhandled: "defer"`): every delivered fill is applied or still deferred.        |
-| S11 | No action half-applies a transition: under `actionErrorPolicy: "rollback"` an action that raises (a failed `order_events` write included) aborts the step and restores the prior state and context (S7, S8), and pages.     |
+| #   | Rule                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1  | `Unknown` is entered on **any** post-send transport failure. There is **no blind resubmission** from `Unknown` — resolution comes only from reconciliation (§8.5).                                                                                                                                                                                                                                              |
+| S2  | An amend rejection leaves the prior order live and unchanged. The UI is told explicitly, because a user who believes a stop moved when it did not is in danger.                                                                                                                                                                                                                                                 |
+| S3  | A fill arriving for an order in `CancelPending` wins: cancel lost the race, state becomes `PartiallyFilled`/`Filled`.                                                                                                                                                                                                                                                                                           |
+| S4  | Executions are deduped by `exec_id`; a repeated `exec_id` never double-counts `filled_qty`.                                                                                                                                                                                                                                                                                                                     |
+| S5  | Out-of-order private-WS pushes are ordered by `(ts_exec, seq)`; a push describing a state older than `last_exchange_update` is ignored except for fills, which are always applied (they are additive and dedupe-protected).                                                                                                                                                                                     |
+| S6  | Terminal states are immutable. A post-terminal exchange push raises `ReconcileAnomaly`, is audited and alerted, and does not mutate the order.                                                                                                                                                                                                                                                                  |
+| S7  | Postgres is authoritative. If Postgres is unavailable, order entry is blocked — we never accept an order we cannot durably record.                                                                                                                                                                                                                                                                              |
+| S8  | Every transition writes an append-only `order_events` row before the in-memory state changes (write-ahead), so a crash mid-transition is recoverable.                                                                                                                                                                                                                                                           |
+| S9  | `untracked` is a distinct state for exchange orders with no local row (manual Bybit-app order, pre-existing, or ours whose row was lost). They are displayed, adoptable by the user, but never auto-managed by rules.                                                                                                                                                                                           |
+| S10 | An event the current state does not handle (a fill while `Submitting` or `AmendPending` awaits the exchange) is deferred (`onUnhandled: "defer"`), up to the runtime's `DEFER_MAX` (1000 per machine); past it the oldest is evicted, which pages on the order lane (`CvErrorHooks`). Every delivered fill is applied, consumed with an audit record (a fill for a held or final order, S6), or still deferred. |
+| S11 | No action half-applies a transition: under `actionErrorPolicy: "rollback"` an action that raises (a failed `order_events` write included) aborts the step and restores the prior state and context (S7, S8), and pages.                                                                                                                                                                                         |
 
 **Persisted state (E29-T03, revision `0034_order_vocabulary`).** `orders.state` (`order_state`, `21-database-schema.md` §1.2) stores each `lifecycle` state of the chart as the value below, and `orders.lifecycle_state` stores the chart state itself, so no reader of `orders` inverts this table; the `protection` region is not persisted there. The `ord_lifecycle` CHECK (`21-database-schema.md` §3.3.4) admits only the pairs below, so the two columns never disagree. `order_events.from_state` and `to_state` hold the `order_state` value alone, so a reader of events (E29-T03's rebuild from `order_events`) maps it back through this table, which, being one to one, inverts exactly (`21-database-schema.md` §3.3.5). The mapping is total and one to one, so it has no many-to-one cases. Six names differ and the other eleven are the same word; `submitted` names a different state on each side. Where §8.4 writes a state (`state=validated`, for example), it is the chart state: the row stores it in `lifecycle_state` and its value from this table in `state`. REST `OrderState` and the WS `orders` frame's `state` carry the `order_state` value, and their `lifecycle_state` the chart state; both are open-ended for readers, who show an order in a state they do not know as live.
 
@@ -1521,7 +1533,7 @@ Rules:
 
 1. Generated **once, before the first send**, by the server from the segments above (no client-supplied string, such as the HTTP `Idempotency-Key`, goes into it), persisted in Postgres, and reused **unchanged** on every retry of that logical order. A replayed request reaches the same ids through its trade group instead: the server stores the request's `Idempotency-Key` as that group's `client_group_ref` (UNIQUE, `21-database-schema.md` §3.3.2), so a replay after a crash finds the group and its order rows before any send rather than minting a new group and new ids.
 2. It is the correlation key everywhere: logs, metrics exemplars, audit, journal, reconciliation, UI deep links. It is not an ownership proof: whether an order belongs to a group is decided by its row's relations (§9.5.1).
-3. A duplicate-id rejection from the exchange (retCode 10001 with a duplicate message, or 110072) is **not** an error: the OMS immediately queries `GET /v5/order/realtime` + `/v5/order/history` for that id and adopts the true state. This is the "success-after-lookup" rule from `20-architecture.md` §9. If neither lookup returns that id, nothing is adopted (`Unresolved`): the order moves to `Unknown` (§8.2 S1), only reconciliation (§8.5) resolves it, and the OMS never re-sends it under a new id.
+3. A duplicate-id rejection from the exchange (retCode 10001 with a duplicate message, or 110072) is **not** an error: the OMS immediately queries `GET /v5/order/realtime` + `/v5/order/history` for that id and adopts the true state. This is the "success-after-lookup" rule from `20-architecture.md` §9. If neither lookup returns that id, nothing is adopted (`Unresolved`): the order moves to `Unknown` (§8.2 S1), only reconciliation (§8.5) resolves it, and the OMS never re-sends it under a new id. A lookup adopts the order only when every SR-E29-03 field matches the row (B1's `is_duplicate_link_id_full_match`); one that found an order under the id that does not match holds the order (`Held`), and a failed, empty or partial lookup moves it to `Unknown` like a lookup that found nothing.
 4. Amends never change the id. Cancel-and-replace algos (chase, §10.4) allocate a **new** id with an incremented `seq2` and record `replaces_order_id`.
 5. A collision check runs at generation: if any local row, in any state, already has the id (`ux_orders_link` is unique over all rows, and Bybit deduplicates whatever our local state is), `seq2` increments and both ids are logged at `warning`. After 16 increments, and never past `seq2` = 3843, a typed `OrderLinkIdExhausted` is raised ([#846 ruling Q1, Q6](https://github.com/CandleViewer/CandleViewer/issues/846#issuecomment-6204432470)). Practically impossible given the UUID content, but a silent collision would be catastrophic, so it is checked.
 6. **Demo retains orders only 7 days** — the reconciler treats an id older than 6 days as unresolvable-by-history on demo and closes it as `Rejected` with `reject_code=DEMO_RETENTION_EXPIRED`.

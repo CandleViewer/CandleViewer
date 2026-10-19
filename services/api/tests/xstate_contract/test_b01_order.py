@@ -40,6 +40,7 @@ from tests.xstate_contract._harness import (
     settle,
     walk,
 )
+from tests.xstate_contract.b01_ports import Commands
 from tests.xstate_contract.membership import _CATALOGUE, check_ledger
 
 CHART = Registry().get("order")
@@ -55,22 +56,47 @@ _SL_ACTIONS = {"request_fallback_sl", "arm_sl_deadline", "raise_naked_position_a
 _UNOWNED = ("untracked", "held")
 _EXCHANGE_LIVE = ("submitted", "triggered", "partially_filled", "cancel_pending", "amend_pending")
 
-INVARIANTS: dict[str, str] = {
+
+def _names(node: Any) -> set[str]:
+    """Every action, guard and service name the chart JSON names (C-2.19)."""
+    if isinstance(node, list):
+        return set().union(*map(_names, node)) if node else set()
+    if not isinstance(node, dict):
+        return set()
+    out = {str(node[k]) for k in ("guard", "src") if k in node}
+    for key in ("actions", "entry", "exit"):
+        out |= {a for a in node.get(key) or () if isinstance(a, str)}
+    return out.union(*(_names(v) for k, v in node.items() if k != "context"))
+
+
+_NAMED = _names(CHART)
+
+INVARIANTS: dict[str, str | tuple[str, ...]] = {
     "INV-B1-a": "test_b01_order_core.py::test_inv_b1_a_fills_in_any_order_give_the_same_totals",
     "INV-B1-b": "test_b01_order_core.py::test_duplicate_fill_never_double_counts",
     "INV-B1-c": "test_inv_b1_c_amend_rejected_never_terminal",
     "INV-B1-d": "test_inv_b1_d_cancel_pending_handles_exec",
     "INV-B1-e": "test_inv_b1_e_unknown_resolved_only_by_recon",
     "INV-B1-f": "test_inv_b1_f_sl_present_only_from_the_exchange_property",
-    "INV-B1-g": "deferred:E29",
-    "INV-B1-h": "test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted",
-    # INV-B1-h also: test_b01_order_core.py::test_inv_b1_h_kill_cancels_a_reconciled_duplicate
+    "INV-B1-g": "test_b01_order_effects.py::test_inv_b1_g_every_step_is_written_before_it_is_seen",
+    "INV-B1-h": (
+        "test_inv_b1_h_kill_at_most_one_cancel_only_if_submitted",
+        "test_b01_order_core.py::test_inv_b1_h_kill_cancels_a_reconciled_duplicate",
+        "test_b01_order_core.py::test_inv_b1_h_kill_cancels_nothing_under_an_unverified_duplicate",
+    ),
     "INV-B1-i": "test_inv_b1_i_kill_never_touches_protection_property",
     "INV-B1-j": "test_inv_b1_j_result_adopted_only_if_ret_code_ok_property",
     "INV-B1-k": "test_inv_b1_k_exchange_end_is_never_stranded_property",
     "INV-B1-l": "test_inv_b1_l_untracked_is_never_managed_property",
-    "INV-B1-m": "test_inv_b1_m_held_is_left_only_by_the_operator_property",
+    "INV-B1-m": (
+        "test_inv_b1_m_held_is_left_only_by_the_operator_property",
+        "test_inv_b1_m_a_stray_operator_command_is_refused_never_kept",
+    ),
     "INV-B1-n": "test_inv_b1_n_kill_never_cancels_an_unowned_order_property",
+    "INV-B1-o": (
+        "test_inv_b1_o_every_arm_into_a_filled_state_raises_the_notice",
+        "test_inv_b1_o_a_fill_reaching_a_final_or_held_order_is_an_audited_anomaly",
+    ),
 }
 
 
@@ -80,6 +106,32 @@ def test_b01_invariant_ledger_matches_catalogue() -> None:
     block = re.search(r"### B1\.1 Contract \(normative\)\s*```json\n(.*?)\n```", text, re.S)
     skip = ("version", "strictConfig", "maxIterations")
     assert block and json.loads(block[1]) == {k: v for k, v in CHART.items() if k not in skip}
+
+
+def _edges(chart: dict[str, Any]) -> set[tuple[str, str]]:
+    """The `lifecycle` region's (from, to) pairs, self-loops included, KILL's arms into `killed`
+    aside (24 §8.2's note names them)."""
+    out: set[tuple[str, str]] = set()
+    for name, node in node_at(chart, "lifecycle")["states"].items():
+        groups = list((node.get("on") or {}).values())
+        groups += [v for k, v in (node.get("invoke") or {}).items() if k in ("onDone", "onError")]
+        for spec in groups:
+            for arm in spec if isinstance(spec, list) else [spec]:
+                target = str(arm.get("target") or "").rsplit(".", 1)[-1]
+                if target and target != "killed":
+                    out.add((name, target))
+    return out
+
+
+def test_b01_24_diagram_draws_every_lifecycle_edge() -> None:
+    """lows-847s1: 24 §8.2's diagram draws exactly the chart's `lifecycle` edges, so the owner
+    document cannot drift from the contract (C-2.19)."""
+    text = (_CATALOGUE.parent / "24-internal-schemas.md").read_text(encoding="utf-8")
+    block = text[text.index("### 8.2 Order state machine") : text.index("**Binding transition")]
+    states = node_at(CHART, "lifecycle")["states"]
+    camel = {"".join(w.capitalize() for w in s.split("_")): s for s in states}
+    drawn = re.findall(r"^\s+(\w+) --> (\w+)", block, re.M)
+    assert {(camel[a], camel[b]) for a, b in drawn if "[*]" not in (a, b)} == _edges(CHART)
 
 
 def test_inv_b1_c_amend_rejected_never_terminal() -> None:
@@ -93,8 +145,7 @@ def test_inv_b1_d_cancel_pending_handles_exec() -> None:
 
 def test_inv_b1_e_unknown_resolved_only_by_recon() -> None:
     leaving = {e for e, _g, _t in exits(CHART, "lifecycle.unknown")}
-    assert leaving - {"MISMATCH"} <= {e for e in leaving if e.startswith("RECON_")}  # #847: held
-    assert "SEND" not in leaving
+    assert {e for e in leaving if not e.startswith("RECON_")} == {"MISMATCH"}  # #847: held
 
 
 def test_b01_killed_is_final_terminal_with_cancel_and_audit() -> None:
@@ -107,8 +158,9 @@ def test_b01_killed_is_final_terminal_with_cancel_and_audit() -> None:
 
 
 def _restore_real(monkeypatch: pytest.MonkeyPatch, *, hang: bool = False) -> list[str]:
-    """Real KILL actions; `cancel_order` records each call (and hangs if *hang*,
-    to keep a parked `cancel_pending` invoke in flight)."""
+    """Real KILL actions. A cancel is recorded whether the `cancel_pending` invoke sends it (it
+    hangs if *hang*, to keep that invoke in flight) or the KILL does, through the OMS's audited
+    cancel service (SR-E29-06)."""
     cancels: list[str] = []
 
     async def _cancel(*_a: object, **_k: object) -> None:
@@ -119,6 +171,7 @@ def _restore_real(monkeypatch: pytest.MonkeyPatch, *, hang: bool = False) -> lis
     for name in _REAL_KILL_ACTIONS:
         monkeypatch.setitem(b01.ACTIONS, name, getattr(b01, name))
     monkeypatch.setitem(b01.SERVICES, "cancel_order", _cancel)
+    monkeypatch.setattr(b01, "_ports", b01.OrderPorts(commands=Commands(on_cancel=_cancel)))
     return cancels
 
 
@@ -167,7 +220,7 @@ async def test_b01_kill_audit_is_write_ahead_of_cancel(
         order.append("cancel_order")
 
     monkeypatch.setitem(b01.ACTIONS, "audit_kill", _audit)
-    monkeypatch.setitem(b01.SERVICES, "cancel_order", _cancel)
+    monkeypatch.setattr(b01, "_ports", b01.OrderPorts(commands=Commands(on_cancel=_cancel)))
     res = await park("order", CHART, "lifecycle.submitted", charts)
     try:
         await res.interpreter.send("KILL", wait=True)
@@ -194,7 +247,7 @@ async def test_b01_kill_cancel_timeout_or_failure_is_audited(
     async def _hook(name: str, _ctx: dict[str, object]) -> None:
         seen.append(name)
 
-    monkeypatch.setitem(b01.SERVICES, "cancel_order", _boom)
+    monkeypatch.setattr(b01, "_ports", b01.OrderPorts(commands=Commands(on_cancel=_boom)))
     b01.set_audit_hook(_hook)
     try:
         res = await park("order", CHART, "lifecycle.submitted", charts)
@@ -280,7 +333,11 @@ _MANAGING = frozenset(
     " issue_kill_cancel keep_prior_order_live mark_needs_lookup record_cancel_refused"
     " reserve_rate_token stamp_validated".split()
 )
-_UNTRACKED_EXITS = {("cancelled", "RECON_FOUND_CANCELLED"), ("cancelled", "RECON_MISS")}
+_UNTRACKED_EXITS = {
+    ("cancelled", "RECON_FOUND_CANCELLED"),
+    ("cancelled", "RECON_MISS"),
+    ("filled", "RECON_FOUND_FILLED"),
+}
 
 
 def _into(state: str) -> set[tuple[str, str]]:
@@ -308,15 +365,18 @@ async def _at(
             await res.interpreter.stop()
 
 
-async def test_b01_binding_stubs_and_event_schemas() -> None:
-    """Every event has a schema, every guard denies (A6), every audit reaches the hook (C-2.9)."""
-    assert all_events(CHART) <= set(CV_EVENT_SCHEMAS["order"])
+async def test_b01_bindings_schemas_guards_and_audits() -> None:
+    """Every event has a closed schema of this machine's own (#847), every guard denies an empty
+    event (A6), only `adoption_allowed` denies everything (until E45-S01 records D6), and every
+    audit reaches the hook (C-2.9)."""
+    schemas = CV_EVENT_SCHEMAS["order"]
+    assert all_events(CHART) == set(schemas) == set(b01.SCHEMAS)
+    assert all(
+        s["type"] == "object" and s["additionalProperties"] is False for s in schemas.values()
+    )
     assert not any(guard({}, None) for guard in b01.GUARDS.values())
-    # Deny-all: adoption_allowed until E45-S01 records D6; the others have no body yet
-    # (sl_attach_ok came with slice 1b's B1 version 2).
-    stubs = "adoption_allowed is_duplicate_link_id_full_match is_link_id_mismatch sl_attach_ok"
-    deny_all = {name for name, guard in b01.GUARDS.items() if guard is b01._deny_guard}
-    assert deny_all == {*stubs.split(), "second_consecutive_miss"}
+    assert b01.GUARDS["adoption_allowed"] is b01.adoption_allowed
+    assert set(b01.ACTIONS) | set(b01.GUARDS) | set(b01.SERVICES) == _NAMED
     audits, hook = sorted(n for n in b01.ACTIONS if n.startswith("audit_")), AsyncMock()
     b01.set_audit_hook(hook)
     try:
@@ -325,7 +385,7 @@ async def test_b01_binding_stubs_and_event_schemas() -> None:
     finally:
         b01.set_audit_hook(None)
     want = [{"audit_kill": "halted_by_kill"}.get(n, n[6:]) for n in audits]
-    assert len(audits) == 9 and [c.args[0] for c in hook.await_args_list] == want
+    assert len(audits) == 11 and [c.args[0] for c in hook.await_args_list] == want
 
 
 @_HYP
@@ -452,6 +512,31 @@ async def test_inv_b1_m_held_is_left_only_by_the_operator_property(
         assert _leaf(i) == "rejected" and not _MANAGING & set(rec.actions)
 
 
+_OWNED_BY = {"OPERATOR_RESOLVED": "held", "ADOPT": "untracked"}
+
+
+@pytest.mark.parametrize("command", sorted(_OWNED_BY))
+@pytest.mark.parametrize("state", [*LIVE, *TERMINALS])
+async def test_inv_b1_m_a_stray_operator_command_is_refused_never_kept(
+    state: str, command: str, charts: Charts
+) -> None:
+    """Every guard allowed: `OPERATOR_RESOLVED` outside `held`, or `ADOPT` outside `untracked`,
+    is consumed and audited by the `lifecycle` arm, never deferred, so a later MISMATCH still
+    holds the order for the Owner (lows-847s1)."""
+    if _OWNED_BY[command] == state:
+        return  # the owner's own arm: INV-B1-m's property and INV-B1-l's
+    async with _at(state, charts, guards=dict.fromkeys(b01.GUARDS, True)) as (i, rec, _c):
+        mark = len(rec.actions)
+        await i.send(command, wait=True)
+        await settle()
+        assert (_leaf(i), i.deferred_count) == (state, 0)
+        assert rec.actions[mark:] == ["audit_operator_command_refused"]
+        if "MISMATCH" in (node_at(CHART, f"lifecycle.{state}").get("on") or {}):
+            await i.send("MISMATCH", wait=True)
+            await settle()
+            assert _leaf(i) == "held"
+
+
 @_HYP
 @given(state=st.sampled_from(_UNOWNED), events=st.lists(st.sampled_from(_EVENTS), max_size=5))
 async def test_inv_b1_n_kill_never_cancels_an_unowned_order_property(
@@ -474,56 +559,122 @@ async def test_inv_b1_n_kill_never_cancels_an_unowned_order_property(
 # --- #847 slice 1b, chart version 2: the protection region's C-2.6 gaps --------------------------
 
 
-@pytest.mark.parametrize("state", ["submitted", "triggered", "cancel_pending"])
-async def test_b01_one_shot_fill_notifies_the_protection_region(state: str, charts: Charts) -> None:
-    """24 §8.8 rule 2: a first fill straight to `filled` starts the SL deadline, as a partial fill
-    does (version 1 notified only from `partially_filled`'s entry)."""
-    async with _at(state, charts, guards={"exec_new_and_closes": True}) as (i, rec, _c):
+#: INV-B1-o: the arms that put an order into a filled state, by the state they leave.
+_FILLED_STATES = ("order.lifecycle.filled", "order.lifecycle.partially_filled")
+_ENDS_WITH_FILLS = ("order.lifecycle.cancelled", "order.lifecycle.expired")
+
+
+def test_inv_b1_o_every_arm_into_a_filled_state_raises_the_notice() -> None:
+    """The notice is the target's entry, so no arm into `filled` or `partially_filled` can lack
+    it, and `cancelled` and `expired` run it too, for an order ended with fills (version 3)."""
+    arms = {(p, e) for p, _n in walk(CHART) for e, _g, t in exits(CHART, p) if t in _FILLED_STATES}
+    assert {e for _p, e in arms} >= {"EXEC", "RECON_FOUND_PARTIAL", "RECON_FOUND_FILLED"}
+    for target in (*_FILLED_STATES, *_ENDS_WITH_FILLS):
+        entry = entry_of(CHART, target.split(".", 1)[1])
+        assert entry[0] == "persist_event" and "notify_protection_region" in entry, target
+    for path, node in walk(CHART):  # and no arm carries a second copy of it
+        for spec in (node.get("on") or {}).values():
+            for arm in spec if isinstance(spec, list) else [spec]:
+                late = arm.get("target") is None and path.split(".")[-1] in _LATE_FILL
+                assert late or "notify_protection_region" not in arm.get("actions", ()), path
+
+
+@pytest.mark.parametrize(
+    ("state", "event"),
+    [
+        *[(s, e) for s in ("submitted", "triggered", "cancel_pending") for e in ["EXEC"]],
+        *[(s, "RECON_FOUND_FILLED") for s in ("unknown", "quarantined", "untracked")],
+        *[(s, "RECON_FOUND_PARTIAL") for s in ("unknown", "quarantined")],
+    ],
+)
+async def test_b01_a_fill_into_a_filled_state_notifies_the_protection_region(
+    state: str, event: str, charts: Charts
+) -> None:
+    """24 §8.8 rule 2: however the first fill arrives, one notice starts the SL deadline; the
+    reconciliation arms of `unknown`, `quarantined` and `untracked` included (slice 1b's gaps)."""
+    plan = {"exec_new_and_closes": True}
+    async with _at(state, charts, guards=plan) as (i, rec, _c):
+        mark = len(rec.actions)
+        await i.send(event, wait=True)
+        await settle()
+        assert _leaf(i) in ("filled", "partially_filled") and i.deferred_count == 0
+        assert rec.actions[mark:].count("notify_protection_region") == 1
+
+
+#: Where a fill can still arrive although the order no longer takes one (INV-B1-o).
+_LATE_FILL = ("held", "filled", "cancelled", "rejected", "expired", "killed")
+
+
+@pytest.mark.parametrize("state", _LATE_FILL)
+async def test_inv_b1_o_a_fill_reaching_a_final_or_held_order_is_an_audited_anomaly(
+    state: str, charts: Charts
+) -> None:
+    """S6: the EXEC is consumed, never deferred, by an arm that audits a `ReconcileAnomaly` and
+    notifies the protection region; the lifecycle state stays (a fill racing a cancel, an expiry
+    or a KILL starts the SL deadline, slice 1b's security Low 2)."""
+    async with _at(state, charts, guards=dict.fromkeys(b01.GUARDS, True)) as (i, rec, _c):
+        mark = len(rec.actions)
         await i.send("EXEC", wait=True)
         await settle()
-        assert _leaf(i) == "filled" and rec.actions.count("notify_protection_region") == 1
+        assert (_leaf(i), i.deferred_count) == (state, 0)
+        assert rec.actions[mark:] == ["audit_reconcile_anomaly", "notify_protection_region"]
 
 
-#: B1.8(d), left for #847 slice 5's lock turn: an order that may have filled unwatched ends with no
-#: first-fill notice, or its fills defer (in `killed` for good). A fix fails this pin; edit B1.8(d).
-_NO_NOTICE = dict.fromkeys(("unknown", "quarantined"), "RECON_FOUND_FILLED RECON_FOUND_CANCELLED")
-_FILLS_DEFER = {
-    "untracked": "RECON_FOUND_LIVE RECON_FOUND_PARTIAL RECON_FOUND_FILLED EXEC",
-    "killed": "EXEC",  # a fill that races a KILL
-}
+@pytest.mark.parametrize("event", ["RECON_FOUND_LIVE", "RECON_FOUND_PARTIAL", "EXEC"])
+async def test_b01_untracked_consumes_the_exchange_facts(event: str, charts: Charts) -> None:
+    """INV-B1-l (version 3): `untracked` records the facts and restarts its miss count, never
+    deferring them (the DEFER_MAX eviction of lows-847s1), and runs no managing action."""
+    async with _at("untracked", charts) as (i, rec, _c):
+        mark = len(rec.actions)
+        await i.send(event, wait=True)
+        await settle()
+        assert (_leaf(i), i.deferred_count) == ("untracked", 0)
+        assert rec.actions[mark:] == ["record_remote_state"]
 
 
-def test_b01_first_fill_notice_gaps_are_pinned() -> None:
-    on = {s: node_at(CHART, f"lifecycle.{s}")["on"] for s in (*_NO_NOTICE, *_FILLS_DEFER)}
-    for s, events in _NO_NOTICE.items():
-        assert all("notify_protection_region" not in on[s][e]["actions"] for e in events.split())
-    for s, events in _FILLS_DEFER.items():
-        assert not set(events.split()) & set(on[s])
+@pytest.mark.parametrize("leaf", ["sl_present", "sl_missing"])
+async def test_b01_a_repeated_first_fill_or_a_late_deadline_is_consumed(
+    leaf: str, charts: Charts
+) -> None:
+    """INV-B1-f (slice 1b code Lows 2 and 4): after the attach result a repeated FIRST_FILL and a
+    late SL_DEADLINE are consumed by the region's arm, never deferred, and move nothing."""
+    async with _at(f"protection.{leaf}", charts) as (i, rec, _c):
+        mark = len(rec.actions)
+        for event in ("FIRST_FILL", "SL_DEADLINE"):
+            await i.send(event, wait=True)
+        await settle()
+        assert (_leaf(i, "protection"), i.deferred_count) == (leaf, 0)
+        assert rec.actions[mark:] == ["record_sl_fact_ignored"] * 2
 
 
 _INTO_SL_PRESENT = {
     ("protection.sl_pending", "onDone", "sl_attach_ok"),
-    ("protection.sl_missing", "SL_OBSERVED", None),
+    ("protection.sl_missing", "SL_OBSERVED", "sl_observed_ok"),
 }
 _READS = st.lists(st.sampled_from(("SL_OBSERVED", "SL_LOST")), max_size=3)
+_EARLY = st.lists(st.sampled_from(("SL_OBSERVED", "SL_LOST", "SL_DEADLINE")), max_size=3)
+_LIFECYCLE_ONLY = {e for e in _EVENTS if e not in ("SL_OBSERVED", "SL_LOST", "SL_DEADLINE")}
 
 
 @_HYP
 @given(
     attach=st.sampled_from(("confirmed", "rejected", "failed")),
-    early=_READS,
+    own=st.booleans(),
+    early=_EARLY,
     during=_READS,
     events=st.lists(st.sampled_from(_EVENTS), max_size=6),
 )
-@example(attach="rejected", early=[], during=["SL_OBSERVED"], events=[])
-@example(attach="failed", early=["SL_OBSERVED"], during=[], events=[])
-@example(attach="confirmed", early=[], during=[], events=["SL_OBSERVED", "SL_LOST"])
+@example(attach="rejected", own=True, early=[], during=["SL_OBSERVED"], events=[])
+@example(attach="failed", own=True, early=["SL_OBSERVED"], during=[], events=[])
+@example(attach="confirmed", own=True, early=[], during=[], events=["SL_OBSERVED", "SL_LOST"])
+@example(attach="rejected", own=False, early=[], during=[], events=["SL_OBSERVED", "SL_DEADLINE"])
 async def test_inv_b1_f_sl_present_only_from_the_exchange_property(
-    attach: str, early: list[str], during: list[str], events: list[str], charts: Charts
+    attach: str, own: bool, early: list[str], during: list[str], events: list[str], charts: Charts
 ) -> None:
-    """Every other guard allowed: the attach result counts only if `sl_attach_ok` confirms it, a
-    reading before the first fill or during the attach is consumed, never deferred, and after the
-    attach result the last reading decides (C-2.6; the slice 1b review's three replays)."""
+    """Every other guard allowed: the attach result counts only if `sl_attach_ok` confirms it, an
+    `SL_OBSERVED` in `sl_missing` only if `sl_observed_ok` does (*own*), a reading or a late
+    `SL_DEADLINE` the leaf does not act on is consumed, never deferred, and after the attach
+    result the last confirmed reading decides (C-2.6; slice 1b's replays, version 3)."""
     present = "order.protection.sl_present"
     arms = {(p, e, g) for p, _n in walk(CHART) for e, g, t in exits(CHART, p) if t == present}
     assert arms == _INTO_SL_PRESENT
@@ -534,6 +685,7 @@ async def test_inv_b1_f_sl_present_only_from_the_exchange_property(
         return await (_fail if attach == "failed" else _done)(*a, **k)
 
     plan = {**dict.fromkeys(b01.GUARDS, True), "sl_attach_ok": attach == "confirmed"}
+    plan["sl_observed_ok"] = own
     svc = {"attach_native_sl": _attach}
     async with _at("protection.not_required", charts, guards=plan, service_mode=svc) as (i, rec, _):
         for ev in [*early, "FIRST_FILL", *during]:
@@ -545,7 +697,9 @@ async def test_inv_b1_f_sl_present_only_from_the_exchange_property(
             if ev:
                 await i.send(ev, wait=True)
             await settle()
-            on = ev == "SL_OBSERVED" or (on and ev != "SL_LOST")
+            on = (ev == "SL_OBSERVED" and own) or (on and ev != "SL_LOST")
             assert _leaf(i, "protection") == ("sl_present" if on else "sl_missing")
             assert i.has_tag("protected") is on
         assert attach == "failed" or ("sl_attach_ok", attach == "confirmed") in rec.guards
+        if not set(events) & _LIFECYCLE_ONLY:  # nothing the protection region owns is deferred
+            assert i.deferred_count == 0

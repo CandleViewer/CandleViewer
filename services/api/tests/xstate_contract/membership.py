@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 _CHART = re.compile(r"^B(\d{2})\.([a-z0-9_]+)\.machine\.json$")
@@ -45,14 +46,17 @@ _CATALOGUE = Path(__file__).resolve().parents[4] / "docs" / "plan" / "28-statech
 _DEFERRED = re.compile(r"^deferred:E\d{2}$")
 
 
-def check_ledger(number: int, ledger: dict[str, str], scope: dict[str, object]) -> None:
+def check_ledger(
+    number: int, ledger: Mapping[str, str | tuple[str, ...]], scope: dict[str, object]
+) -> None:
     """Every catalogue `INV-B<number>-*` is mapped, and only those.
 
     A value is either the name of a test in the same module (the invariant
     is proven on the library here), `test_file.py::test_name` in this suite,
     or `deferred:E<nn>` — the owning epic
-    whose binding bodies the invariant depends on (stubs today). A new
-    catalogue invariant therefore fails this gate until it is mapped.
+    whose binding bodies the invariant depends on (stubs today) — or a tuple
+    of tests when several prove it, each of which must exist. A new catalogue
+    invariant therefore fails this gate until it is mapped.
     """
     expected = catalogue_invariants(_CATALOGUE, number)
     assert expected, f"no INV-B{number}-* rows found in the catalogue"
@@ -61,12 +65,17 @@ def check_ledger(number: int, ledger: dict[str, str], scope: dict[str, object]) 
         f"missing {sorted(set(expected) - set(ledger))}, "
         f"unknown {sorted(set(ledger) - set(expected))}"
     )
-    for inv, where in ledger.items():
-        if _DEFERRED.match(where):
-            continue
-        if "::" in where:  # an existing suite module: `test_x.py::test_name`
-            fname, test = where.split("::", 1)
-            src = (Path(__file__).resolve().parent / fname).read_text(encoding="utf-8")
-            assert re.search(rf"^(async )?def {re.escape(test)}\(", src, re.M), f"{inv}: {where}"
-            continue
-        assert where.startswith("test_") and callable(scope.get(where)), f"{inv}: {where}"
+    for inv, entry in ledger.items():
+        for where in (entry,) if isinstance(entry, str) else entry:
+            _check_entry(inv, where, scope)
+
+
+def _check_entry(inv: str, where: str, scope: dict[str, object]) -> None:
+    if _DEFERRED.match(where):
+        return
+    if "::" in where:  # an existing suite module: `test_x.py::test_name`
+        fname, test = where.split("::", 1)
+        src = (Path(__file__).resolve().parent / fname).read_text(encoding="utf-8")
+        assert re.search(rf"^(async )?def {re.escape(test)}\(", src, re.M), f"{inv}: {where}"
+        return
+    assert where.startswith("test_") and callable(scope.get(where)), f"{inv}: {where}"

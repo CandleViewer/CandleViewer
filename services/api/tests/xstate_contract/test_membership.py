@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.xstate_contract.membership import catalogue_invariants, missing_contract_modules
+from tests.xstate_contract.membership import (
+    _CATALOGUE,
+    catalogue_invariants,
+    check_ledger,
+    missing_contract_modules,
+)
 
 _HERE = Path(__file__).resolve().parent
 _MACHINES = _HERE.parents[1] / "candleviewer" / "statechart" / "machines"
@@ -65,3 +70,22 @@ def test_membership_collection_hook_raises_usage_error(tmp_path: Path) -> None:
 def test_catalogue_invariants_parses_every_machine() -> None:
     cat = _HERE.parents[3] / "docs" / "plan" / "28-statechart-catalogue.md"
     assert all(catalogue_invariants(cat, n) for n in range(1, 21))
+
+
+def _proves_it() -> None: ...
+
+
+def test_a_ledger_entry_may_name_several_tests_and_each_must_exist() -> None:
+    """#3804 DL2: an invariant proven by more than one test lists them all, and renaming or
+    deleting any of them fails the ledger."""
+    ledger: dict[str, str | tuple[str, ...]]
+    ledger = dict.fromkeys(catalogue_invariants(_CATALOGUE, 1), "deferred:E29")
+    first = next(iter(ledger))
+    ledger[first] = (
+        "test_proves_it",
+        "test_b01_order.py::test_b01_invariant_ledger_matches_catalogue",
+    )
+    check_ledger(1, ledger, {"test_proves_it": _proves_it})
+    ledger[first] = ("test_proves_it", "test_b01_order.py::test_no_such_test")
+    with pytest.raises(AssertionError, match="test_no_such_test"):
+        check_ledger(1, ledger, {"test_proves_it": _proves_it})

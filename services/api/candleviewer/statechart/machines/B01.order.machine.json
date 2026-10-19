@@ -1,6 +1,6 @@
 {
   "id": "order",
-  "version": 2,
+  "version": 3,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -28,7 +28,22 @@
     "_fault": null,
     "sl_deadline_us": null,
     "halted_by_kill": false,
-    "kill_skip_cancel": false
+    "kill_skip_cancel": false,
+    "exchange_order_id": null,
+    "price": null,
+    "trigger_price": null,
+    "take_profit": null,
+    "stop_loss": null,
+    "reduce_only": false,
+    "reject_code": null,
+    "needs_lookup": false,
+    "amend_terms": null,
+    "rate_reservation": null,
+    "persisted_state": null,
+    "event_seq": null,
+    "recon_deadline_us": null,
+    "sl_reading": null,
+    "outbox": []
   },
   "states": {
     "lifecycle": {
@@ -148,8 +163,7 @@
                 "target": "#order.lifecycle.filled",
                 "guard": "exec_new_and_closes",
                 "actions": [
-                  "apply_fill",
-                  "notify_protection_region"
+                  "apply_fill"
                 ]
               },
               {
@@ -172,7 +186,10 @@
               "target": "#order.lifecycle.cancel_pending"
             },
             "AMEND": {
-              "target": "#order.lifecycle.amend_pending"
+              "target": "#order.lifecycle.amend_pending",
+              "actions": [
+                "stage_amend"
+              ]
             },
             "EXPIRE": {
               "target": "#order.lifecycle.expired"
@@ -207,8 +224,7 @@
                 "target": "#order.lifecycle.filled",
                 "guard": "exec_new_and_closes",
                 "actions": [
-                  "apply_fill",
-                  "notify_protection_region"
+                  "apply_fill"
                 ]
               },
               {
@@ -270,7 +286,10 @@
               "target": "#order.lifecycle.cancel_pending"
             },
             "AMEND": {
-              "target": "#order.lifecycle.amend_pending"
+              "target": "#order.lifecycle.amend_pending",
+              "actions": [
+                "stage_amend"
+              ]
             },
             "FAULT": {
               "target": "#order.lifecycle.quarantined"
@@ -328,8 +347,7 @@
                 "target": "#order.lifecycle.filled",
                 "guard": "exec_new_and_closes",
                 "actions": [
-                  "apply_fill",
-                  "notify_protection_region"
+                  "apply_fill"
                 ]
               },
               {
@@ -546,6 +564,22 @@
                 ]
               }
             ],
+            "RECON_FOUND_LIVE": {
+              "actions": [
+                "record_remote_state"
+              ]
+            },
+            "RECON_FOUND_PARTIAL": {
+              "actions": [
+                "record_remote_state"
+              ]
+            },
+            "RECON_FOUND_FILLED": {
+              "target": "#order.lifecycle.filled",
+              "actions": [
+                "adopt_recon"
+              ]
+            },
             "RECON_FOUND_CANCELLED": {
               "target": "#order.lifecycle.cancelled",
               "actions": [
@@ -568,6 +602,11 @@
                 ]
               }
             ],
+            "EXEC": {
+              "actions": [
+                "record_remote_state"
+              ]
+            },
             "KILL": {
               "actions": [
                 "audit_kill_ignored_unowned"
@@ -601,6 +640,12 @@
             "raise_critical_alert"
           ],
           "on": {
+            "EXEC": {
+              "actions": [
+                "audit_reconcile_anomaly",
+                "notify_protection_region"
+              ]
+            },
             "OPERATOR_RESOLVED": {
               "target": "#order.lifecycle.rejected",
               "actions": [
@@ -618,12 +663,19 @@
           "type": "final",
           "entry": [
             "persist_event",
+            "notify_protection_region",
             "emit_terminal"
           ],
           "tags": [
             "terminal"
           ],
           "on": {
+            "EXEC": {
+              "actions": [
+                "audit_reconcile_anomaly",
+                "notify_protection_region"
+              ]
+            },
             "KILL": {
               "actions": [
                 "audit_kill_ignored_terminal"
@@ -635,12 +687,19 @@
           "type": "final",
           "entry": [
             "persist_event",
+            "notify_protection_region",
             "emit_terminal"
           ],
           "tags": [
             "terminal"
           ],
           "on": {
+            "EXEC": {
+              "actions": [
+                "audit_reconcile_anomaly",
+                "notify_protection_region"
+              ]
+            },
             "KILL": {
               "actions": [
                 "audit_kill_ignored_terminal"
@@ -658,6 +717,12 @@
             "terminal"
           ],
           "on": {
+            "EXEC": {
+              "actions": [
+                "audit_reconcile_anomaly",
+                "notify_protection_region"
+              ]
+            },
             "KILL": {
               "actions": [
                 "audit_kill_ignored_terminal"
@@ -669,12 +734,19 @@
           "type": "final",
           "entry": [
             "persist_event",
+            "notify_protection_region",
             "emit_terminal"
           ],
           "tags": [
             "terminal"
           ],
           "on": {
+            "EXEC": {
+              "actions": [
+                "audit_reconcile_anomaly",
+                "notify_protection_region"
+              ]
+            },
             "KILL": {
               "actions": [
                 "audit_kill_ignored_terminal"
@@ -696,6 +768,12 @@
             "halted_by_kill"
           ],
           "on": {
+            "EXEC": {
+              "actions": [
+                "audit_reconcile_anomaly",
+                "notify_protection_region"
+              ]
+            },
             "KILL": {
               "actions": [
                 "audit_kill_ignored_terminal"
@@ -707,6 +785,16 @@
       "on": {
         "KILL": {
           "target": "#order.lifecycle.killed"
+        },
+        "OPERATOR_RESOLVED": {
+          "actions": [
+            "audit_operator_command_refused"
+          ]
+        },
+        "ADOPT": {
+          "actions": [
+            "audit_operator_command_refused"
+          ]
         }
       }
     },
@@ -765,21 +853,40 @@
             "request_fallback_sl"
           ],
           "on": {
-            "SL_OBSERVED": {
-              "target": "#order.protection.sl_present"
-            }
+            "SL_OBSERVED": [
+              {
+                "target": "#order.protection.sl_present",
+                "guard": "sl_observed_ok"
+              },
+              {
+                "actions": [
+                  "record_sl_fact_ignored"
+                ]
+              }
+            ]
           }
         }
       },
       "on": {
         "SL_OBSERVED": {
-          "actions": ["record_sl_fact_ignored"]
+          "actions": [
+            "record_sl_fact_ignored"
+          ]
         },
         "SL_LOST": {
-          "actions": ["record_sl_fact_ignored"]
+          "actions": [
+            "record_sl_fact_ignored"
+          ]
         },
         "FIRST_FILL": {
-          "actions": ["record_sl_fact_ignored"]
+          "actions": [
+            "record_sl_fact_ignored"
+          ]
+        },
+        "SL_DEADLINE": {
+          "actions": [
+            "record_sl_fact_ignored"
+          ]
         },
         "KILL": {
           "actions": [

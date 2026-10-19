@@ -26,6 +26,8 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
   fake under the same contract (`fakes.InMemoryOrderStore`).
 - The fill arithmetic (E29-T03): `apply_execution` (`execution`), whose `apply_fields` the OMS
   facade sets into the B1 binding; hostile exchange data raises `ExecutionRefused` (`errors`).
+- B1's write-ahead step (E29-T03): `OrderStepWriter` (`order_steps`), the persist port the order
+  machine's `persist_event` calls, over the repositories above.
 
 `service.py` (the lifecycle contract) and `models.py` are still the E02-T05 scaffold: the
 supervisor can construct and sequence the module, and `start()` builds the `Validator`, but
