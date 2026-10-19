@@ -8,3 +8,5 @@
 # Do not add a whole owned list here to silence GOV-003 — that defeats the
 # purpose of the registry. Allowlist entries are for isolated prose mentions
 # only (e.g. "see the pr-metadata check in CONSTITUTION.md §9").
+docs/ci-runbook.md:required-check-names:pr-metadata
+# reason: names the job that runs the non-required regression guard (CI-REG-*, #3751); not the C-9.1 list

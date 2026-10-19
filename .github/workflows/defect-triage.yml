@@ -1,7 +1,8 @@
 name: defect-triage
 
-# E49-T01: DoR validation on bug open/edit, daily SLA sweep + digest, and the
-# regression-guard check. Logic lives in tools/triage (unit-tested offline).
+# E49-T01: DoR validation on bug open/edit and the daily SLA sweep + digest; the
+# regression guard runs as a non-required step of the pr-metadata job (#3751).
+# Logic lives in tools/triage (unit-tested offline).
 # Never uses pull_request_target and never checks out untrusted PR code with a
 # write token in scope (SR-132; docs/plan/04-security-program.md).
 # Secrets: TRIAGE_TOKEN (fine-grained, this repo + project only), TRIAGE_DIGEST_WEBHOOK.

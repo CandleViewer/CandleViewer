@@ -7,10 +7,10 @@ pull_request events replaces the previous run instead. Scheduled, dispatched and
 keep groups a PR run never shares, so they are never cancelled by one.
 
 The orchestrator's count on 2026-10-19 found about 950 auxiliary runs against 14 `pr` runs in
-10 hours, so the auxiliary workflows also start fewer runs: `regression-guard` no longer runs on
-a PR label event, which changes nothing it reads, and `board-automation` runs no job unless
-`GOVERNANCE_ENFORCE` is "true" (observe-only runs enforced nothing) and runs its three close
-guards in one job.
+10 hours, so the auxiliary workflows also start fewer runs: the regression guard is a step of the
+`pr-metadata` job, not a workflow of its own (test_pr_metadata_yml.py), a PR body edit starts only
+`pr-metadata`, and `board-automation` runs no job unless `GOVERNANCE_ENFORCE` is "true"
+(observe-only runs enforced nothing) and runs its three close guards in one job.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def _pull_request_workflows() -> list[Path]:
 def test_the_scan_finds_the_pull_request_workflows() -> None:
     # Guards the test itself: an empty or wrong list would pass every case below.
     names = {path.stem for path in _pull_request_workflows()}
-    assert {"pr", "pr-metadata", "governance", "regression-guard"} <= names
+    assert {"pr", "pr-metadata", "governance"} <= names
 
 
 @pytest.mark.parametrize("path", _pull_request_workflows(), ids=lambda p: p.stem)
@@ -67,11 +67,21 @@ def _load(name: str) -> dict[Any, Any]:
     return doc
 
 
-def test_regression_guard_reruns_only_when_what_it_reads_changes() -> None:
-    # It reads the PR's files, its body (`Closes #N`) and each closed issue's own labels and body.
-    doc = _load("regression-guard.yml")
-    assert _on(doc)["pull_request"]["types"] == ["opened", "edited", "synchronize", "reopened"]
-    assert doc["concurrency"]["group"] == "regression-guard-${{ github.event.pull_request.number }}"
+# The pull_request workflows that must re-run when the PR's body changes (`edited`):
+# `pr-metadata`, whose checker reads `Closes #N` and whose regression guard reads the Bug issues
+# the body closes. `pr` reads the body too (its changelog-fragment gate) but by design does not
+# re-run on an edit. Any other workflow would start a runner per body edit for nothing.
+BODY_EDIT_RERUNS = {"pr-metadata"}
+
+
+def test_a_body_edit_reruns_only_pr_metadata() -> None:
+    edited = set()
+    for path in _pull_request_workflows():
+        on = _on(yaml.safe_load(path.read_text(encoding="utf-8")))
+        trigger = on.get("pull_request") if isinstance(on, dict) else None
+        if "edited" in ((trigger or {}).get("types") or []):
+            edited.add(path.stem)
+    assert edited == BODY_EDIT_RERUNS
 
 
 ENFORCING = "vars.GOVERNANCE_ENFORCE == 'true'"
