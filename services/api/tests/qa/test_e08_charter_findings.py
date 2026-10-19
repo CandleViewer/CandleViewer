@@ -1,20 +1,22 @@
 """E08-Q06 exploratory charter findings, promoted to tests (#283).
 
 Each test drives production code in-process (recorded corpus, fake clock, no network) and asserts
-the behaviour the E08 contracts promise. All three fail on main today, so they are strict xfails:
-the fix flips one to a failure and its PR removes the marker. Each xfail is limited to
+the behaviour the E08 contracts promise. Both fail on main today, so they are strict xfails: the
+fix flips one to a failure and its PR removes the marker. Each xfail is limited to
 `AssertionError`, so a probe that a refactor breaks fails loudly instead of passing as expected.
-Debriefs: `docs/qa/charters/` (E08-charter-1, -2, -3 and -4). Under the E08 severity rule
+Debriefs: `docs/qa/charters/` (E08-charter-1 to -4). Under the E08 severity rule
 (`qa/plans/e08-market-data-test-plan.md` section 0.1) wrong or old data with no visible signal is
-P0, and the coordinator filed the three as P0 bugs on 2026-10-19: F1 is #3806, F2 is #3807 and F3
-is #3808. Each reason below names its issue. A fix that merges before this module flips its test
-to a strict XPASS, which fails the pack; whichever change lands second removes the marker.
+P0, and the coordinator filed the findings as P0 bugs on 2026-10-19: F1 is #3806, F2 is #3807 and
+F3 is #3808; each reason below names its issue. #3823 fixed F1 before this module merged: its
+strict xfail XPASSed when this change was rebased, so the F1 probe was removed here, and its
+regression case is the one #3823 added in `tests/unit/ingestion/test_book_grid_resync.py`. A fix
+that merges before this module flips its test to a strict XPASS, which fails the pack; whichever
+change lands second removes the marker.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -60,45 +62,6 @@ def _book_stream(tick: dict[str, Decimal], clock: _Clock, desired: list[set[str]
         clock=clock,
         now_us=lambda: NOW_US,
     )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#3806 (E08-Q06 charter 1, F1): a catalogue tick-size change on a live book "
-    "applies later deltas on a second price grid, silently",
-)
-async def test_f1_a_tick_size_change_never_puts_two_levels_on_one_price_of_a_live_book() -> None:
-    tick = {"BTCUSDT": Decimal("0.1")}
-    stream = _book_stream(tick, _Clock(), [])
-    stream.acquire("qa", "BTCUSDT")
-    raw = frames(BOOK)
-    for frame in raw[:50]:
-        await stream.handle_frame(frame)
-    live = stream.view("BTCUSDT", 200)
-    assert live is not None
-    bid = next(lvl for lvl in live.snapshot.bids if lvl.price % Decimal("0.5") == 0)
-    ask = next(lvl for lvl in live.snapshot.asks if lvl.price % Decimal("0.5") == 0)
-    tick["BTCUSDT"] = Decimal("0.5")  # the catalogue refresh moved the grid
-    delta = {
-        "topic": "orderbook.200.BTCUSDT",
-        "type": "delta",
-        "ts": 1700000100000,
-        "data": {
-            "s": "BTCUSDT",
-            "b": [[str(bid.price), "9.999"]],
-            "a": [[str(ask.price), "0"]],
-            "u": json.loads(raw[49])["data"]["u"] + 1,
-            "seq": 9000001,
-        },
-        "cts": 1700000099999,
-    }
-    await stream.handle_frame(json.dumps(delta))
-
-    view = stream.view("BTCUSDT", 200)
-    served = [] if view is None else [lvl.price for lvl in view.snapshot.bids]
-    assert len(served) == len(set(served)), "two levels share a price while the book is live"
-    assert view is None or ask.price not in {lvl.price for lvl in view.snapshot.asks}
 
 
 @pytest.mark.xfail(
