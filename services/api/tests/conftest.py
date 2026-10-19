@@ -101,7 +101,10 @@ def pytest_make_collect_report(
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Tag the E09 regression pack so `pytest -m e09_regression` selects it (#2148)."""
-    from tests._e09_regression_pack import tag_pack
+    """Tag the E09 and E08 regression packs so `pytest -m e09_regression` (#2148) and
+    `pytest -m e08_regression` (#283) select them."""
+    from tests._e08_regression_pack import tag_pack as tag_e08_pack
+    from tests._e09_regression_pack import tag_pack as tag_e09_pack
 
-    tag_pack(items)
+    tag_e09_pack(items)
+    tag_e08_pack(items)

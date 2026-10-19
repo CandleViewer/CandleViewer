@@ -160,6 +160,7 @@ markers = [
   "harness: E12-T04 heavy determinism-harness runs (100k trades, full adversarial matrix) — nightly only (bar-determinism-nightly), deselected from the PR lane",
   "fuzz: E08-X02 long Hypothesis parser-fuzz session — nightly only, deselected from the PR lane",
   "e09_regression: E09 auth/RBAC regression pack (qa/plans/e09-regression-pack.md, #2148), tagged by path in tests/_e09_regression_pack.py, never on perf/fuzz/harness/flaky items — run with pytest -m e09_regression",
+  "e08_regression: E08 market-data/ingestion regression pack (qa/plans/e08-regression-pack.md, #283), tagged by path in tests/_e08_regression_pack.py, never on perf/fuzz/harness/flaky/exchange_smoke items — run with pytest -m e08_regression",
 ]
 # `not flaky`: a test quarantined per C-9.3 runs in no lane; a workflow pytest call that sets its
 # own -m repeats it (scripts/tests/test_workflow_pytest_markers.py, #3091).
