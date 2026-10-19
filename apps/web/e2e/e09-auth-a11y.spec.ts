@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { AXE_GATE_TAGS } from "./a11y/tags";
 
 // E09-Q04: axe-core over all twelve E09 audit screens (WCAG 2.2 AA tags).
 // Network is stubbed at the transport layer; no live calls. Screens whose real UI has not
@@ -117,9 +118,7 @@ for (const { scr, path, shipped, marker } of E09_SCREENS) {
     test.skip(shipped === false, "not-assessed: placeholder screen, no real UI to audit");
     if (marker) await expect(page.getByText(marker)).toBeVisible();
     else await expect(page.getByText("This screen has not shipped yet.")).toHaveCount(0);
-    const res = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
-      .analyze();
+    const res = await new AxeBuilder({ page }).withTags([...AXE_GATE_TAGS]).analyze();
     const bad = res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
     expect(bad.map((v) => `${v.id}: ${v.help}`)).toEqual([]);
   });
@@ -172,9 +171,7 @@ async function stubWizard(page: Page, opts: { reject?: boolean } = {}): Promise<
 }
 
 async function seriousAxe(page: Page): Promise<string[]> {
-  const res = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
-    .analyze();
+  const res = await new AxeBuilder({ page }).withTags([...AXE_GATE_TAGS]).analyze();
   return res.violations
     .filter((v) => v.impact === "serious" || v.impact === "critical")
     .map((v) => `${v.id}: ${v.help}`);
