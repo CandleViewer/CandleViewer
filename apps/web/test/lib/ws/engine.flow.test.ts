@@ -515,6 +515,10 @@ describe("live and replay streams of one ch (11)", () => {
         RS,
         rs,
       ]);
+      t.gateway.latest.revokeStream(BOOK, twinRs, "account_scope_changed", {
+        resubscribe_allowed: true,
+      });
+      expect(t.gateway.latest.subs().map((s) => s.rs)).toContain(twinRs); // a narrowing leaves the subscription with the server (9.5)
     },
   );
 

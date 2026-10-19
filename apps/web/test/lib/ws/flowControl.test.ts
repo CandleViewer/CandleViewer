@@ -24,6 +24,7 @@ describe("flow control", () => {
     );
     flow.setPane("p1", { visibility: "collapsed", tabHidden: false });
     expect(flow.isReleased("trades.BTCUSDT", undefined)).toBe(true);
+    expect(flow.retained).toBe(1); // and the flag is all that is kept of it
     consumers.length = 0; // the last consumer is gone
     flow.forget("trades.BTCUSDT", undefined);
     expect(flow.isReleased("trades.BTCUSDT", undefined)).toBe(false);
