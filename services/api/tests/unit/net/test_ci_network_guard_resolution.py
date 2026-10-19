@@ -3,9 +3,11 @@
 The session guard refuses a lookup of a host outside the loopback/CV_CI_ALLOWED_HOSTS
 allow-list at every resolver entry point, before the resolver runs; loopback and the
 allow-listed compose names keep resolving; and every refusal is recorded, so a client
-that absorbs the error still fails its test at teardown. No lookup leaves the machine
-here: refused names use the reserved `.invalid` TLD and TEST-NET-1, the captured real
-resolvers are tripwires while they are tried, and the real lookups are loopback only.
+that absorbs the error still fails its test at teardown (a refusal left after the last
+test fails the session, and a wrapper left replaced fails its test and is put back).
+No lookup leaves the machine here: refused names use the reserved `.invalid` TLD and
+TEST-NET-1, the captured real resolvers are tripwires while they are tried, and the real
+lookups are loopback only.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from tests._ci_network_guard import (
     _REAL_LOOKUPS,
     NetworkGuardViolation,
     Refusal,
+    _guarded_lookup,
     _verdict,
     expected_refusals,
     guard_installed,
@@ -140,6 +143,17 @@ def test_allow_listed_compose_name_reaches_the_resolver(monkeypatch: pytest.Monk
     assert refused == [Refusal("getaddrinfo", "redis-ci")]
 
 
+def test_a_wrapper_that_outlives_the_session_still_guards_and_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale = _guarded_lookup("getaddrinfo", lambda *args, **_kwargs: [args])
+    monkeypatch.delitem(_REAL_LOOKUPS, "getaddrinfo")  # as after the session guard's teardown
+    with expected_refusals() as refused, pytest.raises(NetworkGuardViolation):
+        stale(_DENIED, 443)
+    assert stale("localhost", 0) == [("localhost", 0)]  # reached the resolver it wraps
+    assert refused == [Refusal("getaddrinfo", _DENIED)]
+
+
 async def test_a_refusal_the_client_absorbs_is_still_recorded(tripwire: list[str]) -> None:
     errors: list[Exception] = []
 
@@ -185,7 +199,7 @@ def _backstop(event, args):
 sys.addaudithook(_backstop)
 """
 
-_INNER_TEST = """
+_ABSORBED = """
 import socket
 
 
@@ -199,21 +213,90 @@ def test_a_bounded_fetch_that_absorbs_every_failure():
     assert len(errors) == 3
 """
 
+_LEFT_AFTER_THE_LAST_TEST = """
+import socket
 
-def test_a_refusal_absorbed_by_the_code_under_test_fails_that_test(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
-) -> None:
+import pytest
+
+
+@pytest.fixture(scope="module")
+def absorbs_a_lookup_at_module_teardown():
+    yield
+    try:  # a module teardown runs after the last test's own verdict
+        socket.getaddrinfo("venue.invalid", 443)
+    except Exception:
+        pass
+
+
+def test_the_last_test(absorbs_a_lookup_at_module_teardown):
+    pass
+"""
+
+_LEFT_REPLACED = """
+import socket
+
+from tests._ci_network_guard import guard_installed
+
+
+def test_replaces_two_wrappers_and_leaves_them():
+    socket.getaddrinfo = lambda *args, **kwargs: []
+    socket.socket.connect = lambda self, address: None
+
+
+def test_the_next_test_runs_guarded_again():
+    assert guard_installed()
+"""
+
+
+def _run_inner(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tests: str
+) -> pytest.RunResult:
+    """Run `tests` in a fresh pytest process under the session guard and its verdict."""
     monkeypatch.setenv("PYTHONPATH", str(_SERVICE_ROOT))
     monkeypatch.delenv("CV_CI_ALLOWED_HOSTS", raising=False)
     pytester.makeini("[pytest]\n")
     pytester.makeconftest(_INNER_CONFTEST)
-    pytester.makepyfile(_INNER_TEST)
-    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", timeout=120)
+    pytester.makepyfile(tests)
+    return pytester.runpytest_subprocess("-p", "no:cacheprovider", timeout=120)
+
+
+def test_a_refusal_absorbed_by_the_code_under_test_fails_that_test(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run_inner(pytester, monkeypatch, _ABSORBED)
     result.assert_outcomes(passed=1, errors=1)
     result.stdout.fnmatch_lines(
         [
             "*ERROR at teardown of test_a_bounded_fetch_that_absorbs_every_failure*",
             "*network guard refused 3 outbound attempt(s) during this test: "
             "getaddrinfo('venue.invalid') x3*",
+        ]
+    )
+
+
+def test_a_refusal_left_after_the_last_test_fails_the_session(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run_inner(pytester, monkeypatch, _LEFT_AFTER_THE_LAST_TEST)
+    result.assert_outcomes(passed=1, errors=1)
+    result.stdout.fnmatch_lines(
+        [
+            "*ERROR at teardown of test_the_last_test*",
+            "*network guard refused 1 outbound attempt(s) after the last test: "
+            "getaddrinfo('venue.invalid'). *",
+        ]
+    )
+
+
+def test_a_wrapper_left_replaced_fails_that_test_and_is_put_back(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run_inner(pytester, monkeypatch, _LEFT_REPLACED)
+    result.assert_outcomes(passed=2, errors=1)  # the next test finds the guard in place again
+    result.stdout.fnmatch_lines(
+        [
+            "*ERROR at teardown of test_replaces_two_wrappers_and_leaves_them*",
+            "*the network guard's getaddrinfo, connect wrapper(s) were replaced during this test "
+            "and left in place*",
         ]
     )

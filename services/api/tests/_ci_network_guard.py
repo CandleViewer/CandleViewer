@@ -17,14 +17,28 @@ this suite can reach the live exchange or any other non-loopback host
 * Every refusal is also recorded. A client that absorbs the error (a bounded
   startup fetch, a retry loop) cannot hide it: the per-test verdict fails the
   test at teardown while a refusal is unclaimed. A test that drives the guard
-  on purpose claims its refusals with `expected_refusals()`.
+  on purpose claims its refusals with `expected_refusals()`. A refusal left
+  after the last test (a module or session fixture's teardown) fails the
+  session.
+* The wrappers stay in place: the per-test verdict also fails a test that
+  replaced one and left it there (patch the socket layer with `monkeypatch`,
+  which restores it), and re-installs it, so the tests after it stay guarded.
 
 Allow-list: loopback (`127.0.0.1`, `::1`, `localhost`, any loopback literal)
 plus any hostname/IP listed in the `CV_CI_ALLOWED_HOSTS` environment variable
 (comma-separated), which CI sets to the service-container hostnames for the
 `integration_db` subset (SR-131). Locally (no env var set) only loopback is
-allowed. The guard sits at the Python `socket` layer: a resolver inside a C
-extension (libpq, uvloop) does not pass through it.
+allowed. Matching is exact, with no case folding or other normalisation:
+`LOCALHOST`, `localhost.`, `127.1`, `0.0.0.0`, `::` and the empty host are
+refused at lookup (bind test servers to `127.0.0.1`). The machine's own name
+is refused too, so `socket.getfqdn()` and an `http.server.HTTPServer` bound to
+`""` raise `NetworkGuardViolation`, which `getfqdn` does not catch.
+
+Boundary: the guard replaces attributes of the Python `socket` module, so it
+does not see a resolver inside a C extension (libpq, uvloop), a reference to a
+resolver taken before the session installs the wrappers, or datagram egress:
+`sendto`/`sendmsg` with a destination address are not wrapped (the suite sends
+no datagrams), and CPython resolves a hostname given there inside C.
 
 This module contains no test collection itself; `tests/conftest.py` imports its
 two autouse fixtures (the session guard and the per-test verdict), so every
@@ -38,7 +52,7 @@ import os
 import socket
 import threading
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -49,10 +63,13 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 #: The `socket` module resolvers the session guard wraps (#3826).
 _LOOKUPS = ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo")
-#: The unguarded resolvers, captured once when the session guard installs its wrappers; the
-#: wrappers call through this table (`resolver_tripwire()`, or a test's fake resolver).
+#: The `socket.socket` methods it wraps.
+_CONNECTS = ("connect", "connect_ex")
+#: The unguarded resolvers, captured when the session guard installs its wrappers. A wrapper
+#: calls through this table, so the guard's own tests can put a tripwire or a fake resolver
+#: behind it; a wrapper that outlives the session falls back to the resolver it wraps.
 _REAL_LOOKUPS: dict[str, Callable[..., Any]] = {}
-#: The installed wrappers, by resolver name (`guard_installed`).
+#: The installed wrappers, by attribute name (`guard_installed`, and the per-test verdict).
 _WRAPPERS: dict[str, Callable[..., Any]] = {}
 
 
@@ -163,20 +180,30 @@ def _host_text(host: object) -> str | None:
     return None  # None, or a type the real call rejects without a lookup
 
 
-def _guarded_lookup(call: str) -> Callable[..., Any]:
+def _guarded_lookup(call: str, real: Callable[..., Any]) -> Callable[..., Any]:
     def guarded(*args: Any, **kwargs: Any) -> Any:
         host = _host_text(_lookup_target(call, args, kwargs))
         if host is not None and not is_host_allowed(host):
             raise _refuse(call, host)
-        return _REAL_LOOKUPS[call](*args, **kwargs)
+        return _REAL_LOOKUPS.get(call, real)(*args, **kwargs)
 
     guarded.__name__ = guarded.__qualname__ = f"cv_guarded_{call}"
     return guarded
 
 
+def _owner(name: str) -> object:
+    """Where the session guard installs its wrapper for `name`."""
+    return socket.socket if name in _CONNECTS else socket
+
+
+def _replaced() -> list[str]:
+    """The guard's wrappers that something has since replaced and left in place."""
+    return [n for n, wrapper in _WRAPPERS.items() if getattr(_owner(n), n, None) is not wrapper]
+
+
 def guard_installed() -> bool:
-    """True while the session guard's resolver wrappers are the ones on `socket`."""
-    return bool(_WRAPPERS) and all(getattr(socket, n) is _WRAPPERS.get(n) for n in _LOOKUPS)
+    """True while every wrapper the session guard installed is still in place."""
+    return bool(_WRAPPERS) and not _replaced()
 
 
 def _tripwire(call: str, real: Callable[..., Any], reached: list[str]) -> Callable[..., Any]:
@@ -221,20 +248,28 @@ def expected_refusals() -> Iterator[list[Refusal]]:
         claimed.extend(_LEDGER.take(since))
 
 
-def _verdict(refusals: list[Refusal], when: str) -> None:
-    """Fail the current test (or session) when the guard refused anything nobody claimed."""
-    if not refusals:
-        return
-    attempts = ", ".join(
-        f"{r.call}({r.host!r})" + (f" x{n}" if n > 1 else "") for r, n in Counter(refusals).items()
-    )
-    pytest.fail(
-        f"network guard refused {len(refusals)} outbound attempt(s) {when}: {attempts}. Tests "
-        "must not reach a host outside the loopback/CV_CI_ALLOWED_HOSTS allow-list (C-13.5), "
-        "and a refusal absorbed by the code under test still fails the test: stub the client, "
-        "or claim a deliberate refusal with `expected_refusals()`.",
-        pytrace=False,
-    )
+def _verdict(refusals: list[Refusal], when: str, *, replaced: Sequence[str] = ()) -> None:
+    """Fail the current test (or session) when the guard refused anything nobody claimed, or
+    when something replaced one of its wrappers and left it in place."""
+    problems: list[str] = []
+    if replaced:
+        problems.append(
+            f"the network guard's {', '.join(replaced)} wrapper(s) were replaced {when} and left "
+            "in place: patch the socket layer with `monkeypatch`, which restores it."
+        )
+    if refusals:
+        attempts = ", ".join(
+            f"{r.call}({r.host!r})" + (f" x{n}" if n > 1 else "")
+            for r, n in Counter(refusals).items()
+        )
+        problems.append(
+            f"network guard refused {len(refusals)} outbound attempt(s) {when}: {attempts}. Tests "
+            "must not reach a host outside the loopback/CV_CI_ALLOWED_HOSTS allow-list (C-13.5), "
+            "and a refusal absorbed by the code under test still fails the test: stub the "
+            "client, or claim a deliberate refusal with `expected_refusals()`."
+        )
+    if problems:
+        pytest.fail(" ".join(problems), pytrace=False)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -244,8 +279,8 @@ def _cv_network_guard() -> Iterator[None]:
     Patches `socket.socket.connect`/`connect_ex` and the `socket` module resolvers for
     the lifetime of the test session. Guard is process-global by design (a background
     or executor thread opening a socket or resolving a name must be caught too), so it
-    is not reset per-test. A refusal still unclaimed when the session ends (a session
-    fixture's teardown) fails the session.
+    is not reset per-test. A refusal still unclaimed, or a wrapper found replaced, when
+    the session ends (a module or session fixture's teardown) fails the session.
     """
     if _WRAPPERS:  # an enclosing session (an in-process pytester run) already guards
         yield
@@ -265,28 +300,32 @@ def _cv_network_guard() -> Iterator[None]:
             raise _refuse("connect_ex", host)
         return real_connect_ex(self, address)
 
-    _REAL_LOOKUPS.update({name: getattr(socket, name) for name in _LOOKUPS})
-    _WRAPPERS.update({name: _guarded_lookup(name) for name in _LOOKUPS})
-    socket.socket.connect = _guarded_connect  # type: ignore[method-assign,assignment]
-    socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign,assignment]
+    real_lookups = {name: getattr(socket, name) for name in _LOOKUPS}
+    _REAL_LOOKUPS.update(real_lookups)
+    _WRAPPERS.update({name: _guarded_lookup(name, real) for name, real in real_lookups.items()})
+    _WRAPPERS.update(connect=_guarded_connect, connect_ex=_guarded_connect_ex)
+    originals = {**real_lookups, "connect": real_connect, "connect_ex": real_connect_ex}
     for name, wrapper in _WRAPPERS.items():
-        setattr(socket, name, wrapper)
+        setattr(_owner(name), name, wrapper)
     try:
         yield
     finally:
-        socket.socket.connect = real_connect  # type: ignore[method-assign]
-        socket.socket.connect_ex = real_connect_ex  # type: ignore[method-assign]
-        for name, real in _REAL_LOOKUPS.items():
-            setattr(socket, name, real)
+        replaced = _replaced()
+        for name, original in originals.items():
+            setattr(_owner(name), name, original)
         _WRAPPERS.clear()
         _REAL_LOOKUPS.clear()
-    _verdict(_LEDGER.take(), "after the last test")
+    _verdict(_LEDGER.take(), "after the last test", replaced=replaced)
 
 
 @pytest.fixture(autouse=True)
 def _cv_network_guard_verdict(_cv_network_guard: None) -> Iterator[None]:
     """Autouse per-test verdict (#3826): fail the test at teardown while the guard holds a
     refusal nobody claimed, so a refusal the code under test absorbed (a bounded fetch, a
-    retry loop) still fails the test that caused it."""
+    retry loop) still fails the test that caused it. Also fail a test that replaced one of
+    the guard's wrappers and left it in place, after re-installing it for the tests after."""
     yield
-    _verdict(_LEDGER.take(), "during this test")
+    replaced = _replaced()
+    for name in replaced:
+        setattr(_owner(name), name, _WRAPPERS[name])
+    _verdict(_LEDGER.take(), "during this test", replaced=replaced)
