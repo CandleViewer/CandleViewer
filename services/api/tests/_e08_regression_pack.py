@@ -30,7 +30,7 @@ _CONTRACT_PACK: Final = "tests/contract/bybit/"
 # suites (adapter, ingestion, book, bus, corpus, E08-Q02 contract, E08-Q03 chaos, E08-X02 abuse
 # cases); the single files are E08 routes and wiring that live in shared directories, the
 # regression tests of P0/P1 defects fixed in E08 whose code sits in storage/ or bars/, and the
-# E08-Q06 cross-epic handshake checks.
+# E08-Q06 cross-epic handshake checks and promoted charter findings.
 PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/unit/exchange/",
     "tests/unit/ingestion/",
@@ -62,6 +62,7 @@ PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/unit/bars/test_kline_rows.py",
     "tests/unit/bars/test_production_factory.py",
     "tests/qa/test_e08_handshake.py",
+    "tests/qa/test_e08_charter_findings.py",
 )
 
 # `addopts` in pyproject.toml deselects these by default (nightly or wall-clock-budget lanes, and
