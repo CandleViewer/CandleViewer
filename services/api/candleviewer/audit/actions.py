@@ -109,6 +109,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "users.invite_refused",
         "users.invite_role_downgraded",
         "users.disable",
+        # E42-T09 (#2649, #965 R5): `PATCH /users/{userId}` re-enabled a disabled user (nothing
+        # restored, R6), and changed the display name or the MFA flag; both written ahead.
+        "users.enable",
+        "users.update",
         # E42-T08 (#2648, #965 R5): a user's account-access grant set replaced, written ahead
         # of the commit with the live grants before and after (`account_access_sqlalchemy.py`).
         "users.access_change",

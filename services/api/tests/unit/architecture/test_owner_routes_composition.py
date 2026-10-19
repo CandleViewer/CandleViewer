@@ -5,7 +5,8 @@ every cell answers as `tests/contract/rbac/matrix.yaml` says and an authorised c
 refused with the fail-closed 501/503. Only the SQL edges of those real classes, the host socket
 table and the session/step-up/invite services are faked (the RBAC pack's seams; no Postgres, no
 network). #2648 adds the account-access read and write (`SqlAlchemyAccountAccessStore` under
-`AccountAccessService`), #965 the disable."""
+`AccountAccessService`), #965 the disable, #2649 the user read model, its PATCH and the admin
+session routes (`SqlAlchemyUserAdminStore`)."""
 
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIden
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import SqlAlchemyUserLifecycleStore
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
+from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
 from tests.contract.rbac import rbac_harness as rbac
 from tests.csrf_helpers import csrf_headers
 
@@ -97,6 +99,20 @@ class _OnboardingRows:
         return self.bound.get(user_id)
 
 
+class _UserAdmin:
+    """The rows behind `SqlAlchemyUserAdminStore` (#2649): `users` maps an id to its `User`; an
+    id it lacks does not exist, so an authorised cell with the matrix's fixed id is a 404."""
+
+    def __init__(self) -> None:
+        self.users: dict[uuid.UUID, dict[str, Any]] = {}
+
+    async def get_user(self, user_id: uuid.UUID) -> dict[str, Any] | None:
+        return self.users.get(user_id)
+
+    async def update_user(self, user_id: uuid.UUID, *_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no matrix cell reaches the update: its body or target stops first")
+
+
 def _loopback_only() -> list[str]:
     """The mesh self-check's host socket table (psutil / WSL portproxy), fixed: one loopback
     bind, so the checklist's `tailscale` probe is deterministic and reads nothing from the host."""
@@ -122,11 +138,14 @@ def deployed() -> Iterator[SimpleNamespace]:
     with pytest.MonkeyPatch.context() as mp:
         for name in ("user", "session_info"):
             mp.setattr(SqlAlchemyIdentityProvider, name, _delegate(identity, name))
-        for name in ("get_roles", "count_active_owners", "apply_roles"):
+        for name in ("get_roles", "get_status", "count_active_owners", "apply_roles"):
             mp.setattr(SqlAlchemyUserRoleStore, name, _delegate(users, name))
         mp.setattr(SqlAlchemyAccountAccessStore, "list_grants", _delegate(access, "list_grants"))
         lifecycle = rbac.LifecycleStore()  # finds no user: the owner's DELETE cell is a 404
         mp.setattr(SqlAlchemyUserLifecycleStore, "disable", _delegate(lifecycle, "disable"))
+        admin = _UserAdmin()
+        for name in ("get_user", "update_user"):
+            mp.setattr(SqlAlchemyUserAdminStore, name, _delegate(admin, name))
         for name in _ONBOARDING_EDGES:
             mp.setattr(SqlAlchemyOnboardingStore, name, _delegate(onboarding, name))
         mp.setattr(appmod, "real_socket_enumerator", lambda: _loopback_only)
@@ -138,7 +157,12 @@ def deployed() -> Iterator[SimpleNamespace]:
         ctx.auth._invites = rbac._Invites()
         client = TestClient(app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
         yield SimpleNamespace(
-            client=client, users=users, access=access, audit=audit, onboarding=onboarding
+            client=client,
+            users=users,
+            access=access,
+            audit=audit,
+            onboarding=onboarding,
+            admin=admin,
         )
 
 
@@ -340,6 +364,32 @@ def test_deployed_app_challenges_an_unelevated_disable_before_the_handler(
     assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
 
 
+@pytest.mark.parametrize("actor", ["manager_with_grant", "viewer", "owner"])
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [("PATCH", "/users/{}", {"display_name": "x"}), ("DELETE", "/users/{}/sessions/{}", None)],
+    ids=["updateUser", "revokeUserSession"],
+)
+def test_deployed_app_challenges_an_unelevated_user_admin_write_before_the_handler(
+    deployed: SimpleNamespace, actor: str, method: str, path: str, body: Any
+) -> None:
+    """#2649: `updateUser` and `revokeUserSession` are path-gated (`DANGEROUS_ROUTES`, `users`):
+    without a live elevation the guard answers the step-up challenge before the handler runs, for
+    a Manager, a Viewer and an Owner alike, so no `rbac.denied` is written and nothing is read."""
+    step_up = deployed.client.app.state.app_context.auth._step_up
+    audited, step_up.elevated = len(deployed.audit.records), False
+    target = rbac.user_id_of("viewer")
+    try:
+        headers = _headers(deployed.client, actor)
+        url = path.format(target, uuid.UUID(int=0x5E55))
+        resp = deployed.client.request(method, url, json=body, headers=headers)
+    finally:
+        step_up.elevated = True
+    assert (resp.status_code, resp.json()["code"]) == (403, "step_up_required"), resp.text
+    assert resp.json()["action_class"] == "users"
+    assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
+
+
 def _states(resp: httpx.Response) -> dict[str, str]:
     assert resp.status_code == 200, resp.text
     return {item["key"]: item["state"] for item in resp.json()["items"]}
@@ -399,3 +449,43 @@ def test_onboarding_routes_derived_from_the_matrix_cover_the_issue_scope() -> No
     """Same guard for the #2506 rows: never empty, and both checklist operations are in it."""
     named = {"GET /onboarding/checklist", "POST /onboarding/checklist/dismiss"}  # by #2506
     assert ONBOARDING_ROUTES and named <= set(ONBOARDING_ROUTES)
+
+
+def test_the_user_admin_store_exists_only_on_the_real_backend() -> None:
+    """#2649: the fake backend has no user admin store, so its four routes answer 501 after RBAC
+    (the matrix cells), and the real backend builds `SqlAlchemyUserAdminStore` (no I/O)."""
+    assert appmod.build_user_admin_store(Settings()) is None
+    real = Settings(storage_backend="real")
+    assert isinstance(appmod.build_user_admin_store(real), SqlAlchemyUserAdminStore)
+    client = TestClient(appmod.create_app(Settings()), client=("127.0.0.1", 50000))
+    resp = client.get(f"/users/{uuid.uuid4()}", headers={"Authorization": "Bearer tok-owner"})
+    assert resp.status_code == 501
+
+
+def test_deployed_app_reads_a_user_through_the_real_user_admin_store(
+    deployed: SimpleNamespace,
+) -> None:
+    """#2649: the owner's `getUser` reaches the store the composition root built and answers the
+    `User` with an `ETag`; the invites list is still the invites router's (registered first)."""
+    viewer = rbac.user_id_of("viewer")
+    deployed.admin.users[viewer] = {
+        "id": str(viewer),
+        "username": "viewer",
+        "email": "viewer@example.com",
+        "display_name": None,
+        "roles": ["viewer"],
+        "status": "active",
+        "mfa_enabled": True,
+        "mfa_required": True,
+        "last_login_at": None,
+        "created_at": "2026-10-19T00:00:00+00:00",
+        "updated_at": "2026-10-19T00:00:00+00:00",
+    }
+    headers = _headers(deployed.client, "owner")
+    try:
+        resp = deployed.client.get(f"/users/{viewer}", headers=headers)
+        assert resp.status_code == 200 and resp.json()["roles"] == ["viewer"]
+        assert resp.headers["etag"].startswith('"') and "password_hash" not in resp.json()
+        assert deployed.client.get("/users/invites", headers=headers).status_code == 200
+    finally:
+        deployed.admin.users.clear()

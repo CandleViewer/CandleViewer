@@ -65,6 +65,9 @@ class _Users:
         role = _ROLES.get(user_id)
         return None if role is None else frozenset({role})
 
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        return "active" if user_id in _ROLES else None
+
     async def count_active_owners(self) -> int:
         return 1
 

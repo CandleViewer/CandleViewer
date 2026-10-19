@@ -394,6 +394,9 @@ class UserStore:
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None:
         return self.roles.get(user_id)
 
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        return "active" if user_id in self.roles else None
+
     async def count_active_owners(self) -> int:
         return sum("owner" in r for r in self.roles.values())
 

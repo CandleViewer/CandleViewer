@@ -61,6 +61,8 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("GET", "/me"): "getMe: reads the session's own `elevated_until`",
     ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
     ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",
+    # E42-T09 (#2649): the contract says listing needs no step-up; revoking one is gated (`users`).
+    ("GET", "/users/{userId}/sessions"): "listUserSessions: a read (04 row 40a); revoke is gated",
     ("PUT", "/admin/capacity/subaccount-tier"): "setSubaccountTier: the contract says No step-up",
     # #3085 (D1): ending one's own view-as only lowers capability, so it never needs a step-up.
     ("DELETE", "/auth/session/view-as"): "endViewAs: the contract says no step-up",

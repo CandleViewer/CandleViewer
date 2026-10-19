@@ -39,12 +39,16 @@ class _Emitter:
 
 
 class _Store:
-    def __init__(self, roles: set[str], owners: int) -> None:
+    def __init__(self, roles: set[str], owners: int, status: str = "active") -> None:
         self.roles = frozenset(roles)
         self.owners = owners
+        self.status = status
 
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None:
         return self.roles
+
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        return self.status
 
     async def count_active_owners(self) -> int:
         return self.owners
@@ -389,7 +393,7 @@ def test_put_roles_bad_bearer_is_401_with_code() -> None:
         headers={"Authorization": "Bearer nope"},
     )
     assert r.status_code == 401
-    assert r.json()["code"] == "unauthorized"
+    assert r.json()["code"] == "unauthenticated"  # the registry's code (AD-F24)
 
 
 # -- SR-125 / #2117: `authz_denied_total` on the real route -------------------------------------
@@ -471,3 +475,82 @@ def test_put_roles_other_timeout_is_not_answered_as_nothing_changed() -> None:
     c = _client(_CommitTimeout({"viewer"}, 2), _admin(), _Emitter(), _Notifier())
     with pytest.raises(TimeoutError):
         c.put(f"/users/{TARGET}/roles", json={"roles": ["manager"]})
+
+
+# -- E42-T09 (#2649): the role route's problems are the registry's; its pre-check counts a target
+# -- the way the store's locked check does
+
+
+def test_put_roles_unauthenticated_answers_the_registry_code() -> None:
+    """AD-F24 (`e42-admin.md` §13.3 note 6): no verified session is `401 unauthenticated`."""
+    r = _client(_Store({"viewer"}, 1), None, _Emitter(), _Notifier()).put(
+        f"/users/{TARGET}/roles", json={"roles": ["viewer"]}
+    )
+    assert (r.status_code, r.json()["code"]) == (401, "unauthenticated")
+
+
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [({"roles": ["root"]}, "validation_failed"), ({"roles": []}, "validation_failed")],
+)
+def test_put_roles_refusals_carry_registered_codes(body: dict[str, Any], code: str) -> None:
+    r = _client(_Store({"viewer"}, 1), _admin(), _Emitter(), _Notifier()).put(
+        f"/users/{TARGET}/roles", json=body
+    )
+    assert (r.status_code, r.json()["code"]) == (400, code)
+
+
+def test_put_roles_conflict_and_audit_down_carry_registered_codes() -> None:
+    """AC8: the audit writer down is `503 audit_unavailable` and nothing changes; the last owner
+    is `409 conflict`."""
+    store, n = _Store({"viewer"}, 2), _Notifier()
+    down = _client(store, _admin(), _Emitter(fail=True), n).put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+    )
+    assert (down.status_code, down.json()["code"]) == (503, "audit_unavailable")
+    assert store.roles == {"viewer"} and n.users == []
+    last = _client(_Store({"owner"}, 1), _admin(), _Emitter(), n).put(
+        f"/users/{TARGET}/roles", json={"roles": ["viewer"]}
+    )
+    assert (last.status_code, last.json()["code"]) == (409, "conflict")
+
+
+@pytest.mark.parametrize("status", ["disabled", "locked", "invited"])
+def test_put_roles_demotes_a_non_active_owner_while_one_other_owner_is_active(status: str) -> None:
+    """hcl-worker-1's note on #2649: the route's pre-check counts a target's owner grant only while
+    the target is active, as the store's locked check does (`counted_roles`)."""
+    store, em, n = _Store({"owner"}, 1, status=status), _Emitter(), _Notifier()
+
+    class _Counted(_Store):  # the store's own floor, on the roles it counts
+        async def apply_roles(
+            self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: _Hook
+        ) -> bool:
+            await audit(self.roles)
+            self.roles = roles
+            return True
+
+    counted = _Counted({"owner"}, 1, status=status)
+    r = _client(counted, _admin(), em, n).put(f"/users/{TARGET}/roles", json={"roles": ["viewer"]})
+    assert r.status_code == 200 and counted.roles == {"viewer"}
+    assert [c["action"] for c in em.calls] == ["roles.grant", "roles.revoke"]
+    del store
+
+
+def test_put_roles_still_refuses_the_last_active_owner_at_the_endpoint() -> None:
+    store, em = _Store({"owner"}, 1, status="active"), _Emitter()
+    r = _client(store, _admin(), em, _Notifier()).put(
+        f"/users/{TARGET}/roles", json={"roles": ["viewer"]}
+    )
+    assert r.status_code == 409 and store.roles == {"owner"}
+    assert [(c["action"], c["reason"]) for c in em.calls] == [("rbac.denied", "owner_floor")]
+
+
+def test_put_roles_without_a_bearer_is_401_unauthenticated() -> None:
+    app = FastAPI()
+    app.include_router(
+        make_users_router(
+            _Store({"viewer"}, 2), _Emitter(), _Resolver(_admin()), _Notifier(), auth=_Auth(True)
+        )
+    )
+    r = TestClient(app).put(f"/users/{TARGET}/roles", json={"roles": ["manager"]})
+    assert (r.status_code, r.json()["code"]) == (401, "unauthenticated")

@@ -29,14 +29,31 @@ lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key
 closed with 501. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
 (`make_read_only_guard`) answers an un-elevated caller first, so this order is the second line: it
 alone decides an elevated caller.
+
+E42-T09 (#2649), `make_user_admin_router`: `GET /users/{userId}` answers the `User` and an
+`ETag` over the whole representation, roles included (never `password_hash`). `PATCH` runs, nothing
+read before the change but its own body: `users:write` (an audited 403 before any lookup, U25),
+the body (O3 and R6 refusals are 400), a self-target of `roles` or `status` (an audited 403,
+SR-055), the step-up `users` (SR-025), then the user read and its `If-Match` (412). A disable is
+`UserDisableService`'s whole cascade with `acknowledge_unknown_positions` as the DELETE reads it,
+and changes nothing else; every other change is one transaction of the user admin store under
+the owner lock (R7), written ahead as `users.enable`, `users.update`, `roles.grant` and
+`roles.revoke`. `GET /users/{userId}/sessions` lists the user's live sessions as
+`listMySessions` does (no token material); `DELETE /users/{userId}/sessions/{sessionId}`
+addresses only a live session of that user (404 otherwise, IDOR), records B16 REVOKE, whose action
+writes the one `auth.session_revoked` ahead of the change (R5), then revokes the row, which
+closes its sockets 4401. No runtime flag gates the lock, the step-up or the audit (C-4.14).
 """
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime
 from functools import partial
 from typing import Annotated, Any, Final, Protocol
 
@@ -58,6 +75,7 @@ from candleviewer.admin.user_disable import DisableResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.api.sessions import _view_json
 from candleviewer.api.step_up import (
     _AuthLike,
     _bearer,
@@ -73,9 +91,16 @@ from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.auth.session_chart import SessionChartError
 from candleviewer.observability.context import current_request_id
 from candleviewer.storage.errors import StorageQueryFailed, WriteAheadTimeout
 from candleviewer.storage.repositories import account_access as aa
+from candleviewer.storage.repositories.user_lifecycle import (
+    UserPatch,
+    UserPrecondition,
+    UserUpdate,
+    UserUpdateAudit,
+)
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _SYSTEM_ROLES = frozenset({"owner", "manager", "viewer"})
@@ -93,6 +118,9 @@ _LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `ap
 #: The tail of every `positions_unknown` detail, the PUT's (`_REFUSED`) and the DELETE's
 #: (`_lifecycle_problem`): how a client acknowledges that the open-position state is unknown.
 _RESEND_ACKNOWLEDGED: Final = "resend with acknowledge_unknown_positions=true"
+#: The detail of every write-ahead refusal (C-2.9): the change rolled back.
+_NOT_AUDITED: Final = "the audit record could not be written; nothing changed"
+_LAST_OWNER: Final = "the last active owner cannot be demoted"
 #: The store's refusals, nothing changed (#2648 design (c).2); unknown and deleted alike.
 _REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
     aa.AccessSelfTargetError: (ErrorCode.FORBIDDEN, 403, "a caller's own grants cannot change"),
@@ -146,6 +174,8 @@ class SnapshotResolver(Protocol):
 
 class UserRoleStore(Protocol):
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None: ...
+
+    async def get_status(self, user_id: uuid.UUID) -> str | None: ...
 
     async def count_active_owners(self) -> int: ...
 
@@ -252,8 +282,7 @@ def _lifecycle_problem(exc: UserLifecycleError) -> JSONResponse:
         unknown = f"open-position state is unavailable (source: {exc.source})"
         return _registered(ErrorCode.POSITIONS_UNKNOWN, 409, f"{unknown}; {_RESEND_ACKNOWLEDGED}")
     if isinstance(exc, LifecycleAuditUnavailableError):
-        detail = "the audit record could not be written; nothing changed"
-        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
     raise exc  # a refusal this route does not know is a defect: a 500, never a guess
 
 
@@ -319,6 +348,16 @@ def _grant_json(grant: aa.AccessGrant) -> dict[str, Any]:
     return shown.model_dump(mode="json", exclude_none=True)
 
 
+async def _session_of(auth: _AuthLike | None, request: Request) -> uuid.UUID | None:
+    """The session behind the bearer token, as the audit record of a refusal names it. A
+    read-only peek: it authorises nothing, and `None` when there is no session to name."""
+    token = _bearer(request)
+    if auth is None or token is None or not auth.sessions_is_active:
+        return None
+    found: SessionRecord | None = await auth.sessions.peek_access_token(token)
+    return None if found is None else found.id
+
+
 async def _elevated(auth: _AuthLike | None, request: Request) -> JSONResponse | uuid.UUID:
     """SR-025, for a handler that has already decided RBAC and the self-target: the id of the
     session holding a live `users` elevation, which the change's audit records name (C-2.9), else
@@ -377,15 +416,7 @@ def make_users_router(
     if emitter is None or notifier is None:
         raise TypeError("make_users_router: audit emitter and notifier are required")
     router = APIRouter()
-
-    async def session_of(request: Request) -> uuid.UUID | None:
-        """The session behind the bearer token, as the audit record of a refusal names it. A
-        read-only peek: it authorises nothing, and `None` when there is no session to name."""
-        token = _bearer(request)
-        if auth is None or token is None or not auth.sessions_is_active:
-            return None
-        found: SessionRecord | None = await auth.sessions.peek_access_token(token)
-        return None if found is None else found.id
+    session_of = partial(_session_of, auth)
 
     @router.put("/users/{userId}/roles")
     async def put_user_roles(
@@ -398,9 +429,7 @@ def make_users_router(
         got = principal_resolver.resolve(request)
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
-            return _problem(
-                401, "unauthorized", "Unauthorized", "no verified session for this request"
-            )
+            return _unauthenticated()  # the registry's 401 code (AD-F24)
         try:
             await enforce(principal, Permission.USERS_WRITE, scope=Scope.NONE, emitter=emitter)
         except ForbiddenError as exc:
@@ -423,31 +452,30 @@ def make_users_router(
             return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
         token = _bearer(request)
         if token is None:
-            return _problem(401, "unauthorized", "Unauthorized", "authentication required")
+            return _unauthenticated()
         try:
             record = await auth.sessions.authenticate_access_token(token)
         except AuthError:
-            return _problem(401, "unauthorized", "Unauthorized", "authentication required")
+            return _unauthenticated()
         gate = await require_elevation_for(auth, str(record.id), "users")
         if gate is not None:
             return gate
         try:
             body = await request.json()
         except ValueError:
-            return _problem(400, "bad_request", "Bad request", "body must be JSON")
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, "body must be JSON")
         roles_raw = body.get("roles") if isinstance(body, dict) else None
         if (
             not isinstance(roles_raw, list)
             or not roles_raw
             or not all(isinstance(r, str) and r in _SYSTEM_ROLES for r in roles_raw)
         ):
-            return _problem(
-                400, "bad_request", "Bad request", "roles must be a non-empty list of role names"
-            )
+            detail = "roles must be a non-empty list of role names"
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
         new_roles = frozenset(roles_raw)
         current = await store.get_roles(user_id)
         if current is None:
-            return _problem(404, "not_found", "Not found", "user not found")
+            return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
 
         async def write_ahead(before: frozenset[str]) -> None:
             """C-2.9: written inside the store's transaction, before commit, with the
@@ -471,10 +499,13 @@ def make_users_router(
                 raise _AuditRefused from exc
 
         # Endpoint-level owner floor (defence in depth; `apply_roles` re-checks
-        # atomically under lock, so a concurrent demotion still cannot slip by).
+        # atomically under lock, so a concurrent demotion still cannot slip by). As the
+        # store's `counted_roles`, a target that is not active holds no counted owner grant
+        # (#2649): a disabled owner can be demoted while one other owner is active.
         try:
+            counted = current if await store.get_status(user_id) == "active" else frozenset()
             assert_owner_floor(
-                current_roles=current,
+                current_roles=counted,
                 new_roles=new_roles,
                 active_owner_count=await store.count_active_owners(),
             )
@@ -491,11 +522,11 @@ def make_users_router(
                 before=current,
                 after=new_roles,
             )
-            return _problem(409, "conflict", "Conflict", "the last active owner cannot be demoted")
+            return _registered(ErrorCode.CONFLICT, 409, _LAST_OWNER)
         except (_AuditRefused, WriteAheadTimeout):  # the store bounds the hook (#2510)
-            return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
         if not found:
-            return _problem(404, "not_found", "Not found", "user not found")
+            return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
         await notifier.roles_changed(user_id)
         return JSONResponse(
             status_code=200, content={"id": str(user_id), "roles": sorted(new_roles)}
@@ -662,6 +693,438 @@ def make_users_router(
                 target_user_id=str(user_id),
             )
             return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        return Response(status_code=204)
+
+    return router
+
+
+# -- E42-T09 (#2649): the user read model, PATCH, and the admin view of a user's sessions --------
+
+#: `sessions.revoked_reason` and the B16 `REVOKE` reason of an Owner's revoke: `set_revoke_admin`'s
+#: own (INV-B16-b), and a reason the revocation counter knows.
+ADMIN_REVOKE_REASON: Final = "admin"
+#: `updateUser`'s query parameter (22-api-openapi.yaml): the disable's acknowledgement.
+_ACKNOWLEDGE: Final = "acknowledge_unknown_positions"
+#: The `UpdateUserRequest` fields a 400 may name: the contract's own, never a client's key.
+_PATCH_FIELDS: Final = frozenset({"display_name", "status", "roles", "mfa_required"})
+#: Fields whose `null` the generated model accepts but the contract does not (no `null` type).
+_NOT_NULL: Final = ("status", "roles", "mfa_required")
+#: An `If-Match` that can match no representation: `*`, a list, two header lines.
+_NEVER_MATCHES: Final = '"never-matches"'
+_STALE: Final = "the user changed since it was read"
+
+
+class UserAdminStore(Protocol):
+    """`storage.repositories.users_sqlalchemy.SqlAlchemyUserAdminStore`."""
+
+    async def get_user(self, user_id: uuid.UUID) -> dict[str, Any] | None: ...
+
+    async def update_user(
+        self,
+        user_id: uuid.UUID,
+        patch: UserPatch,
+        *,
+        actor: uuid.UUID,
+        check: UserPrecondition,
+        audit: UserUpdateAudit,
+    ) -> UserUpdate | None:
+        """One transaction under the user-row and owner locks: `check` on the representation read
+        under them, the change, the owner floor, then `audit` ahead of the commit. Raises what
+        `check`, the floor or `audit` raises, or `WriteAheadTimeout`, with nothing changed;
+        `None` if no such user."""
+        ...
+
+
+class _Stale(Exception):
+    """The `If-Match` names another version than the one read under the lock (412)."""
+
+
+class _StatusRefused(Exception):
+    """R6: the patch cannot move the user from the status read under the lock (400)."""
+
+
+def representation(user: Mapping[str, Any]) -> dict[str, Any]:
+    """The `User` as `getUser` answers it: the contract's fields only, so a column the read model
+    grows (never `password_hash`, which it does not select) cannot leak through."""
+    return api.User.model_validate(dict(user)).model_dump(mode="json")
+
+
+def user_etag(shown: Mapping[str, Any]) -> str:
+    """A strong `ETag` over the whole representation, roles included (R4, UL3-T1): any change to
+    a returned field, a role change among them, makes an earlier tag stale."""
+    canonical = {**shown, "roles": sorted(shown.get("roles") or ())}
+    digest = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
+    return f'"{digest[:32]}"'
+
+
+def _if_match(request: Request) -> str | None:
+    """`If-Match`, one tag, quoted or `W/`-prefixed; absent is `None` (last write wins). Anything
+    that is not one tag can match no version (412)."""
+    lines = request.headers.getlist("if-match")
+    if not lines:
+        return None
+    value = lines[0].strip().removeprefix("W/")
+    if len(lines) > 1 or "," in value or value in ("*", '"*"'):
+        return _NEVER_MATCHES
+    return value if value.startswith('"') else f'"{value}"'
+
+
+def _status_refusal(current: str, requested: str | None) -> str | None:
+    """R6 (UL-F3): only a `disabled` user is enabled, so no PATCH activates an unredeemed invite
+    or lifts a lock; a disable leaves any status (an invited user's invite is revoked)."""
+    if requested == "active" and current not in ("active", "disabled"):
+        return f"a user who is {current} cannot be enabled"
+    return None
+
+
+def _changes(shown: Mapping[str, Any], body: api.UpdateUserRequest) -> list[str]:
+    """The fields other than `status` that `body` would change on `shown`."""
+    sent, changed = body.model_fields_set, []
+    if "display_name" in sent and body.display_name != shown["display_name"]:
+        changed.append("display_name")
+    if "roles" in sent and frozenset(body.roles or ()) != frozenset(shown["roles"]):
+        changed.append("roles")
+    if "mfa_required" in sent and not shown["mfa_required"]:
+        changed.append("mfa_required")
+    return changed
+
+
+def _patch_of(body: api.UpdateUserRequest) -> UserPatch:
+    sent = body.model_fields_set
+    return UserPatch(
+        display_name=body.display_name,
+        set_display_name="display_name" in sent,
+        roles=frozenset(body.roles) if body.roles is not None else None,
+        require_mfa=body.mfa_required is True,
+        enable=body.status == "active",
+    )
+
+
+async def _patch_body(request: Request) -> api.UpdateUserRequest | JSONResponse:
+    """The closed `UpdateUserRequest` (at most 64 KiB, never echoed): `mfa_required: false` (O3),
+    `status` `invited` or `locked` (R6) and a `null` the contract does not allow are 400."""
+    if (raw := await _read_capped(request)) is None:
+        detail = f"the body exceeds {_MAX_BODY_BYTES} bytes"
+        return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
+    try:
+        body = api.UpdateUserRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        named = sorted({str(e["loc"][0]) for e in exc.errors() if e["loc"]} & _PATCH_FIELDS)
+        listed = f": {', '.join(named)}" if named else ""
+        detail = f"the request does not match its schema{listed}"
+        return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
+    sent = body.model_fields_set
+    if nulls := [name for name in _NOT_NULL if name in sent and getattr(body, name) is None]:
+        return _registered(ErrorCode.VALIDATION_FAILED, 400, f"not nullable: {', '.join(nulls)}")
+    return body
+
+
+async def _read(store: UserAdminStore, user_id: uuid.UUID) -> dict[str, Any] | JSONResponse:
+    """The user's representation, 404 for a missing or deleted one, 503 for an outage."""
+    try:
+        found = await store.get_user(user_id)
+    except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
+        if not is_storage_outage(exc):
+            raise
+        _log().error("users.admin read failed", error=type(exc).__name__)
+        return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+    if found is None:
+        return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+    return representation(found)
+
+
+def _answer(shown: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(shown, headers={"ETag": user_etag(shown)})
+
+
+async def _audit_revoke_ahead(auth: _AuthLike, record: SessionRecord, now: datetime) -> None:
+    """R5 (C-2.9): B16 `REVOKE` on the session's chart, as `reset_totp` records it; the chart's
+    `revoked` entry writes the one `auth.session_revoked`, ahead of the change. A record the sink
+    refuses raises `SessionChartError` with the chart rolled back and nothing revoked."""
+    await auth.step_up.chart.revoke(record, now, ADMIN_REVOKE_REASON)
+
+
+def _who(request: Request) -> dict[str, Any]:
+    rid = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
+    return {"actor_ip": source_ip(request.scope), "request_id": uuid.UUID(rid) if rid else None}
+
+
+async def audit_user_update(emitter: _Emitter, change: UserUpdate, base: Mapping[str, Any]) -> None:
+    """The records of one PATCH, ahead of its commit: `users.enable` (R5: status and roles only,
+    nothing restored, R6), `users.update` for the name and the MFA flag (the field names only, so
+    no PII is copied, O6), and `roles.grant` / `roles.revoke` with the sets before and after."""
+    before, after = change.before, change.after
+    held, kept = sorted(before["roles"]), sorted(after["roles"])
+    if before["status"] != after["status"]:
+        await emitter.emit(
+            "users.enable",
+            **base,
+            outcome=AuditOutcome.SUCCESS,
+            severity=Severity.WARNING,
+            before_state={"status": before["status"], "roles": held},
+            after_state={"status": after["status"], "roles": kept},
+        )
+    if named := [f for f in ("display_name", "mfa_required") if before[f] != after[f]]:
+        mfa = "mfa_required" in named
+        await emitter.emit(
+            "users.update",
+            **base,
+            reason=",".join(named),
+            before_state={"mfa_required": before["mfa_required"]} if mfa else None,
+            after_state={"changed": named, **({"mfa_required": True} if mfa else {})},
+        )
+    for action, moved in (
+        ("roles.grant", sorted(set(kept) - set(held))),
+        ("roles.revoke", sorted(set(held) - set(kept))),
+    ):
+        if moved:
+            await emitter.emit(
+                action,
+                **base,
+                reason=",".join(moved),
+                before_state={"roles": held},
+                after_state={"roles": kept},
+            )
+
+
+def make_user_admin_router(
+    store: UserAdminStore | None,
+    emitter: _Emitter,
+    principal_resolver: SnapshotResolver | None,
+    notifier: PermissionChangeNotifier,
+    *,
+    auth: _AuthLike | None = None,
+    user_disable: UserDisable | None = None,
+) -> APIRouter:
+    """`getUser`, `updateUser`, `listUserSessions` and `revokeUserSession` (E42-T09). RBAC runs
+    first, so a refused caller gets one audited 403 whatever the target (U25); an unwired
+    store answers 501 after it. `emitter` and `notifier` are mandatory, as for the role route."""
+    if emitter is None or notifier is None:
+        raise TypeError("make_user_admin_router: audit emitter and notifier are required")
+    router = APIRouter()
+
+    async def caller(
+        request: Request, user_id: uuid.UUID, permission: Permission
+    ) -> PrincipalSnapshot | JSONResponse:
+        """The authorised caller, or the answer: 501 unwired, 401, an audited 403 naming the
+        target (before any lookup), or 503 when that refusal cannot be audited."""
+        if principal_resolver is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
+        if principal is None:
+            return _unauthenticated()
+        denials = _NamesTarget(emitter, user_id, partial(_session_of, auth, request))
+        try:
+            await enforce(principal, permission, emitter=denials, **_who(request))
+        except ForbiddenError as exc:
+            return _forbidden(exc.deny.reason.value)
+        except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+            _log().warning("users.admin refusal not audited", error=type(exc).__name__)
+            detail = "the refusal could not be audited"
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+        return principal
+
+    @router.get("/users/{userId}")
+    async def get_user(
+        request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
+    ) -> JSONResponse:
+        principal = await caller(request, user_id, Permission.USERS_READ)
+        if isinstance(principal, JSONResponse):
+            return principal
+        if store is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user store wired")
+        shown = await _read(store, user_id)
+        return shown if isinstance(shown, JSONResponse) else _answer(shown)
+
+    async def disable(
+        user_id: uuid.UUID,
+        principal: PrincipalSnapshot,
+        body: api.UpdateUserRequest,
+        shown: dict[str, Any],
+        *,
+        acknowledged: bool,
+    ) -> JSONResponse:
+        """SR-029: the whole cascade, exactly as `DELETE /users/{userId}` runs it (AC7 included),
+        and nothing else: another field it would change is refused before anything is."""
+        if changed := _changes(shown, body):
+            detail = f"a disable changes nothing else; send {', '.join(changed)} on its own"
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
+        if store is None or user_disable is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no disable service wired")
+        try:
+            await user_disable.disable(
+                user_id, actor=principal, acknowledge_unknown_positions=acknowledged
+            )
+        except UserLifecycleError as exc:
+            return _lifecycle_problem(exc)
+        except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
+            if not is_storage_outage(exc):
+                raise
+            _log().error("user disable store unavailable", error=type(exc).__name__)
+            return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        after = await _read(store, user_id)
+        return after if isinstance(after, JSONResponse) else _answer(after)
+
+    @router.patch("/users/{userId}")
+    async def update_user(
+        request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
+    ) -> JSONResponse:
+        principal = await caller(request, user_id, Permission.USERS_WRITE)
+        if isinstance(principal, JSONResponse):
+            return principal
+        if (acknowledged := _flag(request, _ACKNOWLEDGE)) is None:
+            detail = f"{_ACKNOWLEDGE} is true or false, given once"
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
+        if isinstance(body := await _patch_body(request), JSONResponse):
+            return body
+        who = _who(request)
+        if user_id == principal.user_id and body.model_fields_set & {"roles", "status"}:
+            denials = _NamesTarget(emitter, user_id, partial(_session_of, auth, request))
+            try:  # SR-055: never the acting user's roles or status, step-up or not
+                await denials.emit(
+                    "rbac.denied",
+                    actor_label=str(principal.user_id),
+                    actor_user_id=principal.user_id,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="self_target",
+                    **who,
+                )
+            except (AuditError, RuntimeError):
+                return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+            return _forbidden("self_target")
+        if isinstance(session := await _elevated(auth, request), JSONResponse):
+            return session
+        if store is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user store wired")
+        if isinstance(shown := await _read(store, user_id), JSONResponse):
+            return shown
+        expected = _if_match(request)
+        if expected is not None and expected != user_etag(shown):
+            return _registered(ErrorCode.VERSION_CONFLICT, 412, _STALE)
+        if (refusal := _status_refusal(shown["status"], body.status)) is not None:
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, refusal)
+        if body.status == "disabled":
+            return await disable(user_id, principal, body, shown, acknowledged=acknowledged)
+        if not body.model_fields_set:  # an empty patch changes nothing and takes no lock
+            return _answer(shown)
+        base = {
+            "actor_label": str(principal.user_id),
+            "actor_user_id": principal.user_id,
+            "object_kind": "user",
+            "object_id": str(user_id),
+            "session_id": session,
+            **who,
+        }
+
+        def check(locked: Mapping[str, Any]) -> None:
+            """Under the locks (R7): the version and the status the change starts from."""
+            current = representation(locked)
+            if expected is not None and expected != user_etag(current):
+                raise _Stale
+            if (refused := _status_refusal(current["status"], body.status)) is not None:
+                raise _StatusRefused(refused)
+
+        async def write_ahead(change: UserUpdate) -> None:
+            """C-2.9: every record of the change, read under the locks, before the commit."""
+            try:
+                await audit_user_update(emitter, change, base)
+            except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+                raise _AuditRefused from exc
+
+        try:
+            change = await store.update_user(
+                user_id, _patch_of(body), actor=principal.user_id, check=check, audit=write_ahead
+            )
+        except OwnerFloorError:  # the role path's loser: one `rbac.denied` (UL-F13), no change
+            try:
+                await emitter.emit(
+                    "rbac.denied",
+                    **base,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="owner_floor",
+                    before_state={"roles": sorted(shown["roles"])},
+                    after_state={"roles": sorted(body.roles or ())},
+                )
+            except (AuditError, RuntimeError):
+                return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+            return _registered(ErrorCode.CONFLICT, 409, _LAST_OWNER)
+        except _Stale:
+            return _registered(ErrorCode.VERSION_CONFLICT, 412, _STALE)
+        except _StatusRefused as exc:
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, str(exc))
+        except (_AuditRefused, WriteAheadTimeout):  # the store bounds the hook (#2510)
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+        except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
+            if not is_storage_outage(exc):
+                raise
+            _log().error("users.update store unavailable", error=type(exc).__name__)
+            return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        if change is None:
+            return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+        if frozenset(change.before["roles"]) != frozenset(change.after["roles"]):
+            try:  # after the commit (R7): a failure is logged at error, never rolled back
+                await notifier.roles_changed(user_id)
+            except Exception as exc:
+                _log().error(
+                    "users.update.step",
+                    step="roles_push",
+                    outcome="failed",
+                    error=type(exc).__name__,
+                    target_user_id=str(user_id),
+                    request_id=current_request_id(),
+                )
+        return _answer(representation(change.after))
+
+    @router.get("/users/{userId}/sessions")
+    async def list_user_sessions(
+        request: Request, user_id: Annotated[uuid.UUID, Path(alias="userId")]
+    ) -> JSONResponse:
+        principal = await caller(request, user_id, Permission.USERS_READ)
+        if isinstance(principal, JSONResponse):
+            return principal
+        if store is None or auth is None or not auth.sessions_is_active:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user or session store wired")
+        if isinstance(found := await _read(store, user_id), JSONResponse):
+            return found
+        mine = await _session_of(auth, request)  # `current` marks the caller's own session
+        views = await auth.sessions.list_sessions(
+            str(user_id), current_session_id=None if mine is None else str(mine)
+        )
+        return JSONResponse({"items": [_view_json(view) for view in views]})
+
+    @router.delete("/users/{userId}/sessions/{sessionId}")
+    async def revoke_user_session(
+        request: Request,
+        user_id: Annotated[uuid.UUID, Path(alias="userId")],
+        session_id: Annotated[uuid.UUID, Path(alias="sessionId")],
+    ) -> Response:
+        principal = await caller(request, user_id, Permission.USERS_WRITE)
+        if isinstance(principal, JSONResponse):
+            return principal
+        if isinstance(gate := await _elevated(auth, request), JSONResponse):
+            return gate
+        if store is None or auth is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user store wired")
+        if isinstance(found := await _read(store, user_id), JSONResponse):
+            return found
+        record = await auth.sessions.find_live_session(str(user_id), str(session_id))
+        if record is None:  # unknown, ended or another user's (IDOR): one 404, nothing changed
+            return _registered(ErrorCode.NOT_FOUND, 404, "no such session of this user")
+        try:
+            await _audit_revoke_ahead(auth, record, auth.sessions.now())
+        except SessionChartError:
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+        try:  # the row, then its sockets (4401, 23 section 9.5) through the revocation sink
+            await auth.sessions.revoke(str(session_id), reason=ADMIN_REVOKE_REASON)
+        except Exception as exc:  # recorded, not revoked: the trail over-reports, never under
+            if not is_storage_outage(exc):
+                raise
+            _log().error("users.session_revoke store unavailable", error=type(exc).__name__)
+            detail = "the session store is unavailable"
+            return _registered(ErrorCode.STORE_UNAVAILABLE, 503, detail)
         return Response(status_code=204)
 
     return router
