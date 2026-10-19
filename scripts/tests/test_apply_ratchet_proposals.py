@@ -41,6 +41,14 @@ def test_apply_proposals_raises_baseline(tmp_path: Path) -> None:
     assert updated["packages"]["packages/protocol"]["baseline"] == 89.4
 
 
+def test_apply_proposals_keeps_a_branch_floor_and_baseline(tmp_path: Path) -> None:
+    branch: dict[str, object] = {"branch_floor": 75.0, "branch_baseline": 75.0}
+    baselines = _baselines(tmp_path, {"services/api": {"baseline": 85.0, **branch}})
+    assert apply_proposals({"services/api": 98.0}, baselines)
+    updated = json.loads(baselines.read_text(encoding="utf-8"))
+    assert updated["packages"]["services/api"] == {"baseline": 98.0, **branch}
+
+
 def test_apply_proposals_ignores_lower_or_equal_values(tmp_path: Path) -> None:
     baselines = _baselines(
         tmp_path,

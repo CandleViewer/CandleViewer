@@ -880,6 +880,32 @@ def test_branches_are_judged_once_lines_pass(
     assert (result.reason or "").startswith((reason or "").format(result.name))
 
 
+@pytest.mark.parametrize(
+    ("line_rate", "branch_rate", "reason", "cell"),
+    [
+        (0.8499, 0.96, "services/api 84.99% < floor 85.0%", "| 84.99% |"),
+        (0.96, 0.7499, "services/api branches 74.99% < floor 75.0%", "| 74.99% |"),
+        (0.96, 0.8946, "regression 0.54pp beyond 0.5pp tolerance", "| 89.5% |"),
+    ],
+)
+def test_a_failing_number_never_prints_equal_to_its_bound(
+    tmp_path: Path, line_rate: float, branch_rate: float, reason: str, cell: str
+) -> None:
+    text = _cobertura(line_rate, branch_rate)
+    result = _judge_branches(tmp_path, "coverage-xml", text)
+    assert result.verdict == "FAIL"
+    assert (result.reason or "").startswith(reason)
+    assert cell in render_summary_table(coverage_gate.GateReport([result]))
+
+
+def test_the_summary_table_prints_a_number_at_its_floor_to_one_decimal(
+    tmp_path: Path,
+) -> None:
+    result = _judge_branches(tmp_path, "coverage-xml", _cobertura(0.85, 0.9))
+    table = render_summary_table(coverage_gate.GateReport([result]))
+    assert "| 85.0% | +0.0pp | 75.0% | 90.0% | 90.0% | PASS |" in table
+
+
 # coverage.py writes branch-rate "0" without --cov-branch and "1" when it finds no branch.
 @pytest.mark.parametrize(
     ("report_format", "text"),

@@ -2,7 +2,8 @@
 """E03-T04: per-package coverage threshold gate.
 
 Reads `tools/ci/coverage-baselines.json` (package -> {floor, baseline,
-artifact, report_format}) and per-package coverage reports (lcov.info or
+artifact, report_format}, plus an optional branch_floor and branch_baseline
+pair) and per-package coverage reports (lcov.info or
 coverage.xml, downloaded as CI artifacts by the caller workflow) and decides
 pass/fail per package plus an overall verdict.
 
@@ -361,6 +362,15 @@ def parse_report(text: str, report_format: str) -> Measured:
     raise CoverageGateError(f"unknown report_format {report_format!r}")
 
 
+def _fmt(value: float, bound: float) -> str:
+    """`value` to one decimal place, or to as many more (up to 6) as it takes
+    not to print equal to a `bound` it differs from."""
+    for places in range(1, 6):
+        if value == bound or f"{value:.{places}f}" != f"{bound:.{places}f}":
+            return f"{value:.{places}f}"
+    return f"{value:.6f}"
+
+
 def _judge(
     label: str, measured: float, floor: float, baseline: float, tolerance_pp: float
 ) -> tuple[str, str] | None:
@@ -368,12 +378,12 @@ def _judge(
     baseline less the tolerance (CI-COV-002): the (code, reason) of the first
     it fails, or None."""
     if measured < floor:
-        return "CI-COV-001", f"{label} {measured:.1f}% < floor {floor:.1f}%"
+        return "CI-COV-001", f"{label} {_fmt(measured, floor)}% < floor {floor:.1f}%"
     regression = baseline - measured
     if regression > tolerance_pp:
         return "CI-COV-002", (
-            f"regression {regression:.1f}pp beyond {tolerance_pp:.1f}pp tolerance "
-            f"({label} baseline {baseline:.1f}% -> measured {measured:.1f}%)"
+            f"regression {_fmt(regression, tolerance_pp)}pp beyond {tolerance_pp:.1f}pp "
+            f"tolerance ({label} baseline {baseline:.1f}% -> measured {measured:.1f}%)"
         )
     return None
 
@@ -526,6 +536,10 @@ def compute_ratchet_proposals(report: GateReport) -> dict[str, float]:
     return proposals
 
 
+def _cell(value: float | None, floor: float) -> str:
+    return "MISSING" if value is None else f"{_fmt(value, floor)}%"
+
+
 def render_summary_table(report: GateReport) -> str:
     """PR-comment summary table: package, floor, baseline, measured, delta,
     branch floor, branch baseline, branches (n/a where branches are not
@@ -538,11 +552,11 @@ def render_summary_table(report: GateReport) -> str:
     sep = "|" + " --- |" * 9
     rows = [header, sep]
     for r in report.results:
-        measured_s = f"{r.measured:.1f}%" if r.measured is not None else "MISSING"
+        measured_s = _cell(r.measured, r.floor)
         delta_s = f"{r.delta:+.1f}pp" if r.delta is not None else "n/a"
         branch_s = "n/a | n/a | n/a"
         if r.branch_floor is not None and r.branch_baseline is not None:
-            branches_s = f"{r.branches:.1f}%" if r.branches is not None else "MISSING"
+            branches_s = _cell(r.branches, r.branch_floor)
             branch_s = (
                 f"{r.branch_floor:.1f}% | {r.branch_baseline:.1f}% | {branches_s}"
             )
