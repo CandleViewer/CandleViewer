@@ -20,6 +20,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.bars import series_store
 from candleviewer.bars.emit import BarEmission
+from candleviewer.bars.heal_driver import HealDriver
 from candleviewer.bars.limits import MAX_CONCURRENT_TAIL_READS
 from candleviewer.bars.metrics import EXPORTED_NAMES
 from candleviewer.bars.models import Bar, BarSpec
@@ -44,6 +45,7 @@ from tests.unit.bars.test_series_store import (
     bar,
     counted,
     emit,
+    events,
     rows,
     up,
     view,
@@ -550,3 +552,98 @@ async def test_a_reset_or_swap_during_a_refresh_read_repairs_nothing_it_did_not_
     tail.gate.set()
     assert not await reading
     assert (hook.calls, view(store)) == ([], ([0], None))
+
+
+@pytest.mark.parametrize("before", ["failed", "degraded", "during", "swap", "flagged"])
+async def test_a_clean_read_with_no_row_flags_a_held_bar_above_0_and_the_driver_heals_it(
+    before: str,
+) -> None:
+    """#3660 rule (1): the read being folded judges D2-H1a. Bar 20 is held, 21 forming, when a
+    clean read with no row of the series' generation, its window holding bars 0..20, is folded: it
+    flags (0, 19), whatever came first. (a) The first read failed, or was degraded with no row;
+    (a-ii) bar 20 closed during the first read; (a-iii) a live swap left a hydrated series not
+    `hydrated` (the read finds the old generation's rows only); (c) a clean empty read flagged
+    the gap, then a degraded one with no row came. The heal driver reads the series again
+    `retry_after_s` later, once the writer has landed 0..20, and heals and repairs it (§7.4)."""
+    clock, gen = Clock(), int(before == "swap")
+    tail = Tail(rows(*range(5)) if before == "swap" else ())
+    tail.error = OSError("questdb down") if before == "failed" else None
+    if before != "swap":
+        tail.tail = BarTail([], dropped=3) if before == "degraded" else BarTail([], since_us=T0)
+    store = SeriesStore(tail, clock=clock)
+    reading = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    if before != "during":
+        tail.gate.set()
+        await reading
+    await emit(store, up("open", 20), generation=gen)
+    await emit(store, up("close", 20), up("open", 21), generation=gen)
+    tail.error = None
+    if before == "flagged":  # the live close flagged the gap; a degraded read with no row next
+        tail.tail = BarTail([], dropped=3)
+        clock.t += RETRY_AFTER_S
+        await store.refresh(SYM, H)
+    tail.tail = BarTail(rows(*range(5)) if before == "swap" else [], since_us=T0)
+    with capture_logs() as logs:
+        if before == "during":
+            tail.gate.set()
+            await reading
+        else:  # due after one miss (5 s), and after a gap that stayed (10 s) before #3660
+            clock.t += 2 * RETRY_AFTER_S
+            await store.refresh(SYM, H)
+    gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
+    assert (view(store), store.gapped(SYM, H), gaps) == (([20], 21), True, [(0, 19)])
+    hook = Hook(store)
+    tail.tail = BarTail(rows(*range(21), gen=gen))  # the writer has landed 0..20
+    clock.t += RETRY_AFTER_S
+    await HealDriver(store).tick()
+    healed = (view(store), store.hydrated(SYM, H), store.gapped(SYM, H), hook.calls)
+    assert healed == ((list(range(21)), 21), True, False, [(SYM, SPEC, 3)])
+
+
+async def test_a_read_that_skips_a_row_leaves_the_series_incomplete_until_one_skips_none() -> None:
+    """#3614 rule (b): rows 0..9 held and a live close at 11 (a hole at 10); the re-read returns
+    0..4 and 6..11 and skips row 5 (malformed). It drops held bar 5, with no merge, and leaves the
+    series not `hydrated`, so the heal driver reads it again, `retry_after_s` later and no sooner.
+    That read skips nothing: it hydrates the series and repairs bar 5 back (§7.4)."""
+    clock = Clock()
+    store, tail, _held = await gapped(clock)
+    tail.tail = BarTail(rows(*range(5), *range(6, 12)), skipped=1)
+    clock.t += RETRY_AFTER_S
+    assert not await store.refresh(SYM, H)  # it lost bar 5: no repair
+    skipping = (view(store)[0], store.hydrated(SYM, H), store.gapped(SYM, H))
+    assert skipping == ([*range(5), *range(6, 12)], False, False)
+    hook, driver = Hook(store), HealDriver(store)
+    tail.tail = BarTail(rows(*range(12)))
+    clock.t += RETRY_AFTER_S - 0.5
+    await driver.tick()
+    assert tail.calls == 2  # not due yet
+    clock.t += 0.5
+    await driver.tick()
+    assert (tail.calls, view(store), store.hydrated(SYM, H)) == (3, (list(range(12)), None), True)
+    assert hook.calls == [(SYM, SPEC, 7)]
+
+
+@pytest.mark.parametrize(("shift", "gap"), [(20, True), (-10, False)], ids=["inside", "before"])
+async def test_a_restart_emptying_a_series_read_with_rows_is_judged_by_that_reads_window(
+    shift: int, gap: bool
+) -> None:
+    """#3660 (b), which rule (1) keeps: rows 0..10 read clean, then a restarted run's bar 5 opens
+    (a reset) and closes. It opened inside that read's window (`since_us`, kept for a read that
+    found rows too), so the close counts one gap, (0, 4), and the one read it brings ends where it
+    started: harmless, one count, one warning, one read. Opened before the window: none of them."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(*range(11)), since_us=T0)
+    store = SeriesStore(tail, clock=clock)
+    _held = await store.ensure(SYM, SPEC)
+    before = counted("bars_series_gaps_total")
+    with capture_logs() as logs:
+        await emit(store, up("open", 5, shift=shift))
+        await emit(store, up("close", 5, shift=shift), up("open", 6, shift=shift))
+    gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
+    assert (store.gapped(SYM, H), gaps) == (gap, [(0, 4)] * gap)
+    assert counted("bars_series_gaps_total") == before + gap
+    clock.t += RETRY_AFTER_S
+    await HealDriver(store).tick()
+    assert (tail.calls, view(store), store.gapped(SYM, H)) == (1 + gap, ([5], 6), False)

@@ -999,8 +999,8 @@ async def test_a_first_close_after_an_empty_read_is_a_gap_only_if_it_opened_in_t
 
 async def test_empty_re_reads_keep_a_gap_until_a_window_starts_after_its_bar_opened() -> None:
     """D2-H1a over clean empty reads while the writer never lands bars 0..19. Bar 20 opened inside
-    R1's window: a gap. R2's window starts after bar 20 opened, but R2's fold judges by R1's (the
-    read `hydrated` came from), so the gap stays; R3's fold judges by R2's and clears it. Then the
+    R1's window: a gap. R2's window starts after bar 20 opened, and R2's fold judges by its own
+    window (#3660), not R1's: the gap clears at R2, with no third read. Then the
     series is `hydrated` and not `gapped`, so a later `ensure` reads nothing."""
     clock = Clock()
     tail = Tail(now=True)
@@ -1010,12 +1010,12 @@ async def test_empty_re_reads_keep_a_gap_until_a_window_starts_after_its_bar_ope
     await emit(store, up("open", 20))
     await emit(store, up("close", 20), up("open", 21))
     seen = [store.gapped(SYM, H)]
-    for start in (21, 22, 23):  # R2 and R3 start after bar 20 opened; the last ensure reads none
+    for start in (21, 22, 23):  # R2 starts after bar 20 opened; the later ensures read none
         tail.tail = BarTail([], since_us=T0 + start * STEP)
-        clock.t += 2 * RETRY_AFTER_S  # R2 leaves it gapped: R3 waits twice as long (D2-H2)
+        clock.t += 2 * RETRY_AFTER_S
         await store.ensure(SYM, SPEC)
         seen.append(store.gapped(SYM, H))
-    assert (tail.calls, seen, view(store)) == (3, [True, True, False, False], ([20], 21))
+    assert (tail.calls, seen, view(store)) == (2, [True, False, False, False], ([20], 21))
 
 
 async def test_index_0_is_next_after_an_empty_read_so_closes_0_and_1_are_no_gap_and_3_is() -> None:
@@ -1063,12 +1063,13 @@ async def test_an_unflipped_rebuilds_rows_do_not_displace_the_live_generations()
 
 async def test_only_the_newest_generations_recent_closes_are_folded() -> None:
     """A swap among the closes seen live: the earlier generation's are not the series' bars. The
-    swap came before the read, which clears D2-H1c's flag as it starts, so the read hydrates."""
+    swap came before the read, which clears D2-H1c's flag as it starts, so the read hydrates. It
+    found no row of generation 1, so its fold flags held bar 7 as a gap from index 0 (#3660)."""
     store = SeriesStore(Tail(now=True))
     await emit(store, up("close", 5))
     await emit(store, up("close", 7), generation=1)
     await store.ensure(SYM, SPEC)
-    assert generation(store) == 1 and view(store) == ([7], None) and not store.gapped(SYM, H)
+    assert generation(store) == 1 and view(store) == ([7], None) and store.gapped(SYM, H)
     assert store.hydrated(SYM, H)
 
 

@@ -344,21 +344,23 @@ def test_the_driver_bound_outlasts_the_production_reader_unwinding_a_cut_read() 
 
 
 def missing(tail: Tail, miss: str) -> Tail:
-    """Every read from now on misses: it fails, or withholds a row (SR-E12-11)."""
+    """Every read from now on misses: it fails, withholds a row (SR-E12-11) or skips one (#3614)."""
     if miss == "failed":
         tail.error = OSError("questdb down")
     else:
-        tail.error, tail.tail = None, BarTail(rows(*range(10)), dropped=1)
+        skip = int(miss == "skipped")
+        tail.error, tail.tail = None, BarTail(rows(*range(10)), skipped=skip, dropped=1 - skip)
     return tail
 
 
 MISSES = pytest.mark.parametrize("miss", ["failed", "degraded"])
 
 
-@MISSES
+@pytest.mark.parametrize("miss", ["failed", "degraded", "skipped"])
 async def test_reads_that_keep_missing_back_off_up_to_160_s(miss: str) -> None:
     """5, 10, 20, 40, 80, then 160 s, where it stays: each miss after the first doubles the
-    interval, for the driver's `refresh` as for `ensure`."""
+    interval, for the driver's `refresh` as for `ensure`. A read that keeps skipping a malformed
+    row (#3614: never `hydrated`) backs off the same way, never re-read at the floor."""
     clock, tail = Clock(), missing(Tail(now=True), miss)
     store = SeriesStore(tail, clock=clock)
     _held = await store.ensure(SYM, SPEC)

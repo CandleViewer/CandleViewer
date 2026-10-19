@@ -27,7 +27,9 @@ a WS snapshot source reads `latest` and `version`.
   read at a time per series: a concurrent `ensure` waits for it, and takes it over if its reader
   was cancelled, unless its own deadline had cut it, which makes it a failed read the waiters
   keep. A failed read (`bars_series_hydrate_failed_total`) leaves the series as it was;
-  a degraded one (SR-E12-11: served, never final) or a live swap leaves it not `hydrated`. An
+  a degraded one (SR-E12-11: served, never final), one that skipped a row (`BarTail.skipped`:
+  never merged, so the row's held bar is dropped; #3614) or a live swap leaves it not `hydrated`
+  (a clean read withholds and skips none). An
   `ensure` reads a series that is not `hydrated`, or is `gapped`, again, but never sooner than
   its re-read interval after the last read: `retry_after_s`, more for a gap or misses (below);
   the heal driver's `refresh` (below) is the only other trigger, by the same rules. Without a
@@ -88,7 +90,12 @@ Gaps: the closes emitted just before the hold that the writer had not landed yet
 ring (the last `RECENT_CLOSES`). A live close that skips indexes past the rows marks the series
 `gapped` (`bars_series_gap`), and so does a first close above index 0 of a series read clean and
 empty, if its bar opened inside that read's window (#2787 D2-H1a; the bars below one that opened
-before it, as a restored builder's can after a long downtime, lie outside every read); an
+before it, as a restored builder's can after a long downtime, lie outside every read). The read
+being folded is the judge (#3660): with no row of the series' generation, a clean one checks the
+first bar it finds held, whatever came before it (a close from the ring, one during the read, or
+one after a failed or degraded read or a live swap), and one not clean checks none. A restart
+that empties a series read clean with rows meets the same check, with that read's window, so its
+first close above 0 counts a gap: one count, one warning and one read, harmless (#3660 (b)). An
 `ensure` re-reads it, no sooner than its re-read interval after the last read. The bars it holds
 newer than the stored rows survive the re-read, and so do, when the read withholds rows
 (SR-E12-11), the ones it holds below the newest row (D2-H1b). A gap that stays (D2-H2): a read
@@ -100,25 +107,22 @@ at most `MAX_GAP_RANGES` (the oldest forgotten first). A read that heals the ser
 reset or swap, forgets them and brings the interval back to `retry_after_s`; a gap seen live (a
 close past the newest bar: a hole no read has looked at yet) brings the interval back too, but a
 re-read in flight that leaves the series gapped then doubles it once. A miss (#2787 P4b) is a
-completed read that fails or withholds rows; a read whose deadline passes before its reader has
+completed read that is not clean: it fails, or withholds or skips rows (#3614: one that keeps
+skipping a malformed row backs off to 160 s); a read whose deadline passes before its reader has
 unwound is a failed read, whoever cancelled it first (its waiters keep that result); one that
 unwinds before its deadline sets none. Misses in a row ask for their own interval:
 `retry_after_s` after the first, doubled by each later one up to `MAX_GAP_BACKOFF` times it; the
 next read waits out the longer of the two, `retry_after_s * max(backoff, missed)`. A clean read
-ends the streak, and so does a gap seen live after degraded reads (they complete, so a read may
+ends the streak, and so does a gap seen live after misses that completed (so a read may
 fill the new hole), but not after failed ones, nor does a live reset or swap. Only its first read
 logs (`bars_series_hydrate_failed` or `_degraded`): the failure counter counts each one, and the
 reader logs and counts each row it withholds.
 
 Not covered: the forming bar is unknown until the next `open` or `update` (builders expose none);
-a held bar whose row a clean read skipped (`BarTail.skipped`, malformed rows included) is dropped
-by that read, which ends `hydrated` (#3614), and a read that loses a held bar repairs nothing, even
+a read that loses a held bar repairs nothing, even
 if it adds bars (§7.4); a hole inside the stored rows with no bar held for it (a row skipped or
 withheld, or one the writer never landed) stays a hole and is not flagged; a
-jump is seen on a close only; a close seen before the first clean read (one from the ring, or a
-live one after a failed or degraded read) is judged only by that read's rows, so an empty read
-leaves it unflagged: the series cannot see its junction, and a writer lagging behind it goes
-unflagged (the heal driver skips it too, #3660); a series with more holes than `MAX_GAP_RANGES`
+jump is seen on a close only; a series with more holes than `MAX_GAP_RANGES`
 logs each again on every re-read, which finds them oldest first; a series freed after its
 grace starts afresh when held again (nothing logged, `retry_after_s`).
 """
@@ -257,11 +261,13 @@ class _Series:
     generation: int | None = None  # set by the first emission, or by a read
     closed: OrderedDict[int, Bar] = field(default_factory=OrderedDict)  # index -> bar
     forming: Bar | None = None
-    #: Holds the stored tail a read took: it neither failed nor was degraded, and no swap followed.
+    #: Holds the stored tail a read took: it neither failed nor was degraded, skipped no row
+    #: (#3614), and no swap followed. Set by the fold, before the held bars (#3660).
     hydrated: bool = False
     #: The window start (µs, `BarTail.since_us`) of the last read folded, set with `hydrated`
-    #: after the fold, so a clean read's while `hydrated`: holding no bar, the series takes a close
-    #: of a bar that opened before it as no gap (D2-H1a).
+    #: as the fold starts, so a clean read's while `hydrated`: holding no bar, the series takes a
+    #: close of a bar that opened before it as no gap (D2-H1a), the held ones that fold applies
+    #: included (#3660).
     since_us: int = 0
     #: A live swap since the read in flight began (set by `_live`, cleared as a read starts).
     swapped: bool = False
@@ -284,7 +290,7 @@ class _Series:
     #: Misses in a row (module docstring), as the re-read interval in `retry_after_s` they ask for:
     #: 1 after the first, doubled by each later one up to `MAX_GAP_BACKOFF`; 0 after a clean read.
     missed: int = 0
-    #: The streak's last miss failed (else it withheld rows): a gap seen live keeps the streak.
+    #: The streak's last miss failed (else it withheld or skipped rows): a gap seen live keeps it.
     failing: bool = False
     #: The gap ranges `(from_index, to_index)` logged since it last healed, reset or swapped, each
     #: once (D2-H2); the oldest is forgotten past `MAX_GAP_RANGES`.
@@ -329,8 +335,8 @@ def _incomplete(s: _Series) -> bool:
 
 
 def _miss(s: _Series, *, failed: bool) -> bool:
-    """A completed read failed or withheld rows: the streak's interval grows (`_Series.missed`).
-    True for the streak's first read, the one that logs."""
+    """A completed read failed, withheld or skipped rows: the streak's interval grows
+    (`_Series.missed`). True for the streak's first read, the one that logs."""
     first, s.failing = not s.missed, failed
     s.missed = 1 if first else min(2 * s.missed, MAX_GAP_BACKOFF)
     return first
@@ -419,7 +425,8 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) 
             bars_series_resets_total.labels(reason="restart").inc()
             _forget_gaps(s)
     elif gaps and (s.closed or (s.hydrated and bar.open_time >= s.since_us)) and i > last + 1:
-        # None held: a clean read found no row in the window this bar opened in (D2-H1a).
+        # None held after a clean read whose window this bar opened in (the last read folded: this
+        # fold's, if one runs): it found no row (D2-H1a, #3660), or a restart emptied the series.
         s.gapped = True  # emitted before the hold and not stored yet, or lost: re-read
         if count:
             bars_series_gaps_total.inc()
@@ -657,7 +664,7 @@ class SeriesStore:
 
     def hydrated(self, symbol: str, spec_hash: str) -> bool:
         """True once a read took the series' stored tail (False: live bars only, or a degraded
-        read's, or one a live swap followed)."""
+        read's, or one that skipped a row, or one a live swap followed)."""
         s = self._series.get((symbol, spec_hash))
         return s is not None and s.hydrated
 
@@ -732,18 +739,16 @@ class SeriesStore:
         else:
             s.read_at = self._clock()  # pre-fold: nothing after the fold can raise until the hook
             before = dict(s.closed)  # what `s` served: a repair is judged against it
-            self._fold(s, tail)
+            self._fold(s, tail)  # it sets `hydrated` and `since_us` (#3660)
             depth, fault = _counted_depth(s, before, tail.since_us, tail.fetched >= MAX_HISTORY)
             s.attempted = not tail.integrity_degraded
-            s.hydrated = s.attempted and not s.swapped  # swapped during it: read again (D2-H1c)
-            s.since_us = tail.since_us  # with `hydrated`, after the fold (D2-H1a)
             if not s.gapped:  # healed, or never gapped
                 _forget_gaps(s)
             elif gapped and s.resets == resets_at_start:  # a re-read, still gapped: back off
                 s.backoff = min(2 * s.backoff, MAX_GAP_BACKOFF)
                 bars_series_gap_rereads_total.inc()
             skipped = tail.skipped
-            if not tail.integrity_degraded:
+            if not (tail.integrity_degraded or skipped):
                 s.missed = 0  # a clean read ends a miss streak
             elif _miss(s, failed=False):  # the reader logs and counts each row it withholds
                 dropped = tail.dropped
@@ -790,7 +795,9 @@ class SeriesStore:
         read never replaces it), else the newest row's (the highest at the newest `ts`, until
         ADR-0033's pointer decides), else none: the rows (with the bars `s` held below the newest
         row merged in by key when the read withheld rows), the bars `s` held that are newer by
-        key or re-close a row, the replayed re-closes of bars now held, then the forming bar."""
+        key or re-close a row, the replayed re-closes of bars now held, then the forming bar. This
+        read sets `hydrated` and `since_us` first, so it judges the held bars' gap checks: with no
+        row of the generation, H1a's (#3660), whatever the reads before it left."""
         replay: Sequence[Close] = s.replay or ()
         forming, held, prior = s.forming, list(s.closed.values()), dict(s.stale)
         gen = s.generation  # only an emission swaps a named one: the publisher sees each swap
@@ -798,6 +805,9 @@ class SeriesStore:
             gen = tail.bars[-1][0]  # none named yet: the newest row's
         _clear(s)
         s.generation, s.gapped = gen, False
+        # Clean (no row withheld, SR-E12-11, nor skipped, #3614) and no live swap during it (D2-H1c)
+        s.hydrated = not (tail.integrity_degraded or tail.skipped or s.swapped)
+        s.since_us = tail.since_us
         # The named generation's rows: not another epoch's, nor an unflipped ADR-0033 rebuild's.
         rows = [(g, bar) for g, bar in tail.bars if g == gen]
         if rows and tail.integrity_degraded:  # a withheld row never drops its held bar (D2-H1b)
