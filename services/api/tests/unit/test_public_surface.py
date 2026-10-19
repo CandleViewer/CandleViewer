@@ -181,6 +181,7 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "AuditSink",
         "CredentialStore",
         "KcvStore",
+        "AuthKeyStore",  # #3505: the keyring count port `admin.wiring` hands to M2
         "SecretsLifecycleFacade",
         "SecretsMetadataFacade",
         "SigningCapability",  # #836: the Protocol M4's signer takes, so the signer is injectable

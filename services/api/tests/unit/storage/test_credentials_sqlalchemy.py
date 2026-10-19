@@ -22,7 +22,7 @@ from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.errors import SnapshotInvalid
-from candleviewer.secrets.store import InMemoryCredentialStore
+from candleviewer.secrets.store import InMemoryAuthKeyStore, InMemoryCredentialStore
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from tests.unit.credentials_m2._helpers import _h, _store
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, SNAPSHOT, AuditLog, kek
@@ -140,5 +140,5 @@ async def test_a_kek_rewrap_moves_a_row_whose_snapshot_is_no_object_and_every_ot
     ids = [(await _store(first, f"KEY{i:04d}ABCDEFGH")).key_id for i in range(3)]
     store.key_id = min(ids)
     rotating = RotatingBroker(store, audit, kek(KEK_V2, 2), prev_kek=kek(KEK_V1, 1))
-    report = await rotating.rewrap_all(2)
+    report = await rotating.rewrap_all(2, auth_keys=InMemoryAuthKeyStore())
     assert (report.rewrapped, report.failed, audit.actions()[-1]) == (3, (), "security.kek_rotated")

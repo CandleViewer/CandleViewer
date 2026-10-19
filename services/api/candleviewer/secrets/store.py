@@ -194,10 +194,14 @@ class InMemoryCredentialStore:
 
 
 class InMemoryAuthKeyStore:
-    """Test fake for `AuthKeyStore`: `rows` holds `auth_keys` records (`env`, `kek_version`)."""
+    """Test fake for `AuthKeyStore`: `rows` holds `auth_keys` records (`env`, `kek_version`) of any
+    environment. Bound to one, as the M10 adapter is, it refuses a call naming another (#3505)."""
 
-    def __init__(self) -> None:
+    def __init__(self, env: str = "demo") -> None:
         self.rows: list[dict[str, Any]] = []
+        self.env = env
 
     async def count_at_kek_version(self, version: int, env: str) -> int:
+        if env != self.env:
+            raise ValueError("the auth key store serves only the process environment")
         return sum(r["env"] == env and r["kek_version"] == version for r in self.rows)

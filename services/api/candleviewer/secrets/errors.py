@@ -5,9 +5,28 @@ Messages carry reason codes and ids only, never key material (C-12.6).
 
 from __future__ import annotations
 
+from typing import Literal
+
+#: `rewrapKek` error codes a KEK re-wrap answers with besides `KekUnavailable` (#2266).
+RotationCode = Literal[
+    "kek_rotation_not_staged", "kek_rotation_in_progress", "audit_unavailable", "store_unavailable"
+]
+
 
 class SecretsError(Exception):
     """Base exception for the M2 `secrets` module."""
+
+
+class KekRotationError(SecretsError):
+    """A KEK re-wrap (`rewrap_deks`) refused or stopped (#2266): `code` is its `rewrapKek` error
+    code. A refusal (`kek_rotation_not_staged`, `kek_rotation_in_progress`) is audited first and
+    latches or moves nothing. A record that cannot be written, a refusal's included, is
+    `audit_unavailable`, a store failure `store_unavailable`; a run stopped after its latch keeps
+    the latch and the rows it moved."""
+
+    def __init__(self, code: RotationCode) -> None:
+        super().__init__(code)
+        self.code: RotationCode = code
 
 
 class KekSourceNotPermitted(SecretsError):

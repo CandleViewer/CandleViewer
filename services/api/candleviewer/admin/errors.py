@@ -7,6 +7,9 @@ from typing import ClassVar, Literal
 #: Why the break-glass CLI cannot use its host journal (E09-S11 #2119): the anchored directory
 #: or the journal is unusable, or the run lock is held (cv-api, or another break-glass run).
 JournalRefusal = Literal["host_fs_unavailable", "api_running"]
+#: `rewrapKek`'s error codes (`22-api-openapi.yaml`, #2266): its audited refusals, then its 503s.
+KekRefusal = Literal["kek_unavailable", "kek_rotation_not_staged", "kek_rotation_in_progress"]
+KekRewrapCode = KekRefusal | Literal["audit_unavailable", "store_unavailable"]
 
 
 class AdminError(Exception):
@@ -81,3 +84,15 @@ class IncidentResolved(AdminError):
 class OpsAuditUnavailable(AdminError):
     """The write-ahead audit record could not be written (E42-T05, C-2.9): 503
     `audit_unavailable`, nothing changed. Fixed message, never the cause."""
+
+
+class KekRewrapError(AdminError):
+    """`AdminService.rewrap_kek` ended without a run's counts (#2266): `code` is the `rewrapKek`
+    error code. A refusal (403 `kek_unavailable`, 409 `kek_rotation_not_staged` and
+    `kek_rotation_in_progress`) was audited and latched or moved nothing. A 503
+    (`audit_unavailable`, `store_unavailable`) after the latch keeps it and the rows moved;
+    calling again resumes."""
+
+    def __init__(self, code: KekRewrapCode) -> None:
+        super().__init__(code)
+        self.code: KekRewrapCode = code

@@ -28,6 +28,7 @@ from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
+    AuthKeyStore,
     CandidateKeys,
     CredentialBorrower,
     CredentialStore,
@@ -141,14 +142,17 @@ def build_secrets_service(
     store: CredentialStore | None = None,
     kcv_store: KcvStore | None = None,
     audit: AuditService | None = None,
+    auth_keys: AuthKeyStore | None = None,
 ) -> SecretsBundle:
     """Construct M2 once and split it into narrow capabilities. No I/O; the KEK is loaded in
-    `start()`. Without an injected store (fake backend) every credential op fails closed."""
+    `start()`. Without an injected store (fake backend) every credential op fails closed. A KEK
+    re-wrap run counts `auth_keys`, the environment's auth keyring, and is never complete
+    without it (#3505)."""
     sink = secrets_audit_sink(audit) if audit is not None else None
     if store is None or kcv_store is None:
         svc = SecretsService(audit=sink)  # no store: fail closed, but still audited (C-2.9)
     else:
-        svc = SecretsService(store=store, kcv_store=kcv_store, audit=sink)
+        svc = SecretsService(store=store, kcv_store=kcv_store, audit=sink, auth_keys=auth_keys)
     return SecretsBundle(
         SecretsLifecycleFacade(svc),
         SecretsMetadataFacade(svc),

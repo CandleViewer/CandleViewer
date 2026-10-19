@@ -17,6 +17,7 @@ from candleviewer.secrets.broker import Purpose
 from candleviewer.secrets.candidate import CandidateKeys, CandidateSigner
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
+    KekRotationError,
     KekSourceNotPermitted,
     KekUnavailable,
     SecretsError,
@@ -38,11 +39,12 @@ from candleviewer.secrets.service import (
     prove_kek_possession,
 )
 from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
-from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
+from candleviewer.secrets.store import AuditSink, AuthKeyStore, CredentialStore, KcvStore
 
 __all__ = [
     "KEY_ID_SLOT",
     "AuditSink",
+    "AuthKeyStore",
     "CandidateKeys",
     "CandidateSigner",
     "CredentialBorrower",
@@ -50,6 +52,7 @@ __all__ = [
     "CredentialUnavailable",
     "KcvStore",
     "KekCheckResult",
+    "KekRotationError",
     "KekSourceNotPermitted",
     "KekUnavailable",
     "Purpose",

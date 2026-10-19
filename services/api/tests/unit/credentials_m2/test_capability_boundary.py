@@ -171,9 +171,10 @@ async def test_borrower_exposes_no_broker_resolver() -> None:
 
 
 async def test_admin_metadata_cannot_decrypt_and_writes_no_borrow() -> None:
-    """Exercising every member of the admin capability never yields plaintext."""
+    """Exercising every member of the admin capability never yields plaintext. The re-wrap's
+    refusal cannot be recorded on the fake backend: `audit_unavailable` (#2266)."""
     from candleviewer.app import build_app_context
-    from candleviewer.secrets import KekUnavailable
+    from candleviewer.secrets import KekRotationError
     from candleviewer.settings import Settings
 
     ctx = build_app_context(Settings(_env_file=None))  # type: ignore[call-arg]
@@ -181,5 +182,5 @@ async def test_admin_metadata_cannot_decrypt_and_writes_no_borrow() -> None:
     assert meta is not None
     res = await meta.verify_kek_possession()
     assert res.kcv_ok is False
-    with pytest.raises(KekUnavailable):
-        await meta.rewrap_deks(2, actor_user_id="u", actor_role="owner")
+    with pytest.raises(KekRotationError, match=r"^audit_unavailable$"):
+        await meta.rewrap_deks(2, environment="demo", actor_user_id="u", actor_role="owner")

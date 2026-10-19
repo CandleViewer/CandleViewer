@@ -28,7 +28,8 @@ class KekCheckResult:
 @dataclass(frozen=True)
 class RewrapReport:
     """One KEK re-wrap run (#2266). `remaining` counts the environment's rows left at
-    `from_version`: unrevoked API key rows, failed ones included, plus auth keyring rows."""
+    `from_version`: unrevoked API key rows, failed ones included, plus auth keyring rows (none
+    counted while no keyring store is wired, and then the run is not `complete`, #3505)."""
 
     from_version: int
     to_version: int
@@ -36,9 +37,11 @@ class RewrapReport:
     remaining: int
     failed: tuple[UUID, ...] = ()
     #: Every audit record of the run carries it.
-    run_id: UUID | None = None
+    run_id: UUID = field(kw_only=True)
     #: The run opened with `security.kek_rotation_resumed`.
     resumed: bool = False
+    #: The run ended with `security.kek_rotated`: never while the keyring went unchecked (#3505).
+    complete: bool = False
 
 
 @dataclass
