@@ -180,6 +180,13 @@ def account_scope(principal: PrincipalSnapshot) -> AccountScope:
     )
 
 
+def scoped_account_ids(principal: PrincipalSnapshot) -> frozenset[uuid.UUID]:
+    """The ids `account_scope()` lists: the grants that currently permit access, so not a frozen
+    one. An owner's scope has no ids (it is every account), so none are listed for one."""
+    scope = account_scope(principal)
+    return scope.account_ids if isinstance(scope, GrantScope) else frozenset()
+
+
 class _AuditEmitter(Protocol):
     """Structural subset of `AuditWriter.emit` (mirrors `api/audit.py`'s
     `_Emitter`/`api/audit.py`'s `AuditWriterLike`) — this module never

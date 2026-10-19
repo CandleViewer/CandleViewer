@@ -34,7 +34,14 @@ import structlog
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import auth_revocation_latency_seconds
-from candleviewer.auth.scopes import Allow, Deny, DenyReason, PrincipalSnapshot, decide
+from candleviewer.auth.scopes import (
+    Allow,
+    Deny,
+    DenyReason,
+    PrincipalSnapshot,
+    decide,
+    scoped_account_ids,
+)
 from candleviewer.bars.errors import (
     BarParamOutOfRange,
     BarsError,
@@ -235,10 +242,9 @@ def auth_ok_payload(principal: PrincipalSnapshot, **extra: Any) -> dict[str, Any
         "user_id": str(principal.user_id),
         "roles": sorted(principal.roles),
         "permissions": sorted(p.value for p in principal.permissions),
-        # Empty for owner = all accounts (ticket); viewable grants otherwise.
-        "account_scope": sorted(
-            str(g.exchange_account_id) for g in principal.account_grants if g.can_view
-        ),
+        # The one scope rule (C-12.4): the grants that currently permit access, so not a frozen
+        # one. An owner's scope has no ids: `[]` means every account.
+        "account_scope": sorted(str(a) for a in scoped_account_ids(principal)),
         **extra,
     }
 

@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 
-from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.scopes import PrincipalSnapshot, scoped_account_ids
 
 if TYPE_CHECKING:  # the annotation only: the filter stays free of the metrics facade at run time
     from candleviewer.ws.metrics import WithheldReason
@@ -222,11 +222,12 @@ def _kill_switch_view(state: Mapping[str, Any], principal: PrincipalSnapshot) ->
 
 
 def _viewable(ids: object, principal: PrincipalSnapshot) -> list[str]:
-    """The ids in `ids` that the connection's `account_scope` lists, canonical. Anything that is
+    """The ids in `ids` that the connection's `account_scope` lists, canonical: the grants that
+    currently permit access (`auth.scopes.account_scope`, so not a frozen one). Anything that is
     not a list or tuple of account ids names no account (a `str` or `bytes` is not one)."""
     if not isinstance(ids, list | tuple):
         return []
-    mine = {grant.exchange_account_id for grant in principal.account_grants if grant.can_view}
+    mine = scoped_account_ids(principal)
     out: list[str] = []
     for raw in ids:
         account = _account(raw)

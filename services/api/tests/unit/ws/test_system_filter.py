@@ -137,7 +137,7 @@ def test_manager_and_viewer_receive_only_the_role_neutral_fields(
     [
         ((), [str(ACC_A), str(ACC_B)], []),  # no grant: the state still arrives, no account
         ((AccountGrant(ACC_A, False, True, False),), [str(ACC_A)], []),  # no view grant
-        ((AccountGrant(ACC_A, True, False, True),), [str(ACC_A)], [str(ACC_A)]),  # frozen
+        ((AccountGrant(ACC_A, True, False, True),), [str(ACC_A)], []),  # frozen: no access
         ((AccountGrant(ACC_A, True, False, False),), [str(ACC_A).upper(), ACC_A], [str(ACC_A)] * 2),
         ((AccountGrant(ACC_A, True, False, False),), ["no", 7, None, [str(ACC_A)]], []),
         ((AccountGrant(ACC_A, True, False, False),), str(ACC_A), []),  # not a list

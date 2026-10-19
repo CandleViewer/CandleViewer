@@ -23,6 +23,7 @@ from candleviewer.auth.scopes import (
     PrincipalSnapshot,
     account_scope,
     decide,
+    scoped_account_ids,
 )
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 
@@ -288,6 +289,29 @@ def test_account_scope_keeps_only_viewable_unfrozen_grants() -> None:
 def test_account_scope_zero_grants_is_empty_never_all() -> None:
     p = _acct_principal(frozenset({"viewer"}), ())
     assert account_scope(p) == GrantScope(p.user_id, frozenset())
+
+
+def test_scoped_account_ids_lists_only_viewable_unfrozen_grants() -> None:
+    d = uuid.uuid4()
+    grants = (
+        AccountGrant(ACCOUNT_A, True, True, False),
+        AccountGrant(ACCOUNT_B, True, True, True),
+        AccountGrant(uuid.uuid4(), False, False, False),
+        AccountGrant(d, True, False, False),
+    )
+    p = _acct_principal(frozenset({"manager"}), grants)
+    assert scoped_account_ids(p) == frozenset({ACCOUNT_A, d})
+
+
+@pytest.mark.parametrize(
+    ("role", "grants"),
+    [("owner", (AccountGrant(ACCOUNT_A, True, True, False),)), ("viewer", ())],
+    ids=["an-owner-is-every-account", "no-grants-is-nothing"],
+)
+def test_scoped_account_ids_of_an_owner_or_of_no_grants_lists_none(
+    role: str, grants: tuple[AccountGrant, ...]
+) -> None:
+    assert scoped_account_ids(_acct_principal(frozenset({role}), grants)) == frozenset()
 
 
 @given(

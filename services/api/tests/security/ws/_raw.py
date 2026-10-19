@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable, Iterator, MutableMapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, MutableMapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NamedTuple
 from unittest.mock import patch
@@ -23,20 +25,33 @@ from prometheus_client import REGISTRY, generate_latest
 from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.app import _session_authenticator
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.gateway import make_ws_router
+from candleviewer.ws.lifecycle import bye_frame
+from candleviewer.ws.topics import FAMILIES
 from tests.contract.ws import _harness
 from tests.contract.ws._harness import WIRE_SUBPROTOCOL, Client, World, current_offer, current_wire
-from tests.contract.ws._support import recv_json
+from tests.contract.ws._support import SAMPLES, recv_json
 from tests.security.auth._stack import RegistryAudit
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.ws._seq_support import ACC_A, ACC_B
 
 SOURCE = "testclient"  # the test client's address, as the gateway records it
+#: Every account-scoped family (23-ws-protocol.md §6.2), by the registry: a new one is covered too.
+SCOPED = tuple(sorted(name for name, fam in FAMILIES.items() if fam.account_scoped))
+_ROLES = json.loads(
+    (Path(__file__).resolve().parents[3] / "candleviewer/auth/rbac_seed.json").read_text("utf-8")
+)["role_permissions"]
+
+
+def role_permissions(role: str) -> frozenset[Permission]:
+    """What the seeded RBAC matrix (`auth/rbac_seed.json`) gives `role`, as a deployment has it."""
+    return frozenset(p for p in Permission if {"*", p.value} & set(_ROLES[role]))
 
 
 class Login(NamedTuple):
@@ -70,7 +85,8 @@ class RawWorld(World):
         self.audit = RegistryAudit()
         self.events: list[MutableMapping[str, Any]] = []  # gateway log events (`world` fixture)
         self.log, self.std, self.printed = log, std, ""  # stdlib logging, stdout and stderr
-        self.user_grants: dict[uuid.UUID, tuple[AccountGrant, ...]] = {}
+        self.user_grants: dict[uuid.UUID, tuple[AccountGrant, ...]] = {}  # `login` gave each user
+        self.user_access: dict[uuid.UUID, tuple[str, frozenset[Permission] | None]] = {}
         self.sessions = SessionService(FakeSessionRepository(), Hasher(), clock=self.utc_now)
         ctx: Any = SimpleNamespace(
             auth=SimpleNamespace(sessions=self.sessions, enrolment_gate_is_active=False)
@@ -78,6 +94,7 @@ class RawWorld(World):
         self.verify = _session_authenticator(ctx, ctx)  # the refusals go unused: the gate is off
         with patch.object(_harness, "make_ws_router", partial(make_ws_router, audit=self.audit)):
             super().__init__()  # `World` builds its router with no audit sink
+        self.registry.services.audit = self.audit  # production's one sink also takes `sub`'s rows
 
     def utc_now(self) -> datetime:
         return datetime.fromtimestamp(self.clock.wall_ms() / 1000, tz=UTC)
@@ -87,15 +104,45 @@ class RawWorld(World):
         return await self.verify(token)
 
     async def _resolve(self, uid: uuid.UUID) -> PrincipalSnapshot:
-        grants = self.user_grants.get(uid, ())  # a user `login` never made holds no account
-        return PrincipalSnapshot(uid, frozenset({"manager"}), self.perms, grants)
+        role, perms = self.user_access.get(uid, ("manager", None))  # a user `login` never made
+        if perms is None:
+            perms = self.perms if role == "manager" else role_permissions(role)
+        return PrincipalSnapshot(uid, frozenset({role}), perms, self.user_grants.get(uid, ()))
 
-    def login(self, name: str, account: uuid.UUID = ACC_A) -> Login:
+    def login(
+        self,
+        name: str,
+        *accounts: uuid.UUID,
+        role: str = "manager",
+        perms: frozenset[Permission] | None = None,
+        frozen: Collection[uuid.UUID] = (),
+    ) -> Login:
         """A live session of the user `name` (one name, one user), minted now, who may view only
-        `account`."""
+        `accounts` (default: A), the `frozen` ones frozen. Their `perms`, read at each load, are the
+        world's for a manager, else the role's seeded set."""
         user = uuid.uuid5(uuid.NAMESPACE_OID, name)
-        self.user_grants[user] = (AccountGrant(account, True, False, False),)  # view only
+        self.user_access[user] = (role, perms)
+        self.user_grants[user] = tuple(
+            AccountGrant(a, True, False, a in frozen) for a in accounts or (ACC_A,)
+        )
         return Login(user, self.call(self.sessions.mint, str(user)))
+
+    async def amended(
+        self,
+        login: Login,
+        *,
+        drop: Collection[uuid.UUID] = (),
+        freeze: Collection[uuid.UUID] = (),
+    ) -> None:
+        """The owner withdraws (`drop`) or freezes (`freeze`) grants of the user: the grant store
+        first, then the registry's notice, as production does."""
+        grants = (
+            replace(g, frozen=g.frozen or g.exchange_account_id in freeze)
+            for g in self.user_grants[login.user_id]
+        )
+        kept = tuple(g for g in grants if g.exchange_account_id not in drop)
+        self.user_grants[login.user_id] = kept
+        await self.registry.grants_changed(login.user_id)
 
     def revoke(self, login: Login) -> None:
         self.call(partial(self.sessions.revoke, str(login.minted.session_id), reason="logout"))
@@ -141,10 +188,13 @@ def delta(name: str, **labels: str) -> Callable[[], float]:
     return lambda: read() - start
 
 
-def authenticated(c: Client, login: Login) -> None:
+def authenticated(c: Client, login: Login) -> dict[str, Any]:
+    """`hello`, then `auth` with `login`'s token: the `auth_ok` frame."""
     hello(c)
     c.send({"t": "auth", "id": "a", "p": {"access_token": login.token}})
-    assert c.recv()["t"] == "auth_ok"
+    auth_ok = c.recv()
+    assert auth_ok["t"] == "auth_ok"
+    return auth_ok
 
 
 def served(c: Client) -> None:
@@ -176,20 +226,25 @@ def strike_out(
     the metrics, one `auth.login_failed` row with the source address and one `ws auth failed` log
     event per attempt."""
     assert len(frames) == 3
-    title = ERROR_META[ErrorCode.AUTH_FAILED].title
+    meta = ERROR_META[ErrorCode.AUTH_FAILED]
     failures = delta("cv_ws_auth_failures_total", reason=reason)
     errors = delta("cv_ws_errors_total", code="auth_failed")  # in process only (#2747)
     closes = delta("cv_ws_closes_total", reason="auth_failed")
     for n, frame in enumerate(frames[:2], 1):
         c.send({**frame, "id": f"a{n}"})
         err = c.recv_err()
-        got = (err["id"], err["p"]["code"], err["p"]["message"], err["p"]["close"])
-        assert got == (f"a{n}", "auth_failed", title, False)
+        assert err["id"] == f"a{n}"  # the whole payload: no field, request id or cause beside it
+        assert err["p"] == {
+            "code": "auth_failed",
+            "message": meta.title,
+            "retryable": meta.retryable,
+            "close": False,
+        }
         if user is not None:
             served(c)
     c.send({**frames[2], "id": "a3"})
     bye, code = c.bye_then_close()
-    assert (bye["p"]["reason"], bye["p"]["code"], code) == ("auth_failed", 4401, 4401)
+    assert (bye["p"], code) == (bye_frame("auth_failed")["p"], 4401)  # the catalogue's, whole
     assert (failures(), errors(), closes()) == (3, 2, 1)
     (row,) = world.audit.of("auth.login_failed")
     got = (row["reason"], row["severity"], row["actor_ip"], row["actor_user_id"])
@@ -197,3 +252,48 @@ def strike_out(
     logged = [e for e in world.events if e["event"] == "ws auth failed"]
     attempts = [(e["reason"], e["attempt"], e["reauth"], e["source_ip"]) for e in logged]
     assert attempts == [(reason, n, user is not None, SOURCE) for n in (1, 2, 3)]
+
+
+def delta_naming(family: str, account: uuid.UUID) -> dict[str, Any]:
+    """The contract suite's sample delta of an account-scoped `family`, its rows renamed to
+    `account` (a trade group's sample names none, so it gets a leg; a rule's rows never do): schema-
+    valid, and the account's id is in the data the owning module would publish for it."""
+    stock = SAMPLES["orders"][1]["orders"][0]["exchange_account_id"]  # the account the samples name
+    body: dict[str, Any] = json.loads(json.dumps(SAMPLES[family][1]).replace(stock, str(account)))
+    if family == "trade_groups":
+        leg = {"id": body["trade_groups"][0]["id"], "exchange_account_id": str(account)}
+        body["trade_groups"][0]["legs"] = [leg | {"status": "open"}]
+    return body
+
+
+def publish(world: RawWorld, family: str, account: uuid.UUID) -> int:
+    """One delta of `family` naming `account`, through the real hub on the app's loop: the number of
+    subscriptions it reached."""
+    body = delta_naming(family, account)
+    return int(world.call(lambda: world.hub.publish(family, body, account=account)))
+
+
+def drained(c: Client) -> list[dict[str, Any]]:
+    """Every frame queued for `c` so far, read through the `pong` of a `ping` sent now: with the
+    backpressure flag off one FIFO queue puts that reply after them."""
+    c.send({"t": "ping", "id": "drain"})
+    frames: list[dict[str, Any]] = []
+    while (frame := c.recv())["t"] != "pong":
+        frames.append(frame)
+    return frames
+
+
+def topic(family: str, *accounts: uuid.UUID) -> dict[str, Any]:
+    """A `sub` entry for `family` naming `accounts`."""
+    return {"ch": family, "opts": {"exchange_account_ids": [str(a) for a in accounts]}}
+
+
+def answers(c: Client, *topics: dict[str, Any]) -> list[dict[str, Any]]:
+    """The per-topic results of one `sub` frame, in request order."""
+    found: list[dict[str, Any]] = c.sub(*topics)["p"]["results"]
+    return found
+
+
+def naming(frames: Iterable[dict[str, Any]], account: uuid.UUID) -> list[dict[str, Any]]:
+    """The frames that carry `account`'s id anywhere: a row, a scope list or a refusal."""
+    return [f for f in frames if str(account) in json.dumps(f, default=repr)]
