@@ -268,8 +268,10 @@ WithheldReason = Literal["unknown_kind", "invalid_body", "no_principal", "no_rol
 WITHHELD_REASONS: Final[tuple[WithheldReason, ...]] = get_args(WithheldReason)
 cv_ws_system_frames_withheld_total = Counter(
     "cv_ws_system_frames_withheld_total",
-    "System frames not queued for a socket: an unknown kind, no kill switch state, no principal or "
-    "no role.",
+    "System WS frames not queued for a socket: a kind outside 23 section 15.9, a kill switch "
+    "without its state, no principal or no role (SR-188, #3125). A deny-all socket counts "
+    "every other frame as no_role. A Manager's or Viewer's feature_flags frame left with no "
+    "key it may learn is the contract and is not counted.",
     labelnames=("reason",),
 )
 # Bound now, as `cv_ws_closes_total` is, so each series exists at 0 from process start and the

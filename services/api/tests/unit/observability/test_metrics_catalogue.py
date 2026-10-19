@@ -372,6 +372,31 @@ def test_cvwb_encode_metrics_served_with_bounded_body_kind() -> None:
         collector.close()
 
 
+def test_ws_withheld_counter_exports_the_catalogue_help_word_for_word() -> None:
+    """#3538: the HELP a scrape serves for `cv_ws_system_frames_withheld_total` is its catalogue
+    help. `ws/metrics.py` declares the first and the catalogue the second, and nothing derives one
+    from the other, so #3224's sentence (a Manager's or Viewer's `feature_flags` frame left with
+    no key it may learn is the contract and is not counted) reached the catalogue alone. The text
+    is read as the collector serves it, before the exposition format's escaping, so no whitespace
+    is normalised. Only this counter is compared; the other WS series are not."""
+    from candleviewer.ws.metrics import export_ws_metrics
+
+    name = "cv_ws_system_frames_withheld_total"
+    (spec,) = [s for s in CATALOGUE if s.name == name]
+    m = Metrics("demo")
+    collector = export_ws_metrics(m.registry, env="demo")
+    try:
+        (exported,) = [
+            f.documentation for f in m.registry.collect() if f.name == name.removesuffix("_total")
+        ]
+    finally:
+        collector.close()
+    assert exported == spec.help, (
+        f"{name}: the exported HELP is not the catalogue help\n"
+        f"  exported : {exported!r}\n  catalogue: {spec.help!r}"
+    )
+
+
 def test_exported_recorder_metrics_served_with_env() -> None:
     """E16-T03: the StreamWriter series are `live`, served via `export_recorder_metrics`."""
     from candleviewer.recorder.metrics import (
