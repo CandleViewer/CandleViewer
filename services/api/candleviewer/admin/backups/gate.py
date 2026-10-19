@@ -13,7 +13,8 @@ so an await in between never lets a second admission through:
 is cancelled. A delete runs no job: under `admit_delete` BK-12 evaluates `backup_deleted`,
 `check()` (`backup_in_use`: any job on that backup) and `last_usable_backup`, writes its record,
 removes the artefact (`remover.remove` under the lock) and marks the row, one delete at a time
-(SR-BK0-08).
+(SR-BK0-08). A download link runs no job either: under `admit_link` BK-10 decides whether the
+backup is usable and writes its record, so neither interleaves with a delete; no job refuses it.
 
 Bounds (`limits`): an admission waits `ADMIT_WAIT_S` for the lock, then `OpsUnavailable` (503
 `store_unavailable`, retryable) with nothing registered; every await inside an admission needs
@@ -34,6 +35,7 @@ from candleviewer.admin.backups.ports import JobDone, JobKind, JobRunner, JobWor
 from candleviewer.admin.errors import AdminError, OpsUnavailable
 
 ConflictRule = Literal["backup_or_restore_running", "verify_running", "backup_in_use"]
+_NoJob = Literal["delete", "link"]  # admissions that run no job
 _BUSY: Final = "backup_or_restore_running"
 #: Per job kind: the running kinds that refuse it, in order, and the rule each answers.
 _EXCLUSIONS: Final[Mapping[JobKind, tuple[tuple[frozenset[str], ConflictRule], ...]]] = {
@@ -75,6 +77,9 @@ class BackupJobGate:
     def admit_delete(self, backup_id: UUID) -> AbstractAsyncContextManager[Admission]:
         return self._held(Admission(self, "delete", backup_id))
 
+    def admit_link(self, backup_id: UUID) -> AbstractAsyncContextManager[Admission]:
+        return self._held(Admission(self, "link", backup_id))
+
     @asynccontextmanager
     async def _held[A: Admission](self, admission: A) -> AsyncIterator[A]:
         try:
@@ -88,7 +93,9 @@ class BackupJobGate:
             admission.open = False
             self._lock.release()
 
-    def _refusal(self, kind: JobKind | Literal["delete"], backup_id: UUID) -> ConflictRule | None:
+    def _refusal(self, kind: JobKind | _NoJob, backup_id: UUID) -> ConflictRule | None:
+        if kind == "link":
+            return None
         if kind == "delete":
             used = any(backup == backup_id for _, backup in self._running.values())
             return "backup_in_use" if used else None
@@ -99,7 +106,7 @@ class BackupJobGate:
 class Admission:
     """The lock, held until the admission's `async with` block ends."""
 
-    def __init__(self, gate: BackupJobGate, kind: JobKind | Literal["delete"], on: UUID) -> None:
+    def __init__(self, gate: BackupJobGate, kind: JobKind | _NoJob, on: UUID) -> None:
         self._gate, self._kind, self._on, self.open = gate, kind, on, True
 
     def check(self) -> None:

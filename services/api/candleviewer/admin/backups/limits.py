@@ -20,3 +20,5 @@ JOB_DEADLINE_S: Final[Mapping[JobKind, float]] = {
     "backup_verify": 12 * _HOUR,
     "backup_restore": 24 * _HOUR,
 }
+RESOLVE_BUDGET_S: Final = 2.0  # one artefact resolve, under the admission lock
+LINK_RECORD_BUDGET_S: Final = 2.0  # one `backup.downloaded` record

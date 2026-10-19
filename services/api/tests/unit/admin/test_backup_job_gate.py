@@ -44,7 +44,8 @@ async def _done(end: JobEnd) -> None:
 
 @asynccontextmanager
 async def _enter(gate: BackupJobGate, kind: str, on: UUID) -> AsyncIterator[Admission]:
-    entered = gate.admit_delete(on) if kind == "delete" else gate.admit(cast(JobKind, kind), on)
+    others = {"delete": gate.admit_delete, "link": gate.admit_link}
+    entered = others[kind](on) if kind in others else gate.admit(cast(JobKind, kind), on)
     async with asyncio.timeout(_BOUND), entered as admission:
         yield admission
 
@@ -87,7 +88,9 @@ _TABLE: list[tuple[list[tuple[str, UUID]], str, UUID, str | None]] = [
     ([(RUN, X), (VERIFY, Y)], "delete", X, "backup_in_use"),
     ([(VERIFY, Y), (RUN, X)], "delete", X, "backup_in_use"),
     ([(RUN, Y), (VERIFY, Y)], "delete", X, None),  # another backup's jobs only
-    *[([], kind, X, None) for kind in (RUN, VERIFY, RESTORE, "delete")],
+    # BK-10: a link runs no job, so no job refuses it; the backup's usability decides.
+    *[([(kind, X)], "link", X, None) for kind in (RUN, VERIFY, RESTORE)],
+    *[([], kind, X, None) for kind in (RUN, VERIFY, RESTORE, "delete", "link")],
 ]
 
 
