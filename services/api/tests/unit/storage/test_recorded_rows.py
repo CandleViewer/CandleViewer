@@ -368,6 +368,7 @@ def test_unusable_required_price_fails_closed(bad: object) -> None:
         (StreamKind.TRADES, _trade(is_block="yes"), "is_block"),
         (StreamKind.TRADES, _trade(ts=None), "ts"),
         (StreamKind.TRADES, _trade(ts="yesterday"), "ts"),
+        (StreamKind.TRADES, _trade(ts=True), "ts"),  # a bool is not epoch µs: no int fast path
         (StreamKind.ORDERBOOK_DELTA, _delta(update_id=None), "update_id"),
         (StreamKind.ORDERBOOK_SNAPSHOT, _snapshot(bids=None), "bids"),
         (StreamKind.ORDERBOOK_SNAPSHOT, _snapshot(asks='[["NaN","1"]]'), "asks"),

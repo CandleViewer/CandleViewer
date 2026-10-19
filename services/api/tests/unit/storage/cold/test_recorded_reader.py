@@ -1481,8 +1481,9 @@ def test_exactly_the_cap_of_years_is_allowed_and_one_more_is_refused() -> None:
 
 def test_a_window_ending_in_the_calendars_last_microseconds_is_a_typed_error() -> None:
     """`months_between` steps through floats, which round the last instant into year 10000."""
-    with pytest.raises(ColdReplayReadError, match="out of range"):
+    with pytest.raises(ColdReplayReadError, match="out of range") as caught:
         recorded_reader._time_keys(YM, LAST_US - 30 * 24 * HOUR, LAST_US + 1)
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__  # no datetime text
 
 
 async def test_klines_of_other_months_are_not_opened(tmp_path: Path) -> None:
@@ -1577,6 +1578,8 @@ async def test_klines_partitions_count_against_the_cap_per_interval(
     assert len(reader._partitions(SYMBOL, StreamKind.KLINES, _at(2026, 10), _at(2026, 11))) == 2
     with pytest.raises(ColdReplayReadError, match="too many partitions"):
         reader._partitions(SYMBOL, StreamKind.KLINES, _at(2026, 9), _at(2026, 11))
+    monkeypatch.setattr(recorded_reader, "_MAX_PARTITIONS", 4)  # exactly the cap is read
+    assert len(reader._partitions(SYMBOL, StreamKind.KLINES, _at(2026, 9), _at(2026, 11))) == 4
 
 
 # --- read() and snapshot_at(): the boundaries the port promises ----------------------------

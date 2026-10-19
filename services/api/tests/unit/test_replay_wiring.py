@@ -22,6 +22,8 @@ from candleviewer.storage.questdb.recorded_reader import QuestDbRecordedReader
 from candleviewer.storage.questdb.wiring import LazyPgWire
 from candleviewer.storage.testing import StaticGapReader
 
+MIB, GIB = 1 << 20, 1 << 30
+
 
 def _settings(**overrides: Any) -> Settings:
     return Settings(_env_file=None, **overrides)  # type: ignore[call-arg]  # pydantic-settings kwarg
@@ -46,6 +48,27 @@ def test_readahead_bounds_come_from_the_cv_replay_settings(
 def test_a_ceiling_not_above_the_readahead_fails_at_startup() -> None:
     with pytest.raises(ValidationError, match="CV_REPLAY_MEMORY_CEILING_BYTES"):
         _settings(replay_readahead_bytes=64 << 20, replay_memory_ceiling_bytes=64 << 20)
+
+
+@pytest.mark.parametrize(
+    ("name", "bound", "past", "others"),
+    [
+        ("replay_readahead_events", 1_024, 1_023, {}),
+        ("replay_readahead_events", 4_194_304, 4_194_305, {}),
+        ("replay_readahead_bytes", MIB, MIB - 1, {}),
+        ("replay_readahead_bytes", GIB, GIB + 1, {"replay_memory_ceiling_bytes": 4 * GIB}),
+        ("replay_memory_ceiling_bytes", 2 * MIB, 2 * MIB - 1, {"replay_readahead_bytes": MIB}),
+        ("replay_memory_ceiling_bytes", 4 * GIB, 4 * GIB + 1, {}),
+    ],
+)
+def test_each_readahead_setting_takes_its_bound_and_refuses_one_past_it(
+    name: str, bound: int, past: int, others: dict[str, int]
+) -> None:
+    """C-2.18: no setting removes a read-ahead or memory bound. The other settings are chosen
+    so the ceiling still exceeds the read-ahead: only the bound under test can refuse."""
+    assert getattr(_settings(**others, **{name: bound}), name) == bound
+    with pytest.raises(ValidationError, match=name):  # the field's own bound, not the ceiling check
+        _settings(**others, **{name: past})
 
 
 def test_no_wiring_off_the_real_backend_or_without_a_gap_reader(tmp_path: Path) -> None:
