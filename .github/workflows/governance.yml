@@ -1,13 +1,18 @@
 name: governance
 
-# "governance" required-check job referenced by .github/branch-protection.json
-# phase 1 (E01-T08). Runs the GOV-00x structural checks plus:
+# The "governance" check (E01-T08). Branch protection requires only `ci-required`; the merge
+# procedure (AGENTS.md §4) requires this one green as well. It runs the GOV-00x structural
+# checks plus:
 #   - a canary self-test (--self-test) proving each checker still fails
 #     against a deliberately-broken fixture (scripts/gov_self_test.py),
 #   - a >=85% line coverage gate on scripts/** (CONSTITUTION.md §9 #3),
-#   - job-duration measurement against the 60s budget, recorded as a
+#   - job-duration measurement against the 90 s budget, recorded as a
 #     GitHub Actions annotation.
-# Owning ticket: E01-Q02.
+# Owning ticket: E01-Q02. #3789: three jobs in parallel instead of one. `governance-checks` runs
+# the checks, the canary and the reports; two `governance-tests` shards run the unit tests
+# (tools/ci/governance_shards.py splits the files by measured weight); `governance` needs all
+# three, combines the shards' coverage, applies the 85% gate and fails unless every job passed,
+# so the `governance` check still means the whole set. Each job checks its own duration.
 
 on:
   pull_request:
@@ -22,8 +27,10 @@ permissions:
   contents: read
 
 jobs:
-  governance:
+  governance-checks:
+    name: governance-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: "Record job start time (perf budget <=90s, E01-Q02)"
         id: gov_start
@@ -32,6 +39,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # verify_migration_lockfile needs merge-base
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -117,19 +125,6 @@ jobs:
         # (E01-Q02 acceptance scenario "the job proves it can still fail").
         run: python scripts/gov_self_test.py --self-test
 
-      - name: Governance script unit tests (>=85% coverage gate on scripts/**)
-        env:
-          # Line coverage only (no branch config anywhere), so coverage.py can
-          # measure with sys.monitoring on 3.13: identical per-file results,
-          # about 2x faster than the default ctrace core, which pays a trace
-          # call per frame even in unmeasured code (the ast/YAML-heavy tests).
-          # If branch coverage is ever enabled, coverage.py warns and falls
-          # back to ctrace: slower, never weaker (#2557).
-          COVERAGE_CORE: sysmon
-        run: >
-          python -m pytest scripts/tests scripts/gh/tests -q -n auto --dist worksteal
-          --cov=scripts --cov-report=term-missing --cov-fail-under=85
-
       - name: Generate CODEOWNERS ownership report (artefact, only if GOV-001 did not run)
         if: ${{ always() && steps.gov001.outcome == 'skipped' }}
         run: python scripts/check_codeowners_coverage.py --report > gov-artifacts/codeowners-ownership-report.txt
@@ -156,16 +151,164 @@ jobs:
         run: |
           end_ns=$(date +%s%N)
           duration_ms=$(( (end_ns - START_NS) / 1000000 ))
-          echo "governance job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
+          echo "$GITHUB_JOB job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
           {
-            echo "### governance duration"
+            echo "### $GITHUB_JOB duration"
             echo "| metric | ms |"
             echo "|---|---|"
             echo "| wall time | ${duration_ms} |"
             echo "| budget | ${BUDGET_MS} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=governance job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
+          echo "::notice title=$GITHUB_JOB job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
           if [ "$duration_ms" -gt "$BUDGET_MS" ]; then
-            echo "::error title=governance job over budget::${duration_ms}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+            echo "::error title=$GITHUB_JOB job over budget::${duration_ms}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+            exit 1
+          fi
+
+  governance-tests:
+    # The unit tests, in two shards of about equal measured weight (#3789): one job ran them in
+    # 55-69 s of a 90 s budget. Each shard writes raw coverage data only; `governance` combines it.
+    name: governance-tests (${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: "Record job start time (perf budget <=90s, E01-Q02)"
+        id: gov_start
+        run: echo "start_ns=$(date +%s%N)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # some tests read the history (merge-base)
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: scripts/requirements-ci.txt
+
+      - name: Install check dependencies (PyYAML for GOV-004, pytest(-cov) for unit tests)
+        run: python -m pip install --quiet -r scripts/requirements-ci.txt
+
+      - name: Governance script unit tests, one shard (coverage data for the 85% gate)
+        env:
+          # Line coverage only (no branch config anywhere), so coverage.py can
+          # measure with sys.monitoring on 3.13: identical per-file results,
+          # about 2x faster than the default ctrace core, which pays a trace
+          # call per frame even in unmeasured code (the ast/YAML-heavy tests).
+          # If branch coverage is ever enabled, coverage.py warns and falls
+          # back to ctrace: slower, never weaker (#2557).
+          COVERAGE_CORE: sysmon
+          COVERAGE_FILE: coverage-shard-${{ matrix.shard }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          listing=$(python tools/ci/governance_shards.py "$SHARD" 2)
+          mapfile -t files <<< "$listing"
+          python -m pytest "${files[@]}" -q -n auto --dist worksteal \
+            --cov=scripts --cov-report= --cov-fail-under=0
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: governance-coverage-${{ matrix.shard }}
+          path: coverage-shard-${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 5 # a later "Re-run failed jobs" of `governance` still finds both shards
+
+      - name: Job duration budget (<=BUDGET_MS, E01-Q02)
+        if: always()
+        continue-on-error: false
+        env:
+          BUDGET_MS: "90000"
+          START_NS: ${{ steps.gov_start.outputs.start_ns }}
+        run: |
+          end_ns=$(date +%s%N)
+          duration_ms=$(( (end_ns - START_NS) / 1000000 ))
+          echo "$GITHUB_JOB job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
+          {
+            echo "### $GITHUB_JOB duration"
+            echo "| metric | ms |"
+            echo "|---|---|"
+            echo "| wall time | ${duration_ms} |"
+            echo "| budget | ${BUDGET_MS} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=$GITHUB_JOB job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
+          if [ "$duration_ms" -gt "$BUDGET_MS" ]; then
+            echo "::error title=$GITHUB_JOB job over budget::${duration_ms}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+            exit 1
+          fi
+
+  governance:
+    # The check people and tools read: green only when the checks and both test shards passed
+    # and the shards' combined coverage of scripts/** is at least 85% (CONSTITUTION.md §9 #3).
+    name: governance
+    needs: [governance-checks, governance-tests]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: "Record job start time (perf budget <=90s, E01-Q02)"
+        id: gov_start
+        run: echo "start_ns=$(date +%s%N)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1 # coverage report reads the sources only
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: scripts/requirements-ci.txt
+
+      - name: Install check dependencies (PyYAML for GOV-004, pytest(-cov) for unit tests)
+        run: python -m pip install --quiet -r scripts/requirements-ci.txt
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: governance-coverage-*
+          merge-multiple: true
+
+      - name: Combined coverage of scripts/** (>=85% gate)
+        run: |
+          set -euo pipefail
+          python -m coverage combine coverage-shard-1 coverage-shard-2
+          python -m coverage report -m --fail-under=85
+
+      - name: Every governance job passed
+        if: ${{ !cancelled() }}
+        env:
+          CHECKS: ${{ needs.governance-checks.result }}
+          TESTS: ${{ needs.governance-tests.result }}
+        run: |
+          echo "governance-checks: $CHECKS; governance-tests (both shards): $TESTS"
+          [ "$CHECKS" = success ] && [ "$TESTS" = success ]
+
+      - name: Job duration budget (<=BUDGET_MS, E01-Q02)
+        if: always()
+        continue-on-error: false
+        env:
+          BUDGET_MS: "90000"
+          START_NS: ${{ steps.gov_start.outputs.start_ns }}
+        run: |
+          end_ns=$(date +%s%N)
+          duration_ms=$(( (end_ns - START_NS) / 1000000 ))
+          echo "$GITHUB_JOB job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
+          {
+            echo "### $GITHUB_JOB duration"
+            echo "| metric | ms |"
+            echo "|---|---|"
+            echo "| wall time | ${duration_ms} |"
+            echo "| budget | ${BUDGET_MS} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=$GITHUB_JOB job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
+          if [ "$duration_ms" -gt "$BUDGET_MS" ]; then
+            echo "::error title=$GITHUB_JOB job over budget::${duration_ms}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
             exit 1
           fi

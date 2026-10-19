@@ -102,9 +102,11 @@ def test_registered_kind_beats_union_for_nonliteral_key(tmp_path: Path) -> None:
 
 
 def test_real_repo_wiring_is_resolved_and_clean() -> None:
-    from tools.statechart.event_coverage import DEFAULT_SCAN, scan_tree
+    from tools.statechart.event_coverage import DEFAULT_MACHINES, DEFAULT_SCAN, scan_tree
 
+    # One scan of the real tree, judged as `main([])` judges it (exit 0 means no finding): a second
+    # scan through main() doubled the slowest governance test (#3789).
     sites = scan_tree(DEFAULT_SCAN)
     session = {s.event for s in sites if s.key == "session"}
     assert {"MFA_OK", "REVOKE", "REQUEST"} <= session
-    assert main([]) == 0
+    assert check(sites, load_descriptors(DEFAULT_MACHINES)) == []
