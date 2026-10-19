@@ -915,6 +915,35 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bars_series_incomplete_in_use",
+        "gauge",
+        "series",
+        (),
+        "Held WS bars series that are not complete: not hydrated (no clean read of their stored"
+        " tail) or gapped (a live close skipped past their newest bar); each is read again when"
+        " due.",
+        "sustained above 0 = held series served without their stored history (bar storage slow"
+        " or down, or a hole the writer never lands)",
+        _L,
+        "E12",
+        exported=True,
+    ),
+    _s(
+        "bars_series_repair_failed_total",
+        "counter",
+        "repairs",
+        ("reason",),
+        "WS series store repairs that did not go out as counted (reason: depth = the repair's"
+        " depth could not be counted and went out as 1, extra snaps; hook = the repair hook"
+        " raised, the read stands and the series' subscribers keep their snapshot).",
+        "depth = a fault in the store's repair walk (snaps reach every history); hook = a repaired"
+        " series whose subscribers got no history_repair snap; see the log",
+        _L,
+        "E12",
+        max_series=2,
+        exported=True,
+    ),
+    _s(
         "bars_endpoint_rows_returned_total",
         "counter",
         "bars",

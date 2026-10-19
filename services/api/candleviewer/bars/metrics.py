@@ -120,6 +120,20 @@ bars_series_gap_rereads_total = Counter(
     "WS series store tail reads that found a series gapped and left it gapped (its re-read"
     " interval doubles, up to a cap).",
 )
+#: The heal driver's view (#2787 D2-H1): held series that are not complete, counted at scrape
+#: time (`SeriesStore.incomplete_count`); repairs not sent as counted, by reason.
+bars_series_incomplete_in_use = Gauge(
+    "bars_series_incomplete_in_use",
+    "Held WS bars series that are not complete: not hydrated (no clean read of their stored tail)"
+    " or gapped (a live close skipped past their newest bar); each is read again when due.",
+)
+bars_series_repair_failed_total = Counter(
+    "bars_series_repair_failed_total",
+    "WS series store repairs that did not go out as counted (reason: depth = the repair's depth"
+    " could not be counted and went out as 1, extra snaps; hook = the repair hook raised, the"
+    " read stands and the series' subscribers keep their snapshot).",
+    labelnames=("reason",),
+)
 
 # --- E12-T05 (#398) `/market/klines` + `/market/bars` endpoint series -----------------------
 #: Allow-listed label values (bounded cardinality; never client text).
@@ -192,6 +206,8 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_series_resets_total",
         "bars_series_read_waits_total",
         "bars_series_gap_rereads_total",
+        "bars_series_incomplete_in_use",
+        "bars_series_repair_failed_total",
         "bar_builder_quarantined_total",
         "bars_restore_gap_total",
         "bars_kline_refused_total",  # bars.kline_rows (#2053)
