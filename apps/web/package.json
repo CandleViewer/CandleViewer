@@ -24,7 +24,7 @@
     "react-router-dom": "^6.28.1"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.10.1",
+    "@axe-core/playwright": "^4.14.0",
     "@candleviewer/chart-engine": "workspace:*",
     "@candleviewer/config": "workspace:*",
     "@candleviewer/protocol": "workspace:*",
