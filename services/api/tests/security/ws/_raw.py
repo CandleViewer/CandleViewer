@@ -3,6 +3,8 @@ a gateway audit sink, driven by a raw client that keeps none of the web client's
 keeps its production wiring and fake clock. Added: a real `SessionService` behind production's
 `app._session_authenticator` (enrolment gate off; E09-X02 covers it), the grants `login` gives each
 user, and E09-X02's `RegistryAudit` (the gateway's `emit` kwargs, checked for the action name only).
+Slice b2 adds the backpressure flag, `races` (a change landing while a principal read is parked)
+and `positions` and `orders` snapshots that name their accounts.
 No code is shared with `apps/web`: frames are hand-built and sent unvalidated.
 """
 
@@ -10,7 +12,15 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable, Collection, Iterable, Iterator, MutableMapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    MutableMapping,
+    Sequence,
+)
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -31,15 +41,18 @@ from candleviewer.auth.models import MintedSession
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.lifecycle import bye_frame
+from candleviewer.ws.permissions import Subscription
+from candleviewer.ws.sequencing import SnapshotBody
 from candleviewer.ws.topics import FAMILIES
 from tests.contract.ws import _harness
 from tests.contract.ws._harness import WIRE_SUBPROTOCOL, Client, World, current_offer, current_wire
 from tests.contract.ws._support import SAMPLES, recv_json
 from tests.security.auth._stack import RegistryAudit
 from tests.unit.auth.session_fakes import FakeSessionRepository
-from tests.unit.ws._seq_support import ACC_A, ACC_B
+from tests.unit.ws._seq_support import ACC_A, ACC_B, Source
 
 SOURCE = "testclient"  # the test client's address, as the gateway records it
 #: Every account-scoped family (23-ws-protocol.md §6.2), by the registry: a new one is covered too.
@@ -77,12 +90,33 @@ class RawClient(Client):
         pytest.fail("a frame arrived, not a close")
 
 
+class NamingSource(Source):
+    """The harness's snapshot `Source`, its `positions` and `orders` bodies naming each account the
+    subscription holds, a row apiece as the owning module's would (the stock bodies are empty): a
+    snapshot built under a scope that still holds a withdrawn account then names it."""
+
+    def build(self, sub: Subscription) -> SnapshotBody | None:
+        body = super().build(sub)
+        family = sub.topic.family.family
+        if body is None or family not in {"positions", "orders"}:
+            return body
+        rows = [row for a in sorted(sub.accounts) for row in delta_naming(family, a)[family]]
+        return replace(body, structured={family: rows})
+
+
 class RawWorld(World):
     """`World` whose tokens are minted, expired and revoked by a real `SessionService`, and whose
     users hold the grants `login` gave them."""
 
-    def __init__(self, log: pytest.LogCaptureFixture, std: pytest.CaptureFixture[str]) -> None:
+    def __init__(
+        self,
+        log: pytest.LogCaptureFixture,
+        std: pytest.CaptureFixture[str],
+        backpressure: BackpressureConfig | None = None,
+    ) -> None:
         self.audit = RegistryAudit()
+        self.reads = 0  # principal reads so far; `races[n]` runs while read n is parked
+        self.races: dict[int, Callable[[], Awaitable[None]]] = {}
         self.events: list[MutableMapping[str, Any]] = []  # gateway log events (`world` fixture)
         self.log, self.std, self.printed = log, std, ""  # stdlib logging, stdout and stderr
         self.user_grants: dict[uuid.UUID, tuple[AccountGrant, ...]] = {}  # `login` gave each user
@@ -92,8 +126,11 @@ class RawWorld(World):
             auth=SimpleNamespace(sessions=self.sessions, enrolment_gate_is_active=False)
         )
         self.verify = _session_authenticator(ctx, ctx)  # the refusals go unused: the gate is off
-        with patch.object(_harness, "make_ws_router", partial(make_ws_router, audit=self.audit)):
-            super().__init__()  # `World` builds its router with no audit sink
+        with (
+            patch.object(_harness, "make_ws_router", partial(make_ws_router, audit=self.audit)),
+            patch.object(_harness, "Source", NamingSource),
+        ):
+            super().__init__(backpressure=backpressure)  # `World`: no audit sink on its router
         self.registry.services.audit = self.audit  # production's one sink also takes `sub`'s rows
 
     def utc_now(self) -> datetime:
@@ -107,7 +144,11 @@ class RawWorld(World):
         role, perms = self.user_access.get(uid, ("manager", None))  # a user `login` never made
         if perms is None:
             perms = self.perms if role == "manager" else role_permissions(role)
-        return PrincipalSnapshot(uid, frozenset({role}), perms, self.user_grants.get(uid, ()))
+        principal = PrincipalSnapshot(uid, frozenset({role}), perms, self.user_grants.get(uid, ()))
+        self.reads += 1
+        if (race := self.races.pop(self.reads, None)) is not None:
+            await race()  # the grant changes after this read took its snapshot, before it returns
+        return principal
 
     def login(
         self,
