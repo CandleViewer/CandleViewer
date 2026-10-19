@@ -82,7 +82,19 @@ def test_board_automation_runs_no_job_unless_the_guards_enforce() -> None:
     jobs = _load("board-automation.yml")["jobs"]
     assert sorted(jobs) == ["close-guards", "kind-sync", "security-label-sync"]
     for name, job in jobs.items():
+        # Only `&&` after the gate: an `||` would let a job run without it.
         assert str(job["if"]).startswith(f"{ENFORCING} && "), name
+        assert "||" not in str(job["if"]), name
+        assert job["permissions"] == {"issues": "write", "contents": "read"}, name
+    # A close has its own group, so a label event right after it cannot cancel the close guards.
+    group = (
+        "board-${{ github.event.issue.number }}-"
+        "${{ github.event.action == 'closed' && 'close' || 'sync' }}"
+    )
+    assert _load("board-automation.yml")["concurrency"] == {
+        "group": group,
+        "cancel-in-progress": True,
+    }
 
 
 def test_board_automation_runs_the_three_close_guards_in_one_job() -> None:
@@ -92,12 +104,18 @@ def test_board_automation_runs_the_three_close_guards_in_one_job() -> None:
         "ISSUE_NUMBER": "${{ github.event.issue.number }}",
         "ACTOR_LOGIN": "${{ github.event.sender.login }}",
     }
-    guards = [step for step in job["steps"] if "run" in step]
+    steps = job["steps"]
+    guards = [step for step in steps if "run" in step]
     assert [step["run"] for step in guards] == [
         f"python -m scripts.gh.run_guard {guard}" for guard in CLOSE_GUARDS
     ]
     # One guard's failure never skips another's check: each later guard runs unless the run was
-    # cancelled or Python never got set up.
+    # cancelled or Python never got set up, and a hung guard fails its own step at the timeout.
     assert "if" not in guards[0]
     after = "${{ !cancelled() && steps.python.outcome == 'success' }}"
     assert [step["if"] for step in guards[1:]] == [after, after]
+    assert [step["timeout-minutes"] for step in guards] == [5, 5, 5]
+    # The step that condition reads exists, sets up Python, and comes before every guard.
+    (python,) = [i for i, step in enumerate(steps) if step.get("id") == "python"]
+    assert str(steps[python]["uses"]).startswith("actions/setup-python@")
+    assert python < steps.index(guards[0])

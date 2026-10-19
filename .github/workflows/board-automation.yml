@@ -7,10 +7,10 @@ name: Board automation
 # docs/plan/04-security-program.md #6.17).
 #
 # Rollout: the jobs run only while the GOVERNANCE_ENFORCE repo variable is
-# "true" (#3751). Unset or "false", every job is skipped and takes no runner:
-# the observe-only mode ran two to three jobs per issue event (about 500 runs
-# in 10 hours on 2026-10-19) that only logged would-have decisions while PR
-# CI waited for runners. Set the variable to "true" to enforce.
+# "true" (#3751; in any letter case, without spaces). Unset or anything else,
+# every job is skipped and takes no runner: the observe-only mode ran one to
+# three jobs per issue event (about 500 runs in 10 hours on 2026-10-19) that
+# only logged would-have decisions while PR CI waited for runners.
 #
 # Credentials: `basiltt/CandleViewer` is a single-owner, user-level repo with
 # no GitHub organization (ADR-0017 Q1) -- org-team-membership endpoints
@@ -33,8 +33,10 @@ on:
     # keys on labels, the close guards on `closed`.
     types: [opened, labeled, unlabeled, closed]
 
+# A newer event replaces an issue's queued or running sync run. A close has a group of its own
+# (#3751), so a label change right after it cannot cancel the close guards before they finish.
 concurrency:
-  group: board-${{ github.event.issue.number }}
+  group: board-${{ github.event.issue.number }}-${{ github.event.action == 'closed' && 'close' || 'sync' }}
   cancel-in-progress: true
 
 permissions:
@@ -112,11 +114,15 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      # A guard that hangs fails its own step at the timeout, so the next guard still runs.
       - name: Run QA sign-off guard
+        timeout-minutes: 5
         run: python -m scripts.gh.run_guard qa-guard
       - name: Run security-close guard
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        timeout-minutes: 5
         run: python -m scripts.gh.run_guard security-guard --mode close
       - name: Run a11y run-link guard
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        timeout-minutes: 5
         run: python -m scripts.gh.run_guard a11y-guard

@@ -8,7 +8,8 @@ name: regression-guard
 on:
   pull_request:
     # #3751: the guard reads the PR's files and body (its `Closes #N` lines) and each closed
-    # issue's own labels, never the PR's labels, so a PR label event changes nothing it reads.
+    # issue's own labels and body, never the PR's labels, so a PR label event changes nothing
+    # it reads.
     types: [opened, edited, synchronize, reopened]
 
 permissions:
