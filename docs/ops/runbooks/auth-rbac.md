@@ -627,7 +627,7 @@ To answer a denial:
 
 1. Find the denial in the audit log. The `permission` label of `authz_denied_total` (below) says
    which decider counted it, and the audit action differs:
-   - `enforce` routes (`users:write` today): action `rbac.denied`,
+   - `enforce` routes (`users:write`, `keys:manage`, `keys:read`) and the key store's owner gate (`keys:read`, reason `not_owner:keys:read:granted_accounts`): action `rbac.denied`,
      `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=rbac.denied"` (add
      `&actor_user_id=<id>`). The entry names the permission and scope (`auth/scopes.py`, `enforce`).
    - Admin-area routes on the E42 guard (`admin/http.py`; `permission="admin:read"` today): action
@@ -661,7 +661,7 @@ generated vocabulary plus `other`).
   `503` for a missing audit writer, and not an allowed caller whose audit write fails (a `503`).
 - The key store's owner gate, for `testApiKey` (`api/exchange_keys.py`, audit row `rbac.denied` with
   reason `not_owner:keys:read:granted_accounts`): a caller `enforce` let through whom the store then
-  refuses (SR-051) counts under `keys:read`, even when its audit row cannot be written.
+  refuses (SR-051) counts under `keys:read`, even when its audit row cannot be written; then only the warning log `key_test_denial_unaudited` (actor and account ids) names the caller.
 
 Not counted:
 
@@ -676,7 +676,7 @@ Read it on the metrics listener, for example
 `curl -s http://127.0.0.1:9108/metrics | grep '^authz_denied_total'` (every permission is listed at 0
 from process start). The `AuthzDeniedSpike` rule fires above 20 denials in 10 minutes
 (`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission). Today a spike on
-`admin:read` comes from the admin-area guard and one on `users:write` from `enforce`; use the
+`admin:read` comes from the admin-area guard, one on `users:write` or `keys:manage` from `enforce`, and one on `keys:read` from `enforce` or the key store's owner gate; use the
 matching query in step 1.
 
 **`auth_stepup_failures_total`** (no labels) counts each failed step-up verification: wrong password,
