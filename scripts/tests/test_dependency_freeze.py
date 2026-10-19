@@ -9,6 +9,8 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+# The latest expiry an accepted risk may carry, the GA cut: 04-security-program.md §16.2 names it.
+FREEZE_CAP = dt.date(2027, 3, 25)
 
 
 def test_accepted_risks_are_time_boxed_and_never_critical() -> None:
@@ -20,8 +22,24 @@ def test_accepted_risks_are_time_boxed_and_never_critical() -> None:
             if isinstance(e["expires"], dt.date)
             else dt.date.fromisoformat(e["expires"])
         )
-        assert exp <= dt.date(2027, 3, 25), e["id"]
+        assert exp <= FREEZE_CAP, e["id"]
         assert e["approver"] == "basiltt"
+
+
+def test_security_program_names_the_register_as_the_scan_exception_record() -> None:
+    # #3587: SR-156 and §16.2 make each scanner finding's register entry its exception record.
+    text = (ROOT / "docs/plan/04-security-program.md").read_text(encoding="utf-8")
+    (sr156,) = [line for line in text.splitlines() if line.startswith("| SR-156 |")]
+    assert "`security/accepted-risks.yaml`" in sr156 and "§16.2" in sr156
+    prose = text.split("### 16.2 Exception process\n", 1)[1].split("\n| Exception id |", 1)[0]
+    for name in ("security/accepted-risks.yaml", "tools/ci/security_gate.py"):
+        assert f"`{name}`" in prose, name
+    assert f"the GA cut, {FREEZE_CAP.isoformat()}, the cap" in prose
+    # What §16.2 says each entry carries, so every entry carries it (`expires` is the expiry date).
+    assert "id, tool, severity, reason, approver, expiry date and ticket" in prose
+    doc = yaml.safe_load((ROOT / "security/accepted-risks.yaml").read_text(encoding="utf-8"))
+    fields = ("id", "tool", "severity", "reason", "approver", "expires", "ticket")
+    assert [e["id"] for e in doc["entries"] if not all(e.get(f) for f in fields)] == []
 
 
 def test_tar_override_pinned_past_critical_advisory() -> None:

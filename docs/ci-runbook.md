@@ -49,8 +49,8 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
-│                                      read-only-scans (security-auth, pip-audit, npm-audit,
-│                                      license-scan)                    (CI-SEC-001..005)
+│                                      read-only-scans (security-auth, pip-audit, register
+│                                      pins, npm-audit, license-scan)   (CI-SEC-001..005)
 ├─ _job-coverage.yml (js/py filters) → per-package threshold            (CI-COV-001..004)
 ├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
 │                                      (CI-BEN-001, stub pending E03-T14)
