@@ -539,3 +539,19 @@ def test_a_job_that_may_report_as_ci_required_fails_the_proof(tmp_path, file, jo
         str(workflows / "*.yml"),
     )
     assert any("the check-run name of 2 jobs" in e for e in errors), errors
+
+
+def test_a_file_over_the_read_bound_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #3716: _read takes MAX_READ_CHARS + 1 characters at most and refuses a longer file, and
+    # load_json reads through it (cv-unbounded-read).
+    monkeypatch.setattr(recon, "MAX_READ_CHARS", 8)
+    at, over = tmp_path / "at.json", tmp_path / "over.json"
+    at.write_text("{}" + " " * 6, encoding="utf-8")
+    over.write_text("{}" + " " * 7, encoding="utf-8")
+    assert recon.load_json(str(at)) == {}
+    with pytest.raises(recon.ReconciliationError, match="over 8 characters"):
+        recon.load_json(str(over))
+    with pytest.raises(recon.ReconciliationError, match="file not found"):
+        recon.load_json(str(tmp_path / "missing.json"))

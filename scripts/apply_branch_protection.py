@@ -28,12 +28,15 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from check_required_check_reconciliation import ReconciliationError, load_workflow_job_names
 
 DEFAULT_DESIRED_STATE_PATH = ".github/branch-protection.json"
 API_BASE = "https://api.github.com"
+#: The most an API answer may hold. The protection and rules answers are a few kB, so a larger
+#: one is refused rather than buffered (cv-unbounded-read, #3716).
+MAX_RESPONSE_BYTES = 1 << 20
 GITHUB_ACTIONS_APP_ID = 15368
 
 # Every setting the file declares, with its JSON type (a dict holds nested settings). A full PUT
@@ -93,6 +96,18 @@ class DesiredStateError(Exception):
 
 class ApplyError(Exception):
     """Raised when the GitHub API call fails."""
+
+
+class _Body(Protocol):
+    def read(self, amt: int, /) -> bytes: ...
+
+
+def _read_answer(response: _Body, url: str) -> bytes:
+    """The answer's body, refused when it is over MAX_RESPONSE_BYTES."""
+    body = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise ApplyError(f"{url}: the answer is over {MAX_RESPONSE_BYTES} bytes")
+    return body
 
 
 @dataclass(frozen=True)
@@ -250,7 +265,7 @@ def fetch_live_state(repo: str, token: str, branch: str = "main") -> dict:
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            return _normalise_live_state(json.loads(response.read()))
+            return _normalise_live_state(json.loads(_read_answer(response, url)))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             # No protection configured yet — treat as an empty live state.
@@ -354,7 +369,7 @@ def apply_state(repo: str, token: str, payload: dict, branch: str = "main") -> N
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            response.read()
+            _read_answer(response, url)
     except urllib.error.HTTPError as exc:
         raise ApplyError(f"PUT {url} failed: {exc.code} {exc.reason}") from exc
     except urllib.error.URLError as exc:
@@ -383,7 +398,7 @@ def fetch_branch_rules(repo: str, token: str, branch: str = "main") -> dict:
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            body = response.read()
+            body = _read_answer(response, url)
     except urllib.error.HTTPError as exc:
         raise ApplyError(f"GET {url} failed: {exc.code} {exc.reason}") from exc
     except urllib.error.URLError as exc:
