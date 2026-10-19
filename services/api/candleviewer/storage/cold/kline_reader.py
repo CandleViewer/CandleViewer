@@ -110,9 +110,16 @@ class ParquetKlineReader:
         )
 
     async def _files(self, paths: ColdPaths) -> list[str]:
-        entries = await asyncio.to_thread(
-            ManifestStore(paths.manifests_dir).read, paths.partition_dir, paths.root
-        )
+        store = ManifestStore(paths.manifests_dir)
+        read = store.read_with_quarantine
+        try:
+            entries, quarantined = await asyncio.to_thread(read, paths.partition_dir, paths.root)
+        except OSError:  # its text names the path: typed, with no chain (503)
+            raise ColdKlineReadError("cold kline partition could not be listed") from None
+        if quarantined:
+            # #3477: the manifest no longer names the quarantined part, so the month's other
+            # parts would pass for all of it. Fail the cold read (503) until it is cleared.
+            raise ColdKlineReadError("cold kline partition holds a quarantined part")
         files = [paths.partition_dir / e.file for e in entries]
         if not files:
             return []

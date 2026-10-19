@@ -19,13 +19,16 @@ from candleviewer.replay import (
     ReplayItem,
     ReplayRequest,
     ReplaySource,
+    ReplaySourceUnavailable,
     ReplayTiers,
     ReplayTierStraddle,
     SourceTier,
 )
 from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import DatasetRegistry
+from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.recorded_reader import ParquetRecordedReader
+from candleviewer.storage.cold.scrub import scrub_all
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import event_from_row
 from candleviewer.storage.testing import (
@@ -115,3 +118,23 @@ async def test_a_window_straddling_the_archive_edge_is_refused_before_any_read(
 
     assert (raised.value.stream, raised.value.archived) == (StreamKind.TRADES, (HOURS[0],))
     assert still_hot.reads == 0
+
+
+async def test_an_archived_hour_that_lost_its_only_part_refuses_rather_than_replaying_empty(
+    tmp_path: Path,
+) -> None:
+    """#3477: the scrub quarantined the hour's only trades part, so its manifest covers nothing
+    and `auto` would read QuestDB, which roll-off already emptied: a silent empty replay. The
+    coverage refuses the marked partition, so the session fails typed before any read."""
+    root = tmp_path / "cold"
+    cold = await _archived(root, HOURS[:1])
+    next((root / "trades").rglob("part-*.parquet")).unlink()
+    assert await scrub_all(DatasetRegistry(root), LoggingSystemEventSink()) == 1
+    dropped = InMemoryRecordedTier()  # roll-off dropped the hour from QuestDB
+    tiers = ReplayTiers(hot=dropped, cold=cold, coverage=cold, gaps=StaticGapReader())
+    trades = _request("auto").model_copy(update={"streams": (StreamKind.TRADES,)})
+
+    with pytest.raises(ReplaySourceUnavailable):
+        await _replay(ReplaySource(trades, tiers))
+
+    assert dropped.reads == 0

@@ -289,7 +289,9 @@ class ManifestCoverage(Protocol):
 
     Roll-off writes and verifies a partition's manifest before it may drop the hot day (21
     Sec.5.3), so a span with no manifest was never dropped holding data: QuestDB still has
-    whatever was recorded there."""
+    whatever was recorded there. A quarantine breaks that: it takes a part out of a manifest
+    after the drop, so a partition that lost a part is refused with the tier's typed error,
+    never reported as uncovered (#3477)."""
 
     async def archived(
         self, symbol: str, stream: StreamKind, rng: TimeRange

@@ -4,6 +4,8 @@ crash-point resume reconciliation."""
 
 from __future__ import annotations
 
+import shutil
+import sys
 from pathlib import Path
 
 import pyarrow as pa
@@ -176,3 +178,93 @@ def test_quarantine_moves_file_and_drops_manifest_entry(tmp_path: Path) -> None:
     assert rel.parts[0] == "_quarantine"
     assert store.read(part, tmp_path) == []
     store.quarantine(part, tmp_path, dest.name)  # idempotent when already moved
+
+
+def test_a_quarantine_marks_its_partition_until_its_mirror_is_removed(tmp_path: Path) -> None:
+    """#3477: `_quarantine/<partition>/` is the mark its readers refuse on; the runbook's last
+    step, removing it after a verified re-export, clears it."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    other = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-18"
+    dest = part / "part-0000.parquet"
+    rows = _write_sample(dest, [1])
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry(dest.name, sha256_of(dest), rows, "trades", "r", 1)])
+    assert not store.has_quarantined_part(part, tmp_path)
+
+    rel = store.quarantine(part, tmp_path, dest.name)
+
+    assert store.has_quarantined_part(part, tmp_path)
+    assert not store.has_quarantined_part(other, tmp_path)
+    shutil.rmtree((tmp_path / rel).parent)
+    assert not store.has_quarantined_part(part, tmp_path)
+
+
+def test_a_partition_retention_removed_is_no_longer_marked(tmp_path: Path) -> None:
+    """Retention deletes the partition and its manifest, never `_quarantine/`: with no manifest
+    left nothing can be served partly, so the stale mark refuses nothing."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry("part-0000.parquet", "0" * 64, 1, "trades", "r", 1)])
+    store.quarantine(part, tmp_path, "part-0000.parquet")
+    assert store.has_quarantined_part(part, tmp_path)
+
+    (tmp_path / "_manifests" / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17.json").unlink()
+
+    assert not store.has_quarantined_part(part, tmp_path)
+    assert store.read_with_quarantine(part, tmp_path) == ([], False)
+
+
+def test_a_part_found_missing_marks_its_partition_too(tmp_path: Path) -> None:
+    """An entry whose file is gone is quarantined by its entry alone: nothing moves, and the
+    mirror is an empty directory, which marks the partition all the same."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry("part-0000.parquet", "0" * 64, 1, "trades", "r", 1)])
+
+    rel = store.quarantine(part, tmp_path, "part-0000.parquet")
+
+    assert not any((tmp_path / rel).parent.iterdir())
+    assert store.has_quarantined_part(part, tmp_path)
+
+
+@pytest.mark.parametrize("part_present", [True, False], ids=["part-moved", "part-missing"])
+def test_a_quarantine_marks_its_partition_before_it_shrinks_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part_present: bool
+) -> None:
+    """#3477: a reader reads the manifest, then looks for the mark (`read_with_quarantine`). It
+    can only refuse a partition whose manifest is already shrunk if `quarantine` made the mark
+    first: marked second, a read landing between the two would serve what is left as the whole
+    partition. Whether the part moves or is already gone, the mark is there at the shrink."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    mirror = tmp_path / "_quarantine" / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    dest = part / "part-0000.parquet"
+    if part_present:
+        rows, sha = _write_sample(dest, [1]), sha256_of(dest)
+    else:  # the entry names a part that is gone: quarantined by its entry alone
+        rows, sha = 1, "0" * 64
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry(dest.name, sha, rows, "trades", "r", 1)])
+    marked_at_write: list[bool] = []
+    real_write = ManifestStore.write
+
+    def watching_write(
+        self: ManifestStore, partition_dir: Path, cold_root: Path, entries: list[ManifestEntry]
+    ) -> None:
+        marked_at_write.append(mirror.is_dir())
+        real_write(self, partition_dir, cold_root, entries)
+
+    monkeypatch.setattr(ManifestStore, "write", watching_write)
+
+    store.quarantine(part, tmp_path, dest.name)
+
+    assert marked_at_write == [True]  # one write, the shrink, and the mark was already there
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lstat semantics")
+def test_a_mirror_that_cannot_be_looked_up_is_never_taken_for_none(tmp_path: Path) -> None:
+    """Fail closed: only a mirror that does not exist clears the partition."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    (tmp_path / "_quarantine").write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(NotADirectoryError):
+        ManifestStore(tmp_path / "_manifests").has_quarantined_part(part, tmp_path)

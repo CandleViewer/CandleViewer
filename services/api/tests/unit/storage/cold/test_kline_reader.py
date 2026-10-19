@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,7 +26,10 @@ from candleviewer.storage.cold.kline_reader import (
 )
 from candleviewer.storage.cold.layout import DatasetNotRegistered, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
+from candleviewer.storage.cold.observability import LoggingSystemEventSink
+from candleviewer.storage.cold.scrub import scrub_all
 from candleviewer.storage.models import StreamKind
+from tests.unit.storage.cold._helpers import quarantine_before_next_read
 
 MIN = 60_000_000
 H = 60 * MIN
@@ -35,7 +39,15 @@ def _us(y: int, m: int, d: int = 1) -> int:
     return int(datetime(y, m, d, tzinfo=UTC).timestamp() * 1_000_000)
 
 
-def _write(root: Path, ym: str, tss: list[int], symbol: str = "BTCUSDT", iv: str = "60") -> None:
+def _write(
+    root: Path,
+    ym: str,
+    tss: list[int],
+    symbol: str = "BTCUSDT",
+    iv: str = "60",
+    *,
+    name: str = "part-0000.parquet",
+) -> Path:
     paths = DatasetRegistry(root).resolve_partition(
         StreamKind.KLINES, partition_values={"symbol": symbol, "interval": iv, "ym": ym}
     )
@@ -54,7 +66,7 @@ def _write(root: Path, ym: str, tss: list[int], symbol: str = "BTCUSDT", iv: str
             "source": ["ws"] * n,
         }
     )
-    f = paths.partition_dir / "part-0000.parquet"
+    f = paths.partition_dir / name
     pq.write_table(table, f)
     ManifestStore(paths.manifests_dir).append_reconciled(
         paths.partition_dir,
@@ -68,6 +80,7 @@ def _write(root: Path, ym: str, tss: list[int], symbol: str = "BTCUSDT", iv: str
             exported_at_us=0,
         ),
     )
+    return f
 
 
 class _Hot:
@@ -415,3 +428,164 @@ async def test_connection_created_before_thread_and_interrupted_on_timeout(
         release.set()
     assert events[0] == "connect"
     assert "interrupt" in events
+
+
+# #3477 (C-2.14): a month that lost a part to quarantine is refused, never served partly.
+
+
+def _mirror(root: Path, ym: str = "2026-03") -> Path:
+    """Where `ManifestStore.quarantine` moves the month's bad parts."""
+    return root / "_quarantine" / "klines" / "symbol=BTCUSDT" / "interval=60" / f"ym={ym}"
+
+
+async def _lose_a_part(root: Path) -> tuple[int, Range]:
+    """Two manifested parts in 2026-03; the second goes bad, and the read that finds it
+    quarantines it."""
+    t0 = _us(2026, 3)
+    _write(root, "2026-03", [t0])
+    bad = _write(root, "2026-03", [t0 + H], name="part-0001.parquet")
+    bad.write_bytes(bad.read_bytes() + b"x")
+    window = Range(t0, t0 + 3 * H)
+    with pytest.raises(kr.ColdKlineReadError, match="failed verification"):
+        await ParquetKlineReader(DatasetRegistry(root))("BTCUSDT", "60", window)
+    assert _mirror(root).is_dir()
+    return t0, window
+
+
+async def test_a_month_that_lost_a_part_refuses_every_later_read(tmp_path: Path) -> None:
+    """The manifest no longer names the quarantined part, so serving the rest would serve the
+    month partly. The refusal names no path."""
+    _, window = await _lose_a_part(tmp_path)
+
+    for _ in range(2):
+        with pytest.raises(kr.ColdKlineReadError, match="quarantined part") as err:
+            await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window)
+        assert "/" not in str(err.value)
+        assert err.value.__cause__ is None and err.value.__context__ is None
+
+
+async def test_a_reader_that_verified_the_month_refuses_it_once_the_scrub_quarantines_a_part(
+    tmp_path: Path,
+) -> None:
+    """The weekly scrub quarantines without any read: the parts that remain verified in the
+    reader's cache must not be served as the whole month."""
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+    second = _write(tmp_path, "2026-03", [t0 + H], name="part-0001.parquet")
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path))
+    window = Range(t0, t0 + 3 * H)
+    assert [r.ts_us for r in await reader("BTCUSDT", "60", window)] == [t0, t0 + H]
+    second.write_bytes(second.read_bytes() + b"x")
+    assert await scrub_all(DatasetRegistry(tmp_path), LoggingSystemEventSink()) == 1
+
+    with pytest.raises(kr.ColdKlineReadError, match="quarantined part"):
+        await reader("BTCUSDT", "60", window)
+
+
+async def test_clearing_the_quarantine_after_a_re_export_restores_the_month(
+    tmp_path: Path,
+) -> None:
+    t0, window = await _lose_a_part(tmp_path)
+    _write(tmp_path, "2026-03", [t0 + H], name="part-0002.parquet")  # the re-export
+    with pytest.raises(kr.ColdKlineReadError, match="quarantined part"):  # until cleared by hand
+        await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window)
+
+    shutil.rmtree(_mirror(tmp_path))  # the runbook's last step
+
+    rows = await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window)
+    assert [r.ts_us for r in rows] == [t0, t0 + H]
+
+
+async def test_a_quarantine_in_one_month_leaves_the_other_months_served(tmp_path: Path) -> None:
+    await _lose_a_part(tmp_path)
+    april = _us(2026, 4)
+    _write(tmp_path, "2026-04", [april])
+
+    rows = await ParquetKlineReader(DatasetRegistry(tmp_path))(
+        "BTCUSDT", "60", Range(april, april + H)
+    )
+
+    assert [r.ts_us for r in rows] == [april]
+
+
+async def test_a_month_whose_only_part_went_missing_refuses_rather_than_reading_empty(
+    tmp_path: Path,
+) -> None:
+    """A part found missing is quarantined by its manifest entry alone: nothing moves, the
+    manifest is left empty and the mirror is an empty directory. The month must not then read
+    as one with no bars."""
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0]).unlink()
+    window = Range(t0, t0 + H)
+    with pytest.raises(kr.ColdKlineReadError, match="failed verification"):
+        await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window)
+    assert not any(_mirror(tmp_path).iterdir())
+
+    with pytest.raises(kr.ColdKlineReadError, match="quarantined part"):
+        await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window)
+
+
+async def test_a_quarantine_landing_just_before_the_manifest_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`quarantine` marks the partition before it shrinks the manifest, and the reader reads the
+    manifest before it looks for the mark, so no interleaving serves the month partly."""
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+    _write(tmp_path, "2026-03", [t0 + H], name="part-0001.parquet")
+    quarantine_before_next_read(monkeypatch, "part-0001.parquet")
+
+    with pytest.raises(kr.ColdKlineReadError, match="quarantined part"):
+        await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", Range(t0, t0 + 3 * H))
+
+
+async def test_a_month_that_cannot_be_listed_is_refused_typed_naming_no_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+
+    def denied(self: ManifestStore, partition_dir: Path, cold_root: Path) -> object:
+        raise PermissionError(13, "Permission denied", str(partition_dir))
+
+    monkeypatch.setattr(ManifestStore, "read", denied)
+
+    with pytest.raises(kr.ColdKlineReadError, match="could not be listed") as err:
+        await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", Range(t0, t0 + H))
+    assert str(tmp_path) not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__suppress_context__
+
+
+async def test_a_month_retention_removed_reads_empty_though_its_quarantine_stays(
+    tmp_path: Path,
+) -> None:
+    """Retention deletes a partition and its manifest, never `_quarantine/`: with no manifest
+    left there is nothing to serve partly, so the month reads empty rather than refusing forever."""
+    _, window = await _lose_a_part(tmp_path)
+    shutil.rmtree(tmp_path / "klines" / "symbol=BTCUSDT" / "interval=60" / "ym=2026-03")
+    next((tmp_path / "_manifests" / "klines").rglob("ym=2026-03.json")).unlink()
+    assert _mirror(tmp_path).is_dir()
+
+    assert await ParquetKlineReader(DatasetRegistry(tmp_path))("BTCUSDT", "60", window) == []
+
+
+def test_the_route_answers_503_for_a_month_that_lost_a_part(tmp_path: Path) -> None:
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+    lost = _write(tmp_path, "2026-03", [t0 + H], name="part-0001.parquet")
+    store = ManifestStore(tmp_path / "_manifests")
+    store.quarantine(lost.parent, tmp_path, lost.name)  # as verification does
+    svc = _svc(ParquetKlineReader(DatasetRegistry(tmp_path)), _us(2026, 6))
+
+    r = _client(svc).get(
+        "/market/klines",
+        params={
+            "symbol": "BTCUSDT",
+            "interval": "60",
+            "from": "2026-03-01T00:00:00Z",
+            "to": "2026-03-01T03:00:00Z",
+        },
+    )
+
+    assert r.status_code == 503
+    assert str(tmp_path) not in r.text
