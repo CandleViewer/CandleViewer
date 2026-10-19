@@ -14,10 +14,6 @@
   },
   "machines": {},
   "openapi_pending": {
-    "DELETE /admin/backups/{backupId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "DELETE /auth/mfa/methods/{methodId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

@@ -28,7 +28,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from tests.unit.admin._admin_fakes import principal
 from tests.unit.admin._backup_fakes import NOW, row
-from tests.unit.admin._delete_fakes import HANG, World, world
+from tests.unit.admin._delete_fakes import HANG, World, job_on, world
 
 WHO, GRANT, BID = principal("owner"), UUID(int=0xC0FFEE), UUID(int=1)
 _BOUND: Final = 2.0  # seconds, a safety net only: no test waits on it when the service is right
@@ -87,7 +87,7 @@ async def test_conflicts_are_refused_in_the_contract_order_each_recorded_first(
 ) -> None:
     w = world(rows)
     if job:  # a verification running on backup 1
-        w.gate._running[object()] = ("backup_verify", BID)
+        await job_on(w.gate, "backup_verify", BID)
     with pytest.raises(DeleteRefused) as refused:
         await _delete(w)
     assert refused.value.rule == rule and w.trail.records == [_record(rule, status)]
@@ -151,6 +151,9 @@ async def test_a_failed_removal_is_503_with_a_second_record_and_the_row_unmarked
     assert w.trail.records == [_record(), _record("store_unavailable")]
     assert w.log == _held("get", "usable_count", "record", "remove", "record")
     assert w.store.rows == list(_PAIR) and row(1).target_path not in repr(logs)  # the class alone
+    error = "TimeoutError" if fault == HANG else type(fault).__name__
+    events = [(e["event"], e["backup_id"], e["error"]) for e in logs]
+    assert events == [("admin_backups.artefact_not_removed", str(BID), error)]
 
 
 @pytest.mark.parametrize(
@@ -166,11 +169,16 @@ async def test_a_mark_is_tried_twice_then_503_with_a_second_record(
     artefact is gone either way, so a refused statement ends as an outage does, not in a 500 after
     the write-ahead record; a retried delete removes it again, idempotently, and marks."""
     w = world(_PAIR, faults={"mark_deleted": list(faults)}, mark_budget_s=0.05)
-    if marked:
-        await _delete(w)
-    else:
-        with pytest.raises(OpsUnavailable, match=r"^backups: store unavailable$"):
+    with capture_logs() as logs:
+        if marked:
             await _delete(w)
+        else:
+            with pytest.raises(OpsUnavailable, match=_STORE_DOWN):
+                await _delete(w)
+    errors = ["TimeoutError" if f == HANG else type(f).__name__ for f in faults]
+    events = [(e["event"], e["backup_id"], e["attempt"], e["error"]) for e in logs]
+    marks = enumerate(errors, 1)
+    assert events == [("admin_backups.delete_not_marked", str(BID), n, x) for n, x in marks]
     steps = ["get", "usable_count", "record", "remove", "mark_deleted", "mark_deleted"]
     assert w.log == _held(*steps, *([] if marked else ["record"]))
     second = [] if marked else [_record("store_unavailable")]
@@ -219,6 +227,8 @@ async def test_a_catalogue_failing_under_the_lock_is_503_recorded_ahead(
         await _delete(w)
     assert w.trail.records == [_record("store_unavailable", status)] and w.remover.removed == []
     assert "driver text" not in repr(logs)
+    error = "TimeoutError" if HANG in faults.values() else "StorageTierUnavailable"
+    assert [(e["event"], e["error"]) for e in logs] == [("admin_backups.delete_read_failed", error)]
 
 
 @pytest.mark.parametrize(

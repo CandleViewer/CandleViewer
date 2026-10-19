@@ -82,6 +82,7 @@ from candleviewer.api import (
     make_ticker_router,
     make_trades_router,
 )
+from candleviewer.api.admin_backup_delete import make_admin_backup_delete_router
 from candleviewer.api.admin_backup_links import make_admin_backup_links_router
 from candleviewer.api.admin_backups import make_admin_backup_runs_router, make_admin_backups_router
 from candleviewer.api.admin_capacity import make_admin_capacity_router
@@ -165,6 +166,7 @@ from candleviewer.auth.session_service import (
 from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
 from candleviewer.backups_wiring import (
     build_admin_backups,
+    build_backup_deletion,
     build_backup_downloads,
     build_backup_freshness,
     build_backup_runs,
@@ -1974,6 +1976,23 @@ def create_app(
             backups_catalogue,
             build_backup_downloads(
                 resolved, backups_catalogue, gate=backups_gate, audit=_LazyAuditEmitter(ctx.audit)
+            ),
+            auth=ctx.auth,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+        )
+    )
+    # BK-12: delete a backup's artefact and keep its row (`backups:write`, one fresh `backups`
+    # step-up each), `501` until an artefact remover is wired, on the one gate above.
+    app.include_router(
+        make_admin_backup_delete_router(
+            backups_catalogue,
+            build_backup_deletion(
+                resolved,
+                gate=backups_gate,
+                audit=_LazyAuditEmitter(ctx.audit),
+                system_settings=admin_settings,
+                freshness=app.state.backup_freshness,
             ),
             auth=ctx.auth,
             resolver=audit_resolver,

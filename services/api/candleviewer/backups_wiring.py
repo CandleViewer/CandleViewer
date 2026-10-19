@@ -14,6 +14,9 @@
   and count towards `RUNS_PER_HOUR` per user in the rolling-hour limiter the audit verify runs
   use (in-process: a restart resets it). Once the catalogue is set, the boot pass ends the runs a
   restart lost and counts them with the jobs it lost (SR-BK7-05).
+- BK-12: a delete needs the catalogue and the engine's artefact remover (#3319); until both are
+  wired `DELETE /admin/backups/{backupId}` answers `501` before any challenge. It runs under the
+  app's one admission gate, which the composition root builds once for every backups service.
 - BK-13: the restore guard reads maintenance mode fresh from the flag repository
   (`FlagStoreMaintenance`) and positions stay unknown. Nothing builds it until BK-14 mounts the
   restore after D7 (#3084).
@@ -32,6 +35,7 @@ import structlog
 
 from candleviewer.admin.backups import ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
+from candleviewer.admin.backups.deletion import BackupDeletion, DeleteAudit
 from candleviewer.admin.backups.downloads import BackupDownloads
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.limits import RUNS_PER_HOUR
@@ -207,3 +211,21 @@ def build_backup_downloads(
         return None
     reader = LocalArtefactStore(settings.backup_root)
     return BackupDownloads(catalogue, reader, DownloadLinks(), gate=gate, audit=audit)
+
+
+def build_backup_deletion(
+    settings: Settings,
+    *,
+    gate: BackupJobGate,
+    audit: DeleteAudit,
+    system_settings: SystemSettings | None,
+    freshness: BackupFreshness | None,
+    remover: ports.ArtefactRemover | None = None,
+) -> BackupDeletion | None:
+    """`deleteBackup`'s service on the catalogue, through the app's one `gate`, recomputing
+    BK-5's `freshness`; None until the engine (#3319) passes its `remover` and the catalogue is
+    set, so the route answers `501` before any challenge."""
+    store = None if remover is None else _catalogue(settings, system_settings)
+    if store is None or remover is None:
+        return None
+    return BackupDeletion(store, remover, gate=gate, audit=audit, freshness=freshness)

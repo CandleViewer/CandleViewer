@@ -1,7 +1,7 @@
 """Backup deletion test fakes (E42-T05 #966 BK-12): BK-4's store with a delete's reads and its mark,
-each op failing or stalling on demand; an artefact remover; an audit trail; and `BackupDeletion`
-over them, with BK-5's freshness on a gauge of its own. Every step lands in one log, in order, with
-whether the admission lock was held."""
+each op failing or stalling on demand; an artefact remover; an audit trail; a job admitted on a
+backup; and `BackupDeletion` over them, with BK-5's freshness on a gauge of its own. Every step
+lands in one log, in order, with whether the admission lock was held."""
 
 from __future__ import annotations
 
@@ -9,12 +9,14 @@ import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID
 
 from candleviewer.admin.backups.deletion import BackupDeletion, DeleteRecord, WriteAhead
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.metrics import BackupFreshness
+from candleviewer.admin.backups.ports import JobKind
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.observability.metrics import Gauge
 from candleviewer.storage.repositories.backups import SUCCESS_STATUSES, BackupRow, counts_as_usable
@@ -94,6 +96,14 @@ class Trail:
         if record["reason"] in self.fail_on:
             raise RuntimeError("WAL unwritable")
         self.records.append({"action": action, **record})
+
+
+async def job_on(gate: BackupJobGate, kind: JobKind, backup_id: UUID) -> None:
+    """A `kind` job on `backup_id`, admitted and submitted the public way, as BK-13a's tests do,
+    to a runner that never starts it, so it never settles."""
+    async with gate.admit(kind, backup_id) as admission:
+        idle = cast(Any, SimpleNamespace(submit=lambda *_: None))
+        admission.submit(idle, UUID(int=9), cast(Any, None), cast(Any, None))
 
 
 @dataclass
