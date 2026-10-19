@@ -156,3 +156,53 @@ def test_log_decision_prints_structured_line(capsys: pytest.CaptureFixture[str])
     gh_adapter.log_decision(42, decision)
     out = capsys.readouterr().out
     assert "GOV-006 42 qa-guard BLOCKED r" in out
+
+
+def _graphql_query(args: list[str]) -> str:
+    return next(a for a in args if a.startswith("query="))
+
+
+def test_get_project_id_reads_the_organisation_project() -> None:
+    # The board is the organisation project CandleViewer/projects/3 (since 2026-10-19); a
+    # `user(login: ...)` lookup no longer finds it.
+    payload = json.dumps({"data": {"organization": {"projectV2": {"id": "PVT_org"}}}})
+    with patch.object(gh_adapter, "_run_gh", return_value=payload) as mock_run:
+        assert gh_adapter.get_project_id() == "PVT_org"
+    args = mock_run.call_args[0][0]
+    query = _graphql_query(args)
+    assert "organization(login: $owner)" in query
+    assert "user(login" not in query
+    assert "owner=CandleViewer" in args
+    assert "number=3" in args
+
+
+def test_get_project_item_kind_reads_the_organisation_project() -> None:
+    repo = {"owner": {"login": "CandleViewer"}, "name": "CandleViewer"}
+    project = {
+        "field": {"id": "PVTSSF_kind", "options": [{"id": "OPT_bug", "name": "Bug"}]},
+        "items": {
+            "nodes": [
+                {"id": "PVTI_7", "content": {"number": 7, "repository": repo}},
+                {
+                    "id": "PVTI_42",
+                    "content": {"number": 42, "repository": repo},
+                    "fieldValueByName": {"name": "Story"},
+                },
+            ]
+        },
+    }
+    payload = json.dumps({"data": {"organization": {"projectV2": project}}})
+    with patch.object(gh_adapter, "_run_gh", return_value=payload) as mock_run:
+        item = gh_adapter.get_project_item_kind("CandleViewer/CandleViewer", 42)
+    assert item == gh_adapter.ProjectItemKind(
+        item_id="PVTI_42",
+        field_id="PVTSSF_kind",
+        option_id_by_kind={"Bug": "OPT_bug"},
+        current_kind="Story",
+    )
+    args = mock_run.call_args[0][0]
+    query = _graphql_query(args)
+    assert "organization(login: $owner)" in query
+    assert "user(login" not in query
+    assert "owner=CandleViewer" in args
+    assert "number=3" in args

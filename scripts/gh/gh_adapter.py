@@ -30,9 +30,10 @@ from scripts.gh.models import Comment, Decision, Issue
 
 GOV_LOG_PREFIX = "GOV-006"
 
-# CandleViewer's user-level Projects v2 board (ADR-0017 Q1/Q4 evidence).
-PROJECT_OWNER = "basiltt"
-PROJECT_NUMBER = 10
+# CandleViewer's organisation-level Projects v2 board, CandleViewer/projects/3 (an organisation
+# project since 2026-10-19). The ADR-0017 Q1/Q4 evidence was gathered on the former user project.
+PROJECT_OWNER = "CandleViewer"
+PROJECT_NUMBER = 3
 KIND_FIELD_NAME = "Kind"
 
 
@@ -116,7 +117,7 @@ class ProjectItemKind:
 
 _PROJECT_ITEM_KIND_QUERY = """
 query($owner: String!, $number: Int!, $issueNumber: Int!, $repoOwner: String!, $repoName: String!) {
-  user(login: $owner) {
+  organization(login: $owner) {
     projectV2(number: $number) {
       field(name: "Kind") {
         ... on ProjectV2SingleSelectField {
@@ -168,7 +169,7 @@ def get_project_item_kind(
         ]
     )
     data = json.loads(raw)
-    project = data.get("data", {}).get("user", {}).get("projectV2")
+    project = data.get("data", {}).get("organization", {}).get("projectV2")
     if project is None:
         return None
     field = project.get("field") or {}
@@ -229,7 +230,7 @@ def set_project_item_kind(
 
 _PROJECT_ID_QUERY = """
 query($owner: String!, $number: Int!) {
-  user(login: $owner) { projectV2(number: $number) { id } }
+  organization(login: $owner) { projectV2(number: $number) { id } }
 }
 """
 
@@ -248,7 +249,7 @@ def get_project_id(project_owner: str = PROJECT_OWNER, project_number: int = PRO
         ]
     )
     data = json.loads(raw)
-    return data["data"]["user"]["projectV2"]["id"]
+    return data["data"]["organization"]["projectV2"]["id"]
 
 
 @contextmanager

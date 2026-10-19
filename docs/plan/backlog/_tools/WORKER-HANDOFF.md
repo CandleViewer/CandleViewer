@@ -10,8 +10,8 @@
 
 - CandleViewer is a private, self-hosted trading terminal (React + WebGL2 chart engine + Electron
   shell; Python 3.12 FastAPI modular monolith; Bybit v5 USDT-perps only). **It moves real money.**
-- Work is tracked as GitHub issues mirrored in `docs/plan/backlog/E*.json`, on GitHub Project #10
-  ("the board"). Three AI agents now work it in parallel; the owner is away for ~3 days.
+- Work is tracked as GitHub issues mirrored in `docs/plan/backlog/E*.json`, on GitHub Project #3
+  (the `CandleViewer` organisation project, "the board"). Three AI agents now work it in parallel; the owner is away for ~3 days.
 - **Your lane is assigned by the orchestrator over RelayRoom** (your hello thread) and reserved by
   comment on each issue; §4 shows the shape of a lane. Only touch the tickets and paths you were given.
   Collisions are the #1 risk of adding agents.

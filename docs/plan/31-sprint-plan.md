@@ -5515,7 +5515,7 @@ Absorbed from the R1 train buffer per roadmap §12. The secondary gates `E50-T05
 
 # 33. Backlog import
 
-How `docs/plan/backlog/all-tickets.json` maps onto the GitHub Project at <https://github.com/users/basiltt/projects/10> (PenniLogic-style schema, per `00-planning-brief.md`).
+How `docs/plan/backlog/all-tickets.json` maps onto the GitHub Project at <https://github.com/orgs/CandleViewer/projects/3> (PenniLogic-style schema, per `00-planning-brief.md`).
 
 ## 33.1 Source of truth
 
