@@ -131,8 +131,8 @@ def make_admin_kek_router(
                 return _problem("forbidden")
         except ForbiddenError:
             return _problem("forbidden")
-        except AuditError:  # a denial that cannot be recorded is not answered as one (C-2.9)
-            return _problem("audit_unavailable")
+        except (AuditError, RuntimeError):  # RuntimeError: no writer wired (as after `stop()`)
+            return _problem("audit_unavailable")  # a denial that cannot be recorded (C-2.9)
         try:
             result = await admin.rewrap_kek(
                 body.environment, body.to_version, str(principal.user_id)

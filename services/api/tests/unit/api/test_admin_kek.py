@@ -22,6 +22,7 @@ from candleviewer import app as app_module
 from candleviewer.admin.wiring import SecretsBundle
 from candleviewer.api.admin_kek import MAX_BODY_BYTES, make_admin_kek_router
 from candleviewer.audit.errors import AuditError
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.service import AuthService
 from candleviewer.secrets import (
@@ -202,11 +203,38 @@ async def test_a_denial_that_cannot_be_recorded_answers_audit_unavailable(
     assert (r.status_code, r.json()["code"], kek.runs()) == (503, "audit_unavailable", [])
 
 
+@pytest.mark.parametrize("perms", [frozenset(), OWNER], ids=["no_keys_manage", "not_the_owner"])
+async def test_a_denial_after_a_stop_unwired_the_writer_answers_audit_unavailable(
+    kek: _Kek, perms: frozenset[Permission]
+) -> None:
+    """`AuditService.writer` raises `RuntimeError` once unwired: unrecordable, so a `503`."""
+    token, emit = await elevated(kek.w, "viewer", perms), kek.w.audit.emit
+
+    async def then_unwired(action: str, **kw: Any) -> None:  # B16's `grace_used`, then a stop()
+        await emit(action, **kw)
+        kek.ctx.audit._writer = None  # as `AuditService.stop()` leaves it
+
+    kek.ctx.audit._writer = SimpleNamespace(emit=then_unwired)
+    r = kek.post(token)
+    assert (r.status_code, r.json()["code"], kek.runs()) == (503, "audit_unavailable", [])
+
+
 async def test_keys_manage_without_the_owner_role_is_forbidden(kek: _Kek) -> None:
     """Defence in depth: the RBAC seed gives `keys:manage` to the Owner alone."""
     r = kek.post(await elevated(kek.w, "manager", OWNER))
     assert (r.status_code, r.json()["code"], kek.runs()) == (403, "forbidden", [])
-    assert [d["reason"] for d in kek.w.audit.of("rbac.denied")] == ["owner_only"]
+
+
+async def test_the_owner_role_refusal_is_one_denial_of_the_caller_at_warning(kek: _Kek) -> None:
+    """As complete as `enforce`'s record: the caller's id, address and request id."""
+    token = await elevated(kek.w, "manager", OWNER)
+    r = kek.post(token)
+    [denial] = kek.w.audit.of("rbac.denied")
+    keys = ("reason", "actor_user_id", "actor_ip", "request_id", "outcome", "severity")
+    caller = kek.w.resolver.by_token[token].user_id, "127.0.0.1"
+    rid = uuid.UUID(r.headers["x-correlation-id"])
+    want = ("owner_only", *caller, rid, AuditOutcome.DENIED, Severity.WARNING)
+    assert tuple(denial.get(k) for k in keys) == want
 
 
 async def test_a_call_without_its_csrf_token_is_refused(kek: _Kek) -> None:
