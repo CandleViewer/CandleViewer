@@ -13,6 +13,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# #3751: a push replaces the PR's previous run; scheduled and dispatched runs share one group
+# per ref and are never cancelled.
+concurrency:
+  group: dast-auth-zap-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   zap:
     name: zap-auth
