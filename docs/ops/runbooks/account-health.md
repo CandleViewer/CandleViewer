@@ -81,5 +81,6 @@ lives in memory: a restart counts the keys already in either state again. It nev
 and the order-entry gate never reads it (US-ACCT-005). The policy is deployment config: a change
 takes a restart, and the first read after it recomputes every key. Rotate a key through SCR-127
 (Owner, step-up, audited). A read the job cannot evaluate logs `account_health.key_age_failed`
-(error, the error type only) once per change: its series and tickets may lag until a read
-evaluates again, while tracking and order entry carry on. That is a bug: file it.
+(error, the error type only) once per change, and the job counts, sets and keeps nothing of it:
+its series and tickets lag until a read evaluates whole, while tracking, the key standing and
+order entry carry on. That is a bug: file it.
