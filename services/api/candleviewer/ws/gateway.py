@@ -641,19 +641,26 @@ class _Connection:
         each guarded. If no close took (the fault came after `close_with` began: no `bye`, or
         with the flag on no flush deadline), the connection ends as on a writer fault: the writer
         is cancelled and the handler sends `bye internal_error` + `1011` itself. A cancellation
-        raised here cancels no task, so it fails closed too, then is re-raised; any other
-        `BaseException` passes through. After a check that found nothing due the rest is waited
-        to the millisecond (`CLOSE_REARM_MIN_S`). The re-arm after a check that raised, a tick
-        later, is defence in depth: the fail-closed close sets `closing` before anything in it can
-        raise, so no flow reaches it today; were that to change, the timer would not spin."""
+        raised here cancels no task, so it fails closed too, then is re-raised: the check's own,
+        or one raised by the fail-closed close, which the `Exception` guard on that close does not
+        take, so it is held until the fold and the log line are done (when both are raised, the
+        check's own is re-raised and the close's is dropped). Any other `BaseException` passes
+        through. After a check that found nothing due the rest is waited to the millisecond
+        (`CLOSE_REARM_MIN_S`). The re-arm after a check that raised, a tick later, is defence in
+        depth: the fail-closed close sets `closing` before anything in it can raise, so no flow
+        reaches it today; were that to change, the timer would not spin."""
         self.close_timer = None
         failed = False
+        cancelled: asyncio.CancelledError | None = None
         try:
             self.watch()
         except (Exception, asyncio.CancelledError) as exc:
             failed = True
-            with contextlib.suppress(Exception):
-                self.close_with("internal_error")
+            try:
+                with contextlib.suppress(Exception):
+                    self.close_with("internal_error")
+            except asyncio.CancelledError as stopped:
+                cancelled = stopped  # held for the fold and the log line below, then re-raised
             pipe = self.pipeline
             if self.bye_frame is None or (pipe is not None and pipe.deadline is None):
                 self.bye_frame = None  # the close never took: the handler sends its own `bye`
@@ -668,6 +675,8 @@ class _Connection:
                 )
             if not isinstance(exc, Exception):
                 raise
+        if cancelled is not None:
+            raise cancelled
         if not self.closing:
             self.arm_close_timer(self.tick_s if failed else CLOSE_REARM_MIN_S)
 
