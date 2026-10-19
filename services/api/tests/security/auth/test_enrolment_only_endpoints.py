@@ -307,21 +307,43 @@ def test_enrol_supersedes_the_earlier_pending_method_and_returns_no_codes(stack:
 def test_enrol_creates_nothing_without_its_audit_record_its_user_or_a_live_token(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    uid = _must_enrol(stack, "alice")
+    _must_enrol(stack, "alice")
     headers = _enrolment_only(stack, "alice")
     before = dict(_store(stack).methods)
     _fail_on(stack, monkeypatch, "auth.mfa_enroll")
 
     unaudited = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
-    stack.users.add(stack.users.users[str(uid)].model_copy(update={"status": UserStatus.DISABLED}))
-    disabled = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
     monkeypatch.setattr(stack.auth, "find_user", AsyncMock(return_value=None))  # deleted since
     gone = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
     stack.clock.now += timedelta(minutes=13)  # past the 12-minute access token
     expired = stack.client.post("/auth/mfa/enroll", headers=headers, json={"method": "totp"})
 
-    assert [r.status_code for r in (unaudited, disabled, gone, expired)] == [503, 401, 401, 401]
+    assert [r.status_code for r in (unaudited, gone, expired)] == [503, 401, 401]
     assert _store(stack).methods == before
+
+
+@pytest.mark.parametrize("route", ["/auth/mfa/enroll", "/auth/mfa/enroll/confirm"])
+def test_enrol_and_confirm_refuse_a_user_disabled_since_the_session_read(
+    stack: Stack, route: str
+) -> None:
+    """#2911 (C-12.4): `_enrolling_caller` reads the user after the session, so one disabled in
+    between (in the user store only) gets the 401 of a deleted one, and nothing changes: no
+    method is added, confirmed or revoked, no session ends and no recovery code is replaced."""
+    uid = _must_enrol(stack, "alice")
+    headers = _enrolment_only(stack, "alice")
+    method_id, seed = _enrol(stack, headers)
+    enrol, confirm = {"method": "totp"}, {"method_id": method_id, "code": stack.code(seed)}
+
+    def state() -> tuple[Any, ...]:
+        sessions = stack.call(stack.auth.sessions.list_sessions, str(uid))
+        return dict(_store(stack).methods), _code_hashes(stack, uid), {v.id for v in sessions}
+
+    before = state()
+    stack.users.add(stack.users.users[str(uid)].model_copy(update={"status": UserStatus.DISABLED}))
+
+    resp = stack.client.post(route, headers=headers, json=confirm if "confirm" in route else enrol)
+
+    assert (resp.status_code, state()) == (401, before)
 
 
 def test_forbidden_a_user_with_a_confirmed_method_gets_409_and_nothing_changes(
