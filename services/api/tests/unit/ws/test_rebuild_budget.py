@@ -112,8 +112,6 @@ def test_rebuild_budget_matches_a_naive_model(
 @pytest.mark.parametrize(
     ("a", "b", "same"),
     [
-        ("book.BTCUSDT.50", "book.BTCUSDT.050", True),
-        ("bars.BTCUSDT.tick.1", "bars.BTCUSDT.tick.01", True),
         ("book.BTCUSDT.50", "book.BTCUSDT.200", False),
         ("bars.BTCUSDT.tick.1", "footprint.BTCUSDT.tick.1", False),
         (f"machines.order:{RS}.state", "machines.order:" + RS.replace("b", "c") + ".state", False),
@@ -122,7 +120,7 @@ def test_rebuild_budget_matches_a_naive_model(
 def test_topic_key_pairs(a: str, b: str, same: bool) -> None:
     assert (topic_key(parse_topic(a), None) == topic_key(parse_topic(b), None)) is same
     assert topic_key(parse_topic(a), RS) != topic_key(parse_topic(a), None)
-    assert topic_key(parse_topic("book.BTCUSDT.050"), None) == LIVE
+    assert topic_key(parse_topic("book.BTCUSDT.50"), None) == LIVE
 
 
 def test_releases_stay_bounded_by_the_window() -> None:

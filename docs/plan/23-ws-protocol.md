@@ -707,7 +707,7 @@ Topic names are dot-separated, lower-case, with symbols in Bybit's native upper-
 Notes that bite if ignored:
 
 - **`book` depth is in the topic name, not the options**, because changing depth changes the identity of the state. `book.BTCUSDT.50` and `book.BTCUSDT.200` are two independent subscriptions with independent sequences.
-- **`bars` `param` follows the REST convention** of `22-api-openapi.yaml` `/market/bars`: `time` → interval code (`1`,`5`,`60`,`D`…), `tick` → trades per bar, `volume` → base volume, `range` → ticks, `delta` → signed volume, `renko` → ticks or `atr:14`, `pnf` → `box:reversal`, `heikin_ashi` → underlying interval. Dots are illegal in `param`; `atr:14` and `10:3` use a colon for exactly this reason.
+- **`bars` `param` follows the REST convention** of `22-api-openapi.yaml` `/market/bars`: `time` → interval code (`1`,`5`,`60`,`D`…), `tick` → trades per bar, `volume` → base volume, `range` → ticks, `delta` → signed volume, `renko` → ticks or `atr:14`, `pnf` → `box:reversal`, `heikin_ashi` → underlying interval. Dots are illegal in `param`; `atr:14` and `10:3` use a colon for exactly this reason. A `param`, like a `book` depth, has one canonical spelling: a whole number has no sign, blanks or leading zeros (`50`, never `050`), and a colon joins non-empty parts. Any other spelling (`05`, `:::`, `1:`) is `invalid_topic_format` (22 `PaneIntervalCode`: one spelling per value).
 - **`footprint` and `bars` for the same `(symbol, bar_type, param)` are separate subscriptions** and each carries its own sequence. They are guaranteed _consistent_ (both derived from the same builder) but not _synchronised_ frame-for-frame; the client joins them by `(generation, index)` (§8.2; footprint bars carry the key, §14.4).
 - **Unconfirmed bars.** The last bar in any `bars`/`footprint` frame may have `confirm: false`. A client MUST NOT treat it as closed — this is the flicker bug Bybit's own `confirm` flag exists to prevent.
 - **`bars` snapshot and options (E12-T06, #399).**
@@ -780,7 +780,7 @@ The 2 000-column snapshot cap applies at every bucket size: the server sends the
 
 ### 6.2 Private topics
 
-The account-scoped private topics (below) intersect the requested `exchange_account_ids` with the caller's granted scope and silently narrow (reporting the effective list in `sub_ok.effective`). Requesting _only_ out-of-scope accounts is an error (`account_scope_denied`). `machines.{entity}.state` is scoped by the entity it names (§6.4).
+The account-scoped private topics (below) intersect the requested `exchange_account_ids` with the caller's granted scope and silently narrow (reporting the effective list in `sub_ok.effective`). Requesting _only_ out-of-scope accounts is an error (`account_scope_denied`). `machines.{entity}.state` is scoped by the entity it names (§6.4). Each id of `exchange_account_ids`, and of `rules`' `rule_ids`, has the canonical §13 `uuid` spelling: hyphenated 8-4-4-4-12 hexadecimal digits in either letter case, read in lower case. Any other spelling (`urn:uuid:`, braces, no hyphens, a sign, blanks, non-ASCII digits) refuses that topic alone with `invalid_options` (`field`: the option, §5.2).
 
 | Topic          | Options                                              | Snapshot                             | Default throttle       | Payload schema                              |
 | -------------- | ---------------------------------------------------- | ------------------------------------ | ---------------------- | ------------------------------------------- |

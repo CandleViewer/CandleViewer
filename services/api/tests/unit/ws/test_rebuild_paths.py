@@ -127,13 +127,12 @@ def test_resync_and_a_resuming_ctl_draw_on_one_topic_budget(resumes: int, held: 
 
 
 def test_a_topic_and_its_replay_session_draw_on_separate_shares() -> None:
-    conn, other = Conn(_book_source()), "book.BTCUSDT.050"
+    conn = Conn(_book_source())
     conn.sub(BOOK)
-    conn.sub(other)
     conn.sub(BOOK, replay_session_id=RS)
     for _ in range(2):
-        _resume(conn, other)
-    for ch in (BOOK, other, other, BOOK):
+        _resume(conn)
+    for ch in (BOOK,) * 4:
         _resync(conn, ch)  # the last is the topic's sixth draw, three of them resyncs: refused
     answers = [f["t"] for f in conn.take() if f["t"] in ("snap", "err")]
     assert answers[-4:] == ["snap", "snap", "snap", "err"]
