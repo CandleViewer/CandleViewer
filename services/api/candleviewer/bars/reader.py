@@ -333,7 +333,8 @@ class BarReader:
         served as-is. A malformed row is skipped, never fatal to the whole tail: one whose
         generation is outside the writer's bound (`check_generation`) too.
 
-        Callers skip a `history` of 0 (a `limit` below 1 raises) and bound every read with a
+        A `limit` outside 1..`MAX_TAIL` raises. The series store, the one caller, asks for
+        `MAX_TAIL` whatever a subscriber's `history` (a 0 too) and bounds every read with a
         timeout, degrading when it expires (SR-E12-01). `BarTail` says what `since_us` and
         `fetched` tell of a tail shorter than `limit`, and what they do not."""
         now = self._now_us()
