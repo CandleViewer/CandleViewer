@@ -29,7 +29,10 @@ This router publishes nothing itself.
 Enrolment-only session (#2295): refresh classifies the presented session as the enrolment
 guard classifies a bearer (`AuthService.classify`). One that would outlive its 15-minute
 lifetime (Q7) gets the uniform `401 refresh_token_invalid` before any audit write or rotation,
-so the client signs in again; one that cannot be classified gets a 503 (fail closed).
+so the client signs in again; one that cannot be classified gets a 503 (fail closed). Its
+successor's `refresh_expires_in` and cookie `Max-Age` count down to the unchanged expiry, and
+`GET /auth/session` gives it empty grants and no `kill_switch` (contract) and re-issues its
+CSRF cookie with the same countdown.
 Unlock is not among an enrolment-only session's operations, and its `cv_refresh` cookie reaches
 no bearer guard, so unlock answers the session it finds as the guard would (`route_refusal`).
 
@@ -413,14 +416,36 @@ def _view_json(view: SessionView) -> dict[str, Any]:
     }
 
 
-def _tokens(minted: MintedSession, *, include_refresh: bool) -> dict[str, Any]:
+def _tokens(
+    minted: MintedSession, *, include_refresh: bool, refresh_expires_in: int = REFRESH_EXPIRES_IN_S
+) -> dict[str, Any]:
     return {
         "access_token": minted.access_token,
         "token_type": "Bearer",
         "expires_in": ACCESS_TOKEN_EXPIRES_IN_S,
-        "refresh_expires_in": REFRESH_EXPIRES_IN_S,
+        "refresh_expires_in": refresh_expires_in,
         "refresh_token": minted.refresh_token if include_refresh else None,
     }
+
+
+def refresh_lifetime_s(minted: MintedSession, *, password_only: bool) -> int:
+    """`refresh_expires_in` and the cookies' `Max-Age` (#2295, Q7): a session minted on the
+    password alone (enrolment-only) counts down to its absolute expiry, at most 15 minutes;
+    any other session keeps `REFRESH_EXPIRES_IN_S`."""
+    if not password_only:
+        return REFRESH_EXPIRES_IN_S
+    return max(0, int((minted.expires_at - minted.issued_at).total_seconds()))
+
+
+def remaining_lifetime_s(record: SessionRecord, *, now: datetime) -> int:
+    """Whole seconds from *now* to *record*'s absolute expiry, never negative: the `Max-Age`
+    of a cookie re-issued for an existing enrolment-only session (#2295, Q7)."""
+    return max(0, int((record.expires_at - now).total_seconds()))
+
+
+#: The `SessionInfo` grants an enrolment-only session gets empty (#2295): it may use nothing
+#: they describe, and `kill_switch` is omitted.
+ENROLMENT_ONLY_EMPTY_GRANTS = ("permissions", "account_scope", "allowed_environments")
 
 
 class AuditUnavailableError(RuntimeError):
@@ -852,12 +877,20 @@ def make_session_router(
         return csrf_problem(refusal)
 
     async def _session_info(
-        provider: IdentityProvider, record: SessionRecord, at: datetime
+        provider: IdentityProvider,
+        record: SessionRecord,
+        at: datetime,
+        *,
+        enrolment_only: bool = False,
     ) -> dict[str, Any]:
         """`SessionInfo`. No step-up elevation survives the lock (contract "Idle lock"),
         so a locked session reports `step_up_expires_at: null`."""
         locked = record.is_idle_locked(now=at)
-        info = await provider.session_info(str(record.user_id))
+        info = (
+            {grant: [] for grant in ENROLMENT_ONLY_EMPTY_GRANTS}
+            if enrolment_only
+            else await provider.session_info(str(record.user_id))
+        )
         return {
             **info,
             "user": await provider.user(str(record.user_id)),
@@ -1027,18 +1060,23 @@ def make_session_router(
                 _outcome_lost("auth.refresh_reuse_detected", presented_record.id, "cancelled")
             raise
         minted = outcome.minted
+        lifetime = refresh_lifetime_s(
+            minted, password_only=presented_record.mfa_satisfied_at is None
+        )
         user = await identity.user(str(presented_record.user_id))
         response = JSONResponse(
             status_code=200,
             content={
                 "status": "authenticated",
-                "tokens": _tokens(minted, include_refresh=cookie_token is None),
+                "tokens": _tokens(
+                    minted, include_refresh=cookie_token is None, refresh_expires_in=lifetime
+                ),
                 "user": user,
             },
         )
-        _set_refresh_cookie(response, minted.refresh_token, max_age=REFRESH_EXPIRES_IN_S)
+        _set_refresh_cookie(response, minted.refresh_token, max_age=lifetime)
         # SR-041: validated above, rotated with the session
-        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S)
+        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=lifetime)
         return response
 
     @router.get("/auth/session")
@@ -1054,11 +1092,36 @@ def make_session_router(
             return _problem(
                 501, "Not implemented", "identity provider not wired (E09-T03); disabled"
             )
-        response = JSONResponse(await _session_info(identity, record, now()))
-        # SR-041 recovery path: re-issue when absent or not verifying.
+        try:
+            verdict = SessionClass.FULL
+            if auth_service.enrolment_gate_is_active:
+                verdict = await auth_service.classify(record)
+        except Exception as exc:  # fail closed, as refresh does: never the full grants
+            auth_enrolment_refused_total.labels(transport="http", reason="unclassified").inc()
+            _log().error(
+                "auth.enrolment_only.unclassified", path="/auth/session", error=type(exc).__name__
+            )
+            return _session_unchecked()  # the guard's `503 store_unavailable` and Retry-After
+        if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED:
+            # Not minted enrolment-only (Q7): the guard's 401 to its bearer, given here too to
+            # the refresh cookie alone, which reaches this read past the guard (#3214).
+            auth_enrolment_refused_total.labels(transport="http", reason="expired").inc()
+            ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
+            _log().warning("auth.enrolment_only.expired", path="/auth/session", **ids)
+            return _unauthorized()
+        enrolment_only, at = verdict is not SessionClass.FULL, now()
+        response = JSONResponse(
+            await _session_info(identity, record, at, enrolment_only=enrolment_only)
+        )
+        # SR-041 recovery path: re-issue when absent or not verifying. An enrolment-only
+        # session's cookie counts down to its unchanged expiry (#2295, Q7), as at sign-in and
+        # refresh, from now: this read is not activity, so `last_seen_at` is not now (#3214).
         present = request.cookies.get(CSRF_COOKIE)
         if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
-            set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=REFRESH_EXPIRES_IN_S)
+            max_age = (
+                remaining_lifetime_s(record, now=at) if enrolment_only else REFRESH_EXPIRES_IN_S
+            )
+            set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=max_age)
         return response
 
     @router.post("/auth/unlock")

@@ -61,3 +61,7 @@ def ok_audit_lane(reg: object) -> None:
 
 def ok_tier(reg: object) -> None:
     reg.histogram("cv_w_seconds", "help", ("tier",))  # ok: cv-obs-metric-label-allowlist
+
+
+def ok_role_2295(reg: object) -> None:
+    reg.counter("cv_r_total", "help", ("role",))  # ok: cv-obs-metric-label-allowlist

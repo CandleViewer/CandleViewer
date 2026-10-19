@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119); §4 was updated 2026-10-18 for #965 (the served disable and its limits). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119); §4 was updated 2026-10-18 for #965 (the served disable and its limits). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -134,9 +134,9 @@ curl -s -X POST "$API/auth/mfa/recovery" -H 'Content-Type: application/json' \
   -d '{"mfa_token":"<mfa_token>","recovery_code":"<code>"}'
 ```
 
-Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. **BLOCKED — not
-implemented:** this route mints no session, token or cookie (`api/auth.py`), and
-`/auth/mfa/enroll[/confirm]` are `501` stubs (re-enrolment: #2295; recovery-session gap: #2344). So recovery codes do **not** currently get the Owner back in. A code is single use;
+Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. This route mints no
+session, token or cookie yet (recovery-session gap: #2344), but it un-confirms the old TOTP, so
+the next password sign-in gets an enrolment-only session: re-enrol as in §2 step 4 (#2295). A code is single use;
 `auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
 Re-enrolment is forced after every recovery sign-in, however many codes remain
 (`auth/mfa_service.py`); there is no remaining-codes threshold (#2296).
@@ -228,11 +228,32 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    another way. Expected `200` with `target_user_id`, `methods_revoked`, `sessions_revoked`. The reply
    contains no secret.
 
-4. **BLOCKED — re-enrolment is not possible today.** `reset_totp` revokes every method; a user with
-   no active method gets `501` from `POST /auth/login` (`login_service.py`), and
-   `/auth/mfa/enroll[/confirm]` are `501` stubs (`api/auth.py`). After a reset the user
-   cannot log back in until #2295 (session-authenticated enrolment and a no-method
-   login path) lands. Do not reset a TOTP you cannot afford to leave locked out.
+4. The user re-enrols on their next sign-in (#2295). The reset also sets their `mfa_required`, so
+   `POST /auth/login` with the password answers `200` with an **enrolment-only** session: it lives
+   15 minutes and may only call `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm`,
+   `GET /auth/session`, `POST /auth/refresh` and `POST /auth/logout` (anything else is
+   `403 mfa_enrollment_required`; the WebSocket closes with `4403`). The user enrols a new TOTP, then
+   confirms a code: that revokes their other methods and sessions, replaces their recovery codes
+   with 10 new ones (shown once) and returns a full session. If the 15 minutes run out, they sign
+   in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
+   `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user; counter
+   `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in
+   whose user was disabled since the password check gets `403`: its `auth.login_failed` row carries
+   `session_id` and `after_state.voids_session_created`, so its `auth.session_created` row is void.
+   - If confirm answers `503`, the user signs in again. When the error log
+     `auth.enrolment.completed_unrotated` names the user, the enrolment completed but the session
+     was not rotated: the new TOTP is active (the next sign-in asks for it), its 10 recovery codes
+     were never shown, and the sessions the log lists may still be live. The caller's own
+     (`session_id`) stays enrolment-only and ends within 15 minutes of its sign-in. Any other id in
+     `revoked_session_ids` may be a full session that proved the user's previous factor: it is full
+     again now that a method is confirmed. Revoke it at once by resetting the user's TOTP again
+     (steps 1 to 3; the reset revokes every session of the user). The user has no recovery codes
+     they can read; if they need a set, a reset (this section) makes the next confirm show one.
+   - An enrolment-only sign-in by an Owner (`auth_enrolment_only_sessions_total{role="owner"}`
+     rising) is expected only after an Owner TOTP reset, a recovery sign-in or a first sign-in.
+     Otherwise treat it as U34 in `04-security-program.md` (a stolen password enrolling a TOTP,
+     RR-15): find the `auth.session_created` record with `enrolment_only: true` and its source
+     IP. The paging rule on that series is not written yet (#2746).
 5. Verify from telemetry: audit action `auth.mfa_reset_by_owner` (severity critical) with the
    target user:
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.mfa_reset_by_owner"`;
