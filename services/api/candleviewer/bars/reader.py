@@ -21,8 +21,7 @@ from typing import Any, Final, Protocol
 
 import structlog
 
-from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TIME_WINDOW_US
-from candleviewer.bars.limits import MAX_TAIL as MAX_TAIL  # end of life: #2787 D2-M1
+from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TAIL, MAX_TIME_WINDOW_US
 from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import (

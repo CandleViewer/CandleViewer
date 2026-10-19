@@ -7,7 +7,8 @@ its read ends, and `bars_series_read_waits_total` counts the reads that had to w
 
 Deterministic: the fake read blocks on events these tests set, the stores' clock is the test's,
 and the loop is yielded to (`until`), never slept on; the wait counter is how a test knows a read
-is waiting. No network, no QuestDB.
+is waiting. One test runs its own loop, whose timers keep the test's clock too. No network, no
+QuestDB.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from tests.unit.bars.test_series_store import (
 WAITS = "bars_series_read_waits_total"
 FAILED = "bars_series_hydrate_failed_total"
 LATE = "LATEUSDT"
+NEXT = "NEXTUSDT"
 
 
 def symbols(n: int, prefix: str = "S") -> list[str]:
@@ -195,6 +197,36 @@ async def test_a_read_waiting_past_timeout_s_for_a_slot_fails_like_a_timed_out_r
     assert await free_slots() == SLOTS
 
 
+def test_the_wait_for_a_slot_and_the_read_share_one_timeout_s_deadline() -> None:
+    """A read that waited 1.5 s of its 2 s for a slot has 0.5 s left to read, not a fresh 2 s: at
+    2.1 s it ends as a timed-out read. The loop's timers run on the test's clock (its `time`)."""
+    clock = Clock()
+
+    class Loop(asyncio.SelectorEventLoop):
+        def time(self) -> float:
+            return clock.t
+
+    async def scenario() -> None:
+        tails, names, failed = Tails(), symbols(SLOTS), counted(FAILED, "timeout")
+        blockers = ensure_all(SeriesStore(tails, timeout_s=60.0, clock=clock), names)
+        await until(lambda: len(tails.started) == SLOTS, "every slot taken")
+        store, before = SeriesStore(tails, timeout_s=2.0, clock=clock), waits()
+        late = asyncio.create_task(store.ensure(LATE, SPEC))
+        await until(lambda: waits() == before + 1, "the read waits for a slot")
+        clock.t += 1.5
+        tails.gate(names[0]).set()  # a slot is freed: the read starts with 0.5 s left
+        await until(lambda: LATE in tails.started, "the read starts")
+        clock.t += 0.6
+        await until(late.done, "the read ends at the deadline its wait began")
+        late.result()  # a failed read is no error: the series stays live-only
+        assert counted(FAILED, "timeout") == failed + 1 and not store.hydrated(LATE, H)
+        tails.open_all()
+        await finish(blockers)
+
+    with asyncio.Runner(loop_factory=Loop) as runner:
+        runner.run(scenario())
+
+
 async def test_a_slot_is_given_back_when_its_read_raises() -> None:
     tails = Tails()
     tails.error = OSError("questdb down")
@@ -252,6 +284,27 @@ async def test_the_wait_counter_moves_only_for_a_read_that_had_to_wait() -> None
     await finish([*blockers, waiter])
     await store.ensure("AFTERUSDT", SPEC)  # the slots are free again: no wait
     assert waits() == before + 1
+
+
+async def test_a_read_queued_behind_a_waiter_handed_a_slot_is_counted_as_a_wait() -> None:
+    """Two reads end in one loop pass: the first hands its slot to the read already waiting, which
+    has not resumed yet, and the second frees one. A read that arrives in that pass finds a slot
+    free but queues behind that waiter, and the counter counts it: it asks `locked()`, the
+    question `acquire()` asks, not whether a slot is free."""
+    tails, before = Tails(), waits()
+    store = SeriesStore(tails, timeout_s=60.0)
+    names = symbols(SLOTS)
+    blockers = ensure_all(store, names)
+    waiter = asyncio.create_task(store.ensure(LATE, SPEC))
+    await until(lambda: len(tails.started) == SLOTS and waits() == before + 1, "one read waits")
+    tails.gate(names[0]).set()
+    tails.gate(names[1]).set()
+    queued = asyncio.create_task(store.ensure(NEXT, SPEC))  # before the two reads end
+    await asyncio.sleep(0)  # one pass: both reads end, then the new read asks (a yield)
+    assert NEXT not in tails.started and waits() == before + 2
+    tails.open_all()
+    await finish([*blockers, waiter, queued])
+    assert tails.peak == SLOTS and NEXT in tails.started and waits() == before + 2
 
 
 async def test_the_bound_is_shared_by_every_store_in_the_process() -> None:

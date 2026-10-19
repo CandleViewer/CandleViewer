@@ -18,8 +18,9 @@ a WS snapshot source reads `latest` and `version`.
   re-close of a bar the ring holds takes that bar's slot there.
 - **Hydration:** the first `ensure` starts a series from its ring, replayed by the sink rules,
   then reads the newest closed tape-built bars, bounded by `timeout_s`, and folds over them the
-  bars it held (those newer than the rows, or replacing a bar they hold, each with its build
-  mark), the closes seen just before and during the read that re-close a bar now held, and the
+  bars it held (those newer than the rows, or replacing a bar they hold, and, when the read
+  withheld rows, any below the newest row; each with its build mark), the closes seen just
+  before and during the read that re-close a bar now held, and the
   forming bar. It keeps one generation: the one the series names (an emission's or an earlier
   read's), else the newest row's, else none yet. A read never replaces a named one: only an
   emission swaps it, so the WS publisher sees every generation swap the store makes. One
@@ -60,14 +61,19 @@ a WS snapshot source reads `latest` and `version`.
 
 Gaps: the closes emitted just before the hold that the writer had not landed yet come from the
 ring (the last `RECENT_CLOSES`). A live close that skips indexes past the rows marks the series
-`gapped` (`bars_series_gap`), and an `ensure` re-reads it, no sooner than `retry_after_s` after
-the last read; the bars it holds newer than the stored rows survive the re-read. Not covered: the
-forming bar is unknown until the next `open` or `update` (builders expose none); a hole inside the
-stored rows (a row the read withheld or skipped, or one the writer never landed) stays a hole and
-is not flagged; a jump is seen on a close only; with no stored row below its ring (an empty read)
-a series cannot see its junction, so a writer lagging past the ring goes unflagged, and a series
-read clean and empty with nothing seen live is read again only after a swap or a gap; a degraded
-re-read drops a held bar whose stored row it withheld; a swap inside a first read goes unseen.
+`gapped` (`bars_series_gap`), and so does a first close above index 0 of a series read clean and
+empty, if its bar opened inside that read's window (#2787 D2-H1a; the bars below one that opened
+before it, as a restored builder's can after a long downtime, lie outside every read); an
+`ensure` re-reads it, no sooner than `retry_after_s` after the last read. The bars it holds newer
+than the stored rows survive the re-read, and so do, when the read withholds rows (SR-E12-11),
+the ones it holds below the newest row (D2-H1b). Not covered: the forming bar is unknown until
+the next `open` or `update` (builders expose none); a held bar whose row a clean read skipped
+(`BarTail.skipped`, malformed rows included) is dropped by that read, which ends `hydrated`
+(#3614); a hole inside the stored rows with no bar held for it (a row skipped or withheld, or one
+the writer never landed) stays a hole and is not flagged; a jump is seen on a close only; a close
+seen before the first clean read (one from the ring, or a live one after a failed or degraded
+read) is judged only by that read's rows, so an empty read leaves it unflagged: the series cannot
+see its junction, and a writer lagging behind it goes unflagged.
 """
 
 from __future__ import annotations
@@ -87,7 +93,7 @@ import structlog
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.errors import SpecCapExceeded
 from candleviewer.bars.leases import CAP_GLOBAL, GRACE_US, Key
-from candleviewer.bars.limits import MAX_CONCURRENT_TAIL_READS, QUERY_TIMEOUT_S
+from candleviewer.bars.limits import MAX_CONCURRENT_TAIL_READS, MAX_TAIL, QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import (
     bars_series_gaps_total,
     bars_series_hydrate_failed_total,
@@ -96,7 +102,7 @@ from candleviewer.bars.metrics import (
     bars_spec_cap_rejected_total,
 )
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.reader import MAX_TAIL, BarTail, degrade_reason
+from candleviewer.bars.reader import BarTail, degrade_reason
 
 #: The WS `history` cap (`23-ws-protocol.md` §6.1).
 MAX_HISTORY: Final = MAX_TAIL
@@ -193,6 +199,12 @@ class _Series:
     forming: Bar | None = None
     #: Holds the stored tail a read took: it neither failed nor was degraded, and no swap followed.
     hydrated: bool = False
+    #: The window start (µs, `BarTail.since_us`) of the last read folded, set with `hydrated`
+    #: after the fold, so a clean read's while `hydrated`: holding no bar, the series takes a close
+    #: of a bar that opened before it as no gap (D2-H1a).
+    since_us: int = 0
+    #: A live swap since the read in flight began (set by `_live`, cleared as a read starts).
+    swapped: bool = False
     #: Waiters keep the latest read's result: True after a success, a failure or a timeout,
     #: False after a degraded read or a cancellation.
     attempted: bool = False
@@ -228,8 +240,10 @@ def _holds(s: _Series, bar: Bar) -> bool:
 
 def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) -> bool:
     """Fold one emission of `s.generation` into `s` (module docstring); False when it changes
-    nothing. With `gaps`, a close that skips indexes past the newest one marks `s` gapped. Only
-    the sink passes `count`: a hold's ring replay and a read's fold count no reset or gap."""
+    nothing. With `gaps`, a close that skips indexes past the newest one (past none, so from
+    index 0, on a series read clean and empty, if its bar opened inside the read's window) marks
+    `s` gapped. Only the sink passes `count`: a hold's ring replay and a read's fold count no reset
+    or gap."""
     bar, i = u.bar, u.bar.index
     last = next(reversed(s.closed), -1)
     if u.kind != "close":
@@ -249,7 +263,8 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True, count: bool = False) 
         _clear(s)  # another bar at or below the newest index: the builder restarted
         if count:
             bars_series_resets_total.labels(reason="restart").inc()
-    elif gaps and s.closed and i > last + 1:
+    elif gaps and (s.closed or (s.hydrated and bar.open_time >= s.since_us)) and i > last + 1:
+        # None held: a clean read found no row in the window this bar opened in (D2-H1a).
         s.gapped = True  # emitted before the hold and not stored yet, or lost: re-read
         if count:
             bars_series_gaps_total.inc()
@@ -271,7 +286,7 @@ def _live(s: _Series, u: BarUpdate, generation: int, *, count: bool = False) -> 
     first emission names it."""
     if generation != s.generation:
         if s.generation is not None:  # naming the first one is not a swap (23 §8.2)
-            s.hydrated = False  # the new generation's rows are read again (ADR-0033)
+            s.hydrated, s.swapped = False, True  # its rows are read again (ADR-0033)
             if count:
                 bars_series_resets_total.labels(reason="generation_swap").inc()
         _clear(s)
@@ -455,8 +470,7 @@ class SeriesStore:
             return
         ready = s.ready = asyncio.Event()
         ring = self._recent.get((symbol, spec.spec_hash), ())
-        s.replay, s.attempted = deque(ring, maxlen=MAX_HISTORY), False
-        before = s.generation
+        s.replay, s.attempted, s.swapped = deque(ring, maxlen=MAX_HISTORY), False, False
         try:
             async with asyncio.timeout(self._timeout_s):  # the wait for a slot counts toward it
                 slots = _READ_SLOTS.get()
@@ -472,10 +486,10 @@ class SeriesStore:
                 error_type=type(exc).__name__, error=str(exc)[:120],
             )  # fmt: skip
         else:
-            swapped = before is not None and s.generation != before  # live, during the read
             self._fold(s, tail)
             s.attempted = not tail.integrity_degraded
-            s.hydrated = s.attempted and not swapped  # the new generation's rows are read next
+            s.hydrated = s.attempted and not s.swapped  # swapped during it: read again (D2-H1c)
+            s.since_us = tail.since_us  # with `hydrated`, after the fold (D2-H1a)
             if tail.integrity_degraded:  # SR-E12-11: its bars are served, never as final
                 _log().warning(
                     "bars_series_hydrate_degraded", spec_hash=spec.spec_hash, symbol=symbol,
@@ -494,7 +508,8 @@ class SeriesStore:
     def _fold(self, s: _Series, tail: BarTail) -> None:
         """Rebuild `s` in one generation: the one it names (an emission's or an earlier read's: a
         read never replaces it), else the newest row's (the highest at the newest `ts`, until
-        ADR-0033's pointer decides), else none: the rows, the bars `s` held that are newer by
+        ADR-0033's pointer decides), else none: the rows (with the bars `s` held below the newest
+        row merged in by key when the read withheld rows), the bars `s` held that are newer by
         key or re-close a row, the replayed re-closes of bars now held, then the forming bar."""
         replay: Sequence[Close] = s.replay or ()
         forming, held, prior = s.forming, list(s.closed.values()), dict(s.stale)
@@ -503,9 +518,14 @@ class SeriesStore:
             gen = tail.bars[-1][0]  # none named yet: the newest row's
         _clear(s)
         s.generation, s.gapped = gen, False
-        for g, bar in tail.bars:
-            if g != gen:
-                continue  # another epoch, or an unflipped ADR-0033 rebuild: the named one wins
+        # The named generation's rows: not another epoch's, nor an unflipped ADR-0033 rebuild's.
+        rows = [(g, bar) for g, bar in tail.bars if g == gen]
+        if rows and tail.integrity_degraded:  # a withheld row never drops its held bar (D2-H1b)
+            g, newest = rows[-1]
+            top = (newest.open_time, newest.index)
+            rows += [(g, b) for b in held if (b.open_time, b.index) < top]
+            rows.sort(key=lambda r: (r[1].open_time, r[1].index))  # stable: a row, then its twin
+        for g, bar in rows:
             _apply(s, _update("close", bar), gaps=False)
             built = tail.builds.get((g, bar.index, bar.open_time))
             if built is not None:
