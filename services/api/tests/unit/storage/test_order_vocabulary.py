@@ -1,7 +1,8 @@
 """The persisted order vocabulary (E29-T03 #847, slice 2; main-orchestrator's ruling 2): the B1
 chart's `lifecycle` states, `LifecycleState`, the 24-internal-schemas.md Sec.8.2 mapping onto
-`order_state`, and the regenerated REST and WS enums, held to the database types; and Sec.8.6's
-exchange-boundary `OmsErrorCode`, held to the code."""
+`order_state`, and the regenerated REST and WS enums, held to the database types; the contract's
+pointers to this slice, which name no revision; and Sec.8.6's exchange-boundary `OmsErrorCode`,
+held to the code."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 
+import pytest
 from pydantic import BaseModel
 
 from candleviewer.api._generated import openapi_models as rest
@@ -27,6 +29,7 @@ _CHART = _REPO / "services/api/candleviewer/statechart/machines/B01.order.machin
 _WS = _REPO / "packages/protocol/ws-schemas.json"
 _SCHEMAS = _REPO / "docs/plan/24-internal-schemas.md"
 _SECTION = "### 8.2 Order state machine"  # of 24-internal-schemas.md
+_CONTRACTS = (_REPO / "docs/plan/22-api-openapi.yaml", _REPO / "docs/plan/23-ws-protocol.md")
 
 
 def _chart() -> dict[str, Any]:
@@ -95,6 +98,15 @@ def test_the_regenerated_rest_and_ws_enums_are_the_database_enums() -> None:
     assert _values(rest.Order, "lifecycle_state") == lifecycle
     assert set(order["lifecycle_state"]["enum"]) - {None} == lifecycle
     assert _values(rest.OrderEvent, "kind") == set(models.ORDER_EVENT_KINDS)
+
+
+@pytest.mark.parametrize("contract", _CONTRACTS, ids=lambda path: path.name)
+def test_the_contract_names_no_revision_of_the_implementation(contract: Path) -> None:
+    """22 and 23 say 24 Sec.8.2's mapping and the type `order_lifecycle_state` are "added by
+    E29-T03's implementation" and leave the revision to 21 Sec.9.4 and 24 Sec.8.2. A migration is
+    re-parented onto a newer head when another lands first (C-5.3), which changes its number, so a
+    revision named in the contract would then be one that does not exist."""
+    assert re.findall(r"\d{4}_order_vocabulary", contract.read_text(encoding="utf-8")) == []
 
 
 def test_section_8_6_lists_the_exchange_enum_and_keeps_the_oms_codes_apart() -> None:
