@@ -68,9 +68,8 @@ Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admi
 `watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
 minute, so a job that stalls or dies still latches `STALE` once a key's last pass is past its
 window; if that loop dies, `watch_ended()` latches `UNAVAILABLE`. It counts missed runs and
-publishes the oldest key's age and the soonest expiry, and, as a run's end and a failure do, the
-pages' gauges: each rule's failing keys and whether this job latched the gate, which only a restart
-resets (#836 slice 2c2). `/readyz` is anonymous (SR-010), so it gets
+publishes the oldest key's age, the soonest expiry and, as a run's end and a failure do, the pages'
+gauges (`_failing()`, #836 slice 2c2). `/readyz` is anonymous (SR-010), so it gets
 the key count and the oldest age only (`ages()`, no key id); each key's age goes to the debug log,
 never to a series labelled by key (decision 13 on #836). `key_selfcheck_wiring` builds the job on
 the real backend.
@@ -426,7 +425,8 @@ class KeySelfCheck:
         return True
 
     async def run_once(self) -> None:
-        """One pass over every target; only cancellation escapes. A key list that cannot be read
+        """One pass over every target. Only cancellation and a metrics fault in `_ran()` escape;
+        it follows all enforcement and `_loop_ended` fails closed. A key list that cannot be read
         fails closed at boot, and later once a known key is past its window."""
         async with self._lock:
             booting, self._booted = not self._booted, True

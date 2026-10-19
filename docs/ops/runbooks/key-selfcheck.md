@@ -88,15 +88,14 @@ Verify: no `starting in read-only mode` line for an `accounts.*` reason, and a n
 `account.tested` with outcome success for the key. `KeySelfCheckFailed` resolves once a pass finds
 no failing key, and `KeySelfCheckLatched` then pages until the restart. The disarmed account stays
 disarmed: re-arming `trading_enabled` has no operation yet, so a force-disabled account has no
-audited way back until #3657 ships (decision 16 on #836: Owner only with step-up, refused while a
-key of the account fails its standing check). Never re-arm in SQL (C-2.9).
+audited way back until #3657 ships (decision 16 on #836). Never re-arm in SQL (C-2.9).
 
 ## Symptom: read-only with `accounts.key_verification_stale` or `accounts.key_selfcheck_unavailable`
 
 Pages: `KeySelfCheckLatched` (the latch, until the restart: a passing run never ends it) and
-`KeySelfCheckRunMissed` (a run is overdue; it clears once runs begin again, the latch does not). WS
-clients get "Trading disabled: a stored API key has no recent passing check." or "Trading disabled:
-the stored API keys could not be checked."
+`KeySelfCheckRunMissed` (a run is overdue; it ends 2 h after the last missed run, not at the
+restart). WS clients get "Trading disabled: a stored API key has no recent passing check." or
+"Trading disabled: the stored API keys could not be checked."
 
 No verdict was possible, so no key is blamed and nothing is disarmed. `stale`: a key has had no
 passing check for the interval plus 15 minutes; the warning log `key_selfcheck_inconclusive` and

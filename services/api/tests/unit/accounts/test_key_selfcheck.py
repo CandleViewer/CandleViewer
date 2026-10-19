@@ -23,6 +23,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -1012,8 +1013,7 @@ def sample(w: World, name: str, **labels: str) -> float | None:
     return w.metrics.registry.get_sample_value(name, {"env": "demo", **labels})
 
 
-#: #836 slice 2c2: the pages' gauges (KeySelfCheckFailed, KeySelfCheckLatched).
-FAILING, LATCH = "cv_keys_failing_policy", "cv_key_selfcheck_latch_state"
+FAILING, LATCH = "cv_keys_failing_policy", "cv_key_selfcheck_latch_state"  # the pages' gauges
 
 
 @pytest.mark.parametrize(
@@ -1083,7 +1083,7 @@ async def test_the_watchdog_counts_one_missed_run_per_interval_past_the_grace() 
     assert missed == [("error", 1), ("error", 2), ("error", 1)]  # none inside the grace
 
 
-async def test_a_failure_publishes_its_rule_and_the_latch_before_the_next_key_is_checked(
+async def test_a_failure_publishes_its_rule_then_the_latch_before_the_next_key_is_checked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     w, seen = World(target(), target(key=KEY2, acct=ACCT2), info=facts(permissions=WITHDRAW)), []
@@ -1095,8 +1095,11 @@ async def test_a_failure_publishes_its_rule_and_the_latch_before_the_next_key_is
         return await real()
 
     monkeypatch.setattr(w, "key_info", key_info)
+    monkeypatch.setattr(w.metrics, "get", spy := Mock(wraps=w.metrics.get))
     await w.run()
     assert seen == [(1.0, 1.0)]  # KeySelfCheckFailed at once; the latch page waits on it
+    pages = [c.args[0] for c in spy.call_args_list if c.args[0] in (FAILING, LATCH)]
+    assert pages == ([FAILING] * len(Rule) + [LATCH]) * 3  # a scrape never reads a bare latch
 
 
 async def test_the_watchdog_before_any_run_counts_and_latches_nothing() -> None:

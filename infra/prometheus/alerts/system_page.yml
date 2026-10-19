@@ -123,8 +123,8 @@ groups:
           runbook_url: "docs/plan/07-release-and-prr.md#alert-keyselfchecklatched"
       - alert: KeySelfCheckRunMissed
         # #836 (SR-E27-18): a run not begun within the interval plus 15 min; a stopped job counts
-        # one each interval (at most 1 h), so 2 h holds it. A condition page: it ends when runs
-        # resume, while the latch a stall or a dead loop takes holds KeySelfCheckLatched up.
+        # one each interval (at most 1 h), so 2 h holds it. A condition page, ending 2 h after the
+        # last increment, a restart or not; KeySelfCheckLatched pages the latch until the restart.
         expr: sum by (env) (increase(cv_key_selfcheck_missed_runs_total[2h])) > 0
         for: 0m
         labels:

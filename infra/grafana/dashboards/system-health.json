@@ -682,6 +682,11 @@
       },
       "fieldConfig": {
         "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -718,7 +723,7 @@
           "refId": "A"
         }
       ],
-      "title": "Stored API keys failing the self-check, by rule (page above 0)",
+      "title": "Stored API keys failing the self-check, by rule (dashed: pages at 1)",
       "type": "timeseries"
     },
     {
@@ -773,7 +778,7 @@
           "refId": "A"
         }
       ],
-      "title": "Oldest stored API key's last passing self-check (stale latch at the interval + 15 min)",
+      "title": "Oldest stored API key's last pass (dashed: the default interval; stale latch at +15 min)",
       "type": "timeseries"
     }
   ],
