@@ -217,6 +217,7 @@ from candleviewer.ingestion.watchdog import StalenessWatchdog
 from candleviewer.journal.service import JournalService
 from candleviewer.key_import_wiring import wire_key_import
 from candleviewer.key_selfcheck_wiring import wire_key_selfcheck
+from candleviewer.key_test_wiring import wire_key_test
 from candleviewer.net import (
     BindingSelfCheck,
     CidrAllowList,
@@ -1754,6 +1755,8 @@ def create_app(
             owner_resolver,
             egress_ip=resolved.egress_ip,
             rotation=KeyRotationPolicy.from_settings(resolved),
+            # #836 slice 2b6: `testApiKey`, its verdict enforced by the self-check (decision 11).
+            tests=wire_key_test(ctx, selfcheck, key_imports),
         )
     )
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts

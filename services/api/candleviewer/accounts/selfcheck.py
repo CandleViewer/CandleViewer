@@ -29,13 +29,13 @@ naming one, and never an exchange UID: Viewers read the audit log (C-12.4), whil
 whitelist, the egress IP and the UID are Confidential and keys:read-gated. They stay in the
 `api_keys` columns and the standing result (decision 4b on #836).
 
-What cannot be checked latches the gate too and disables nothing: keys found while no egress IP is
-configured, a key list that cannot be read (at boot, or once a known key is past its window), a
-row the model refuses or of another environment, a key's check past its overall deadline and a
-dead loop. A latch never replaces a more specific one (another module's, or this job's failure by
-a weaker code), so a repeat notifies nobody. Every external await is bounded: a timed-out write is
-a refused one (any latch due came first). Each key's standing result is kept with its time for
-display (US-ACCT-003 NFR).
+What cannot be checked latches the gate too and disables nothing: keys found, or a key tested,
+while no egress IP is configured, a key list that cannot be read (at boot, or once a known key is
+past its window), a row the model refuses or of another environment, a key's check past its
+overall deadline and a dead loop. A latch never replaces a more specific one (another module's, or
+this job's failure by a weaker code), so a repeat notifies nobody. Every external await is bounded:
+a timed-out write is a refused one (any latch due came first). Each key's standing result is kept
+with its time for display (US-ACCT-003 NFR).
 
 Restarts: the latch and the standing results live in memory. A rule code found in
 `last_error_code` for a key the job holds no result for is a standing failure (decision 3 on #836):
@@ -60,7 +60,9 @@ and a pass both mark one disarm, the second finds it marked, and neither fails.
 On demand (`testApiKey`, decision 11 on #836): `test()` runs one stored key's pipeline as a pass
 does and hands its verdict to the same outcome handling, with the acting Owner on `account.tested`,
 so a failure found on demand latches and force-disables at once and a pass refreshes the key's last
-pass. A test with no verdict raises and changes nothing. Its WebSocket half is not here.
+pass. A test with no verdict raises and changes nothing. With no egress IP configured it signs and
+judges nothing, as a pass does: it latches `UNAVAILABLE` and raises `NoEgressIp`. Its WebSocket
+half is not here.
 
 Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admission (#837 W3).
 `watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
@@ -86,7 +88,7 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.accounts.errors import WithdrawPermissionError
+from candleviewer.accounts.errors import AccountsError, WithdrawPermissionError
 from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.verification import (
     KeyFacts,
@@ -209,6 +211,11 @@ class Target(Protocol):
     def read_only(self) -> bool: ...
     @property
     def verified_at(self) -> datetime: ...
+
+
+class NoEgressIp(AccountsError):
+    """No egress IP is configured, so no whitelist can be judged: a test signs and judges
+    nothing, as a pass does then, and the job latches `UNAVAILABLE`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,9 +498,14 @@ class KeySelfCheck:
         and its verdict handled as a pass handles one, `account.tested` naming `actor` (the acting
         Owner). The verdict and the seconds its signed calls took. A check with no verdict raises
         (`VerificationInconclusive`, `TimeoutError`, or a signing error) and changes nothing. A key
-        of another environment is refused before anything is signed (C-2.11)."""
+        of another environment is refused before anything is signed (C-2.11). With no egress IP,
+        as in a pass, nothing is signed or judged: the gate latches and `NoEgressIp` is raised."""
         if account.env.value != self._env:
             raise ValueError("not this process's environment")
+        if self._policy.egress_ip is None:  # `run_once`'s precondition: no whitelist is judged
+            logger().critical("key_selfcheck_no_egress_ip", key_id=str(target.key_id))
+            self._latch(UNAVAILABLE)
+            raise NoEgressIp("egress_ip_unset")
         started = self._monotonic()
         verdict = await self._verdict(target, account, now)
         elapsed = self._monotonic() - started

@@ -2,7 +2,8 @@
 
 The job is `test_key_selfcheck.World`'s real `KeySelfCheck`, its store, audit sink and calls one
 event log over documented-shape replies; the reads and the WebSocket half are scripted. Clocks are
-fakes, and a hang ends at a bound cut to zero, never a sleep. No network.
+fakes, and a hang ends at a bound cut to zero, never a sleep, except in one case, which lets a
+1 ms bound expire on a socket that never answers, deterministically. No network.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.accounts import key_test as kt
 from candleviewer.accounts.errors import AccountNotFoundError
@@ -22,7 +24,7 @@ from candleviewer.accounts.key_import import Importer
 from candleviewer.accounts.key_test import KeyTest, KeyTested, KeyTestRefused, Probe, Throttle
 from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.repository import AccountsRepository
-from candleviewer.accounts.selfcheck import FAILED
+from candleviewer.accounts.selfcheck import FAILED, UNAVAILABLE
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationResult
 from candleviewer.exchange.bybit import key_info
 from candleviewer.storage.repositories.accounts import PolicyDisarm, SelfCheckTargetRow
@@ -152,6 +154,19 @@ async def test_a_test_with_no_verdict_changes_nothing_and_still_probes_the_socke
     assert not done.passed
 
 
+async def test_with_no_egress_ip_a_test_signs_and_judges_nothing_as_the_hourly_pass() -> None:
+    """Decision 11: a pass with no egress IP judges no key, so neither does a test; its unmet
+    whitelist rule is the deployment's, never the key's, so nothing is disarmed or recorded."""
+    w, socket = World(target(), egress=None), Socket()
+    flow = flow_of(w, socket=socket)
+    with capture_logs() as logs, pytest.raises(KeyTestRefused) as refused:
+        await run(flow)
+    assert (refused.value.code, w.built, socket.calls) == ("exchange_unavailable", [], [])
+    assert (w.kinds(), w.armed[ACCT], w.check.results) == ([("latch", UNAVAILABLE)], True, {})
+    unset = {"event": "key_selfcheck_no_egress_ip", "key_id": str(KEY), "log_level": "critical"}
+    assert unset in logs and flow.throttle.admit(KEY) is None  # nothing probed: its minute back
+
+
 async def test_a_failure_restored_after_a_restart_answers_a_test_until_a_pass_replaces_it() -> None:
     """Decision 3 leaves a `failed` check with no result: a test reads no verdict from it."""
     w, clock = World(target(last_error="key_withdraw_permission"), info=inconclusive()), Clock()
@@ -176,15 +191,35 @@ async def test_the_rest_half_ends_at_the_jobs_deadline_with_no_verdict() -> None
     assert w.kinds() == [] and w.check.results == {}
 
 
-async def test_the_socket_half_gets_only_what_is_left_of_the_twelve_seconds() -> None:
+@pytest.mark.parametrize(("took", "dialled"), [(11.999, [KEY]), (12.0, []), (12.5, [])])
+async def test_the_socket_half_gets_only_what_is_left_of_the_twelve_seconds(
+    took: float, dialled: list[UUID]
+) -> None:
+    """A socket that never answers is cut at what is left (here 1 ms); with nothing left the port
+    is never called, so no open of the deployment's budget is spent (SR-E27-05)."""
     w, clock, socket = World(target()), Clock(), Socket(None)  # a socket that never answers
-    done = await run(flow_of(w, job=Slow(w.check, clock, 12.5), clock=clock, socket=socket))
-    assert done.websocket == Probe(False, None, "timeout") and socket.calls == [KEY]
+    done = await run(flow_of(w, job=Slow(w.check, clock, took), clock=clock, socket=socket))
+    assert (done.websocket, socket.calls) == (Probe(False, None, "timeout"), dialled)
 
 
-async def test_a_socket_half_that_raises_is_its_own_auth_error_never_the_tests() -> None:
-    done = await run(flow_of(World(target()), socket=Socket(RuntimeError("m2 refused"))))
-    assert done.websocket == Probe(False, None, "auth_error") and not done.passed
+@pytest.mark.parametrize(
+    "error",
+    [
+        type("Refusal", (Exception,), {"code": "kek_unavailable"})("m2 refused"),
+        RuntimeError("no signing capability is wired"),
+    ],
+    ids=["m2-refused", "unwired"],
+)
+async def test_a_socket_half_that_raises_is_service_unavailable_never_the_keys_auth_error(
+    error: Exception,
+) -> None:
+    """A port that raises is CandleViewer's own fault (M2 refusing to sign, say), never the key's:
+    the exchange did not refuse it. It stays the half's result and never fails the test."""
+    with capture_logs() as logs:
+        done = await run(flow_of(World(target()), socket=Socket(error)))
+    assert done.websocket == Probe(False, None, "service_unavailable") and not done.passed
+    failed = {"event": "key_test_ws_failed", "key_id": str(KEY), "log_level": "warning"}
+    assert failed | {"error": type(error).__name__} in logs
 
 
 async def test_without_include_ws_the_socket_half_does_not_run() -> None:

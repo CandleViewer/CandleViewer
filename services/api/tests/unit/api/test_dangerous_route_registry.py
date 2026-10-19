@@ -40,7 +40,11 @@ _WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 #: reason is data, so no entry is without one). A contract operation listed here must not name
 #: a step-up class in its text (`test_allow_listed_operations_name_no_step_up_class`).
 _NOT_DANGEROUS: dict[tuple[str, str], str] = {
-    ("POST", "/exchange-accounts/{accountId}/keys/{keyId}/test"): "testApiKey: read-only probe",
+    # 04 row 44: no step-up. Decision 11 on #836 makes a test's verdict enforce as the hourly
+    # check's does, which only ever disarms an account: it grants nothing.
+    ("POST", "/exchange-accounts/{accountId}/keys/{keyId}/test"): (
+        "testApiKey: no step-up (04 row 44); its verdict can only disarm, never grant"
+    ),
     ("POST", "/admin/audit/verify"): "verifyAuditChain: `audit:read`, no step-up (04 row 49a)",
     # 04 row 52 gates restore and delete only (`restoreBackup`, `deleteBackup`).
     ("POST", "/admin/backups"): "createBackup: triggers a backup run",

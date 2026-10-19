@@ -103,7 +103,7 @@ entries:
     approver: "basiltt"
     expires: "2027-03-25"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1978"
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/api/exchange_keys.py:205"
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/api/exchange_keys.py:278"
     tool: codeql
     severity: HIGH
     reason: "False positive by construction: an in-memory HMAC-SHA256, keyed by a per-process random key, over the pasted exchange API key (an exchange-issued random identifier, not a password), used only to tell a reused Idempotency-Key with another API key from a replay; it only feeds the request digest held in the bounded in-memory replay cache, and nothing is persisted or logged. A slow KDF adds nothing. Re-check if the hashed value or the tag's use changes"

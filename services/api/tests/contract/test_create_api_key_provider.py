@@ -172,6 +172,27 @@ async def test_no_answer_in_time_is_a_503_with_retry_after_and_no_exchange_membe
 
 
 @pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (KekUnavailable("kek_unavailable"), 403),
+        (CredentialUnavailable("candidate_timeout"), 503),  # exchange_unavailable
+        (CredentialUnavailable("audit_unavailable"), 503),
+        (CredentialUnavailable("store_failed"), 503),  # store_unavailable
+    ],
+    ids=["kek_unavailable", "exchange_unavailable", "audit_unavailable", "store_unavailable"],
+)
+async def test_a_403_or_503_is_never_kept_for_replay(error: Exception, status: int) -> None:
+    """`createApiKey`, No verdict: a 403, 502 or 503 is never stored, so its re-send is judged
+    afresh once the cause clears (the 502 has its own test above)."""
+    world = Rig()
+    world.flow = world.importer(Refusing(error))
+    route = Route(world)
+    first, again = await route.post(), await route.post()
+    assert (first.status_code, again.status_code) == (status, status)
+    assert "idempotency-replayed" not in again.headers
+
+
+@pytest.mark.parametrize(
     ("who", "status"), [("manager", 403), ("reader", 403), ("viewer", 403), ("nobody", 401)]
 )
 async def test_only_the_owner_may_import_even_a_manager_granted_on_the_account(

@@ -31,6 +31,17 @@ withdraw, transfer, fiat or card right; error otherwise). Order entry is off for
 and the key's account is disarmed (`trading_enabled` false). The key's status does not change:
 reads go on.
 
+An Owner's on-demand test of a stored key (`testApiKey`, the Admin - Accounts "Test connection")
+enforces its verdict the same way (decision 11 on #836): a failing test gives this symptom and these
+records at once, its `account.tested` naming the Owner (`actor_user_id`, `request_id`) instead of
+`system:key-selfcheck`. Its WebSocket half never latches or disarms anything, and a passing test,
+like a passing hourly re-check, never clears the latch. A WebSocket half that CandleViewer could
+not sign or run shows `service_unavailable`, never the key's `auth_error` (warning log
+`key_test_ws_failed` with the error type: `KekUnavailable` and `CredentialUnavailable` are M2's).
+With `CV_EGRESS_IP` unset a test, like a pass, signs and judges nothing: it answers
+`503 exchange_unavailable` and latches `accounts.key_selfcheck_unavailable` (the next symptom),
+and no key or account is blamed.
+
 The disarm's rule code and time commit with it, on the account row (`exchange_accounts`
 `policy_disarm_code`, `policy_disarmed_at`). If the audit sink refuses `account.disabled_by_policy`
 (critical log `key_selfcheck_disable_unaudited`), the record stays owed (`policy_disarm_audited_at`
@@ -111,7 +122,8 @@ key's age. The `accounts` check on `/readyz` shows the number of keys checked an
 pass, healthy or not, never a key id (the route is anonymous); the debug log `key_selfcheck_ages`
 has each key's age.
 
-`unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`),
+`unavailable`: keys are stored but `CV_EGRESS_IP` is unset (`key_selfcheck_no_egress_ip`, at a
+pass or at a key test),
 the key list could not be read at start-up, or once a known key is past its window
 (`key_selfcheck_targets_failed`; a read that fails inside every window latches nothing), a key's
 check passed its deadline or its row is refused (`key_selfcheck_unfinished`,
