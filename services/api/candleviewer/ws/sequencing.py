@@ -639,6 +639,8 @@ class TopicEmitter:
                 "reason": reason,
                 "previous_seq": previous,
             }
+            if sub.replay_session_id is not None:  # a replay stream and its live twin share a `ch`
+                fields["rs"] = sub.replay_session_id  # canonical, the server's own
             # 23 §7.4's incidents, `upstream_desync` and `backpressure`, log at warning.
             if reason in INCIDENT_REASONS:
                 _log().warning("ws resync", **fields)
@@ -786,7 +788,14 @@ class TopicEmitter:
             _log().info("ws client resync", **fields)
         budget, key = authz.rebuilds, topic_key(sub.topic, sub.replay_session_id)
         if (scope := budget.take(key, "resync")) is not None:
-            budget.log("resync", scope, self.connection_id, sub.ch, client_reason=reason)
+            budget.log(
+                "resync",
+                scope,
+                self.connection_id,
+                sub.ch,
+                rs=sub.replay_session_id,
+                client_reason=reason,
+            )
             spent = budget.count_refusal("resync", scope, key)
             if budget.drawn(key, "resync") < budget.limits["topic"]:  # spent by `ctl`/`sub` too
                 message = f"{spent}; no snapshot was taken."
