@@ -180,7 +180,8 @@ def load_accepted_risks(path: Path) -> list[AcceptedRisk]:
                     reason=entry["reason"],
                     approver=entry["approver"],
                     expires=expires,
-                    ticket=entry.get("ticket"),
+                    # Required, like the rest (04-security-program.md §16.2, #3587).
+                    ticket=entry["ticket"],
                 )
             )
         except SecurityGateError:

@@ -31,10 +31,12 @@ def test_security_program_names_the_register_as_the_scan_exception_record() -> N
     text = (ROOT / "docs/plan/04-security-program.md").read_text(encoding="utf-8")
     (sr156,) = [line for line in text.splitlines() if line.startswith("| SR-156 |")]
     assert "`security/accepted-risks.yaml`" in sr156 and "§16.2" in sr156
+    assert "in-source suppression" in sr156  # the other record, which §16.2 also names
     prose = text.split("### 16.2 Exception process\n", 1)[1].split("\n| Exception id |", 1)[0]
     for name in ("security/accepted-risks.yaml", "tools/ci/security_gate.py"):
         assert f"`{name}`" in prose, name
     assert f"the GA cut, {FREEZE_CAP.isoformat()}, the cap" in prose
+    assert "(§12.2, CI-SEC-006)" in prose
     # What §16.2 says each entry carries, so every entry carries it (`expires` is the expiry date).
     assert "id, tool, severity, reason, approver, expiry date and ticket" in prose
     doc = yaml.safe_load((ROOT / "security/accepted-risks.yaml").read_text(encoding="utf-8"))

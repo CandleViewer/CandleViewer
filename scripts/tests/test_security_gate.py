@@ -273,6 +273,7 @@ def test_expired_accepted_risk_reblocks_on_run_date(tmp_path: Path) -> None:
                     "reason": "temporary — fix in progress",
                     "approver": "basiltt",
                     "expires": "2026-09-27",
+                    "ticket": "#1",
                 }
             ]
         },
@@ -1288,6 +1289,16 @@ def test_register_refuses_a_severity_the_gate_cannot_rank(tmp_path: Path, severi
     assert exc_info.value.message == f"accepted-risk entry #0 is malformed: {message}"
 
 
+def test_register_refuses_an_entry_without_a_ticket(tmp_path: Path) -> None:
+    # #3587: 04-security-program.md §16.2 lists the ticket in every entry, so the gate needs it.
+    entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": "HIGH"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    with pytest.raises(SecurityGateError) as exc_info:
+        load_accepted_risks(_write_yaml(tmp_path, {"entries": [entry]}))
+    assert exc_info.value.code == "CI-SEC-005"
+    assert exc_info.value.message == "accepted-risk entry #0 is malformed: 'ticket'"
+
+
 # --------------------------------------------------------------------------
 # CLI entrypoint
 # --------------------------------------------------------------------------
@@ -1755,7 +1766,7 @@ def test_one_register_entry_covers_its_ghsa_on_every_module_pnpm_reports(
     doc["metadata"]["vulnerabilities"] |= {"moderate": 0, "high": 2}
     report = _write_json(tmp_path, "npm-audit.json", doc)
     entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": "HIGH"}
-    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01", "ticket": "#1"}
     rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
     assert (rc, err) == (0, "")
     accepted = "accepted risk: npm-audit finding GHSA-82fw-gwwq-j7x9 (HIGH) until 2099-01-01 - test"
@@ -1774,7 +1785,7 @@ def test_critical_pnpm_advisory_blocks_even_with_a_matching_register_entry(
     # The register refuses a CRITICAL entry at load, so a matching entry has a lower severity.
     report = _write_json(tmp_path, "npm-audit.json", _pnpm_doc(TINYPOOL))
     entry = {"id": "GHSA-5gmw-xhrv-c9v3", "tool": "npm-audit", "severity": "HIGH"}
-    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01", "ticket": "#1"}
     rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
     assert (rc, out) == (1, "")
     head = "CI-SEC-001: npm-audit finding GHSA-5gmw-xhrv-c9v3 (CRITICAL) has an accepted-risk entry"
@@ -1801,7 +1812,7 @@ def test_an_entry_accepts_findings_up_to_its_own_severity_only(
     doc["metadata"]["vulnerabilities"] |= {"moderate": 0, "high": 1}
     report = _write_json(tmp_path, "npm-audit.json", doc)
     entry = {"id": "GHSA-82fw-gwwq-j7x9", "tool": "npm-audit", "severity": "MEDIUM"}
-    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01", "ticket": "#1"}
     rc, out, err = _npm_gate(capsys, report, _write_yaml(tmp_path, {"entries": [entry]}))
     assert (rc, out) == (1, "")
     head = "CI-SEC-001: npm-audit finding GHSA-82fw-gwwq-j7x9 (HIGH) has an accepted-risk entry"
@@ -1815,7 +1826,7 @@ def test_an_entry_still_accepts_a_finding_below_its_own_severity(
     # MEDIUM finding: a finding re-scored lower keeps the decision it already has.
     report = SARIF_FIXTURES / "bandit-1.9.4-finding.sarif"
     entry = {"id": "B307:finding/parse_expr.py:2", "tool": "bandit", "severity": "HIGH"}
-    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01"}
+    entry |= {"reason": "test", "approver": "basiltt", "expires": "2099-01-01", "ticket": "#1"}
     argv = ["--tool", "bandit", "--report", str(report), "--run-date", "2026-10-18"]
     rc = main([*argv, "--accepted-risks", str(_write_yaml(tmp_path, {"entries": [entry]}))])
     out, err = capsys.readouterr()
