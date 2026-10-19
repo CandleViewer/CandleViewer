@@ -1011,8 +1011,10 @@ def test_a_bucket_complete_in_the_snapshot_is_never_sent_again(
     columns = [{**done, "bids": [2.0]}, {**live, "bids": [3.0]}]
     hub.publish(_HEATMAP, {**head, "columns": columns}, part=live_part)
     [delta] = _queued(pipe)
+    # `e` first: a binary frame's `p` is a string. Whole frames: the part is dropped with the
+    # column. Merging: heatmap has no window encoder yet, so the merged window is structured.
+    assert delta["e"] == "j"
     assert [col["t_ms"] for col in delta["p"]["columns"]] == [1500]
-    assert delta["e"] == "j"  # the trimmed frame lost its part, on both lanes and both encodings
 
 
 def test_a_window_of_whole_heatmap_frames_never_regresses_a_complete_bucket() -> None:

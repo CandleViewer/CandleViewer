@@ -1087,8 +1087,7 @@ def test_coalescer_whole_heatmap_frame_open_columns_before_a_complete_one_stay_w
 
 def test_coalescer_whole_heatmap_frame_trimmed_at_take_keeps_its_counts_not_its_part() -> None:
     """The next frame of the window is trimmed as it leaves, as one trimmed as it is queued is:
-    root fields, counts, `ts_ms` and `meta` stay, and its part goes with the dropped column. What
-    it keeps is recorded as sent like any frame's: its complete bucket is final from then on."""
+    root fields, counts, `ts_ms` and `meta` stay, and its part goes with the dropped column."""
     queue, part, root = CoalescingQueue("heatmap", coalesce=False), Frame(HEATMAP_COLUMN), _HEAT
     assert queue.offer({**root, "columns": [_column(0)]}, part, count=2)
     later = {**root, "max_value": 2.0, "columns": [_column(0, complete=False), _column(100)]}
@@ -1097,7 +1096,17 @@ def test_coalescer_whole_heatmap_frame_trimmed_at_take_keeps_its_counts_not_its_
         Emission({**root, "columns": [_column(0)]}, part, 2),
         Emission({**root, "max_value": 2.0, "columns": [_column(100)]}, None, 3, 7, {"k": 1}),
     ]
-    assert queue.offer({**root, "columns": [_column(100, complete=False)]})
+
+
+def test_coalescer_whole_heatmap_frame_trimmed_at_take_is_recorded_as_sent() -> None:
+    """A frame trimmed as it leaves is recorded as sent like any other: the next frame of the
+    window loses its open column for bucket 0, which the frame before it completed, and the
+    complete bucket 100 it keeps is final from then on."""
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    assert queue.offer({**_HEAT, "columns": [_column(0)]})
+    assert queue.offer({**_HEAT, "columns": [_column(0, complete=False), _column(100)]})
+    assert [f.body["columns"] for f in queue.take()] == [[_column(0)], [_column(100)]]
+    assert queue.offer({**_HEAT, "columns": [_column(100, complete=False)]})
     assert not queue.pending  # bucket 100 left complete in the frame that was trimmed as it left
 
 
@@ -1158,6 +1167,18 @@ def test_coalescer_heatmap_reads_a_bucket_by_its_t_ms_as_an_int(coalesce: bool) 
     twice = CoalescingQueue("heatmap", coalesce=coalesce)
     assert twice.offer({**_HEAT, "columns": [_column(0), as_text]})
     assert [f.body["columns"] for f in twice.take()] == [[_column(0)]]
+
+
+@pytest.mark.parametrize("coalesce", [False, True], ids=["whole", "merging"])
+def test_coalescer_heatmap_remembers_a_sent_bucket_by_its_t_ms_as_an_int(coalesce: bool) -> None:
+    """The mirror of the test above, on the side that records: `emitted` reads the `t_ms` of a
+    complete column as an int too, so one that carries it as a string is that bucket's, and a
+    later column for the bucket, an int, is dropped."""
+    as_text = {**_column(0), "t_ms": "0"}
+    queue = CoalescingQueue("heatmap", coalesce=coalesce)
+    assert queue.offer({**_HEAT, "columns": [as_text]}) and len(queue.take()) == 1
+    assert queue.offer({**_HEAT, "columns": [_column(0, complete=False)]})
+    assert (queue.pending, queue.take()) == (False, [])
 
 
 @pytest.mark.parametrize(
