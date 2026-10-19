@@ -260,7 +260,8 @@ class SessionClass(StrEnum):
     ENROLMENT_ONLY_EXPIRED = "enrolment_only_expired"
     #: The user is disabled or gone, whatever else holds: #2911 answers, not this class. The
     #: HTTP guard leaves the request to its route, whose `require_active` revokes the session
-    #: as `user_disabled` and counts the SR-029 breach signal; the WS `auth` fails.
+    #: as `user_disabled` and counts the SR-029 breach signal; the WS `auth` is closed
+    #: `bye user_disabled`, 4403, and counted in `cv_ws_revoked_total`, as #3413's close is.
     USER_INACTIVE = "user_inactive"
 
 

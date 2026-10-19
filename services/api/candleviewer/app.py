@@ -938,8 +938,8 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
     `23-ws-protocol.md` §4.3), so HTTP (401) and the socket (`auth_failed`) both lead to a new
     sign-in; one past its expiry fails the lookup first. A user disabled or deleted since
     `require_active` read the session (`USER_INACTIVE`, a race with the disable) is refused as
-    the gateway refuses a late registration (`bye user_disabled`, 4403, #3413), uncounted here:
-    #2911's refusal, not an enrolment one."""
+    the gateway refuses a late registration (`bye user_disabled`, 4403, #3413), and counted as
+    it is, its line naming the session and the user: #2911's refusal, not an enrolment one."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)
@@ -962,7 +962,8 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
 
             raise AuthRefused("mfa_enrollment_required", audit=_audit)
         if verdict is SessionClass.USER_INACTIVE:  # disabled or gone since the lookup (#2911)
-            raise AuthRefused("user_disabled")  # as a late registration is closed (#3413)
+            ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
+            raise AuthRefused("user_disabled", ids=ids)  # as a late registration is (#3413)
         refusals.expired(record, channel="ws", method="GET", path="/ws")
         raise PermissionError("not a live enrolment-only session")
 

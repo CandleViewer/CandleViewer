@@ -372,6 +372,7 @@ def test_ws_refusal_is_audited_and_counted_on_the_scraped_registry(stack: Stack)
     user = _enrolling(stack)
     minted, _ = _mint(stack, user)
     before = _refusals(stack, "ws", "enrolment_only")
+    revoked = stack.scraped("cv_ws_revoked_total")
 
     with capture_logs() as logs, _socket(stack) as ws:
         _hello_auth(ws, minted.access_token)
@@ -385,6 +386,7 @@ def test_ws_refusal_is_audited_and_counted_on_the_scraped_registry(stack: Stack)
     )
     assert record["after_state"] == {"channel": "ws", "method": "GET", "path": "/ws"}
     assert _refusals(stack, "ws", "enrolment_only") == before + 1
+    assert stack.scraped("cv_ws_revoked_total") == revoked  # not a revocation, unlike #2911's
     (line,) = [e for e in logs if e["event"] == "ws auth refused"]
     assert (line["reason"], line["source_ip"]) == (_CODE, "127.0.0.1")
 
@@ -566,17 +568,19 @@ def test_refresh_of_a_deleted_or_disabled_users_session_writes_the_2911_denial(
     assert _refusals(stack, "http", "expired") == before
 
 
-def test_ws_auth_of_a_user_gone_since_its_lookup_is_closed_as_disabled_uncounted(
+def test_ws_auth_of_a_user_gone_since_its_lookup_is_closed_and_counted_as_disabled(
     stack: Stack,
 ) -> None:
     """The socket's strict lookup refuses a disabled or deleted user's session first; a user gone
     from the user store since then is closed as a late registration is (#3413): `bye
-    user_disabled`, 4403, counted neither as a failed `auth` nor as an enrolment refusal."""
+    user_disabled`, 4403, counted in `cv_ws_revoked_total` with a warning naming the session and
+    the user, and neither as a failed `auth` nor as an enrolment refusal."""
     minted, user = _full_session(stack)
     del stack.users.users[str(user.id)]  # the session row still reads it active: a race
     failures, expired = _failures(), _refusals(stack, "ws", "expired")
+    revoked = stack.scraped("cv_ws_revoked_total", reason="user_disabled")
 
-    with _socket(stack) as ws:
+    with capture_logs() as logs, _socket(stack) as ws:
         bye = _hello_auth(ws, minted.access_token)
         code = _closed(ws)
 
@@ -588,3 +592,6 @@ def test_ws_auth_of_a_user_gone_since_its_lookup_is_closed_as_disabled_uncounted
     )
     assert (_failures(), _refusals(stack, "ws", "expired")) == (failures, expired)
     assert stack.audit.of(REFUSAL_ACTION) == []
+    assert stack.scraped("cv_ws_revoked_total", reason="user_disabled") == revoked + 1
+    (line,) = [e for e in logs if e["event"] == "ws auth refused"]
+    assert (line["session_id"], line["user_id"]) == (str(minted.session_id), str(user.id))
