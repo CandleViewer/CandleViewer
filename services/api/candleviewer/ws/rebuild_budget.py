@@ -226,14 +226,25 @@ class RebuildBudget:
         return self._user is not None and self._user[0].first_refusal(self._user[1], self._clock())
 
     def log(
-        self, path: RebuildPath, scope: Scope, connection_id: str, ch: str, **fields: Any
+        self,
+        path: RebuildPath,
+        scope: Scope,
+        connection_id: str,
+        ch: str,
+        *,
+        rs: str | None,
+        **fields: Any,
     ) -> None:
         """`ws resync rate limited` (23 §7.7) per refused `resync` or `ctl` and per `sub` frame: the
-        first `REFUSAL_LOG_LIMIT` a window per path, one `capped`, then none."""
+        first `REFUSAL_LOG_LIMIT` a window per path, one `capped` (that refusal's own line, flagged,
+        so it names its `ch` and `rs` too), then none. `rs`: the canonical id of the replay session
+        of `ch`'s stream, never the client's text; None for a live stream, which has no key."""
         if (verdict := self._logs.admit(path, self._clock())) is RefusalLog.NONE:
             return
         limit, log = self.limits[scope], structlog.get_logger(__name__)
         line = {"path": path, "scope": scope, "limit": limit, "window_s": REBUILD_WINDOW_S}
+        if rs is not None:  # a replay stream and its live twin share a `ch`
+            fields["rs"] = rs
         if verdict is RefusalLog.SUMMARY:
             line["capped"] = True
         log.warning("ws resync rate limited", connection_id=connection_id, ch=ch, **line, **fields)

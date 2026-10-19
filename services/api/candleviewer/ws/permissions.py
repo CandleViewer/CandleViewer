@@ -785,7 +785,10 @@ class ConnectionAuthz:
         if resnapshot:  # SR-193: drawn before any change, so a refused `ctl` changes nothing
             key = topic_key(sub.topic, sub.replay_session_id)
             if (scope := self.rebuilds.take(key, "ctl")) is not None:
-                self.rebuilds.log("ctl", scope, self.connection_id, sub.ch)
+                # `rs=`: the subscription's own canonical id, never the raw `rs` argument
+                self.rebuilds.log(
+                    "ctl", scope, self.connection_id, sub.ch, rs=sub.replay_session_id
+                )
                 spent = self.rebuilds.count_refusal("ctl", scope, key)
                 raise TopicError("resync_rate_limited", f"{spent}; nothing was changed.")
         if paused or "paused" in changes:
@@ -1410,7 +1413,9 @@ async def handle_sub(
     finally:  # a raise or a cancellation mid-loop still records the refusals before it (C-2.9)
         await _audit_denials(authz, denials)
     if spent:  # SR-193: one line for the frame, naming its first budget refusal (§7.7)
-        authz.rebuilds.log("sub", spent[0][1], authz.connection_id, spent[0][0], count=len(spent))
+        authz.rebuilds.log(
+            "sub", spent[0][1], authz.connection_id, spent[0][0], rs=rs, count=len(spent)
+        )
     cv_ws_client_topics_depth.observe(len(authz.by_id))
     out: dict[str, Any] = {"t": "sub_ok", "p": {"results": results}}
     if fid is not None:
