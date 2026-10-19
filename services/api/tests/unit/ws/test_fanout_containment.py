@@ -385,26 +385,28 @@ def test_a_failure_that_repeats_logs_once_an_interval_with_a_count_but_orders_ev
 def test_the_log_window_is_fixed_so_a_failure_that_repeats_is_never_starved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The interval runs from the line that opened it, whatever it holds back: a build that fails
-    every 0.7 s (of a 1 s interval) logs at t = 0 and at t = 1.4, with `suppressed` 0, then 1 (the
-    failure at 0.7), and the failure at 2.1 falls in the window the second line opened, to 2.4. A
-    window that each held-back failure pushed out would log once, at t = 0, and never again; one
-    that began where the last ended, not at the line, would end at 2.0 and log again at t = 2.1."""
+    """The interval runs from the line that opened it, whatever it holds back, and each line
+    restarts the count: a build that fails every 0.7 s (of a 1 s interval) logs at t = 0, 1.4 and
+    2.8, with `suppressed` 0, 1 (the failure at 0.7), then 1 (the failure at 2.1, in the window the
+    second line opened, to 2.4). A window that each held-back failure pushed out would log once, at
+    t = 0, and never again; one that began where the last ended, not at the line, would end at 2.0
+    and log again at t = 2.1; one that carried its count over a renewal would say 2 at t = 2.8; one
+    that lasted twice as long once renewed would end at 3.4 and not log at t = 2.8."""
     clock = Clock()
     hub = SequencingHub(clock=clock)
     (bad, book), _ = _pair(hub)
     book.snapshot_pending, book.pending_reason = True, _HELD
     bad.emitter.cache.invalidate(_BOOK)
     monkeypatch.setattr(bad.emitter.source, "build", _raises)
-    every = 0.7 * sequencing.FAILURE_LOG_INTERVAL_S  # no step on a window's edge: 1.0, 2.0, 2.4
+    every = 0.7 * sequencing.FAILURE_LOG_INTERVAL_S  # no step on an edge: 1.0, 2.0, 2.4, 3.4
     lines: list[tuple[float, int]] = []
     with capture_logs() as logs:
-        for step in range(4):  # t = 0, 0.7, 1.4, 2.1
+        for step in range(5):  # t = 0, 0.7, 1.4, 2.1, 2.8
             clock.now, seen = step * every, len(logs)
             hub.flush_pending()
             failed = [e for e in logs[seen:] if e["event"] == "ws snapshot failed"]
             lines += [(round(clock.now, 1), e["suppressed"]) for e in failed]
-    assert lines == [(0.0, 0), (round(2 * every, 1), 1)]
+    assert lines == [(0.0, 0), (round(2 * every, 1), 1), (round(4 * every, 1), 1)]
 
 
 @pytest.mark.parametrize("family", _NEVER_THROTTLED)
