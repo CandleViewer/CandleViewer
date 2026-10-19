@@ -302,6 +302,12 @@ async def skip_kill_cancel(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -
     context["kill_skip_cancel"] = True
 
 
+async def adopt_recon(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+    """Reconciliation has bound the order, so a KILL cancels it again (INV-B1-h); adopting the
+    reconciled totals and exchange order id is #847 slice 5's."""
+    context["kill_skip_cancel"] = False
+
+
 async def issue_kill_cancel(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """At most one exchange cancel per order, only if submitted (INV-B1-h): via the
     chart's own `cancel_order` service (the same client order id, C-2.10), bounded by
@@ -357,7 +363,6 @@ async def audit_guard_denied(_i: Any, context: dict[str, Any], event: Any, _a: A
 
 
 _STUB_ACTIONS = (
-    "adopt_recon",
     "arm_recon_deadline",
     "arm_sl_deadline",
     "bump_recon_misses",
@@ -382,6 +387,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "adopt_ack": adopt_ack,
     "adopt_amend": adopt_amend,
     "adopt_cancel_ack": adopt_ack,
+    "adopt_recon": adopt_recon,
     "apply_fill": apply_fill,
     "map_reject_code": map_reject_code,
     "set_local_reject": set_local_reject,

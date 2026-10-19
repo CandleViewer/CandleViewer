@@ -1,4 +1,4 @@
-"""B1 `order` binding core (E29-T03 #847): guards (A6), actions, INV-B1-a/b, S2-S4, native SL."""
+"""B1 `order` binding core (E29-T03 #847): guards (A6), actions, INV-B1-a/b/h, S2-S4, native SL."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ MAX_LEAVES = "99999999999999999999.749999999999999999"  # MAX - 0.25
 _STAMPED = ORDER | {"trigger_price": None, "take_profit": None, "qty": "0.5", "leaves_qty": "0.5"}
 _X1 = {"ok": True, "exchange_order_id": "x1"}  # the place ack
 _KEPT = ("63000", "1", "0.75", 1)  # price, qty, leaves_qty and one ERROR log: not adopted
+_REJECT = [{"ok": False, "terms": {"stop_loss": "1", "price": "1"}}]  # ruling 3: a business reject
 _RATES = st.sampled_from([Decimal("-0.0001"), Decimal("0.0002"), Decimal("0.00055")])
 _FILL = st.tuples(st.decimals(1, 9, places=2), st.decimals(1, 99, places=1), _RATES)
 
@@ -290,18 +291,50 @@ async def test_cancel_loses_the_race_to_a_fill_not_to_a_repeat(
         assert (interp.context["leaves_qty"], interp.context["seen_exec_ids"]) == (leaves, seen)
 
 
-@pytest.mark.parametrize("amend", [_hang, [{"ok": True, "terms": {"qty": "1E+80"}}]])
+@pytest.mark.parametrize(("fills", "state"), [(["e1"], "partially_filled"), ([], "submitted")])
+@pytest.mark.parametrize("amend", [_hang, [{"ok": True, "terms": {"qty": "1E+80"}}], _REJECT])
 async def test_amend_rejection_does_not_move_the_stop(
-    amend: object, charts: Charts, monkeypatch: pytest.MonkeyPatch
+    amend: object, fills: list[str], state: str, charts: Charts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Gherkin "Amend rejection does not move the stop" (S2) on the library: an amend rejected, or
-    acked ok with terms it cannot use, is sent once and changes nothing; slice 5 emits the event."""
+    """Gherkin "Amend rejection does not move the stop" (S2) on the library, with fills or none:
+    an amend rejected (`AMEND_REJECTED`, or a result that is not ok), or acked ok with terms it
+    cannot use, is sent once and changes nothing; slice 5 emits the event."""
     monkeypatch.setitem(b01.SERVICES, "amend_order", sent := AsyncMock(side_effect=amend))
     async with _sent(charts) as interp:
-        await interp.send("EXEC", wait=True, **_exec("e1", "0.25").payload)
+        for exec_id in fills:
+            await interp.send("EXEC", wait=True, **_exec(exec_id, "0.25").payload)
         before = copy.deepcopy(interp.context)
         for event in ("AMEND", "AMEND_REJECTED"):  # unhandled once the ack has landed: deferred
             await interp.send(event, wait=True)
             await settle()
-        assert "order.lifecycle.partially_filled" in interp.current_state_ids
-        assert (sent.await_count, interp.context["price"], interp.context) == (1, "63000", before)
+        assert f"order.lifecycle.{state}" in interp.current_state_ids
+        assert (sent.await_count, interp.context["stop_loss"]) == (1, "62000")
+        assert interp.context == before
+
+
+@pytest.mark.parametrize("recon", ["RECON_FOUND_LIVE", "RECON_FOUND_PARTIAL"])
+async def test_inv_b1_h_kill_cancels_a_reconciled_duplicate(
+    recon: str, charts: Charts, place: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INV-B1-h on the library: a duplicate-id place result parks in `unknown`, where a KILL skips
+    the cancel; reconciliation finding the order live binds it (`adopt_recon` clears the skip), so
+    a KILL then audits ahead of exactly one cancel (#847 slice 4)."""
+    trail: list[str] = []
+
+    async def _cancel(*_a: object) -> None:
+        trail.append("cancel_order")
+
+    async def _audit(name: str, _ctx: object) -> None:
+        trail.append(name)
+
+    place.return_value = {"ok": False, "error_code": "DUPLICATE_CLIENT_ID"}
+    monkeypatch.setitem(b01.SERVICES, "cancel_order", _cancel)
+    monkeypatch.setattr(b01, "_hook", _audit)
+    async with _sent(charts) as interp:
+        assert "order.lifecycle.unknown" in interp.current_state_ids
+        assert interp.context["kill_skip_cancel"] is True
+        for event in (recon, "KILL"):
+            await interp.send(event, wait=True)
+        await settle()
+        assert "order.lifecycle.killed" in interp.current_state_ids
+        assert trail == ["halted_by_kill", "cancel_order", "kill_protection_retained"]
