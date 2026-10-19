@@ -384,6 +384,9 @@ class ParquetRecordedReader:
 
     async def _partition_files(self, paths: ColdPaths) -> list[str]:
         store = ManifestStore(paths.manifests_dir)
+        if await asyncio.to_thread(store.has_quarantined_part, paths.partition_dir, paths.root):
+            # #3477: the manifest no longer names that part, so the rest would pass for all of it.
+            raise ColdReplayReadError("a cold partition holds a quarantined part")
         entries = await asyncio.to_thread(store.read, paths.partition_dir, paths.root)
         if not entries:
             return []

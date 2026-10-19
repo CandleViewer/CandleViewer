@@ -8,6 +8,7 @@ import importlib
 import inspect
 import json
 import os
+import shutil
 import sys
 import threading
 from collections.abc import Callable
@@ -28,7 +29,7 @@ from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore, SchemaRegistry
 from candleviewer.storage.cold.observability import Severity, SystemEventSink
 from candleviewer.storage.cold.recorded_reader import ParquetRecordedReader
-from candleviewer.storage.cold.scrub import verify_partition
+from candleviewer.storage.cold.scrub import scrub_all, verify_partition
 from candleviewer.storage.errors import ColdReplayReadError, ColdReplayReadTimeout
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
@@ -291,8 +292,10 @@ async def test_a_manifest_that_disagrees_with_an_intact_part_is_refused(
 
 
 async def test_every_swapped_part_is_refused_by_verification_never_served(tmp_path: Path) -> None:
-    """Verification stops at a partition's first bad part, so the next read verifies again and
-    refuses the second, rather than serve it as if the failed pass had cleared it."""
+    """Verification stops at a partition's first bad part and quarantines it, and later reads
+    refuse the partition for that (#3477). Once the quarantine is cleared, the next read
+    verifies again and refuses the second part, rather than serve it as if the failed pass had
+    cleared it."""
     root = tmp_path / "cold"
     rows = generated_rows()
     registry = await _export(root, rows)
@@ -307,11 +310,148 @@ async def test_every_swapped_part_is_refused_by_verification_never_served(tmp_pa
     events = _Events()
     reader = ParquetRecordedReader(registry, events=events)
 
-    for _ in parts:
-        with pytest.raises(ColdReplayReadError, match="failed verification"):
-            await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+    with pytest.raises(ColdReplayReadError, match="failed verification"):
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+    with pytest.raises(ColdReplayReadError, match="quarantined part"):
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+    shutil.rmtree(_trades_mirror(root))
+    with pytest.raises(ColdReplayReadError, match="failed verification"):
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
 
     assert [detail["reason"] for _, _, detail in events.emitted] == ["sha256", "sha256"]
+
+
+# #3477 (C-2.14): a partition that lost a part to quarantine is refused, never served partly.
+
+FIRST_HALF = TimeRange(start_us=H0, end_us=H0 + 1_800_000_000)
+SECOND_HALF = TimeRange(start_us=H0 + 1_800_000_000, end_us=H0 + HOUR)
+
+
+def _trades_mirror(root: Path) -> Path:
+    """Where `ManifestStore.quarantine` moves the trades hour's bad parts."""
+    return root / "_quarantine" / "trades" / f"symbol={SYMBOL}" / "dt=2026-10-01"
+
+
+async def _halves(root: Path, rows: dict[StreamKind, list[dict[str, object]]]) -> DatasetRegistry:
+    """The trades hour as two disjoint parts, `FIRST_HALF` then `SECOND_HALF`."""
+    registry = DatasetRegistry(root)
+    registry.ensure_tree()
+    exporter = ColdExporter(registry, MemHotSource(rows), rows_per_group=64)
+    for half in (FIRST_HALF, SECOND_HALF):
+        await exporter.export_partition(SYMBOL, StreamKind.TRADES, half)
+    return registry
+
+
+async def _lose_the_second_half(root: Path) -> DatasetRegistry:
+    """The second half's part goes bad, and the read that finds it quarantines it."""
+    registry = await _halves(root, generated_rows())
+    parts = sorted((root / "trades").rglob("part-*.parquet"))
+    assert len(parts) == 2
+    _swap_for_valid_parquet(parts[1])
+    with pytest.raises(ColdReplayReadError, match="failed verification"):
+        await ParquetRecordedReader(registry).read(
+            SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=1_000
+        )
+    return registry
+
+
+async def test_a_partition_that_lost_a_part_is_refused_by_every_later_read(
+    tmp_path: Path,
+) -> None:
+    """On an explicit tier nothing checks coverage, so this refusal is what keeps the first half
+    from replaying as the whole hour. It names no path and carries none in its chain."""
+    registry = await _lose_the_second_half(tmp_path / "cold")
+    reader = ParquetRecordedReader(registry)
+
+    for _ in range(2):
+        with pytest.raises(ColdReplayReadError, match="quarantined part") as err:
+            await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=1_000)
+        assert "/" not in str(err.value)
+        assert err.value.__cause__ is None and err.value.__context__ is None
+
+
+async def test_a_reader_that_verified_the_hour_refuses_it_once_the_scrub_quarantines_a_part(
+    tmp_path: Path,
+) -> None:
+    """The weekly scrub quarantines without any read: the part that stays verified in the
+    reader's cache must not be served as the whole hour."""
+    root = tmp_path / "cold"
+    registry = await _halves(root, generated_rows())
+    reader = ParquetRecordedReader(registry)
+    first = await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=1_000)
+    _swap_for_valid_parquet(sorted((root / "trades").rglob("part-*.parquet"))[1])
+    assert await scrub_all(registry, _Events()) == 1
+
+    with pytest.raises(ColdReplayReadError, match="quarantined part"):
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=1_000)
+    assert first  # the hour was served whole before
+
+
+async def test_clearing_the_quarantine_after_a_re_export_restores_the_partition(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cold"
+    rows = generated_rows()
+    registry = await _lose_the_second_half(root)
+    await ColdExporter(registry, MemHotSource(rows)).export_partition(
+        SYMBOL, StreamKind.TRADES, SECOND_HALF
+    )  # the re-export
+    reader = ParquetRecordedReader(registry)
+    with pytest.raises(ColdReplayReadError, match="quarantined part"):  # until cleared by hand
+        await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=1_000)
+
+    shutil.rmtree(_trades_mirror(root))  # the runbook's last step
+
+    got = await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=1_000)
+    want = rows_in(rows[StreamKind.TRADES], FIRST_HOUR)
+    assert got == [event_from_row(StreamKind.TRADES, r) for r in want]
+
+
+async def test_a_quarantine_in_one_partition_leaves_the_others_served(tmp_path: Path) -> None:
+    root = tmp_path / "cold"
+    registry = await _export(root, generated_rows())
+    paths = registry.resolve_partition(
+        StreamKind.TRADES, partition_values={"symbol": SYMBOL, "dt": "2026-10-01"}
+    )
+    ManifestStore(paths.manifests_dir).quarantine(
+        paths.partition_dir, paths.root, _part(root).name
+    )  # as verification does
+
+    deltas = await ParquetRecordedReader(registry).read(
+        SYMBOL, StreamKind.ORDERBOOK_DELTA, FIRST_HOUR, depth=200, limit=1_000
+    )
+
+    assert deltas
+
+
+async def test_an_hour_whose_only_part_went_missing_is_refused_rather_than_read_empty(
+    tmp_path: Path,
+) -> None:
+    """The scrub quarantines a part found missing by its manifest entry alone: nothing moves,
+    the manifest is left empty and the mirror is an empty directory. The hour must not then read
+    as one in which nothing was recorded."""
+    root = tmp_path / "cold"
+    registry = await _export(root, generated_rows())
+    _part(root).unlink()
+    events = _Events()
+    assert await scrub_all(registry, events) == 1
+    assert [detail["reason"] for _, _, detail in events.emitted] == ["missing"]
+    assert not any(_trades_mirror(root).iterdir())
+
+    with pytest.raises(ColdReplayReadError, match="quarantined part"):
+        await ParquetRecordedReader(registry).read(
+            SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10
+        )
+
+
+async def test_coverage_leaves_out_the_quarantined_part_as_before(tmp_path: Path) -> None:
+    """`auto` routing is unchanged: it routes on the manifests, which no longer name the lost
+    part, so the second half is not cold coverage."""
+    registry = await _lose_the_second_half(tmp_path / "cold")
+
+    covered = await ParquetRecordedReader(registry).archived(SYMBOL, StreamKind.TRADES, FIRST_HOUR)
+
+    assert covered == [FIRST_HALF]
 
 
 def _count_verifications(monkeypatch: pytest.MonkeyPatch) -> list[ColdPaths]:

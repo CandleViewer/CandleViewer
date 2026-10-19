@@ -36,11 +36,24 @@ SHA-256 must re-verify. Only when **every** symbol in that day verifies is the p
 Location: `<CV_PARQUET_ROOT>/_quarantine/<stream>/symbol=<SYM>/dt=<DATE>/part-NNNN.parquet` with a
 `part-NNNN.reason.json` sidecar (`row_count` | `checksum` | `sha256` | `missing_manifest`).
 Quarantined files are removed from the manifest, so no DuckDB view or cold read can serve them.
+Verify-on-read and the weekly scrub (`STORAGE_COLD_FILE_QUARANTINED`) quarantine the same way, with
+no sidecar; a part they found missing leaves an empty directory.
 
-1. Do **not** move it back. The hot partition still holds the data.
+While the partition's quarantine directory exists, every cold read of that partition refuses rather
+than serve the parts that remain as all of it (#3477): `/market/klines` answers 503 for that month,
+a replay over it fails typed and the cold repository raises. Retention never touches `_quarantine/`:
+a partition it deletes keeps its quarantine directory, and reads of that range keep refusing until
+the directory is deleted.
+
+1. Do **not** move it back. After a roll-off quarantine the hot partition still holds the data.
 2. Inspect: `duckdb -c "SELECT count(*) FROM read_parquet('<file>')"` vs the hot `count()`.
 3. Fix the cause (disk, schema drift — see `STORAGE_SCHEMA_DRIFT`), then let the next run re-export.
-4. After a successful later run, the quarantined file may be deleted manually (audit the deletion).
+4. After a later run has re-exported and verified the partition, delete the partition's whole
+   quarantine directory (the part and its sidecar) and audit the deletion. That deletion is what
+   restores the partition's reads.
+5. If the hot tier no longer holds the day (a scrub or a read found the bad part after the day was
+   dropped), no run can re-export it: restore the part from a backup before step 4. Deleting the
+   directory without a restore serves the partition without that part, as if it were complete.
 
 ## Manual compaction
 

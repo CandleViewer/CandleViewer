@@ -172,6 +172,19 @@ class ManifestStore:
         self.write(partition_dir, cold_root, remaining)
         return dest.relative_to(cold_root)
 
+    def has_quarantined_part(self, partition_dir: Path, cold_root: Path) -> bool:
+        """#3477: whether `quarantine` took a part of this partition out and its mark, the
+        partition's directory under `_quarantine/`, is still there. The manifest no longer names
+        that part, so serving the rest would serve the partition partly (C-2.14): the cold
+        readers refuse it until an operator removes the directory after a verified re-export.
+        An empty directory counts (a part found missing is quarantined by its entry alone), and
+        any failure to look it up other than its absence is raised, never read as "none"."""
+        try:
+            os.lstat(cold_root / QUARANTINE_DIR / partition_dir.relative_to(cold_root))
+        except FileNotFoundError:
+            return False
+        return True
+
 
 class SchemaRegistry:
     """`cold/_manifests/schema-registry.json` — the exporter's fail-closed

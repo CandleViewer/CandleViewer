@@ -4,6 +4,7 @@ crash-point resume reconciliation."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pyarrow as pa
@@ -176,3 +177,44 @@ def test_quarantine_moves_file_and_drops_manifest_entry(tmp_path: Path) -> None:
     assert rel.parts[0] == "_quarantine"
     assert store.read(part, tmp_path) == []
     store.quarantine(part, tmp_path, dest.name)  # idempotent when already moved
+
+
+def test_a_quarantine_marks_its_partition_until_its_mirror_is_removed(tmp_path: Path) -> None:
+    """#3477: `_quarantine/<partition>/` is the mark its readers refuse on; the runbook's last
+    step, removing it after a verified re-export, clears it."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    other = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-18"
+    dest = part / "part-0000.parquet"
+    rows = _write_sample(dest, [1])
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry(dest.name, sha256_of(dest), rows, "trades", "r", 1)])
+    assert not store.has_quarantined_part(part, tmp_path)
+
+    rel = store.quarantine(part, tmp_path, dest.name)
+
+    assert store.has_quarantined_part(part, tmp_path)
+    assert not store.has_quarantined_part(other, tmp_path)
+    shutil.rmtree((tmp_path / rel).parent)
+    assert not store.has_quarantined_part(part, tmp_path)
+
+
+def test_a_part_found_missing_marks_its_partition_too(tmp_path: Path) -> None:
+    """An entry whose file is gone is quarantined by its entry alone: nothing moves, and the
+    mirror is an empty directory, which marks the partition all the same."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part, tmp_path, [ManifestEntry("part-0000.parquet", "0" * 64, 1, "trades", "r", 1)])
+
+    rel = store.quarantine(part, tmp_path, "part-0000.parquet")
+
+    assert not any((tmp_path / rel).parent.iterdir())
+    assert store.has_quarantined_part(part, tmp_path)
+
+
+def test_a_mirror_that_cannot_be_looked_up_is_never_taken_for_none(tmp_path: Path) -> None:
+    """Fail closed: only a mirror that does not exist clears the partition."""
+    part = tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-17"
+    (tmp_path / "_quarantine").write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(NotADirectoryError):
+        ManifestStore(tmp_path / "_manifests").has_quarantined_part(part, tmp_path)

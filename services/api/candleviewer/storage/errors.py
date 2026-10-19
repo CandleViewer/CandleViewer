@@ -264,7 +264,8 @@ class KcvEnrolmentNotAudited(StorageError):
 
 class ColdReplayReadError(StorageTierUnavailable):
     """The cold read was refused or failed: a path outside the registry, a manifest that names
-    a foreign file, a partition that failed verification, or a DuckDB error."""
+    a foreign file, a partition that failed verification or holds a quarantined part, or a
+    DuckDB error."""
 
     code = "COLD_REPLAY_READ_ERROR"
 
