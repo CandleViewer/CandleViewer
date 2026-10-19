@@ -3144,8 +3144,37 @@ replaces it (the later frame wins).
               "pending_amend",
               "rejected",
               "expired",
-              "untracked"
-            ]
+              "untracked",
+              "triggered",
+              "unknown",
+              "quarantined",
+              "killed",
+              "held"
+            ],
+            "description": "The persisted order state (`order_state`); the chart-to-database mapping is in 24-internal-schemas.md §8.2 (added by E29-T03's implementation). Open-ended for readers: a client must not reject the frame or drop the order for a state it does not know; it shows the order as live (non-terminal) until its id arrives in `removed`. Adding a state is an additive change (C-6.3)."
+          },
+          "lifecycle_state": {
+            "enum": [
+              "draft",
+              "validated",
+              "submitting",
+              "submitted",
+              "triggered",
+              "partially_filled",
+              "cancel_pending",
+              "amend_pending",
+              "unknown",
+              "quarantined",
+              "untracked",
+              "held",
+              "filled",
+              "cancelled",
+              "rejected",
+              "expired",
+              "killed",
+              null
+            ],
+            "description": "The B1 chart state of the order, verbatim (`OrderLifecycleState`); null until the OMS records it. Open-ended for readers, as `state` is: an unknown value reads as live, and adding one is an additive change (C-6.3)."
           },
           "qty": { "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal" },
           "filled_qty": { "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal" },
@@ -4332,7 +4361,7 @@ Both this document and `22-api-openapi.yaml` are too large for manual review to 
 | `openapi_jsonschema`           | `openapi-spec-validator` (independent implementation)                                                                                         | JSON-Schema-2020-12 keyword misuse; notably the YAML 1.1 `on:`/`off:`/`yes:`/`no:` boolean-coercion trap that silently corrupts a `required` list.                                 |
 | `ref_closure`                  | `tools/contracts/check_refs.py`                                                                                                               | Every `$ref` resolves; every component referenced at least once.                                                                                                                   |
 | `rbac_coverage`                | `tools/contracts/check_rbac.py`                                                                                                               | Every operation has `x-rbac`; every permission code exists in `x-permissions`; every order/position mutation declares `x-idempotency: required`.                                   |
-| `enum_parity_db`               | `tools/contracts/check_enum_parity.py`                                                                                                        | Each schema tagged `x-db-enum: <pg_type>` matches the introspected Postgres enum of `21-database-schema.md`, modulo an explicitly declared `x-db-enum-superset`. 31 enums covered. |
+| `enum_parity_db`               | `tools/contracts/check_enum_parity.py`                                                                                                        | Each schema in `22-api-openapi.yaml`'s `covers` list matches its `x-db-enum` type as introspected from Postgres (`21-database-schema.md`), modulo a declared `x-db-enum-superset`. |
 | `error_registry_single_source` | `tools/contracts/check_error_registry.py`                                                                                                     | §10.2 == the canonical registry; `rest_analogue` values resolve; generated enums are fresh.                                                                                        |
 | `ws_message_schemas`           | `tools/contracts/validate_ws_schemas.py --draft 2020-12`                                                                                      | Every §13–§15 schema meta-validates; every §12 example validates.                                                                                                                  |
 | `schemathesis_fuzz`            | `schemathesis run --checks all`                                                                                                               | Live-instance property fuzzing of all 166 operations.                                                                                                                              |
