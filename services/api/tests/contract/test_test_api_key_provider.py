@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import httpx
@@ -361,3 +362,17 @@ async def test_with_no_egress_ip_a_test_is_a_503_that_probed_signed_and_disarmed
 def test_without_a_self_check_or_an_import_no_test_is_wired() -> None:
     ctx, wired = cast(Any, SimpleNamespace()), cast(Any, object())
     assert wire_key_test(ctx, None, wired) is None and wire_key_test(ctx, wired, None) is None
+
+
+async def test_the_ws_probe_reads_the_guards_offset_per_probe_and_zero_until_measured() -> None:
+    """A host clock 12 s ahead shows in the offset that puts the `auth`'s `expires` on the
+    exchange's clock, as for REST (`test_key_selfcheck_wiring.py`); 0 until the guard measures."""
+    measured, venue = iter([-12_000, None]), SimpleNamespace(key_ws_probe=AsyncMock())
+    ingestion = SimpleNamespace(clock_offset_ms=lambda: next(measured))
+    settings = SimpleNamespace(environment=Environment.DEMO)
+    ctx = SimpleNamespace(settings=settings, exchange_bybit=venue, ingestion=ingestion)
+    imports = SimpleNamespace(flow=SimpleNamespace(accounts=None))
+    flow: Any = wire_key_test(cast(Any, ctx), cast(Any, object()), cast(Any, imports))
+    await flow._websocket(KEY)
+    offset_ms = venue.key_ws_probe.await_args.kwargs["clock_offset_ms"]
+    assert (offset_ms(), offset_ms()) == (-12_000, 0)  # read per probe; 0 until measured
