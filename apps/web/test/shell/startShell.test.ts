@@ -1,7 +1,7 @@
 // E17-T04 S5g (C11, C12; WS-E06; D9): the shell starts the web WS client and feeds the shell store from it. The `system` updates
 // and the connection state reach the store as they arrive; the client is the one the app reads through `useWsState`; and
-// `SystemSocket` is no longer constructed (its deletion is #3249). The last test is the real path: the shell, the client, the
-// worker's host and a gateway, which says `hello`, then `auth`, before any `sub`.
+// The last test is the real path: the shell, the client, the worker's host and a gateway, which says `hello`, then `auth`,
+// before any `sub`.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getActiveClient } from "../../src/lib/ws/client/activeClient.js";
 import type { WsState } from "../../src/lib/ws/state/types.js";
@@ -12,15 +12,6 @@ import { tokenOf, URL } from "../lib/ws/support/connectionHarness";
 import { BOOK } from "../lib/ws/support/engineHarness";
 import { FakePort } from "../lib/ws/support/fakePort";
 import { shim, WAIT } from "../lib/ws/support/portShim";
-
-const sockets = vi.hoisted(() => ({ made: 0 }));
-vi.mock("../../src/shell/bootstrap/systemSocket.js", () => ({
-  SystemSocket: class {
-    constructor() {
-      sockets.made += 1;
-    }
-  },
-}));
 
 const WS_URL = "wss://localhost/api/v1/ws";
 const jsonResponse = (body: unknown): Response =>
@@ -40,13 +31,12 @@ afterEach(() => {
 });
 
 describe("startShell", () => {
-  it("starts the WS client and the REST bootstrap concurrently, and never a SystemSocket", () => {
+  it("starts the WS client and the REST bootstrap concurrently", () => {
     const { port, fetchImpl, handle } = started();
     expect(port.of("connect")).toEqual([
       expect.objectContaining({ t: "connect", wsUrl: WS_URL, shell: "browser" }),
     ]);
     expect(fetchImpl).toHaveBeenCalled();
-    expect(sockets.made).toBe(0);
     handle.stop();
   });
 
