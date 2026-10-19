@@ -77,15 +77,12 @@ credential operation raises `kek_unavailable`. The log line contains this remedi
 | `kek_rows_stranded` | the KEK loaded, but unrevoked API key rows of this environment are wrapped under a version this process did not load: typically a restart without `CV_KEK_PREV_HANDLE` before a re-wrap finished. Unlike the reasons above, cv-api keeps the broker: those keys fail closed, every other key still signs (cancels and SL amendments included), and new orders stay latched with `secrets.kek_rows_stranded`. Its log line and `security.kek_rows_stranded` give the count. Of the signals above, `security.kek_load_failed`, `cv_kek_version_state` = 0 and "every credential operation raises" do not apply here: the record is `security.kek_rows_stranded`, the version gauge shows the loaded version, and only the stranded keys fail. Recover as below |
 
 **Recovering from `kek_rows_stranded`** (either way ends with a restart that finds no stranded row).
-Neither of the two tools these paths name exists yet: the re-wrap entry point (#2266 D2) and the
-audited revoke flow (#898). Do not mark `api_keys` rows revoked by hand to clear the latch: that
-revocation would not be audited (C-2.9).
+Do not mark `api_keys` rows revoked by hand to clear the latch: that revocation would not be
+audited (C-2.9).
 
 1. The previous KEK is in custody: restart via the launcher with `CV_KEK_PREV_HANDLE` = that KEK
-   beside the current one, so the stranded keys sign again. Finishing the re-wrap, which resumes
-   where it stopped, needs the entry point; until it ships, do not restart without the previous
-   handle, or the rows left at the old version strand again. After the re-wrap finishes, restart
-   without it.
+   beside the current one, so the stranded keys sign again, and finish the re-wrap, which resumes
+   where it stopped (KEK rotation step 2, below). Then restart without it (step 3).
 2. The previous KEK is lost: those keys can never be opened again. Revoke each at Bybit, then in
    CandleViewer through the audited key-management flow (#898), which has to work under this
    degrade because revocation needs no KEK. Until it ships the stranded keys stay failed and new
@@ -101,29 +98,41 @@ version = 3`); a version number alone matches every lineage.
 Recovery: fix custody, then restart cv-api **via the launcher**. There is no runtime reload; a passing
 mesh self-check never clears the KEK latch.
 
-## KEK rotation (owner-run, maintenance window)
+## KEK rotation (owner-run, per environment)
 
-> **Do not start a KEK rotation until #2266 ships.** Step 1 alone (booting v(n+1) with the
-> previous handle) enrols v(n+1) and is a one-way door: without the re-wrap entry point, rows left
-> at v(n) become unborrowable as soon as cv-api restarts without `CV_KEK_PREV_HANDLE` (health stays
-> OK; signing for those keys fails). #2266 also adds the stranded-row check and verifies the
-> previous KEK before enrolling the new one.
+Each environment has its own KEK lineage (#2338): rotate one environment at a time, on that
+environment's process. Nothing here reads or changes another environment's rows or versions.
 
-1. Provision KEK v(n+1) in custody alongside v(n). Start cv-api with `CV_KEK_VERSION=n+1`,
-   `CV_KEK_HANDLE` = v(n+1), `CV_KEK_PREV_HANDLE` = v(n).
-2. Run the admin re-wrap (`secrets.rewrap_deks(n+1)`, counts only). **Not yet invocable:** no route
-   or CLI calls it; the entry point, the transactional per-row audit and `kek_rotation_resumed` are
-   tracked in #2266. Audit `security.kek_rotation_started`
-   (with both KCVs and the invoking Owner) then `security.kek_rotated` — or
-   `security.kek_rotation_incomplete` (with `done`/`left`) if any row is left; never retire v(n)
-   after an incomplete record. Ciphertext and `enc_nonce` are untouched; the job
-   is idempotent and resumable — if killed, rerun it. Borrows keep working throughout (rows still at
-   v(n) are unwrapped with the previous KEK). A row that cannot be unwrapped is reported, audited as
-   `security.kek_rotation_failed` (`key_id`, `done`) and left at v(n) — investigate before
-   retiring v(n).
-3. Verify the report shows `remaining = 0`, then set `kek_versions.retired_at` for v(n) of this
-   environment only (`WHERE env = '<env>' AND version = <n>`), retire v(n) from custody and restart
-   without `CV_KEK_PREV_HANDLE`.
+1. **Stage.** Provision KEK v(n+1) in custody beside v(n). Restart cv-api via the launcher with
+   `CV_KEK_VERSION=n+1`, `CV_KEK_HANDLE` = v(n+1) and `CV_KEK_PREV_HANDLE` = v(n). The boot checks
+   the previous KEK first, then enrols v(n+1) (`security.kek_enrolled`). From this boot on, rows
+   still at v(n) sign only while the previous handle is supplied.
+2. **Re-wrap.** As the Owner, log in, complete MFA, and send `POST /admin/keys/kek-rewrap` with the
+   CSRF token and `{"environment": "<env>", "to_version": <n+1>}`. Its first answer, unless a `keys`
+   step-up is still live, is `403 step_up_required`: step up for class `keys` and send it again. The
+   call latches new orders read-only (`secrets.kek_rotation`) until the restart in step 3; cancels,
+   stop-loss amendments and borrows keep working. The answer holds counts only. Repeat the call
+   until it answers `complete: true`: each call resumes the run, and a `503` keeps the rows moved so
+   far. Investigate every `failed` row first: `security.kek_rotation_failed` names it, and it stays
+   at v(n). A `409 kek_rotation_not_staged` means the body differs from the boot or the previous
+   handle is missing; a `409 kek_rotation_in_progress`, that a run is under way (call again after
+   its `Retry-After`); a `403 kek_unavailable`, that the process is degraded (see the Symptom
+   section above; stage again as in step 1 once it is fixed). Each run writes
+   `security.kek_rotation_started` (or `security.kek_rotation_resumed`), one
+   `security.credential_rewrapped` per moved row in that row's transaction, and
+   `security.kek_rotated`, or `security.kek_rotation_incomplete` while rows are left: never go on
+   after an incomplete record. An auth keyring row left at v(n) moves only at a rotation boot:
+   restart as in step 1, then call again (ADR-0009 Amendment 4).
+3. **Prove v(n+1) alone.** Restart via the launcher without `CV_KEK_PREV_HANDLE`, keeping v(n) in
+   custody. Confirm health is OK with no `kek_rows_stranded` and that the stored-key self-check
+   passed (no `accounts.key_*` latch). If rows are stranded, stage again as in step 1 and resume
+   step 2.
+4. **Retire.** Only then set `kek_versions.retired_at` for v(n) of this environment only
+   (`WHERE env = '<env>' AND version = <n>`), under change control (owner + security reviewer).
+   A boot that supplies a retired KEK is refused (`kek_retired`).
+5. **Destroy v(n).** In a routine rotation keep it only in the owner's offline copy (ADR-0009 §7)
+   until every database backup taken before the rotation has expired, then destroy it; in a
+   compromise rotation destroy it now.
 
 ## Upgrading to per-environment KEK lineages
 

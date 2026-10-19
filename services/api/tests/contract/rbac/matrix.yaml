@@ -152,8 +152,10 @@ operations:
     permissions: ['keys:manage']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml (#2266 contract slice, PR A); the #2266 entry-point slice (D2) mounts it
+    state: not_executable
+    reason: 'the CI app wires M2 without a credential store, so an authorised Owner gets 403 kek_unavailable,
+      read as a refusal; every actor gets 422 for the empty body, validated before RBAC. Each actor is
+      asserted in tests/unit/api/test_admin_kek.py (#2266 D2)'
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   PUT /admin/log-level:
     permissions: ['admin:write']

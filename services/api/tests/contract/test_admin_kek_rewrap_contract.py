@@ -2,7 +2,7 @@
 entry point of the KEK re-wrap (`docs/plan/spikes/e27-kek.md` section 5). Owner only
 (`keys:manage`), step-up class `keys`; the body confirms the staged rotation boot; the answer is
 counts only. Two problem codes are registered here; the `403 kek_unavailable` it cites came with
-#3335. The route stays pending until the #2266 entry-point slice (D2) serves it."""
+#3335. The #2266 entry-point slice (D2) serves it."""
 
 from __future__ import annotations
 
@@ -94,12 +94,23 @@ def test_text_names_step_up_class_keys_only_and_the_path_is_swept() -> None:
     assert DANGEROUS_PATH_PATTERN.match(_PATH)  # mounting it ungated fails the registry test
 
 
-def test_operation_is_pending_and_has_its_not_mounted_rbac_matrix_row() -> None:
+def test_operation_is_served_and_its_rbac_matrix_row_says_why_it_is_not_executable() -> None:
+    """The CI app wires M2 without a credential store, so an authorised Owner gets `403
+    kek_unavailable`, which the runner reads as a refusal; `tests/unit/api/test_admin_kek.py`
+    asserts each actor through the real middleware instead."""
     key = f"POST {_PATH}"
-    assert _PENDING[key]["ticket"] == "#2266"
+    assert key not in _PENDING
     row = _MATRIX["operations"][key]
-    assert (row["state"], row["outcomes"]) == ("not_mounted", support.OWNER_ONLY)
+    assert (row["state"], row["outcomes"]) == ("not_executable", support.OWNER_ONLY)
+    assert "test_admin_kek.py" in row["reason"]
     assert (row["permissions"], row["scope"]) == (["keys:manage"], "none")
+
+
+def test_the_security_program_grants_it_to_the_owner_with_step_up_only() -> None:
+    """04 §7.2.2 row 41a and SR-025 (#2266 D2), as PR A's security review asked."""
+    _, cell, owner, manager, viewer = support.capability_rows()["41a"]
+    assert support.grants(cell) == ({"keys:manage"}, {"rewrapKek"})
+    assert (owner, manager, viewer) == ("✔(step-up)", "✖", "✖")
 
 
 @pytest.mark.parametrize("code", sorted(_CODES))

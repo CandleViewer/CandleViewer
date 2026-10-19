@@ -445,6 +445,7 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("DELETE", "/users/u", "users"),  # deleteUser (04 row 38)
         ("PUT", "/users/u/account-access", "users"),  # setUserAccountAccess (04 row 40)
         ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (SR-025, 04 row 50)
+        ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
         ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
         ("PUT", "/recording/symbols/s/pin", "recorder"),  # pinRecordedSymbol (04 row 9)
     ],

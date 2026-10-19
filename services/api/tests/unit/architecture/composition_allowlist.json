@@ -382,10 +382,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "POST /admin/keys/kek-rewrap": {
-      "reason": "contract-first operation (#2266 contract slice, PR A); the #2266 entry-point slice (D2) serves it",
-      "ticket": "#2266"
-    },
     "POST /admin/view-as": {
       "reason": "contract-first operation (#3085 contract slice); the view-as server slice serves it",
       "ticket": "#3085"

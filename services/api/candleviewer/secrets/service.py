@@ -61,8 +61,8 @@ STRANDED_GATE_REASON = "secrets.kek_rows_stranded"
 STRANDED_REMEDIATION = (
     "KEK rows stranded: API keys of this environment are wrapped under a KEK version this "
     "process did not load, so they cannot sign; new orders are disabled. Restart cv-api via the "
-    "launcher with CV_KEK_PREV_HANDLE supplying the previous KEK and finish the re-wrap, or, if "
-    "that KEK is lost, revoke those keys at the exchange and in CandleViewer, then restart. "
+    "launcher with CV_KEK_PREV_HANDLE supplying the previous KEK and finish the re-wrap "
+    "(POST /admin/keys/kek-rewrap); if that KEK is lost, revoke those keys at the exchange. "
     "See docs/ops/runbooks/kek-custody.md."
 )
 #: #2266: a KEK re-wrap run latched order entry before its first row, until the restart.

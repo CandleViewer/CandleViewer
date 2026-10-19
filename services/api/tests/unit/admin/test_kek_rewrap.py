@@ -1,6 +1,6 @@
 """`AdminService.rewrap_kek` (#2266 PR D1): one KEK re-wrap run for the Owner through M2's metadata
 facade, answered with the `rewrapKek` counts (no key id, no KCV), and each M2 refusal or failure
-mapped to the contract's error code. Nothing outside `admin/` calls it yet (the route is D2)."""
+mapped to the contract's error code. The route that calls it is `api/admin_kek.py` (PR D2)."""
 
 from __future__ import annotations
 
