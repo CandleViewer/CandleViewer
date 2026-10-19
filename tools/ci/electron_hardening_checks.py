@@ -503,6 +503,10 @@ _UNSAFE = re.compile(r"\$\{|(?:^|[/\\])\.\.(?:[/\\]|$)")
 # The served root below each list's destination: <resources> for extraResources, the
 # install folder (mac: Contents) for extraFiles; files copies into the app folder.
 _SERVED = {"extraResources": WEB_DIST_TO, "extraFiles": "resources/" + WEB_DIST_TO}
+# A normalised `to` the gate can compare with that root: '.' or names of ASCII letters,
+# digits, '.', '_' and '-' that do not end in '.'. Others may name it on disk: win and mac
+# fold case past ASCII, win drops a name's trailing dots and spaces and has 8.3 aliases.
+_PLAIN_TO = re.compile(r"\.|[\w.-]*[\w-](?:/[\w.-]*[\w-])*", re.ASCII)
 
 
 def _uncomment(text: str) -> str:
@@ -615,12 +619,13 @@ def _excludes_maps(patterns: list[str]) -> bool:
 
 def _serves(to: object, root: str | None) -> bool:
     """True when `to` could write into the served root, `root` below its list's destination
-    (None: not below it): at, inside or above it (absent or empty: the destination), or an
-    absolute, drive, '..' or ${...} path; case is ignored, as on win and mac."""
-    t = posixpath.normpath(str(to or ".").replace("\\", "/")).lower()
-    if t.startswith("/") or ":" in t or _UNSAFE.search(t):
+    (None: not below it): at, inside or above it (absent or empty: the destination), or not
+    _PLAIN_TO once '\\' is '/' and normalised (an absolute, drive, '..' or ${...} path among
+    them); case is ignored, as on win and mac."""
+    t = posixpath.normpath(str(to or ".").replace("\\", "/"))
+    if not _PLAIN_TO.fullmatch(t):
         return True
-    t, r = t + "/", f"{root}/"
+    t, r = t.lower() + "/", f"{root}/"
     return root is not None and (t == "./" or t.startswith(r) or r.startswith(t))
 
 
@@ -723,8 +728,9 @@ def check_packaging(text: str, config_dir: Path, web_dist: Path) -> list[Violati
         msg = (
             f"extraResources must copy the web dist this gate scanned ({web_dist}) to "
             f"'{WEB_DIST_TO}', the asset root the packaged app:// handler serves, and "
-            "nothing else may write there or above it: give every other entry a plain "
-            "relative `to` outside it, and use no extraResources or extraFiles patterns"
+            "nothing else may write there or above it: give every other entry a relative "
+            "`to` outside it, of ASCII letters, digits and . _ - with no name ending in "
+            "'.', and use no extraResources or extraFiles patterns"
         )
         vs.append(Violation("SR-174", subject, msg))
     return vs
