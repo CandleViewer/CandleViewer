@@ -32,6 +32,8 @@ Not run (needs docker / hours): 10-minute ingest, 12-month scans, reference 4 vC
 ## Nightly (`perf-storage-nightly.yml`)
 
 Runs both harnesses (DuckDB shapes + real-QuestDB testcontainers suite; docker is available on `ubuntu-latest`) and
-uploads `results.json` + `storage-perf.json`. Any failure (incl. the >20 % baseline gate) opens a `perf` issue (AC2).
+uploads `results.json` + `storage-perf.json`. A perf-gate failure opens a `perf` issue (AC2): the proxy harness's >20 %
+baseline gate (exit 1) or a failed real-engine perf test (pytest exit 1); any other failure fails the job without one.
+The real-engine run is `--no-cov`: `services/api`'s coverage floor applies to the whole package, which four perf tests cannot reach (#3429).
 The 24 h growth figure and the 4 vCPU / 8 GB profile remain **unmeasured** until a nightly run yields non-quantized
 numbers (follow-up on #274); this PR does not claim them. Not run locally: no docker.
