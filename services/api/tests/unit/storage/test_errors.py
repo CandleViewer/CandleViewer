@@ -12,6 +12,8 @@ from candleviewer.storage.errors import (
     AuditEntryTooLarge,
     BackupCheckViolation,
     BackupWriteOnceViolation,
+    ColdReplayReadError,
+    ColdReplayReadTimeout,
     HotReplayReadError,
     HotReplayReadTimeout,
     IlpRowError,
@@ -64,6 +66,8 @@ def test_error_codes_are_stable_and_unique() -> None:
         BackupWriteOnceViolation: "STORAGE_BACKUP_WRITE_ONCE",
         BackupCheckViolation: "STORAGE_BACKUP_CHECK_VIOLATION",
         KcvEnrolmentNotAudited: "STORAGE_KCV_ENROLMENT_NOT_AUDITED",
+        ColdReplayReadError: "COLD_REPLAY_READ_ERROR",
+        ColdReplayReadTimeout: "COLD_REPLAY_READ_TIMEOUT",
     }
     assert len(set(ERROR_CODES.values())) == len(ERROR_CODES)
 

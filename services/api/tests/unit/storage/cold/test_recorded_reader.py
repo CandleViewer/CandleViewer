@@ -12,6 +12,7 @@ import sys
 import threading
 from collections.abc import Callable
 from concurrent.futures import Executor, Future
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -26,12 +27,9 @@ from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore, SchemaRegistry
 from candleviewer.storage.cold.observability import Severity, SystemEventSink
-from candleviewer.storage.cold.recorded_reader import (
-    ColdReplayReadError,
-    ColdReplayReadTimeout,
-    ParquetRecordedReader,
-)
+from candleviewer.storage.cold.recorded_reader import ParquetRecordedReader
 from candleviewer.storage.cold.scrub import verify_partition
+from candleviewer.storage.errors import ColdReplayReadError, ColdReplayReadTimeout
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     ManifestCoverage,
@@ -486,8 +484,9 @@ async def test_coverage_reads_its_manifests_off_the_event_loop(
 
 
 @pytest.mark.parametrize("bad", ["0", None, 1.5, True, [0]], ids=repr)
+@pytest.mark.parametrize("field", ["range_start_us", "range_end_us"])
 async def test_a_coverage_range_that_is_not_integral_is_a_typed_error(
-    tmp_path: Path, bad: object
+    tmp_path: Path, field: str, bad: object
 ) -> None:
     """Corrupt coverage metadata is refused typed, never a bare `TypeError` from the span
     arithmetic, and never coverage a bool or a float happens to compare as."""
@@ -495,7 +494,7 @@ async def test_a_coverage_range_that_is_not_integral_is_a_typed_error(
     registry = await _export(root, generated_rows())
     manifest = _trades_manifest(root)
     doc = json.loads(manifest.read_text(encoding="utf-8"))
-    doc["entries"][0]["range_start_us"] = bad
+    doc["entries"][0][field] = bad
     manifest.write_text(json.dumps(doc), encoding="utf-8")
 
     with pytest.raises(ColdReplayReadError):
@@ -567,6 +566,18 @@ async def test_a_day_without_any_export_reads_nothing(tmp_path: Path) -> None:
     next_day = TimeRange(start_us=H0 + 24 * HOUR, end_us=H0 + 25 * HOUR)
 
     assert await reader.read(SYMBOL, StreamKind.TRADES, next_day, depth=200, limit=10) == []
+
+
+async def test_a_reader_asked_for_no_concurrency_still_runs_one_scan(tmp_path: Path) -> None:
+    registry = await _export(tmp_path / "cold", generated_rows())
+    reader = ParquetRecordedReader(registry, max_concurrency=0)
+
+    async with asyncio.timeout(30):  # a semaphore of no slots would never let the read in
+        got = await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
+
+    assert got and got == await ParquetRecordedReader(registry).read(
+        SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10
+    )
 
 
 async def test_a_read_spanning_too_many_partitions_is_refused(tmp_path: Path) -> None:
@@ -1268,6 +1279,59 @@ async def test_a_manifest_that_is_not_json_is_a_typed_error(tmp_path: Path) -> N
     await _refusal(registry)
 
 
+async def test_a_manifest_nested_deeper_than_the_parser_can_go_is_a_typed_error(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cold"
+    registry = await _export(root, generated_rows())
+    _trades_manifest(root).write_text("[" * 200_000 + "]" * 200_000, encoding="utf-8")
+
+    error = await _refusal(registry)
+
+    assert error.__cause__ is None and error.__suppress_context__
+
+
+async def test_a_manifest_with_an_integer_past_the_digit_limit_is_a_typed_error(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cold"
+    registry = await _export(root, generated_rows())
+    doc = '{"layout_version": 1, "entries": [], "x": ' + "9" * 5_000 + "}"
+    _trades_manifest(root).write_text(doc, encoding="utf-8")
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4_300)  # the default, whatever PYTHONINTMAXSTRDIGITS says
+    try:
+        await _refusal(registry)
+    finally:
+        sys.set_int_max_str_digits(limit)
+
+
+async def test_an_unreadable_listing_is_typed_and_chains_no_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = await _export(tmp_path / "cold", generated_rows())
+
+    def denied(self: ManifestStore, partition_dir: Path, cold_root: Path) -> list[object]:
+        raise PermissionError(13, "denied", str(tmp_path / "cold" / "secret-path"))
+
+    monkeypatch.setattr(ManifestStore, "read", denied)
+
+    error = await _refusal(registry)
+
+    assert error.__cause__ is None and error.__suppress_context__
+    assert str(tmp_path) not in str(error)
+
+
+async def test_a_failed_verification_chains_no_cause(tmp_path: Path) -> None:
+    root = tmp_path / "cold"
+    registry = await _export(root, generated_rows())
+    _swap_for_valid_parquet(_part(root))
+
+    error = await _refusal(registry)
+
+    assert error.__cause__ is None and error.__suppress_context__
+
+
 async def test_a_manifest_entry_whose_file_is_not_text_is_a_typed_error(tmp_path: Path) -> None:
     root = tmp_path / "cold"
     registry = await _export(root, generated_rows())
@@ -1349,8 +1413,13 @@ def test_a_huge_window_is_refused_before_any_key_is_built(monkeypatch: pytest.Mo
         recorded_reader._time_keys(("symbol", "dt", "hour"), H0, H0 + 10 * 366 * 24 * HOUR)
 
 
+@pytest.mark.parametrize(
+    "width_us",
+    [100 * 366 * 24 * HOUR, recorded_reader._MAX_PARTITIONS * 31 * 24 * HOUR + 1],
+    ids=["a-century", "one-past-the-month-guard"],
+)
 def test_a_month_window_far_wider_than_one_read_is_refused_before_any_key_is_built(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, width_us: int
 ) -> None:
     def never(_us: int) -> object:
         raise AssertionError("a key was built")
@@ -1358,7 +1427,7 @@ def test_a_month_window_far_wider_than_one_read_is_refused_before_any_key_is_bui
     monkeypatch.setattr(recorded_reader, "_moment", never)
 
     with pytest.raises(ColdReplayReadError):
-        recorded_reader._time_keys(("symbol", "ym"), H0, H0 + 100 * 366 * 24 * HOUR)
+        recorded_reader._time_keys(("symbol", "ym"), H0, H0 + width_us)
 
 
 def test_a_year_window_of_more_than_one_read_is_refused() -> None:
@@ -1379,6 +1448,51 @@ def test_a_month_window_wider_than_one_read_is_refused_never_cut() -> None:
 def test_a_window_beyond_the_calendar_is_a_typed_error() -> None:
     with pytest.raises(ColdReplayReadError):
         recorded_reader._time_keys(("symbol", "y"), 2**62, 2**62 + HOUR)
+
+
+YM: tuple[str, ...] = ("symbol", "ym")
+LAST_US = 253_402_300_799_999_999  # 9999-12-31T23:59:59.999999Z, the calendar's last instant
+
+
+def _at(year: int, month: int, day: int = 1) -> int:
+    return (date(year, month, day) - date(1970, 1, 1)).days * 24 * HOUR
+
+
+def test_a_month_window_ending_on_a_month_boundary_names_only_its_own_months() -> None:
+    assert recorded_reader._time_keys(YM, _at(2026, 10, 31), _at(2026, 11)) == [{"ym": "2026-10"}]
+    assert recorded_reader._time_keys(YM, _at(2026, 10), _at(2026, 12)) == [
+        {"ym": "2026-10"},
+        {"ym": "2026-11"},
+    ]
+
+
+def test_a_month_window_across_new_year_names_the_months_of_both_years() -> None:
+    keys = recorded_reader._time_keys(YM, _at(2026, 12, 15), _at(2027, 1, 15))
+
+    assert keys == [{"ym": "2026-12"}, {"ym": "2027-01"}]
+    assert recorded_reader._time_keys(YM, _at(2026, 12, 31), _at(2027, 1)) == [{"ym": "2026-12"}]
+
+
+def test_exactly_120_months_are_allowed_and_one_more_is_refused() -> None:
+    assert len(recorded_reader._time_keys(YM, _at(2016, 1), _at(2026, 1))) == 120
+
+    with pytest.raises(ColdReplayReadError):
+        recorded_reader._time_keys(YM, _at(2016, 1), _at(2026, 1) + 1)
+
+
+def test_exactly_the_cap_of_years_is_allowed_and_one_more_is_refused() -> None:
+    year = ("symbol", "y")
+    assert len(recorded_reader._time_keys(year, _at(2026, 1), _at(3026, 1))) == 1_000
+
+    with pytest.raises(ColdReplayReadError):
+        recorded_reader._time_keys(year, _at(2026, 1), _at(3026, 1) + 1)
+
+
+def test_a_window_ending_in_the_calendars_last_microseconds_is_a_typed_error() -> None:
+    """`months_between` steps through floats, which round the last instant into year 10000."""
+    with pytest.raises(ColdReplayReadError, match="out of range") as caught:
+        recorded_reader._time_keys(YM, LAST_US - 30 * 24 * HOUR, LAST_US + 1)
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__  # no datetime text
 
 
 async def test_klines_of_other_months_are_not_opened(tmp_path: Path) -> None:
@@ -1405,6 +1519,76 @@ async def test_klines_of_other_months_are_not_opened(tmp_path: Path) -> None:
     listed = ParquetRecordedReader(registry)._partitions(SYMBOL, StreamKind.KLINES, H0, H0 + HOUR)
 
     assert [p.partition_dir.name for p in listed] == ["ym=2026-10"]
+
+
+async def _klines_registry(
+    root: Path, months: tuple[str, ...], intervals: tuple[str, ...] = ("1",)
+) -> DatasetRegistry:
+    bar: dict[str, object] = {
+        "ts": H0,
+        "symbol": SYMBOL,
+        "interval": "1",
+        "open": 1.0,
+        "high": 2.0,
+        "low": 0.5,
+        "close": 1.5,
+        "volume": 3.0,
+        "turnover": 4.5,
+        "confirmed": True,
+    }
+    registry = DatasetRegistry(root)
+    registry.ensure_tree()
+    exporter = ColdExporter(registry, MemHotSource({StreamKind.KLINES: [bar]}))
+    for interval in intervals:
+        for ym in months:
+            await exporter.export_partition(
+                SYMBOL,
+                StreamKind.KLINES,
+                FIRST_HOUR,
+                partition_extra={"interval": interval, "ym": ym},
+            )
+    return registry
+
+
+async def test_an_empty_klines_window_reads_nothing(tmp_path: Path) -> None:
+    reader = ParquetRecordedReader(await _klines_registry(tmp_path / "cold", ("2026-10",)))
+    empty = TimeRange(start_us=H0 + 5, end_us=H0 + 5)
+
+    assert await reader.read(SYMBOL, StreamKind.KLINES, empty, depth=200, limit=10) == []
+
+
+async def test_a_klines_window_ending_on_a_month_boundary_reads_its_month(tmp_path: Path) -> None:
+    reader = ParquetRecordedReader(await _klines_registry(tmp_path / "cold", ("2026-10",)))
+    window = TimeRange(start_us=H0, end_us=_at(2026, 11))
+
+    got = await reader.read(SYMBOL, StreamKind.KLINES, window, depth=200, limit=10)
+
+    assert [e.tiebreak for e in got] == [("1",)]
+
+
+async def test_klines_across_new_year_list_the_months_of_both_years(tmp_path: Path) -> None:
+    registry = await _klines_registry(tmp_path / "cold", ("2026-12", "2027-01"))
+
+    parts = ParquetRecordedReader(registry)._partitions(
+        SYMBOL, StreamKind.KLINES, _at(2026, 12, 15), _at(2027, 1, 15)
+    )
+
+    assert [p.partition_dir.name for p in parts] == ["ym=2026-12", "ym=2027-01"]
+
+
+async def test_klines_partitions_count_against_the_cap_per_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A month of klines is one partition per interval: 120 months of 13 intervals is 1 560."""
+    registry = await _klines_registry(tmp_path / "cold", ("2026-09", "2026-10"), ("1", "5"))
+    reader = ParquetRecordedReader(registry)
+    monkeypatch.setattr(recorded_reader, "_MAX_PARTITIONS", 3)
+
+    assert len(reader._partitions(SYMBOL, StreamKind.KLINES, _at(2026, 10), _at(2026, 11))) == 2
+    with pytest.raises(ColdReplayReadError, match="too many partitions"):
+        reader._partitions(SYMBOL, StreamKind.KLINES, _at(2026, 9), _at(2026, 11))
+    monkeypatch.setattr(recorded_reader, "_MAX_PARTITIONS", 4)  # exactly the cap is read
+    assert len(reader._partitions(SYMBOL, StreamKind.KLINES, _at(2026, 9), _at(2026, 11))) == 4
 
 
 # --- read() and snapshot_at(): the boundaries the port promises ----------------------------

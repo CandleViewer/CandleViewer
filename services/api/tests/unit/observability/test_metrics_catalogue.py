@@ -322,6 +322,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.net.metrics import NET_EXPORTED_NAMES
     from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
+    from candleviewer.replay.metrics import EXPORTED_NAMES as REPLAY_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
@@ -339,6 +340,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= AUDIT_NAMES
     others |= BACKUP_NAMES
     others |= LIFECYCLE_NAMES | LANE_NAMES
+    others |= REPLAY_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -422,6 +424,25 @@ def test_exported_recorder_metrics_served_with_env() -> None:
         collector.close()
 
 
+def test_exported_replay_metrics_served_with_env() -> None:
+    """E26-T02: the replay read-path series are `live`, served via `export_replay_metrics`."""
+    from candleviewer.replay.merge import replay_events_read_total
+    from candleviewer.replay.metrics import EXPORTED_NAMES, export_replay_metrics
+
+    assert EXPORTED_NAMES <= {s.name for s in live_specs() if s.exported}
+    m = Metrics("demo")
+    register_r0(m)
+    collector = export_replay_metrics(m.registry, env="demo")
+    try:
+        replay_events_read_total.labels(stream="trades", tier="parquet").inc(0)
+        text = generate_latest(m.registry).decode()
+        assert 'replay_events_read_total{env="demo",stream="trades",tier="parquet"}' in text
+        for name in EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+    finally:
+        collector.close()
+
+
 def test_exported_secrets_metrics_served_on_app_registry_with_env() -> None:
     """E27-T02: every M2 series is served on the scraped registry with `env`."""
     from candleviewer.secrets import _metrics as sm
@@ -448,6 +469,19 @@ def test_drawings_rows_catalogue_cap_equals_the_closed_tool_set() -> None:
 
     spec = next(s for s in CATALOGUE if s.name == "cv_drawings_rows")
     assert spec.max_series == len(TOOLS)
+
+
+def test_replay_catalogue_caps_equal_the_closed_label_sets() -> None:
+    """E26-T02: `stream` is a replayable stream and `tier` a `Tier`; each cap is their product."""
+    from typing import get_args
+
+    from candleviewer.replay.merge import Tier
+    from candleviewer.storage.repositories.recorded import REPLAYABLE_STREAMS
+
+    caps = {s.name: s.max_series for s in CATALOGUE}
+    tiers = len(get_args(Tier))
+    assert caps["replay_events_read_total"] == len(REPLAYABLE_STREAMS) * tiers
+    assert caps["replay_source_read_seconds"] == tiers
 
 
 def test_workspaces_catalogue_caps_equal_the_closed_label_sets() -> None:

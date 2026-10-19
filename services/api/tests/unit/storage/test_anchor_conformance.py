@@ -17,8 +17,8 @@ import pytest
 from candleviewer.domain.sql_names import ts_param
 from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import DatasetRegistry
-from candleviewer.storage.cold.recorded_reader import ColdReplayReadError, ParquetRecordedReader
-from candleviewer.storage.errors import HotReplayReadError
+from candleviewer.storage.cold.recorded_reader import ParquetRecordedReader
+from candleviewer.storage.errors import ColdReplayReadError, HotReplayReadError
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.recorded_reader import ANCHOR_ROWS, QuestDbRecordedReader
 from candleviewer.storage.repositories.recorded import RecordedEvent
@@ -102,8 +102,18 @@ async def _anchors(
             [_snap(H0, 9, 999), *(_snap(H0 + MINUTE, e, 20 + e) for e in range(15))],
             (H0 + MINUTE, (34, 200, 14)),
         ),
+        (
+            [_snap(H0 + 2 * MINUTE, 0, 99), *(_snap(H0 + MINUTE, e, e) for e in range(15))],
+            (H0 + 2 * MINUTE, (99, 200, 0)),
+        ),
     ],
-    ids=["distinct-instants", "tie-by-update-id", "tie-by-epoch", "fifteen-tied-and-an-older"],
+    ids=[
+        "distinct-instants",
+        "tie-by-update-id",
+        "tie-by-epoch",
+        "fifteen-tied-and-an-older",
+        "one-newest-over-fifteen-tied",
+    ],
 )
 async def test_both_tiers_choose_the_same_anchor(
     tmp_path: Path, rows: list[dict[str, object]], want: tuple[int, tuple[int, int, int]]

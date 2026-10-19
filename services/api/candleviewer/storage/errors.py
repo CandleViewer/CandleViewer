@@ -262,6 +262,19 @@ class KcvEnrolmentNotAudited(StorageError):
     code = "STORAGE_KCV_ENROLMENT_NOT_AUDITED"
 
 
+class ColdReplayReadError(StorageTierUnavailable):
+    """The cold read was refused or failed: a path outside the registry, a manifest that names
+    a foreign file, a partition that failed verification, or a DuckDB error."""
+
+    code = "COLD_REPLAY_READ_ERROR"
+
+
+class ColdReplayReadTimeout(StorageTierUnavailable):
+    """The DuckDB scan exceeded its deadline and was interrupted."""
+
+    code = "COLD_REPLAY_READ_TIMEOUT"
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -291,4 +304,6 @@ ERROR_CODES: dict[type[StorageError], str] = {
     BackupWriteOnceViolation: BackupWriteOnceViolation.code,
     BackupCheckViolation: BackupCheckViolation.code,
     KcvEnrolmentNotAudited: KcvEnrolmentNotAudited.code,
+    ColdReplayReadError: ColdReplayReadError.code,
+    ColdReplayReadTimeout: ColdReplayReadTimeout.code,
 }

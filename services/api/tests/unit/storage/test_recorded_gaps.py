@@ -146,6 +146,22 @@ async def test_a_cancelled_gap_read_raises_the_cancellation(
         await repo.recording_gaps("BTCUSDT", WINDOW, streams=(StreamKind.TRADES,), limit=10)
 
 
+async def test_a_fault_that_is_not_the_databases_is_raised_as_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only driver and socket failures read as an unreadable gap table: a defect below the
+    adapter is raised as itself, never typed as a database failure."""
+    repo, _ = _repo([ROW])
+
+    async def broken(*_: object) -> list[dict[str, Any]]:
+        raise TypeError("a bind the statement does not take")
+
+    monkeypatch.setattr(repo, "_all", broken)
+
+    with pytest.raises(TypeError):
+        await repo.recording_gaps("BTCUSDT", WINDOW, streams=(StreamKind.TRADES,), limit=10)
+
+
 def test_the_adapter_and_the_fake_take_the_same_keyword_only_arguments() -> None:
     """One port, two implementations (conformance): the merge calls both the same way."""
     repo, _ = _repo([])

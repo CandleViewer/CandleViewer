@@ -15,6 +15,7 @@ from itertools import pairwise
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 
 from candleviewer.replay import ReplayItem, ReplayMemoryCeilingExceeded
 from candleviewer.replay.merge import SEQUENCE_DOMAIN, STREAM_ORDINAL, approx_bytes, row_bytes
@@ -29,7 +30,6 @@ from tests.unit.replay._events import (
     ROOMY,
     SECOND,
     SYM,
-    T0,
     Harness,
     delta,
     digest,
@@ -205,10 +205,23 @@ async def test_a_duplicated_row_keeps_the_copy_read_last() -> None:
     """A re-exported cold part repeats rows (21 Sec.5.3), oldest copy first: the newest wins."""
     first = trade(SECOND, trade_id="x")
     assert isinstance(first.payload, RecordedTrade)
-    newer = dataclasses.replace(first, payload=dataclasses.replace(first.payload, size=Decimal(2)))
-    harness = Harness(cold=[first, newer], archived=True)
+    middle = dataclasses.replace(first, payload=dataclasses.replace(first.payload, size=Decimal(2)))
+    newer = dataclasses.replace(first, payload=dataclasses.replace(first.payload, size=Decimal(3)))
+    harness = Harness(cold=[first, middle, newer], archived=True)
+    labels = {"stream": "trades", "tier": "parquet"}
+    before = REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0
 
     assert await harness.read_all() == [newer]
+    assert REGISTRY.get_sample_value("replay_events_read_total", labels) == before + 1  # once
+
+
+async def test_reads_are_counted_under_the_stream_they_replay() -> None:
+    labels = {"stream": "tickers", "tier": "questdb"}
+    before = REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0
+    harness = Harness(hot=[ticker(SECOND), ticker(2 * SECOND)], req=request(streams=(TICKERS,)))
+
+    assert len(await harness.read_all()) == 2
+    assert REGISTRY.get_sample_value("replay_events_read_total", labels) == before + 2
 
 
 async def test_only_events_inside_the_half_open_replay_window_replay() -> None:
@@ -232,24 +245,37 @@ async def test_a_sparse_stream_doubles_its_read_window_up_to_the_cap_and_clips_t
     assert harness.hot.windows == [(lo * SECOND, hi * SECOND) for lo, hi in pairwise(edges)]
 
 
-async def test_a_capped_read_is_halved_and_reread_without_losing_rows() -> None:
-    dense = [trade(i, trade_id=f"d{i:03}") for i in range(400)]
+async def test_a_capped_read_keeps_its_complete_instants_and_loses_no_rows() -> None:
+    """A capped read returns the earliest rows; all but its last instant are complete."""
+    dense = [trade(i // 2, trade_id=f"d{i:03}") for i in range(400)]  # two prints per instant
     harness = Harness(hot=dense)
+    labels = {"stream": "trades", "tier": "questdb"}
+    before = REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0
 
-    got = events(await harness.read_all(budget_bytes=row_bytes(TRADES, 200) * 50))
+    got = events(await harness.read_all(budget_bytes=row_bytes(TRADES, 200) * 51))
 
-    assert [e.ts_us for e in got] == [T0 + i for i in range(400)]
-    assert harness.hot.reads > 400 // 50
+    assert [e.tiebreak for e in got] == [(f"d{i:03}",) for i in range(400)]
+    # The first read is capped at its 26th instant; the next window starts there and spans
+    # what filled the cap (25 µs), so it is not capped again.
+    assert harness.hot.windows[1] == (25, 50)
+    # The capped read's last instant is read twice, but each event is counted once.
+    assert REGISTRY.get_sample_value("replay_events_read_total", labels) == before + 400
 
 
-async def test_an_instant_denser_than_the_row_cap_is_refused_at_a_one_microsecond_read() -> None:
+async def test_an_instant_denser_than_the_row_cap_is_refused_at_its_first_read() -> None:
+    """A capped read whose rows all share one instant cannot be split, so it is refused at
+    once rather than after the window has been narrowed to 1 µs."""
     harness = Harness(hot=[trade(0, trade_id=f"s{i}") for i in range(5)])
+    labels = {"stream": "trades", "tier": "questdb"}
+    before = REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0
 
     with pytest.raises(ReplayMemoryCeilingExceeded) as raised:
         await harness.read_all(budget_bytes=row_bytes(TRADES, 200) * 2)
 
     assert (raised.value.symbol, raised.value.stream) == (SYM, TRADES)
-    assert harness.hot.windows[-1] == (0, 1)
+    assert harness.hot.reads == 1
+    # A refused read delivers nothing, so it counts nothing.
+    assert (REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0) == before
 
 
 async def test_an_instant_of_exactly_the_row_cap_replays() -> None:
