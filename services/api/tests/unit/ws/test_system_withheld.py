@@ -26,7 +26,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.metrics import WITHHELD_REASONS, cv_ws_system_frames_withheld_total
 from candleviewer.ws.permissions import ConnectionAuthz
-from candleviewer.ws.system_filter import FlagVisible, system_view, withheld_reason
+from candleviewer.ws.system_filter import NEUTRAL_FIELDS, FlagVisible, system_view, withheld_reason
 from tests.unit.ws.test_system_filter import (
     _FLAG_FRAME,
     BODIES,
@@ -35,6 +35,7 @@ from tests.unit.ws.test_system_filter import (
     OWNER,
     SAMPLES,
     VIEWER,
+    _section_15_9,
     _visible,
 )
 
@@ -131,6 +132,13 @@ def _agree(body: Any, who: PrincipalSnapshot | None, visible: FlagVisible | None
 
 
 def test_system_view_and_withheld_reason_agree_on_what_is_withheld() -> None:
+    """The frames named here, and a grid: each kind with every other field of its neutral list set
+    to one empty value (`[]`, `{}`, `None`, `0`, `""`), then with each of those fields alone.
+    A frame with nothing to report is sent, or left out with a reason: never dropped unnoticed,
+    except a Manager's or Viewer's flag frame left with no key, which the contract leaves
+    uncounted (`_not_meant`)."""
+    named = {kind: sorted(fields - {"kind"}) for kind, fields in NEUTRAL_FIELDS.items()}
+    empties: tuple[Any, ...] = ([], {}, None, 0, "")
     bodies: list[Any] = [
         *(body for body, _ in SAMPLES.values()),
         *NO_STATES,
@@ -139,6 +147,12 @@ def test_system_view_and_withheld_reason_agree_on_what_is_withheld() -> None:
         {"kind": 7},
         ["notice"],
         None,
+        *(
+            {"kind": kind} | dict.fromkeys(keys, empty)
+            for kind in sorted(named)
+            for empty in empties
+            for keys in [named[kind], *([field] for field in named[kind])]
+        ),
     ]
     for body, who, visible in product(bodies, WHOS, (None, _visible)):
         _agree(body, who, visible)
@@ -231,10 +245,10 @@ def test_the_help_and_the_ops_row_say_a_flag_frame_left_with_no_key_is_not_count
         for line in ARCH.read_text(encoding="utf-8").splitlines()
         if line.startswith("| Gateway |") and f"`{NAME}" in line
     ]
+    scoped = "Manager's or Viewer's feature_flags frame left with no key it may learn"
     for text in (spec.help, row.replace("`", "")):
-        assert "Viewer's feature_flags frame left with no key it may learn is the contract" in text
-        assert "and is not counted" in text
+        assert f"{scoped} is the contract and is not counted" in text
 
 
 def test_section_15_9_names_the_counter_of_a_frame_it_leaves_out() -> None:
-    assert f"`{NAME}` (20 §12.1)" in ARCH.with_name("23-ws-protocol.md").read_text(encoding="utf-8")
+    assert f"are counted by `{NAME}` (20 §12.1)" in _section_15_9()
