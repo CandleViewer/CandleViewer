@@ -63,6 +63,10 @@ def gate_notice(
 #: Role-neutral client texts per gate reason (no internal addresses reach WS clients).
 _CLIENT_TEXT = {
     "secrets.kek_unavailable": "Trading disabled: the credential key is unavailable.",
+    "secrets.kek_rotation": "Trading disabled: a credential key rotation is in progress.",
+    "secrets.kek_rows_stranded": (
+        "Trading disabled: some stored API keys cannot be used with the loaded key."
+    ),
 }
 
 

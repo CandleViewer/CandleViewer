@@ -2,8 +2,7 @@
 `23-ws-protocol.md` names them in the open code list, beside `secrets.kek_unavailable` (C-6.1).
 `secrets.kek_rotation` is the reason the `rewrapKek` contract latches order entry with (#2266 D1
 sends it); `secrets.kek_rows_stranded` is the one a boot with stranded API key rows latches with
-(#2266 C sends it). The notice schema is unchanged; each client text stays with the PR that first
-sends the reason."""
+(#2266 C sends it). The notice schema is unchanged; each carries its own role-neutral text."""
 
 from __future__ import annotations
 
@@ -66,3 +65,15 @@ def test_rotation_notice_matches_the_system_schema_and_names_no_key(code: str) -
     assert (frame["p"]["severity"], frame["p"]["reason"]) == ("critical", code)
     assert set(frame["p"]) <= {"kind", "severity", "message", "reason"}
     assert not _UUID.search(json.dumps(frame["p"]))  # a key id or an account id is a UUID
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        (_ROTATION, "Trading disabled: a credential key rotation is in progress."),
+        (_STRANDED, "Trading disabled: some stored API keys cannot be used with the loaded key."),
+    ],
+)
+def test_each_rotation_reason_has_its_own_role_neutral_text(code: str, message: str) -> None:
+    """Not the generic read-only text (#2266 C review): it says why, and names no key or account."""
+    assert client_notice(True, code)["message"] == message

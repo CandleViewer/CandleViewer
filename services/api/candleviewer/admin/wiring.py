@@ -20,7 +20,7 @@ from typing import Any
 
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.lane_journal import key_id
-from candleviewer.audit.models import AuditEmission, ExchangeEnv, Severity
+from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService, LaneKeyLoader
@@ -86,12 +86,14 @@ AuditVerifyRunner = VerifyRunner
 _SECRETS_ERRORS = frozenset(
     {"security.kek_load_failed", "security.kek_rotation_failed", "security.kek_rows_stranded"}
 )
+#: An M2 refusal (#2266): stored as denied, at warning, as the other refusals are (C-12.8).
+_SECRETS_REFUSED = "security.kek_rotation_refused"
 
 
 def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any]:
     """The audit columns of one M2 record, for the WAL sink and the row builder alike. Fields
     are ids only; the actor comes from the wiring-bound caller identity, never the borrower."""
-    return {
+    columns: dict[str, Any] = {
         "actor_label": f"{fields.get('actor_kind', 'system')}:{fields.get('actor_role', '')}",
         "actor_user_id": fields.get("actor_user_id"),
         "object_kind": "api_key" if "key_id" in fields else "kek",
@@ -99,6 +101,9 @@ def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any
         "severity": Severity.ERROR if action in _SECRETS_ERRORS else Severity.INFO,
         "after_state": dict(fields),
     }
+    if action == _SECRETS_REFUSED:
+        columns |= {"outcome": AuditOutcome.DENIED, "severity": Severity.WARNING}
+    return columns
 
 
 def secrets_audit_sink(audit: AuditService) -> Callable[[str, dict[str, str]], Awaitable[None]]:

@@ -49,6 +49,28 @@ async def test_a_staged_run_answers_counts_and_no_key_id_or_kcv() -> None:
     assert audit.records[-1][1]["actor_role"] == "owner"
 
 
+@pytest.mark.parametrize(("env", "version"), [("live", 2), ("demo", 3)])
+async def test_m2_checks_and_records_the_environment_and_version_the_caller_sent(
+    env: str, version: int
+) -> None:
+    """Through `AdminService`, the metadata facade and M2 (C-2.11): never a constant."""
+    admin, store, audit = await _admin(InMemoryAuthKeyStore())
+    with pytest.raises(KekRewrapError, match="kek_rotation_not_staged"):
+        await admin.rewrap_kek(env, version, "owner-7")
+    action, fields = audit.records[-1]
+    sent = (fields["requested_env"], fields["to_version"], fields["actor_user_id"])
+    assert (action, sent) == ("security.kek_rotation_refused", (env, str(version), "owner-7"))
+    assert all(row["kek_version"] == 1 for row in store.rows.values())
+
+
+async def test_every_record_of_a_run_carries_the_caller_as_the_owner() -> None:
+    admin, store, audit = await _admin(InMemoryAuthKeyStore())
+    booted = len(audit.records)
+    await admin.rewrap_kek("demo", 2, "owner-7")
+    records = [f for _, f in audit.records[booted:] + store.rewrap_audit]
+    assert [(f["actor_user_id"], f["actor_role"]) for f in records] == [("owner-7", "owner")] * 4
+
+
 async def test_a_keyring_row_left_answers_incomplete_with_the_row_counted() -> None:
     """#3505: API key rows all moved, an auth keyring row still at v1: no `kek_rotated`."""
     auth = InMemoryAuthKeyStore()

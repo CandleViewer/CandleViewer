@@ -529,7 +529,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "gauge",
         "state",
         (),
-        "1 while M2 is latched degraded (KEK unavailable).",
+        "1 while M2 is latched degraded (KEK unavailable or API key rows stranded).",
         "1 = trading off; pages KekUnavailable",
         _L,
         "E27",

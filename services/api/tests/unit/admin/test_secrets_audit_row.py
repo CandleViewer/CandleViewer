@@ -66,12 +66,34 @@ def test_the_real_backend_injects_a_row_builder_bound_to_the_process_environment
 
 @pytest.mark.parametrize(
     ("action", "severity"),
-    [("security.kek_enrolled", "info"), ("security.kek_rows_stranded", "error")],
+    [
+        ("security.kek_enrolled", "info"),
+        ("security.kek_rows_stranded", "error"),
+        ("security.kek_load_failed", "error"),
+        ("security.kek_rotation_failed", "error"),
+    ],
 )
 def test_the_boot_records_are_about_the_kek_at_their_severity(action: str, severity: str) -> None:
-    """#2266 PR C: an enrolment commits with its KCV row; stranded rows page at error."""
+    """#2266 PR C: an enrolment commits with its KCV row; what pages is at error."""
     row = secrets_audit_row("demo")(action, {"env": "demo", "kcv": "00", "stranded": "1"})
     assert (row["action"], row["object_kind"], row["severity"]) == (action, "kek", severity)
+
+
+async def test_a_kek_rotation_refusal_is_stored_as_denied_at_warning() -> None:
+    """#2266 D1 review (C-2.9, C-12.8): a query for denied outcomes finds every refusal, on the
+    WAL path and in the row builder alike."""
+    emitted: list[dict[str, Any]] = []
+
+    async def emit(action: str, **columns: Any) -> None:
+        emitted.append(columns)
+
+    refused, fields = "security.kek_rotation_refused", {"reason": "kek_rotation_not_staged"}
+    await secrets_audit_sink(cast(Any, SimpleNamespace(writer=SimpleNamespace(emit=emit))))(
+        refused, fields
+    )
+    row = secrets_audit_row("demo")(refused, fields)
+    stored = [(c["outcome"], c["severity"]) for c in (emitted[0], row)]
+    assert stored == [("denied", "warning")] * 2
 
 
 @pytest.mark.parametrize(

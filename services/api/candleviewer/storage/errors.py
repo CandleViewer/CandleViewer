@@ -253,8 +253,11 @@ class BackupCheckViolation(StorageError):
 
 
 class KcvEnrolmentNotAudited(StorageError):
-    """A KCV enrolment's `security.kek_enrolled` cannot commit with its `kek_versions` row (no
-    audit row builder is wired, or the record's `record_id` is stored), so nothing does (#2266)."""
+    """A KCV enrolment's `security.kek_enrolled` cannot commit with its `kek_versions` row, so
+    nothing does (#2266). Two causes share this code, as `secrets.io_failed` logs it: no audit
+    row builder is wired (a wiring defect: every enrolment is refused), or the record was not
+    written because its `record_id` is stored already (a fresh uuid4: practically never). The
+    message tells them apart; B1's re-wrap splits them (`RewrapAuditNotWired`, `...NotWritten`)."""
 
     code = "STORAGE_KCV_ENROLMENT_NOT_AUDITED"
 

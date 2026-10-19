@@ -83,6 +83,9 @@ class RotatingBroker(CredentialBroker):
         unchecked: `auth_left` reads `unchecked` and the run is never complete (#3505).
         """
         kek, prev = self.staged(new_kek_version)
+        # Before the first await: a `stop()` that zeroes the KEKs mid-run cannot skip the opening
+        # record, and the run is then closed as aborted (#2266 D1 review).
+        kcvs = {"from_kcv": prev.kcv().hex(), "to_kcv": kek.kcv().hex()}
         run_id = uuid4()
         self._cache.flush()
         total = await self._io(self._store.count_at_kek_version(prev.version, self._env), "store")
@@ -94,8 +97,7 @@ class RotatingBroker(CredentialBroker):
             "run_id": str(run_id),
             "from": str(prev.version),
             "to": str(kek.version),
-            "from_kcv": prev.kcv().hex(),
-            "to_kcv": kek.kcv().hex(),
+            **kcvs,
             "actor_kind": kind,
             "actor_role": role,
             **({"actor_user_id": user} if user else {}),
