@@ -2620,6 +2620,7 @@ def wire_public_ws(
             clock=clock,
             writer=_BookWriter(),
             supervisor=B14BookSupervisor(),
+            tick_size=_tick_size,  # #3806: a tick-size change under a LIVE book resyncs it
         )
     )
     ctx.ingestion.attach_tickers(

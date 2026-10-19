@@ -38,7 +38,9 @@ that upstream topic, so the UI shows the "stale data" badge for the symbol. Seve
 breaker marks it degraded at more than 5 per 60 s. Severity: Ticket.
 
 1. Read the `reason` label on _Book resyncs/min_. `sequence_gap` or `frame_loss` point upstream or at
-   local backpressure; `bad_snapshot` / `bad_replay` point at payload corruption.
+   local backpressure; `bad_snapshot` / `bad_replay` point at payload corruption. `grid` follows a
+   tick-size change in the instrument catalogue (one per symbol, at its next book delta): check
+   `GET /v1/instruments` for a new `tick_size`; a corrupt frame is `rejected_frame`, not `grid`.
 2. For `frame_loss`, check _Never-drop queue full events/s_ and host CPU: the frame buffer is
    overflowing. Reduce subscribed symbols or depth tier until it clears.
 3. For `sequence_gap` with a healthy host, check exchange status; if it persists for 30 minutes,

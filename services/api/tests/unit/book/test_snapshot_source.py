@@ -175,7 +175,7 @@ async def test_the_adapter_keeps_no_engine_alive() -> None:
     ("price", "qty", "scales", "record"),
     [  # qty_scale 18; the largest i64 price; the largest u64 size
         ("99.7", "0.000000000000000001", (1, 18), (0, 997, 1)),
-        ("92233720368.54775807", "1", (8, 3), (0, 2**63 - 1, 1000)),
+        ("92233720368.54775807", "1", (8, 3), (1, 2**63 - 1, 1000)),
         ("99.7", "184467440737.09551615", (1, 8), (0, 997, 2**64 - 1)),
     ],
     ids=["qty-scale-18", "price-at-i64-max", "size-at-u64-max"],
@@ -186,12 +186,14 @@ async def test_values_at_the_section_14_1_and_kind_1_limits_are_served_exactly(
     """Plain decimals in the payload (`str` would write "1E-18") and exact kind-1 records,
     whatever the caller's decimal context."""
     eng = await _live()
-    level = BookLevel(price=Decimal(price), qty=Decimal(qty), price_ticks=997)
-    await eng.on_event(delta(11, 10, [level]))
+    ask = record[0] == 1  # a book's prices rise with its ticks (#3806): a far price is an ask
+    level = BookLevel(price=Decimal(price), qty=Decimal(qty), price_ticks=1002 if ask else 997)
+    await eng.on_event(delta(11, 10, [] if ask else [level], [level] if ask else []))
     with localcontext(Context(prec=6)):  # scaling must not round to the ambient precision
         body = _World(eng).src.build(_sub())
     assert body is not None and (body.price_scale, body.qty_scale) == scales
-    assert body.structured["bids"][2] == [price, qty] and body.parts[0].records[2] == record
+    side, i = ("asks", 1) if ask else ("bids", 2)
+    assert body.structured[side][i] == [price, qty] and body.parts[0].records[i + 2 * ask] == record
 
 
 @pytest.mark.parametrize(
@@ -219,8 +221,9 @@ async def test_a_value_outside_its_kind_1_field_builds_none(
 ) -> None:
     """Fail closed: no snapshot (the subscription stays pending), never an encoder error."""
     eng = await _live(xseq=xseq)
-    level = BookLevel(price=Decimal(price), qty=Decimal(qty), price_ticks=997)
-    await eng.on_event(delta(11, 10, [level]))
+    ask = Decimal(price) > 100  # a book's prices rise with its ticks (#3806): a far price is an ask
+    level = BookLevel(price=Decimal(price), qty=Decimal(qty), price_ticks=1002 if ask else 997)
+    await eng.on_event(delta(11, 10, [] if ask else [level], [level] if ask else []))
     assert eng.phase is BookPhase.LIVE and _World(eng).src.build(_sub()) is None
 
 

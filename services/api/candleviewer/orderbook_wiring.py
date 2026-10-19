@@ -27,6 +27,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Protocol
 
 import structlog
@@ -105,6 +106,7 @@ _RESYNC_REASONS = frozenset(
         "snapshot_timeout",
         "rejected_frame",
         "backoff",
+        "grid",  # #3806: a tick-size change under a LIVE book, or a level off the book's grid
     }
 )
 
@@ -165,8 +167,13 @@ class BookStream:
         rand: Callable[[], float] = _JITTER,
         write_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        tick_size: Callable[[str], Decimal | None] | None = None,
     ) -> None:
         self._clock, self._rand = clock, rand
+        #: #3806: the catalogue's tick size (the one `parse_frame` reads), and the grid each
+        #: (symbol, depth) book was last snapshotted on. Without it the grid check is off.
+        self._tick_size = tick_size
+        self._grids: dict[tuple[str, int], Decimal | None] = {}
         #: #1975: the SNAPSHOT_TIMEOUT tick's sleep (a virtual clock in the chaos rig).
         self._sleep = sleep
         self._backoff: dict[str, _ResyncBackoff] = {}
@@ -383,8 +390,20 @@ class BookStream:
             return
         if ev is None or ev.symbol not in self._demand.desired():
             return
+        # #3806: the grid `ev` was parsed on. No await lies between the parse and this read, so
+        # both read the same catalogue tick size.
+        grid = None if self._tick_size is None else self._tick_size(ev.symbol)
         self._touch(self._topic_for(ev.symbol, ev.depth))
         tb = await self._ensure(ev.symbol)
+        key = (ev.symbol, ev.depth)
+        if isinstance(ev, BookSnapshot):
+            self._grids[key] = grid  # the grid this tier's book is (re)built on
+        elif ev.depth == tb.active.depth and self._grids.get(key, grid) != grid:
+            # C-2.5: a delta is never applied across two grids. Leave LIVE and rebuild from a
+            # snapshot on the new grid; deltas until then are dropped. A warming tier has no
+            # LIVE book yet, and a retired tier's frames are dropped by `TieredBook`.
+            await tb.active.invalidate("grid")
+            return
         await tb.on_event(ev)
         if tb.warming is None:
             self.sync()  # a completed tier swap retires the old topic

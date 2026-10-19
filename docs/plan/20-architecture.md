@@ -295,7 +295,7 @@ States: `INIT → SNAPSHOT_PENDING → LIVE → DESYNCED → SNAPSHOT_PENDING`. 
 
 **As shipped (E08-S05, reconciled E08-T06).** Default depth tier is **200** (ADR-0021). Resync
 discipline is invalidate-and-resubscribe (ADR-0023) with reasons `sequence_gap`, `buffer_overflow`,
-`server_reset`, `bad_snapshot`, `bad_replay`, `frame_loss`, `reconnect`, `rejected_frame`; the breaker marks a book
+`server_reset`, `bad_snapshot`, `bad_replay`, `frame_loss`, `reconnect`, `rejected_frame`, `grid`; the breaker marks a book
 `degraded` at **> 5 resyncs / 60 s** (`book/resync.py`). The phase is exported as
 `ingest_book_live{symbol}` and resyncs as `ingest_book_resyncs_total{symbol,reason}`; the alert
 `IngestionBookResyncRateHigh` fires at > 5 per 5 min (runbook `docs/ops/ingestion.md`). `book_resync_total`
@@ -303,6 +303,8 @@ in §12.1 remains the E04 catalogue name; the ingestion registry series is the o
 Ingest-boundary rejections (24-internal-schemas §14.2 rule 10) are counted as
 `ingest_rejected_total{stream,reason}` with `stream` ∈ `trade|ticker|book|pump` and a closed
 `reason` enum. A rejected book frame resyncs with reason `rejected_frame`.
+A tick-size change under a LIVE book resyncs it (reason `grid`) before a delta on the new grid is
+applied; so does a level that contradicts the book, which holds one level per price (#3806).
 
 ### 3.3 Bar Builders
 
