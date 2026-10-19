@@ -4369,51 +4369,98 @@ A CI job regenerates all three and fails on any diff, so drift between this docu
 
 _Added 2026-09-24, when ADR-0016 was Accepted._ Every catalogue lifecycle (B1–B20, `28-statechart-catalogue.md`) runs on the pinned library through `cv.statechart.factory`. There is no shim. This section owns the persisted and published shapes the runtime produces. Behaviour is owned by `28`, and the component design by `20` §4.4 and `29` §1.
 
-**Tables** (migration `E29-T12`):
+**Tables** (migration `0033_machine_persistence`, E50-T61; stores: E50-T62; sink and wiring: E50-T63):
 
 ```sql
 CREATE TABLE machine_snapshots (
   machine_kind      text        NOT NULL,   -- catalogue id: order, trade_group, leg, ..., risk_lockout
-  entity_id         uuid        NOT NULL,
+  entity_id         text        NOT NULL,   -- MachineKey.entity_id verbatim (see "Machine key")
   env               text        NOT NULL,
-  cv_schema_version int         NOT NULL,   -- OUR envelope version
-  lib_snapshot_ver  int         NOT NULL CHECK (lib_snapshot_ver >= 3),  -- CV-C52 minimum_version=3
-  machine_hash      text        NOT NULL,   -- sha256(canonical_json(chart)); must equal machine_hashes.lock
+  cv_schema_version int         NOT NULL,   -- persistence.SEAL_LAYOUT_V at write time; diagnostic only
+  lib_snapshot_ver  int         NOT NULL,   -- SealedSnapshot.version; CV-C52 minimum_version=3
+  machine_hash      sha256_hex  NOT NULL,   -- sha256(canonical_json(chart)); must equal machine_hashes.lock
   snapshot          jsonb       NOT NULL,   -- interpreter.get_persisted_snapshot() (root only; carries chain_trips)
-  hmac_key_id       text        NOT NULL,
-  hmac_tag          bytea       NOT NULL,   -- HMAC-SHA256 tag; input layout owned by 29 §1.3 (CV-C53)
-  state_ids         text[]      NOT NULL,   -- denormalised for query/index
-  chain_trips       int         NOT NULL DEFAULT 0,  -- >0 = latched degraded until operator ack (CV-C63)
+  hmac_key_id       text        NOT NULL,   -- Seal.key_id
+  hmac_tag          bytea       NOT NULL,   -- the 32 raw bytes of Seal.tag; input layout owned by 29 §1.3 (CV-C53)
+  state_ids         text[]      NOT NULL,   -- denormalised from the blob, query/index only
+  chain_trips       int         NOT NULL DEFAULT 0,  -- denormalised; >0 = latched degraded until operator ack (CV-C63)
   updated_at        timestamptz NOT NULL,
-  PRIMARY KEY (machine_kind, entity_id, env)
+  PRIMARY KEY (machine_kind, entity_id, env),
+  CONSTRAINT ms_entity  CHECK (entity_id <> ''),
+  CONSTRAINT ms_env     CHECK (env IN ('live','demo','testnet')),
+  CONSTRAINT ms_schema  CHECK (cv_schema_version >= 1),
+  CONSTRAINT ms_lib_ver CHECK (lib_snapshot_ver >= 3),
+  CONSTRAINT ms_tag_len CHECK (octet_length(hmac_tag) = 32),
+  CONSTRAINT ms_trips   CHECK (chain_trips >= 0)
 );
 
-CREATE TABLE machine_drain_journal (       -- CV-C65': drained events, replayed exactly once after restore
-  machine_kind  text NOT NULL, entity_id uuid NOT NULL, env text NOT NULL,
-  send_id       text NOT NULL,              -- stable id (R11-W-1); de-dup key for re-submits (R14-02)
-  lane          text NOT NULL CHECK (lane IN ('priority','inbox')),
-  ordinal       int  NOT NULL,              -- position in drain_pending() output, priority first
-  event_type    text NOT NULL,
-  payload       jsonb NOT NULL,
-  receipt_error text,                       -- Receipt.error class name if set (e.g. InterpreterStoppedError)
-  replayed_at   timestamptz,
-  PRIMARY KEY (machine_kind, entity_id, env, send_id)
+CREATE TABLE machine_drain_journal (          -- CV-C65': drained events, replayed exactly once after restore
+  machine_kind  text        NOT NULL,
+  entity_id     text        NOT NULL,
+  env           text        NOT NULL,
+  send_id       text        NOT NULL,         -- stable id (R11-W-1): 32 hex of sha256; de-dup key for re-submits (R14-02)
+  lane          text        NOT NULL,
+  ordinal       int         NOT NULL,         -- position in drain_pending() output, priority first
+  event_type    text        NOT NULL,
+  payload       jsonb       NOT NULL,         -- JournalEntry.record (the persist_event output)
+  receipt_error text,                         -- Receipt.error class name if set (e.g. InterpreterStoppedError)
+  replayed_at   timestamptz,                  -- set once, by replay_once
+  PRIMARY KEY (machine_kind, entity_id, env, send_id),
+  CONSTRAINT mdj_entity  CHECK (entity_id <> ''),
+  CONSTRAINT mdj_env     CHECK (env IN ('live','demo','testnet')),
+  CONSTRAINT mdj_send_id CHECK (send_id ~ '^[0-9a-f]{32}$'),
+  CONSTRAINT mdj_lane    CHECK (lane IN ('priority','inbox')),
+  CONSTRAINT mdj_ordinal CHECK (ordinal >= 0)
 );
+CREATE INDEX ix_mdj_pending ON machine_drain_journal (machine_kind, entity_id, env, ordinal)
+  WHERE replayed_at IS NULL;                  -- list-unreplayed, in replay order
 
-CREATE TABLE machine_events (              -- append-only; CvAuditPlugin; order_events (§8) specialises it
-  seq bigserial PRIMARY KEY,
-  machine_kind text NOT NULL, entity_id uuid NOT NULL, env text NOT NULL,
-  event_type   text NOT NULL, payload jsonb NOT NULL,
-  from_states  text[] NOT NULL, to_states text[] NOT NULL,
-  actions_run  text[] NOT NULL,             -- from the actual execution list (MUST-02)
-  fault        jsonb,                        -- non-null on a failed transition (CvErrorHooks)
-  occurred_at  timestamptz NOT NULL
+CREATE TABLE machine_events (                 -- append-only, hash-chained; CvAuditPlugin; order_events (§8) specialises it
+  seq          bigserial   PRIMARY KEY,
+  machine_kind text        NOT NULL,
+  entity_id    text        NOT NULL,
+  env          text        NOT NULL,
+  event_type   text        NOT NULL,
+  payload      jsonb       NOT NULL,
+  from_states  text[]      NOT NULL,
+  to_states    text[]      NOT NULL,
+  actions_run  text[]      NOT NULL,          -- from the actual execution list (MUST-02)
+  fault        jsonb,                         -- non-null exactly when phase = 'fault'
+  occurred_at  timestamptz NOT NULL,
+  phase        text        NOT NULL,          -- MachineEventRow.phase: write-ahead row, commit row, or fault row
+  prev_hash    sha256_hex  NOT NULL,          -- previous row_hash of the same (machine_kind, entity_id, env); 64 zeros first
+  row_hash     sha256_hex  NOT NULL UNIQUE,   -- row_digest(); the idempotency key for WAL replay
+  CONSTRAINT me_entity     CHECK (entity_id <> ''),
+  CONSTRAINT me_env        CHECK (env IN ('live','demo','testnet')),
+  CONSTRAINT me_phase      CHECK (phase IN ('ahead','commit','fault')),
+  CONSTRAINT me_fault_phase CHECK ((phase = 'fault') = (fault IS NOT NULL))
 );
+CREATE INDEX ix_me_machine_seq ON machine_events (machine_kind, entity_id, env, seq);
 ```
+
+**Machine key.** A machine is `(machine_kind, entity_id, env)`, exactly `persistence.MachineKey`. `entity_id` is never NULL or empty and is built once by the owning module, identically on write and read: the lowercase canonical `str(UUID)` for uuid-keyed kinds (23 §6.4); the symbol for B11; the owning module's canonical string for a composed key such as B14's `(env, symbol, depth)`; the `machine_kind` itself for a singleton (B17, B18). `''` and `entity_id = machine_kind` are different keys. Writers and readers build the `MachineKey` from the row's three columns and never from the envelope: the seal binds all three byte for byte (`_mac_input`, `SEAL_LAYOUT_V = 2`), so a different spelling fails closed as a refused seal. `env` is part of the key (C-2.11), so it sits before `seq` in `ix_me_machine_seq`; the index serves the per-machine timeline and the chain-head lookup (`ORDER BY seq DESC LIMIT 1`).
+
+**`cv_schema_version`** is `persistence.SEAL_LAYOUT_V` at write time (the layout of the sealed envelope's MAC input, currently 2), stored for diagnostics and fleet queries (which rows predate a layout bump). It is neither the library's snapshot version (`lib_snapshot_ver`, the CV-C52 floor, `SealedSnapshot.version`) nor the chart's own `version` (`statechart/lock.py`). No code path reads it to choose a MAC layout or to skip verification: the layout label is fixed inside `_mac_input`, so a row cannot downgrade itself.
+
+**Unsealed columns.** `state_ids`, `chain_trips`, `updated_at` and every other column outside the seal are for query and index only. The seal does not cover them, so a reader decides nothing from them and re-derives from the verified blob (as the inspector does). `hmac_tag` holds the 32 raw bytes of the HMAC-SHA256 tag (`Seal.tag` is their lowercase hex digest; the store converts both ways); `hmac_key_id` is a key reference, never key material.
+
+**Hash chain.** `prev_hash` and `row_hash` are `MachineEventRow`'s: `row_hash` is `sha256` over the canonical JSON of every other field (`row_digest`), `prev_hash` is the previous row's `row_hash` for the same machine key (64 zeros for the first). Within one machine, `seq` order is chain order. Type mapping from `MachineEventRow`: `occurred_at` (ISO-8601 UTC string) to `timestamptz`, `payload` and `fault` (dicts) to `jsonb`, `from_states`, `to_states` and `actions_run` (lists of strings) to `text[]`, `prev_hash` and `row_hash` (hex strings) to `sha256_hex`, and `machine_kind`, `entity_id`, `env`, `event_type` and `phase` (strings) to `text`. The digest covers `occurred_at` as the ISO-8601 UTC string the plugin emitted and `payload` and `fault` as JSON, so a store must return those byte-faithfully (the E50-T62 and E50-T63 integration tests assert it).
 
 **Drain journal semantics** (E50-T10, `statechart/persistence.py`): `send_id` = first 32 hex of sha256 over canonical JSON `[machine_kind, entity_id, env, ordinal, persisted_event]`, so a retried append after a crash between journal and snapshot is a no-op on the PK. `lane` is `priority` for the first `len(priority_queue)` drained events. `receipt_error` is `InterpreterStoppedError` when a `send(wait=True)` waiter was failed by the drain; each such row is also audited (R14-02). `replay_once` re-enqueues rows in `ordinal` order via the restore hook (lane + engine provenance preserved) and stamps `replayed_at`; stamped rows are never replayed again. (The ticket text calls this table `statechart_drain_journal`; the name here, `machine_drain_journal`, is authoritative.)
 
-A context carrying `_fault` is never written to `machine_snapshots`. Instead a quarantine row goes to `machine_events` with `fault` set, and P1 pages (MUST-01). The order family writes `machine_events` **write-ahead**. The other families write it write-behind.
+**Faults.** A context carrying `_fault` is never written to `machine_snapshots`. A `machine_events` row with `phase = 'fault'` and `fault` set records the refusal (persist refused, drain error, restore quarantine) and P1 pages (MUST-01). The order family writes `machine_events` **write-ahead**; the other families write it write-behind.
+
+**Privileges and triggers.** Each statement that names `cv_app` or `cv_ro` runs only where that role exists, as in `0003_audit_log` (the roles come from `infra/scripts/pg_bootstrap.sql`):
+
+| Table                   | `cv_app` may                               | Enforced by                                                                                                                                                                                                                                                                        |
+| ----------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `machine_snapshots`     | `SELECT`, `INSERT`, `UPDATE` (upsert)      | `REVOKE DELETE, TRUNCATE`                                                                                                                                                                                                                                                          |
+| `machine_drain_journal` | `SELECT`, `INSERT`, `UPDATE (replayed_at)` | `REVOKE UPDATE`, then `GRANT UPDATE (replayed_at)`; `REVOKE DELETE, TRUNCATE`; `trg_mdj_stamp_once`, a BEFORE UPDATE row trigger (the write-once pattern of `0024` and `0032`) that allows only `replayed_at` going from NULL to a value, once                                     |
+| `machine_events`        | `SELECT`, `INSERT`                         | `trg_me_append`, `forbid_mutation()` as a BEFORE UPDATE OR DELETE row trigger, and `trg_me_no_truncate`, `audit_refuse_truncate()` as a BEFORE TRUNCATE statement trigger (the `audit_log` and `order_events` guards); `REVOKE UPDATE, DELETE, TRUNCATE` from `cv_app` and `cv_ro` |
+
+As with `audit_log`, the owning role and superusers can still disable a trigger; the guard is the runtime role's privileges plus the triggers.
+
+**Downgrade.** The revision's downgrade locks the three tables in `SHARE` mode and refuses, naming the table, while any of them holds a row: audit history and recovery state are never dropped, so a populated database is fixed forward (C-5.2, C-5.7). When all three are empty it drops them and the one trigger function the revision created; `sha256_hex`, `forbid_mutation()` and `audit_refuse_truncate()` stay.
 
 **WS projection, topic `machines.{entity}.state`** (owned here; framed per `23-ws-protocol.md` §6.4 and §15.10, which own the entity grammar, the per-entity RBAC and the `context_summary` redaction). It is published by the machine **on state entry** and is never produced by querying an interpreter (MUSTNOT-03):
 
@@ -4648,3 +4695,12 @@ These are contract-test obligations created by this pass; they belong in the CI 
 - New §17.6 adds the `machine_snapshots` columns `lib_snapshot_ver`, `hmac_key_id`, `hmac_tag` and `chain_trips`, the new `machine_drain_journal` table (CV-C65′), `machine_events` (write-ahead for orders), and the `machine.state` WS projection. **Follow-up:** register the topic `machines.{entity}.state` in `23-ws-protocol.md` §6 (ticket E17-T08).
 - §17.1 gains a versioning row for charts and snapshots. §17.5 gains the `tests/xstate_contract/` obligation.
 - All references to an in-house interpreter shim, a dual-runtime conformance harness or `CV_STATECHART_RUNTIME` are withdrawn across 20, 24, 28 and ADR-0016.
+
+### 19.12 2026-10-19 — §17.6 made implementable as written (E50-T61)
+
+- `machine_events` gains `phase`, `prev_hash` and `row_hash`, exactly as `CvAuditPlugin`'s `MachineEventRow` emits them; `row_hash` is `UNIQUE`, the idempotency key for WAL replay, and the section states the type mapping of every field.
+- `entity_id` is `text` in all three tables (it was `uuid`; `MachineKey.entity_id` is a `str`, and B11, B14 and the singleton machines have no UUID), with the machine-key convention stated. `machine_hash` uses the `sha256_hex` domain.
+- `cv_schema_version` is `persistence.SEAL_LAYOUT_V` at write time, diagnostic only: nothing reads it to choose a MAC layout.
+- The named CHECKs, the indexes `ix_mdj_pending` and `ix_me_machine_seq`, the privilege and trigger rules (`machine_events` append-only, the journal stamped once) and the downgrade rule are written into the section.
+- The `_fault` sentence: a `machine_events` row with `phase = 'fault'` and `fault` set records the refusal.
+- The section names its owners, in place of a migration ticket that never existed: the migration `0033_machine_persistence` (E50-T61), the stores (E50-T62), and the sink and wiring (E50-T63).
