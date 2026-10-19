@@ -70,15 +70,16 @@ import asyncio
 import json
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Concatenate
 
 import structlog
 
-from candleviewer.audit.actions import validate_action
+from candleviewer.audit.actions import AUDIT_ACTIONS, validate_action
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity, storable
 from candleviewer.audit.redact import redact
@@ -139,6 +140,8 @@ async def _uninterruptible[T](op: _WalOp, fn: Callable[..., T], /, *args: Any) -
     return fut.result()
 
 
+#: The first dotted segment of every registered action, and `other` (S4a's `domain` label).
+AUDIT_DOMAINS: tuple[str, ...] = (*sorted({a.split(".", 1)[0] for a in AUDIT_ACTIONS}), "other")
 #: Upper bound on the `on_alarm` callback (a slow pager must not stall a WAL op).
 _ALARM_TIMEOUT_S = 2.0
 #: How long a failed WAL append keeps `append_failure_active` true (#2510): long enough
@@ -191,6 +194,7 @@ class AuditWriter:
         self._write_errors_total = 0
         self._refused_total = 0
         self._drain_overruns_total = 0
+        self._refused_by_domain = dict.fromkeys(AUDIT_DOMAINS, 0)
         self._inflight = False
         self._max_insert_attempts = max_insert_attempts
         self._failure: BaseException | None = None
@@ -214,6 +218,12 @@ class AuditWriter:
     def refused_total(self) -> int:
         """`emit()` calls refused with `AuditUnavailable` (WAL full/unwritable)."""
         return self._refused_total
+
+    @property
+    def refused_by_domain(self) -> Mapping[str, int]:
+        """Records a caller waited on (`emit()`, the lane façade's fallback) that it refused, by the
+        action's first dotted segment; the drain retries and the fold-in keeps its journal."""
+        return MappingProxyType(self._refused_by_domain)
 
     @property
     def drain_overruns_total(self) -> int:
@@ -400,7 +410,11 @@ class AuditWriter:
         clock is not read. Cancelling the caller never interrupts an append that has started:
         that record is still accepted. Cancelled while still queued for
         `_wal_lock`, nothing is appended (see `_shielded`)."""
-        self._refuse_unless_accepting()
+        try:
+            self._refuse_unless_accepting()
+        except AuditError:
+            self._count_refusal(action)
+            raise
         emission = self.build(
             action,
             actor_label=actor_label,
@@ -418,7 +432,19 @@ class AuditWriter:
             request_id=request_id,
             env=env,
         )
-        await self.ingest(emission)
+        await self.ingest_counted(emission)
+
+    async def ingest_counted(self, record: AuditEmission) -> int:
+        """`ingest()` for a caller that waits on the record: a refusal is counted, then raised."""
+        try:
+            return await self.ingest(record)
+        except (AuditUnavailable, AuditWriterStopped):
+            self._count_refusal(record.action)
+            raise
+
+    def _count_refusal(self, action: str) -> None:
+        domain = action.split(".", 1)[0]
+        self._refused_by_domain[domain if domain in self._refused_by_domain else "other"] += 1
 
     async def ingest(self, record: AuditEmission | dict[str, Any]) -> int:
         """Durably append an already-redacted record that `build()` made, or one in its JSON

@@ -202,6 +202,11 @@ class AuditService:
         detail = "" if self.is_active else "scaffold module — fake storage backend"
         return HealthReport(module="audit", status=status, detail=detail)
 
+    def lane_parts(self) -> tuple[AuditWriter | None, AuditLane | None, LaneFacade | None]:
+        """What S4a's metrics read at a scrape (`audit/metrics.py`), each None until `start()`
+        wires it: the writer, the lane and its façade."""
+        return self._writer, self._lane, self._facade
+
 
 def _log() -> Any:
     """Resolved per call: a module-level logger pins a stale processor chain (#2008)."""

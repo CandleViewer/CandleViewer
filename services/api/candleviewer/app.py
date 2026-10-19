@@ -51,6 +51,7 @@ from candleviewer.admin.wiring import (
     build_audit_service,
     build_audit_verify_job,
     build_secrets_service,
+    export_audit_lane_metrics,
     export_secrets_metrics,
     secrets_audit_row,
     system_event_redactor,
@@ -1641,6 +1642,13 @@ def create_app(
     # E42-T02: audit page time by filter class, and reads over their time budget.
     app.state.audit_query_metrics = export_audit_query_metrics(
         ctx.metrics, env=resolved.environment.value
+    )
+    # ADR-0037 S4a (#3009): the audit lane's series and the writer's refusals by domain.
+    app.state.audit_lane_metrics = export_audit_lane_metrics(
+        ctx.metrics,
+        env=resolved.environment.value,
+        audit=ctx.audit,
+        journal_first=lambda: feature_flags.lane_flag.value,
     )
     # E42-T04 (#965 R7): user lifecycle calls and steps, read by the lifecycle tickets.
     app.state.user_lifecycle_metrics = export_user_lifecycle_metrics(

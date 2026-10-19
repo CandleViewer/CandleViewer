@@ -48,3 +48,8 @@ def ok_table(reg: object) -> None:
 def ok_user_lifecycle(reg: object) -> None:
     reg.counter("cv_l_total", "help", ("action", "result"))  # ok: cv-obs-metric-label-allowlist
     reg.counter("cv_s_total", "help", ("step", "outcome"))  # ok: cv-obs-metric-label-allowlist
+
+
+def ok_audit_lane(reg: object) -> None:
+    reg.counter("cv_k_total", "help", ("class", "reason"))  # ok: cv-obs-metric-label-allowlist
+    reg.counter("cv_o_total", "help", ("domain",))  # ok: cv-obs-metric-label-allowlist

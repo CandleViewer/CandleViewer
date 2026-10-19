@@ -64,9 +64,12 @@ rules:
       #   kind outside them never makes a series (`admin/backups/metrics.KINDS`); max_series=5.
       # result, also (E42-T05, #966, cv_restore_jobs_total): {refused, succeeded, failed,
       #   cancelled}, each bound at import (`admin/backups/metrics.RESTORE_RESULTS`); max_series=4.
+      # class, domain, reason, state (ADR-0037 S4a): {reserved, shared}; a registered audit
+      #   action's first segment or `other` (34); section 15.6's refusals and `timeout` (14 with
+      #   `class`), its anomaly reasons, or {held, stopped}; {open, held, stopped}.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|bucket|cause|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|outcome|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|step|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(action|bucket|cause|class|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|outcome|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|step|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

@@ -40,7 +40,7 @@ from prometheus_client import (
 )
 from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
 from prometheus_client.metrics import MetricWrapperBase
-from prometheus_client.metrics_core import Metric
+from prometheus_client.metrics_core import CounterMetricFamily, GaugeMetricFamily, Metric
 from prometheus_client.registry import Collector
 
 # Re-exported so modules outside `candleviewer.observability` never import
@@ -52,6 +52,8 @@ __all__ = [
     "Gauge",
     "Histogram",
     "ReexportCollector",
+    "ScrapeCollector",
+    "ScrapedFamily",
     "generate_latest",
 ]
 
@@ -500,6 +502,50 @@ class ReexportCollector(Collector):
             out = Metric(family.name, family.documentation, family.type, family.unit)
             for s in family.samples:
                 out.add_sample(s.name, {**s.labels, **self._const}, s.value, s.timestamp)
+            yield out
+
+    def close(self) -> None:
+        if self._target is not None:
+            self._target.unregister(self)
+            self._target = None
+
+
+@dataclass(frozen=True, slots=True)
+class ScrapedFamily:
+    """A counter or gauge a `ScrapeCollector` serves: (label values, value) per sample."""
+
+    name: str
+    kind: MetricKind
+    help: str
+    labels: tuple[str, ...]
+    samples: tuple[tuple[tuple[str, ...], float], ...]
+
+
+class ScrapeCollector(Collector):
+    """Serve on `target` the families `read()` returns at each scrape, with `env`: `read()` runs in
+    the scrape's thread, so it reads in-memory values only. Its families are checked once here, as
+    the facade checks its own; construction registers it, `close()` unregisters it."""
+
+    def __init__(
+        self, target: CollectorRegistry, *, env: str, read: Callable[[], Iterable[ScrapedFamily]]
+    ) -> None:
+        for family in read():
+            check_label_names(family.name, family.labels)
+            if family.kind not in ("counter", "gauge"):
+                raise MetricsError(f"{family.name}: a scraped family is a counter or a gauge")
+        self._env, self._read = env, read
+        self._target: CollectorRegistry | None = target
+        target.register(self)
+
+    def describe(self) -> list[Metric]:
+        return []  # as `ReexportCollector`: the families are read at the scrape
+
+    def collect(self) -> Iterable[Metric]:
+        for family in self._read():
+            make = CounterMetricFamily if family.kind == "counter" else GaugeMetricFamily
+            out = make(family.name, family.help, labels=[ENV_LABEL, *family.labels])
+            for values, value in family.samples:
+                out.add_metric([self._env, *values], value)
             yield out
 
     def close(self) -> None:
