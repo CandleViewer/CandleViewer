@@ -19,18 +19,18 @@ repository-backed range table.
 from __future__ import annotations
 
 from bisect import bisect_left
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Final
 
 _MIN_US: Final = 60_000_000
-#: Interval code -> fixed bar width (µs). `M` (calendar month) has no fixed width.
-BAR_WIDTH_US: Final[dict[str, int]] = {
-    **{c: int(c) * _MIN_US for c in ("1", "3", "5", "15", "30", "60", "120", "240", "360", "720")},
-    "D": 1440 * _MIN_US,
-    "W": 7 * 1440 * _MIN_US,
-}
-#: Bybit weeks open on Monday 00:00 UTC; the Unix epoch was a Thursday.
+_MINUTE_CODES: Final = ("1", "3", "5", "15", "30", "60", "120", "240", "360", "720")
+#: Interval code -> fixed bar width (µs), read-only. `M` (calendar month) has no fixed width.
+BAR_WIDTH_US: Final[Mapping[str, int]] = MappingProxyType(
+    {**{c: int(c) * _MIN_US for c in _MINUTE_CODES}, "D": 1440 * _MIN_US, "W": 7 * 1440 * _MIN_US}
+)
+#: The venue's weeks open on Monday 00:00 UTC; the Unix epoch was a Thursday.
 _WEEK_ANCHOR_US: Final = 4 * 1440 * _MIN_US
 
 
@@ -81,8 +81,8 @@ class CoverageIndex:
 
     #3808: `horizon_us`, when set, is read at every `mark_covered` and bounds the covered set:
     nothing at or after it is ever covered, since no bar exists there yet.
-    `KlineBackfillService` sets it to the open time of the bar containing now, so neither the
-    forming bar nor a future window can be cached as covered, whatever window was requested.
+    `KlineBackfillService` sets it to the open time of the bar containing the host clock's now,
+    so neither the forming bar nor a window after it can be cached as covered, by that clock.
     """
 
     _ranges: list[Range] = field(default_factory=list)

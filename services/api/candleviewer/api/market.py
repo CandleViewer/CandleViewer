@@ -251,8 +251,8 @@ def make_market_router(
     optional `Callable[[str, str], CoverageIndex | None]` used only to
     compute the `meta.coverage_holes` diagnostic (never required for
     correctness of the returned bars) — the fake/default storage backend
-    has no coverage tracking of its own, so a request against it simply
-    reports an empty hole list.
+    has no coverage tracking of its own, so a request against it reports
+    no hole before now (the part of a window after now is always declared).
 
     `principal_resolver=None` (no identity provider composed, i.e. the fake
     storage backend; same posture as `make_audit_router`'s own default and
