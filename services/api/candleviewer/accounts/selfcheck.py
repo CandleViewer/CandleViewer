@@ -50,10 +50,17 @@ too, leaves the account armed until the window ends. The verified columns and a 
 (`trading_enabled` false, with its rule code and time) persist too. A disarm whose record
 is not marked written is owed in the store, so the boot pass, like every pass, sends it before it
 checks a key (decision 5 on #836). The audit sink cannot dedup it (`AuditWriter.emit` mints a fresh
-`record_id`), so it can be written twice, never zero times, in two windows: a crash between the
-record and its mark, and an emit cut by its bound once the writer has started the append (the
-writer keeps that append; the job counts the emit refused, so the record stays owed). A record
-sent but not yet marked is kept in memory, so a failed mark is retried alone.
+`record_id`), so it can be written twice, never zero times, in three windows: a crash between the
+record and its mark, an emit cut by its bound once the writer has started the append (the writer
+keeps that append; the job counts the emit refused, so the record stays owed), and a test's disarm
+that a pass reads as owed while the test sends its record (a test runs outside the pass's lock). A
+record sent but not yet marked is kept in memory, so a failed mark is retried alone; when a test
+and a pass both mark one disarm, the second finds it marked, and neither fails.
+
+On demand (`testApiKey`, decision 11 on #836): `test()` runs one stored key's pipeline as a pass
+does and hands its verdict to the same outcome handling, with the acting Owner on `account.tested`,
+so a failure found on demand latches and force-disables at once and a pass refreshes the key's last
+pass. A test with no verdict raises and changes nothing. Its WebSocket half is not here.
 
 Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admission (#837 W3).
 `watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
@@ -71,7 +78,7 @@ import asyncio
 import math
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
@@ -125,6 +132,8 @@ CHECK_STEPS: Final = 8
 #: the adapter refuses each call at once.
 BOOT_DEADLINE_S: Final = 60.0
 ACTOR: Final = "system:key-selfcheck"
+#: The job's own records name the job; a test's `account.tested` names the acting Owner instead.
+_JOB: Final[Mapping[str, object]] = {"actor_label": ACTOR}
 DISABLED_BY_POLICY: Final = "account.disabled_by_policy"
 FAILED: Final = "accounts.key_selfcheck_failed"
 STALE: Final = "accounts.key_verification_stale"
@@ -191,6 +200,17 @@ class AuditEmitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
+class Target(Protocol):
+    """One stored key as a check reads it: a `SelfCheckTargetRow`, or the key a test names."""
+
+    @property
+    def key_id(self) -> UUID: ...
+    @property
+    def read_only(self) -> bool: ...
+    @property
+    def verified_at(self) -> datetime: ...
+
+
 @dataclass(frozen=True, slots=True)
 class KeyCheck:
     """One key's standing self-check result (US-ACCT-003 NFR: cached with its time)."""
@@ -201,8 +221,9 @@ class KeyCheck:
     outcome: Outcome
     #: The failing rule (a verdict) or the inconclusive code; `None` on a pass.
     code: str | None
-    #: `None` when this process holds no verdict: an inconclusive check, or a failure restored from
-    #: its stored rule code after a restart (outcome `failed`, decision 3).
+    #: The verdict, `None` when this process holds none: an inconclusive check, or a failure
+    #: restored from its stored rule code after a restart (decision 3), so a `failed` outcome does
+    #: not imply a result. A test's verdict replaces it as a pass's does (`test()`).
     result: VerificationResult | None
     last_pass_at: datetime
     #: The configured egress IP, for copying into the exchange's key whitelist.
@@ -439,8 +460,12 @@ class KeySelfCheck:
                 self._ran(next((o for o in ("failed", "inconclusive") if o in outcomes), "passed"))
 
     def _ran(self, result: str) -> None:
-        """Count the run, and publish each rule's failing keys (every rule, 0 when none)."""
+        """Count the run, and publish each rule's failing keys."""
         self._m.get("cv_key_selfcheck_runs_total").labels(result).inc()
+        self._failing()
+
+    def _failing(self) -> None:
+        """Publish each rule's failing keys (every rule, 0 when none), after a run or a test."""
         codes = [c.code for c in tuple(self.results.values()) if c.outcome == "failed"]
         for rule in Rule:
             self._m.get("cv_keys_failing_policy").labels(rule.value).set(codes.count(rule.value))
@@ -453,18 +478,42 @@ class KeySelfCheck:
             return None
         started = self._monotonic()
         verdict = await self._verify(target, account, now)
-        elapsed, rule = self._monotonic() - started, "none"
-        outcome: Outcome
+        elapsed = self._monotonic() - started
         if isinstance(verdict, str):
-            outcome = "inconclusive"
             await self._inconclusive(target, account.id, verdict, now)
-        elif verdict.passed:
-            outcome = "passed"
-            await self._passed(target, account.id, verdict, now)
-        else:
-            outcome, rule = "failed", verdict.failures[0].rule.value
-            await self._failed(target, account.id, verdict, now)
-        # Counted once the verdict is handled: a metrics fault never withholds a record or disarm.
+            return self._count("inconclusive", "none", elapsed)
+        return await self._judge(target, account.id, verdict, now, elapsed, _JOB)
+
+    async def test(
+        self, target: Target, account: ExchangeAccount, now: datetime, actor: Mapping[str, object]
+    ) -> tuple[VerificationResult, float]:
+        """`testApiKey`'s REST half (decision 11 on #836): the key's pipeline as a pass runs it,
+        and its verdict handled as a pass handles one, `account.tested` naming `actor` (the acting
+        Owner). The verdict and the seconds its signed calls took. A check with no verdict raises
+        (`VerificationInconclusive`, `TimeoutError`, or a signing error) and changes nothing. A key
+        of another environment is refused before anything is signed (C-2.11)."""
+        if account.env.value != self._env:
+            raise ValueError("not this process's environment")
+        started = self._monotonic()
+        verdict = await self._verdict(target, account, now)
+        elapsed = self._monotonic() - started
+        await self._judge(target, account.id, verdict, now, elapsed, actor)
+        self._failing()  # a failure found on demand is published at once, never at the next run
+        return verdict, elapsed
+
+    async def _judge(
+        self, target: Target, account_id: UUID, verdict: VerificationResult, now: datetime,
+        elapsed: float, actor: Mapping[str, object],
+    ) -> Outcome:  # fmt: skip
+        """A verdict's outcome handling, the hourly pass's and a test's alike, then its count."""
+        if verdict.passed:
+            await self._passed(target, account_id, verdict, now, actor)
+            return self._count("passed", "none", elapsed)
+        await self._failed(target, account_id, verdict, now, actor)
+        return self._count("failed", verdict.failures[0].rule.value, elapsed)
+
+    def _count(self, outcome: Outcome, rule: str, elapsed: float) -> Outcome:
+        """Count once the verdict is handled: a metrics fault withholds no record or disarm."""
         self._m.get("cv_key_verification_seconds").child().observe(elapsed)
         self._m.get("cv_key_verification_total").labels(outcome, rule).inc()
         return outcome
@@ -494,10 +543,11 @@ class KeySelfCheck:
 
     async def _passed(
         self,
-        target: SelfCheckTargetRow,
+        target: Target,
         account_id: UUID,
         verdict: VerificationResult,
         now: datetime,
+        actor: Mapping[str, object],
     ) -> None:
         """A write-ahead `account.tested`, then the verified columns."""
         key, summary = target.key_id, self._summary(verdict, now)
@@ -511,7 +561,7 @@ class KeySelfCheck:
         )
         recorded = await self._write(
             key,
-            lambda: self._emit("account.tested", "api_key", key, after_state=summary),
+            lambda: self._emit("account.tested", "api_key", key, actor, after_state=summary),
             lambda: self._store.record_pass(key, verified),
         )
         last_pass, egress = now if recorded else target.verified_at, self._policy.egress_ip
@@ -521,10 +571,11 @@ class KeySelfCheck:
 
     async def _failed(
         self,
-        target: SelfCheckTargetRow,
+        target: Target,
         account_id: UUID,
         verdict: VerificationResult,
         now: datetime,
+        actor: Mapping[str, object],
     ) -> None:
         """Latch first; then the verdict's record and its rule code, the force-disable whatever
         they did, and the policy-violation record last (decision 2 on #836: enforcement first)."""
@@ -538,7 +589,7 @@ class KeySelfCheck:
         tested = {"outcome": "failure", "after_state": summary, **crit}
         await self._write(
             key,
-            lambda: self._emit("account.tested", "api_key", key, **tested),
+            lambda: self._emit("account.tested", "api_key", key, actor, **tested),
             lambda: self._store.record_error(key, code=rule, at=now),
         )
         await self._disarm(PolicyDisarm(account_id, rule, now))
@@ -626,13 +677,29 @@ class KeySelfCheck:
             return
         if not marked:  # no longer owed as read: a later disarm, or a mismatch that re-sends it
             logger().error("key_selfcheck_disable_mark_unchanged", account_id=str(account_id))
-        del self._unmarked[account_id]
+        self._unmarked.pop(account_id, None)  # a test and a pass may both have settled it
 
     async def _verify(
         self, target: SelfCheckTargetRow, account: ExchangeAccount, now: datetime
     ) -> VerificationResult | str:
-        """The pipeline's result within the key's deadline, or the code of an inconclusive check
-        (no verdict); the key's client is always closed."""
+        """The pipeline's result, or the code of an inconclusive check (no verdict)."""
+        try:
+            return await self._verdict(target, account, now)
+        except VerificationInconclusive as exc:
+            return str(exc) if _CODE.fullmatch(str(exc)) else "inconclusive"
+        except TimeoutError:
+            return "timeout"
+        except Exception as exc:  # a signing or programming error is no verdict either
+            logger().error(
+                "key_selfcheck_error", key_id=str(target.key_id), error=type(exc).__name__
+            )
+            return "check_error"
+
+    async def _verdict(
+        self, target: Target, account: ExchangeAccount, now: datetime
+    ) -> VerificationResult:
+        """The pipeline within the key's deadline, the key's client always closed. M2's refused
+        borrow is a verdict (SR-E27-14); a check with no verdict raises."""
         try:
             calls = self._calls(target.key_id, account.exchange_uid)
             try:
@@ -647,17 +714,8 @@ class KeySelfCheck:
                     )
             finally:
                 await self._close(target.key_id, calls)
-        except VerificationInconclusive as exc:
-            return str(exc) if _CODE.fullmatch(str(exc)) else "inconclusive"
         except WithdrawPermissionError:  # M2's borrow re-check refused the stored row (SR-E27-14)
             return _ROW_REFUSED
-        except TimeoutError:
-            return "timeout"
-        except Exception as exc:  # a signing or programming error is no verdict either
-            logger().error(
-                "key_selfcheck_error", key_id=str(target.key_id), error=type(exc).__name__
-            )
-            return "check_error"
 
     async def _close(self, key_id: UUID, calls: SelfCheckCalls) -> None:
         """Close one key's client, bounded. It never raises, so it never changes the verdict."""
@@ -684,10 +742,13 @@ class KeySelfCheck:
             summary |= {"uta": result.uta, "withdraw_enabled": result.withdraw_enabled}
         return summary
 
-    async def _emit(self, action: str, kind: str, object_id: UUID, **fields: Any) -> None:
+    async def _emit(
+        self, action: str, kind: str, object_id: UUID, actor: Mapping[str, object] = _JOB, /,
+        **fields: Any,
+    ) -> None:  # fmt: skip
         await self._audit.emit(
             action,
-            actor_label=ACTOR,
+            **actor,
             object_kind=kind,
             object_id=str(object_id),
             env=self._env,
