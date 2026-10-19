@@ -215,6 +215,7 @@ async def test_a_gap_first_seen_during_a_read_is_no_re_read() -> None:
     tail.tail = BarTail(rows(*range(10)), dropped=1)
     store = SeriesStore(tail, clock=clock)
     await store.ensure(SYM, SPEC)
+    tail.tail = BarTail(rows(*range(10)))  # clean from here: no miss streak (#2787 P4b)
     before = counted(REREADS)
     tail.gate.clear()
     tail.started.clear()
@@ -227,7 +228,7 @@ async def test_a_gap_first_seen_during_a_read_is_no_re_read() -> None:
     assert (tail.calls, store.gapped(SYM, H), counted(REREADS)) == (2, True, before)
     await reread(store, clock, 1)
     assert (tail.calls, counted(REREADS)) == (3, before + 1)
-    await reread(store, clock, 1)  # not hydrated, it backs off too: 10 s now
+    await reread(store, clock, 1)  # still gapped, it backs off: 10 s now
     assert tail.calls == 3
 
 

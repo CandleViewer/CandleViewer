@@ -548,7 +548,8 @@ async def test_a_failed_read_is_read_again_by_an_ensure_retry_after_s_later() ->
 
 async def test_a_cancelled_first_ensure_hands_its_read_to_a_waiter() -> None:
     """A client's disconnect must not leave another's series history-less: the waiter reads
-    again, keeps a close seen during the abandoned read, and the cancelled one holds nothing."""
+    again (the cancelled read unwound before its deadline, so it set none), keeps a close seen
+    during the abandoned read, and the cancelled one holds nothing."""
     clock = Clock()
     tail = Tail(rows(0))
     store = SeriesStore(tail, clock=clock)

@@ -2,8 +2,9 @@
 
 At most `MAX_CONCURRENT_TAIL_READS` reads run at once across every `SeriesStore` on the loop. The
 wait for a slot counts toward `timeout_s`, so a read that cannot start in time fails like any
-timed-out read and its series is read again `retry_after_s` later. A slot is given back however
-its read ends, and `bars_series_read_waits_total` counts the reads that had to wait for one.
+timed-out read and its series is read again at least `retry_after_s` later (more after misses in
+a row). A slot is given back however its read ends, and `bars_series_read_waits_total` counts
+the reads that had to wait for one.
 
 Deterministic: the fake read blocks on events these tests set, the stores' clock is the test's,
 and the loop is yielded to (`until`), never slept on; the wait counter is how a test knows a read
@@ -171,7 +172,8 @@ async def test_no_more_reads_than_slots_run_at_once_and_every_series_hydrates(to
 
 async def test_a_read_waiting_past_timeout_s_for_a_slot_fails_like_a_timed_out_read() -> None:
     """The wait counts toward `timeout_s` (SR-E12-01), so an `ensure` is held no longer than a
-    slow read holds it; the series is read again `retry_after_s` later, like any failed read."""
+    slow read holds it; the series is read again at least `retry_after_s` later (more after
+    misses in a row), like any failed read."""
     tails, clock = Tails(), Clock()
     blockers = ensure_all(SeriesStore(tails, timeout_s=60.0), symbols(SLOTS))
     await until(lambda: len(tails.started) == SLOTS, "every slot taken")
@@ -190,7 +192,7 @@ async def test_a_read_waiting_past_timeout_s_for_a_slot_fails_like_a_timed_out_r
     assert (counted(FAILED, "timeout"), waits()) == (failed + 2, before + 2)
     tails.open_all()
     await finish(blockers)
-    clock.t += RETRY_AFTER_S  # the slots are free: a zero timeout lets a read that never waits end
+    clock.t += 2 * RETRY_AFTER_S  # two misses: 10 s (#2787 P4b); slots free: a 0 s read ends
     await store.ensure(LATE, SPEC)
     assert LATE in tails.started and store.hydrated(LATE, H)
     assert (counted(FAILED, "timeout"), waits()) == (failed + 2, before + 2)

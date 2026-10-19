@@ -135,6 +135,14 @@ bars_series_repair_failed_total = Counter(
     " read stands and the series' subscribers keep their snapshot).",
     labelnames=("reason",),
 )
+#: The heal driver's refreshes (#2787 P4b, `bars.heal_driver`), by result.
+bars_heal_refresh_total = Counter(
+    "bars_heal_refresh_total",
+    "Heal driver refreshes of held WS bars series (result: repaired; unchanged = no repair, a"
+    " failed read included; timeout = cut by the driver's bound; error = the refresh raised;"
+    " tick_error = a tick raised before any refresh).",
+    labelnames=("result",),
+)
 
 # --- E12-T05 (#398) `/market/klines` + `/market/bars` endpoint series -----------------------
 #: Allow-listed label values (bounded cardinality; never client text).
@@ -209,6 +217,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_series_gap_rereads_total",
         "bars_series_incomplete_in_use",
         "bars_series_repair_failed_total",
+        "bars_heal_refresh_total",  # bars.heal_driver (#2787 P4b)
         "bar_builder_quarantined_total",
         "bars_restore_gap_total",
         "bars_kline_refused_total",  # bars.kline_rows (#2053)

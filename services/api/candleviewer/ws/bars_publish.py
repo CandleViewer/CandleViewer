@@ -1,8 +1,9 @@
 """`bars.{symbol}.{bar_type}.{param}` deltas from the bar emit path (E12-T06 slice D1b, #399;
 `23-ws-protocol.md` §3.6, §6.1, §7.1, §8.2, §14.3). D2 registers `BarsPublisher` on the
 `EmitRouter` after the series store (a re-snapshot reads the new generation) and calls
-`note_generation` for each bars snapshot it builds; the series store will call `history_repair`
-through its repair hook after each re-read that repaired a series (#2787 D2-H1; nothing does yet).
+`note_generation` for each bars snapshot it builds; the series store calls `history_repair`
+through its repair hook after each re-read that repaired a series (#2787 D2-H1: `create_app` sets
+the hook with `bars_enabled`).
 
 - **Groups.** Each `include_delta` group (§6.1) with a subscriber a frame reaches (live,
   snapshotted, unpaused) is encoded and sent alone (`publish(select=...)`, `meta.include_delta`):
@@ -228,11 +229,11 @@ class BarsPublisher:
         added or replaced: a `snap` with a lower `history` holds none of them, so the repair
         leaves it alone. Returns the `snap`s sent; never awaits.
 
-        Caller contract (#2787 D2-H1, the heal driver; nothing calls it yet). It must follow EVERY
-        repairing re-read, whoever started it: a subscriber's `ensure` or the heal driver. The
-        store will call it through a synchronous repair hook, invoked right after its fold with no
-        `await` between, which the composition root (`bars_wiring.py` or `app.py`) will wire, as
-        `bars` imports no `ws`. A depth the store fails to count is passed as 1, never skipped.
+        Caller contract (#2787 D2-H1, the heal driver). It must follow EVERY repairing re-read,
+        whoever started it: a subscriber's `ensure` or the heal driver. The store calls it through
+        a synchronous repair hook, invoked right after its fold with no `await` between, which
+        `create_app` wires, as `bars` imports no `ws`. A depth the store fails to count is passed
+        as 1, never skipped.
         Precision, not correctness: a `min_history` counted before newer bars arrived can only be
         low, as the changed bar moves further from the newest (barring a reset), so it sends an
         extra `snap` and never misses one."""

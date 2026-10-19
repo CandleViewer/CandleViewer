@@ -39,6 +39,11 @@ MAX_TAIL: Final = 1_000
 #: runs on QuestDB at a time). A first read that cannot start in time retries on a later `ensure`.
 #: Revisit it with `questdb_pgwire_lock_wait_seconds{wire="bars_hydrate"}`.
 MAX_CONCURRENT_TAIL_READS: Final = 8
+#: How long past the series store's `timeout_s` the heal driver lets a refresh run (#2787 P4b): a
+#: read its deadline cut still unwinds through its reader, and `LazyPgWire` gives the cut query's
+#: connection up to its `close_timeout_s` (5 s, pinned by a test) to close gracefully; then 1 s of
+#: slack. At `QUERY_TIMEOUT_S` a refresh is cut at 8 s, 4 times it.
+HEAL_REFRESH_MARGIN_S: Final = 5.0 + 1.0
 #: SR-E12-03: param floors/ceilings per non-time bar type.
 TICK_PARAM_RANGE: Final = (100, 1_000_000)
 RANGE_TICKS_RANGE: Final = (2, 100_000)
@@ -51,6 +56,7 @@ QTY_PARAM_MAX: Final = 10**12
 
 __all__ = [
     "DEFAULT_LIMIT",
+    "HEAL_REFRESH_MARGIN_S",
     "MAX_BRICKS_PER_TRADE",
     "MAX_CONCURRENT_TAIL_READS",
     "MAX_LIMIT",

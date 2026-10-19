@@ -6,7 +6,8 @@ Only the composition root sees the bus, the storage tier and the bars module tog
   and E12-T06 (#399) land the consumers and remove the flag. Never gates a safety invariant.
 * `BarsRuntime` is the one lifecycle owner started/stopped by the lifespan. The set's ticker and
   lane tasks and the writer's drain task are spawned and tracked by those classes (C-2.18); every
-  queue is bounded (`BarWriter(max_buffered)`, lane `maxsize`).
+  queue is bounded (`BarWriter(max_buffered)`, lane `maxsize`). With the WS series store it owns
+  the heal driver's task too (#2787 P4b): started after the set, stopped before it.
 * Shutdown order: **set first, then writer** - the set's final closes/blobs are submitted to the
   writer, which is then drained.
 * Emit path (E12-T06, #399): the WS series store (a swap's re-snapshot reads the new generation),
@@ -34,7 +35,9 @@ import structlog
 
 from candleviewer.bars.builder_set import BarBuilderSet, production_factory
 from candleviewer.bars.emit import BarSink, EmitRouter, WriterSink
+from candleviewer.bars.heal_driver import HealDriver
 from candleviewer.bars.kline_rows import PrecedenceHealth
+from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars.state_store import StateStore
 from candleviewer.bars.writer import BarWriter, RowSink, default_is_permanent
 from candleviewer.exchange.base.models import TradeEvent
@@ -151,8 +154,10 @@ class BarsRuntime:
         precedence: PrecedenceHealth | None = None,
         *,
         reader_stop: Callable[[], Awaitable[None]] | None = None,
+        heal: HealDriver | None = None,
     ) -> None:
         self.precedence = precedence if precedence is not None else PrecedenceHealth()
+        self.heal = heal
         self.builder_set = builder_set
         self.writer = writer
         self._sink_stop = sink_stop
@@ -168,6 +173,8 @@ class BarsRuntime:
             os.chmod(self._root, 0o700)
         await self.writer.start()
         await self.builder_set.start()
+        if self.heal is not None:
+            self.heal.start()
 
     def writer_state(self) -> tuple[bool, str]:
         degraded = (
@@ -182,8 +189,11 @@ class BarsRuntime:
         return False, ""
 
     async def stop(self) -> None:
-        """Set before writer, so the set's final closes reach the writer's drain; then the sink
-        and the store's reader connection, each bounded by its own stop (module docstring)."""
+        """The heal driver first (no read in flight), then set before writer, so the set's final
+        closes reach the writer's drain; then the sink and the store's reader connection, each
+        bounded by its own stop (module docstring)."""
+        if self.heal is not None:
+            await self.heal.stop()
         await self.builder_set.stop()
         remaining = await self.writer.stop()
         if remaining:
@@ -211,12 +221,13 @@ def wire_bars(
     sink_degraded: Callable[[], bool] | None = None,
     reader_stop: Callable[[], Awaitable[None]] | None = None,
     tick_size: Callable[[str], Decimal | None] = lambda _s: None,
-    series: BarSink | None = None,
+    series: SeriesStore | None = None,
     publisher: BarSink | None = None,
 ) -> BarsRuntime:
     """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`
     and `publisher` (the WS sinks) are emitted to before the writer (module docstring);
-    `reader_stop` closes the series store's own reader connection after `sink_stop`."""
+    `reader_stop` closes the series store's own reader connection after `sink_stop`; the runtime
+    owns a heal driver over `series`."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",
@@ -234,4 +245,7 @@ def wire_bars(
         factory=production_factory(tick_size, renko_enabled=ctx.settings.bars_renko_enabled),
     )
     ctx.bars.attach(builder_set)
-    return BarsRuntime(builder_set, writer, root, sink_stop, sink_degraded, reader_stop=reader_stop)
+    heal = HealDriver(series) if series is not None else None
+    return BarsRuntime(
+        builder_set, writer, root, sink_stop, sink_degraded, reader_stop=reader_stop, heal=heal
+    )
