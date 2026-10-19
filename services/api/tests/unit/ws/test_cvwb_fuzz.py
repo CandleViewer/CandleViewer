@@ -3,7 +3,9 @@ of the `cv.v1.msgpack` client-frame decoder (SR-185, #2483) seeded from `msgpack
 
 Deselected from the default lane by `addopts` (`-m "not fuzz and not perf"`); run explicitly with
 ``pytest -m fuzz --no-cov``. Default 200 examples; the nightly sets ``CV_FUZZ_EXAMPLES=20000`` and
-``CV_FUZZ_SEED`` (Hypothesis runs derandomised from it, so a failure replays from the seed).
+``CV_FUZZ_SEED`` (derandomised: a failure replays from that seed and example count, `_fuzz.py`).
+Every target runs through `_fuzz.drive`, so ``CV_FUZZ_SECONDS`` time-boxes each target (per target,
+as it does the parser suite's), and each decode is timed (`_fuzz.Watch`).
 Invariant: ``decode`` returns a ``Frame`` or raises ONLY ``FrameMalformedError``, and one decode
 never allocates more than ``MAX_PEAK_BYTES`` (SR-128: wire counts never size an allocation). The
 msgpack decoder returns a JSON-like value within ``MAX_MSGPACK_DEPTH`` or raises ONLY
@@ -11,10 +13,10 @@ msgpack decoder returns a JSON-like value within ``MAX_MSGPACK_DEPTH`` or raises
 array and map headers (claims up to 2^32 - 1, nesting past 1 024, padding to the inbound cap),
 which byte mutation of small seeds cannot reach; its third builds open levels, each holding up to
 its cap of children before opening the next (distinct or duplicate map keys).
-A failure reports only its target and a sha256 digest of (seed, input): the tests take one redacted
-`_Input`, and Hypothesis reports nothing (no failing-case report, blob or explanation). The pair is
-written to ``CV_FUZZ_ARTIFACT_DIR``, which CI uploads only encrypted (fuzz-nightly.yml). Those
-helpers are shared with the parser suite (`_fuzz.py`).
+A failure reports only its target and a sha256 digest of (seed, input): the tests take no arguments,
+`drive` hands each check one redacted `_Input`, and Hypothesis reports nothing (no failing-case
+report, blob or explanation). The pair is written to ``CV_FUZZ_ARTIFACT_DIR``, which CI uploads only
+encrypted (fuzz-nightly.yml). Those helpers are shared with the parser suite (`_fuzz.py`).
 """
 
 from __future__ import annotations
@@ -28,7 +30,6 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from hypothesis import given, seed
 from hypothesis import strategies as st
 
 from candleviewer.ws.binary import FrameMalformedError, decode
@@ -39,8 +40,7 @@ from candleviewer.ws.codec import (
     decode_client_frame,
 )
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
-from tests.unit.ws._fuzz import FUZZ_SETTINGS as _FUZZ_SETTINGS
-from tests.unit.ws._fuzz import SEED
+from tests.unit.ws._fuzz import SEED, Watch, drive
 from tests.unit.ws._fuzz import Input as _Input
 from tests.unit.ws._fuzz import save_failure as _save_failure
 from tests.unit.ws._msgpack_bounds import peak_bound
@@ -121,24 +121,29 @@ def _check(
     peak_cap: Callable[[], int],
     depth_cap: int | None = None,
 ) -> None:
-    """One input against a decoder's invariant: it returns or raises only `typed`, never nests
-    past `depth_cap` (when set) and never peaks above `peak_cap()`. A violation, or a check that
-    raises, fails with the target and the digest, raised where no exception is in flight."""
+    """One input against a decoder's invariant: it returns or raises only `typed`, never takes
+    over `CALL_SECONDS`, never nests past `depth_cap` (when set) and never peaks above
+    `peak_cap()`. A violation, or a check that raises, fails with the target and the digest, raised
+    where no exception is in flight."""
     data = case.data  # built before tracing starts: the peak is the decoder's alone
     why = ""
     value: object = None
+    watch = Watch()
     tracemalloc.start()
     try:
         try:
-            value = decoder(data)
+            with watch:
+                value = decoder(data)
         except typed:
             pass
-        except BaseException as exc:
+        except Exception as exc:  # a Ctrl-C, or an exit, is not a finding
             why = f"untyped {type(exc).__name__}"
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
     try:  # the peak first: a value that broke it may be too big to walk
+        if not why and watch.slow:
+            why = "slow input"
         if not why and peak > peak_cap():
             why = "decode peaked above its cap"
         if not why and depth_cap is not None and not 0 <= _json_like_depth(value) <= depth_cap:
@@ -156,27 +161,30 @@ def _check_msgpack(case: _Input) -> None:
     _check(case, decode_client_frame, MsgpackFrameError, peak_bound, MAX_MSGPACK_DEPTH)
 
 
+#: Seeds by name: a composite strategy's repr shows its arguments, and `drive`'s locals show the
+#: strategy, so a traceback with locals (`-l`) would print the seeds' bytes.
+_SEED_SETS: Final = {"cvwb": SEEDS, "msgpack": MSGPACK_SEEDS}
+
+
 @st.composite
-def _mutated(draw: st.DrawFn, target: str, seeds: list[bytes]) -> _Input:
+def _mutated(draw: st.DrawFn, target: str) -> _Input:
+    seeds = _SEED_SETS[target]
     i = draw(st.integers(0, len(seeds) - 1))
     ops = draw(st.lists(_op, min_size=1, max_size=6))
     return _Input(target, lambda: mutate(seeds[i], ops))
 
 
 @pytest.mark.fuzz
-@seed(SEED)
-@_FUZZ_SETTINGS
-@given(case=_mutated("cvwb", SEEDS))
-def test_decode_mutated_corpus_raises_only_the_typed_error(case: _Input) -> None:
-    _check(case, decode, FrameMalformedError, lambda: MAX_PEAK_BYTES)
+def test_decode_mutated_corpus_raises_only_the_typed_error() -> None:
+    def check(case: _Input) -> None:
+        _check(case, decode, FrameMalformedError, lambda: MAX_PEAK_BYTES)
+
+    drive(_mutated("cvwb"), check)
 
 
 @pytest.mark.fuzz
-@seed(SEED)
-@_FUZZ_SETTINGS
-@given(case=_mutated("msgpack", MSGPACK_SEEDS))
-def test_msgpack_client_decode_mutated_corpus_raises_only_the_typed_error(case: _Input) -> None:
-    _check_msgpack(case)
+def test_msgpack_client_decode_mutated_corpus_raises_only_the_typed_error() -> None:
+    drive(_mutated("msgpack"), _check_msgpack)
 
 
 _CLAIMS: Final[tuple[int, ...]] = (0, 1, 2, 15, 16, 63, 64, 65, 255, 0xFFFF, 1 << 31, 0xFFFFFFFF)
@@ -220,11 +228,16 @@ _STRUCTURED = st.builds(
 
 
 @pytest.mark.fuzz
-@seed(SEED)
-@_FUZZ_SETTINGS
-@given(case=_STRUCTURED)
-def test_msgpack_client_decode_structured_frames_stay_bounded(case: _Input) -> None:
-    _check_msgpack(case)
+def test_msgpack_client_decode_structured_frames_stay_bounded() -> None:
+    drive(_STRUCTURED, _check_msgpack)
+
+
+def test_a_ctrl_c_during_a_decode_is_not_a_finding() -> None:
+    def interrupt(data: bytes) -> object:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _check(_Input("probe", lambda: b""), interrupt, FrameMalformedError, lambda: MAX_PEAK_BYTES)
 
 
 # SR-128 (targeted): every count field that cannot fit is rejected up front by `_fits`. Removing
@@ -320,9 +333,6 @@ _OPEN_LEVELS = st.builds(
 
 
 @pytest.mark.fuzz
-@seed(SEED)
-@_FUZZ_SETTINGS
-@given(case=_OPEN_LEVELS)
-def test_msgpack_client_decode_open_levels_stay_bounded(case: _Input) -> None:
+def test_msgpack_client_decode_open_levels_stay_bounded() -> None:
     """#2509 review: values held in containers that never complete are charged late."""
-    _check_msgpack(case)
+    drive(_OPEN_LEVELS, _check_msgpack)

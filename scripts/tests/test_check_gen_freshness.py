@@ -801,7 +801,7 @@ def generated_repo(
     monkeypatch.chdir(root)
     subprocess.run(gen_gate.GENERATE_CMD, check=True)
     # #3392: the directories step 7 judges (FIXED_OUTPUT_DIRS) hold what their
-    # generators wrote and the hand-kept corpus; this stand-in generator leaves them alone.
+    # generators wrote and the hand-kept corpora; this stand-in generator leaves them alone.
     for rel in _FIXED_TREE:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(f"stand-in for {rel}\n", encoding="utf-8")
@@ -1309,7 +1309,7 @@ def test_ci_gen_006_gets_one_git_rm_command_and_the_gate_then_passes(
 
 
 @pytest.mark.parametrize(
-    "rel", ["packages/protocol/generated/ws_constants.py", _HAND_KEPT]
+    "rel", ["packages/protocol/generated/ws_constants.py", _HAND_KEPT, *_PARSER_CORPORA]
 )
 def test_a_file_the_tables_name_that_git_does_not_track_fails_closed(
     generated_repo: Path, rel: str, capsys: pytest.CaptureFixture[str]
@@ -1343,7 +1343,7 @@ def test_the_checkout_passes_step_7(
     isolated_git: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The real index (read only): every tracked file in the gated directories is a
-    generator's, the CVWB layout twin or the hand-kept corpus."""
+    generator's, the CVWB layout twin or one of the hand-kept corpora."""
     monkeypatch.chdir(_REPO_ROOT)
     gen_gate.check_fixed_outputs()
 

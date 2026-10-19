@@ -1,24 +1,32 @@
 """E17-X02 (#415): nightly fuzz of the WS topic and option parsers and the JSON client-frame path.
 
-Each target returns a typed refusal or a bounded value for any input a decoded frame can carry:
-- `parse_topic`: a `TopicError` with one of its three codes and no `field`, or a parse of a name
-  of the §13 topic shape whose parts are in the registry's sets;
+Each target returns a typed refusal or a bounded value for any input a decoded frame can carry,
+and takes under `CALL_SECONDS` to do it:
+- `parse_topic`: a `TopicError` with one of its three codes that names no field, or a parse of a
+  name of the §13 topic shape (`_topic_shaped`, written out here) whose parts are in the
+  registry's sets;
 - `validate_options`, for every family: `invalid_options` whose `field` is an option name or
-  `opts`, never client text (§5.1), or options within what the registry declares;
-- `is_topic_name`: a bool, true only for a string of at most `TOPIC_MAX_LEN` characters;
+  `opts`, never client text (§5.1), or options within what the registry declares: list sizes,
+  ranges and choices, a `bool`, a `param` of 1 to 24 characters, a decimal of the §13 grammar (a
+  value kind the registry declares without a bound is checked against its grammar only);
+- `is_topic_name`: true for a string of the §13 topic shape, 1 to 120 characters, and only then;
 - `parse_replay_session_id`: None, or the input in lower case, a canonical uuid;
 - `_Connection.decode` (JSON text frames, before and after `auth_ok`): the refusal `[]`, the
-  oversize close, or a value at most `MAX_JSON_DEPTH` deep from a frame within its size cap.
+  oversize close, or a value at most `MAX_JSON_DEPTH` deep from a frame within its size cap; and,
+  from `auth_ok`, never a frame over `MAX_PONG_BYTES` that opens with `t: "pong"` or is one.
 Seeds: `topics.json` (the registry) and `json-client.json` (the §12 example frames, whose options
-and replay session ids seed those targets), edited; frames also with JSON tokens, and repeated past
-the size caps. A frame has no lone surrogate: an ASGI server delivers only valid UTF-8. A failure
-reports as `test_cvwb_fuzz.py`'s do (`_fuzz.py`). Only the corpus check runs in the PR lane.
+and replay session ids seed those targets), edited; frames also with JSON tokens, repeated past
+the size caps, and `pong` frames of a size on either side of their bound; options also with each
+cap the registry declares probed alone, from below as well as above. A frame has no lone
+surrogate: an ASGI server delivers only valid UTF-8. A failure reports as `test_cvwb_fuzz.py`'s do
+(`_fuzz.py`). Only the checks of the seeds and of the oracles' own premises run in the PR lane.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import string
 import uuid
 from collections.abc import Callable
 from functools import partial
@@ -29,10 +37,15 @@ import pytest
 from fastapi import WebSocket
 from hypothesis import strategies as st
 
-from candleviewer.ws import topics
+from candleviewer.ws import gateway, topics
 from candleviewer.ws.gateway import _OVERSIZE, _Connection
-from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_JSON_DEPTH, MAX_PREAUTH_FRAME_BYTES
-from tests.unit.ws._fuzz import Input, drive, encode, save_failure
+from candleviewer.ws.limits import (
+    MAX_INBOUND_FRAME_BYTES,
+    MAX_JSON_DEPTH,
+    MAX_PONG_BYTES,
+    MAX_PREAUTH_FRAME_BYTES,
+)
+from tests.unit.ws._fuzz import Input, Watch, drive, encode, save_failure
 
 CORPORA = Path(__file__).resolve().parents[5] / "tests/fuzz/ws-frames"
 #: `parse_topic`'s outcome ("ok" or its refusal code) -> topic names.
@@ -57,9 +70,18 @@ _SEEDS: Final = {
     ),
 }
 _CODES: Final = frozenset({"invalid_topic_format", "unknown_topic", "unsupported_symbol"})
-#: A refusal names an option or `opts`, never client text (§5.1); `parse_topic`'s names nothing.
-_FIELDS: Final = topics.OPTION_NAMES | {"opts", None}
+#: What a refusal's `field` may be. `validate_options` names an option or `opts`, never client text
+#: (§5.1); `parse_topic` names nothing, and the other targets raise no `TopicError`.
+_NO_FIELD: Final = frozenset({None})
+_OPTION_FIELDS: Final = topics.OPTION_NAMES | {"opts"}
 _PARAM: Final = re.compile(r"[A-Za-z0-9:]{1,24}")
+#: §13 `common.schema.json#/$defs/decimal`.
+_DECIMAL: Final = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+#: §13 `common.schema.json#/$defs/topic`: 1 to 120 characters, `[a-z_]+`, then any number of a dot
+#: and `[A-Za-z0-9:_-]+`. Written out from the schema's pattern, not read from the registry's.
+_TOPIC_MAX: Final = 120
+_TOPIC_HEAD: Final = frozenset(string.ascii_lowercase + "_")
+_TOPIC_PART: Final = frozenset(string.ascii_letters + string.digits + ":_-")
 #: Separators, both cases, digits, look-alikes (fullwidth, Cyrillic, Arabic-Indic), controls.
 _CHARS: Final = tuple(".:-_aAzZfF09 /*{}\x00\n\u200b\uff21\u0410\u0663\u00df")
 #: Frame edits: JSON's tokens, those Python's decoder reads past the standard (NaN, infinities),
@@ -82,6 +104,22 @@ _JSON: Final = st.recursive(
 )
 
 
+class _Quiet:
+    """A logger that drops every record."""
+
+    def __getattr__(self, name: str) -> Callable[..., None]:
+        return lambda *args, **kwargs: None
+
+
+@pytest.fixture(autouse=True)
+def _no_gateway_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_Connection.close_with` logs one `ws close` line per oversize or over-bound frame, about
+    one example in six of the JSON frame target: captured output that a failing night would print
+    ahead of the one line that matters."""
+    quiet = _Quiet()
+    monkeypatch.setattr(gateway, "_log", lambda: quiet)
+
+
 def _edit(text: str, edits: list[tuple[str, int, int]], pieces: tuple[str, ...]) -> str:
     """Each edit sets or inserts a piece at a position, deletes up to 64 characters there, cuts
     there, or repeats the whole up to 302 times (past every size cap)."""
@@ -102,9 +140,12 @@ def _list(opt: topics.Opt, n: int) -> list[str]:
 
 
 def _past(opt: topics.Opt) -> list[Any]:
-    """Values just past a cap the registry declares for `opt`: list size, item size or range."""
+    """Values just past a cap the registry declares for `opt`: a list one over its largest size or
+    one under its smallest (the empty list, when that is one), an item over 64 characters, or a
+    number past its range."""
     if opt.max_items is not None:
-        return [_list(opt, opt.max_items + 1), ["x" * 65]]
+        under = [_list(opt, opt.min_items - 1)] if opt.min_items > 0 else []
+        return [_list(opt, opt.max_items + 1), *under, ["x" * 65]]
     return [b + d for b, d in ((opt.lo, -1), (opt.hi, 1)) if b is not None]
 
 
@@ -154,14 +195,32 @@ def _options(draw: st.DrawFn) -> list[object]:
     return [family, opts]
 
 
+def _pong(pad: int, form: str) -> str:
+    """A `pong` echoing an id, with `pad` characters of padding in its `p`: its `t` first (`first`)
+    or last (`last`), or first with the end cut off (`cut`), which no parser reads."""
+    members = ['"id":"c-hb-118"', '"p":{"pad":"' + "x" * pad + '"}']
+    t = '"t":"pong"'
+    text = "{" + ",".join([*members, t] if form == "last" else [t, *members]) + "}"
+    return text[:-3] if form == "cut" else text
+
+
 @st.composite
 def _frames(draw: st.DrawFn) -> list[object]:
     """[after `auth_ok`, text]: a corpus frame, edited with JSON tokens and characters; one time in
-    four, a `ping` whose `p` nests the frame 4 levels short of `MAX_JSON_DEPTH` to 4 past it."""
-    if draw(st.integers(0, 3)) == 0:
+    four, a `ping` whose `p` nests the frame 4 levels short of `MAX_JSON_DEPTH` to 4 past it; one
+    time in eight, a `pong` 40 to 555 characters long, on either side of `MAX_PONG_BYTES`."""
+    after_auth = draw(st.booleans())
+    pick = draw(st.integers(0, 7))
+    if pick < 2:
         depth = draw(st.integers(MAX_JSON_DEPTH - 4, MAX_JSON_DEPTH + 4)) - 1
-        return [draw(st.booleans()), '{"t":"ping","p":' + "[" * depth + "]" * depth + "}"]
-    return [draw(st.booleans()), _edit(draw(st.sampled_from(_TEXTS)), draw(_EDITS), _PIECES)]
+        return [after_auth, '{"t":"ping","p":' + "[" * depth + "]" * depth + "}"]
+    if pick == 2:
+        pad, form = (
+            draw(st.integers(0, 2 * MAX_PONG_BYTES)),
+            draw(st.sampled_from(("first", "last", "cut"))),
+        )
+        return [after_auth, _pong(pad, form)]
+    return [after_auth, _edit(draw(st.sampled_from(_TEXTS)), draw(_EDITS), _PIECES)]
 
 
 def _decode(arg: list[Any]) -> object:
@@ -176,13 +235,24 @@ def _decode(arg: list[Any]) -> object:
     return conn.decode({"text": arg[1]}, MAX_INBOUND_FRAME_BYTES)
 
 
+def _topic_shaped(ch: object) -> bool:
+    """`ch` has the §13 topic shape: a string of 1 to 120 characters whose first part is lower-case
+    letters and underscores and whose other parts, split on dots, are letters, digits, colons,
+    underscores and hyphens, none of them empty."""
+    if not isinstance(ch, str) or not 0 < len(ch) <= _TOPIC_MAX:
+        return False
+    head, *parts = ch.split(".")
+    return (
+        bool(head) and set(head) <= _TOPIC_HEAD and all(p and set(p) <= _TOPIC_PART for p in parts)
+    )
+
+
 def _parsed(ch: Any, p: object) -> bool:
-    if not isinstance(p, topics.ParsedTopic) or p.ch != ch or len(ch) > topics.TOPIC_MAX_LEN:
+    if not isinstance(p, topics.ParsedTopic) or p.ch != ch or not _topic_shaped(ch):
         return False
     sets = (topics.DEPTHS, topics.BAR_TYPES, topics.PROFILE_KINDS, topics.MACHINE_KINDS)
     return (
-        topics.TOPIC_NAME_RE.fullmatch(ch) is not None
-        and p.family is topics.FAMILIES.get(ch.split(".")[0])
+        p.family is topics.FAMILIES.get(ch.split(".")[0])
         and all(
             v is None or v in s
             for v, s in zip((p.depth, p.bar_type, p.kind, p.entity_kind), sets, strict=True)
@@ -190,6 +260,16 @@ def _parsed(ch: Any, p: object) -> bool:
         and (p.symbol is None or topics.SYMBOL_RE.fullmatch(p.symbol) is not None)
         and (p.param is None or _PARAM.fullmatch(p.param) is not None)
     )
+
+
+#: Options with no list size, choices or range: what each kind is, as the registry declares it.
+#: A new kind with no cap fails the target (KeyError in the bound check) and, in the PR lane,
+#: `test_the_options_bound_check_knows_every_option_kind_the_registry_declares`, until one is added.
+_UNRANGED: Final[dict[str, Callable[[Any], bool]]] = {
+    "bool": lambda v: isinstance(v, bool),
+    "decimal": lambda v: isinstance(v, str) and _DECIMAL.fullmatch(v) is not None,
+    "str": lambda v: isinstance(v, str) and _PARAM.fullmatch(v) is not None,
+}
 
 
 def _within(opt: topics.Opt, v: Any) -> bool:
@@ -201,7 +281,7 @@ def _within(opt: topics.Opt, v: Any) -> bool:
         return (number or isinstance(v, str)) and v in opt.choices
     if opt.lo is not None or opt.hi is not None:
         return number and (opt.lo is None or v >= opt.lo) and (opt.hi is None or v <= opt.hi)
-    return isinstance(v, bool | str)
+    return _UNRANGED[opt.kind](v)
 
 
 def _options_within(arg: list[Any], out: object) -> bool:
@@ -212,23 +292,39 @@ def _options_within(arg: list[Any], out: object) -> bool:
 
 
 def _name(ch: Any, named: object) -> bool:
-    short = isinstance(ch, str) and 0 < len(ch) <= topics.TOPIC_MAX_LEN
-    return named is False or (named is True and short)
+    return named is _topic_shaped(ch)
 
 
 def _session(raw: Any, rs: object) -> bool:
     return rs is None or (isinstance(raw, str) and rs == raw.lower() == str(uuid.UUID(raw)))
 
 
+def _opens_with_pong(text: str) -> bool:
+    """The text opens with the member `"t": "pong"` of an object, JSON whitespace between its
+    tokens, within its first `MAX_PONG_BYTES` characters (§8.5)."""
+    rest = text[:MAX_PONG_BYTES]
+    for token in ("{", '"t"', ":", '"pong"'):
+        rest = rest.lstrip(" \t\n\r")
+        if not rest.startswith(token):
+            return False
+        rest = rest[len(token) :]
+    return True
+
+
 def _frame(arg: list[Any], frame: object) -> bool:
     if frame is _OVERSIZE:
         return True
+    after_auth, text = arg
+    size = len(text.encode())
+    if after_auth and size > MAX_PONG_BYTES:  # §8.5: such a pong closes, parsed or not
+        if _opens_with_pong(text) or (isinstance(frame, dict) and frame.get("t") == "pong"):
+            return False
     depth, level = 0, [frame]
     while nodes := [n for n in level if isinstance(n, dict | list)]:
         depth += 1
         level = [c for n in nodes for c in (n.values() if isinstance(n, dict) else n)]
-    cap = MAX_INBOUND_FRAME_BYTES if arg[0] else MAX_PREAUTH_FRAME_BYTES
-    return len(arg[1].encode()) <= cap and depth <= MAX_JSON_DEPTH
+    cap = MAX_INBOUND_FRAME_BYTES if after_auth else MAX_PREAUTH_FRAME_BYTES
+    return size <= cap and depth <= MAX_JSON_DEPTH
 
 
 def _check(
@@ -236,26 +332,31 @@ def _check(
     call: Callable[[Any], object],
     bounded: Callable[[Any, Any], bool],
     codes: frozenset[str],
+    fields: frozenset[str | None],
 ) -> None:
-    """A typed refusal (a `TopicError` with one of `codes`) or a value `bounded` accepts. A
-    violation, or a bound check that raises, fails with the target and the digest alone, raised
-    where no exception is in flight."""
+    """A typed refusal (a `TopicError` with one of `codes`, naming one of `fields`) or a value
+    `bounded` accepts, in under `CALL_SECONDS`. A violation, or a bound check that raises, fails
+    with the target and the digest alone, raised where no exception is in flight."""
     arg, why = json.loads(case.data), ""
     value: object = None
+    watch = Watch()
     try:
         try:
-            value = call(arg)
+            with watch:
+                value = call(arg)
         except topics.TopicError as exc:
-            if exc.code not in codes or exc.field not in _FIELDS:
+            if exc.code not in codes or exc.field not in fields:
                 why = "refusal outside the catalogue"
-        except BaseException as exc:
+        except Exception as exc:  # a Ctrl-C, or an exit, is not a finding
             why = f"untyped {type(exc).__name__}"
         else:
-            why = "" if bounded(arg, value) else "unbounded value"
+            why = "" if bounded(arg, value) else "value beyond its bounds"
     except Exception as exc:
         why = f"bounds check raised {type(exc).__name__}"
     finally:
         del arg, value  # nothing derived from the input stays in the frame that fails
+    if not why and watch.slow:
+        why = "slow input"
     if why:
         raise AssertionError(f"{why}: {save_failure(case)}") from None
 
@@ -266,16 +367,17 @@ def _fuzz(
     call: Callable[[Any], object],
     bounded: Callable[[Any, Any], bool],
     codes: frozenset[str] = frozenset(),
+    fields: frozenset[str | None] = _NO_FIELD,
 ) -> None:
     def check(case: Input) -> None:
-        _check(case, call, bounded, codes)
+        _check(case, call, bounded, codes, fields)
 
     drive(values.map(lambda value: Input(target, partial(encode, value))), check)
 
 
 @pytest.mark.fuzz
 def test_parse_topic_returns_a_typed_refusal_or_a_bounded_parse() -> None:
-    _fuzz("parse_topic", _edited("topics"), topics.parse_topic, _parsed, _CODES)
+    _fuzz("parse_topic", _edited("topics"), topics.parse_topic, _parsed, _CODES, _NO_FIELD)
 
 
 @pytest.mark.fuzz
@@ -283,11 +385,12 @@ def test_validate_options_returns_a_typed_refusal_or_bounded_options_for_every_f
     def call(arg: list[Any]) -> object:
         return topics.validate_options(topics.FAMILIES[arg[0]], arg[1])
 
-    _fuzz("validate_options", _options(), call, _options_within, frozenset({"invalid_options"}))
+    codes = frozenset({"invalid_options"})
+    _fuzz("validate_options", _options(), call, _options_within, codes, _OPTION_FIELDS)
 
 
 @pytest.mark.fuzz
-def test_is_topic_name_returns_a_bool_true_only_for_a_short_string() -> None:
+def test_is_topic_name_returns_a_bool_true_exactly_for_the_topic_shape() -> None:
     _fuzz("is_topic_name", _edited("topics"), topics.is_topic_name, _name)
 
 
@@ -302,17 +405,21 @@ def test_json_client_frames_decode_to_a_refusal_or_a_bounded_value() -> None:
 
 
 def _outcome(ch: str) -> str:
+    """ "ok", or the code of `parse_topic`'s refusal, with the field it names (it names none)."""
     try:
         topics.parse_topic(ch)
     except topics.TopicError as exc:
-        return exc.code
+        return exc.code if exc.field is None else f"{exc.code} naming {exc.field}"
     return "ok"
 
 
 def test_each_committed_seed_meets_its_expectation() -> None:
-    """Each topic sits in the group of what `parse_topic` makes of it; each frame decodes to a
-    JSON object ("ok") or not, before and after `auth_ok`."""
+    """Each topic sits in the group of what `parse_topic` makes of it, its refusal naming no field,
+    and is a topic name exactly when it has the §13 shape; each frame decodes to a JSON object
+    ("ok") or not, before and after `auth_ok`."""
+    names = [ch for group in TOPICS.values() for ch in group]
     wrong = [ch for expect, seeds in TOPICS.items() for ch in seeds if _outcome(ch) != expect]
+    wrong += [ch for ch in names if topics.is_topic_name(ch) is not _topic_shaped(ch)]
     for expect, frames in FRAMES.items():
         for name, hexed in frames.items():
             for authed in (False, True):
@@ -320,3 +427,162 @@ def test_each_committed_seed_meets_its_expectation() -> None:
                 if ("ok" if isinstance(frame, dict) else "malformed") != expect:
                     wrong.append(name)
     assert wrong == []
+
+
+def test_topics_json_has_an_ok_seed_for_every_registry_family_shape_and_kind() -> None:
+    """The corpus stays complete as the registry grows: a new family, shape, machine kind, depth,
+    bar type or profile kind fails here until a seed names it."""
+    parsed = [topics.parse_topic(ch) for ch in TOPICS["ok"]]
+    shapes = {(f.family, len(shape)) for f in topics.FAMILIES.values() for shape in f.shapes}
+    missing = {
+        "family and shape": shapes - {(p.family.family, p.ch.count(".")) for p in parsed},
+        "machine kind": set(topics.MACHINE_KINDS) - {p.entity_kind for p in parsed},
+        "depth": set(topics.DEPTHS) - {p.depth for p in parsed},
+        "bar type": set(topics.BAR_TYPES) - {p.bar_type for p in parsed},
+        "profile kind": set(topics.PROFILE_KINDS) - {p.kind for p in parsed},
+    }
+    assert {what: names for what, names in missing.items() if names} == {}
+
+
+def _refused(family: str, opts: dict[str, Any]) -> str | None:
+    """The option `validate_options` refuses `opts` for; None when it accepts them."""
+    try:
+        topics.validate_options(topics.FAMILIES[family], opts)
+    except topics.TopicError as exc:
+        return exc.field if exc.code == "invalid_options" else exc.code
+    return None
+
+
+def test_each_value_just_past_a_declared_cap_is_refused_alone_naming_its_option() -> None:
+    """`_PAST` is what the options target draws one time in three: one option of one family just
+    past a cap the registry declares for it, which must be refused for that option. Each list
+    option with a minimum is probed with fewer items than that."""
+    assert [(f, o) for f, o in _PAST if _refused(f, o) != next(iter(o))] == []
+    probed = [(f, k, len(v)) for f, o in _PAST for k, v in o.items() if isinstance(v, list)]
+    wanted = [
+        (name, key, opt.min_items)
+        for name, family in sorted(topics.FAMILIES.items())
+        for key, opt in {**topics.UNIVERSAL, **family.options}.items()
+        if opt.min_items > 0
+    ]
+    assert wanted
+    assert [w for w in wanted if not any(w[:2] == p[:2] and p[2] < w[2] for p in probed)] == []
+
+
+@pytest.mark.parametrize(
+    ("family", "opts", "field"),
+    [
+        ("book", {"nope": 1}, "opts"),  # an unknown key is never echoed
+        ("book", {"history": 5}, "history"),  # a known option name, not this family's: named
+        ("book", [], "opts"),  # opts must be an object
+        ("book", {"throttle_ms": -1}, "throttle_ms"),
+        ("orders", {"exchange_account_ids": []}, "exchange_account_ids"),
+    ],
+)
+def test_a_refused_option_names_an_option_or_opts_never_client_text(
+    family: str, opts: Any, field: str
+) -> None:
+    assert _refused(family, opts) == field
+
+
+@pytest.mark.parametrize(
+    ("kind", "good", "bad"),
+    [
+        ("bool", [True, False], ["yes", 1, None]),
+        ("str", ["atr:14", "x" * 24, "Ab:1"], ["", "a.b", "x" * 25, "1 2", 5]),
+        ("decimal", ["1.5", "-0", "10", "0.001"], ["", "1e3", "1.", ".5", "--1", 1.5]),
+    ],
+)
+def test_options_with_no_list_size_or_range_are_bounded_by_their_kind(
+    kind: str, good: list[Any], bad: list[Any]
+) -> None:
+    """Each option of these kinds takes what the kind's grammar says and refuses the rest, and the
+    fuzz target's bound for the kind (`_UNRANGED`) says the same."""
+    options = [
+        (name, key)
+        for name, family in sorted(topics.FAMILIES.items())
+        for key, opt in {**topics.UNIVERSAL, **family.options}.items()
+        if opt.kind == kind
+    ]
+    assert options
+    wrong = [(n, k, v) for n, k in options for v in good if _refused(n, {k: v}) is not None]
+    wrong += [(n, k, v) for n, k in options for v in bad if _refused(n, {k: v}) != k]
+    assert wrong == []
+    assert all(_UNRANGED[kind](v) for v in good) and not any(_UNRANGED[kind](v) for v in bad)
+
+
+def test_the_options_bound_check_knows_every_option_kind_the_registry_declares() -> None:
+    """`_within` judges an option with no list size, choices or range by its kind alone, and raises
+    KeyError for a kind `_UNRANGED` lacks, which fails every example of the options target. A
+    registry change that adds such a kind fails here, in its own PR, not only in the nightly."""
+    lacking: list[tuple[str, str, str]] = []
+    for name, family in sorted(topics.FAMILIES.items()):
+        for key, opt in {**topics.UNIVERSAL, **family.options}.items():
+            try:
+                _within(opt, None)
+            except KeyError:
+                lacking.append((name, key, opt.kind))
+    assert lacking == []
+
+
+@pytest.mark.parametrize(
+    ("ch", "shaped"),
+    [
+        ("orders", True),
+        ("book.BTCUSDT.50", True),
+        ("machines.order:0a000000-0000-4000-8000-000000000001.state", True),
+        ("a" * 120, True),
+        ("a" * 121, False),
+        ("", False),
+        ("orders\n", False),
+        ("Orders", False),
+        ("orders.", False),
+        (".orders", False),
+        ("book..50", False),
+        ("book.BTC USDT", False),
+        ("book.\uff22TC", False),
+        ("book\u0000.BTCUSDT", False),
+        (None, False),
+    ],
+)
+def test_the_topic_shape_oracle_reads_the_spec_as_the_registry_does(ch: Any, shaped: bool) -> None:
+    """`_topic_shaped`, written from the §13 pattern, agrees with the registry's reading of it on
+    the cases a prefix match, a missing anchor or a character class would get wrong."""
+    registry = isinstance(ch, str) and bool(ch) and topics.TOPIC_NAME_RE.fullmatch(ch) is not None
+    assert _topic_shaped(ch) is shaped
+    assert (registry and len(ch) <= topics.TOPIC_MAX_LEN) is shaped
+    assert topics.is_topic_name(ch) is shaped
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"t":"pong"}',
+        '{ "t" : "pong" ,"id":"x"}',
+        '\n\t {"t":"pong"',
+        '{"t":"ping"}',
+        '{"id":"x","t":"pong"}',
+        '{"t":"pongs"}',
+        '{"t":"pong',
+        '["t","pong"]',
+        " " * 250 + '{"t":"pong"}',
+        " " * 244 + '{"t":"pong"}',
+    ],
+)
+def test_the_pong_oracle_reads_the_opening_as_the_gateway_does(text: str) -> None:
+    assert _opens_with_pong(text) is gateway._leads_with_pong(text, msgpack=False)
+
+
+def test_a_ctrl_c_during_a_parse_is_not_a_finding() -> None:
+    def interrupt(arg: Any) -> object:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _check(Input("probe", lambda: b"[]"), interrupt, _name, frozenset(), _NO_FIELD)
+
+
+def test_a_frame_that_closes_the_socket_logs_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    """The fuzz run's gateway log is dropped (`_no_gateway_log`): an oversize frame closes the
+    connection, which logs `ws close` otherwise."""
+    assert _decode([False, "x" * (MAX_PREAUTH_FRAME_BYTES + 1)]) is _OVERSIZE
+    assert capsys.readouterr() == ("", "")
