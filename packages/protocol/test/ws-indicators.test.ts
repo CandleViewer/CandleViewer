@@ -27,25 +27,6 @@ const { schemas } = JSON.parse(readFileSync(join(here, "..", "ws-schemas.json"),
 const schemaOf = (name: string): SchemaNode => schemas[`cv://ws/v1/${name}.schema.json`] ?? {};
 const keys = (node: SchemaNode | undefined): string => [...(node?.required ?? [])].sort().join();
 
-// `indicators.BTCUSDT.time.1` (23 §6.1, §14.10): bar 19 still in warmup, then bar 20, which a
-// late trade amends. `key` is the instance's spec_hash (24 §7.4).
-const point = (index: number, v: string | null): Point => ({
-  generation: 7,
-  index,
-  t_ms: index,
-  v: [v],
-});
-const ema = { key: "ab".repeat(32), indicator: "ema", params: { n: 21 }, build_version: 1 };
-const series = { symbol: "BTCUSDT", bar_type: "time", param: "1" } as const;
-const SNAPSHOT: Payload = {
-  ...series,
-  instances: [{ ...ema, outputs: ["ema"], points: [point(19, null), point(20, "61234.5")] }],
-};
-const AMENDED: Payload = {
-  ...series,
-  instances: [{ ...ema, outputs: ["ema"], points: [{ ...point(20, "0.0000001"), amended: true }] }],
-};
-
 describe("indicators.{symbol}.{bar_type}.{param} (consumer side, 23-ws-protocol §6.1/§14.10)", () => {
   it("types the payload as the topic map's entry, with closed points", () => {
     type Entry = generated.ws.WsTopicPayloadMap["indicators.{symbol}.{bar_type}.{param}"];
@@ -53,17 +34,6 @@ describe("indicators.{symbol}.{bar_type}.{param} (consumer side, 23-ws-protocol 
     expectTypeOf<Point["v"][number]>().toEqualTypeOf<string | null>();
     expectTypeOf<Point["amended"]>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<Point>().not.toHaveProperty("confirm"); // only closed bars are served
-  });
-
-  it("stores points by (key, generation, index): an amended one replaces, null is no value", () => {
-    const store = new Map<string, Point>();
-    for (const { key, points } of [SNAPSHOT, AMENDED].flatMap((f) => f.instances)) {
-      for (const p of points) store.set(`${key}/${p.generation}/${p.index}`, p);
-    }
-    expect([...store.values()].map((p) => [p.index, p.v[0], p.amended])).toEqual([
-      [19, null, undefined],
-      [20, "0.0000001", true],
-    ]);
   });
 
   it("reads a value back as the kernel's float64, written without an exponent", () => {

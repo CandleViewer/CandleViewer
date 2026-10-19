@@ -38,7 +38,7 @@ def _doc(*blocks: str) -> str:
 def test_extract_bundle_has_one_entry_per_fence() -> None:
     bundle = ext.build_bundle(MD_TEXT)
     section = ext.schema_section(MD_TEXT)
-    assert bundle["schemaCount"] == len(ext.FENCE.findall(section)) == 36
+    assert bundle["schemaCount"] == len(ext.FENCE.findall(section)) == 37
     assert list(bundle["schemas"]) == sorted(bundle["schemas"])
 
 
@@ -196,7 +196,7 @@ def test_every_coalesced_family_declares_the_disclosure_fields() -> None:
     row = re.search(r"^\| \*\*Coalescing\*\* +\|[^|]*\|([^|]*)\|", MD_TEXT, re.MULTILINE)
     assert row is not None
     families = [name.strip().rstrip(".").lower() for name in row.group(1).split(",")]
-    assert len(families) == 8, f"§8.1 Coalescing row changed: {families}"
+    assert len(families) == 9, f"§8.1 Coalescing row changed: {families}"
     schemas = ext.build_bundle(MD_TEXT)["schemas"]
     for family in families:
         props = schemas[f"cv://ws/v1/{family}.schema.json"]["properties"]

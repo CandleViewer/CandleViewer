@@ -3,7 +3,8 @@ apart again. The contract job runs this directory when the doc changes, and the 
 registry does. What is read: the §6.1 and §6.2 tables (topic, options, default throttle, binary
 form), the §5.4 re-snapshot list, the §12.1 frames, the `encoding` row of §5.1, the family names
 of §6.2's accounts paragraph and the series and labels of its metrics paragraph, and from the §13
-schemas the `ctl` keys, `params` and `exchange_account_ids`. The rest of the prose is not parsed.
+schemas the `ctl` keys, `params`, `exchange_account_ids`, and the `indicatorOptions` and
+`indicatorInstance` of `indicators.*`. The rest of the prose is not parsed.
 A table row ahead of its registry row fails here by design. What the server does is pinned in
 `tests/unit/ws/test_topic_registry_as_built.py`.
 """
@@ -19,6 +20,7 @@ from typing import Any, Final
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.ws import topics as registry
 from candleviewer.ws.permissions import ConnectionAuthz, auth_ok_payload
 from candleviewer.ws.topics import CTL_KEYS, FAMILIES, IDENTITY_OPTIONS, OPTION_NAMES, UNIVERSAL
 from tests.contract.ws._harness import PROTOCOL_DOC, SCHEMAS
@@ -87,6 +89,16 @@ def test_a_indicators_takes_exactly_its_13_5_option_set() -> None:
     assert set(_INDICATOR_OPTS["properties"]) == set(UNIVERSAL) | set(
         FAMILIES["indicators"].options
     )
+
+
+def test_a_an_indicators_instance_is_checked_by_13s_indicator_instance() -> None:
+    """§13 `indicatorInstance`: the keys, `indicator` pattern and caps `_instance_ok` restates."""
+    instance = SCHEMAS["cv://ws/v1/common.schema.json"]["$defs"]["indicatorInstance"]
+    params = instance["properties"]["params"]
+    assert set(instance["properties"]) == registry._INSTANCE_KEYS
+    assert instance["properties"]["indicator"]["pattern"] == f"^{registry._INDICATOR_RE.pattern}$"
+    assert params["maxProperties"] == registry._MAX_INSTANCE_PARAMS
+    assert params["additionalProperties"]["maxLength"] == registry._MAX_PARAM_TEXT
 
 
 def test_c_13_5_lists_params_and_no_topic_takes_it() -> None:

@@ -1210,6 +1210,8 @@ The backend kernel in M9 (`services/api/candleviewer/orderflow/indicators/`) com
 - **CVD:** the running sum of the bar's `delta` from the anchor, `session` or `utc_day`.
 - **ZigZag** (`depth`, `deviation_pct`): confirmed pivots only, which give `swing_high` and `swing_low`; with `deviation_pct = 0` and `depth = n` it is §7.2's swing, a pivot with `n` bars either side. The provisional leg is never published.
 
+Four orders are not fixed here yet, so the worker mirror (E13-T01) must not take them from this section alone: σ's recurrence (whether West's running mean is kept apart from the VWAP quotient, and the update order), how RSI derives its gains, losses and ratio, the ADX chain (+DM, −DM, TR, the DIs, DX, and each smoothing stage with its seed) and ZigZag's confirmation and deviation rule. E13-T02's kernel docstrings and golden vectors fix them, and its implementation PR amends this section as built.
+
 **Warmup and missing values.** Each kernel declares `warmup_bars(params)`, counted on the densified series. Before it, and wherever an operation has no value (a zero divisor), an output is `None`: never `0`, and never NaN on the wire, where it is `null` (23 §14.10). The descriptor's `nullable_when` names the bar count and the reason.
 
 **State.** `snapshot()` returns a versioned orjson blob `{"v": STATE_VERSION, "indicator", "build_version", "state"}` with `STATE_VERSION = 1` and NaN written as `null`; `restore()` refuses another version, indicator or `build_version` with a typed `IndicatorStateError`, as `BuilderState` does (§3.2). Incremental updates and a full recompute are the same fold, so restoring at any bar and going on gives the values an uninterrupted run gives.

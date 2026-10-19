@@ -6337,7 +6337,7 @@ class IndicatorDescriptor(BaseModel):
         ]
         | None,
         Field(
-            description="Every output's unit (24 §7.1). Open-ended; an unknown one renders unitless."
+            description="Every output's unit (24 §7.1); a client renders one it does not know unitless. **Open-ended for readers:** clients must tolerate values they do not know, so adding a unit is an additive change (C-6.3).\n"
         ),
     ] = None
     nullable_when: Annotated[
