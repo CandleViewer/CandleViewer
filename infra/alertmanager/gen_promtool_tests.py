@@ -24,6 +24,9 @@ _MISSED = 'cv_key_selfcheck_missed_runs_total{env="live"}'
 _EXPIRY = 'cv_key_soonest_expiry_seconds{env="live"}'
 _FAILING = 'cv_keys_failing_policy{{env="live",rule="{}"}}'
 _WD, _NA, _IP = "key_withdraw_permission", "key_permission_not_allowed", "key_ip_whitelist_mismatch"
+# ADR-0037 S4a (#3009): the audit lane's series, each bound from process start.
+_LANE = 'cv_audit_lane_{}{{env="live"}}'
+_STATE = 'cv_audit_lane_state{{env="live",state="{}"}}'
 
 # alert -> (series, firing values, healthy values, eval_time, extra labels)
 SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
@@ -176,6 +179,29 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     "KeyExpiringWithin14Days": (_EXPIRY, "864000+0x30", "1209600+0x30", "20m", {"env": "live"}),
     "KeyExpiringWithin7Days": (_EXPIRY, "259200+0x30", "604800+0x30", "20m", {"env": "live"}),
     "KeyExpiringWithin1Day": (_EXPIRY, "43200+0x30", "0+0x30", "20m", {"env": "live"}),
+    # ADR-0037 S4a (#3009), the audit lane's tickets: a refusal a caller saw; the oldest unit's age
+    # past 600 s (900) or keeping up (30); a held lane; the head going back across a restart (20,
+    # then 3); a boot count already 2 at the first scrape (set before it); `quarantine/` growing.
+    "AuditSinkRefusing": (
+        'cv_audit_writer_refused_total{domain="auth",env="live"}',
+        "0+0x5 1+0x20",
+        "0+0x25",
+        "10m",
+        {"env": "live"},
+    ),
+    "AuditLaneBacklogAged": (
+        _LANE.format("oldest_age_seconds"), "0+60x20", "30+0x20", "15m", {"env": "live"}
+    ),
+    "AuditLaneDrainHeld": (_STATE.format("held"), "1+0x20", "0+0x20", "5m", {"env": "live"}),
+    "AuditLaneSeqRegressed": (
+        _LANE.format("last_seq"), "10+1x10 3+1x10", "10+1x20", "25m", {"env": "live"}
+    ),
+    "AuditLaneBootOvershoot": (
+        _LANE.format("boot_overshoot_frames_total"), "2+0x20", "0+0x20", "5m", {"env": "live"}
+    ),
+    "AuditLaneQuarantineGrowing": (
+        _LANE.format("quarantine_bytes"), "100+0x10 400+0x20", "400+0x30", "20m", {"env": "live"}
+    ),
 }
 
 _LAST_OK = 'cv_audit_verify_last_ok_timestamp_seconds{env="live"}'
@@ -233,6 +259,11 @@ def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
     counts["+Inf"] = counts["10.0"]
     return {_LATENCY.format(le): f"0+0x5 {n}+0x700" for le, n in counts.items()}
 
+
+# #3009 S4a: a lane refusal or anomaly at 6 min, by its labels.
+_REFUSED = 'cv_audit_lane_refused_total{{class="shared",env="live",reason="{}"}}'
+_ANOMALY = 'cv_audit_lane_anomalies_total{{env="live",reason="{}"}}'
+_CREATED = 'cv_audit_lane_created_total{env="live"}'
 
 # alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
 MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
@@ -330,6 +361,29 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("10m", True, {_LATCH: "1+0x20", _FAILING.format(_WD): "1+0x4 0+0x15"}),
         ("10m", False, {_LATCH: "1+0x4 0+0x15"}),  # the restart
     ),
+    # #3009 S4a. A stopped lane or a refusal fires; a held lane's refusals are AuditLaneDrainHeld's.
+    "AuditLaneRefusing": (
+        ("10m", True, {_STATE.format("stopped"): _RISE}),
+        ("10m", True, {_REFUSED.format("full"): _RISE}),
+        ("10m", False, {_STATE.format("held"): _RISE, _REFUSED.format("held"): _RISE}),
+    ),
+    # A critical anomaly is AuditLaneAnomaly's, a torn tail alone AuditLaneTornTail's.
+    "AuditLaneAnomaly": (
+        ("10m", True, {_ANOMALY.format("frame_rejected"): _RISE}),
+        ("10m", False, {_ANOMALY.format("torn_tail"): _RISE}),
+    ),
+    "AuditLaneTornTail": (
+        ("10m", True, {_ANOMALY.format("torn_tail"): _RISE}),
+        ("10m", False, {_ANOMALY.format("frame_rejected"): _RISE}),
+    ),
+    # Frame 1 at the first boot (no history) and at a later boot fire; a process that made its lane
+    # is quiet once its 15 minutes and the 9 h 30 m hold have passed; no lane made never fires.
+    "AuditLaneCreated": (
+        ("5m", True, {_CREATED: "1+0x700"}),
+        ("25m", True, {_CREATED: "0+0x20 1+0x700"}),
+        ("10h", False, {_CREATED: "1+0x700"}),
+        ("25m", False, {_CREATED: "0+0x30"}),
+    ),
 }
 
 #: alert -> cases of (eval_time, {series: values}, the `rule` of each alert expected): #836's
@@ -385,6 +439,10 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
         ("0+0x5 9+0x14", "15m", False),
         ("0+0x5 10+0x14", "15m", True),
     ],
+    # #3009 S4a: a lower head after a restart gap of 30 minutes is a drop too; an operator
+    # removing copies from `quarantine/` is no growth.
+    "AuditLaneSeqRegressed": [("10+1x10 _x30 3+1x10", "55m", True)],
+    "AuditLaneQuarantineGrowing": [("400+0x10 0+0x20", "20m", False)],
 }
 
 

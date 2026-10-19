@@ -356,3 +356,127 @@ groups:
         annotations:
           summary: "Roll-off listed no closed day for a stream whose hot table holds aged partitions"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-rolloffstreamunlisted"
+      # --- Journal-first audit lane (ADR-0037, #3009 S4a). Series: audit/metrics.py, read at the
+      # scrape. Each rule is a ticket: ADR-0037 lists seven as pages, which only the Owner grants
+      # (#2701), so each of those says so; a ticket is muted 22:00-07:00 UTC, so an event rule
+      # holds with `keep_firing_for: 9h30m` (ws_gateway.yml header). Component `audit_lane`, or
+      # `audit_sink` for the writer, so PostgresDown's inhibition (component `audit`) hides none.
+      - alert: AuditSinkRefusing
+        # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
+        # A record a caller waited on was refused by the audit writer: its action failed closed.
+        expr: sum by (env) (increase(cv_audit_writer_refused_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: audit_sink
+        annotations:
+          summary: "The audit sink refused a record its caller waited on: an audited action failed"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditsinkrefusing"
+      - alert: AuditLaneBacklogAged
+        # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
+        # The oldest unconfirmed lane unit waited over 10 minutes: the sink is not taking them.
+        expr: max by (env) (cv_audit_lane_oldest_age_seconds) > 600
+        for: 0m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "Audit lane records have waited over 10 minutes for the audit sink"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlanebacklogaged"
+      - alert: AuditLaneRefusing
+        # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
+        # The lane is stopped, or refused records (`held` is AuditLaneDrainHeld's): each fell back.
+        expr: >-
+          max by (env) (cv_audit_lane_state{state="stopped"}) > 0
+          or sum by (env) (increase(cv_audit_lane_refused_total{reason!="held"}[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "The audit lane refuses records; they fall back to the audit sink"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlanerefusing"
+      - alert: AuditLaneDrainHeld
+        # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
+        # The lane holds (review L6: the state, so a hold on a quiet lane alerts too).
+        expr: max by (env) (cv_audit_lane_state{state="held"}) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "The audit lane holds: every lane record falls back to the audit sink"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlanerefusing"
+      - alert: AuditLaneAnomaly
+        # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
+        # A critical `audit.lane_anomaly` row: lane material that was not authentic or in sequence.
+        expr: sum by (env) (increase(cv_audit_lane_anomalies_total{reason!="torn_tail"}[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "The audit lane recorded a critical anomaly (tampering or damage)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlaneanomaly"
+      - alert: AuditLaneTornTail
+        # A torn tail alone is a ticket (ADR-0037): an append a crash cut short, a warning row.
+        expr: sum by (env) (increase(cv_audit_lane_anomalies_total{reason="torn_tail"}[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "The audit lane found a torn tail (an append cut short by a crash)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlaneanomaly"
+      - alert: AuditLaneQuarantineGrowing
+        # A ticket (ADR-0037): `quarantine/` grew, evidence kept for good with its PII (Q8).
+        expr: max by (env) (delta(cv_audit_lane_quarantine_bytes[1h])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "The audit lane's quarantine grew"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlaneanomaly"
+      - alert: AuditLaneSeqRegressed
+        # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
+        # The head `seq` went down, across a restart gap of up to a day: a rollback or a lost lane.
+        expr: max by (env) (resets(cv_audit_lane_last_seq[1d])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "The audit lane's head went back: frames were rolled back or deleted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed"
+      - alert: AuditLaneCreated
+        # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
+        # A process wrote frame 1 of a new lane: the first boot, or a lane that was lost. The count
+        # is set before the first scrape, so the rule reads it, not an increase, for 15 minutes.
+        expr: >-
+          max by (env) (max_over_time(cv_audit_lane_created_total[15m])) > 0
+          unless on (env) max by (env) (max_over_time(cv_audit_lane_created_total[15m] offset 15m)) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "A new audit lane was created (expected once, at the first boot)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed"
+      - alert: AuditLaneBootOvershoot
+        # A boot wrote its rows past a lane cap (the lane was full at a restart). Set before the
+        # first scrape, so read, not increased; a crash loop that dies first leaves its log lines.
+        expr: max by (env) (max_over_time(cv_audit_lane_boot_overshoot_frames_total[1h])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: audit_lane
+        annotations:
+          summary: "cv-api booted with the audit lane past a cap"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlanerefusing"
