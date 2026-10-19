@@ -14,6 +14,8 @@ from typing import Any
 
 import jsonschema
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from candleviewer.api.contract_conformance import (
     ContractDriftError,
@@ -22,7 +24,9 @@ from candleviewer.api.contract_conformance import (
     load_openapi_spec,
     spec_paths,
 )
+from candleviewer.api.indicators import make_indicators_router
 from candleviewer.app import create_app
+from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.settings import Settings
 
 
@@ -381,3 +385,54 @@ def test_admin_user_session_listing_needs_no_step_up_but_revoking_does(
     revoke = spec["paths"]["/users/{userId}/sessions/{sessionId}"]["delete"]["description"]
     assert "listing needs no step-up" in _flat(listing)
     assert _flat(revoke).startswith("Requires step-up `users`.")
+
+
+class _IndicatorsPrincipal:
+    def __init__(self, *permissions: str) -> None:
+        self.permissions = frozenset(permissions)
+
+    def has(self, permission: str) -> bool:
+        return permission in self.permissions
+
+
+class _IndicatorsResolver:
+    def __init__(self, principal: _IndicatorsPrincipal | None) -> None:
+        self.principal = principal
+
+    def resolve(self, request: object) -> _IndicatorsPrincipal | None:
+        return self.principal
+
+
+def _list_indicators(principal: _IndicatorsPrincipal | None) -> Any:
+    app = FastAPI()
+    resolver = _IndicatorsResolver(principal)
+    app.include_router(make_indicators_router(default_catalogue(), principal_resolver=resolver))
+    return TestClient(app).get("/indicators")
+
+
+def _response_schema(spec: dict[str, Any], status: str, media: str) -> dict[str, Any]:
+    response = spec["paths"]["/indicators"]["get"]["responses"][status]
+    if "$ref" in response:
+        response = spec["components"]["responses"][response["$ref"].rsplit("/", 1)[1]]
+    return {"components": spec["components"], **response["content"][media]["schema"]}
+
+
+def test_list_indicators_response_conforms_to_the_contract(spec: dict[str, Any]) -> None:
+    """E13-T02: the served catalogue validates against `listIndicators`' 200 schema."""
+    response = _list_indicators(_IndicatorsPrincipal("marketdata:read"))
+    assert response.status_code == 200
+    schema = _response_schema(spec, "200", "application/json")
+    jsonschema.Draft202012Validator(schema).validate(response.json())
+    assert len(response.json()["items"]) == 28
+
+
+@pytest.mark.parametrize(
+    ("principal", "status"), [(None, "401"), (_IndicatorsPrincipal("orders:read"), "403")]
+)
+def test_list_indicators_refusals_conform_to_their_declared_responses(
+    spec: dict[str, Any], principal: _IndicatorsPrincipal | None, status: str
+) -> None:
+    response = _list_indicators(principal)
+    assert str(response.status_code) == status
+    schema = _response_schema(spec, status, "application/problem+json")
+    jsonschema.Draft202012Validator(schema).validate(response.json())

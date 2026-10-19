@@ -121,6 +121,7 @@ from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.idle_lock import IdleLockMiddleware
+from candleviewer.api.indicators import make_indicators_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
@@ -264,6 +265,7 @@ from candleviewer.observability.support_bundle_wiring import build_support_bundl
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oms.service import OmsService
 from candleviewer.orderbook_wiring import BookStream
+from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.recorder.coverage import CoverageService
@@ -2134,6 +2136,10 @@ def create_app(
     # E08-S04: in-memory hot tape (newest-first); same resolver/fail-closed rules.
     app.include_router(
         make_trades_router(lambda: ctx.ingestion.trades, principal_resolver=audit_resolver)
+    )
+    # E13-T02: the indicator catalogue (static, code-defined); same resolver/fail-closed rules.
+    app.include_router(
+        make_indicators_router(default_catalogue(), principal_resolver=audit_resolver)
     )
     # E35-T03: rule vocabulary + IR schema (fail-closed 501 without a resolver).
     rule_telemetry = _RuleCompileTelemetry(metrics_facade)
