@@ -71,7 +71,7 @@ class StateStore:
         self._root = root
 
     def path(self, symbol: str, spec_hash: str) -> Path:
-        if not _SYMBOL.match(symbol) or not _HASH.match(spec_hash):
+        if not _SYMBOL.fullmatch(symbol) or not _HASH.fullmatch(spec_hash):
             raise BarsError("A state blob path needs a valid symbol and spec hash.")
         return self._root / symbol / f"{spec_hash}.state.json"
 

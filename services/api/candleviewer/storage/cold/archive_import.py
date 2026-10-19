@@ -149,12 +149,12 @@ class _DaySession:
         if self.done is None:
             self._reconcile_orphans()
             self.seen = _existing_keys(self.paths.partition_dir, self.entries)
-            used = {int(m.group(1)) for e in self.entries if (m := _PART_RE.match(e.file))}
+            used = {int(m.group(1)) for e in self.entries if (m := _PART_RE.fullmatch(e.file))}
             # Also skip names present on disk (another writer's in-flight part): never clobber.
             on_disk = {
                 int(m.group(1))
                 for p in self.paths.partition_dir.glob("part-*.parquet*")
-                if (m := _PART_RE.match(p.name.removesuffix(".tmp")))
+                if (m := _PART_RE.fullmatch(p.name.removesuffix(".tmp")))
             } if self.paths.partition_dir.is_dir() else set()  # fmt: skip
             nxt = max(used | on_disk, default=-1) + 1
             self.file = f"part-{nxt:04d}.parquet"

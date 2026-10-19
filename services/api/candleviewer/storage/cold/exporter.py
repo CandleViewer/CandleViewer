@@ -216,7 +216,7 @@ class ColdExporter:
         source_count = await self._source.count_partition(symbol, stream, rng)
         run_id = str(uuid.uuid4())
         exported_at_us = int(self._clock().timestamp() * 1_000_000)
-        used = {int(m.group(1)) for e in existing if (m := _PART_RE.match(e.file))}
+        used = {int(m.group(1)) for e in existing if (m := _PART_RE.fullmatch(e.file))}
         file_name = f"part-{(max(used) + 1) if used else 0:04d}.parquet"
         dest = paths.partition_dir / file_name
 

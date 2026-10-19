@@ -36,7 +36,7 @@ from candleviewer.recorder.importer import (
 )
 from candleviewer.storage.cold.archive_import import ColdArchiveDayWriter, FileImportLedger
 from candleviewer.storage.cold.layout import DatasetRegistry
-from candleviewer.storage.cold.manifest import ManifestStore, sha256_of
+from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
 
 DAY_US = 86_400_000_000
 H = 3_600_000_000
@@ -425,6 +425,61 @@ async def test_orphan_sweep_never_deletes_another_writers_unmanifested_part(
     # the import leftover was swept and its name reused by the new, manifested part
     assert pq.read_table(mine).num_rows == 24
     assert pq.read_table(foreign).num_rows == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "new_part"),
+    [
+        ("part-0004.parquet.tmp", "part-0005.parquet"),
+        ("part-0004.parquet\n", "part-0000.parquet"),
+        ("part-0004.parquet\n.tmp", "part-0000.parquet"),
+        ("part-0004.parquet\r\n", "part-0000.parquet"),
+    ],
+    ids=["legal-tmp", "lf", "lf-tmp", "crlf"],
+)
+async def test_a_disk_name_ending_in_a_newline_is_no_part_name(
+    tmp_path: Path, name: str, new_part: str
+) -> None:
+    """#3555: `$` also matches before a final newline, so `match` counted `part-0004.parquet\\n`
+    (and its `.tmp`) as part 4 and the new part skipped to 5. Outside the pattern it is not a
+    part name: the new part's name is free, never an existing one, and the file is left alone."""
+    part_dir = tmp_path / "trades" / f"symbol={SYM}" / "dt=2026-06-01"
+    part_dir.mkdir(parents=True)
+    (part_dir / name).write_bytes(b"in flight")
+    d = date(2026, 6, 1)
+    s = await _importer(tmp_path, FakeArchive()).run(ImportRequest(SYM, d, d))
+    assert s.rows_written == 24
+    assert sorted(p.name for p in part_dir.iterdir()) == sorted([name, new_part])
+    assert (part_dir / name).read_bytes() == b"in flight"
+    assert pq.read_table(part_dir / new_part).num_rows == 24
+
+
+@pytest.mark.parametrize(
+    ("name", "new_part"),
+    [
+        ("part-0004.parquet", "part-0005.parquet"),
+        ("part-0004.parquet\n", "part-0000.parquet"),
+        ("part-0004.parquet\r\n", "part-0000.parquet"),
+    ],
+    ids=["legal", "lf", "crlf"],
+)
+async def test_a_manifest_name_ending_in_a_newline_is_no_part_name(
+    tmp_path: Path, name: str, new_part: str
+) -> None:
+    """#3555: as above for a manifest entry: `match` counted `part-0004.parquet\\n` as part 4. The
+    entry stays in the manifest, and its file is read for the day's keys as before."""
+    part_dir = tmp_path / "trades" / f"symbol={SYM}" / "dt=2026-06-01"
+    part_dir.mkdir(parents=True)
+    seed = pa.table({"ts": pa.array([1], pa.int64()), "trade_id": ["seed"]})
+    pq.write_table(seed, part_dir / name)
+    seeded = ManifestEntry(name, sha256_of(part_dir / name), 1, "trades", "exporter-run", 1)
+    store = ManifestStore(tmp_path / "_manifests")
+    store.write(part_dir, tmp_path, [seeded])
+    d = date(2026, 6, 1)
+    s = await _importer(tmp_path, FakeArchive()).run(ImportRequest(SYM, d, d))
+    assert s.rows_written == 24
+    assert sorted(e.file for e in store.read(part_dir, tmp_path)) == sorted([name, new_part])
+    assert pq.read_table(part_dir / new_part).num_rows == 24
 
 
 async def test_import_holds_partition_lock_shared_with_exporter(tmp_path: Path) -> None:

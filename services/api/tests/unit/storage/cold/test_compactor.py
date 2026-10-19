@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -43,7 +44,9 @@ def test_should_compact_false_when_few_large_files() -> None:
     assert should_compact([100 * MIB] * 4) is False
 
 
-def _seed(root: Path, files: list[list[tuple[int, float]]]) -> ManifestStore:
+def _seed(
+    root: Path, files: list[list[tuple[int, float]]], names: list[str] | None = None
+) -> ManifestStore:
     """Write manifested part files (each a list of `(ts, price)` rows)."""
     part = root / PART
     store = ManifestStore(root / "_manifests")
@@ -58,7 +61,7 @@ def _seed(root: Path, files: list[list[tuple[int, float]]]) -> ManifestStore:
                 }
             )
         )
-        dest = part / f"part-{i:04d}.parquet"
+        dest = part / (names[i] if names else f"part-{i:04d}.parquet")
         write_parquet_file(table, dest)
         entries.append(
             ManifestEntry(
@@ -131,6 +134,38 @@ async def test_active_replay_session_skips_partition_and_logs_session_id(
 async def test_default_idle_guard_reads_empty_set_and_compacts(tmp_path: Path) -> None:
     _seed(tmp_path, [[(1, 1.0)], [(2, 1.0)]])
     assert (await _compact(tmp_path)).skipped is False
+
+
+@pytest.mark.parametrize(
+    ("name", "staged"),
+    [
+        ("part-0007.parquet", "part-0008.parquet"),
+        ("part-0007.parquet\n", "part-0002.parquet"),
+        ("part-0007.parquet\r\n", "part-0002.parquet"),
+    ],
+    ids=["legal", "lf", "crlf"],
+)
+async def test_a_manifest_name_ending_in_a_newline_is_no_part_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, staged: str
+) -> None:
+    """#3555: `$` also matches before a final newline, so `match` counted `part-0007.parquet\\n`
+    as part 7 and staged the merge at 8. Outside the pattern it is not a part name: it is still
+    merged and removed like any original, and the staged name is free, never an existing one."""
+    dests: list[Path] = []
+
+    def spy(table: pa.Table, dest: Path, **kw: Any) -> int:
+        assert not dest.exists()
+        dests.append(dest)
+        return write_parquet_file(table, dest, **kw)
+
+    monkeypatch.setattr(compactor_mod, "write_parquet_file", spy)
+    names = ["part-0000.parquet", "part-0001.parquet", name]
+    _seed(tmp_path, [[(1, 1.0)], [(2, 1.0)], [(3, 1.0)]], names)
+    result = await _compact(tmp_path)
+    assert [d.name for d in dests] == [staged]
+    assert result.merged_file == "part-0000.parquet" and result.row_count == 3
+    assert sorted(p.name for p in (tmp_path / PART).iterdir()) == ["part-0000.parquet"]
+    assert sum(_rows(tmp_path).values()) == 3
 
 
 async def test_below_threshold_is_noop(tmp_path: Path) -> None:

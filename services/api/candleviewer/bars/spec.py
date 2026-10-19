@@ -87,7 +87,7 @@ def compute_spec_hash(spec: BarSpec) -> str:
 
 
 def _uint(bar_type: str, param: str) -> int:
-    if not _UINT.match(param):
+    if not _UINT.fullmatch(param):
         raise BarSpecError(
             f"The param '{param}' is not valid for bar_type '{bar_type}'; "
             "it must be a positive whole number."
@@ -117,7 +117,7 @@ def from_wire(bar_type: str, param: str) -> BarSpec:
                 f"The param '{param}' is not a supported time interval for bar_type 'time'."
             )
         return BarSpec(kind="time", interval_ms=TIME_INTERVALS[param])
-    if bar_type == "renko" and _ATR.match(param):
+    if bar_type == "renko" and _ATR.fullmatch(param):
         raise BarSpecError(RENKO_ATR_DEFERRED)
     n = _uint(bar_type, param)
     if bar_type == "tick":

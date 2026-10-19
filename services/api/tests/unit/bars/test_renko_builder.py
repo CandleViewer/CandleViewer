@@ -147,6 +147,20 @@ def test_renko_malformed_atr_is_an_ordinary_invalid_param(param: str) -> None:
         from_wire("renko", param)
 
 
+@pytest.mark.parametrize("tail", ["\n", "\r\n"], ids=["lf", "crlf"])
+@pytest.mark.parametrize("param", ["atr:14", "atr:14:150"])
+def test_renko_atr_param_ending_in_a_newline_falls_through_and_is_refused(
+    param: str, tail: str
+) -> None:
+    """#3555: `$` also matches before a final newline, so `match` took it as the deferred ATR
+    form. Outside the pattern it falls through to the whole-number check, which refuses it."""
+    with pytest.raises(BarSpecError) as e:
+        from_wire("renko", param)
+    assert str(e.value) == RENKO_ATR_DEFERRED
+    with pytest.raises(BarSpecError, match="positive whole number"):
+        from_wire("renko", param + tail)
+
+
 # --- Spec bounds (security note) and construction ---------------------------------------------
 
 
