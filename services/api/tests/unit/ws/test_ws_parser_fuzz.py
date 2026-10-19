@@ -6,9 +6,10 @@ and takes under `CALL_SECONDS` to do it:
   name of the §13 topic shape (`_topic_shaped`, written out here) whose parts are in the
   registry's sets;
 - `validate_options`, for every family: `invalid_options` whose `field` is an option name or
-  `opts`, never client text (§5.1), or options within what the registry declares: list sizes,
-  ranges and choices, a `bool`, a `param` of 1 to 24 characters, a decimal of the §13 grammar (a
-  value kind the registry declares without a bound is checked against its grammar only);
+  `opts`, never client text (§5.1), or options within what the registry declares: list sizes and
+  items (a string of at most 64 characters, or an `indicators` instance of the §13 shape), ranges
+  and choices, a `bool`, a `param` of 1 to 24 characters, a decimal of the §13 grammar (a value
+  kind the registry declares without a bound is checked against its grammar only);
 - `is_topic_name`: true for a string of the §13 topic shape, 1 to 120 characters, and only then;
 - `parse_replay_session_id`: None, or the input in lower case, a canonical uuid;
 - `_Connection.decode` (JSON text frames, before and after `auth_ok`): the refusal `[]`, the
@@ -25,6 +26,7 @@ surrogate: an ASGI server delivers only valid UTF-8. A failure reports as `test_
 from __future__ import annotations
 
 import json
+import math
 import re
 import string
 import uuid
@@ -77,6 +79,13 @@ _OPTION_FIELDS: Final = topics.OPTION_NAMES | {"opts"}
 _PARAM: Final = re.compile(r"[A-Za-z0-9:]{1,24}")
 #: §13 `common.schema.json#/$defs/decimal`.
 _DECIMAL: Final = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+#: §13 `common.schema.json#/$defs/indicatorInstance`, written out from the schema, not read from
+#: the registry's: the `indicator` pattern, its two members, at most 16 params, and the longest
+#: text an item or a param holds.
+_INDICATOR: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
+_INSTANCE_KEYS: Final = frozenset({"indicator", "params"})
+_INSTANCE_PARAMS: Final = 16
+_ITEM_TEXT: Final = 64
 #: §13 `common.schema.json#/$defs/topic`: 1 to 120 characters, `[a-z_]+`, then any number of a dot
 #: and `[A-Za-z0-9:_-]+`. Written out from the schema's pattern, not read from the registry's.
 _TOPIC_MAX: Final = 120
@@ -272,10 +281,52 @@ _UNRANGED: Final[dict[str, Callable[[Any], bool]]] = {
 }
 
 
+def _text_item(v: Any) -> bool:
+    return isinstance(v, str) and len(v) <= _ITEM_TEXT
+
+
+def _param_value(v: Any) -> bool:
+    """A string of at most 64 characters, a boolean, or a number the wire can carry (an integer of
+    any size; NaN and the infinities are no JSON)."""
+    if isinstance(v, str):
+        return len(v) <= _ITEM_TEXT
+    return isinstance(v, int) or (isinstance(v, float) and math.isfinite(v))
+
+
+def _instance(v: Any) -> bool:
+    """§13 `common.schema.json#/$defs/indicatorInstance`: an object with an `indicator`, a string of
+    `[a-z][a-z0-9_]{0,31}`, and `params`, at most 16 of them, and no other member."""
+    if not isinstance(v, dict) or not set(v) <= _INSTANCE_KEYS:
+        return False
+    name, params = v.get("indicator"), v.get("params", {})
+    return (
+        isinstance(name, str)
+        and _INDICATOR.fullmatch(name) is not None
+        and isinstance(params, dict)
+        and len(params) <= _INSTANCE_PARAMS
+        and all(_param_value(p) for p in params.values())
+    )
+
+
+#: What one item of a list option is, by kind, as the registry declares it. A new list kind with no
+#: item check fails the target (KeyError in the bound check) and, in the PR lane,
+#: `test_the_options_bound_check_knows_every_option_kind_the_registry_declares`, until one is added.
+_ITEMS: Final[dict[str, Callable[[Any], bool]]] = {
+    "uuids": _text_item,
+    "symbols": _text_item,
+    "strings": _text_item,
+    "instances": _instance,
+}
+
+
 def _within(opt: topics.Opt, v: Any) -> bool:
     if opt.max_items is not None:
-        items = isinstance(v, list) and all(isinstance(x, str) and len(x) <= 64 for x in v)
-        return items and opt.min_items <= len(v) <= opt.max_items
+        item = _ITEMS[opt.kind]
+        return (
+            isinstance(v, list)
+            and opt.min_items <= len(v) <= opt.max_items
+            and all(item(x) for x in v)
+        )
     number = isinstance(v, int | float) and not isinstance(v, bool)
     if opt.choices:
         return (number or isinstance(v, str)) and v in opt.choices
@@ -485,19 +536,44 @@ def test_a_refused_option_names_an_option_or_opts_never_client_text(
     assert _refused(family, opts) == field
 
 
+_PARAMS_16: Final = {f"p{i}": i for i in range(16)}
+#: `indicators.instances` items (§13 `indicatorInstance`) the registry takes, and ones it refuses.
+_GOOD_INSTANCES: Final[list[Any]] = [
+    {"indicator": "rsi"},
+    {"indicator": "rsi", "params": {}},
+    {"indicator": "rsi", "params": {"n": 14, "k": 2.5, "on": True, "s": "x" * 64}},
+    {"indicator": "a" + "b_9" * 10 + "c", "params": _PARAMS_16},  # 32 characters, 16 params
+    {"indicator": "rsi", "params": {"n": 10**400}},  # an integer past a float's range
+]
+_BAD_INSTANCES: Final[list[Any]] = [
+    *(None, "rsi", ["rsi"], {}, {"params": {}}, {"indicator": 5}, {"indicator": "rsi", "x": 1}),
+    *(
+        {"indicator": name}
+        for name in ("", "Rsi", "rsI", "_rsi", "1rsi", "r.si", "rsi\n", "a" * 33)
+    ),
+    *({"indicator": "rsi", "params": p} for p in (None, [14], {**_PARAMS_16, "q": 1})),
+    *({"indicator": "rsi", "params": {"n": n}} for n in (None, [14], {"a": 1}, "x" * 65)),
+    *({"indicator": "rsi", "params": {"n": n}} for n in (float("nan"), float("inf"))),
+]
+
+
 @pytest.mark.parametrize(
     ("kind", "good", "bad"),
     [
         ("bool", [True, False], ["yes", 1, None]),
         ("str", ["atr:14", "x" * 24, "Ab:1"], ["", "a.b", "x" * 25, "1 2", 5]),
         ("decimal", ["1.5", "-0", "10", "0.001"], ["", "1e3", "1.", ".5", "--1", 1.5]),
+        ("instances", _GOOD_INSTANCES, _BAD_INSTANCES),
     ],
 )
-def test_options_with_no_list_size_or_range_are_bounded_by_their_kind(
+def test_options_are_bounded_by_the_grammar_of_their_kind(
     kind: str, good: list[Any], bad: list[Any]
 ) -> None:
     """Each option of these kinds takes what the kind's grammar says and refuses the rest, and the
-    fuzz target's bound for the kind (`_UNRANGED`) says the same."""
+    fuzz target's bound for the kind says the same: `_UNRANGED` for the value, or, for a list kind,
+    `_ITEMS` for each item (here, the one item of a list)."""
+    in_list = kind in _ITEMS
+    oracle = _ITEMS[kind] if in_list else _UNRANGED[kind]
     options = [
         (name, key)
         for name, family in sorted(topics.FAMILIES.items())
@@ -505,24 +581,37 @@ def test_options_with_no_list_size_or_range_are_bounded_by_their_kind(
         if opt.kind == kind
     ]
     assert options
-    wrong = [(n, k, v) for n, k in options for v in good if _refused(n, {k: v}) is not None]
-    wrong += [(n, k, v) for n, k in options for v in bad if _refused(n, {k: v}) != k]
+
+    def refused(name: str, key: str, value: Any) -> str | None:
+        return _refused(name, {key: [value] if in_list else value})
+
+    wrong = [(n, k, v) for n, k in options for v in good if refused(n, k, v) is not None]
+    wrong += [(n, k, v) for n, k in options for v in bad if refused(n, k, v) != k]
     assert wrong == []
-    assert all(_UNRANGED[kind](v) for v in good) and not any(_UNRANGED[kind](v) for v in bad)
+    assert all(oracle(v) for v in good) and not any(oracle(v) for v in bad)
 
 
 def test_the_options_bound_check_knows_every_option_kind_the_registry_declares() -> None:
-    """`_within` judges an option with no list size, choices or range by its kind alone, and raises
-    KeyError for a kind `_UNRANGED` lacks, which fails every example of the options target. A
-    registry change that adds such a kind fails here, in its own PR, not only in the nightly."""
+    """`_within` judges an option with no list size, choices or range by its kind alone
+    (`_UNRANGED`) and each item of a list option by its kind (`_ITEMS`), and raises KeyError for a
+    kind either table lacks, which fails every example of the options target. A registry change
+    that adds such a kind fails here, in its own PR, not only in the nightly."""
     lacking: list[tuple[str, str, str]] = []
     for name, family in sorted(topics.FAMILIES.items()):
         for key, opt in {**topics.UNIVERSAL, **family.options}.items():
             try:
-                _within(opt, None)
+                _within(opt, [None])  # a list option's item check runs on a value that is no item
             except KeyError:
                 lacking.append((name, key, opt.kind))
     assert lacking == []
+
+
+def test_the_options_oracle_accepts_the_instances_option_the_registry_accepts() -> None:
+    """`indicators.instances` is a list of `{indicator, params}` objects (§13 `indicatorInstance`),
+    not of strings: options the registry accepts for it are within what the oracle allows."""
+    opts = {"instances": [{"indicator": "rsi", "params": {"n": 14}}], "history": 10}
+    accepted = topics.validate_options(topics.FAMILIES["indicators"], opts)
+    assert _options_within(["indicators", opts], accepted)
 
 
 @pytest.mark.parametrize(

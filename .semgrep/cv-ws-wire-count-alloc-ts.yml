@@ -43,7 +43,8 @@ rules:
         - docs/plan/23-ws-protocol.md section 3.4
         - docs/security/threat-models/E17-ws-gateway.md section 9
     pattern-sources:
-      # 16-, 32- and 64-bit reads: an 8-bit value cannot size an unbounded allocation.
+      # 16-, 32- and 64-bit reads: an 8-bit value is at most 255, so it cannot size a large
+      # allocation.
       - patterns:
           - pattern: $V.$GET(...)
           - metavariable-regex:

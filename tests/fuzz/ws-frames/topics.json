@@ -21,6 +21,7 @@
     "footprint.BTCUSDT.tick.1000",
     "footprint.BTCUSDT.time.1",
     "footprint.BTCUSDT.volume.100",
+    "indicators.BTCUSDT.time.5",
     "heatmap.BTCUSDT",
     "profile.BTCUSDT.delta",
     "profile.BTCUSDT.tpo",

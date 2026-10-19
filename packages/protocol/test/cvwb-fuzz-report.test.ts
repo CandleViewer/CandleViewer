@@ -83,6 +83,7 @@ it("a failing input reaches no report", { timeout: 60_000 }, () => {
     CI: "true",
     NO_COLOR: "1",
     CV_FUZZ_EXAMPLES: "200",
+    CV_FUZZ_SECONDS: "0", // the example count, whatever time box this run's shell exports
     CV_FUZZ_SEED: String(SEED),
     CV_FUZZ_ARTIFACT_DIR: join(scratch, "out"),
     PLANTED_LOG: join(scratch, "seen.jsonl"),
