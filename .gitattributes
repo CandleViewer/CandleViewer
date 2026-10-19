@@ -28,3 +28,6 @@ packages/fixtures/golden/policy/*.json                      text eol=lf linguist
 services/api/candleviewer/auth/generated_permissions.py    text eol=lf linguist-generated=true
 services/api/candleviewer/auth/rbac_seed.json              text eol=lf linguist-generated=true
 
+# E13-T02: indicator golden vectors, written by `CV_REGEN_GOLDEN=1 pytest
+# tests/unit/orderflow/indicators/test_golden_vectors.py` (json.dumps + LF) and byte-checked by it.
+packages/fixtures/golden/indicators/** text eol=lf linguist-generated=true

@@ -46,6 +46,17 @@ before commit.
 - `golden/bigtrade/` — E22-T04 big-trade golden (trades input, expected events for three
   configurations, `algo_version`). Provenance, deviation (2.99 h window, not a symbol-day) and
   regeneration (needs an `ALGO_VERSION` bump): see `golden/bigtrade/README.md`.
+- `golden/indicators/` — E13-T02 indicator-kernel golden vectors: densified input bars
+  (`inputs_*.jsonl`), per-case kernel float64 outputs and exact-reference values
+  (`vectors_*.jsonl`), `spec_hash_vectors.json` and `manifest.json` (sha256, build versions,
+  tolerance), read by the Python kernel tests, the TS worker mirror (E13-T01) and the parity pack
+  (E13-Q05). Sources: `bybit/2026-10-05/rest/kline_BTCUSDT_1_page{0,1,2}.json` (450 1m klines,
+  bars 200-214 removed and refilled by `densify()`), `golden/bars/time_bars_BTCUSDT.jsonl` (1m)
+  and a seeded offline synthetic day; date 2026-10-05; symbol BTCUSDT; env: public market data,
+  no account data; redaction: derived output of already-redacted fixtures, no identifiers. No
+  recorded symbol-day exists yet (exception #1778 A). Regenerate with
+  `CV_REGEN_GOLDEN=1 pytest tests/unit/orderflow/indicators/test_golden_vectors.py` and review
+  the diff; a changed kernel output needs that kernel's `build_version` bumped.
 
 ## Scripts
 

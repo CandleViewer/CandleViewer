@@ -1,0 +1,35 @@
+{
+  "$note": "GENERATED - do not hand-edit. A kernel diff means its operation order changed: bump that kernel's build_version and regenerate.",
+  "build_versions": {
+    "adx": 1,
+    "atr": 1,
+    "cvd": 1,
+    "delta": 1,
+    "ema": 1,
+    "rsi": 1,
+    "sma": 1,
+    "volume": 1,
+    "vwap": 1,
+    "zigzag": 1
+  },
+  "files": {
+    "inputs_kline_gap.jsonl": "0c20184746ec19027962266d6798ce026585aa666a25a038cdff5b386a6b76ef",
+    "inputs_synthetic_day.jsonl": "fd71dc05acee46b45440da5115428b64f6fbe4a81374aafb20c957593899cde9",
+    "inputs_tape_1m.jsonl": "ffa1b1c963dbd183a14aba834f6d3147571301130ea05c848e5dd89b2deaaae0",
+    "spec_hash_vectors.json": "31d50a456f87e162e48035bb5251acabf34192caf0031cbd8e6c7b1b16a497d4",
+    "vectors_kline_gap.jsonl": "519f027fa9d123bc39eb30a8dedfc77ec6bca508f3bbd62812d35d4f413baef0",
+    "vectors_synthetic_day.jsonl": "5dc16bdeddb20b9e1d8debf8b26b17f4346ab265bc68554023b627c830e6965f",
+    "vectors_tape_1m.jsonl": "34e1b92c706f8a382ad0c9a1564db705efe5758f6689bce8e72e68d64dc61fad"
+  },
+  "indicator_spec_version": 1,
+  "inputs": {
+    "kline_gap": "packages/fixtures/bybit/2026-10-05/rest/kline_BTCUSDT_1_page{0,1,2}.json: 450 BTCUSDT 1m klines (public market data, documented-shape capture, exception #1778 A), read by the production page parser; bars 200-214 removed and refilled by BarSeries.densify() (15 synthetic bars). No aggressor split: delta is 0.",
+    "synthetic_day": "tests/unit/orderflow/indicators/_golden.py synthetic_day(), seed 20261019: 1,440 1m slots from 2026-10-05T12:00Z, session anchor 08:00 UTC, gaps of 1, 7 and 30 bars refilled by densify(), zero-volume bars, flat runs, an outside bar.",
+    "tape_1m": "packages/fixtures/golden/bars/time_bars_BTCUSDT.jsonl, spec 1m: 180 tape-built BTCUSDT bars with aggressor delta (E12-S01 golden; no gap)."
+  },
+  "kernel_values": "binary64 shortest round-trip strings (Python repr); compare after parsing to binary64, bit for bit, -0 distinct from 0",
+  "reference_values": "exact reference (tests/unit/orderflow/indicators/reference.py) rounded to 20 significant digits",
+  "regenerate": "cd services/api && CV_REGEN_GOLDEN=1 pytest tests/unit/orderflow/indicators/test_golden_vectors.py",
+  "state_version": 1,
+  "tolerance": "abs(kernel - reference) <= 1e-8 * max(1, abs(reference)); None positions equal"
+}

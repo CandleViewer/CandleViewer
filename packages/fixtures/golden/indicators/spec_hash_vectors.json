@@ -1,0 +1,194 @@
+{
+  "$note": "GENERATED - do not hand-edit. Regenerate with `cd services/api && CV_REGEN_GOLDEN=1 pytest tests/unit/orderflow/indicators/test_golden_vectors.py`. A diff here moves every indicator instance, cache and metric key: bump INDICATOR_SPEC_VERSION.",
+  "indicator_spec_version": 1,
+  "vectors": [
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"close\",\"v\":1}",
+      "indicator": "ema",
+      "note": "ema(21) on 1m",
+      "params": {
+        "n": 21
+      },
+      "source": "close",
+      "spec_hash": "f6199d1f31a4e6417c895787a27e08e1462d42c3fac2a443501971ac8a20fa5d"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"close\",\"v\":1}",
+      "indicator": "ema",
+      "note": "ema(21.0): the same identity as ema(21)",
+      "params": {
+        "n": 21.0
+      },
+      "source": "close",
+      "spec_hash": "f6199d1f31a4e6417c895787a27e08e1462d42c3fac2a443501971ac8a20fa5d"
+    },
+    {
+      "bar_spec_hash": "243a2e966460a213138db11e49fe6b6b2ca7f7c8d994e8f05384c0f6c5bfd88f",
+      "canonical_json": "{\"bar_spec_hash\":\"243a2e966460a213138db11e49fe6b6b2ca7f7c8d994e8f05384c0f6c5bfd88f\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"close\",\"v\":1}",
+      "indicator": "ema",
+      "note": "ema(21) on 5m: another bar spec",
+      "params": {
+        "n": 21
+      },
+      "source": "close",
+      "spec_hash": "614f5ddb7c8a037efc0964bc1427bcac913012f0c212e848b5f5ec8595a83a81"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"sma\",\"params\":{\"n\":\"20\"},\"source\":\"close\",\"v\":1}",
+      "indicator": "sma",
+      "note": "sma(20)",
+      "params": {
+        "n": 20
+      },
+      "source": "close",
+      "spec_hash": "8701251ee90a6d7131cddf3352dc64ed701f488be2f9df08335da6658a580864"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"rsi\",\"params\":{\"n\":\"14\"},\"source\":\"close\",\"v\":1}",
+      "indicator": "rsi",
+      "note": "rsi(14)",
+      "params": {
+        "n": 14
+      },
+      "source": "close",
+      "spec_hash": "706c3bd4a8763a33c6f5ed7e5dc4df46584c57b0db17d893a2ca94c932615a16"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"atr\",\"params\":{\"n\":\"14\"},\"source\":null,\"v\":1}",
+      "indicator": "atr",
+      "note": "atr(14): fixed fields, source null",
+      "params": {
+        "n": 14
+      },
+      "source": null,
+      "spec_hash": "5c9a57c38b3500f0e2087b505301a5d82e8ef907a30a2e7f243a6d4b36bd3061"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"adx\",\"params\":{\"n\":\"14\"},\"source\":null,\"v\":1}",
+      "indicator": "adx",
+      "note": "adx(14)",
+      "params": {
+        "n": 14
+      },
+      "source": null,
+      "spec_hash": "1eb1e5066eca49b550b8f5d447cca8446c8b80d78b4b2b46e9dcb83e7348c600"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"vwap\",\"params\":{\"anchor\":\"session\"},\"source\":\"hlc3\",\"v\":1}",
+      "indicator": "vwap",
+      "note": "vwap(session)",
+      "params": {
+        "anchor": "session"
+      },
+      "source": "hlc3",
+      "spec_hash": "9e126b80fba3330fbb92e3b932142193afd4f9197ba55e178ef1d5fab4da9a41"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"cvd\",\"params\":{\"anchor\":\"session\"},\"source\":null,\"v\":1}",
+      "indicator": "cvd",
+      "note": "cvd(session)",
+      "params": {
+        "anchor": "session"
+      },
+      "source": null,
+      "spec_hash": "43428188047a58f935aeaaf23b10bab5ce166a7014842d81c6c683ac62bb042e"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"cvd\",\"params\":{\"anchor\":\"utc_day\"},\"source\":null,\"v\":1}",
+      "indicator": "cvd",
+      "note": "cvd(utc_day)",
+      "params": {
+        "anchor": "utc_day"
+      },
+      "source": null,
+      "spec_hash": "b5d93bcc4456aa592790e915822284b67479c50c0a6661ea0907c7ea53cfdeb3"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"volume\",\"params\":{},\"source\":null,\"v\":1}",
+      "indicator": "volume",
+      "note": "volume: no params",
+      "params": {},
+      "source": null,
+      "spec_hash": "c677c1a94aa0cb33e045938bee6be4e46a7eb88a303abc01c392b78153bab825"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"delta\",\"params\":{},\"source\":null,\"v\":1}",
+      "indicator": "delta",
+      "note": "delta: no params",
+      "params": {},
+      "source": null,
+      "spec_hash": "3413ef9561359c4570e3b2c6d232838cee84aba6a21c91926dd5f437890af273"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0\"},\"source\":null,\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, 0)",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 0
+      },
+      "source": null,
+      "spec_hash": "53268bb357669014fb5e54d2756fdd34483fce3d14ec83e55511d9d2cacfff69"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0\"},\"source\":null,\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag, keys in another order",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 0
+      },
+      "source": null,
+      "spec_hash": "53268bb357669014fb5e54d2756fdd34483fce3d14ec83e55511d9d2cacfff69"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0.1\"},\"source\":null,\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, 0.1)",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 0.1
+      },
+      "source": null,
+      "spec_hash": "8c4beee098bdd4508ac07ed9100da7c27db0ce819e6af7f450b8920dabefe286"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0.0000001\"},\"source\":null,\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, 1e-7): no exponent",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 1e-07
+      },
+      "source": null,
+      "spec_hash": "f86be12dfd3797ba143dab3492dfdc32fffcc2e411359b74d70279c14174e04d"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0\"},\"source\":null,\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, -0.0): negative zero is 0",
+      "params": {
+        "depth": 5,
+        "deviation_pct": -0.0
+      },
+      "source": null,
+      "spec_hash": "53268bb357669014fb5e54d2756fdd34483fce3d14ec83e55511d9d2cacfff69"
+    }
+  ]
+}
