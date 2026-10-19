@@ -112,6 +112,7 @@ from candleviewer.auth.models import (
     SessionRecord,
     SessionView,
     UserRecord,
+    UserStatus,
 )
 from candleviewer.auth.recovery_codes import RECOVERY_CODE_COUNT
 
@@ -472,14 +473,12 @@ def make_auth_router(
         user, read now. Only the bearer names the user (SR-026: no header and no query
         parameter can). A user who already has a confirmed method gets 409 (Q10: voluntary
         re-enrolment is not specified yet), and nothing changes."""
-        ready = _enrolment_ready(mfa=True)
-        if isinstance(ready, JSONResponse):
+        if isinstance(ready := _enrolment_ready(mfa=True), JSONResponse):
             return ready
         unauthenticated = _problem(
             401, _UNAUTHENTICATED, "authentication required", code="unauthenticated"
         )
-        token = _bearer(request)
-        if token is None:
+        if (token := _bearer(request)) is None:
             return unauthenticated
         try:
             record = await auth_service.sessions.authenticate_access_token(token, touch=True)
@@ -488,7 +487,7 @@ def make_auth_router(
         if (refusal := undeclared_query_refusal(request, frozenset())) is not None:
             return refusal  # SR-026: before the user is read or anything changes
         user = await auth_service.find_user(str(record.user_id))
-        if user is None:
+        if user is None or user.status is UserStatus.DISABLED:  # gone or disabled since (#2911)
             return unauthenticated
         if user.mfa_methods:
             detail = "a confirmed MFA method exists; re-enrolment is not available yet"
