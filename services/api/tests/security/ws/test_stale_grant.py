@@ -3,9 +3,9 @@ queued frames are dropped before `permission_change` (23-ws-protocol.md §9.5). 
 the owner withdraws B (the grant store, then the registry's notice) while B's snapshot and deltas
 are queued behind a parked writer, while a `sub` awaits its upstream, during the first `auth` and
 during an in-place re-`auth`: with the backpressure flag off (today's default) and on, under both
-subprotocols. Each test asserts what its AC row lists (the PR body's table): the announcing frames
-in order, each `revoked` stamped at the withdrawal on the fake clock (`0 <= ts - at_ms <= 1000`),
-and no `snap` or `d` naming B from the withdrawal on.
+subprotocols. Each test asserts what the AC-13 and AC-14 rows of the threat model's §7 list: the
+announcing frames in order, each `revoked` stamped at the withdrawal on the fake clock
+(`0 <= ts - at_ms <= 1000`), and no `snap` or `d` naming B from the withdrawal on.
 """
 
 from __future__ import annotations
@@ -59,8 +59,11 @@ class Held:
         monkeypatch.setattr(gateway._Connection, "send_payload", held)
 
     def hold(self, c: Client, frame: dict[str, Any]) -> None:
-        """Send `frame`; the writer parks in its reply. A `sub`'s `sub_ok` is queued with no await
-        before the snapshot that follows it, so the snapshot is queued, not sent."""
+        """Send `frame`; the writer parks in the first frame it sends after this, the `sub_ok` of a
+        `sub`. Whatever is pushed behind that frame (the snapshot, then deltas), in however many
+        turns of the loop, is queued, not sent. One hold per `Held`: after a `release` the event the
+        writer waits on stays set, so a second would not park."""
+        assert not self.parked.is_set(), "a Held holds once"
         self._armed = True
         c.send(frame)
         assert self.parked.wait(5.0)
@@ -91,9 +94,9 @@ def since(c: Client, mark: int) -> list[dict[str, Any]]:
 
 
 def _announced(got: list[dict[str, Any]], at_ms: int) -> None:
-    """`got` is everything received from the withdrawal on. It is announced by `permission_change`
-    (A alone) and `revoked`, each stamped at the withdrawal on the fake clock, `0 <= ts - at_ms <=
-    1000`; and no `snap` or `d` anywhere in `got` names B, so none follows the first
+    """`got` is everything received from the withdrawal on. It holds a `permission_change` (A alone)
+    and `revoked` frames; each `revoked` is stamped at the withdrawal on the fake clock, `0 <= ts -
+    at_ms <= 1000`; and no `snap` or `d` anywhere in `got` names B, so none follows the first
     `permission_change`."""
     kinds = [f["t"] for f in got]
     assert "permission_change" in kinds
@@ -115,12 +118,17 @@ def test_x02_ac_13_a_withdrawn_grants_queued_frames_are_dropped_before_permissio
 ) -> None:
     m1, held, kept = world.login("m1", ACC_A, ACC_B), Held(world, monkeypatch), ACC_A in named
     revoked = delta("cv_ws_revoked_total", reason="account_scope_changed")
+    withdrawn = delta("cv_ws_overflow_total", reason="withdrawn")  # §9.5: per queued frame purged
+    # B's snapshot and two deltas are in the queue at the withdrawal; with the flag on, a throttled
+    # family's second delta waits in its pacing window instead, which the change discards uncounted
+    queued = 2 if flag and family == "positions" else 3
     with raw_connect(world) as c:
         authenticated(c, m1)
         held.hold(c, {"t": "sub", "id": "s", "p": {"topics": [topic(family, *named)]}})
         assert [publish(world, family, ACC_B) for _ in range(2)] == [1, 1]  # behind the snapshot
         mark, at_ms = len(c.seen), world.clock.wall_ms()
         world.call(partial(world.amended, m1, drop=(ACC_B,)))
+        assert withdrawn() == queued  # the frames were queued, and the change purged each of them
         assert [publish(world, family, a) for a in (ACC_B, ACC_A)] == [0, kept]  # B routes nowhere
         held.release()
         flushed(c)
@@ -189,6 +197,8 @@ def test_x02_ac_13_a_sub_awaiting_its_upstream_when_b_is_withdrawn_is_served_wit
         world.call(sink.go.set)
         flushed(c)
         assert [publish(world, "positions", a) for a in (ACC_B, ACC_A)] == [0, kept]
+        world.clock.now += 5.0  # past the pacing window the narrowed topic's snapshot opened
+        c.send({"t": "ping", "id": "tick"})  # the writer's turn that sends A's delta precedes this
         flushed(c)
     got = since(c, mark)
     _announced(got, at_ms)
@@ -200,6 +210,8 @@ def test_x02_ac_13_a_sub_awaiting_its_upstream_when_b_is_withdrawn_is_served_wit
         assert positions["effective"]["exchange_account_ids"] == [str(ACC_A)]
     else:  # ended before its reply: refused, as a `sub` of B is now
         assert positions["error"]["code"] == "account_scope_denied"
+    deltas = [f for f in got if f["t"] == "d"]  # the narrowed topic goes on for A: its frame, sent
+    assert len(deltas) == (1 if kept else 0) and naming(deltas, ACC_A) == deltas
     assert len(world.audit.of("ws.subscription.revoked")) == 1 and revoked() == 1
     assert world.audit.of("ws.subscribe.denied") == []  # the change's row records it (23 §5.2)
 
