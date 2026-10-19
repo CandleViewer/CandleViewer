@@ -21,6 +21,11 @@ def test_redacts_api_secret_by_exact_name() -> None:
     assert redacted_value == "[redacted:key-name]"
 
 
+def test_redacts_access_token_and_token_by_exact_name() -> None:
+    out = _redact_mapping({"access_token": "short-1", "token": "short-2"})
+    assert out == {"access_token": "[redacted:key-name]", "token": "[redacted:key-name]"}
+
+
 def test_redacts_generic_secret_key() -> None:
     out = _redact_mapping({"secret": "CANARY-2"})
     assert "CANARY-2" not in str(out)

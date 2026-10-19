@@ -17,6 +17,9 @@ entrypoints). Wires:
   `RedactionFilter` attached directly to the handler — the ProcessorFormatter
   path only runs for stdlib records that reach that handler, so the filter is
   the actual backstop for anything that formats its own message.
+- An `UpgradeLineFilter` on the `uvicorn.error` logger, ahead of every handler: the log lines of a
+  WebSocket upgrade show the path of its request target only, and a header line shows a marker
+  for the value of a header named as a secret. `reset_logging()` removes it.
 """
 
 from __future__ import annotations
@@ -26,13 +29,19 @@ import contextlib
 import logging
 import logging.handlers
 import queue
+import re
 import sys
 from typing import Any, Final
 
 import structlog
 from structlog.types import EventDict, Processor
 
-from candleviewer.observability.redaction import _redact_mapping, _redact_value
+from candleviewer.observability.redaction import (
+    _KEY_NAME_MARKER,
+    _is_redact_key,
+    _redact_mapping,
+    _redact_value,
+)
 
 _VALID_LEVELS: Final[frozenset[str]] = frozenset({"debug", "info", "warning", "error", "critical"})
 
@@ -121,6 +130,52 @@ class RedactionFilter(logging.Filter):
             record.exc_info = None
         if record.exc_text:
             record.exc_text = _redact_value(record.exc_text, depth=0)
+
+
+#: Lines of `uvicorn.error` that name the request target of a WebSocket upgrade, by how their
+#: format starts; the target is the second argument. They are uvicorn's accepted, refused and
+#: HTTP-response lines (INFO) and the websockets server's request line (DEBUG).
+#: A changed library format leaves its line uncut: the real-server tests are the guard.
+_TARGET_LINES: Final = ('%s - "WebSocket %s"', "< %s %s %s")
+#: The websockets server's request and response header lines (DEBUG): the name, then the value.
+_HEADER_LINES: Final = ("< %s: %s", "> %s: %s")
+#: The first character that is not part of a path: anything but unreserved characters and `/`.
+#: uvicorn writes a target percent-encoded, so an encoded `?`, `;` or `#` ends the path too.
+_NOT_PATH = re.compile(r"[^A-Za-z0-9/._~-]")
+#: The scheme and authority in front of the path of an absolute-form target (`ws://host/ws`);
+#: uvicorn writes its colon as `%3A`.
+_SCHEME_AUTHORITY = re.compile(r"\A[A-Za-z][A-Za-z0-9+.-]*(?::|%3[Aa])//[^/?#]*")
+
+
+class UpgradeLineFilter(logging.Filter):
+    """Log lines of a WebSocket upgrade, on `uvicorn.error`, show the path of its target only.
+
+    The gateway reads no query string (`23-ws-protocol.md` §4.3). In the `_TARGET_LINES` the target
+    is cut to its path: a query string, a path parameter, a fragment and their percent-encoded
+    spellings end it, and the scheme and host of an absolute-form target are dropped. In the
+    `_HEADER_LINES` the value of a header named as a secret (`_REDACT_KEYS`) is replaced by its
+    marker. Any other argument is left as it is. On the logger, the filter runs before every
+    handler, so stdout and the support bundle's buffer get the same line.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg, args = record.msg, record.args
+        if isinstance(msg, str) and isinstance(args, tuple) and len(args) > 1:
+            if msg.startswith(_TARGET_LINES) and isinstance(args[1], str):
+                record.args = (args[0], _path_of(args[1]), *args[2:])
+            elif msg in _HEADER_LINES and _is_redact_key(args[0]):
+                record.args = (args[0], _KEY_NAME_MARKER, *args[2:])
+        return True
+
+
+def _path_of(target: str) -> str:
+    """The leading run of path characters of a request target, after its authority if it has one:
+    `/ws?a=b`, `/ws%3Fa=b`, `/ws;a=b`, `/ws#a` and `http://host/ws?a=b` are all `/ws`."""
+    return _NOT_PATH.split(_SCHEME_AUTHORITY.sub("", target, count=1), maxsplit=1)[0]
+
+
+_UPGRADE_LOGGER: Final = "uvicorn.error"
+_UPGRADE_FILTER: Final = UpgradeLineFilter()
 
 
 def _redaction_processor(logger: object, method_name: str, event_dict: EventDict) -> EventDict:
@@ -227,6 +282,7 @@ def configure_logging(
     root = logging.getLogger()
     root.handlers = [queue_handler]
     root.setLevel(getattr(logging, level_name.upper()))
+    logging.getLogger(_UPGRADE_LOGGER).addFilter(_UPGRADE_FILTER)  # the one instance, once
 
     # `env` is bound onto every subsequent structlog call via contextvars so
     # every log line carries it without every call site passing it manually.
@@ -235,7 +291,8 @@ def configure_logging(
 
 
 def reset_logging() -> None:
-    """Undo `configure_logging()`: stop the listener, drop its root handler, reset structlog.
+    """Undo `configure_logging()`: stop the listener, drop its root handler and the upgrade-line
+    filter, reset structlog.
 
     Test-isolation helper (C-13.7); safe to call when nothing was configured.
     """
@@ -246,5 +303,6 @@ def reset_logging() -> None:
     root = logging.getLogger()
     root.handlers = [h for h in root.handlers if not isinstance(h, _RawQueueHandler)]
     root.setLevel(logging.WARNING)
+    logging.getLogger(_UPGRADE_LOGGER).removeFilter(_UPGRADE_FILTER)
     structlog.reset_defaults()
     structlog.contextvars.clear_contextvars()

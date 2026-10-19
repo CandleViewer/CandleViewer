@@ -45,8 +45,13 @@ _REDACT_KEYS: Final[frozenset[str]] = frozenset(
         "recovery_code",
         "session",
         "csrf",
+        "access_token",
+        "token",
     }
 )
+
+#: What the value of a key named in `_REDACT_KEYS` is replaced by.
+_KEY_NAME_MARKER: Final[str] = "[redacted:key-name]"
 
 #: Maximum string length scanned for value-shape patterns. Longer values are
 #: truncated with a marker *before* scanning so one huge payload cannot stall
@@ -136,7 +141,7 @@ def _redact_mapping(mapping: dict[Any, Any], depth: int = 0) -> dict[Any, Any]:
     out: dict[Any, Any] = {}
     for key, value in mapping.items():
         if _is_redact_key(key):
-            out[key] = "[redacted:key-name]"
+            out[key] = _KEY_NAME_MARKER
         else:
             out[key] = _redact_value(value, depth)
     return out

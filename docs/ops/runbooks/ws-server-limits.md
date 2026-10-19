@@ -64,7 +64,10 @@ proxy its own address where the deployment allows it. Regression tests:
 - **Access lines.** The HTTP access line is off whenever the `/metrics` listener runs
   (`CV_METRICS_ENABLED`, on by default): the listener's `access_log=False` clears the shared
   `uvicorn.access` logger. WebSocket handshake lines (`"WebSocket /ws" [accepted]`) are logged on
-  `uvicorn.error` at INFO and stay on.
+  `uvicorn.error` at INFO and stay on. A filter on that logger (`UpgradeLineFilter`) cuts the
+  request target in those lines and in the websockets server's DEBUG request line to its path, and
+  shows a marker for the value of a DEBUG header line named as a secret, at every level, on stdout
+  and in the support bundle's buffer; the HTTP access line is unchanged.
 - **Process ids.** A six-digit process id turns `Started server process [N]` and
   `Finished server process [N]` into a single `[redacted:totp-shape]` marker, because six digits
   is the shape of a TOTP code. PID 1, as in the container, avoids it.
