@@ -80,9 +80,11 @@ _APIKEY_RE = r"\b[A-Za-z0-9]{18,36}\b"
 _TOTP_RE = r"\b\d{6}\b"
 #: `secrets.token_urlsafe(32)` invite token (43 chars; sits in URL path `/invites/<token>`; C-12.6).
 _INVITE_SHAPE_RE = r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
+#: E42-T05 BK-11: a backup fetch's path, whatever its token's shape (defence in depth, AD-I04).
+_DOWNLOAD_PATH_RE = r"/admin/backups/[^/]*/download/[^/\s]"  # an empty backupId too
 _VALUE_PATTERN = re.compile(
     f"(?P<jwt>{_JWT_SCAN_RE})|(?P<apikey>{_APIKEY_RE})|(?P<invite>{_INVITE_SHAPE_RE})"
-    f"|(?P<totp>{_TOTP_RE})"
+    f"|(?P<totp>{_TOTP_RE})|(?P<download>{_DOWNLOAD_PATH_RE})"
 )
 
 _REASON_BY_GROUP: Final[dict[str, str]] = {
@@ -90,6 +92,7 @@ _REASON_BY_GROUP: Final[dict[str, str]] = {
     "apikey": "key-shape",
     "totp": "totp-shape",
     "invite": "invite-token-shape",
+    "download": "download-path",
 }
 
 

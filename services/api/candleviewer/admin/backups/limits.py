@@ -56,3 +56,5 @@ REMOVE_BUDGET_S: Final = 10.0  # the engine's `remove` of one artefact: a backst
 FETCHES_PER_HOUR: Final = 10
 #: A fetch's reads of its link's session family and its user's permissions, together.
 FETCH_READ_BUDGET_S: Final = 2.0
+#: One read of a served artefact (a 1 MiB chunk): past it the download is cut.
+STREAM_READ_BUDGET_S: Final = 30.0

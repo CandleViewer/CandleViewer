@@ -20,6 +20,7 @@ around a tripped gate by simply being on-mesh.
 
 from __future__ import annotations
 
+import re
 from ipaddress import IPv4Address, IPv6Address, ip_address
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -33,6 +34,9 @@ from .cidr import CidrAllowList
 RESOLVED_SOURCE_KEY = "cv_mesh_source"
 
 _GENERIC_403_BODY = b'{"detail":"Forbidden"}'
+#: `downloadBackup`'s token is a credential in its path: the record keeps the route template
+#: (the token as Starlette routes it, `[^/]+`, a decoded newline included; the id may be empty).
+_FETCH_PATH = re.compile(r"(/admin/backups/)[^/]*(/download/)[^/]+")
 
 
 def _address(text: str) -> IPv4Address | IPv6Address:
@@ -90,7 +94,7 @@ class MeshOnlyMiddleware:
             "net.off_mesh_request",
             severity="warning",
             source_address=source,
-            path=scope.get("path"),
+            path=_FETCH_PATH.sub(r"\1{backupId}\2{token}", str(scope.get("path", ""))),
             scope_type=scope["type"],
         )
         await self._reject(scope, send)

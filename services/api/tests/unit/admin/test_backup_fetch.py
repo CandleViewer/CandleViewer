@@ -117,7 +117,11 @@ class Fx:
 
 
 async def _fx(
-    *, permissions: tuple[str, ...] = ("backups:read",), fetched: int = 0, **kw: Any
+    *,
+    permissions: tuple[str, ...] = ("backups:read",),
+    fetched: int = 0,
+    rows: Any = None,
+    **kw: Any,
 ) -> Fx:
     clock, sessions = Clock(), FakeSessionRepository()
     await sessions.create_session(session(SID))
@@ -125,7 +129,7 @@ async def _fx(
     for _ in range(fetched):
         hourly.record_start(str(WHO.user_id))
     ports = FetchPorts(sessions, Identity(*permissions), hourly, now=clock)
-    w = world([row(1)], links=DownloadLinks(now=clock), fetch=ports, **kw)
+    w = world(rows or [row(1)], links=DownloadLinks(now=clock), fetch=ports, **kw)
     return Fx(w, sessions, hourly, clock)
 
 

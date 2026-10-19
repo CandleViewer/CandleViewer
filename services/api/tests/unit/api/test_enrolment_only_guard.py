@@ -59,8 +59,8 @@ _OPERATIONS = frozenset(declared_operations(_SPEC))
 _SESSIONLESS = sessionless_operations(_SPEC)
 _MATRIX = Path(__file__).resolve().parents[2] / "contract" / "rbac" / "matrix.yaml"
 #: Rows the contract serves anonymously but the matrix marks `public: false`; each names its issue.
-#: #3419 made the backup download token-addressed; its row and enrolment-only bearer wait on #3500.
-_CONTRACT_AHEAD_OF_MATRIX = {"GET /admin/backups/{backupId}/download/{token}": "#3500"}
+#: None is left: E42-T05 BK-11 made the token-addressed backup download's row public (#3500).
+_CONTRACT_AHEAD_OF_MATRIX: dict[str, str] = {}
 _VERDICTS = {
     "enrolling": SessionClass.ENROLMENT_ONLY,
     "full": SessionClass.FULL,

@@ -222,6 +222,14 @@ class BackupDownloads:
         self._resolve_budget_s, self._record_budget_s = resolve_budget_s, record_budget_s
         self._fetch, self._fetch_budget_s = fetch, fetch_budget_s
 
+    def with_fetch(self, fetch: FetchPorts) -> BackupDownloads:
+        """This service with the fetch's ports: the links, catalogue and artefacts shared."""
+        return BackupDownloads(
+            self._catalogue, self._reader, self._links, gate=self._gate, audit=self._audit,
+            resolve_budget_s=self._resolve_budget_s, record_budget_s=self._record_budget_s,
+            fetch=fetch, fetch_budget_s=self._fetch_budget_s,
+        )  # fmt: skip
+
     async def issue(
         self, backup_id: UUID, who: AuditPrincipal, challenge_id: UUID, write_ahead: WriteAhead
     ) -> tuple[str, DownloadLink]:

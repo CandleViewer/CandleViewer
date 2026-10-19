@@ -2,8 +2,8 @@
 positions. BK-4: the catalogue reads answer `501` on every backend until `BACKUPS_CATALOGUED` is
 set (Q3); once it is, what each backend serves. BK-8: a run answers `501` until an engine is
 wired, through the app's one admission gate. BK-10: the link issue needs that and a backup root,
-and then reads artefacts there. BK-12: a delete answers `501` until an artefact remover is wired,
-on the same gate; the remover's port states its bounds."""
+and then reads artefacts there. BK-11: the fetch, over the issue's links. BK-12: a delete answers
+`501` until an artefact remover is wired, on the same gate; the remover's port states its bounds."""
 
 from __future__ import annotations
 
@@ -16,6 +16,10 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+from starlette.types import ASGIApp, Receive, Scope, Send
 from structlog.testing import capture_logs
 
 import candleviewer.app as app_module
@@ -28,8 +32,10 @@ from candleviewer.admin.backups.metrics import BackupFreshness
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobErrorCode, OpenPositions
 from candleviewer.admin.backups.rows import LostRuns
 from candleviewer.admin.errors import OpsNotWired, PositionsUnknownError
+from candleviewer.api.admin_backup_download import NoStoreNoReferrer
 from candleviewer.api.audit_limiter import AuditVerifyLimiter
 from candleviewer.api.deny_by_default import served_operations
+from candleviewer.api.idle_lock import idle_locked_problem
 from candleviewer.api.recorder_admin import AdminJobStore
 from candleviewer.app import create_app
 from candleviewer.backups_wiring import AdminJobRunner, UnknownOpenPositions
@@ -362,3 +368,111 @@ def test_create_app_builds_one_admission_gate_and_the_delete_takes_it(
     assert built == [kwargs["gate"] for kwargs in seen] == [app.state.backups_gate]
     assert seen[0]["freshness"] is app.state.backup_freshness is not None
     assert ("DELETE", "/admin/backups/{backupId}") in served_operations(app)
+
+
+@pytest.mark.usefixtures("catalogued")
+def test_the_fetch_is_wired_over_the_issue_on_the_real_backend_with_an_identity(
+    tmp_path: Path, engines: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows: Any = object()
+    built: list[Any] = []
+
+    def repository(engine: Any, _make: Any) -> Any:
+        built.append(engine)
+        return rows
+
+    monkeypatch.setattr(wiring, "SqlAlchemySessionRepository", repository)
+    identity: Any = object()
+    real = Settings(backup_root=str(tmp_path), storage_backend="real")
+    catalogue = BackupCatalogue(Store())
+    issue = wiring.build_backup_downloads(real, catalogue, gate=BackupJobGate(), audit=AuditSpy())
+    assert issue is not None
+    unwired = ((real, None, identity), (real, issue, None), (Settings(), issue, identity))
+    for settings, issuer, who in unwired:
+        assert (
+            wiring.build_backup_fetch(settings, issuer, identity=who, system_settings=None) is None
+        )
+    fetch = wiring.build_backup_fetch(real, issue, identity=identity, system_settings=None)
+    assert fetch is not None and fetch._fetch is not None
+    assert (fetch._links, fetch._catalogue) == (issue._links, issue._catalogue)
+    assert (fetch._fetch.sessions, fetch._fetch.identity, built) == (rows, identity, ["admin"])
+    assert isinstance(fetch._fetch.hourly, AuditVerifyLimiter)
+    assert fetch._fetch.hourly._rate == limits.FETCHES_PER_HOUR
+
+
+def test_create_app_mounts_the_fetch_over_the_issue_with_its_identity_and_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fetch is built over the issue's service with the app's identity provider (`501` until
+    wired), and its route resolves a sent bearer with the resolver the link issue uses."""
+    issue, identity = object(), object()
+    seen: dict[str, Any] = {}
+
+    def fetch(_settings: Any, given: Any, **kw: Any) -> None:
+        seen["fetch"] = (given, kw["identity"])
+
+    def spy(name: str, make: Callable[..., Any]) -> Callable[..., Any]:
+        def build(*args: Any, **kw: Any) -> Any:
+            seen[name] = kw["resolver"]
+            return make(*args, **kw)
+
+        return build
+
+    monkeypatch.setattr(app_module, "build_identity_provider", lambda _settings: identity)
+    monkeypatch.setattr(app_module, "build_backup_downloads", lambda *_a, **_k: issue)
+    monkeypatch.setattr(app_module, "build_backup_fetch", fetch)
+    for name in ("make_admin_backup_download_router", "make_admin_backup_links_router"):
+        monkeypatch.setattr(app_module, name, spy(name, getattr(app_module, name)))
+    app = create_app()
+    assert seen["fetch"] == (issue, identity)
+    resolver = seen["make_admin_backup_download_router"]
+    assert resolver is not None and resolver is seen["make_admin_backup_links_router"]
+    assert ("GET", "/admin/backups/{backupId}/download/{token}") in served_operations(app)
+
+
+class _LockedGate:  # the idle-lock gate's own answer to every request on the path
+    def __init__(self, app: ASGIApp, **_kw: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        await idle_locked_problem(None)(scope, receive, send)
+
+
+async def _enrolment_refusal(_request: Request, _call_next: Any) -> JSONResponse:
+    return JSONResponse({"code": "enrolment_only"}, 403)
+
+
+class _Failing:  # a wired fetch that fails: the server's error middleware answers 500
+    async def fetch(self, *_args: Any) -> Any:
+        raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize(
+    ("refusal", "status"),
+    [("mesh", 403), ("idle_lock", 401), ("enrolment", 403), ("error", 500)],
+)
+def test_every_answer_to_the_fetch_path_is_stamped_outside_the_pinned_guards(
+    monkeypatch: pytest.MonkeyPatch, refusal: str, status: int
+) -> None:
+    """Review decision 7: `NoStoreNoReferrer` wraps the whole stack, outside the user middleware
+    whose order #2421 and #2295 pin, so the mesh `403`, the idle-lock `401`, an enrolment-guard
+    refusal (a stand-in: the real guard passes the sessionless fetch) and a `500` are stamped."""
+    client = ("203.0.113.9", 5) if refusal == "mesh" else ("127.0.0.1", 50000)
+    if refusal == "idle_lock":
+        monkeypatch.setattr(app_module, "IdleLockMiddleware", _LockedGate)
+    elif refusal == "enrolment":
+        monkeypatch.setattr(
+            app_module, "make_enrolment_only_guard", lambda *_a, **_k: _enrolment_refusal
+        )
+    elif refusal == "error":
+        monkeypatch.setattr(app_module, "build_backup_fetch", lambda *_a, **_k: _Failing())
+    app = create_app()
+    stack: list[Any] = [m.cls for m in app.user_middleware]  # the pinned order, untouched
+    assert NoStoreNoReferrer not in stack
+    http = TestClient(app, client=client, raise_server_exceptions=False)
+    answer = http.get(f"/admin/backups/{uuid4()}/download/{'A' * 43}")
+    stamps = answer.headers.get("cache-control"), answer.headers.get("referrer-policy")
+    assert (answer.status_code, stamps) == (status, ("no-store", "no-referrer"))
