@@ -2,10 +2,12 @@
 
 Each test drives production code in-process (recorded corpus, fake clock, no network) and asserts
 the behaviour the E08 contracts promise. All three fail on main today, so they are strict xfails:
-the fix flips one to a failure and its PR removes the marker. Debriefs: `docs/qa/charters/`
-(E08-charter-1, -2, -3 and -4). Under the E08 severity rule (`qa/plans/e08-market-data-test-plan.md`
-section 0.1) wrong or old data with no visible signal is P0, so each was reported to the
-coordinator for filing; the reasons below name the finding until an issue number replaces it.
+the fix flips one to a failure and its PR removes the marker. Each xfail is limited to
+`AssertionError`, so a probe that a refactor breaks fails loudly instead of passing as expected.
+Debriefs: `docs/qa/charters/` (E08-charter-1, -2, -3 and -4). Under the E08 severity rule
+(`qa/plans/e08-market-data-test-plan.md` section 0.1) wrong or old data with no visible signal is
+P0, so each was reported to the coordinator for filing; the reasons below name the finding until
+an issue number replaces it.
 """
 
 from __future__ import annotations
@@ -61,6 +63,7 @@ def _book_stream(tick: dict[str, Decimal], clock: _Clock, desired: list[set[str]
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="E08-Q06 charter 1 finding F1 (reported for filing): a catalogue tick-size change "
     "on a live book applies later deltas on a second price grid, silently",
 )
@@ -99,6 +102,7 @@ async def test_f1_a_tick_size_change_never_puts_two_levels_on_one_price_of_a_liv
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="E08-Q06 charter 2 finding F2 (reported for filing): once a released book's grace "
     "runs out with no sync(), its frames are ignored and the frozen book is served as live",
 )
@@ -183,6 +187,7 @@ async def _settle(backfill: KlineBackfillService) -> None:
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason="E08-Q06 charter 3 finding F3 (reported for filing): a klines window after the "
     "venue's newest bar is cached as covered, so its bars are never fetched or flagged",
 )

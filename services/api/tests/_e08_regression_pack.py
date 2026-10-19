@@ -63,6 +63,9 @@ PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/unit/bars/test_production_factory.py",
     "tests/qa/test_e08_handshake.py",
     "tests/qa/test_e08_charter_findings.py",
+    # Cross-epic contract suites the handshake relies on instead of repeating them.
+    "tests/contract/ws/test_ws_topic_registry_as_built.py",
+    "tests/contract/test_openapi_conformance.py",
 )
 
 # `addopts` in pyproject.toml deselects these by default (nightly or wall-clock-budget lanes, and

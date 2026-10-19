@@ -1,18 +1,23 @@
-"""E08-Q06 cross-epic handshake checks (#283): the E08 contracts downstream epics build on.
+r"""E08-Q06 cross-epic handshake checks (#283): the E08 contracts downstream epics build on.
 
 E12 (bars), E17 (WS gateway), E22 (tape), E24 (derivatives) and E29 (OMS) start from these. Offline
-and in-process, so a downstream epic re-runs them at its start:
+and in-process, so a downstream epic re-runs them at its start, with the suites they rely on (all
+of them are in the E08 regression pack as well):
 
-    cd services/api && uv run pytest -p no:randomly --no-cov tests/qa/test_e08_handshake.py
+    cd services/api && uv run pytest -p no:randomly --no-cov tests/qa/test_e08_handshake.py \
+        tests/unit/exchange/test_market_data_port_spec.py \
+        tests/contract/ws/test_ws_topic_registry_as_built.py \
+        tests/contract/bybit/test_pipeline_read_surface.py \
+        tests/contract/test_market_klines_contract.py tests/contract/test_openapi_conformance.py
 
 Each check holds the code to the document that owns the contract. What another suite already pins
-is not repeated here, and `docs/qa/e08-signoff.md` lists those suites next to this file: the port
-method set (`tests/unit/exchange/test_market_data_port_spec.py`), the 23 §6.1 table against the
-topic registry (`tests/contract/ws/test_ws_topic_registry_as_built.py`), the trades, order book,
-ticker and klines bodies against the generated OpenAPI models
-(`tests/contract/bybit/test_pipeline_read_surface.py`,
+is not repeated here: the port method set (`tests/unit/exchange/test_market_data_port_spec.py`),
+the 23 §6.1 table against the topic registry
+(`tests/contract/ws/test_ws_topic_registry_as_built.py`), the trades, order book, ticker and klines
+bodies against the generated OpenAPI models (`tests/contract/bybit/test_pipeline_read_surface.py`,
 `tests/contract/test_market_klines_contract.py`) and served routes against declared operations
-(`tests/contract/test_openapi_conformance.py`).
+(`tests/contract/test_openapi_conformance.py`). The command above runs every one of them, and
+`test_the_rerun_command_runs_every_suite_this_module_relies_on` keeps it that way.
 """
 
 from __future__ import annotations
@@ -71,6 +76,7 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.ws.topics import DEPTHS, FAMILIES
 from candleviewer.ws_wiring import _Demand, ingestion_streams
 from tests._corpus import rest
+from tests._e08_regression_pack import is_pack_path
 from tests.openapi_helpers import deref
 
 API_ROOT: Final = Path(__file__).resolve().parents[2]
@@ -371,3 +377,16 @@ def test_d_instrument_detail_body_is_the_22_api_instrument_detail(
     InstrumentDetail.model_validate(body)
     assert set(body) <= _properties(schemas("InstrumentDetail"))
     assert set(schemas("Instrument")["required"]) <= set(body)
+
+
+def test_the_rerun_command_runs_every_suite_this_module_relies_on() -> None:
+    """A downstream epic copies the docstring's command, so it must name every suite cited there."""
+    doc = __doc__ or ""
+    command = re.search(r"^    (cd services/api && .*?)\n\n", doc, flags=re.DOTALL | re.MULTILINE)
+    assert command is not None, "the module docstring lost its re-run command"
+    in_command = {word for word in command.group(1).split() if word.startswith("tests/")}
+    cited = set(re.findall(r"`(tests/[^`]+\.py)`", doc)) | {"tests/qa/test_e08_handshake.py"}
+
+    assert cited <= in_command, f"cited but not in the re-run command: {sorted(cited - in_command)}"
+    assert all((API_ROOT / path).is_file() for path in in_command), sorted(in_command)
+    assert all(is_pack_path(path) for path in in_command), "a re-run suite left the E08 pack"
