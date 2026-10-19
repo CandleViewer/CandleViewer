@@ -1,19 +1,20 @@
 """#3558: C-9.1 #11's Dependabot alert gate (`security_gate.py --tool dependabot`) and the
-`dependabot-alerts` step of `_job-security.yml`. The open alerts on `main` are recorded `gh api`
-listings (scripts/tests/fixtures/dependabot-alerts/), planted at a higher severity or with another
-range where a test needs one; the tree under test and its merge base are commits of a scratch git
+`dependabot-alerts` job of `pr.yml`. The open alerts on `main` are recorded `gh api` listings
+(scripts/tests/fixtures/dependabot-alerts/), planted at a higher severity or with another range
+where a test needs one; the tree under test and its merge base are commits of a scratch git
 repository. No network."""
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
 from collections.abc import Callable, Mapping
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pytest
@@ -60,7 +61,7 @@ packages:
 snapshots:
   vitest@3.2.7(@types/node@22.20.5): {}
 """
-Files = Mapping[str, str | None]  # path -> text; None deletes the file
+Files = Mapping[str, str | PurePosixPath | None]  # path -> text, a symlink's target, or None
 MAIN: Files = {"pnpm-lock.yaml": LOCK}
 FIX = {"pnpm-lock.yaml": LOCK.replace("vitest@3.2.7", "vitest@4.1.11")}  # fixes alert 37
 UNRELATED = {"pnpm-lock.yaml": LOCK.replace("tinypool@2.2.0", "tinypool@2.2.1")}  # not vitest
@@ -81,6 +82,10 @@ def _commit(repo: Path, files: Files) -> str:
         path = repo / name
         if text is None:
             path.unlink()
+        elif isinstance(text, PurePosixPath):  # in place of the file or directory there
+            shutil.rmtree(path, ignore_errors=True)
+            path.unlink(missing_ok=True)
+            path.symlink_to(text)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
@@ -205,7 +210,10 @@ MAPPINGS: dict[str, tuple[dict[str, Any], Files, Files, Files, str]] = {
     "cargo-lock-beside-it": (
         _alert(55),
         {CARGO: TOML, TAURI_LOCK: CARGO_LOCK},
-        {TAURI_LOCK: CARGO_LOCK.replace("2.1.1", "2.11.1")},
+        {
+            TAURI_LOCK: CARGO_LOCK.replace("2.1.1", "2.11.1"),
+            CARGO: TOML.replace("=2.1.1", "=2.11.1"),
+        },
         {CARGO: TOML.replace('"=2.1.1"', '"2"')},
         f"{TAURI_LOCK}: 2.1.1 -> 2.11.1",
     ),
@@ -299,7 +307,7 @@ UNAUDITED: dict[str, tuple[dict[str, Any], Files, Files, str]] = {
         _alert(55),
         {CARGO: TOML},
         {TAURI_LOCK: CARGO_LOCK},
-        MOVED.format("2.1.1", TAURI_LOCK),
+        MOVED.format(f"2.1.1 in {TAURI_LOCK} and =2.1.1", CARGO),
     ),
     "lock-deleted": (
         _alert(55),
@@ -327,6 +335,31 @@ UNAUDITED: dict[str, tuple[dict[str, Any], Files, Files, str]] = {
         {CARGO: TOML},
         {CARGO: TOML.replace("=2.1.1", "=2.11.1")},
         "CI-SEC-005: dependabot: alert 55's advisory gives no vulnerable range '~> 2.0' and first ",
+    ),
+    "requirement-indented": (PINNED, {REQS: PINS}, {REQS: f"  {PINS}"}, f"at ==6.0.2 in {REQS})"),
+    "lock-patched-beside-an-old-pin": (
+        _alert(55),
+        {CARGO: TOML, TAURI_LOCK: CARGO_LOCK},
+        {TAURI_LOCK: CARGO_LOCK.replace("2.1.1", "2.11.1")},
+        MOVED.format(f"2.11.1 in {TAURI_LOCK} and =2.1.1", CARGO),
+    ),
+    "lock-patched-beside-a-range": (
+        _alert(55),
+        {CARGO: TOML, TAURI_LOCK: CARGO_LOCK},
+        {TAURI_LOCK: CARGO_LOCK.replace("2.1.1", "2.11.1"), CARGO: TOML.replace("=2.1.1", "2")},
+        MOVED.format(f"2.11.1 in {TAURI_LOCK} and 2", CARGO),
+    ),
+    "manifest-symlinked": (
+        PINNED,
+        {REQS: PINS, "scripts/vendored.txt": PINS},
+        {REQS: PurePosixPath("vendored.txt")},
+        f"CI-SEC-005: dependabot: cannot read {REQS} at HEAD: {REQS} has git mode 120000, not a ",
+    ),
+    "directory-symlinked": (
+        PINNED,
+        {REQS: PINS, "vendor/requirements-ci.txt": PINS},
+        {"scripts": PurePosixPath("vendor")},
+        f"CI-SEC-005: dependabot: cannot read {REQS} at HEAD: scripts has git mode 120000, not a ",
     ),
     "absent-at-the-merge-base": (
         PINNED,
@@ -378,7 +411,7 @@ def test_change_no_audit_step_reads_fixes_only_to_an_exact_patched_release(
         "pip-outside-services-api",
         "ecosystem",
         "no-version",
-        "git-error",
+        "not-a-file",
         "unparsable",
         "no-base",
         "ref",
@@ -391,6 +424,24 @@ def test_blocking_alert_the_gate_cannot_judge_fails_closed_with_ci_sec_005(
     # Never as "no alerts" or as a fix: an unreadable lockfile is no removal of the package.
     rc, out, err = gate([_alert(37, **moved)], pr, base=base)
     assert (rc, out, err.startswith(f"CI-SEC-005: dependabot: {says}")) == (1, "", True)
+
+
+def test_no_open_alert_passes(gate: Gate) -> None:
+    # gh writes `[[]]` for no open alert: one page, empty. Only a listing that is no list of pages
+    # fails closed.
+    assert gate([], {}) == (0, OK, "")
+
+
+def test_audited_lock_that_keeps_an_alerted_version_is_left_to_its_audit(gate: Gate) -> None:
+    # pnpm audit judges every version the lock resolves, so the note says the change is passed on,
+    # not that it fixed the alert.
+    both = LOCK.replace("  vitest@3.2.7: {}\n", "  vitest@3.2.7: {}\n  vitest@4.1.11: {}\n")
+    rc, out, err = gate([_alert(37)], {"pnpm-lock.yaml": both})
+    assert (rc, err) == (0, "")
+    assert out == (
+        f"changed here, for npm-audit to judge: dependabot alert 37 ({VITEST}, CRITICAL), "
+        f"npm:vitest in pnpm-lock.yaml: 3.2.7 -> 3.2.7, 4.1.11\n{OK}"
+    )
 
 
 def test_alert_below_high_is_never_mapped(gate: Gate) -> None:
@@ -487,14 +538,40 @@ def test_dependabot_alert_fixtures_keep_ghs_own_formatting(name: str) -> None:
 
 GH_ARGS = "api --paginate --slurp repos/o/r/dependabot/alerts?state=open&per_page=100"
 PLANTED = json.dumps([[_alert(37, "critical")]])
+WORKFLOWS = ROOT / ".github" / "workflows"
+JOBS: dict[str, Any] = yaml.safe_load((WORKFLOWS / "pr.yml").read_text(encoding="utf-8"))["jobs"]
+GATE_INSTALL = "python -I -m pip install --require-hashes --only-binary=:all: --no-deps -r "
+
+
+def test_alerts_job_alone_reads_the_alerts_and_installs_only_the_gates_wheel() -> None:
+    # Every PR and merge group, a docs-only one too: the alerts describe `main`, not the PR's
+    # paths. Only this job's token reads them, and no PR package is installed or run beside it.
+    job = JOBS["dependabot-alerts"]
+    assert job["permissions"] == {"contents": "read", "vulnerability-alerts": "read"}
+    assert ("if" in job, "needs" in job) == (False, False)
+    checkout, setup, install, step = job["steps"]
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
+    # The CPython whose wheel tools/ci/requirements-security-gate.txt pins by hash, as codeql's.
+    version = yaml.safe_load((WORKFLOWS / "_job-security.yml").read_text("utf-8"))["env"]
+    assert (setup["uses"].split("@")[0], setup["with"]) == (
+        "actions/setup-python",
+        {"python-version": version["PYTHON_VERSION"]},
+    )
+    assert install["run"] == GATE_INSTALL + "tools/ci/requirements-security-gate.txt"
+    assert set(install) == {"name", "run"}
+    assert (step["id"], step["env"]) == ("dependabot-alerts", {"GH_TOKEN": "${{ github.token }}"})
+    # No other job, in this workflow or another, holds the read.
+    assert "vulnerability-alerts" not in json.dumps({**JOBS, "dependabot-alerts": None})
+    held = [
+        p.name for p in WORKFLOWS.glob("*.yml") if "vulnerability-alerts" in p.read_text("utf-8")
+    ]
+    assert held == ["pr.yml"]
 
 
 def _step(tmp_path: Path, listing: str, status: int, *prs: Files, main: bool = True) -> Any:
     """The dependabot-alerts step as the runner runs it (`bash -e`) in the job's checkout, with a
     stand-in `gh` that prints `listing` and exits with `status`, as gh does."""
-    jobs = yaml.safe_load((ROOT / ".github/workflows/_job-security.yml").read_text("utf-8"))["jobs"]
-    (step,) = [s for s in jobs["read-only-scans"]["steps"] if s.get("id") == "dependabot-alerts"]
-    assert step["env"] == {"GH_TOKEN": "${{ github.token }}"}  # the job token, no new secret
+    step = JOBS["dependabot-alerts"]["steps"][-1]
     repo, _ = _checkout(tmp_path, MAIN, *prs)
     if not main:
         _git(repo, "update-ref", "-d", "refs/remotes/origin/main")
@@ -505,26 +582,34 @@ def _step(tmp_path: Path, listing: str, status: int, *prs: Files, main: bool = T
     gh.write_text(
         f'#!/bin/sh\n[ "$*" = "{GH_ARGS}" ] || exit 99\ncat ../listing.json\nexit {status}\n'
     )
-    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" -B "$@"\n')  # -B: no bytecode in tools/
+    # -B: no bytecode in tools/. The token stays with gh: the gate's own code never sees it.
+    python.write_text(
+        f'#!/bin/sh\n[ -z "${{GH_TOKEN+x}}" ] || exit 98\nexec "{sys.executable}" -B "$@"\n'
+    )
     for exe in (gh, python):
         exe.chmod(0o755)
     env = GIT_ENV | {"PATH": f"{gh.parent}{os.pathsep}{os.environ['PATH']}"}
     run = ["bash", "-e", "-c", step["run"]]
-    env["GITHUB_REPOSITORY"] = "o/r"
+    env |= {"GITHUB_REPOSITORY": "o/r", "GH_TOKEN": "stand-in"}  # as the step's env sets it
     proc = subprocess.run(run, cwd=repo, env=env, capture_output=True, timeout=120, check=False)
     return proc.returncode, proc.stdout.decode(), proc.stderr.decode()
 
 
 @pytest.mark.parametrize(
     ("listing", "pr", "fixed"),
-    [(RECORDED, {}, None), (PLANTED, FIX, True), (PLANTED, UNRELATED, False)],
-    ids=["recorded-mediums", "planted-critical-fix-pr", "planted-critical-unrelated-pr"],
+    [("[[]]", {}, None), (RECORDED, {}, None), (PLANTED, FIX, True), (PLANTED, UNRELATED, False)],
+    ids=[
+        "no-open-alert",
+        "recorded-mediums",
+        "planted-critical-fix-pr",
+        "planted-critical-unrelated",
+    ],
 )
 def test_alerts_step_judges_the_alerts_against_the_merge_base_with_main(
     tmp_path: Path, listing: str, pr: Files, fixed: bool | None
 ) -> None:
     rc, out, err = _step(tmp_path, listing, 0, pr)
-    if fixed is None:  # the recorded alerts are all Medium
+    if fixed is None:  # none, or the recorded ones, all Medium
         assert (rc, out, err) == (0, OK, "")
     elif fixed:
         assert (rc, out, err) == (0, FIXED.format(VITEST, "CRITICAL") + OK, "")

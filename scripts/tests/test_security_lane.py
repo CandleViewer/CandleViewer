@@ -27,13 +27,12 @@ JOBS: dict[str, Any] = yaml.safe_load(
 )["jobs"]
 READ = {"contents": "read"}
 SARIF = {"contents": "read", "security-events": "write"}
-ALERTS = {"vulnerability-alerts": "read"}  # #3558: the dependabot-alerts step lists the alerts
 # Job -> (permissions, timeout-minutes).
 LANE = {
     "codeql": (SARIF, 25),
     "semgrep-bandit": (SARIF, 30),
     "gitleaks": (READ, 10),
-    "read-only-scans": (READ | ALERTS, 47),
+    "read-only-scans": (READ, 45),
     "trivy": (SARIF, 15),
 }
 # Folded job -> scan step id -> the old job whose budget it spends. license-scan's old job is
@@ -43,12 +42,11 @@ SCANS = {
     "read-only-scans": {
         **{scan: scan for scan in ("security-auth", "pip-audit", "npm-audit", "license-scan")},
         **dict.fromkeys(["license-scope", "freeze"], "license-scan"),
-        "dependabot-alerts": "dependabot-alerts",
     },
 }
-# Old job -> its timeout-minutes before #3104; #3558 adds the alert gate's own budget.
+# Old job -> its timeout-minutes before #3104.
 OLD_BUDGETS = {"semgrep": 15, "bandit": 10, "security-auth": 10, "pip-audit": 10}
-OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10, "dependabot-alerts": 2}
+OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10}
 INSTALLERS = ("pnpm install", "uv sync", "corepack", "actions/setup-node@")
 # A node package-manager word anywhere in a line: quoted, path-qualified, in `sh -c`, backticks or
 # `$(...)`, or before `)` or `;`; not part of a longer name such as `pnpm-lock.yaml` or `npm-audit`.
@@ -80,14 +78,13 @@ SEMGREP_LOCK = "tools/ci/requirements-semgrep.txt"
 SEMGREP_INSTALL = f"pip install --require-hashes --only-binary=:all: -r {SEMGREP_LOCK}"
 SCANNERS = (SEMGREP_INSTALL, '"pip-audit==', '"bandit[sarif]==')
 FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js", "py", "infra"))
-# The pr.yml caller as it stood before the fold (#3104 leaves it and the resolver lane alone),
-# plus the alerts read #3558 grants.
+# The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
 CALLER = {
     "name": "security",
     "needs": "changed-paths",
     "if": "${{ " + FILTERS + " || needs.changed-paths.outputs.semgrep == 'true' }}",
     "with": {"image_changed": "${{ needs.changed-paths.outputs.image == 'true' }}"},
-    "permissions": SARIF | ALERTS,
+    "permissions": SARIF,
     "uses": "./.github/workflows/_job-security.yml",
 }
 
@@ -125,18 +122,11 @@ def test_tree_readers_run_before_the_first_install_and_semgrep_before_bandit() -
     ids = _ids("read-only-scans")
     texts = [json.dumps(step) for step in _steps("read-only-scans")]
     first = min(i for i, text in enumerate(texts) if any(word in text for word in INSTALLERS))
-    readers = ("security-auth", "pip-audit", "dependabot-alerts")
-    assert max(ids.index(reader) for reader in readers) < first
+    assert max(ids.index("security-auth"), ids.index("pip-audit")) < first
     after = ["npm-audit", "license-scope", "freeze", "license-scan"]
     assert first < ids.index(after[0]) and after == sorted(after, key=ids.index)
     # Semgrep scans the whole tree, so it runs before bandit writes its report into it.
     assert _ids("semgrep-bandit").index("semgrep") < _ids("semgrep-bandit").index("bandit")
-
-
-def test_read_only_scans_checks_out_full_history_for_the_alert_gates_merge_base() -> None:
-    # dependabot-alerts diffs this tree against its merge base with origin/main (#3558).
-    (checkout,) = [s for s in _steps("read-only-scans") if "actions/checkout@" in s.get("uses", "")]
-    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
 
 
 @pytest.mark.parametrize("job", sorted(SCANS))

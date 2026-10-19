@@ -38,6 +38,7 @@ GATES: dict[str, int | str] = {
 OTHER_LANES = ["changed-paths", "js", "py", "rule-roundtrip", "contract"]
 OTHER_LANES += ["integration", "migrations", "security", "e2e", "a11y", "engine-bench"]
 OTHER_LANES += ["security-review-label"]  # #2892: its own job, applicable on every PR
+OTHER_LANES += ["dependabot-alerts"]  # #3558: its own job too, as only it reads the alerts
 # The blocking statechart contract run, defined once (#3104); it starts with `uv sync`.
 SCRIPT = "tools/statechart/run_xstate_contract.sh"
 # The script's commands, verbatim: the old job's steps (_job-xstate-contract.yml at 59bec409), so
@@ -265,8 +266,9 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
     # scans into one job and bandit into semgrep's (4 / 18 / 18 / 37), then runs xstate-contract
     # in `gates` (4 / 17 / 17 / 36), then `gen` (3 / 16 / 16 / 35); the third PR's own run is 16.
     # #3385 runs the secret scans as a `gates` step, so a docs-only PR still starts three jobs.
-    # #2892 adds `security-review-label` to every run (4 / 17 / 17 / 36).
-    [("docs", 4), ("py", 17), ("py,infra", 17), ("all", 36)],
+    # #2892 adds `security-review-label` to every run (4 / 17 / 17 / 36), #3558 the Dependabot
+    # alert gate's `dependabot-alerts` (5 / 18 / 18 / 37).
+    [("docs", 5), ("py", 18), ("py,infra", 18), ("all", 37)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))

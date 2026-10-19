@@ -1,6 +1,7 @@
 # The one third-party module tools/ci/security_gate.py imports, for the codeql job (#3337), which
 # installs it after analyze with `--require-hashes --only-binary=:all: --no-deps`: this wheel only,
-# no build step, nothing else. Keep the version equal to scripts/requirements-ci.txt (a test in
+# no build step, nothing else; pr.yml's dependabot-alerts job (#3558) installs it the same way, on
+# the same Python. Keep the version equal to scripts/requirements-ci.txt (a test in
 # scripts/tests/test_security_lane.py pins both). The hash is PyPI's sha256 of the CPython 3.12
 # manylinux x86_64 wheel that the ubuntu-latest runner selects for PYTHON_VERSION 3.12, from
 # `pip download PyYAML==6.0.2 --only-binary=:all: --no-deps --platform manylinux_2_17_x86_64

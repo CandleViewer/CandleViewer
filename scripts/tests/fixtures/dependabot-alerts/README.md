@@ -1,8 +1,8 @@
 # Recorded Dependabot alert listings (#3558)
 
 `test_dependabot_alert_gate.py` runs these files through `tools/ci/security_gate.py --tool
-dependabot`, the gate on the `dependabot-alerts` step of `_job-security.yml`'s `read-only-scans`
-job: C-9.1 #11's Dependabot alert gate. That step runs
+dependabot`, the gate of `pr.yml`'s `dependabot-alerts` job: C-9.1 #11's Dependabot alert gate.
+Its gate step runs
 `gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100"`
 with the job token, which `vulnerability-alerts: read` lets list the alerts. `--slurp` writes one
 JSON array holding each page's array of alerts; with no open alerts it writes `[[]]`. Recorded

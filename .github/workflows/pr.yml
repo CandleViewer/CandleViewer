@@ -13,7 +13,8 @@ name: pr
 # CV-ERR codes surfaced by the resolver: CI-GATE-001 (applicable lane not
 # successful), CI-GATE-002 (gate misconfiguration: applicable lane skipped),
 # CI-GATE-003 (unpinned action / pull_request_target — tools/ci/check_action_pins.py);
-# by the security-review-label job: CI-GATE-004 (C-10.2 path, label not added, #2892).
+# by the security-review-label job: CI-GATE-004 (C-10.2 path, label not added, #2892); by the
+# dependabot-alerts job: CI-SEC-001/004/005 (C-9.1 #11's Dependabot alert gate, #3558).
 
 on:
   pull_request:
@@ -574,6 +575,49 @@ jobs:
             gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" -f 'labels[]=security-review' --silent
           fi
 
+  # --- C-9.1 #11's Dependabot alert gate (#3558). An open High or Critical alert on `main` blocks
+  # every PR and merge group, a docs-only one too, unless its tree fixes the alert since its merge
+  # base with main or a dated entry accepts it (High only): docs/ci-runbook.md, CI-SEC-001/005.
+  # Its own job, as only it may read the alerts; it installs nothing but the gate's PyYAML wheel,
+  # pinned by hash. A fix changes the package's versions in the root pnpm-lock.yaml or
+  # services/api/uv.lock, which the security lane's npm-audit and pip-audit judge; in a file no
+  # audit step reads it must leave only exact patched releases.
+  dependabot-alerts:
+    name: dependabot-alerts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # The job token lists the alerts with GitHub's read-only `vulnerability-alerts` permission,
+      # so no new secret:
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions
+      vulnerability-alerts: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate reads HEAD's merge base with origin/main
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12" # _job-security.yml's PYTHON_VERSION: the pinned wheel's CPython
+      - name: Install the gate's one module (hash-pinned PyYAML wheel, as codeql does)
+        run: >-
+          python -I -m pip install --require-hashes --only-binary=:all: --no-deps
+          -r tools/ci/requirements-security-gate.txt
+      # A failed API call fails closed (CI-SEC-005), never passes as "no alerts". The token stays
+      # with gh: the gate's own code runs without it.
+      - name: dependabot-alerts (open Dependabot alerts on main, judged on this tree)
+        id: dependabot-alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fail() { echo "CI-SEC-005: dependabot: $*" >&2; exit 1; }
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/dependabot/alerts?state=open&per_page=100" > dependabot-alerts.json ||
+            fail "the alerts API call failed (gh's error above): a token without vulnerability-alerts: read (GitHub may withhold it from a fork's pull request) or an API outage"
+          unset GH_TOKEN
+          base=$(git merge-base HEAD origin/main) || fail "this checkout has no merge base with origin/main"
+          python tools/ci/security_gate.py --tool dependabot --report dependabot-alerts.json --base "$base"
+
   # --- Path-filtered lanes ---------------------------------------------------
   # Each callee is a `workflow_call` stub in this Task (echoes a placeholder
   # conclusion); its owning ticket replaces the body without changing this
@@ -647,13 +691,11 @@ jobs:
     with:
       image_changed: ${{ needs.changed-paths.outputs.image == 'true' }}
     # A called reusable workflow may only use permissions its caller job grants.
-    # _job-security.yml uploads SARIF (security-events: write) and lists the
-    # Dependabot alerts (vulnerability-alerts: read, #3558); granting them here
+    # _job-security.yml uploads SARIF (security-events: write); granting it here
     # keeps the workflow-level default at contents: read for every other lane.
     permissions:
       contents: read
       security-events: write
-      vulnerability-alerts: read
     uses: ./.github/workflows/_job-security.yml
 
   e2e:
@@ -700,6 +742,7 @@ jobs:
       - changed-paths
       - gates
       - security-review-label
+      - dependabot-alerts
       - js
       - py
       - architecture
@@ -737,6 +780,7 @@ jobs:
           RESULT_GATES: ${{ needs.gates.result }}
           RESULT_SECRET_SCAN: ${{ needs.gates.outputs.secret-scan }}
           RESULT_SECURITY_REVIEW_LABEL: ${{ needs.security-review-label.result }}
+          RESULT_DEPENDABOT_ALERTS: ${{ needs.dependabot-alerts.result }}
           RESULT_PIN_CHECK: ${{ needs.gates.outputs.pin-check }}
           RESULT_SPIKE_CONTAINMENT: ${{ needs.gates.outputs.spike-containment }}
           RESULT_COMMITLINT: ${{ needs.gates.outputs.commitlint }}
@@ -770,6 +814,7 @@ jobs:
               gates: { applicable: true, result: process.env.RESULT_GATES },
               "secret-scan": { applicable: true, result: process.env.RESULT_SECRET_SCAN },
               "security-review-label": { applicable: true, result: process.env.RESULT_SECURITY_REVIEW_LABEL },
+              "dependabot-alerts": { applicable: true, result: process.env.RESULT_DEPENDABOT_ALERTS },
               "pin-check": { applicable: isTrue(process.env.FILTER_INFRA), result: process.env.RESULT_PIN_CHECK },
               "spike-containment": { applicable: true, result: process.env.RESULT_SPIKE_CONTAINMENT },
               commitlint: { applicable: process.env.FILTER_PR !== "false", result: process.env.RESULT_COMMITLINT },

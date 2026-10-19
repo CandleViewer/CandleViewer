@@ -36,6 +36,8 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 ├─ security-review-label (always, #2892) → adds `security-review` when a C-10.2 path is touched,
 │                                      by main's tools/ci/security_review_label.py (CI-GATE-004);
 │                                      a merge group has no PR, so its step is skipped (#3433)
+├─ dependabot-alerts (always, #3558) → C-9.1 #11's Dependabot alert gate: the open alerts on
+│                                      `main`, judged on this tree         (CI-SEC-001/004/005)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
 ├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
 │                                      lanes (tools/ci/py-test-lanes.json), coverage combined
@@ -49,8 +51,8 @@ PR opened/updated, or merge group queued for main (.github/workflows/pr.yml)
 │                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*)
 ├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
 │                                      folded jobs, one step per scan (#3104): semgrep-bandit;
-│                                      read-only-scans (security-auth, pip-audit, dependabot-alerts,
-│                                      npm-audit, license-scan)         (CI-SEC-001..005)
+│                                      read-only-scans (security-auth, pip-audit, npm-audit,
+│                                      license-scan)                    (CI-SEC-001..005)
 ├─ _job-coverage.yml (js/py filters) → per-package threshold            (CI-COV-001..004)
 ├─ _job-engine-bench.yml (engine/protocol filters) → GPU benchmark vs baseline
 │                                      (CI-BEN-001, stub pending E03-T14)
@@ -360,8 +362,8 @@ index alone, removing nothing.
   no entry covers (30-release-roadmap.md §4.4 R0), or trufflehog found a
   secret-shaped string in the PR's commits (the `gates` job's `secret-scan`
   step, §3), or an open High or Critical Dependabot alert on `main` (the
-  `dependabot-alerts` step, C-9.1 #11) that the PR neither fixes nor has an entry
-  for. Fix the finding: for an npm-audit advisory on a transitive
+  `dependabot-alerts` job, on every PR and merge group, C-9.1 #11) that the PR
+  neither fixes nor has an entry for. Fix the finding: for an npm-audit advisory on a transitive
   package, a `pnpm-workspace.yaml` override to the patched release
   (`docs/plan/35-dependency-freeze-policy.md` §8.4). A PR fixes an alert when it
   changes the package's resolved versions since its merge base with `main`: for
@@ -372,7 +374,12 @@ index alone, removing nothing.
   `services/api/uv.lock` (pip-audit reads its `uv export`). In the other files the
   change must remove the package or leave only exact pins (`==` in a requirements
   file, `=` in a `Cargo.toml`, any `Cargo.lock` version) at or above the alert's
-  first patched version and outside its vulnerable range. A High alert may instead
+  first patched version and outside its vulnerable range, in every file that names
+  it: a `Cargo.toml`'s pins as well as its `Cargo.lock`'s. A fix that has merged
+  leaves its alert open until Dependabot scans `main` again, usually minutes:
+  re-run the job then. An alert raised on `main` after the PR's merge commit was
+  built needs the branch updated (rebase and push): a re-run reuses that merge
+  commit, so it judges the PR against the older `main`. A High alert may instead
   take a dated HIGH entry naming its GHSA (an entry of any tool, so its reason
   must cover every package the alert names); a Critical one takes none. Dismissing
   an alert is the owner's decision, recorded on the alert, never a way to make a
@@ -417,18 +424,23 @@ index alone, removing nothing.
   the registry's answer: pnpm builds it from the advisories the registry's
   audit endpoint returns, so the gate cannot tell a registry that listed none
   from a tree with none. C-9.1 #11's Dependabot alert gate, the `dependabot-alerts`
-  step, is the independent second signal (#3558). For `dependabot` it is: the
-  alerts API call failed (gh prints why: an outage, so re-run; or a token without
+  job, is the independent second signal (#3558). For `dependabot` it is: the
+  alerts API call failed (gh prints why: an outage, so re-run; a token without
   `vulnerability-alerts: read`, which GitHub may withhold from a fork's pull
-  request, so push the branch to this repository instead); a listing that is not
+  request, so push the branch to this repository instead; or Dependabot alerts
+  turned off for the repository, a 403 that says so, which only the owner may
+  change); a listing that is not
   pages of open alerts, each with a known severity, a GHSA id, a package and a
   manifest inside the repository; no merge base with `origin/main` in the
   checkout (the job fetches full history for it); or a High or Critical alert
   the gate cannot judge: a manifest it does not map (CI-SEC-001 lists those it
   does; teach it another in a reviewed PR), a lockfile git or the gate cannot
-  read, a package that resolves to no version there at the merge base (check the
-  alert on GitHub), or, for a file no audit step reads, an advisory whose
-  vulnerable range or first patched version is not in numeric releases.
+  read (a symlink or submodule where it or a directory on its path should be is
+  never read as the package removed), a package that resolves to no version
+  there at the merge base (usually the PR is behind the `main` that raised the
+  alert: update the branch; else check the alert on GitHub), or, for a file no
+  audit step reads, an advisory whose vulnerable range or first patched version
+  is not in numeric releases.
   This never passes by default — check the scanner's own step log for a
   setup problem before assuming the codebase is clean (in a folded job the
   scan's step installs its own tools, so a failed install shows there).

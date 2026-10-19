@@ -1075,9 +1075,9 @@ def parse_npm_audit(path: Path) -> list[Finding]:
     return findings
 
 
-# C-9.1 #11's alert gate (#3558) reads what the `dependabot-alerts` step writes: `gh api --paginate
-# --slurp` of the repository's open Dependabot alerts (REST API 2022-11-28), one array per page
-# (scripts/tests/fixtures/dependabot-alerts/README.md). The alerts describe `main`.
+# C-9.1 #11's alert gate (#3558) reads what pr.yml's `dependabot-alerts` job writes: `gh api
+# --paginate --slurp` of the repository's open Dependabot alerts (REST API 2022-11-28), one array
+# per page (scripts/tests/fixtures/dependabot-alerts/README.md). The alerts describe `main`.
 _DEPENDABOT_SEVERITY: dict[str, Severity] = {
     "critical": "CRITICAL",
     "high": "HIGH",
@@ -1085,13 +1085,14 @@ _DEPENDABOT_SEVERITY: dict[str, Severity] = {
     "low": "LOW",
 }
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
-# A requirements-file line: the name, any extras, then its specifier up to a marker or comment.
+# A requirements-file line (pip strips its indent): the name, any extras, then its specifier up
+# to a marker or comment.
 _REQUIREMENT = re.compile(
-    r"^([A-Za-z0-9][\w.-]*)[ \t]*(?:\[[^\]]*\])?[ \t]*([^;#\\\n]*)", re.MULTILINE
+    r"^[ \t]*([A-Za-z0-9][\w.-]*)[ \t]*(?:\[[^\]]*\])?[ \t]*([^;#\\\n]*)", re.MULTILINE
 )
-# The files an audit step reads, so judges a fix's new versions in: pnpm audit, the root
-# pnpm-lock.yaml; pip-audit, the uv export of services/api. No step audits any other file.
-_AUDITED = frozenset({"pnpm-lock.yaml", "services/api/uv.lock"})
+# The files an audit step reads, so judges a fix's new versions in, and that step: pnpm audit,
+# the root pnpm-lock.yaml; pip-audit, the uv export of services/api. No step audits another file.
+_AUDITED = {"pnpm-lock.yaml": "npm-audit", "services/api/uv.lock": "pip-audit"}
 # How a file pins one release exactly: a lock's version, a Cargo.toml's `=`, else (a
 # requirements file) `==` or `===`.
 _EXACT_PIN = {"Cargo.lock": "", "Cargo.toml": "="}
@@ -1104,6 +1105,7 @@ _HOLDS: dict[str, Callable[[tuple[int, ...], tuple[int, ...]], bool]] = {
     "=": operator.eq,
 }
 Reader = Callable[[str, str], str | None]  # (commit, path) -> the file's text there, None if absent
+_REGULAR = ("regular file", ("100644", "100755"))  # the git modes of a file, not a link
 
 
 @dataclass(frozen=True)
@@ -1286,20 +1288,20 @@ def resolved_versions(path: str, ecosystem: str, name: str, text: str) -> frozen
     return frozenset(re.sub(r"\s+", "", version) for version in found)
 
 
+def _versions(read: Reader, rev: str, path: str, alert: DependabotAlert) -> frozenset[str]:
+    """The versions the file at `path` resolves the alert's package to at commit `rev`."""
+    text = read(rev, path)
+    with _lockfile(path, rev):
+        return resolved_versions(path, alert.ecosystem, alert.name, text) if text else frozenset()
+
+
 def _versions_at(
     read: Reader, rev: str, paths: tuple[str, ...], alert: DependabotAlert
 ) -> tuple[str, frozenset[str]]:
     """The first of `paths` that resolves the alert's package at commit `rev`, and its versions
     there; the first path and none when none does."""
-    for path in paths:
-        text = read(rev, path)
-        with _lockfile(path, rev):
-            if text is None:
-                continue
-            found = resolved_versions(path, alert.ecosystem, alert.name, text)
-        if found:
-            return path, found
-    return paths[0], frozenset()
+    found = ((path, _versions(read, rev, path, alert)) for path in paths)
+    return next(((path, versions) for path, versions in found if versions), (paths[0], frozenset()))
 
 
 def _release(text: str) -> tuple[int, ...]:
@@ -1341,7 +1343,8 @@ def judge_alert_fixes(
     """#3558's ruling: an alert the gate would block passes when the tree under test (HEAD) fixes
     it since `base`, its merge base with main. In a file an audit step reads (_AUDITED) any change
     to the package's resolved versions is the fix, and that step judges the new versions. In any
-    other file, the fix is the package gone or only exact patched releases left (_patched).
+    other file, the fix is the package gone or only exact patched releases left (_patched) in
+    every file that names it: a Cargo.toml's pins as well as its Cargo.lock's versions.
     Returns the findings left for evaluate_findings, and a note per fixed alert."""
     findings: list[Finding] = []
     fixed: list[str] = []
@@ -1361,11 +1364,15 @@ def judge_alert_fixes(
                 "no version at the merge base, so the gate cannot tell a fix",
             )
         was, now = ", ".join(sorted(before)), ", ".join(sorted(after))
+        held = {path: _versions(read, "HEAD", path, alert) for path in paths}
         if before == after:
             why = f"this tree leaves it at {was} in {old}"
-        elif old in _AUDITED or all(_patched(new, version, alert) for version in after):
+        elif old in _AUDITED or all(_patched(p, v, alert) for p in held for v in held[p]):
+            fix = "fixed here"
+            if old in _AUDITED and before & after:  # a version left is its audit's to judge
+                fix = f"changed here, for {_AUDITED[old]} to judge"
             fixed.append(
-                f"fixed here: dependabot alert {alert.number} ({finding.finding_id}, "
+                f"{fix}: dependabot alert {alert.number} ({finding.finding_id}, "
                 f"{finding.severity}), {finding.package} in {old}: {was} -> "
                 + (f"{new}: {now}" if after and new != old else now or "removed")
             )
@@ -1375,8 +1382,8 @@ def judge_alert_fixes(
             if alert.patched:
                 fix = f"an exact release at or above {alert.patched} outside "
                 fix += f"{alert.vulnerable!r}, or removing it"
-            why = f"this tree moves it to {now} in {new}, which no audit step reads: "
-            why += f"a fix there is {fix}"
+            now = " and ".join(f"{', '.join(sorted(held[p]))} in {p}" for p in held if held[p])
+            why = f"this tree moves it to {now}, which no audit step reads: a fix there is {fix}"
         findings.append(replace(finding, detail=f"{finding.detail} ({why})"))
     return findings, fixed
 
@@ -1394,7 +1401,8 @@ def git_reader(base: str | None) -> Reader:
 
     def git(*args: str) -> subprocess.CompletedProcess[bytes]:
         try:  # a fixed argv, no shell; the commit and path were validated above
-            return subprocess.run(["git", *args], capture_output=True, timeout=60, check=False)
+            argv = ["git", "--literal-pathspecs", *args]
+            return subprocess.run(argv, capture_output=True, timeout=60, check=False)
         except (OSError, subprocess.SubprocessError) as exc:
             raise SecurityGateError("CI-SEC-005", f"dependabot: git {args[0]}: {exc}") from exc
 
@@ -1406,14 +1414,23 @@ def git_reader(base: str | None) -> Reader:
 
     @functools.cache  # each blocking alert reads the same few files
     def read(rev: str, path: str) -> str | None:
-        # A file the commit lacks is None; any git failure raises, never reads as "removed".
-        listed = git("ls-tree", "--name-only", rev, "--", path)
-        if listed.returncode == 0 and not listed.stdout.strip():
-            return None
-        blob = git("cat-file", "blob", f"{rev}:{path}")
+        # A file the commit lacks is None. Any git failure, and any entry on the path but
+        # directories and a regular file (a symlink, a submodule), raises: never read as "removed"
+        # what pip or cargo would still find there.
         try:
-            if listed.returncode or blob.returncode:
-                raise ValueError((listed.stderr + blob.stderr).decode(errors="replace").strip())
+            for entry in (*map(str, reversed(PurePosixPath(path).parents[:-1])), path):
+                listed = git("ls-tree", "-z", rev, "--", entry)
+                if listed.returncode:
+                    raise ValueError(listed.stderr.decode(errors="replace").strip())
+                mode = listed.stdout.split(b" ", 1)[0].decode()
+                if not mode:
+                    return None
+                kind, modes = ("directory", ("040000",)) if entry != path else _REGULAR
+                if mode not in modes:
+                    raise ValueError(f"{entry} has git mode {mode}, not a {kind}")
+            blob = git("cat-file", "blob", f"{rev}:{path}")
+            if blob.returncode:
+                raise ValueError(blob.stderr.decode(errors="replace").strip())
             return blob.stdout.decode("utf-8")
         except ValueError as exc:  # UnicodeDecodeError is one too
             raise SecurityGateError(
