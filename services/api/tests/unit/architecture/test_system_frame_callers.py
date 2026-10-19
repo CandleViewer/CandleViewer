@@ -257,9 +257,11 @@ def test_push_system_is_named_only_by_its_senders() -> None:
         "self.chan = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': self.chan})",
         "class K:\n    TOPIC = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': K.TOPIC})",
         "push = lambda c, ch=SYSTEM_TOPIC: c.push({'t': 'd', 'ch': ch})",
-        # by design a name and an attribute of one spelling are one name, whoever holds it
+        # by design a name and an attribute of one spelling are one name, whoever holds it, and a
+        # starred unpacking that does not line up is read by position (B is 2)
         "self.chan = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': chan})",
         "chan = SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': other.chan})",
+        "*A, B = 1, SYSTEM_TOPIC, 2\nconn.push({'t': 'd', 'ch': B})",
         "A, B = 1, SYSTEM_TOPIC\nconn.push({'t': 'd', 'ch': B})",
         "[A, B] = [SYSTEM_TOPIC, 1]\nconn.push({'t': 'd', 'ch': A})",
         "A, (B, C) = 1, (SYSTEM_TOPIC, 2)\nconn.push({'t': 'd', 'ch': B})",
@@ -286,8 +288,16 @@ _PUSH = "    conn.push({'t': 'd', 'ch': ch, 'p': body})"
         ("def _push(conn, body, ch=SYSTEM_TOPIC):\n" + _PUSH, "_push"),
         ("def _push(conn, ch=SYSTEM_TOPIC, /, *, body):\n" + _PUSH, "_push"),
         ("def _push(conn, *, body, ch=SYSTEM_TOPIC):\n" + _PUSH, "_push"),
+        ("async def _push(conn, ch=SYSTEM_TOPIC, /, body=None, retries=3):\n" + _PUSH, "_push"),
     ],
-    ids=["instance-attribute", "class-attribute", "default", "positional-only", "keyword-only"],
+    ids=[
+        "instance-attribute",
+        "class-attribute",
+        "default",
+        "positional-only",
+        "keyword-only",
+        "async-positional-only",
+    ],
 )
 def test_a_copy_of_the_topic_held_by_a_class_or_a_default_is_found_where_the_frame_is_built(
     source: str, scope: str
@@ -323,6 +333,10 @@ def test_a_file_is_parsed_whatever_text_it_holds(tmp_path: Path) -> None:
         "CH = 'ch'\nrow = {CH: SYSTEM_TOPIC, 'ok': True}",  # a result row, whatever its key spells
         "def _push(c, ch='book'):\n    c.push({'t': 'd', 'ch': ch})",  # another default
         "def _push(c, ch, topic=SYSTEM_TOPIC):\n    c.push({'t': 'd', 'ch': ch})",  # `ch` has none
+        # nor has a keyword-only `ch`; a `:=` of another value, in an `if` and in the frame
+        "def _push(c, *, ch, topic=SYSTEM_TOPIC):\n    c.push({'t': 'd', 'ch': ch})",
+        "if (t := 'book'):\n    conn.push({'t': 'd', 'ch': t})",
+        "conn.push({'t': 'd', 'ch': (t := 'book')})",
     ],
 )
 def test_a_frame_on_another_channel_or_a_result_row_is_not_found(source: str) -> None:

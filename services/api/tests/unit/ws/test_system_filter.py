@@ -339,6 +339,7 @@ _OBJECTS_SPELLED = {
     "object-or-array-without-items": {"type": ["object", "array"]},
     "enum-with-an-object": {"enum": ["a", {"x": 1}]},
     "const-object": {"const": {"x": 1}},
+    "const-list": {"const": [{"x": 1}]},
 }
 _SCALARS_SPELLED = {
     "oneOf": {"oneOf": [{"type": "string"}, {"type": "null"}]},
@@ -373,6 +374,15 @@ def test_the_probe_lists_no_property_that_cannot_hold_an_object(spelling: dict[s
 def test_the_probe_fails_on_a_shape_it_cannot_classify(shape: dict[str, Any]) -> None:
     with pytest.raises(AssertionError, match=r"cannot classify .* at kind\.field"):
         _holds_objects(shape, "kind.field")
+
+
+def test_the_probe_names_the_field_whose_ref_it_cannot_classify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behind a `$ref` too: the failure names the field the probe was reading."""
+    monkeypatch.setitem(_SCHEMA["$defs"], "zz", {})
+    with pytest.raises(AssertionError, match=r"cannot classify .* at kind\.field"):
+        _holds_objects({"$ref": "#/$defs/zz"}, "kind.field")
 
 
 @pytest.mark.parametrize(
