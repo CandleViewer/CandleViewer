@@ -235,7 +235,9 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    with 10 new ones (shown once) and returns a full session. If the 15 minutes run out, they sign
    in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
    `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user; counter
-   `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes).
+   `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in
+   whose user was disabled since the password check gets `403`: its `auth.login_failed` row carries
+   `session_id` and `after_state.voids_session_created`, so its `auth.session_created` row is void.
    - If confirm answers `503`, the user signs in again. When the error log
      `auth.enrolment.completed_unrotated` names the user, the enrolment completed but the session
      was not rotated: the new TOTP is active (the next sign-in asks for it), its 10 recovery codes
