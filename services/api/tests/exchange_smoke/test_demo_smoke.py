@@ -1,6 +1,7 @@
 """Opt-in demo connectivity smoke suite (E08-T05, 24-internal-schemas §14.2 rule 5).
 
 Run manually only: `CV_EXCHANGE_SMOKE=1 uv run pytest -m exchange_smoke --no-cov`.
+An opted-in run fails closed at session setup for now (#3826): see README.md.
 No credentials; demo REST host + the public stream demo uses. Every test is
 marked `exchange_smoke`, so the default CI lane (`-m "not exchange_smoke"`)
 never selects it.

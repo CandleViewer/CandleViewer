@@ -13,11 +13,11 @@ from typing import Any
 
 import pytest
 
-# Re-exported so the autouse fixture is picked up for every test under
-# services/api/tests/** (E03-T03 network guard, ADR-0012 / SR-140). Import
-# has a side effect of registering the fixture with pytest; do not remove
-# even though `_cv_network_guard` looks unused to a linter.
-from tests._ci_network_guard import _cv_network_guard  # noqa: F401
+# Re-exported so the autouse fixtures are picked up for every test under
+# services/api/tests/** (E03-T03 network guard, ADR-0012 / SR-140; #3826 per-test
+# verdict). Import has a side effect of registering the fixtures with pytest; do not
+# remove even though they look unused to a linter.
+from tests._ci_network_guard import _cv_network_guard, _cv_network_guard_verdict  # noqa: F401
 from tests._duckdb_guard import _cv_no_duckdb_install  # noqa: F401
 from tests._hypothesis_profiles import load_active_profile
 

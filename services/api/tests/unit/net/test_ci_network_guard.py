@@ -5,7 +5,8 @@ connection to a non-allow-listed host must raise `NetworkGuardViolation`
 before any real socket I/O happens; `CV_CI_ALLOWED_HOSTS` entries must be
 honoured. No real network egress in any case (C-13.5/C-13.7) — the "denied"
 path never reaches the OS, and the "allowed" path only ever talks to a
-socket this test itself opened on loopback.
+socket this test itself opened on loopback. A deliberate refusal is claimed
+with `expected_refusals()`, or the per-test verdict fails the test (#3826).
 """
 
 from __future__ import annotations
@@ -15,7 +16,12 @@ from collections.abc import Iterator
 
 import pytest
 
-from tests._ci_network_guard import NetworkGuardViolation, is_host_allowed
+from tests._ci_network_guard import (
+    NetworkGuardViolation,
+    Refusal,
+    expected_refusals,
+    is_host_allowed,
+)
 
 pytestmark = pytest.mark.usefixtures("_cv_network_guard")
 
@@ -43,10 +49,14 @@ def test_guard_allows_loopback_connect(loopback_listener: tuple[str, int]) -> No
 def test_guard_denies_non_loopback_connect() -> None:
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        with pytest.raises(NetworkGuardViolation, match="outbound network denied in CI"):
+        with (
+            expected_refusals() as refused,
+            pytest.raises(NetworkGuardViolation, match="outbound network denied in CI"),
+        ):
             client.connect(("93.184.216.34", 443))
     finally:
         client.close()
+    assert refused == [Refusal("connect", "93.184.216.34")]
 
 
 def test_guard_denies_live_exchange_hostname_resolution_bypass() -> None:
@@ -56,10 +66,11 @@ def test_guard_denies_live_exchange_hostname_resolution_bypass() -> None:
     # after their own resolution step.
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        with pytest.raises(NetworkGuardViolation):
+        with expected_refusals() as refused, pytest.raises(NetworkGuardViolation):
             client.connect(("198.51.100.7", 443))
     finally:
         client.close()
+    assert refused == [Refusal("connect", "198.51.100.7")]
 
 
 def test_is_host_allowed_true_for_loopback_variants() -> None:

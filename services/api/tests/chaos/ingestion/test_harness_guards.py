@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from tests._ci_network_guard import NetworkGuardViolation
+from tests._ci_network_guard import NetworkGuardViolation, Refusal, expected_refusals
 from tests._corpus import frames
 from tests.chaos.ingestion._faults import Fault, FaultKind
 from tests.chaos.ingestion._feed import Feeder
@@ -27,10 +27,11 @@ BOOK = frames("ws/orderbook_BTCUSDT.jsonl")
 def test_live_exchange_host_is_unreachable_from_the_suite() -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        with pytest.raises(NetworkGuardViolation):
+        with expected_refusals() as refused, pytest.raises(NetworkGuardViolation):
             sock.connect(("api.bybit.com", 443))
     finally:
         sock.close()
+    assert refused == [Refusal("connect", "api.bybit.com")]  # claimed (#3826)
 
 
 async def test_rest_traffic_is_answered_by_the_stub_transport(rig: Rig) -> None:
