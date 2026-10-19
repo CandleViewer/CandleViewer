@@ -60,15 +60,16 @@ class FakeSocket:
     """One private-stream connection. It answers `auth`, `subscribe` and `ping` as the demo
     stream does and carries what the venue pushes; `drop()` ends it as a reset would."""
 
-    def __init__(self, on_subscribed: Callable[[], None]) -> None:
+    def __init__(self, on_subscribed: Callable[[], None], *, auth: str = "ws_auth_ok.json") -> None:
         self._inbox: asyncio.Queue[str | None] = asyncio.Queue()
         self._on_subscribed, self._subscribed = on_subscribed, 0
+        self._auth = auth
         self.open = True
 
     async def send(self, message: str) -> None:
         frame = json.loads(message)
         if frame.get("op") == "auth":
-            self._inbox.put_nowait(json.dumps(load(_KEYS / "ws_auth_ok.json")))
+            self._inbox.put_nowait(json.dumps(load(_KEYS / self._auth)))
         elif frame.get("op") == "subscribe":
             ack = {"success": True, "ret_msg": "", "op": "subscribe", "req_id": frame["req_id"]}
             self._inbox.put_nowait(json.dumps(ack))
@@ -131,6 +132,8 @@ class FakeBybit:
         self.on_create: Callable[[int], None] | None = None
         #: Called with the path of every GET, signed or not, before it is answered.
         self.on_get: Callable[[str], None] | None = None
+        #: The private stream answers its `auth` with the recorded refusal.
+        self.refuse_ws_auth = False
         #: Server-time reads after this many get the recorded 10018 reply.
         self.limit_time_reads: int | None = None
         self.time_reads = 0
@@ -144,7 +147,8 @@ class FakeBybit:
         return httpx.MockTransport(self.handle)
 
     async def dial(self, url: str) -> FakeSocket:
-        self.socket = FakeSocket(self._subscribed)
+        auth = "ws_auth_denied.json" if self.refuse_ws_auth else "ws_auth_ok.json"
+        self.socket = FakeSocket(self._subscribed, auth=auth)
         self.sockets.append(self.socket)
         return self.socket
 

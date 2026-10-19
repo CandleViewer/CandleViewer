@@ -3,10 +3,11 @@
 The demo key pair comes from the process environment only and is popped from it at once, so no
 child process inherits it; the environment variable `CV_SPIKE_BYBIT_ENV` (read, not popped) must
 say `demo`. Every refusal names its rule only. The exit code is 0 only for a `completed` run: 1
-for an interrupted run, a run stopped early, a cleanup that did not finish or a REST execution
-backfill that failed; 2 for a refusal. A stop request that aborts the run (one that cuts the
-repeated cleanup short, or a second one before the run has begun) is logged by its class alone,
-never by the text of the exchange error it interrupted, and exits 1.
+for an interrupted run (a stop request, SIGHUP included, at any point up to the outputs), a run
+stopped early, a cleanup that did not finish or a REST execution backfill that failed; 2 for a
+refusal. A stop request that aborts the run (one that cuts the repeated cleanup short, or a second
+one before the run has begun) is logged by its class alone, never by the text of the exchange
+error it interrupted, and exits 1.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--sl-pct", type=Decimal, default=Decimal(2), help="native SL distance, %%")
     p.add_argument("--fill-wait-s", type=float, default=30.0, help="wait for a passive fill")
     p.add_argument("--taker-every", type=int, default=5, help="every Nth order crosses; 0: never")
-    p.add_argument("--capture-10002", action="store_true", help="one read stamped 30 s behind")
+    p.add_argument("--capture-10002", action="store_true", help="orders only: a read 30 s behind")
     p.add_argument("--capture-10018", action="store_true", help="orders only: a burst, at the end")
     p.add_argument("--burst-max", type=int, default=700, help="requests in that burst (<= 1000)")
     p.add_argument("--retention-probe", type=Path, metavar="ORDERS_CSV", help="earlier run's")
@@ -102,7 +103,12 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # the class only: an exchange text can echo the key id (C-12.2)
         log.error("run_failed", error=type(exc).__name__)
         return 1
-    log.info("run_written", out=str(cfg.out), outcome=report["outcome"])
+    log.info(
+        "run_written",
+        out=str(cfg.out),
+        outcome=report["outcome"],
+        stop_reason=report["stop_reason"],
+    )
     return 0 if report["outcome"] == COMPLETED else 1
 
 

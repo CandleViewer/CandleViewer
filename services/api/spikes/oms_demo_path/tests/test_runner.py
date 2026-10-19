@@ -8,6 +8,8 @@ path, and the private stream is the venue's fake socket. Each test drives a publ
 from __future__ import annotations
 
 import asyncio
+import csv
+import functools
 import hashlib
 import json
 import signal
@@ -19,11 +21,14 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.secrets import Secret
 from spikes.oms_demo_path.runner import (
     CLEAN,
     COMPLETED,
+    CYCLE_COLUMNS,
     INTERRUPTED,
+    ORDER_COLUMNS,
     Config,
     Harness,
     _on_signals,
@@ -40,10 +45,19 @@ KEY_ID = "k" + hashlib.sha256(b"harness key id").hexdigest()[:19]
 PLACEHOLDER = "XXXXXXXXXX"
 SKIPPED = "skipped: account not flat or run stopped"
 #: What the owner does when a cleanup did not finish, spelt out here and not imported, so a
-#: weakened text fails: the run's orders may still rest, and a position may still be open.
+#: weakened text fails: the run's orders may still rest, and a position may still be open. The
+#: run's ids carry no prefix of their own beyond `cvd-` (24 §8.3 puts a random group right after
+#: it), so `orders.csv`, next to the summary, is the list of what it sent.
 BY_HAND = (
-    "in the demo UI cancel the run's open ETHUSDT orders (orderLinkId prefix cvd-)"
-    " and flatten the ETHUSDT position"
+    "in the demo UI cancel the run's open ETHUSDT orders (orderLinkId prefix cvd-; each is listed"
+    " in orders.csv of the run's output directory) and flatten the ETHUSDT position"
+)
+#: The CSV files a run keeps as it goes.
+_JOURNALS = ("orders", "cycles", "rest_calls")
+#: The first stop reason of a run a key refusal ended: by class and code, never exchange text.
+KEY_REFUSED = (
+    "stopped early: SafetyRefusal: create refused (retCode 10003: AuthError (AUTH_ERROR)):"
+    " stopping the run"
 )
 #: What the outcome says when the REST execution backfill failed.
 AC2_MISSING = (
@@ -101,19 +115,32 @@ def _signals(monkeypatch: pytest.MonkeyPatch) -> dict[int, Callable[[], None]]:
     sends a stop request by running the callback, as the loop does on the signal."""
     registered: dict[int, Callable[[], None]] = {}
 
-    def add(sig: int, callback: Callable[[], None]) -> None:
-        registered[sig] = callback
+    def add(sig: int, callback: Callable[..., None], *args: Any) -> None:
+        registered[sig] = functools.partial(callback, *args)
 
     monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", add)
     return registered
 
 
-def _stop_twice(registered: dict[int, Callable[[], None]]) -> None:
-    """A first stop request (SIGINT) and a second (SIGTERM), run by the loop at its next turn: the
-    cancel lands where the run's task is then waiting."""
-    loop = asyncio.get_running_loop()
-    loop.call_soon(registered[signal.SIGINT])
-    loop.call_soon(registered[signal.SIGTERM])
+def _stop_once(registered: dict[int, Callable[[], None]], sig: signal.Signals) -> None:
+    """A stop request, run by the loop at its next turn."""
+    asyncio.get_running_loop().call_soon(registered[sig])
+
+
+def _hangup(registered: dict[int, Callable[[], None]]) -> None:
+    """SIGHUP, as the loop delivers it: the callback runs at once, inside whatever is running."""
+    registered[signal.SIGHUP]()
+
+
+def _stop_twice(
+    registered: dict[int, Callable[[], None]],
+    first: signal.Signals = signal.SIGINT,
+    second: signal.Signals = signal.SIGTERM,
+) -> None:
+    """A first stop request and a second, run by the loop at its next turn: the cancel lands where
+    the run's task is then waiting."""
+    _stop_once(registered, first)
+    _stop_once(registered, second)
 
 
 async def _run_with_signals(h: Harness) -> dict[str, Any]:
@@ -129,6 +156,12 @@ async def _cancel_here() -> None:
     assert task is not None
     task.cancel()
     await asyncio.sleep(0)
+
+
+def _file(tmp_path: Path, name: str) -> list[dict[str, str]]:
+    """The rows of one of the run's CSV files, as a reader of the directory finds them."""
+    with (tmp_path / "run" / name).open(encoding="utf-8", newline="") as stream:
+        return list(csv.DictReader(stream))
 
 
 async def test_cleanup_cancels_a_resting_order_by_its_link_then_flattens(tmp_path: Path) -> None:
@@ -335,7 +368,8 @@ async def test_a_failed_open_order_read_says_what_to_cancel_and_what_to_flatten(
         await h.cleanup()
     await h.client.aclose()
     failed = {"event": "cleanup_incomplete", "failed_steps": 1, "by_hand": BY_HAND}
-    assert failed | {"log_level": "error"} in logs
+    failed |= {"orders_csv": str(tmp_path / "run" / "orders.csv"), "log_level": "error"}
+    assert failed in logs
     assert venue.orders[link]["orderStatus"] == "New"
     assert _flattens(venue) == [("Sell", "0.01")] and venue.size == 0
     assert h.cleanup_ok is False and h.notes["cleanup"].startswith("INCOMPLETE (open orders: ")
@@ -352,6 +386,15 @@ def test_a_soak_with_the_10018_burst_is_refused_when_the_config_is_built(tmp_pat
         _config(tmp_path, mode="soak", capture_10018=True)
     assert _config(tmp_path, capture_10018=True).capture_10018
     assert not _config(tmp_path, mode="soak").capture_10018
+
+
+def test_a_soak_with_the_10002_capture_is_refused_when_the_config_is_built(tmp_path: Path) -> None:
+    """Only an orders run reads with a skewed timestamp: a soak would skip the capture without a
+    word, and the owner would believe it was taken."""
+    with pytest.raises(SafetyRefusal, match="10002 capture runs in orders mode only"):
+        _config(tmp_path, mode="soak", capture_10002=True)
+    assert _config(tmp_path, capture_10002=True).capture_10002
+    assert not _config(tmp_path, mode="soak").capture_10002
 
 
 # -- a backfill that failed is not a clean run ---------------------------------------------------
@@ -400,38 +443,105 @@ async def test_a_stop_request_during_the_backfill_still_writes_and_marks_the_mis
     monkeypatch.setattr(h, "backfill", cut_backfill)
     main = asyncio.create_task(drive(h))
     report = await main
-    assert report["outcome"] == f"{COMPLETED}; {AC2_MISSING}"
+    assert report["outcome"] == f"{INTERRUPTED}; {AC2_MISSING}"
     assert (report["rest_backfill_error"], report["rest_executions"]) == ("CancelledError", None)
     assert h.notes["wrap_up"] == "stopped early: CancelledError"
+    assert report["stop_reason"] == "stop request (cancelled)"
     assert (tmp_path / "run" / "summary.json").is_file() and main.cancelling() == 0
     assert not [s for s in h.recorder.samples if s.op == "burst"]
 
 
-# -- a second Ctrl-C or SIGTERM: still flatten, still write -------------------------------------
-
-
-async def test_a_second_stop_request_still_flattens_and_writes_the_outputs(
+async def test_a_stop_request_during_the_wrap_up_makes_a_completed_run_interrupted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The first stop request (SIGINT) ends the run between cycles; the second (SIGTERM) cancels
-    the run's task where it waits, here on a fill. The run still cancels its orders, flattens,
-    writes its outputs and reports `interrupted`: nothing escapes `drive`, and the cancellation
-    is consumed, so what follows is an ordinary task."""
+    """The cycles are done and the outcome stood at `completed` when the terminal closes (SIGHUP)
+    while the backfill reads. The README says a stop request ends the run `interrupted`, exit 1:
+    the outcome is settled when the outputs are written, not before the wrap-up begins."""
+    venue = FakeBybit()
+    registered = _signals(monkeypatch)
+    venue.on_get = lambda path: _hangup(registered) if path == "/v5/execution/list" else None
+    h = _harness(venue, _config(tmp_path, orders=2, capture_10018=True))
+
+    report = await asyncio.create_task(_run_with_signals(h))
+    assert report["outcome"] == INTERRUPTED and h.notes["ip_limit_10018"] == SKIPPED
+    assert not [s for s in h.recorder.samples if s.op == "burst"]
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert (saved["outcome"], saved["stop_reason"]) == (INTERRUPTED, "stop request (SIGHUP)")
+    summary = (tmp_path / "run" / "summary.md").read_text(encoding="utf-8")
+    assert ": interrupted." in summary
+
+
+async def test_a_stop_request_during_the_wrap_up_keeps_what_else_was_wrong_with_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a `completed` outcome turns into `interrupted`: a cleanup that did not finish stays
+    in the outcome, after the new word."""
+    venue = FakeBybit()
+    venue.flatten_fills = False
+    registered = _signals(monkeypatch)
+    venue.on_get = lambda path: _hangup(registered) if path == "/v5/execution/list" else None
+    h = _harness(venue, _config(tmp_path, orders=1, taker_every=1))
+
+    report = await asyncio.create_task(_run_with_signals(h))
+    assert report["outcome"] == f"{INTERRUPTED}; cleanup INCOMPLETE: {BY_HAND}"
+
+
+# -- a second Ctrl-C, SIGTERM or SIGHUP: still flatten, still write -----------------------------
+
+_PAIRS = pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (signal.SIGINT, signal.SIGTERM),
+        (signal.SIGTERM, signal.SIGHUP),
+        (signal.SIGHUP, signal.SIGINT),
+    ],
+    ids=["int-term", "term-hup", "hup-int"],
+)
+
+
+@_PAIRS
+async def test_a_second_stop_request_still_flattens_and_writes_the_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first: signal.Signals, second: signal.Signals
+) -> None:
+    """The first stop request (SIGINT, SIGTERM or SIGHUP) ends the run between cycles; the second
+    cancels the run's task where it waits, here on a fill. The run still cancels its orders,
+    flattens, writes its outputs and reports `interrupted`: nothing escapes `drive`, and the
+    cancellation is consumed, so what follows is an ordinary task."""
     venue = FakeBybit()
     registered = _signals(monkeypatch)
     h = _harness(venue, _config(tmp_path, orders=40, capture_10018=True))
-    venue.on_create = lambda n: _stop_twice(registered) if n == 2 else None
+    venue.on_create = lambda n: _stop_twice(registered, first, second) if n == 2 else None
 
     main = asyncio.create_task(_run_with_signals(h))
     with capture_logs() as logs:
         report = await main
-    assert set(registered) == {signal.SIGINT, signal.SIGTERM}
+    assert set(registered) == {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
     assert report["outcome"] == INTERRUPTED and len(_cycles(h)) == 2
     assert (h.notes["cleanup"], h.cleanup_ok, venue.size) == (CLEAN, True, Decimal(0))
     assert len(_flattens(venue)) == 1 and h.notes["ip_limit_10018"] == SKIPPED
     saved = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
-    assert saved["outcome"] == INTERRUPTED
+    assert (saved["outcome"], saved["stop_reason"]) == (INTERRUPTED, f"stop request ({first.name})")
     assert main.cancelling() == 0 and {"event": "run_cancelled", "log_level": "warning"} in logs
+
+
+async def test_a_hangup_is_a_stop_request_and_not_the_end_of_the_run_where_it_stands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closing the terminal, the tab, the SSH or the WSL session sends SIGHUP, whose default is to
+    kill the process: a resting order and an open position stay, and nothing is written. It is a
+    stop request like SIGINT and SIGTERM: the run cancels, flattens, writes and says why."""
+    venue = FakeBybit()
+    registered = _signals(monkeypatch)
+    h = _harness(venue, _config(tmp_path, orders=40, capture_10018=True))
+    venue.on_create = lambda n: _stop_once(registered, signal.SIGHUP) if n == 2 else None
+
+    report = await asyncio.create_task(_run_with_signals(h))
+    assert signal.SIGHUP in registered
+    assert report["outcome"] == INTERRUPTED and len(_cycles(h)) == 2
+    assert (h.notes["cleanup"], h.cleanup_ok, venue.size) == (CLEAN, True, Decimal(0))
+    assert len(_flattens(venue)) == 1 and h.notes["ip_limit_10018"] == SKIPPED
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert (saved["outcome"], saved["stop_reason"]) == (INTERRUPTED, "stop request (SIGHUP)")
 
 
 async def test_a_stop_request_that_cuts_the_cleanup_short_is_followed_by_one_whole_cleanup(
@@ -476,7 +586,13 @@ async def test_a_stop_request_that_cuts_the_second_cleanup_short_aborts_and_says
     main = asyncio.create_task(drive(h))
     with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
         await main
-    assert {"event": "run_aborted", "by_hand": BY_HAND, "log_level": "error"} in logs
+    aborted = {
+        "event": "run_aborted",
+        "by_hand": BY_HAND,
+        "stop_reason": "stop request (cancelled)",
+    }
+    aborted |= {"orders_csv": str(tmp_path / "run" / "orders.csv"), "log_level": "error"}
+    assert aborted in logs
     assert venue.size > 0 and not (tmp_path / "run" / "summary.json").exists()
 
 
@@ -518,23 +634,336 @@ async def test_a_second_stop_request_in_a_soak_leaves_the_account_alone(
     assert (tmp_path / "run" / "summary.json").is_file()
 
 
-# -- the duplicate capture follows an accepted first create only ---------------------------------
+# -- the first stop reason is kept, whatever stop request comes after it ------------------------
 
 
-async def test_a_rejected_first_create_is_not_sent_again_as_the_duplicate_capture(
+async def test_the_first_stop_reason_survives_a_stop_request_that_cuts_the_cleanup_short(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key refusal ends the run and its cleanup begins; a stop request then cancels the cleanup
+    where it reads the open orders. The cancellation replaces the refusal in flight, so the
+    outcome reads `interrupted`: the reason the run stopped must already be recorded, and the
+    summaries carry it, by class and code and never by the exchange's text."""
+    venue = FakeBybit()
+    venue.refuse_creates = lambda n: (10003, "text the exchange wrote")
+    h = _harness(venue, _config(tmp_path, orders=10, taker_every=0))
+    reads, own_open = 0, h._own_open
+
+    async def cut_the_first_read() -> list[str]:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            await _cancel_here()
+        return await own_open()
+
+    monkeypatch.setattr(h, "_own_open", cut_the_first_read)
+    main = asyncio.create_task(drive(h))
+    report = await main
+    assert (reads, report["outcome"], h.cleanup_ok) == (2, INTERRUPTED, True)
+    assert report["stop_reason"] == KEY_REFUSED
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert (saved["outcome"], saved["stop_reason"]) == (INTERRUPTED, KEY_REFUSED)
+    summary = (tmp_path / "run" / "summary.md").read_text(encoding="utf-8")
+    assert f"First stop reason: {KEY_REFUSED}." in summary
+    assert "text the exchange wrote" not in report["stop_reason"]
+
+
+async def test_a_failure_that_stopped_the_run_is_named_once_in_the_summary(tmp_path: Path) -> None:
+    """With no stop request after it the reason is the outcome: the summary says it once."""
+    venue = FakeBybit()
+    venue.refuse_creates = lambda n: (10003, "refused")
+    h = _harness(venue, _config(tmp_path, orders=10, taker_every=0))
+    report = await drive(h)
+    assert (report["outcome"], report["stop_reason"]) == (KEY_REFUSED, KEY_REFUSED)
+    summary = (tmp_path / "run" / "summary.md").read_text(encoding="utf-8")
+    assert "First stop reason" not in summary and summary.count(KEY_REFUSED) == 1
+
+
+@pytest.mark.parametrize("mode", ["orders", "soak"])
+async def test_a_stream_that_refuses_its_auth_is_the_stop_reason_in_either_mode(
+    tmp_path: Path, mode: str
+) -> None:
+    """The refusal comes from the stream's own task, before any cycle runs: it is the reason, named
+    by its rule, and `summary.json` carries it."""
+    venue = FakeBybit()
+    venue.refuse_ws_auth = True
+    h = _harness(venue, _config(tmp_path, mode=mode))
+    report = await drive(h)
+    reason = "stopped early: StreamAuthRefused: the private stream refused auth"
+    assert (report["outcome"], report["stop_reason"]) == (reason, reason)
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert saved["stop_reason"] == reason and venue.posts("/v5/order/create") == []
+
+
+async def test_a_run_nothing_stopped_has_no_stop_reason(tmp_path: Path) -> None:
+    report = await drive(_harness(FakeBybit(), _config(tmp_path, orders=2)))
+    assert (report["outcome"], report["stop_reason"]) == (COMPLETED, None)
+
+
+async def test_only_the_first_stop_reason_is_kept(tmp_path: Path) -> None:
+    h = _harness(FakeBybit(), _config(tmp_path))
+    h.note_stop("stop request (SIGHUP)")
+    h.note_stop(KEY_REFUSED)
+    await h.client.aclose()
+    assert h.stop_reason == "stop request (SIGHUP)"
+
+
+# -- the run's record is on disk as it goes, so a killed run still leaves it --------------------
+
+
+async def test_the_record_of_a_run_is_on_disk_while_the_run_goes_on(tmp_path: Path) -> None:
+    """When the venue holds the second create, the process could be killed: the second order is
+    already in orders.csv (written before the request goes out), the first cycle's outcome is in
+    cycles.csv, and every call answered so far is in rest_calls.csv."""
+    venue = FakeBybit()
+    h = _harness(venue, _config(tmp_path, orders=3, taker_every=0))
+    seen: dict[str, Any] = {}
+
+    def killed_now(n: int) -> None:
+        if n == 2:
+            seen["in_flight"] = venue.posts("/v5/order/create")[-1]["orderLinkId"]
+            seen["answered"] = len(h.recorder.samples)
+            seen.update({name: _file(tmp_path, f"{name}.csv") for name in _JOURNALS})
+
+    venue.on_create = killed_now
+    await drive(h)
+
+    first, second = (r["order_link_id"] for r in _cycles(h)[:2])
+    assert seen["in_flight"] == second
+    assert [r["order_link_id"] for r in seen["orders"]] == [first, second]
+    assert [r["order_link_id"] for r in seen["cycles"]] == [first]
+    assert len(seen["rest_calls"]) == seen["answered"]
+    assert {r["order_link_id"] for r in _file(tmp_path, "orders.csv")} == h.links
+
+
+async def test_an_order_row_names_the_order_the_native_stop_and_the_symbol(tmp_path: Path) -> None:
+    venue = FakeBybit()
+    h = _harness(venue, _config(tmp_path, orders=2, taker_every=2))
+    await drive(h)
+    passive, taker = (r for r in _file(tmp_path, "orders.csv") if r["cycle"] != "-1")
+    assert (passive["cycle"], passive["kind"], taker["cycle"], taker["kind"]) == (
+        "0",
+        "passive",
+        "1",
+        "taker",
+    )
+    for row in (passive, taker):
+        assert (row["symbol"], row["side"]) == (SYMBOL, "Buy")
+        assert Decimal(row["stop_loss"]) < Decimal(row["price"]) and Decimal(row["qty"]) > 0
+        assert int(row["created_ms"]) > 0 and row["order_link_id"] in h.links
+
+
+async def test_an_aborted_run_leaves_its_orders_and_calls_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both cleanups are cut by a stop request: the run aborts and writes no summary, yet the order
+    it sent, the cycle it ended and every call it made are on disk for the owner."""
+    venue = FakeBybit()
+    h = _harness(venue, _config(tmp_path, orders=1, taker_every=1))
+
+    async def cut_every_read() -> list[str]:
+        await _cancel_here()
+        return []  # never reached: the cancel landed
+
+    monkeypatch.setattr(h, "_own_open", cut_every_read)
+    main = asyncio.create_task(drive(h))
+    with capture_logs(), pytest.raises(asyncio.CancelledError):
+        await main
+    assert not (tmp_path / "run" / "summary.json").exists()
+    link = _cycles(h)[0]["order_link_id"]
+    assert [r["order_link_id"] for r in _file(tmp_path, "orders.csv")] == [link]
+    assert [r["order_link_id"] for r in _file(tmp_path, "cycles.csv")] == [link]
+    calls = _file(tmp_path, "rest_calls.csv")
+    assert len(calls) == len(h.recorder.samples)
+    assert {"create", "duplicate"} <= {r["op"] for r in calls}
+
+
+async def test_a_flatten_is_in_orders_csv_before_it_is_sent(tmp_path: Path) -> None:
+    venue = FakeBybit()
+    h = _harness(venue, _config(tmp_path))
+    _left_open(venue, h)
+    seen: dict[str, Any] = {}
+    venue.on_create = lambda n: seen.update(rows=_file(tmp_path, "orders.csv"))
+    await h.cleanup()
+    await h.client.aclose()
+    flatten = seen["rows"][-1]
+    assert (flatten["cycle"], flatten["kind"], flatten["side"], flatten["qty"]) == (
+        "-1",
+        "flatten:end",
+        "Sell",
+        "0.01",
+    )
+    assert flatten["order_link_id"] in h.links and flatten["stop_loss"] == ""
+
+
+async def test_no_opening_order_is_sent_when_its_record_cannot_be_written(tmp_path: Path) -> None:
+    """No row, no order: the record is what the owner has if the run is killed. The run stops, and
+    its cleanup still runs."""
+    venue = FakeBybit()
+    (tmp_path / "run" / "orders.csv").mkdir(parents=True)  # nothing can be appended there
+    h = _harness(venue, _config(tmp_path))
+    with capture_logs() as logs:
+        report = await drive(h)
+    opening = [b for b in venue.posts("/v5/order/create") if b.get("reduceOnly") is not True]
+    assert opening == []
+    assert report["outcome"] == (
+        "stopped early: SafetyRefusal: the order record cannot be written: no order is sent"
+    )
+    assert h.notes["cleanup"] == CLEAN
+    failed = [entry for entry in logs if entry["event"] == "journal_unwritable"]
+    assert [(e["file"], e["log_level"]) for e in failed] == [("orders.csv", "error")]
+
+
+async def test_a_flatten_goes_out_even_when_its_record_cannot_be_written(tmp_path: Path) -> None:
+    """Closing the position never waits for the record of the order that closes it."""
+    venue = FakeBybit()
+    (tmp_path / "run" / "orders.csv").mkdir(parents=True)
+    h = _harness(venue, _config(tmp_path))
+    _left_open(venue, h)
+    with capture_logs():
+        await h.cleanup()
+    await h.client.aclose()
+    assert _flattens(venue) == [("Sell", "0.01")] and venue.size == 0
+    assert (h.notes["cleanup"], h.cleanup_ok) == (CLEAN, True)
+
+
+async def test_every_field_of_a_cycle_row_is_a_column_of_cycles_csv(tmp_path: Path) -> None:
+    """A field outside the fixed columns would be dropped from the file: the rows of a run that
+    uses every field (an error, an amend, a cancel, a flatten) all fit."""
+    venue = FakeBybit()
+    venue.split_fills, venue.fail_lookups = True, {3: 4}
+    h = _harness(venue, _config(tmp_path))
+    await drive(h)
+    assert set().union(*h.rows) <= set(CYCLE_COLUMNS) and {"error", "amend"} <= set().union(*h.rows)
+    assert [r["order_link_id"] for r in _file(tmp_path, "cycles.csv")] == [
+        r["order_link_id"] for r in h.rows
+    ]
+    assert set(_file(tmp_path, "orders.csv")[0]) == set(ORDER_COLUMNS)
+
+
+async def test_the_retention_probe_looks_up_the_orders_an_earlier_run_listed(
     tmp_path: Path,
 ) -> None:
-    """The duplicate capture re-sends an order the venue holds, to see its refusal. A rejected
-    first create left nothing to duplicate: sending it again would only retry it, and the note
-    would read `accepted`."""
+    """`orders.csv` is the file the probe reads: `cycle`, `order_link_id` and `created_ms` of each
+    order an earlier run sent, its flatten left out."""
     venue = FakeBybit()
-    venue.refuse_creates = lambda n: (110007, "insufficient balance") if n == 1 else None
+    await drive(_harness(venue, _config(tmp_path, orders=3)))
+    earlier = tmp_path / "run" / "orders.csv"
+    (flatten,) = [r["order_link_id"] for r in _file(tmp_path, "orders.csv") if r["cycle"] == "-1"]
+    asked = len(venue.calls)
+
+    probe = _harness(venue, _config(tmp_path / "later", orders=1, retention_probe=earlier))
+    await drive(probe)
+    found = probe.notes["demo_retention"]
+    assert [entry["found"] for entry in found] == [True] * 4
+    assert all(0 <= entry["age_days"] < 1 for entry in found)
+    looked_up = {p["orderLinkId"] for method, _, p in venue.calls[asked:] if "orderLinkId" in p}
+    assert flatten not in looked_up  # a flatten is listed, and no sample of the probe
+
+
+async def test_the_retention_probe_skips_a_row_the_leak_check_withheld(tmp_path: Path) -> None:
+    """A journal row that failed the leak check is one line naming the failed checks, in place of
+    the row: it has no order id, and the probe must not stop on it."""
+    venue = FakeBybit()
+    await drive(_harness(venue, _config(tmp_path, orders=2)))
+    earlier = tmp_path / "run" / "orders.csv"
+    with earlier.open("a", encoding="utf-8", newline="") as stream:
+        stream.write("withheld by the leak check: key-shape\r\n")
+
+    probe = _harness(venue, _config(tmp_path / "later", orders=1, retention_probe=earlier))
+    await drive(probe)
+    assert [entry["found"] for entry in probe.notes["demo_retention"]] == [True] * 4
+    assert "wrap_up" not in probe.notes
+
+
+# -- the duplicate capture follows the first accepted create ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("code", "text"),
+    [(110007, "insufficient balance"), (110072, "OrderLinkedID is duplicate")],
+    ids=["refused", "unresolved"],
+)
+async def test_a_first_create_that_was_refused_or_is_unresolved_leaves_the_duplicate_to_the_next(
+    tmp_path: Path, code: int, text: str
+) -> None:
+    """The duplicate capture re-sends an order the venue holds, to see its refusal. A refused or
+    unresolved first create left nothing to duplicate: sending it again would only retry it, and
+    the note would read `accepted`. The capture waits for the next cycle whose create is accepted,
+    and only that cycle's order is sent twice."""
+    venue = FakeBybit()
+    venue.refuse_creates = lambda n: (code, text) if n == 1 else None
+    h = _harness(venue, _config(tmp_path, orders=3, taker_every=0))
+    report = await drive(h)
+    first, second, third = (r["order_link_id"] for r in _cycles(h))
+    sent = [b["orderLinkId"] for b in venue.posts("/v5/order/create")]
+    assert (sent.count(first), sent.count(second), sent.count(third)) == (1, 2, 1)
+    assert h.notes["duplicate_order_link_id"].startswith("retCode 110072: DuplicateClientIdError")
+    assert report["outcome"] == COMPLETED
+
+
+async def test_the_duplicate_is_captured_once_in_a_run(tmp_path: Path) -> None:
+    venue = FakeBybit()
+    h = _harness(venue, _config(tmp_path, orders=3, taker_every=0))
+    await drive(h)
+    sent = [b["orderLinkId"] for b in venue.posts("/v5/order/create")]
+    assert sorted(sent.count(r["order_link_id"]) for r in _cycles(h)) == [1, 1, 2]
+    assert sent[1] == sent[0]  # the first accepted create is the one that is sent twice
+
+
+async def test_a_run_with_no_accepted_create_says_the_duplicate_was_not_captured(
+    tmp_path: Path,
+) -> None:
+    """The error shape of a duplicate `orderLinkId` is an acceptance criterion: a run that could
+    not capture it says so, in the notes and in `summary.md`, and does not leave it silent."""
+    venue = FakeBybit()
+    venue.refuse_creates = lambda n: (110007, "insufficient balance")
     h = _harness(venue, _config(tmp_path, orders=2, taker_every=0))
     report = await drive(h)
-    first = _cycles(h)[0]["order_link_id"]
-    assert [b["orderLinkId"] for b in venue.posts("/v5/order/create")].count(first) == 1
+    note = "not captured (no cycle had an accepted create: 2 ran)"
+    assert report["outcome"] == COMPLETED and h.notes["duplicate_order_link_id"] == note
+    saved = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert saved["notes"]["duplicate_order_link_id"] == note
+    summary = (tmp_path / "run" / "summary.md").read_text(encoding="utf-8")
+    assert f"duplicate_order_link_id: {note}" in summary
+
+
+async def test_a_run_that_stops_before_its_first_cycle_says_the_duplicate_was_not_captured(
+    tmp_path: Path,
+) -> None:
+    venue = FakeBybit()
+    h = _harness(venue, _config(tmp_path))
+    h.stopping.set()
+    report = await drive(h)
+    assert report["outcome"] == INTERRUPTED
+    assert h.notes["duplicate_order_link_id"] == "not captured (no cycle ran)"
+
+
+async def test_a_stop_request_between_the_create_and_its_duplicate_is_said_in_the_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venue = FakeBybit()
+    h = _harness(venue, _config(tmp_path, orders=1, taker_every=0))
+    post = h._post
+
+    async def cut_the_duplicate(
+        op: str, path: str, body: dict[str, Any]
+    ) -> tuple[ExchangeError | None, float]:
+        if op == "duplicate":
+            await _cancel_here()
+        return await post(op, path, body)
+
+    monkeypatch.setattr(h, "_post", cut_the_duplicate)
+    report = await asyncio.create_task(drive(h))
+    assert report["outcome"] == INTERRUPTED
+    note = "not captured (the run ended before the duplicate was sent)"
+    assert h.notes["duplicate_order_link_id"] == note
+
+
+async def test_a_soak_has_no_duplicate_capture_to_miss(tmp_path: Path) -> None:
+    h = _harness(FakeBybit(), _config(tmp_path, mode="soak"))
+    await drive(h)
     assert "duplicate_order_link_id" not in h.notes
-    assert [r["create"] for r in _cycles(h)] == ["110007", "0"] and report["outcome"] == COMPLETED
 
 
 # -- the guard rails that stop a run -------------------------------------------------------------

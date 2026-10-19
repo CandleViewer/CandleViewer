@@ -1,18 +1,21 @@
 """Recording for the E29-K01 harness: REST round trips, reply shapes, fixture staging.
 
 `RestRecorder` is the `GuardedTransport` callback. It keeps one `RestSample` per HTTP exchange
-(the round-trip data) and the first reply per `(path, retCode, HTTP status, variant)`, scrubbed
-as it is recorded: those are the fixture captures. The variant tells apart what a read reply's
-list holds (`_variant`), so the populated order rows and the open position are kept beside the
-empty replies the preflight reads first. The key-info reply is never kept. `FixtureSink` writes
-the captures and the scrubbed private-stream frames in the `packages/fixtures/bybit/<date>/`
-layout (`rest/*.json`, `ws/*.jsonl`, manifest entries, README lines) under a staging directory;
-the owner reviews them before anything moves into `packages/fixtures`.
+(the round-trip data; the `Journal` it is given also appends each to `rest_calls.csv` as it
+arrives, so a killed run leaves the calls it made) and the first reply per `(path, retCode, HTTP
+status, variant)`, scrubbed as it is recorded: those are the fixture captures. The variant tells
+apart what a read reply's list holds (`_variant`), so the populated order rows and the open
+position are kept beside the empty replies the preflight reads first. The key-info reply is never
+kept. `FixtureSink` writes the captures and the scrubbed private-stream frames in the
+`packages/fixtures/bybit/<date>/` layout (`rest/*.json`, `ws/*.jsonl`, manifest entries, README
+lines) under a staging directory; the owner reviews them before anything moves into
+`packages/fixtures`.
 """
 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import time
 from collections.abc import Iterator
@@ -24,6 +27,7 @@ from typing import Any, Final
 import httpx
 import structlog
 
+from .journal import Journal
 from .safety import DEMO_REST_HOST, DEMO_WS_URL
 from .scrub import LeakError, Scrubber
 from .stats import as_decimal
@@ -67,6 +71,10 @@ class RestSample:
     rtt_ms: float
 
 
+#: The columns of `rest_calls.csv`: the fields of a `RestSample`, in order.
+REST_COLUMNS: Final = tuple(field.name for field in dataclasses.fields(RestSample))
+
+
 @dataclass(frozen=True, slots=True)
 class Capture:
     """One reply shape, already scrubbed: a JSON value, or the text of a non-JSON reply."""
@@ -107,8 +115,8 @@ def _variant(body: object) -> str:
 
 
 class RestRecorder:
-    def __init__(self, scrubber: Scrubber) -> None:
-        self._scrubber = scrubber
+    def __init__(self, scrubber: Scrubber, journal: Journal | None = None) -> None:
+        self._scrubber, self._journal = scrubber, journal
         self.samples: list[RestSample] = []
         self.captures: dict[CaptureKey, Capture] = {}
 
@@ -126,6 +134,8 @@ class RestRecorder:
             now_ms = int(time.time() * 1e3)
             sample = RestSample(now_ms, op, request.method, path, status, ret_code, rtt_s * 1e3)
             self.samples.append(sample)
+            if self._journal is not None:
+                self._journal.append(dataclasses.asdict(sample))
         variant = _variant(body)
         key = (path, ret_code, status, variant)
         if path in _NOT_KEPT or key in self.captures:

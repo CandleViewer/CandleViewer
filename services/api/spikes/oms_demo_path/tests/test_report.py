@@ -77,8 +77,10 @@ def _parity_row(summary: str) -> str:
     return next(line for line in section.splitlines() if line.startswith("| execution |"))
 
 
-async def _summary(h: Harness, rest: dict[str, RestExecution]) -> tuple[dict[str, Any], str]:
-    report = build_report(h, rest, COMPLETED)
+async def _summary(
+    h: Harness, rest: dict[str, RestExecution], outcome: str = COMPLETED
+) -> tuple[dict[str, Any], str]:
+    report = build_report(h, rest, outcome)
     await h.client.aclose()
     report |= {"fixtures": [], "ws_capture_withheld": False}  # what `write_outputs` adds
     return report, render(report)
@@ -106,3 +108,63 @@ async def test_a_failed_backfill_reads_n_a_where_an_empty_listing_would_read_zer
     assert f"the REST backfill FAILED ({h.backfill_error})" in summary
     assert "the #843 AC2 number is missing" in summary
     assert _parity_row(summary).endswith("| n/a | n/a | n/a | n/a |")
+
+
+REASON = "stopped early: SafetyRefusal: create refused (retCode 10003: AuthError (AUTH_ERROR))"
+
+
+async def test_a_stop_reason_the_outcome_does_not_say_is_named_in_the_summary(
+    tmp_path: Path,
+) -> None:
+    """A stop request that interrupted the cleanup of a run a refusal had stopped turns the outcome
+    into `interrupted`: the refusal is still in `summary.json` and `summary.md`."""
+    h = _harness(tmp_path)
+    h.stop_reason = REASON
+    report, summary = await _summary(h, {}, "interrupted")
+    assert (report["outcome"], report["stop_reason"]) == ("interrupted", REASON)
+    assert f"First stop reason: {REASON}." in summary
+
+
+async def test_a_stop_reason_the_outcome_already_says_is_not_repeated(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.stop_reason = REASON
+    report, summary = await _summary(h, {}, REASON)
+    assert report["stop_reason"] == REASON
+    assert "First stop reason" not in summary and summary.count(REASON) == 1
+
+
+async def test_a_run_nothing_stopped_has_no_stop_reason_line(tmp_path: Path) -> None:
+    report, summary = await _summary(_harness(tmp_path), {})
+    assert report["stop_reason"] is None and "First stop reason" not in summary
+
+
+async def test_a_duplicate_capture_that_failed_is_a_line_of_the_error_shapes(
+    tmp_path: Path,
+) -> None:
+    """Its error shape is an acceptance criterion of #843: a run without it says so where the
+    error shapes are, in the words of its note."""
+    h = _harness(tmp_path)
+    h.notes["duplicate_order_link_id"] = "not captured (no cycle ran)"
+    _, summary = await _summary(h, {})
+    shapes = summary.split("## Error shapes")[1].split("## Stream")[0]
+    assert "duplicate_order_link_id: not captured (no cycle ran)" in shapes
+
+
+async def test_a_duplicate_capture_that_succeeded_adds_no_line(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.notes["duplicate_order_link_id"] = "retCode 110072: DuplicateClientIdError (DUPLICATE)"
+    _, summary = await _summary(h, {})
+    shapes = summary.split("## Error shapes")[1].split("## Stream")[0]
+    assert "duplicate_order_link_id:" not in shapes
+
+
+async def test_the_outputs_leave_the_journals_as_the_run_kept_them(tmp_path: Path) -> None:
+    """`orders.csv` and `rest_calls.csv` are written row by row while the run goes on: writing the
+    outputs at the end must not replace them with a table rebuilt from memory."""
+    h = _harness(tmp_path)
+    h.orders_log.append({"cycle": 0, "order_link_id": "cvd-a", "kind": "passive"})
+    before = (tmp_path / "run" / "orders.csv").read_bytes()
+    write_outputs(h, build_report(h, {}, COMPLETED), {})
+    await h.client.aclose()
+    assert (tmp_path / "run" / "orders.csv").read_bytes() == before
+    assert not (tmp_path / "run" / "rest_calls.csv").exists()  # no call was made

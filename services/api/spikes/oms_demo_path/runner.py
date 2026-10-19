@@ -13,10 +13,18 @@ with a REST execution backfill over the run window and always write the run dire
 that failed is in the outcome too, since the count it gives (#843 AC2) is then missing. The 10018
 burst (`orders` only) runs last, and only after a complete run that left the account flat.
 
-A first stop request (SIGINT or SIGTERM) ends the run between cycles. A second cancels the step
-in progress, and the run still winds down: it cleans up once more if the cancel cut that short,
-writes its outputs and reports `interrupted`. A stop request that cuts that second cleanup short
-aborts the run: the log then says what to do by hand.
+A first stop request (SIGINT, SIGTERM or SIGHUP: the terminal, the tab or the SSH or WSL session
+closing) ends the run between cycles. A second cancels the step in progress, and the run still
+winds down: it cleans up once more if the cancel cut that short, writes its outputs and reports
+`interrupted`; so does a stop request that comes during the wrap-up. The first reason the run
+stopped (an error's class and code, or the stop request) is kept whatever stops it after: it is in
+the summaries even when a later stop request turns the outcome into `interrupted`. A stop request
+that cuts that second cleanup short aborts the run: the log then says what to do by hand.
+
+The run keeps its record as it goes (`journal.py`): every order is in `orders.csv` before its create
+is sent, every finished cycle in `cycles.csv`, every answered call in `rest_calls.csv`, so a run
+that is aborted or killed leaves the list of what it sent. No opening order is sent whose row
+cannot be written.
 """
 
 from __future__ import annotations
@@ -27,7 +35,7 @@ import csv
 import io
 import signal
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, Decimal
@@ -60,7 +68,8 @@ from candleviewer.observability.metrics import CONTENT_TYPE_LATEST, Metrics, gen
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.order_link import OrderPurpose
 
-from .capture import FixtureSink, RestRecorder, labelled
+from .capture import REST_COLUMNS, FixtureSink, RestRecorder, labelled
+from .journal import Journal
 from .report import build_report, write_outputs
 from .safety import (
     DEMO,
@@ -98,6 +107,17 @@ CLEAN: Final = "own orders cancelled, position flat"
 #: no count of the executions seen only through REST (#843 AC2), so the run is not a clean one.
 BACKFILL_FAILED: Final = (
     "REST execution backfill FAILED: the AC2 number (executions seen only via REST) is missing"
+)
+#: The columns of `orders.csv`: one row per order the run sent, written before its create is sent.
+ORDER_COLUMNS: Final = tuple(
+    "cycle order_link_id created_ms kind symbol side qty price stop_loss".split()
+)
+#: The columns of `cycles.csv`: one row per cycle, and per flatten (cycle -1), when it ended.
+CYCLE_COLUMNS: Final = tuple(
+    (
+        "cycle order_link_id created_ms kind create create_ms partial amend amend_ms cancel "
+        "cancel_ms status filled error"
+    ).split()
 )
 _OPEN: Final = ("New", "PartiallyFilled", "Untriggered")
 #: A create that may have landed: looked up by its `orderLinkId` (24 §8.3 rule 3), never re-sent.
@@ -151,6 +171,10 @@ class Config:
             raise SafetyRefusal(
                 "the 10018 burst runs in orders mode only: a soak has no orders of its own "
                 "to show the account flat"
+            )
+        if self.mode == "soak" and self.capture_10002:
+            raise SafetyRefusal(
+                "the 10002 capture runs in orders mode only: a soak would skip it without a word"
             )
 
 
@@ -213,10 +237,14 @@ def _why(exc: BaseException) -> str:
 def _by_hand(symbol: str) -> str:
     """What the owner does when a cleanup did not finish. The run could not say what still rests
     (a failed read of the open orders, a failed cancel) or what is still held (a failed
-    flatten), so both are named: its orders are found by the `orderLinkId` prefix."""
+    flatten), so both are named. The ids of its orders have no prefix of their own beyond
+    `LINK_PREFIX` (24 §8.3 puts a random group right after it): `orders.csv` lists every order it
+    sent, written before the order was, so an aborted or killed run has it too. It sits in the
+    run's output directory, beside the summary: no path here, the summary goes on a public issue."""
     return (
-        f"in the demo UI cancel the run's open {symbol} orders (orderLinkId prefix {LINK_PREFIX})"
-        f" and flatten the {symbol} position"
+        f"in the demo UI cancel the run's open {symbol} orders (orderLinkId prefix {LINK_PREFIX};"
+        f" each is listed in orders.csv of the run's output directory) and flatten the {symbol}"
+        " position"
     )
 
 
@@ -245,7 +273,13 @@ class Harness:
         self.cfg, self.symbol = cfg, cfg.symbol
         self._transport, self._sleep = transport_factory, sleep
         self.scrubber = Scrubber([creds.key_id])
-        self.recorder = RestRecorder(self.scrubber)
+        #: The run's record, appended to as it goes (`journal.py`): the orders it sent, the cycles
+        #: it ended and the calls it made.
+        self.orders_log = Journal(cfg.out / "orders.csv", ORDER_COLUMNS, self.scrubber)
+        self.cycles_log = Journal(cfg.out / "cycles.csv", CYCLE_COLUMNS, self.scrubber)
+        self.recorder = RestRecorder(
+            self.scrubber, Journal(cfg.out / "rest_calls.csv", REST_COLUMNS, self.scrubber)
+        )
         self.governor = TokenBucketGovernor(sleep=sleep)
         self.signer = BybitSigner(creds, uuid4())
         self.metrics = Metrics(DEMO)
@@ -275,8 +309,17 @@ class Harness:
         self.cleanup_ok: bool | None = None
         #: Why the REST execution backfill gave no listing (`wrap_up`); `None` when it did.
         self.backfill_error: str | None = None
+        #: The first reason the run stopped (`note_stop`); `None` for a run nothing stopped.
+        self.stop_reason: str | None = None
         self._failures = 0
         self._failed_cycles = 0
+
+    def note_stop(self, reason: str) -> None:
+        """Keep the first reason the run stopped, in fixed words (an error by class and code,
+        never its text; a stop request by its signal). A later stop request can turn the outcome
+        into `interrupted` and cut the cleanup short; the reason is kept and reported anyway."""
+        if self.stop_reason is None:
+            self.stop_reason = reason
 
     def now_ms(self) -> int:
         """The exchange clock: local wall clock plus the measured offset."""
@@ -426,7 +469,22 @@ class Harness:
                 row.update(cancel=_code(err), cancel_ms=round(took * 1e3, 1))
             raise
         finally:
-            self.rows.append(row)
+            self._keep(row)
+
+    def _keep(self, row: dict[str, Any]) -> None:
+        """A finished row of the cycle table: kept for the report, and appended to `cycles.csv`."""
+        self.rows.append(row)
+        self.cycles_log.append(row)
+
+    def _record_order(
+        self, cycle: int, link: str, kind: str, created_ms: int, body: Mapping[str, Any]
+    ) -> bool:
+        """The row of an order in `orders.csv`, on disk before its create is sent: a run that dies
+        after the request left still leaves the order's id. `False` when it could not be written."""
+        row: dict[str, object] = {"cycle": cycle, "order_link_id": link, "created_ms": created_ms}
+        row |= {"kind": kind, "symbol": self.symbol, "side": body["side"], "qty": body["qty"]}
+        row |= {"price": body.get("price", ""), "stop_loss": body.get("stopLoss", "")}
+        return self.orders_log.append(row)
 
     async def _cycle(self, i: int, row: dict[str, Any]) -> None:
         inst, cfg = self.inst, self.cfg
@@ -443,14 +501,18 @@ class Harness:
         body = {**ref, "side": "Buy", "orderType": "Limit", "qty": str(qty), "price": str(price)}
         body |= {"timeInForce": "GTC", "positionIdx": 0, "stopLoss": str(stop)}
         body |= {"slTriggerBy": "MarkPrice", "tpslMode": "Full"}
-        row.update(order_link_id=link, created_ms=self.now_ms())
-        row["kind"] = "taker" if taker else "passive"
+        kind, created = ("taker" if taker else "passive"), self.now_ms()
+        if not self._record_order(i, link, kind, created, body):  # no row, no order
+            raise SafetyRefusal("the order record cannot be written: no order is sent")
+        row.update(order_link_id=link, created_ms=created, kind=kind)
         self.fills[link] = asyncio.Event()
         try:
             error, took = await self._post("create", "/v5/order/create", body)
             row.update(create=_code(error), create_ms=round(took * 1e3, 1))
             self._judge(error)
-            if i == 0 and error is None:  # the duplicate capture needs an order the venue holds
+            # The duplicate capture needs an order the venue holds: the first accepted create,
+            # whichever cycle it is (a refused or unresolved first create leaves it to the next).
+            if error is None and "duplicate_order_link_id" not in self.notes:
                 duplicate, _ = await self._post("duplicate", "/v5/order/create", body)
                 self.notes["duplicate_order_link_id"] = _describe(duplicate)
             if error is not None and not isinstance(error, _UNRESOLVED):
@@ -513,10 +575,11 @@ class Harness:
             body |= {"orderLinkId": link, "side": "Sell" if side == "Buy" else "Buy"}
             body |= {"orderType": "Market", "qty": str(size), "reduceOnly": True}
             body |= {"timeInForce": "IOC", "positionIdx": 0}
+            kind, created = f"flatten:{reason}", self.now_ms()
+            self._record_order(-1, link, kind, created, body)  # closing never waits for its row
             error, took = await self._post("flatten", "/v5/order/create", body)
-            row = {"cycle": -1, "order_link_id": link, "created_ms": self.now_ms()}
-            row |= {"kind": f"flatten:{reason}", "create": _code(error)}
-            self.rows.append(row | {"create_ms": round(took * 1e3, 1)})
+            row = {"cycle": -1, "order_link_id": link, "created_ms": created, "kind": kind}
+            self._keep(row | {"create": _code(error), "create_ms": round(took * 1e3, 1)})
         for _ in range(15):
             if (await self._position())[0] == 0:
                 return
@@ -559,7 +622,10 @@ class Harness:
             steps = "; ".join(failed)
             self.notes["cleanup"] = f"INCOMPLETE ({steps}): {_by_hand(self.symbol)}"
             _log().error(
-                "cleanup_incomplete", failed_steps=len(failed), by_hand=_by_hand(self.symbol)
+                "cleanup_incomplete",
+                failed_steps=len(failed),
+                by_hand=_by_hand(self.symbol),
+                orders_csv=str(self.orders_log.path),
             )
         else:
             self.notes["cleanup"] = CLEAN
@@ -587,6 +653,11 @@ class Harness:
                     with contextlib.suppress(ExchangeError):
                         await self.sync_clock()
                 await self._pause(t0 + (i + 1) * interval - time.monotonic())
+        except Exception as exc:
+            # Kept before the cleanup runs: a stop request that cuts the cleanup short cancels the
+            # task, and the cancellation replaces this error in flight.
+            self.note_stop(_why(exc))
+            raise
         finally:
             await self.cleanup()
             await self._sleep(10)  # the flatten's trailing pushes
@@ -638,7 +709,8 @@ class Harness:
     async def retention(self, path: Path) -> None:
         """Demo order retention (24 §8.3 rule 6): look up a sample of an earlier run's ids."""
         text = await asyncio.to_thread(path.read_text, encoding="utf-8")
-        rows = [r for r in csv.DictReader(io.StringIO(text)) if r.get("cycle", "-1") != "-1"]
+        listed = csv.DictReader(io.StringIO(text))  # a row the leak check withheld has no id
+        rows = [r for r in listed if r.get("order_link_id") and r.get("cycle", "-1") != "-1"]
         found = []
         for r in rows[:2] + rows[-2:]:
             order = await self._order(r["order_link_id"])
@@ -679,7 +751,9 @@ class Harness:
         whatever failed before them, a stop request that cancels this step included (it ends the
         measuring, not the writing). A backfill that failed or was cut short is in the outcome (so
         the exit code) and the outputs: with no listing there is no REST-only count (#843 AC2),
-        and an empty one must not read as zero."""
+        and an empty one must not read as zero. A stop request at any point of this step, one that
+        cancels it or not, ends a `completed` run as `interrupted`: the outcome is settled here,
+        when the outputs are written, not before the wrap-up begins."""
         rest: dict[str, RestExecution] | None = None
         stopped: BaseException | None = None
         try:
@@ -692,15 +766,34 @@ class Harness:
             stopped = exc
         except asyncio.CancelledError as exc:
             _consume_cancel()
+            self.note_stop("stop request (cancelled)")
+            self.stopping.set()
             stopped = exc
         if stopped is not None:
             self.notes["wrap_up"] = _why(stopped)
             if rest is None:
                 self.backfill_error = _failure(stopped)
                 outcome = f"{outcome}; {BACKFILL_FAILED}"
+        if self.stopping.is_set() and outcome.startswith(COMPLETED):
+            outcome = INTERRUPTED + outcome.removeprefix(COMPLETED)
+        self._note_missing_duplicate()
         report = build_report(self, rest or {}, outcome)
         await asyncio.to_thread(write_outputs, self, report, rest or {})
         return report
+
+    def _note_missing_duplicate(self) -> None:
+        """The duplicate `orderLinkId` reply is an acceptance criterion of #843 (AC1): an orders
+        run that could not capture it says so in its notes and summaries, and says why."""
+        if self.cfg.mode != "orders" or "duplicate_order_link_id" in self.notes:
+            return
+        cycles = [r for r in self.rows if r["cycle"] >= 0]
+        if any(r.get("create") == "0" for r in cycles):
+            why = "the run ended before the duplicate was sent"
+        elif cycles:
+            why = f"no cycle had an accepted create: {len(cycles)} ran"
+        else:
+            why = "no cycle ran"
+        self.notes["duplicate_order_link_id"] = f"not captured ({why})"
 
     async def _burst_when_flat(self, outcome: str) -> None:
         """The burst may hold the host IP for 10 minutes or more, which locks out every cancel and
@@ -732,18 +825,21 @@ async def _serve_metrics(h: Harness, port: int) -> asyncio.Server:
 
 
 def _on_signals(h: Harness) -> None:
-    """The first SIGINT/SIGTERM stops between cycles (cleanup and outputs still run); each
-    further one cancels the step in progress. `drive` winds the run down after the first of them
-    (`_after_cancel`); one that cuts that wind-down short aborts the run."""
+    """The first SIGINT, SIGTERM or SIGHUP stops between cycles (cleanup and outputs still run);
+    each further one cancels the step in progress. `drive` winds the run down after the first of
+    them (`_after_cancel`); one that cuts that wind-down short aborts the run. SIGHUP is what
+    closing the terminal, the tab or the SSH or WSL session sends: its default kills the process
+    where it stands, with an order resting, a position open and nothing written."""
     main, loop = asyncio.current_task(), asyncio.get_running_loop()
 
-    def handler() -> None:
+    def handler(sig: signal.Signals) -> None:
+        h.note_stop(f"stop request ({sig.name})")
         if h.stopping.is_set() and main is not None:
             main.cancel()
         h.stopping.set()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, handler)
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        loop.add_signal_handler(sig, handler, sig)
 
 
 def outcome_of(h: Harness, error: BaseException | None) -> str:
@@ -767,13 +863,19 @@ async def _after_cancel(h: Harness) -> str:
     stop request that cuts this second cleanup short aborts the run, and the account may then be
     left as it is: the log says what to do by hand."""
     _consume_cancel()
+    h.note_stop("stop request (cancelled)")
     h.stopping.set()
     _log().warning("run_cancelled")
     if h.cfg.mode == "orders" and h.cleanup_ok is None:
         try:
             await h.cleanup()
         except asyncio.CancelledError:
-            _log().error("run_aborted", by_hand=_by_hand(h.symbol))
+            _log().error(
+                "run_aborted",
+                by_hand=_by_hand(h.symbol),
+                orders_csv=str(h.orders_log.path),
+                stop_reason=h.stop_reason,
+            )
             raise
     return outcome_of(h, None)
 
@@ -788,6 +890,7 @@ async def drive(h: Harness) -> dict[str, Any]:
         try:
             await h.session()
         except Exception as exc:
+            h.note_stop(_why(exc))
             outcome = outcome_of(h, exc)
             _log().error("run_stopped_early", reason=outcome)
         except asyncio.CancelledError:

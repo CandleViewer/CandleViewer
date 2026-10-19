@@ -1,8 +1,9 @@
 """Outputs of an E29-K01 run: `summary.json` and `summary.md` (the tables for #843 and the
-ADR-0006 §Validation addendum), CSVs of every REST call, cycle, stream item and REST execution,
-a snapshot of the metrics, and the scrubbed fixture staging. Every output has the run's known
-values masked and passes the scrubber's leak check, or is withheld (C-12.2): the summary goes on
-a public issue."""
+ADR-0006 §Validation addendum), CSVs of every REST call, order, cycle, stream item and REST
+execution, a snapshot of the metrics, and the scrubbed fixture staging. Every output has the
+run's known values masked and passes the scrubber's leak check, or is withheld (C-12.2): the
+summary goes on a public issue. The REST call, order and cycle CSVs are not written here: the run
+appends to them as it goes (`journal.py`), so one that was aborted or killed still has them."""
 
 from __future__ import annotations
 
@@ -110,6 +111,7 @@ def build_report(h: Harness, rest: Mapping[str, RestExecution], outcome: str) ->
         "symbol": h.symbol,
         "window_ms": [start, end],
         "outcome": outcome,
+        "stop_reason": h.stop_reason,
         "clock_offset_ms": [h.offset_ms, round(h.offset_err_ms, 1)],
         "budget_4": budget_4(p95),
         "rest_rtt_ms": {k: _q(quantiles(v)) for k, v in sorted(rtt.items())},
@@ -172,8 +174,6 @@ def write_outputs(h: Harness, report: dict[str, Any], rest: Mapping[str, RestExe
     _write(h, out / "summary.json", json.dumps(report, indent=2) + "\n")
     _write(h, out / "summary.md", render(report))
     _write(h, out / "metrics.prom", generate_latest(h.metrics.registry).decode())
-    _write(h, out / "rest_calls.csv", _csv([dataclasses.asdict(s) for s in h.recorder.samples]))
-    _write(h, out / "orders.csv", _csv(h.rows))
     stand_in = h.scrubber.stand_in  # exchange ids leave the process only as stand-ins
     items = [
         dataclasses.asdict(it)
@@ -272,6 +272,24 @@ def _parity_head(r: dict[str, Any]) -> list[str]:
     ]
 
 
+def _stop_reason(r: dict[str, Any]) -> list[str]:
+    """The first reason the run stopped, when the outcome does not already say it: a stop request
+    that came after it, and cut the cleanup short, turns the outcome into `interrupted`."""
+    reason = r["stop_reason"]
+    if reason is None or reason in r["outcome"]:
+        return []
+    return [f"First stop reason: {reason}.", ""]
+
+
+def _duplicate(r: dict[str, Any]) -> list[str]:
+    """The duplicate-`orderLinkId` reply is an acceptance criterion of #843: a run that could not
+    capture it says so among the error shapes, in the words of its note."""
+    note = r["notes"].get("duplicate_order_link_id")
+    if not isinstance(note, str) or not note.startswith("not captured"):
+        return []
+    return [f"duplicate_order_link_id: {note}", ""]
+
+
 def _partial(r: dict[str, Any]) -> list[str]:
     """How many cycles saw a partial fill; nothing for a run with no cycles."""
     c = r["cycles"]
@@ -304,6 +322,7 @@ def render(r: dict[str, Any]) -> str:
             "",
             f"{start} to {end}: {r['outcome']}. Clock offset {offset} ms (±{err} ms).",
             "",
+            *_stop_reason(r),
             *_budget(r),
             "## REST round trip per call (ms)",
             "",
@@ -319,6 +338,7 @@ def render(r: dict[str, Any]) -> str:
             *_table(["stream", "executions", "violations", "unmatched", "lag p95 ms"], order),
             "## Error shapes and the E08 adapter taxonomy",
             "",
+            *_duplicate(r),
             *_table(["op", "call", "HTTP", "retCode", "retMsg", "adapter", "retryable"], errors),
             "## Stream, cycles, notes, fixtures",
             "",
