@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from candleviewer.observability import pgwire_metrics  # noqa: F401 - registers the PG-wire series
 from candleviewer.observability.kline_boundary_metrics import (  # noqa: F401 - registers it
     kline_hot_boundary_fallback_total,
 )
@@ -230,6 +231,10 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_checksum_mismatch_total",  # bars.reader (E12-T02, #1998)
         "bars_rebuild_scheduled_total",
         "bars_stale_build_version_total",
+        # Every `LazyPgWire`'s, the bars sink's and the store's among them (#2787 D2-G2).
+        "questdb_pgwire_discards_total",
+        "questdb_pgwire_abandoned_total",
+        "questdb_pgwire_lock_wait_seconds",
     }
 )
 

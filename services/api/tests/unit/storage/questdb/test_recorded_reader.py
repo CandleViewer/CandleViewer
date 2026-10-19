@@ -306,7 +306,7 @@ async def test_lazy_pgwire_hands_the_driver_records_over_without_a_dict_copy() -
     async def connect(**_: object) -> _Records:
         return conn
 
-    wire = LazyPgWire("h", 1, "u", "p", connect=connect)
+    wire = LazyPgWire("h", 1, "u", "p", name="bars", connect=connect)  # any valid name will do
 
     (got,) = await wire.fetch_records("SELECT 1")
 

@@ -61,6 +61,7 @@ def build_replay_wiring(settings: Settings, gaps: RecordingGapReader | None) -> 
         int(port or QUESTDB_PG_DEFAULT_PORT),
         settings.questdb_pg_user,
         settings.questdb_pg_password.get_secret_value(),
+        name="replay",
     )
     cold = ParquetRecordedReader(DatasetRegistry(settings.parquet_root))
     tiers = ReplayTiers(hot=QuestDbRecordedReader(pg), cold=cold, coverage=cold, gaps=gaps)

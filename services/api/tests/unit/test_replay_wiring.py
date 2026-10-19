@@ -101,6 +101,7 @@ def test_the_real_backend_wires_questdb_parquet_manifest_coverage_and_gaps(
     assert wiring.cold._registry.root == Path(settings.parquet_root)  # `CV_PARQUET_ROOT`
     assert tiers.coverage is tiers.cold  # `auto` routes on the cold manifests
     assert tiers.gaps is gaps
+    assert wiring.pg.name == "replay"  # the `wire` label of `questdb_pgwire_*`
 
 
 @pytest.mark.parametrize(
@@ -111,9 +112,9 @@ def test_the_wiring_passes_the_questdb_port_or_its_default_user_and_password(
 ) -> None:
     opened: list[tuple[object, ...]] = []
 
-    def wire(*args: object) -> LazyPgWire:
+    def wire(*args: object, name: object) -> LazyPgWire:
         opened.append(args)
-        return LazyPgWire(*args)  # type: ignore[arg-type]  # the arguments the wiring passes
+        return LazyPgWire(*args, name=name)  # type: ignore[arg-type]  # what the wiring passes
 
     monkeypatch.setattr(replay_wiring, "LazyPgWire", wire)
     settings = _settings(

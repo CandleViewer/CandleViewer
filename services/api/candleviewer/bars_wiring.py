@@ -15,7 +15,9 @@ Only the composition root sees the bus, the storage tier and the bars module tog
 * `GuardedRowSink` fails closed with `StorageTierUnavailable` when no QuestDB ILP sink is
   composed (fake storage backend). With `storage_backend="real"` the composition root passes a
   `QuestDbRowSink` (#2037) as `inner_sink`. Shutdown: set -> writer -> sink (ILP drain,
-  transport, PG-wire).
+  transport, PG-wire) -> the series store's own PG-wire connection (`reader_stop`, #2787 D2-G2),
+  each stop hook (the sink's and the reader's) isolated: the next still runs after an exception
+  (logged) or a cancellation (raised).
 * `StorageTape` reads the trades table through `MarketDataRepository.read_trades` (no SQL here).
 """
 
@@ -147,12 +149,15 @@ class BarsRuntime:
         sink_stop: Callable[[], Awaitable[None]] | None = None,
         sink_degraded: Callable[[], bool] | None = None,
         precedence: PrecedenceHealth | None = None,
+        *,
+        reader_stop: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.precedence = precedence if precedence is not None else PrecedenceHealth()
         self.builder_set = builder_set
         self.writer = writer
         self._sink_stop = sink_stop
         self._sink_degraded = sink_degraded
+        self._reader_stop = reader_stop
         self._root = state_root
 
     async def start(self) -> None:
@@ -177,16 +182,24 @@ class BarsRuntime:
         return False, ""
 
     async def stop(self) -> None:
-        """Set before writer, so the set's final closes reach the writer's drain."""
+        """Set before writer, so the set's final closes reach the writer's drain; then the sink
+        and the store's reader connection, each bounded by its own stop (module docstring)."""
         await self.builder_set.stop()
         remaining = await self.writer.stop()
         if remaining:
             logger().error("bars_writer_rows_unwritten_at_shutdown", remaining=remaining)
-        if self._sink_stop is not None:
+        try:
+            await self._run_hook(self._sink_stop, "bars_sink_stop_failed")
+        finally:  # a cancellation in the sink's close still closes the store's connection
+            await self._run_hook(self._reader_stop, "bars_reader_stop_failed")
+
+    @staticmethod
+    async def _run_hook(stop: Callable[[], Awaitable[None]] | None, failed: str) -> None:
+        if stop is not None:
             try:
-                await self._sink_stop()
-            except Exception:
-                logger().exception("bars_sink_stop_failed")
+                await stop()
+            except Exception:  # logged; a cancellation propagates
+                logger().exception(failed)
 
 
 def wire_bars(
@@ -196,12 +209,14 @@ def wire_bars(
     inner_sink: RowSink | None = None,
     sink_stop: Callable[[], Awaitable[None]] | None = None,
     sink_degraded: Callable[[], bool] | None = None,
+    reader_stop: Callable[[], Awaitable[None]] | None = None,
     tick_size: Callable[[str], Decimal | None] = lambda _s: None,
     series: BarSink | None = None,
     publisher: BarSink | None = None,
 ) -> BarsRuntime:
     """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`
-    and `publisher` (the WS sinks) are emitted to before the writer (module docstring)."""
+    and `publisher` (the WS sinks) are emitted to before the writer (module docstring);
+    `reader_stop` closes the series store's own reader connection after `sink_stop`."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",
@@ -219,4 +234,4 @@ def wire_bars(
         factory=production_factory(tick_size, renko_enabled=ctx.settings.bars_renko_enabled),
     )
     ctx.bars.attach(builder_set)
-    return BarsRuntime(builder_set, writer, root, sink_stop, sink_degraded)
+    return BarsRuntime(builder_set, writer, root, sink_stop, sink_degraded, reader_stop=reader_stop)

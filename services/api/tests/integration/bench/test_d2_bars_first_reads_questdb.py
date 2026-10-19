@@ -410,7 +410,7 @@ async def test_d2_g3_first_reads_on_a_seeded_questdb(
     host, pg, ilp = questdb
     conn = await _connect(host, pg)
     sink = _sink(host, pg, ilp)  # a second one, never written to: its connection is the reads'
-    own = LazyPgWire(host, pg, _PGWIRE_USER, _PGWIRE_PASSWORD)  # option A: a second connection
+    own = LazyPgWire(host, pg, _PGWIRE_USER, _PGWIRE_PASSWORD, name="bars_hydrate")  # option A
     lock = _TimedLock()
     sink.pgwire._lock = lock  # the bench's instrument on the shared connection
     try:

@@ -35,6 +35,7 @@ def build_rolloff_job(
         int(port or 8812),
         settings.questdb_pg_user,
         settings.questdb_pg_password.get_secret_value(),
+        name="rolloff",
     )
     registry = DatasetRegistry(settings.parquet_root)
     events = LoggingSystemEventSink()

@@ -286,7 +286,7 @@ from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.scrub import ScrubTask
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.models import StreamKind, TimeRange
-from candleviewer.storage.questdb.wiring import QuestDbRowSink
+from candleviewer.storage.questdb.wiring import LazyPgWire, QuestDbRowSink
 from candleviewer.storage.repositories.account_access_sqlalchemy import (
     SqlAlchemyAccountAccessStore,
 )
@@ -1254,9 +1254,15 @@ def create_app(
     if resolved.bars_enabled:
         bars_sink = _build_bars_sink(resolved)
         bars_clock = bars_now_us or (lambda: time.time_ns() // 1000)
+        # #2787 D2-G2 (D-G2 = A): the store's reads on their own connection, closed after the
+        # sink; REST bars, klines and the writer keep the sink's (20-architecture.md §4.2).
+        hydrate_wire: LazyPgWire | None = None
+        hydrate_reader: BarReader | None = None
         if bars_sink is not None:
             bars_reader = BarReader(bars_sink.pgwire, _no_rebuild_executor, now_us=bars_clock)
-        bars_series = SeriesStore(bars_reader.read_tail if bars_reader is not None else None)
+            hydrate_wire = bars_sink.pgwire.sibling("bars_hydrate")
+            hydrate_reader = BarReader(hydrate_wire, _no_rebuild_executor, now_us=bars_clock)
+        bars_series = SeriesStore(hydrate_reader.read_tail if hydrate_reader is not None else None)
         scales = functools.partial(_catalogue_scales, ctx)
         publisher = BarsPublisher(ws_sequencing, scales, swap_reason="generation_swap")
         app.state.bars_runtime = wire_bars(
@@ -1264,6 +1270,7 @@ def create_app(
             inner_sink=bars_sink,
             sink_stop=bars_sink.stop if bars_sink is not None else None,
             sink_degraded=(lambda: bars_sink.pgwire.degraded) if bars_sink is not None else None,
+            reader_stop=hydrate_wire.close if hydrate_wire is not None else None,
             now_us=bars_clock,
             tick_size=lambda sym: _catalogue_tick_size(ctx, sym),
             series=bars_series,

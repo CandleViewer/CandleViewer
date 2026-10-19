@@ -178,6 +178,7 @@ def _build(
         int(port or 8812),
         settings.questdb_pg_user,
         settings.questdb_pg_password.get_secret_value(),
+        name="retention",
     )
     registry = DatasetRegistry(settings.parquet_root)
     events = LoggingSystemEventSink()

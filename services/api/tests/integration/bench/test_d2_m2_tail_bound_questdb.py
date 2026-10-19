@@ -238,7 +238,7 @@ async def test_d2_m2_the_two_statements_return_the_one_statement_s_rows_on_quest
 ) -> None:
     host, pg, ilp = questdb
     conn = await _connect(host, pg)
-    wire = LazyPgWire(host, pg, _PGWIRE_USER, _PGWIRE_PASSWORD)
+    wire = LazyPgWire(host, pg, _PGWIRE_USER, _PGWIRE_PASSWORD, name="bars_hydrate")  # tail reads
     cases = {case: _keys(stamps) for case, stamps in _stamps().items()}
     rows: dict[str, int] = {}
     times: dict[str, dict[str, dict[str, object]]] = {}

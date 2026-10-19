@@ -32,11 +32,12 @@ MAX_TAIL: Final = 1_000
 #: D2-G1). Every `SeriesStore` on the event loop shares them, and a read that cannot take a slot
 #: within `QUERY_TIMEOUT_S` fails like any timed-out read and is read again by a later `ensure`,
 #: so the process-wide series cap never turns into one read per series at once (BR-38: snapshot
-#: storms against the read path). It is 8, not 16 (ruling D-G2 on #2787 D2-G3): the shared reader
-#: connection serialises every query, so a REST read waits behind the first reads in flight. G3
-#: measured that REST read at 638 ms behind 16 and 320 ms behind 8 (medians); a first read that
-#: cannot start in time retries on a later `ensure`. Revisit the number if the reader gains a
-#: second connection or a pool.
+#: storms against the read path). It is 8, not 16 (ruling D-G2 on #2787 D2-G3): on the one
+#: connection REST then shared with them, G3 measured a REST read behind 16 first reads at 638 ms
+#: and behind 8 at 320 ms (medians). Since D2-G2 the first reads have their own connection
+#: (`20-architecture.md` §4.2), where they queue only behind each other: 8 bounds that queue (one
+#: runs on QuestDB at a time). A first read that cannot start in time retries on a later `ensure`.
+#: Revisit it with `questdb_pgwire_lock_wait_seconds{wire="bars_hydrate"}`.
 MAX_CONCURRENT_TAIL_READS: Final = 8
 #: SR-E12-03: param floors/ceilings per non-time bar type.
 TICK_PARAM_RANGE: Final = (100, 1_000_000)
