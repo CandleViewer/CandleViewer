@@ -6,7 +6,7 @@ import asyncio
 import random
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, get_args
+from typing import Any, NoReturn, get_args
 from uuid import UUID
 
 import pytest
@@ -227,21 +227,26 @@ class Journal:
 @dataclass
 class SqlEdges:
     """The real backend's account health SQL edges as `fake_sql_edges` fakes them: the usable-key
-    read answers `rows`, or raises the first error in `down`; the episode replay read finds no
-    open episode; a pool release is counted. Each read records the environment its store or
-    journal was bound to."""
+    read answers `rows`, or raises the first error in `down`; the episode journal is `journal`,
+    which finds no open episode until one is recorded; a pool release is counted. Each read
+    records the environment its store or journal was bound to, and `connects` counts the times
+    anything asked for a connection: an edge that is not faked."""
 
     rows: list[SelfCheckTargetRow] = field(default_factory=list)
     down: list[Exception] = field(default_factory=list)
     envs: list[str] = field(default_factory=list)
     journal_envs: list[str] = field(default_factory=list)
+    journal: Journal = field(default_factory=Journal)
     disposed: int = 0
+    connects: int = 0
 
 
 def fake_sql_edges(monkeypatch: pytest.MonkeyPatch) -> SqlEdges:
     """Fake, for one test, every SQL edge the real backend's account health runtime reaches: the
-    usable-key read, the episode replay read and the pool release, each with the signature of the
-    method it replaces. The app-wiring tests share it, so an edge added later is faked for all."""
+    usable-key read, the episode journal's replay read, `record` and `resolve`, and the pool
+    release, each with the signature of the method it replaces. Under them, the one door to a
+    connection (`unit_of_work`) counts in `connects` and raises, so an edge added later and not
+    faked fails its test at once instead of dialling a database. The app-wiring tests share it."""
     edges = SqlEdges()
 
     async def targets(store: SqlAlchemyKeySelfCheckStore) -> tuple[SelfCheckTargetRow, ...]:
@@ -254,12 +259,32 @@ def fake_sql_edges(monkeypatch: pytest.MonkeyPatch) -> SqlEdges:
         journal: SqlAlchemyDmsEpisodeJournal, limit: int
     ) -> tuple[DmsEpisodeRow, ...]:
         edges.journal_envs.append(journal._env)
-        return ()
+        return await edges.journal.open_episodes(limit)
+
+    async def record(
+        _journal: SqlAlchemyDmsEpisodeJournal,
+        account_id: UUID,
+        *,
+        from_state: str,
+        reason: str,
+        at: datetime,
+    ) -> int:
+        return await edges.journal.record(account_id, from_state=from_state, reason=reason, at=at)
+
+    async def resolve(_journal: SqlAlchemyDmsEpisodeJournal, account_id: UUID, row: int) -> None:
+        await edges.journal.resolve(account_id, row)
 
     async def dispose(_repository: SqlAlchemyRelationalRepository) -> None:
         edges.disposed += 1
 
+    def unit_of_work(_repository: SqlAlchemyRelationalRepository) -> NoReturn:
+        edges.connects += 1
+        raise ConnectionError("a SQL edge of the account health runtime is not faked")
+
     monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
     monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", open_episodes)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "record", record)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "resolve", resolve)
     monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
+    monkeypatch.setattr(SqlAlchemyRelationalRepository, "unit_of_work", unit_of_work)
     return edges

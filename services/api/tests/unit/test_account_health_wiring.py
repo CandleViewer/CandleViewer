@@ -39,6 +39,7 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.redaction import redact_structure
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import ExchangeAccountRow, SelfCheckTargetRow
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
 from tests.unit.accounts._fakes import (
     ACC,
@@ -729,6 +730,40 @@ async def test_a_stop_releases_the_pool_of_the_runtimes_own_store_and_only_that_
     runtime = appmod.create_app(_real()).state.account_health
     await runtime.stop()
     assert stored.disposed == 1
+
+
+async def test_a_down_transition_through_the_real_backend_never_connects(
+    stored: SqlEdges, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#837 W6c: an account that goes down has its episode recorded, its hook called and its row
+    resolved on the faked journal, and nothing reaches for a connection: the journal's writes are
+    SQL edges too (`fake_sql_edges`), so no test of the real backend can dial a database."""
+    clock = FakeClock()
+    monkeypatch.setattr(wiring, "SystemClock", lambda: clock)
+    stored.rows = [_account_row(ACC)]
+    app = appmod.create_app(_real())
+    feed = app.state.app_context.accounts.account_health
+    await app.state.account_health.refresh_tracking()
+    feed.ws_heartbeat(ACC)
+    clock.advance(30)  # the down window passes with no success
+    with capture_logs() as logs:
+        moved = feed.ws_dropped(ACC)  # the evidence call commits the lapse and owes the hook
+        await app.state.account_health.monitor.drain()
+    assert moved is not None and moved.to_state is HealthState.DOWN
+    episodes = [(e.account_id, e.reason, e.resolved) for e in stored.journal.rows.values()]
+    assert episodes == [(ACC, "no_success", True)]
+    failures = [e["event"] for e in logs if e["log_level"] in ("error", "critical")]
+    assert failures == ["account.dms_policy_unbound"]  # the hook ran, and no write failed
+    assert stored.connects == 0
+
+
+async def test_an_edge_that_is_not_faked_counts_a_connection_and_is_refused(
+    stored: SqlEdges,
+) -> None:
+    repository = SqlAlchemyRelationalRepository("postgresql+asyncpg://127.0.0.1:1/none")
+    with pytest.raises(ConnectionError):
+        repository.unit_of_work()
+    assert stored.connects == 1
 
 
 @pytest.mark.parametrize(
