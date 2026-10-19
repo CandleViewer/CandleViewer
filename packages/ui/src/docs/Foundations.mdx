@@ -7,8 +7,9 @@ import { TokenTables } from "./TokenTables";
 # Design tokens
 
 Generated from `packages/ui/tokens/` by `pnpm --filter @candleviewer/ui build:tokens` (ADR-0024). This
-page renders `build/ts/tokens.ts`, so it cannot drift from the build. Values are the dark set; the light
-and high-contrast bundles define the same custom properties, and a colour swatch paints the property.
+page renders `build/ts/tokens.ts`, so it cannot drift from it; only `--size-icon`, a CSS leaf beside
+`size.icon.*`, has no place in that nested tree. Values are the dark set; the light and high-contrast
+bundles define the same custom properties, and a colour swatch paints the property.
 
 Stories sit under the catalogue's bands (`Atoms`, `Molecules`, `Organisms`, `Trading`, `RuleEngine`,
 `ChartEngine`); `Foundations` holds what is not a catalogue component. The Theme, Density and Motion
