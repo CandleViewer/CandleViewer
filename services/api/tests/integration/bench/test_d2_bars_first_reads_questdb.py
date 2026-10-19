@@ -5,8 +5,8 @@ tracing slows it); `D2G3_MACHINE` names the host in the output line. SYNTHETIC b
 (pure functions of a fixed seed, no exchange data) go in through the production row path (`bar_row`
 into `QuestDbRowSink`, as `app._build_bars_sink` builds it): 16 series of 1 m time bars, and 8
 `range` series at the smallest param with `D2G3_DENSE_ROWS` rows together (default 250 000, a knob
-for local dense runs) in the 31 d window, which each `range` first read scans whole (`symbol` has
-no index). The objects are built as `app.py` builds them: one `LazyPgWire` shared by a `BarReader`,
+for local dense runs) in the 31 d window; a `range` first read starts at its 1 000th-newest `ts`
+(D2-M2). The objects are built as `app.py` builds them: one `LazyPgWire` shared by a `BarReader`,
 `SeriesStore(reader.read_tail)` and the `/market/bars` router; a second `LazyPgWire`, with its own
 `BarReader` and router, is option A's separation. A 5 ms ticker samples the loop: its worst
 lateness is `lag_ms` (C-2.17 allows 50 ms), the longest callback `step_ms`, the longest collection

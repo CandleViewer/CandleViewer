@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 
 import pytest
@@ -14,15 +14,43 @@ from structlog.testing import capture_logs
 from candleviewer.bars.kline_rows import KLINE_SOURCE, ORDERFLOW_NULL_COLUMNS
 from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TAIL, MAX_TIME_WINDOW_US
 from candleviewer.bars.models import Bar, BarSpec
-from candleviewer.bars.reader import BarReader, BarTail, build_tail_query, tail_window_us
-from candleviewer.bars.rows import BUILD_VERSIONS, MAX_GENERATION, bar_row, row_checksum
+from candleviewer.bars.reader import (
+    BarReader,
+    BarTail,
+    build_tail_bound_query,
+    build_tail_query,
+    row_key,
+    tail_window_us,
+)
+from candleviewer.bars.rows import (
+    BUILD_VERSIONS,
+    MAX_GENERATION,
+    bar_param_for,
+    bar_row,
+    row_checksum,
+)
 from candleviewer.bars.series_store import SeriesStore
-from candleviewer.domain.sql_names import ts_param
+from candleviewer.domain.sql_names import ts_param, ts_us_from_row
 from candleviewer.ws.topics import FAMILIES
 
 SPEC = BarSpec(kind="time", interval_ms=60_000)
 SYM, T0, MIN = "BTCUSDT", 1_700_000_040_000_000, 60_000_000
 NOW = T0 + 10_000 * MIN
+#: A non-time spec, whose read is bounded first (D2-M2, #3688), and its window start.
+RSPEC, RSINCE = BarSpec(kind="renko", range_ticks=2), NOW - MAX_NON_TIME_WINDOW_US
+#: A valid spec of each non-time kind (tick, range and renko at their SR-E12-03 floors). A kind
+#: added to `BUILD_VERSIONS` without one fails the tests over `NON_TIME`, never skips.
+FLOORS = {
+    "tick": BarSpec(kind="tick", tick_count=100),
+    "volume": BarSpec(kind="volume", volume_threshold=Decimal(10)),
+    "range": BarSpec(kind="range", range_ticks=2),
+    "renko": RSPEC,
+    "delta": BarSpec(kind="delta", delta_threshold=Decimal(10)),
+}
+NON_TIME = pytest.mark.parametrize("kind", [k for k in BUILD_VERSIONS if k != "time"])
+#: Both tail statements' builders: the refusals are one set.
+BUILDERS = pytest.mark.parametrize("build", [build_tail_query, build_tail_bound_query])
+Build = Callable[..., tuple[str, tuple[object, ...]]]
 
 
 def _bar(i: int, *, closed: bool = True, shift: int = 0) -> Bar:
@@ -55,6 +83,13 @@ def _row(
     return row
 
 
+def _brick(i: int, at: int, spec: BarSpec = RSPEC, *, closed: bool = True) -> dict[str, object]:
+    """The stored row of non-time bar `i` of `spec` (generation 1), opening `at` minutes after
+    `T0`."""
+    bar = _bar(i, closed=closed, shift=at - i).model_copy(update={"spec_hash": spec.spec_hash})
+    return bar_row(bar, spec, generation=1)
+
+
 def _kline_row(i: int) -> dict[str, object]:
     """A kline-sourced `bars_time` row (`kline_rows.kline_row` shape): no index, no order flow."""
     return _row(i, {"source": KLINE_SOURCE, "index": None, **dict.fromkeys(ORDERFLOW_NULL_COLUMNS)})
@@ -68,6 +103,51 @@ class _Conn:
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         self.calls.append((sql, params))
         return self.rows
+
+
+class _Steps(_Conn):
+    """Answers its k-th statement with `answers[k]`, and records each."""
+
+    def __init__(self, *answers: list[dict[str, object]]) -> None:
+        super().__init__([])
+        self.answers = answers
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        self.calls.append((sql, params))
+        return self.answers[len(self.calls) - 1]
+
+
+def _select(
+    rows: list[dict[str, object]], sql: str, binds: tuple[object, ...]
+) -> list[dict[str, object]]:
+    """A tail statement over `rows` as QuestDB answers it: the series' keyed rows from its `ts`
+    bind on, newest first by the key it orders by (`ts`, or `ts, generation, index`), at most its
+    `LIMIT`; the bound's statement returns the `ts` column only."""
+    symbol, param, since = binds
+    start = ts_us_from_row(since)
+    hits = [r for r in rows if (r["symbol"], r["bar_param"]) == (symbol, param)]
+    hits = [r for r in hits if r["index"] is not None and ts_us_from_row(r["ts"]) >= start]
+    hits.sort(
+        key=lambda r: row_key(r) if " generation DESC" in sql else row_key(r)[:1], reverse=True
+    )
+    out = hits[: int(sql.rsplit(" LIMIT ", 1)[1])]
+    return [{"ts": r["ts"]} for r in out] if sql.startswith("SELECT ts ") else out
+
+
+class _Table(_Conn):
+    """A table of stored `rows`: each statement is answered by `_select`, and `landing` is written
+    right after the first one, as a bar's row lands between the two statements of a read."""
+
+    def __init__(self, rows: list[dict[str, object]], landing: dict[str, object]) -> None:
+        super().__init__(rows)
+        self.landing, self.answers = landing, list[list[dict[str, object]]]()
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        self.calls.append((sql, params))
+        self.answers.append(_select(self.rows, sql, params))
+        if len(self.calls) == 1:
+            self.rows.append(self.landing)
+        return self.answers[-1]
 
 
 async def _sched(*_: object) -> None:
@@ -103,25 +183,40 @@ def test_the_tail_cap_is_the_ws_history_maximum() -> None:
     assert FAMILIES["bars"].options["history"].hi == MAX_TAIL == 1_000
 
 
+@BUILDERS
 @pytest.mark.parametrize(
     ("kind", "limit", "match"),
     [("tick", 0, "limit"), ("tick", MAX_TAIL + 1, "limit"), ("ohlc", 1, "kind")],
 )
 def test_tail_query_refuses_an_unbounded_limit_or_an_unknown_kind(
-    kind: str, limit: int, match: str
+    build: Build, kind: str, limit: int, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
-        build_tail_query(kind, SYM, "tick:500", limit, T0, now_us=T0)
+        build(kind, SYM, "tick:500", limit, T0, now_us=T0)
 
 
+@BUILDERS
 @pytest.mark.parametrize(
     ("kind", "cap"), [("time", MAX_TIME_WINDOW_US), ("tick", MAX_NON_TIME_WINDOW_US)]
 )
-def test_tail_query_refuses_a_window_beyond_the_sr_e12_02_cap(kind: str, cap: int) -> None:
+def test_tail_query_refuses_a_window_beyond_the_sr_e12_02_cap(
+    build: Build, kind: str, cap: int
+) -> None:
     """The cap holds where the SQL is built, not only where `tail_window_us` sizes the window."""
-    build_tail_query(kind, SYM, "x", 1, NOW - cap, now_us=NOW)  # exactly the cap: accepted
+    build(kind, SYM, "x", 1, NOW - cap, now_us=NOW)  # exactly the cap: accepted
     with pytest.raises(ValueError, match="SR-E12-02"):
-        build_tail_query(kind, SYM, "x", 1, NOW - cap - 1, now_us=NOW)
+        build(kind, SYM, "x", 1, NOW - cap - 1, now_us=NOW)
+
+
+def test_the_bound_query_takes_the_newest_ts_on_one_key_with_the_tail_query_s_where() -> None:
+    """D2-M2 (#3688): `ts` alone, ordered by the designated timestamp only (QuestDB 8.1.1 scans
+    backward and stops at the limit), with the WHERE and binds of the read it bounds."""
+    where = ' WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 AND "index" IS NOT NULL ORDER BY '
+    sql, params = build_tail_bound_query("renko", SYM, "renko:2", MAX_TAIL, T0, now_us=T0)
+    tail_sql, tail_params = build_tail_query("renko", SYM, "renko:2", MAX_TAIL, T0, now_us=T0)
+    assert sql.split(where) == ["SELECT ts FROM bars_renko", "ts DESC LIMIT 1000"]
+    assert tail_sql.split(where)[0] == "SELECT * FROM bars_renko"  # the same WHERE
+    assert params == tail_params == (SYM, "renko:2", ts_param(T0))
 
 
 @pytest.mark.parametrize(
@@ -173,8 +268,8 @@ async def test_read_tail_reads_the_clock_once_so_a_window_at_its_cap_is_never_re
     caller's `now_us`: that holds only while the window and the check share one reading. A clock
     that moves 1 us a read would otherwise turn every such read into a refusal."""
     clock = itertools.count(NOW)
-    reader = BarReader(_Conn([]), _sched, now_us=lambda: next(clock))
-    tail = await reader.read_tail(SYM, spec, MAX_TAIL)
+    conn = _Conn([_row(0)])  # a row, so the read runs its second statement too
+    tail = await BarReader(conn, _sched, now_us=lambda: next(clock)).read_tail(SYM, spec, MAX_TAIL)
     assert tail.since_us == NOW - tail_window_us(spec, MAX_TAIL)  # the first reading
     assert next(clock) == NOW + 1  # and the only one
 
@@ -186,6 +281,77 @@ async def test_read_tail_measures_back_from_the_wall_clock_by_default(
     conn = _Conn([])
     await BarReader(conn, _sched).read_tail(SYM, SPEC, 4)
     assert conn.calls[0][1][2] == ts_param(NOW - 8 * MIN)
+
+
+@NON_TIME
+@pytest.mark.parametrize(
+    ("newest", "start"),
+    [
+        ([], None),
+        ([T0 + 9 * MIN, T0 + 8 * MIN], RSINCE),
+        ([T0 + 9 * MIN, T0 + 8 * MIN, T0 + 7 * MIN], T0 + 7 * MIN),
+        ([T0 + 9 * MIN, T0 + 7 * MIN, T0 + 7 * MIN], T0 + 7 * MIN),
+        ([T0 + 9 * MIN, T0 + 8 * MIN, RSINCE - MIN], RSINCE),
+    ],
+    ids=["empty", "fewer-than-the-limit", "the-limit", "tied-at-the-bound", "below-the-window"],
+)
+async def test_a_non_time_read_starts_at_its_nth_newest_ts_else_at_its_window_start(
+    kind: str, newest: list[int], start: int | None
+) -> None:
+    """The bound's statement first, then the tail from the oldest `ts` it returned when it
+    returned the limit (a tie included: `>=` keeps the rest of it; never before the window start),
+    else from the window start, the one-statement read. An empty window ends the read there: the
+    empty tail, no second scan. `since_us` stays the window start in every case."""
+    spec, param = FLOORS[kind], bar_param_for(FLOORS[kind])
+    conn = _Steps([{"ts": ts_param(ts)} for ts in newest], [])
+    tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, spec, 3)
+    second = [] if start is None else [build_tail_query(kind, SYM, param, 3, start, now_us=NOW)]
+    assert conn.calls == [build_tail_bound_query(kind, SYM, param, 3, RSINCE, now_us=NOW), *second]
+    assert tail == BarTail([], since_us=RSINCE)
+
+
+@NON_TIME
+async def test_a_non_time_read_folds_its_second_statement_s_rows_as_the_one_statement_did(
+    kind: str,
+) -> None:
+    """The bound only moves where the tail starts: those rows are dropped, skipped and counted
+    as before, and the bound's own `ts` rows are never folded."""
+    spec = FLOORS[kind]
+    tampered = _brick(2, 7, spec)
+    tampered["close"] = 99.0  # edited after its checksum: dropped
+    rows = [_brick(3, 7, spec), tampered, _brick(1, 6, spec, closed=False), _brick(0, 5, spec)]
+    conn = _Steps([{"ts": ts_param(T0 + m * MIN)} for m in (7, 7, 6, 5)], rows)
+    tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, spec, 4)
+    assert conn.calls[1][1][2] == ts_param(T0 + 5 * MIN)
+    assert [(gen, b.index, b.open_time) for gen, b in tail.bars] == [
+        (1, 0, T0 + 5 * MIN), (1, 3, T0 + 7 * MIN)
+    ]  # fmt: skip
+    assert (tail.dropped, tail.skipped, tail.fetched, tail.since_us) == (1, 1, 4, RSINCE)
+
+
+@pytest.mark.parametrize(
+    ("held", "landed", "indexes"),
+    [(range(1, 11), 11, [9, 10, 11]), ([5, 6], 4, [4, 5, 6])],
+    ids=["above-the-bound", "below-the-oldest-of-fewer-than-the-limit"],
+)
+async def test_a_row_written_between_the_two_statements_is_read_as_the_one_statement_would(
+    held: Sequence[int], landed: int, indexes: list[int]
+) -> None:
+    """The second statement runs after a row lands: it reads that row when it lies at or above the
+    bound and, with fewer than the limit returned (no bound), wherever it lies in the window. Its
+    rows are those of the one statement over the table as it then is."""
+    conn = _Table([_brick(m, m) for m in held], _brick(landed, landed))
+    tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, RSPEC, 3)
+    one = _select(conn.rows, *build_tail_query("renko", SYM, "renko:2", 3, RSINCE, now_us=NOW))
+    assert conn.answers[1] == one
+    assert [b.index for _, b in tail.bars] == indexes
+
+
+async def test_a_time_read_stays_one_statement_from_its_window_start() -> None:
+    """A time window spans twice `limit` bars, which bounds its sort: no bound is taken first."""
+    conn = _Conn([_row(1), _row(0)])
+    await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, SPEC, 2)
+    assert conn.calls == [build_tail_query("time", SYM, "1m", 2, NOW - 4 * MIN, now_us=NOW)]
 
 
 async def test_read_tail_is_oldest_first_and_closed_only() -> None:
