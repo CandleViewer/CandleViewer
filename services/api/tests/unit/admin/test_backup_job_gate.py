@@ -300,3 +300,4 @@ def test_the_shipped_bounds_are_pinned() -> None:
     assert (gate._admit_wait_s, gate._deadlines_s) == (ADMIT_WAIT_S, JOB_DEADLINE_S)
     budgets = (limits.RECORD_BUDGET_S, limits.WRITE_BUDGET_S, limits.LOST_READ_BUDGET_S)
     assert (budgets, limits.WRITE_TRIES, limits.LOST_RUNS_LIMIT) == ((2.0, 2.0, 2.0), 2, 16)
+    assert (limits.RUNS_PER_HOUR, limits.PLAN_BUDGET_S) == (4, 2.0)

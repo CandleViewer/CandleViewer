@@ -25,6 +25,10 @@ JOB_DEADLINE_S: Final[Mapping[JobKind, float]] = {
 }
 RESOLVE_BUDGET_S: Final = 2.0  # one artefact resolve, under the admission lock
 LINK_RECORD_BUDGET_S: Final = 2.0  # one `backup.downloaded` record
+#: `createBackup`: "A user may start at most 4 runs in a rolling hour"; a run counts once its
+#: `requested` record is written, and so does a refusal of an unencrypted plan once its record is.
+RUNS_PER_HOUR: Final = 4
+PLAN_BUDGET_S: Final = 2.0  # the engine's `plan`, under the admission lock
 RECORD_BUDGET_S: Final = 2.0  # one `backup.run` record
 WRITE_BUDGET_S: Final = 2.0  # one catalogue write; the store caps each statement at 1 s itself
 WRITE_TRIES: Final = 2  # a run's end: each update ends a row only while `running`, so retry-safe
