@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
@@ -18,6 +19,7 @@ from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, KeyCheck
 from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryCheck, OrderEntryGate
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
+from candleviewer.storage.repositories.dms_episodes_sqlalchemy import SqlAlchemyDmsEpisodeJournal
 from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -58,6 +60,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(wiring, "SystemClock", lambda: clock)
     monkeypatch.setattr(SqlAlchemyKeySelfCheckStore, "targets", targets)
     monkeypatch.setattr(SqlAlchemyRelationalRepository, "dispose", dispose)
+    monkeypatch.setattr(SqlAlchemyDmsEpisodeJournal, "open_episodes", AsyncMock(return_value=()))
     monkeypatch.setattr(appmod, "_build_accounts_counts", lambda _settings: None)
     app = appmod.create_app(_real())
     ctx = app.state.app_context
