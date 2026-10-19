@@ -125,18 +125,81 @@ CLOSE_TOO_BIG = 1009
 CLOSE_SLOW_CONSUMER = 4429
 
 # --- Server-layer (uvicorn) limits: consumed by `candleviewer.server` --------
-#: Headroom over the gateway frame cap so the gateway, not the transport, is
-#: what answers an over-cap frame with its own close code on borderline sizes.
+#: Headroom over the gateway frame cap, so that the gateway, not the transport, answers a frame a
+#: little over its cap (its `bye frame_too_big`, then `1009`). A fragmented message is charged
+#: `WS_FRAGMENT_OVERHEAD_BYTES` per fragment against the same 4 KiB (#2176): at
+#: `WS_MAX_FRAGMENTS_PER_MESSAGE` fragments, a message at the gateway cap fills it exactly, and a
+#: larger one is closed by the transport (`1009`, no `bye`). It stays 4 KiB: clients send a message
+#: in one frame, or a few large ones, so the charge there is a few hundred bytes at most.
 SERVER_WS_HEADROOM_BYTES = 4 * 1024
 #: Transport-level max message size (applies to the decompressed message).
 SERVER_WS_MAX_SIZE = MAX_INBOUND_FRAME_BYTES + SERVER_WS_HEADROOM_BYTES
 #: §3.5: permessage-deflate is agreed for `cv.v1.json` only; `server.CvWebSocketsProtocol` withdraws
 #: it from a `cv.v1.msgpack` upgrade. The size cap above bounds the inflated message.
 SERVER_WS_PER_MESSAGE_DEFLATE = True
-#: Small per-connection inbound queue; clients are limited to 30 frames/s (§16.2).
-SERVER_WS_MAX_QUEUE = 4
-#: Whole-process concurrent connection/task bound (8 per user x a few users).
+#: Whole-process concurrent connection/task bound (8 per user x a few users). #2176: live WebSockets
+#: are not counted against it (`server.CvHttpToolsProtocol`), so it stays for HTTP requests, the
+#: REST control path and the kill switch included (C-2.21); the gateway bounds WebSockets
+#: (`MAX_UNAUTHENTICATED_SOCKETS` before `auth_ok`, `MAX_CONNECTIONS_PER_USER` after it). A
+#: WebSocket's handler still running after its connection is lost counts until it returns.
 SERVER_LIMIT_CONCURRENCY = 256
+#: #2176 (SR-191): seconds a kept-alive HTTP connection may stay idle after a response before it is
+#: closed. uvicorn's own default, set here with the other server bounds; the first bytes of the
+#: next request start `SERVER_READ_HEADER_TIMEOUT_S`.
+SERVER_KEEP_ALIVE_TIMEOUT_S = 5
+#: #2176: a connection that has not sent a complete request line and headers within this many
+#: seconds of opening, or of its first bytes after a response, is closed, in both protocol classes
+#: of `candleviewer.server`. It bounds how long a connection that has not completed its headers
+#: can occupy one of the `SERVER_LIMIT_CONCURRENCY` slots, which the REST control path, the kill
+#: switch included, needs (C-2.21). An answer sent before its request's body has all come starts
+#: it too: the rest of that body and the next request line and headers come within it. A body the
+#: app reads, and the rate at which connections open, are not bounded here. A client sends its
+#: request line and headers in one write.
+SERVER_READ_HEADER_TIMEOUT_S = 10.0
+#: #2176: request line and headers that take more bytes than this get a 400 and the close, in the
+#: HTTP protocol class (a WebSocket upgrade passes it first). 32 KiB is above what a browser sends
+#: this API (its cookies are a CSRF token and a refresh token scoped to one route) and matches
+#: nginx's default buffers (4 x 8 KiB). websockets bounds an upgrade per line (8 192 B) and per
+#: header count (128), about 1 MiB in all, so this is the tighter total; a request past one of those
+#: by one long line or one header too many still fits under it and gets websockets' 414 or 431.
+SERVER_MAX_REQUEST_HEAD_BYTES = 32 * 1024
+#: #2176: a message of more than this many fragments (its first frame and the continuation
+#: frames after it) is refused with `1009`, as `frame_too_big` is. 64 carries a message at the
+#: gateway cap (`MAX_INBOUND_FRAME_BYTES`) in fragments of 4 KiB.
+WS_MAX_FRAGMENTS_PER_MESSAGE = 64
+#: #2176: charged per fragment against `SERVER_WS_MAX_SIZE`, which websockets counts in payload
+#: bytes: a buffered fragment costs about 42 B more than its payload in uvicorn's protocol
+#: (measured on 0.54.0: 43 B for 1 B, 50 B for 8 B). `SERVER_WS_HEADROOM_BYTES` covers the charge
+#: on a message at the gateway cap in `WS_MAX_FRAGMENTS_PER_MESSAGE` fragments.
+WS_FRAGMENT_OVERHEAD_BYTES = 64
+#: #2176: the bound on the WebSocket protocol's inbound message queue, in messages kept for the
+#: app at once. Past it the rest of a read is held unparsed, and reading stays paused, until the
+#: app has read the queue. A read is parsed in pieces of this many smallest client frames (6 KiB),
+#: the next only once the queue is empty: the queue's bytes are bounded by the messages one piece
+#: completes, decompressed (each at most `SERVER_WS_MAX_SIZE`). With permessage-deflate one 6 KiB
+#: piece can complete about 23 frames whose payloads inflate to that cap, so a connection's queue
+#: can hold about 6 MiB before reading pauses; the gateway's rate and size checks apply as each
+#: message is read. A client within the inbound rate (30/s, 300/min, §8.5) sends at most 300
+#: messages a minute.
+WS_MAX_QUEUED_MESSAGES = 1024
+#: #2176: every inbound WebSocket frame (data, continuation, ping, pong) takes one token of a
+#: per-connection bucket of `WS_INBOUND_FRAME_BURST` tokens, refilled at this rate; a frame that
+#: finds none closes the connection `4429`, counted as `client_rate_limited`. A client within the
+#: gateway's inbound rate sends at most 30 messages in a second and 300 a minute (5 a second over
+#: time), a message in one frame or a few, plus a `pong` to the server's ping every 15 s: 64 a
+#: second is over 12x that sustained rate and twice its one-second burst.
+WS_INBOUND_FRAMES_PER_S = 64
+#: #2176: the frame bucket's size: 30 messages of 8 frames, or a message in 64 fragments, with room.
+WS_INBOUND_FRAME_BURST = 256
+#: #2176: seconds a closed connection's transport may take to send what it still holds; then it is
+#: aborted. A transport's close waits for its write buffer to drain, which a peer that stops
+#: reading never lets happen; a reading peer drains a full buffer (64 KiB over the kernel's) in
+#: well under this on loopback or the tailnet. The bound assumes a response written under flow
+#: control (chunks of at most the transport's high-water mark). A route that returns a large
+#: artefact must stream it (`FileResponse`, `StreamingResponse`): one `send()` of the whole body
+#: starts uvicorn's keep-alive timer at the write, so the close comes 5 s after it and this
+#: bound's abort 5 s after the close.
+SERVER_CLOSE_DRAIN_TIMEOUT_S = 5.0
 
 
 def json_depth_exceeds(text: str, limit: int) -> bool:
