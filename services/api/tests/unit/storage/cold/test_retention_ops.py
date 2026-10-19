@@ -305,7 +305,7 @@ async def test_hot_store_days_sums_an_hourly_tables_hours_into_their_day() -> No
     """#3794: retention saw day-named partitions only, so its reaper and preview never listed
     `orderbook_deltas`. An emptied hour is not data; the open day is not closed."""
     store = QuestDbRetentionHotStore(_HourlyPg(), apply_timeout_s=1.0, poll_s=0.001)
-    days = await store.days(D, DAY_US + 2 * 86_400_000_000)
+    days = await store.days(D, DAY_US + 86_400_000_000)  # 2026-08-02 is still open
 
     assert [(d.start_us, d.bytes, d.rows_by_symbol) for d in days] == [
         (DAY_US, 300, {"BTCUSDT": 7})

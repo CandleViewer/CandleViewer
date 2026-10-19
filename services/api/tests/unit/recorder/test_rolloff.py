@@ -634,7 +634,12 @@ def _failures(reason: str) -> float:
 
 @pytest.mark.parametrize(
     ("reason", "severity"),
-    [("timeout", "WARNING"), ("suspended", "CRITICAL"), ("unexpected_shape", "CRITICAL")],
+    [
+        ("timeout", "WARNING"),
+        ("suspended", "CRITICAL"),
+        ("unexpected_shape", "CRITICAL"),
+        ("missing", "WARNING"),  # no DROP was issued: the day left QuestDB another way
+    ],
 )
 async def test_rolloff_unconfirmed_drop_is_audited_retained_and_stops_the_stream(
     reason: DropNotAppliedReason, severity: str, monkeypatch: pytest.MonkeyPatch
@@ -720,6 +725,32 @@ async def test_rolloff_counts_and_logs_once_a_stream_whose_aged_partitions_list_
         }
     ]
     assert hot.aged_before == [NOW_US - 2 * US_PER_DAY]  # two days: whatever the partitioning
+
+
+async def test_a_failing_guard_query_never_stops_the_runs_other_streams() -> None:
+    """The guard is a signal: if its query fails, the next stream still rolls off."""
+
+    class BrokenGuardHot(FakeHot):
+        async def aged_partitions(self, stream: StreamKind, before_us: int) -> int:
+            if stream is D:
+                raise ConnectionResetError("questdb went away")
+            return 0
+
+    before = _failures("unlisted_check_failed")
+    hot = BrokenGuardHot({D: {}, T: {day(10): ["BTCUSDT"]}})
+    job = _job(hot, FakeArchiver(), FakeMarks(), config=RollOffConfig(streams=(D, T)))
+
+    with capture_logs() as logs:
+        report = await job.run()
+
+    assert report.dropped == [(T, day(10))]
+    assert _failures("unlisted_check_failed") == before + 1
+    assert {
+        "event": "rolloff_unlisted_check_failed",
+        "log_level": "warning",
+        "stream": D.value,
+        "error": "ConnectionResetError",
+    } in logs
 
 
 def test_the_unlisted_counter_starts_at_zero_for_every_rolloff_stream() -> None:

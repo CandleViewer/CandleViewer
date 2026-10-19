@@ -188,11 +188,15 @@ def _timestamp_us(value: object) -> int | None:
 
 def _aged(row: dict[str, object], before_us: int) -> bool:
     """A partition whose newest row is older than `before_us`. Fail closed: a row without the
-    column (a shape change) counts as aged; an emptied one (NULL `maxTimestamp`) does not."""
+    column, or with a value that is not a timestamp (a shape or driver change), counts as aged;
+    an emptied one (NULL `maxTimestamp`) does not."""
     if "maxTimestamp" not in row:
         return True
-    newest = _timestamp_us(row["maxTimestamp"])
-    return newest is not None and newest < before_us
+    value = row["maxTimestamp"]
+    if value is None:
+        return False
+    newest = _timestamp_us(value)
+    return newest is None or newest < before_us
 
 
 def _emptied(row: dict[str, object]) -> bool:
@@ -241,7 +245,7 @@ class QuestDbHotPartitions:
     async def _partitions(self, stream: StreamKind) -> list[dict[str, object]]:
         # Table from the TABLE_BY_STREAM allowlist, emitted as an escaped literal.
         literal = sql_string_literal(_hot_table(stream))
-        sql = f"SELECT name, diskSize FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
+        sql = f"SELECT name, diskSize, numRows, minTimestamp FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
         return await self._fetch(sql)
 
     async def disk_bytes(self, streams: Sequence[StreamKind]) -> int:
@@ -296,9 +300,9 @@ class QuestDbHotPartitions:
         }
 
     async def drop_day(self, stream: StreamKind, day_start_us: int) -> None:
-        """Drop the day's own partitions by name, in one statement: the DAY partition, or every
-        HOUR partition of the day (#3794: a day name is refused for a `PARTITION BY HOUR`
-        table). A day with no partition is `missing`, never a driver error."""
+        """Drop the day's own live partitions by name, in one statement: the DAY partition, or
+        every HOUR partition of the day (#3794: a day name is refused for a `PARTITION BY HOUR`
+        table). A day with no live partition is `missing`, never a driver error."""
         table = _hot_table(stream)
         day = day_name(day_start_us)
         names = await self._day_partitions(stream, table, day)
@@ -310,7 +314,9 @@ class QuestDbHotPartitions:
         await self._await_dropped(table, day, frozenset(names))
 
     async def _day_partitions(self, stream: StreamKind, table: str, day: str) -> list[str]:
-        """The listed names of `day`'s partitions, under the wall-clock bound of the wait."""
+        """The names of `day`'s live partitions, read before the DROP under a bound of its own
+        (`apply_timeout_s`, as long as the wait's). An emptied one, still listed until QuestDB
+        purges it, holds nothing and is not named."""
         start = self._clock()
         try:
             async with asyncio.timeout(self._apply_timeout_s):
@@ -319,7 +325,8 @@ class QuestDbHotPartitions:
             raise self._not_applied(table, day, "timeout", start) from None
         if any(not r.get("name") for r in rows):
             raise self._not_applied(table, day, "unexpected_shape", start)
-        names = sorted(str(r["name"]) for r in rows if partition_day(str(r["name"])) == day)
+        mine = [r for r in rows if partition_day(str(r["name"])) == day]
+        names = sorted(str(r["name"]) for r in mine if not _emptied(r))
         if not names:
             raise self._not_applied(table, day, "missing", start)
         return names

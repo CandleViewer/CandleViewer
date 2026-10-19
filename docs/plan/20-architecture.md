@@ -1562,6 +1562,13 @@ Key self-check set (E27-T03, #836; runbooks in section 9 and `docs/ops/runbooks/
 `KeySelfCheckFailed` (one alert per failing rule), `KeySelfCheckLatched` (the job's read-only latch, held until a
 restart; quiet while a key fails), `KeySelfCheckRunMissed`; Ticket (SR-034) — `KeyExpiringWithin14Days`, `KeyExpiringWithin7Days`, `KeyExpiringWithin1Day`.
 
+Roll-off (E16-T05, #3794): Ticket — `RollOffStreamUnlisted` (`system_ticket.yml`,
+`component: recorder`) when `recorder_rolloff_streams_unlisted_total{stream}` rose in 25 h: a nightly
+run listed no closed day for a stream whose hot table holds partitions older than two days, so that
+stream sits outside retention. The series starts at 0 for every roll-off stream, so the first such
+run fires it. If the guard's own query fails, the run goes on and counts
+`recorder_rolloff_failures_total{reason="unlisted_check_failed"}` instead.
+
 WS gateway set (E17-T06, `infra/prometheus/alerts/ws_gateway.yml`, `component: gateway`, runbooks in
 `07-release-and-prr.md` section 9, promtool cases in `infra/prometheus/tests/ws_alerts.test.yml`), all
 Ticket (warning): `WsFanoutP95OverBudget` (p95 of `cv_ws_fanout_seconds` over 20 ms for 5 min, judged

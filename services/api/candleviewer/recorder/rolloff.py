@@ -46,12 +46,16 @@ ROLLOFF_STREAMS: tuple[StreamKind, ...] = (
     StreamKind.LIQUIDATIONS,
 )
 DOWNSAMPLE_STREAMS: tuple[StreamKind, ...] = (StreamKind.ORDERBOOK_DELTA, StreamKind.HEATMAP_CELLS)
+#: A nightly run takes minutes to hours, far past the client's default buckets (<= 10 s).
+ROLLOFF_DURATION_BUCKETS = (60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0)
 
 recorder_rolloff_bytes_total = Counter(
     "recorder_rolloff_bytes_total", "Parquet bytes verified by the nightly roll-off.", ["stream"]
 )
 recorder_rolloff_duration_seconds = Histogram(
-    "recorder_rolloff_duration_seconds", "Wall time of one nightly roll-off run."
+    "recorder_rolloff_duration_seconds",
+    "Wall time of one nightly roll-off run.",
+    buckets=ROLLOFF_DURATION_BUCKETS,
 )
 recorder_rolloff_failures_total = Counter(
     "recorder_rolloff_failures_total", "Roll-off archive attempts that failed.", ["reason"]
@@ -292,7 +296,14 @@ class RollOffJob:
         """#3794: a table whose aged partitions `closed_days` cannot list sits outside retention
         with no error at all (deltas did, under their hour names). Count it and log it once."""
         cutoff = self._now_us() - UNLISTED_AGE_DAYS * US_PER_DAY
-        aged = await self._hot.aged_partitions(stream, cutoff)
+        try:
+            aged = await self._hot.aged_partitions(stream, cutoff)
+        except Exception as exc:  # a signal only: it never stops the run's other streams
+            recorder_rolloff_failures_total.labels(reason="unlisted_check_failed").inc()
+            logger().warning(
+                "rolloff_unlisted_check_failed", stream=stream.value, error=type(exc).__name__
+            )
+            return
         if aged:
             recorder_rolloff_streams_unlisted_total.labels(stream=stream.value).inc()
             logger().warning("rolloff_stream_unlisted", stream=stream.value, partitions=aged)
@@ -327,8 +338,8 @@ class RollOffJob:
                 "range_end_us": day.end_us,
                 "rows": rows,
             }
-            # Write-ahead audit (C-2.9) BEFORE the final re-check, so only the
-            # DROP round-trip sits between the last snapshot and the drop.
+            # Write-ahead audit (C-2.9) BEFORE the final re-check, so only the drop's
+            # partition listing and its DROP sit between the last snapshot and the drop.
             await self._audit.write("retention.purge", detail)
             after = await self._hot.snapshot(stream, day)
             exported = {o.symbol: o.rows for o in outcomes}
@@ -361,14 +372,16 @@ class RollOffJob:
         report: RollOffReport,
         retained: dict[str, list[int]],
     ) -> None:
-        """The DROP was issued but could not be confirmed applied: the day may still be hot, so it
-        is never reported dropped and it caps the watermark (`retained`)."""
+        """The drop could not be confirmed applied, or, for `missing` and a listing that cannot be
+        read, was never issued: the day may still be hot, so it is never reported dropped and it
+        caps the watermark (`retained`)."""
         # The purge record is append-only and stands; record the outcome against the same day.
         await self._audit.write("rolloff.drop_unconfirmed", detail | {"reason": exc.reason})
         reason = f"drop_not_applied_{exc.reason}"
         recorder_rolloff_failures_total.labels(reason=reason).inc()
-        # A timeout is usually WAL lag that clears by itself; the rest needs an operator.
-        severity: Severity = "WARNING" if exc.reason == "timeout" else "CRITICAL"
+        # A timeout is usually WAL lag that clears by itself, and `missing` means the day left
+        # QuestDB another way after it verified here; the rest needs an operator.
+        severity: Severity = "WARNING" if exc.reason in ("timeout", "missing") else "CRITICAL"
         event: dict[str, str | int] = {
             "stream": stream.value,
             "range_start_us": day.start_us,

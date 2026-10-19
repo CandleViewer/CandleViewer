@@ -2535,6 +2535,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "dashboard",
         _L,
         "E16",
+        buckets=(60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0),
         exported=True,
     ),
     _s(

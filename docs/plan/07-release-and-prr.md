@@ -1761,6 +1761,8 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=min by (env) (cv_key_soonest_expiry_seconds) / 86400'
 curl -s http://127.0.0.1:8000/readyz  # the accounts check: its cause, the key count and the oldest last pass
 docker compose -f infra/compose/docker-compose.yml --profile core exec -e PGOPTIONS='-c default_transaction_read_only=on' postgres psql -U "${POSTGRES_USER:-cv}" -d "${POSTGRES_DB:-candleviewer}" -c "SELECT id, exchange_account_id, status, expires_at FROM api_keys WHERE status IN ('active', 'rotating') ORDER BY expires_at LIMIT 5"  # read-only, on the host
+```
+
 <a id="alert-rolloffstreamunlisted"></a>
 
 ### RollOffStreamUnlisted

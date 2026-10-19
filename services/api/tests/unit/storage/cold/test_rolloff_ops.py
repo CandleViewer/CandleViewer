@@ -185,7 +185,8 @@ async def test_hot_partitions_closed_days_parses_and_filters() -> None:
     hot = QuestDbHotPartitions(pg)
     days = await hot.closed_days(T, DAY_START_US + 86_400_000_000)
     assert days == [DAY_START_US]
-    assert pg.calls[0][0] == "SELECT name, diskSize FROM table_partitions('trades')"
+    sql = "SELECT name, diskSize, numRows, minTimestamp FROM table_partitions('trades')"
+    assert pg.calls[0][0] == sql
 
 
 HOURS = ["2026-10-17T00", "2026-10-17T01", "2026-10-17T23"]
@@ -204,7 +205,8 @@ async def test_hot_partitions_closed_days_lists_a_day_once_from_its_hour_partiti
 
 async def test_hot_partitions_aged_partitions_count_by_newest_row_whatever_the_name() -> None:
     """The guard reads no name: a partitioning roll-off cannot list still counts. Fail closed:
-    a row without the column counts; an emptied partition (NULL newest row) does not."""
+    a row without the column, or with a value that is not a timestamp, counts; an emptied
+    partition (NULL newest row) does not."""
     old = datetime(2026, 10, 14, 5)
     rows: list[dict[str, object]] = [
         {"name": "2026-10-14T05", "maxTimestamp": old},
@@ -213,12 +215,13 @@ async def test_hot_partitions_aged_partitions_count_by_newest_row_whatever_the_n
         {"name": "2026-10-16T23", "maxTimestamp": datetime(2026, 10, 16, 23, 59, 59)},
         {"name": "2026-10-13", "maxTimestamp": None},
         {"name": "2026-10-12"},
+        {"name": "2026-10-11", "maxTimestamp": "2026-10-11T23:00:00"},  # not a timestamp
     ]
     pg = FakePg(rows)
 
     aged = await QuestDbHotPartitions(pg).aged_partitions(D, DAY_START_US)
 
-    assert aged == 4
+    assert aged == 5
     assert pg.calls[0][0] == "SELECT name, maxTimestamp FROM table_partitions('orderbook_deltas')"
 
 
@@ -242,7 +245,9 @@ async def test_hot_partitions_symbols_bind_naive_utc_ts_params() -> None:
 async def test_hot_partitions_drop_uses_allowlisted_table_and_date_literal() -> None:
     pg = ListedPg([{"name": "2026-10-17"}, {"name": "2026-10-18"}])
     await QuestDbHotPartitions(pg).drop_day(StreamKind.ORDERBOOK_DELTA, DAY_START_US)
-    listing = "SELECT name, diskSize FROM table_partitions('orderbook_deltas')"
+    listing = (
+        "SELECT name, diskSize, numRows, minTimestamp FROM table_partitions('orderbook_deltas')"
+    )
     assert pg.calls[0] == (listing, ())
     assert pg.calls[1] == ("ALTER TABLE orderbook_deltas DROP PARTITION LIST '2026-10-17'", ())
     poll = pg.calls[2][0]
@@ -261,6 +266,32 @@ async def test_hot_partitions_drop_names_every_hour_of_the_day_in_one_statement(
     assert len(pg.calls) == 3  # the listing, the DROP, one poll that lists none of them
 
 
+async def test_hot_partitions_drop_names_only_the_live_hours_of_a_partly_emptied_day() -> None:
+    """QuestDB lists an emptied partition until it purges it: it holds nothing, and naming it
+    again in the LIST could fail the drop of the live hours beside it."""
+    live: dict[str, object] = {
+        "name": HOURS[0],
+        "numRows": 5,
+        "minTimestamp": datetime(2026, 10, 17),
+    }
+    ghost: dict[str, object] = {"name": HOURS[1], "numRows": 0, "minTimestamp": None}
+    pg = ListedPg([live, ghost])
+
+    await QuestDbHotPartitions(pg).drop_day(D, DAY_START_US)
+
+    assert pg.calls[1] == (f"ALTER TABLE orderbook_deltas DROP PARTITION LIST '{HOURS[0]}'", ())
+
+
+async def test_hot_partitions_drop_of_a_day_whose_hours_are_all_emptied_is_missing() -> None:
+    ghost: dict[str, object] = {"name": HOURS[0], "numRows": 0, "minTimestamp": None}
+    pg = ListedPg([ghost])
+
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
+        await QuestDbHotPartitions(pg).drop_day(D, DAY_START_US)
+
+    assert exc.value.reason == "missing" and len(pg.calls) == 1  # no DROP was issued
+
+
 async def test_hot_partitions_drop_of_a_day_without_partitions_is_missing_not_a_driver_error() -> (
     None
 ):
@@ -271,7 +302,8 @@ async def test_hot_partitions_drop_of_a_day_without_partitions_is_missing_not_a_
 
     assert exc.value.reason == "missing" and "reason=missing" in str(exc.value)
     assert (exc.value.table, exc.value.partition) == ("trades", DAY)
-    assert [sql for sql, _ in pg.calls] == ["SELECT name, diskSize FROM table_partitions('trades')"]
+    listing = "SELECT name, diskSize, numRows, minTimestamp FROM table_partitions('trades')"
+    assert [sql for sql, _ in pg.calls] == [listing]
 
 
 DAY = "2026-10-17"

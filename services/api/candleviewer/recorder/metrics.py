@@ -99,13 +99,13 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
         "recorder_disk_budget_last_sample_timestamp_seconds",
+        "recorder_disk_budget_breakdown_age_seconds",
         # The nightly roll-off (`recorder/rolloff.py`, E16-T05): unscraped until #3794.
         "recorder_rolloff_bytes_total",
         "recorder_rolloff_duration_seconds",
         "recorder_rolloff_failures_total",
         "recorder_rolloff_streams_unlisted_total",
         "recorder_watermark_lag_days",
-        "recorder_disk_budget_breakdown_age_seconds",
     }
 )
 
