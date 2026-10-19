@@ -253,7 +253,7 @@ def test_semgrep_scans_keep_the_timeout_threshold_the_gate_counts() -> None:
 
 def test_dependabot_proposes_updates_of_the_semgrep_lock() -> None:
     # #3549 (C-12.3): CI's pip-audit reads only the services/api export, so Dependabot is how
-    # an advisory or a release for the lock's pins turns into a PR.
+    # a Semgrep or PyYAML release turns into a PR; an advisory on another pin is an alert.
     doc = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
     (entry,) = [u for u in doc["updates"] if u["directory"] == "/tools/ci"]
     assert entry["package-ecosystem"] == "pip"
@@ -261,6 +261,9 @@ def test_dependabot_proposes_updates_of_the_semgrep_lock() -> None:
     assert {"dependencies", "security", "security-review", "area/infra-devops"} <= set(
         entry["labels"]
     )
+    # #3672: only the lock's two inputs. A transitive bump alone can leave Semgrep's declared
+    # ranges (#3701, #3704); the lock's header command re-locks the rest within them.
+    assert entry["allow"] == [{"dependency-name": "semgrep"}, {"dependency-name": "PyYAML"}]
     # Every other .txt in the directory is no lock, and pip would read its lines as packages.
     listed = {p.name for p in (ROOT / "tools" / "ci").iterdir() if p.suffix in (".txt", ".in")}
     locks = {name for name in listed if name.startswith("requirements-")}

@@ -38,6 +38,14 @@ did. Dependabot cannot run `--write`, so the flow is **propose-in-CI, commit-by-
    locks, `npm` minor+patch, `docker`), labelled
    `dependencies` plus the area / `sla/*` labels. Ungrouped single-package PRs from before this
    policy are closed in favour of the next grouped run (`@dependabot recreate` is acceptable).
+   Each entry waits 7 days after a release (`cooldown`; security updates are not delayed, and
+   base images, which get none, wait too, with Trivy as the CI backstop). The `tools/ci` entry
+   proposes only `semgrep` and `PyYAML`, the lock's inputs: a bump of another pin can leave
+   Semgrep's declared ranges, so a Semgrep bump is adopted with a full re-lock from the lock's
+   header command (#3672). `allow` also limits that entry's security-update PRs, which narrows
+   SR-134 for this CI-only lock: an advisory on another pin is a Dependabot alert, fixed by the
+   same re-lock (or a dated accepted-risk entry while Semgrep pins it exactly), until #3672
+   item 6 adds pip-audit over the `tools/ci` locks.
 2. **CI proposes, never commits.** `check_freeze_manifest.py --propose` runs in that `freeze`
    step on every PR. On a mismatch it still fails, prints the expected/actual digests, writes the
    regenerated manifest + unified diff to the job **step summary**, and (only for

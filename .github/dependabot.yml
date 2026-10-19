@@ -4,6 +4,10 @@ version: 2
 # bumps are GROUPED (one PR per ecosystem per week) and labelled `dependencies`; the
 # read-only-scans CI job then publishes the regenerated manifest as a proposal for the reviewer.
 # Majors on pinned-runtime-sensitive packages are ignored until the runtime moves (§2.1.3).
+# Every entry waits 7 days after a release before proposing it (`cooldown`), so a version
+# pulled or found malicious soon after publishing is not proposed. Security updates are not
+# delayed by it; base images get none (they are not in the advisory database), so their
+# bumps wait too, with Trivy as the CI backstop.
 updates:
   # SR-132/SR-134: keep pinned GitHub Actions SHAs current. Dependabot opens
   # a PR bumping `uses: owner/repo@<sha> # vX.Y.Z` to the latest release;
@@ -14,6 +18,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
@@ -38,6 +44,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       crypto:
         patterns: ["argon2-cffi", "cryptography", "pyotp", "starlette", "itsdangerous"]
@@ -61,6 +69,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       npm-minor-patch:
         patterns: ["*"]
@@ -87,6 +97,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
     groups:
       docker:
         patterns: ["*"]
@@ -109,8 +121,13 @@ updates:
 
   # #3549: the security lane's hash locks in tools/ci (requirements-semgrep.txt: Semgrep and
   # every dependency; requirements-security-gate.txt: the gate's PyYAML). CI's pip-audit reads
-  # only the services/api export, so these PRs are how a Semgrep advisory or release shows up.
-  # A bump whose new pins need other dependencies: regenerate with the command in the lock.
+  # only the services/api export, so these PRs are how a Semgrep release shows up.
+  # Only the two real inputs are proposed (#3672): Dependabot reads every pinned line as
+  # top-level, so a transitive bump alone can leave Semgrep's declared ranges (mcp==1.29.0,
+  # the opentelemetry ~=1.37.0 family: #3701, #3704). The lock's header command takes every
+  # release those ranges allow. `allow` also limits security-update PRs here: an advisory on
+  # another pin is a Dependabot alert, fixed by re-running that command, or by a dated
+  # accepted-risk entry while Semgrep pins the package exactly.
   - package-ecosystem: "pip"
     directory: "/tools/ci"
     exclude-paths:
@@ -118,6 +135,11 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 7
+    allow:
+      - dependency-name: "semgrep"
+      - dependency-name: "PyYAML"
     groups:
       security-lane:
         patterns: ["*"]
