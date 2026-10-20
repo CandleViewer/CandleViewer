@@ -1,0 +1,63 @@
+rules:
+  - id: cv-admin-no-flag-lookup
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A feature-flag lookup in a safety module. Authentication, RBAC, audit, the OMS, risk,
+      secrets, the exchange adapter, `ws/permissions.py`, the rule arm gate and the admin guard
+      read no feature flag, by import, flag service, flag-named call or object, or catalogue key,
+      so no flag can switch a safety control off (C-4.14, SR-E42-07, AD-F09).
+    metadata:
+      rule-id: cv-admin-no-flag-lookup
+      sr: SR-E42-07
+      # E42-X03 decision D3, the AD-F09 residual no static rule sees: ADR-0037 decision 12's
+      # `audit.lane_journal_first` reaches audit/ as a plain callable the composition root builds
+      # (`flags_wiring.LaneFlag`) and hands `AuditService.use_lane_flag`. Its key is in the list
+      # below like every other; services/api/tests/unit/admin/test_flag_lookup_rule.py holds the
+      # list to the catalogue.
+      residual: >-
+        D3 (AD-F09): audit.lane_journal_first enters audit/ as the injected callable that
+        AuditService.use_lane_flag receives, until #3009 retires the flag.
+    pattern-either:
+      # the flag API: the module, its parts, and the composition root's flag wiring, imported
+      # absolutely, relatively (leading dots) or by name at run time
+      - patterns:
+          - pattern-either:
+              - pattern: import $MOD
+              - pattern: from $MOD import $NAME
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^(candleviewer\.|\.+)?(admin\.)?(flags(\..+)?|flags_wiring)$
+      - pattern: from candleviewer.admin import flags
+      - pattern: from candleviewer import flags_wiring
+      - pattern: from . import flags
+      - pattern: from .. import flags_wiring
+      - pattern: importlib.import_module("=~/^\.*(candleviewer\.)?(admin\.)?(flags|flags_wiring)(\..*)?$/", ...)
+      # a call naming a flag (`get_flag(...)`, `FlagService(...)`, `x.is_enabled()`)
+      - patterns:
+          - pattern: $CALL(...)
+          - metavariable-regex:
+              metavariable: $CALL
+              regex: (?i)^([\w.]*\.)?\w*(flag|feature_enabled|is_enabled)\w*$
+      # a method or attribute of an object named like a flag (`self._flags.value(...)`)
+      - patterns:
+          - pattern-either:
+              - pattern: $OBJ.$ATTR(...)
+              - pattern: $OBJ.$ATTR
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: (?i)^([\w.]*\.)?\w*flag\w*$
+      # a catalogue key, exactly (candleviewer/admin/flags/catalogue.py)
+      - pattern: '"=~/^(algo\.chase|algo\.iceberg|algo\.oco|algo\.scaled|algo\.twap|audit\.lane_journal_first|engine\.webgl_v2|killswitch\.ingestion|killswitch\.order_entry|maintenance\.keep_recorder|maintenance\.mode|recorder\.auto_record|rules\.form_editor|rules\.graph_editor|storage\.cold_tier|trading\.live_enabled|trading\.one_click)$/"'
+    paths:
+      include:
+        - "services/api/candleviewer/auth/**"
+        - "services/api/candleviewer/audit/**"
+        - "services/api/candleviewer/oms/**"
+        - "services/api/candleviewer/risk/**"
+        - "services/api/candleviewer/secrets/**"
+        - "services/api/candleviewer/exchange/**"
+        - "services/api/candleviewer/ws/permissions.py"
+        - "services/api/candleviewer/rules/manager.py"
+        - "services/api/candleviewer/admin/http.py"
+        - "services/api/candleviewer/api/deny_by_default.py"
