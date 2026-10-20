@@ -27,9 +27,14 @@ Timing is on the loop clock, from `book_step()` to the frame's arrival at the ri
 through its proxy, with the flood's sockets in the same loop. That is more than budget #6's span
 (book update to outbound frame emitted), so a pass here is a pass there; the gateway's own
 `cv_ws_fanout_seconds` reads the rig's virtual clock and cannot show wall time. The gateway's
-clock is virtual too: a second of it (16 updates) takes about 50 ms of real time, and what an
-update waits behind is the flood's frames sent ahead of it (one or two refused `sub`s on each
-tick, the other legs' frames on theirs, the 40 `ping`s once). N = 400: the p95 is the 380th
+clock is virtual too: a second of it (16 updates) takes about 50 ms of real time. The flood's
+frames (one or two refused `sub`s on each tick, the other legs' frames on theirs, the 40 `ping`s
+once) are written ahead of each update, so they are queued in the loop at the publish. Since the
+fair fix (#3884) the reader yields after each frame, and the update is delivered before they are
+handled: the cost of handling them falls between one update's arrival and the next tick, outside
+the timed span. So this test pins the other user's budget beside the flood, through that user's
+own path, and not the cost of the flooding user's own handling: a slower refusal path does not
+move it. The fair fix's own real-gateway test pins the scheduling. N = 400: the p95 is the 380th
 sample with 20 above it, so the ten or so ticks with a one-off event and a few scheduler stalls
 cannot move it, while a cost on every update does. Those ticks have a loose bound of their own,
 `STALL_MS` on the slowest update: 5 times the budget and 3.7 times the slowest update seen when
@@ -305,7 +310,9 @@ async def nodelay_stack() -> AsyncIterator[Stack]:
 async def measure(stack: Stack, flood: Flood | None) -> tuple[list[float], list[tuple[int, Any]]]:
     """N updates of the recorded book to a user on `book`, each timed from its publish to its
     arrival: its milliseconds, and the `(s, body)` of each `d`. The flood, if any, sends ahead of
-    each update, so its frames are in the loop at the publish. The user must see all of them."""
+    each update, so its frames are queued in the loop at the publish; the fair fix handles them
+    after the update is delivered, so their handling is not in the timed span. The user must see
+    all of them."""
     loop = asyncio.get_running_loop()
     arrived, stream = list[float](), list[tuple[int, Any]]()
 

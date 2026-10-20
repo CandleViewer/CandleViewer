@@ -131,10 +131,10 @@ def refused_alone(
         assert (counted("cv_ws_subscribe_total") - results, refused()) == (3, 1)  # each result once
         assert counted("cv_ws_errors_total") == errors  # a result, not an `err` frame
         assert calls() == {"build": 2, "generation": 2, "acquire": 2}  # the two valid topics only
-    row = dict(  # §5.2: the family, never the name the client sent
+    row = dict(  # §5.2: the family, never the name the client sent; and the socket (E17-R-16)
         action="ws.subscribe.denied", actor_label="ws", actor_user_id=login.user_id,
         object_kind="ws_topic", object_id=audited, outcome=AuditOutcome.DENIED,
-        severity=Severity.WARNING, reason=code,
+        severity=Severity.WARNING, reason=code, **world.named_by(login),
     )  # fmt: skip
     assert world.audit.of("ws.subscribe.denied") == ([row] if audited else [])
     if hostile is not None:

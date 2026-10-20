@@ -188,6 +188,18 @@ class RawWorld(World):
     def revoke(self, login: Login) -> None:
         self.call(partial(self.sessions.revoke, str(login.minted.session_id), reason="logout"))
 
+    def named_by(self, login: Login) -> dict[str, Any]:
+        """What a `ws.subscribe.denied` row names of the socket it came from (#415, E17-R-16): the
+        session in `session_id` and the connection in `after_state`. Read off the socket's own
+        close row, so call it after the socket has closed: that row's `object_id` is the connection,
+        and its `session_id` must be the login's."""
+        (closed,) = self.audit.of("ws.connection.closed")
+        assert closed["session_id"] == str(login.minted.session_id)
+        return {
+            "session_id": closed["session_id"],
+            "after_state": {"connection_id": closed["object_id"]},
+        }
+
     def leaks(self, secret: str, c: RawClient) -> list[str]:
         """The sinks holding any 16-character window of `secret` (the whole of a shorter one)."""
         shown = self.std.readouterr()  # a read empties the capture, so keep what it held

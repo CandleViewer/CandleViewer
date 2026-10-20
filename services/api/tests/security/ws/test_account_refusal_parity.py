@@ -232,8 +232,9 @@ def _observe(
     return seen, spies.checks[checks:]
 
 
-def _denied_row(login: Login, family: str, reason: str) -> dict[str, Any]:
-    """The `ws.subscribe.denied` row of one refusal (23 §5.2): the family and the code, no id."""
+def _denied_row(world: RawWorld, login: Login, family: str, reason: str) -> dict[str, Any]:
+    """The `ws.subscribe.denied` row of one refusal (23 §5.2): the family and the code, no id; and
+    the socket it came from, which the row names (#415, E17-R-16), once that socket has closed."""
     return {
         "action": "ws.subscribe.denied",
         "actor_label": "ws",
@@ -243,6 +244,7 @@ def _denied_row(login: Login, family: str, reason: str) -> dict[str, Any]:
         "outcome": AuditOutcome.DENIED,
         "severity": Severity.WARNING,
         "reason": reason,
+        **world.named_by(login),
     }
 
 
@@ -260,7 +262,7 @@ def test_x02_ac_05_an_existing_account_and_an_unknown_id_get_one_refusal(
         unknown, by_unknown = _observe(world, checked, c, family, [UNKNOWN])
     assert existing == unknown  # frames, row, series, log events and records, lookups: whole
     assert existing["reply"]["p"]["results"] == [{"ch": family, "ok": False, "error": DENIED}]
-    assert existing["rows"] == [_denied_row(alice, family, "account_scope_denied")]
+    assert existing["rows"] == [_denied_row(world, alice, family, "account_scope_denied")]
     labels = ("cv_ws_subscribe_total", (("result", "account_scope_denied"), ("topic", family)))
     assert {k: v for k, v in existing["series"].items() if k[0] == labels[0]} == {labels: 1.0}
     assert existing["events"] == existing["stdlib"] == existing["lookups"] == []
@@ -313,7 +315,7 @@ def test_x02_ac_05_without_the_family_permission_both_ids_get_forbidden(
         foreign, by_foreign = _observe(world, checked, c, family, [BOB])
         unknown, by_unknown = _observe(world, checked, c, family, [UNKNOWN])
     assert foreign == unknown
-    assert foreign["rows"] == [_denied_row(alice, family, "forbidden")]
+    assert foreign["rows"] == [_denied_row(world, alice, family, "forbidden")]
     assert by_foreign == by_unknown == [(None, DenyReason.MISSING_PERMISSION)]
     assert checked.loads == checked.reads == [alice.user_id]  # once, at `auth`
 
@@ -335,6 +337,7 @@ def test_x02_ac_05_the_spies_see_a_sub_that_is_served(world: RawWorld, spies: Sp
 def test_x02_ac_05_every_collaborator_of_the_subscription_services_is_known_to_the_spies() -> None:
     known = {"upstream", "bars", "series", "audit", "clock", "instrument_known", "snapshots"}
     known |= {"snapshot_cache", "sequencing", "bars_off", "machines", "span_ids", "user_rebuilds"}
+    known |= {"qty_step"}  # SR-E12-03 (#3885): read only for a `bar_type` topic, to bound a param
     assert {f.name for f in fields(permissions.SubscriptionServices)} == known, (
         "a new collaborator of the subscription services: wire it into `spies` and the arms, so "
         "that a `sub` that reads it is seen, then add it here"

@@ -155,6 +155,7 @@ def test_x02_ws_d04_a_private_topic_refused_at_the_cap_is_one_audited_denial(
             "outcome": AuditOutcome.DENIED,
             "severity": Severity.WARNING,
             "reason": "subscription_limit",
+            **world.named_by(login),  # E17-R-16: the row names its socket
         }
     ]
 
@@ -438,10 +439,12 @@ def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing
     generated = {"id", "record_id", "prev_hash", "entry_hash", "event_ts"}
     rows = [{k: v for k, v in r.items() if v is not None and k not in generated} for r in repo.rows]
     seen = [[ch, "forbidden"] for ch in private[:10]]  # the record lists the first 10 refusals
-    after = json.dumps({"codes": ["forbidden"], "count": 50, "refusals": seen}, sort_keys=True)
+    named = world.named_by(login)  # E17-R-16: the record names its socket (the one connection)
+    after = {"codes": ["forbidden"], "count": 50, "refusals": seen} | named["after_state"]
     row = {"action": DENIED, "actor_label": "ws", "actor_user_id": str(login.user_id)}
     row |= {"object_kind": "ws_topic", "object_id": "orders", "outcome": "denied"}
-    row |= {"severity": "warning", "reason": "forbidden", "after_state": after}
+    row |= {"severity": "warning", "reason": "forbidden", "session_id": named["session_id"]}
+    row |= {"after_state": json.dumps(after, sort_keys=True)}
     order = {"actor_label": "oms", "object_kind": "order", "outcome": "success", "severity": "info"}
     orders = [order | {"action": "orders.submit", "object_id": f"o{s}"} for s in ordered]
     assert [r for r in rows if r["action"] == DENIED] == [row] * BUDGET  # one a frame, 20 a minute

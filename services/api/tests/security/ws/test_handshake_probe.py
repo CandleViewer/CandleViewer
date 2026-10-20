@@ -3,8 +3,10 @@ of a DAST pass over the handshake. Raw sockets send real upgrade requests and fr
 chaos rig's gateway on a real uvicorn server (production WS settings, 127.0.0.1 only). Behind every
 refusal before `accept`, the gateway's `accept`, the authenticator and the connection registry never
 ran; a socket admitted and then closed made no authenticator call and wrote no audit row. No sleeps,
-every wait bounded. AC-25's handshake timeout is #2176's open item (WS-D14), so no test waits for
-one. The staging ZAP pass and the TLS check are not run here (slice i records them).
+every wait bounded. #2176 (WS-D14) is merged, as #3890: its request-header deadline closes AC-25's
+two partial requests after 10 s with nothing sent, and a header line over 8 KiB gets 431 at once.
+No test here waits for the 10 s (the tests of #3890 do). The staging ZAP pass and the TLS check are
+not run here (slice i records them).
 """
 
 from __future__ import annotations
