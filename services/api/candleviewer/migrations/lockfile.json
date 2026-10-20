@@ -186,6 +186,11 @@
       "path": "services/api/candleviewer/migrations/versions/0038_risk_state.py",
       "sha256": "185d567e5146e8f8bca47d767a2444f2e2790849e0b5b54f010afdd5a89e2eb9",
       "down_revision": "0037_account_profiles"
+    },
+    "0039_trade_groups": {
+      "path": "services/api/candleviewer/migrations/versions/0039_trade_groups.py",
+      "sha256": "c28ec62b754e73bb0e58aae92a9d1bc846e901ec43b0c4d22fbe00c64e128ceb",
+      "down_revision": "0038_risk_state"
     }
   }
 }

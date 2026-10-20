@@ -265,19 +265,38 @@ erDiagram
     exchange_accounts ||--o{ risk_lockouts : locked_by
     users ||--o{ risk_lockouts : scopes
     exchange_accounts ||--o| kill_switch_state : frozen_by
+    trade_group_definitions ||--o{ trade_group_definition_members : lists
+    exchange_accounts ||--o{ trade_group_definition_members : joins
+    trade_group_definitions ||--o{ trade_groups : fires
 
     trade_groups {
         uuid id PK
-        text client_group_ref UK
+        text client_group_ref UK "unique per created_by"
+        sha256_hex client_body_sha256
+        uuid definition_id FK
+        exchange_env env
         symbol_code symbol
         text side
         trade_group_status status
         uuid created_by FK
     }
+    trade_group_definitions {
+        uuid id PK
+        text name UK "live rows"
+        exchange_env env
+    }
+    trade_group_definition_members {
+        uuid definition_id PK
+        uuid exchange_account_id PK
+        boolean enabled
+    }
     trade_group_legs {
         uuid id PK
         uuid trade_group_id FK
         uuid exchange_account_id FK
+        uuid account_profile_id FK
+        int profile_version
+        jsonb profile_snapshot
         leg_status status
         numeric target_qty
     }
@@ -870,7 +889,7 @@ ALTER TABLE exchange_accounts
   );
 ```
 
-Additional invariant, enforced by trigger `trg_ea_env_parent`: a sub-account's `env` must equal its parent's `env`. Cross-env parenting is a data-integrity bug that would let a demo key fan out into a live group.
+Additional invariant, enforced by trigger `trg_ea_env_parent`: a sub-account's `env` must equal its parent's `env`. Cross-env parenting is a data-integrity bug that would let a demo key fan out into a live group. Once an account is a member of a trade-group definition or has a leg, `trg_ea_env_in_use` (§3.3.3a, revision `0039_trade_groups`) refuses any change of its `env`; blanket immutability is #2333's.
 
 #### 3.2.2 `api_keys`
 
@@ -1419,16 +1438,19 @@ ALTER TABLE account_profile_revisions ENABLE ALWAYS TRIGGER trg_apr_no_truncate;
 
 #### 3.3.2 `trade_groups`
 
-A single ticket that fans out to N accounts. `client_group_ref` is the idempotency key from the UI — a re-submitted ticket with the same ref never creates a second group.
+A single ticket that fans out to N accounts. `client_group_ref` is the replay anchor: the request's `Idempotency-Key` (24 §8.3 rule 1), unique per creator (`UNIQUE (created_by, client_group_ref)`), never across users, so another user's key reads as a missing one; `client_body_sha256` fingerprints the request, so the same key with another body is told apart after the 24 h idempotency record has gone (G-6(b), #2876; SR-E29-07). A re-submitted ticket with the same key and body never creates a second group.
 
 | Column                    | Type               | Null | Default        | Constraints / notes                                                   |
 | ------------------------- | ------------------ | ---- | -------------- | --------------------------------------------------------------------- |
 | `id`                      | uuid               | no   | —              | PK                                                                    |
-| `client_group_ref`        | text               | no   | —              | UNIQUE; UI-generated ULID, idempotency key                            |
-| `env`                     | exchange_env       | no   | —              | All legs must match this env (trigger-enforced)                       |
+| `client_group_ref`        | text               | no   | —              | Lower-case UUID; replay anchor, unique per creator; write-once        |
+| `client_body_sha256`      | sha256_hex         | no   | —              | Fingerprint of the request body; write-once                           |
+| `definition_id`           | uuid               | yes  | NULL           | FK → trade_group_definitions RESTRICT; set when fired from one        |
+| `env`                     | exchange_env       | no   | —              | Write-once; every leg's account is in it (`trg_tgl_env`)              |
 | `symbol`                  | symbol_code        | no   | —              | e.g. `BTCUSDT`                                                        |
 | `side`                    | text               | no   | —              | CHECK in ('Buy','Sell')                                               |
 | `status`                  | trade_group_status | no   | `'draft'`      |                                                                       |
+| `leg_failure_policy`      | text               | no   | `best_effort`  | best_effort / all_or_none / abort_on_first (24 §9.5); write-once      |
 | `algo`                    | algo_kind          | no   | `'none'`       | bracket / scaled / twap / chase / iceberg / oco                       |
 | `algo_params`             | jsonb              | yes  | NULL           | Validated per `algo` by app-layer schema (doc 24)                     |
 | `intent_note`             | text               | yes  | NULL           | Free text captured at ticket time → journal                           |
@@ -1443,21 +1465,24 @@ A single ticket that fans out to N accounts. `client_group_ref` is the idempoten
 | `trigger_by`              | text               | yes  | NULL           | LastPrice / MarkPrice / IndexPrice                                    |
 | `sl_price_hint`           | numeric(38,18)     | yes  | NULL           | Absolute SL as drawn on chart; profiles may override                  |
 | `tp_price_hint`           | numeric(38,18)     | yes  | NULL           |                                                                       |
-| `is_paper`                | boolean            | no   | `false`        | True when env='demo' or replay simulation                             |
+| `is_paper`                | boolean            | no   | `false`        | The paper matcher fills it (24 §1.2); orthogonal to `env`             |
 | `submitted_at`            | timestamptz        | yes  | NULL           | First leg submit                                                      |
 | `opened_at`               | timestamptz        | yes  | NULL           | First fill                                                            |
 | `closed_at`               | timestamptz        | yes  | NULL           | All legs flat                                                         |
-| `created_by`              | uuid               | no   | —              | FK users RESTRICT — attribution is permanent                          |
+| `created_by`              | uuid               | no   | —              | FK users RESTRICT — attribution is permanent; write-once              |
 | `created_at`/`updated_at` | timestamptz        | no   | `now()`        |                                                                       |
 
 ```sql
 CREATE TABLE trade_groups (
   id                  uuid PRIMARY KEY,
-  client_group_ref    text NOT NULL UNIQUE,
+  client_group_ref    text NOT NULL,
+  client_body_sha256  sha256_hex NOT NULL,
+  definition_id       uuid REFERENCES trade_group_definitions(id) ON DELETE RESTRICT,
   env                 exchange_env NOT NULL,
   symbol              symbol_code NOT NULL,
   side                text NOT NULL,
   status              trade_group_status NOT NULL DEFAULT 'draft',
+  leg_failure_policy  text NOT NULL DEFAULT 'best_effort',
   algo                algo_kind NOT NULL DEFAULT 'none',
   algo_params         jsonb,
   intent_note         text,
@@ -1481,22 +1506,78 @@ CREATE TABLE trade_groups (
   updated_at          timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT tg_side      CHECK (side IN ('Buy','Sell')),
   CONSTRAINT tg_origin    CHECK (origin IN ('manual','hotkey','dom_click','chart_click','rule','alert','replay_sim')),
+  CONSTRAINT tg_policy    CHECK (leg_failure_policy IN ('best_effort','all_or_none','abort_on_first')),
   CONSTRAINT tg_entrytype CHECK (entry_type IN ('Market','Limit','Conditional')),
-  CONSTRAINT tg_limit_px  CHECK (entry_type <> 'Limit' OR entry_price > 0),
-  CONSTRAINT tg_cond_px   CHECK (entry_type <> 'Conditional' OR (trigger_price > 0 AND trigger_by IS NOT NULL)),
+  CONSTRAINT tg_limit_px  CHECK ((entry_type <> 'Limit' OR entry_price > 0) IS TRUE),
+  CONSTRAINT tg_cond_px   CHECK ((entry_type <> 'Conditional' OR (trigger_price > 0 AND trigger_by IS NOT NULL)) IS TRUE),
   CONSTRAINT tg_trigby    CHECK (trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')),
-  CONSTRAINT tg_paper_env CHECK (env <> 'demo' OR is_paper = true),
-  CONSTRAINT tg_times     CHECK (closed_at IS NULL OR opened_at IS NULL OR closed_at >= opened_at)
+  CONSTRAINT tg_times     CHECK (closed_at IS NULL OR opened_at IS NULL OR closed_at >= opened_at),
+  CONSTRAINT tg_ref_fmt   CHECK (client_group_ref ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  CONSTRAINT tg_finite    CHECK (requested_qty_value <> 'NaN' AND entry_price <> 'NaN' AND trigger_price <> 'NaN'
+    AND sl_price_hint <> 'NaN' AND tp_price_hint <> 'NaN'),
+  CONSTRAINT ux_tg_creator_ref UNIQUE (created_by, client_group_ref)
 );
-CREATE INDEX ix_tg_open      ON trade_groups (symbol, created_at DESC) WHERE status IN ('submitting','partially_open','open','closing');
-CREATE INDEX ix_tg_user_time ON trade_groups (created_by, created_at DESC);
-CREATE INDEX ix_tg_rule      ON trade_groups (origin_rule_id) WHERE origin_rule_id IS NOT NULL;
-CREATE INDEX ix_tg_env_time  ON trade_groups (env, created_at DESC);
+CREATE INDEX ix_tg_open       ON trade_groups (symbol, created_at DESC) WHERE status IN ('submitting','partially_open','open','closing');
+CREATE INDEX ix_tg_user_time  ON trade_groups (created_by, created_at DESC);
+CREATE INDEX ix_tg_rule       ON trade_groups (origin_rule_id) WHERE origin_rule_id IS NOT NULL;
+CREATE INDEX ix_tg_rule_run   ON trade_groups (origin_rule_run_id) WHERE origin_rule_run_id IS NOT NULL;
+CREATE INDEX ix_tg_env_time   ON trade_groups (env, created_at DESC);
+CREATE INDEX ix_tg_definition ON trade_groups (definition_id) WHERE definition_id IS NOT NULL;
+```
+
+`tg_limit_px` and `tg_cond_px` are NULL-safe (`IS TRUE`): a bare CHECK passes a NULL result, so a Limit group without its price would be stored. `tg_finite` keeps NaN out of the prices, as `ap_finite` does for profiles (§3.2.4). `tg_ref_fmt` settles one format for the anchor, the canonical lower-case UUID text (any version, so a server-minted ref of a rule, alert or replay origin fits too); the service stores `str(UUID(header))`, never the header as received. There is no index or lookup on `client_group_ref` alone. `leg_failure_policy` is the group's failure policy (24 §9.5, `tg_policy`), stored so that B2's unwind and a restart read it from the row, never from a machine snapshot. The column default is 24 §9.5's manual-ticket default; the store writes the policy explicitly for every other origin (`abort_on_first` for a rule-originated group); 22's and 23's two-value `atomicity` is its projection until SR-E28-25 settles one vocabulary. Groups are entry fan-outs only (`ux_tgl_group_account`: one leg per account), so every leg opens a position and `tgl_sl_px` is C-2.6 as written: a take-profit or an unwind is a reduce-only `orders` row on the entry leg, never a leg. `ix_tg_rule_run` serves the `ON DELETE SET NULL` of `origin_rule_run_id` when the run retention (§7) prunes `rule_runs`. `symbol`, `side`, `entry_type`, `origin`, `origin_rule_id`, `is_paper` and `algo_params` are written when the group is created; the trade-group store (E28-T01's last slice) never updates them, and freezing them in the schema once a group leaves `draft` is left to E28-T05 (#909, where both deferrals are recorded). Two triggers, both `ENABLE ALWAYS`, refuse with SQLSTATE 23514 naming themselves as the constraint and never a value:
+
+- `trg_tg_env` (BEFORE INSERT): a group fired from a definition is in the definition's environment.
+- `trg_tg_write_once` (BEFORE UPDATE): `id`, `env`, `created_by`, `client_group_ref`, `client_body_sha256`, `definition_id` and `leg_failure_policy` never change.
+
+`trg_trade_groups_touch` (BEFORE UPDATE) is `set_updated_at()` (§1.4).
+
+```sql
+CREATE FUNCTION tg_env_check() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE definition_env text;
+BEGIN
+  IF NEW.definition_id IS NOT NULL THEN
+    SELECT d.env::text INTO definition_env FROM public.trade_group_definitions d WHERE d.id = NEW.definition_id;
+    IF FOUND AND definition_env <> NEW.env::text THEN
+      RAISE EXCEPTION 'trg_tg_env: a group fired from a definition is in the definition environment'
+        USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tg_env';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_tg_env BEFORE INSERT ON trade_groups
+  FOR EACH ROW EXECUTE FUNCTION tg_env_check();
+ALTER TABLE trade_groups ENABLE ALWAYS TRIGGER trg_tg_env;
+CREATE FUNCTION tg_write_once() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE changed text;
+BEGIN
+  changed := CASE
+    WHEN NEW.id IS DISTINCT FROM OLD.id THEN 'id'
+    WHEN NEW.env IS DISTINCT FROM OLD.env THEN 'env'
+    WHEN NEW.created_by IS DISTINCT FROM OLD.created_by THEN 'created_by'
+    WHEN NEW.client_group_ref IS DISTINCT FROM OLD.client_group_ref THEN 'client_group_ref'
+    WHEN NEW.client_body_sha256 IS DISTINCT FROM OLD.client_body_sha256 THEN 'client_body_sha256'
+    WHEN NEW.definition_id IS DISTINCT FROM OLD.definition_id THEN 'definition_id'
+    WHEN NEW.leg_failure_policy IS DISTINCT FROM OLD.leg_failure_policy THEN 'leg_failure_policy'
+  END;
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION 'trg_tg_write_once: trade_groups.% is write-once', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tg_write_once';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_tg_write_once BEFORE UPDATE ON trade_groups
+  FOR EACH ROW EXECUTE FUNCTION tg_write_once();
+ALTER TABLE trade_groups ENABLE ALWAYS TRIGGER trg_tg_write_once;
+CREATE TRIGGER trg_trade_groups_touch BEFORE UPDATE ON trade_groups
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
 #### 3.3.3 `trade_group_legs`
 
-One leg per target account. The leg holds the **resolved** sizing after applying the account profile, plus the per-account risk decision trail.
+One leg per target account. The leg holds the **resolved** sizing after applying the account profile, plus the per-account risk decision trail. It records the profile it was sized from twice: `account_profile_id` and `profile_version` name the revision (§3.2.5, the composite FK `tgl_profile_revision`), and `profile_snapshot` is a frozen copy, the 24 §9.2 `AccountProfile` projection (fractions, the domain's units), so a trade is attributed to the exact version whatever happens to the profile later (SR-E28-07; #905 "Leg snapshot survives a profile edit"). `tgl_snapshot` ties the copy to the columns. A profile delete sets `account_profile_id` to NULL and keeps the snapshot (E28-X01 Q3).
 
 ```sql
 CREATE TABLE trade_group_legs (
@@ -1504,6 +1585,7 @@ CREATE TABLE trade_group_legs (
   trade_group_id        uuid NOT NULL REFERENCES trade_groups(id) ON DELETE CASCADE,
   exchange_account_id   uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
   account_profile_id    uuid REFERENCES account_profiles(id) ON DELETE SET NULL,
+  profile_version       integer NOT NULL,
   profile_snapshot      jsonb NOT NULL,        -- frozen copy of the profile used
   status                leg_status NOT NULL DEFAULT 'pending',
   sequence_no           smallint NOT NULL,     -- fan-out order (rate-limit pacing)
@@ -1531,15 +1613,187 @@ CREATE TABLE trade_group_legs (
   CONSTRAINT tgl_lev        CHECK (resolved_leverage BETWEEN 1 AND 100),
   CONSTRAINT tgl_sl_conf    CHECK (native_sl_confirmed = false OR native_sl_confirmed_at IS NOT NULL),
   CONSTRAINT tgl_fees_nonneg CHECK (fees_paid >= 0),
-  UNIQUE (trade_group_id, exchange_account_id)
+  CONSTRAINT tgl_profile_version CHECK (profile_version >= 1),
+  CONSTRAINT tgl_snapshot   CHECK ((jsonb_typeof(profile_snapshot) = 'object'
+    AND profile_snapshot ->> 'account_id' = exchange_account_id::text
+    AND profile_snapshot ->> 'version' = profile_version::text
+    AND (account_profile_id IS NULL OR profile_snapshot ->> 'profile_id' = account_profile_id::text)) IS TRUE),
+  CONSTRAINT tgl_sl_px      CHECK ((resolved_sl_price > 0 OR status IN ('rejected','cancelled','error')) IS TRUE),
+  CONSTRAINT tgl_finite     CHECK (target_qty <> 'NaN' AND filled_qty <> 'NaN' AND avg_entry_price <> 'NaN'
+    AND avg_exit_price <> 'NaN' AND resolved_leverage <> 'NaN' AND resolved_sl_price <> 'NaN'
+    AND resolved_tp_price <> 'NaN' AND risk_usd <> 'NaN' AND realised_pnl <> 'NaN' AND fees_paid <> 'NaN'),
+  CONSTRAINT tgl_profile_revision FOREIGN KEY (account_profile_id, profile_version)
+    REFERENCES account_profile_revisions (profile_id, version),
+  CONSTRAINT ux_tgl_group_account UNIQUE (trade_group_id, exchange_account_id)
 );
 CREATE INDEX ix_tgl_group   ON trade_group_legs (trade_group_id, sequence_no);
 CREATE INDEX ix_tgl_account ON trade_group_legs (exchange_account_id, created_at DESC);
-CREATE INDEX ix_tgl_open    ON trade_group_legs (exchange_account_id) WHERE status IN ('submitted','open','partially_filled','closing');
-CREATE INDEX ix_tgl_no_sl   ON trade_group_legs (trade_group_id) WHERE status IN ('open','partially_filled') AND native_sl_confirmed = false;
+CREATE INDEX ix_tgl_open    ON trade_group_legs (exchange_account_id) WHERE status IN ('pending','submitted','open','partially_filled','filled');
+CREATE INDEX ix_tgl_no_sl   ON trade_group_legs (trade_group_id) WHERE status IN ('open','partially_filled','filled') AND native_sl_confirmed = false;
+CREATE INDEX ix_tgl_profile ON trade_group_legs (account_profile_id) WHERE account_profile_id IS NOT NULL;
 ```
 
-`ix_tgl_no_sl` powers the **safety alarm**: any open leg without a confirmed exchange-side SL is surfaced on the Risk Dashboard within one second and raises `system_events` severity `critical`.
+`ix_tgl_no_sl` powers the **safety alarm**: any open leg without a confirmed exchange-side SL is surfaced on the Risk Dashboard within one second and raises `system_events` severity `critical`. A `filled` leg is an open position, so the alarm covers it (C-2.6; 22 `native_sl_confirmed`: "a filled leg with false is an alertable condition"). `tgl_sl_px` is the leg's share of the native-stop floor (SR-E28-08): a leg carries a resolved stop unless it was rejected, cancelled or failed before it sent anything. `ix_tgl_open` covers the live statuses; `leg_status` has no `closing` (the B3 chart state is not stored). `tgl_finite` keeps NaN out of the leg's numbers.
+
+Three triggers, all `ENABLE ALWAYS`, refuse with SQLSTATE 23514 naming themselves as the constraint and never a value; `trg_trade_group_legs_touch` (BEFORE UPDATE) is `set_updated_at()`:
+
+- `trg_tgl_env` (BEFORE INSERT OR UPDATE OF `trade_group_id`, `exchange_account_id`): the leg's account is in its group's environment (SR-E28-16). It reads the account `FOR SHARE`, so an environment change waits for the leg's transaction and `trg_ea_env_in_use` (§3.3.3a) then sees the leg.
+- `trg_tgl_profile` (BEFORE INSERT): a leg is sized from a live profile of its own account.
+- `trg_tgl_write_once` (BEFORE UPDATE): `id`, `trade_group_id`, `exchange_account_id`, `profile_version` and `profile_snapshot` never change; `account_profile_id` only becomes NULL, and only once its profile row is gone (the FK's `ON DELETE SET NULL`).
+
+```sql
+CREATE FUNCTION tgl_env_check() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE group_env text; account_env text;
+BEGIN
+  SELECT g.env::text INTO group_env FROM public.trade_groups g WHERE g.id = NEW.trade_group_id;
+  SELECT a.env::text INTO account_env FROM public.exchange_accounts a
+    WHERE a.id = NEW.exchange_account_id FOR SHARE;
+  IF group_env IS NOT NULL AND account_env IS NOT NULL AND group_env <> account_env THEN
+    RAISE EXCEPTION 'trg_tgl_env: a leg account is outside its group environment'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tgl_env';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_tgl_env BEFORE INSERT OR UPDATE OF trade_group_id, exchange_account_id ON trade_group_legs
+  FOR EACH ROW EXECUTE FUNCTION tgl_env_check();
+ALTER TABLE trade_group_legs ENABLE ALWAYS TRIGGER trg_tgl_env;
+CREATE FUNCTION tgl_profile_check() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+BEGIN
+  IF NEW.account_profile_id IS NULL OR NOT EXISTS (
+      SELECT FROM public.account_profiles p
+      WHERE p.id = NEW.account_profile_id AND p.exchange_account_id = NEW.exchange_account_id
+        AND p.deleted_at IS NULL) THEN
+    RAISE EXCEPTION 'trg_tgl_profile: a leg is sized from a live profile of its own account'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tgl_profile';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_tgl_profile BEFORE INSERT ON trade_group_legs
+  FOR EACH ROW EXECUTE FUNCTION tgl_profile_check();
+ALTER TABLE trade_group_legs ENABLE ALWAYS TRIGGER trg_tgl_profile;
+CREATE FUNCTION tgl_write_once() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE changed text;
+BEGIN
+  changed := CASE
+    WHEN NEW.id IS DISTINCT FROM OLD.id THEN 'id'
+    WHEN NEW.trade_group_id IS DISTINCT FROM OLD.trade_group_id THEN 'trade_group_id'
+    WHEN NEW.exchange_account_id IS DISTINCT FROM OLD.exchange_account_id THEN 'exchange_account_id'
+    WHEN NEW.profile_version IS DISTINCT FROM OLD.profile_version THEN 'profile_version'
+    WHEN NEW.profile_snapshot IS DISTINCT FROM OLD.profile_snapshot THEN 'profile_snapshot'
+    WHEN NEW.account_profile_id IS DISTINCT FROM OLD.account_profile_id
+      AND (NEW.account_profile_id IS NOT NULL
+        OR EXISTS (SELECT FROM public.account_profiles p WHERE p.id = OLD.account_profile_id))
+      THEN 'account_profile_id'
+  END;
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION 'trg_tgl_write_once: trade_group_legs.% is write-once', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tgl_write_once';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_tgl_write_once BEFORE UPDATE ON trade_group_legs
+  FOR EACH ROW EXECUTE FUNCTION tgl_write_once();
+ALTER TABLE trade_group_legs ENABLE ALWAYS TRIGGER trg_tgl_write_once;
+CREATE TRIGGER trg_trade_group_legs_touch BEFORE UPDATE ON trade_group_legs
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+```
+
+#### 3.3.3a `trade_group_definitions` and `trade_group_definition_members`
+
+A trade-group definition is a named set of accounts a ticket can fan out to (SR-E28-31, F-03 of E28-X01): its own tables, apart from `trade_groups`, which records executions. A definition is in one environment, and every member is in it: `trg_tgdm_env` refuses a member from another one, and a definition's `env` is write-once (`trg_tgd_write_once`). A member is enabled or disabled per account. Definitions are soft-deleted; members are removed outright. A soft-deleted definition still answers for the groups it fired (they are history), and neither `trg_tg_env` (§3.3.2) nor `trg_tgdm_env` (below) reads `deleted_at`: firing a new group from it, or adding a member to it, is refused by the API (E28-T05, #909) and never done by the store. Who may write them is decision D8 of E28-X01, enforced at the API (Owner-only with step-up until the Owner decides otherwise); nothing in the schema encodes it.
+
+```sql
+CREATE TABLE trade_group_definitions (
+  id          uuid PRIMARY KEY,
+  name        text NOT NULL,
+  env         exchange_env NOT NULL,
+  created_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+  updated_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz,
+  CONSTRAINT tgd_name CHECK (char_length(name) BETWEEN 1 AND 80)
+);
+CREATE UNIQUE INDEX ux_tgd_name ON trade_group_definitions (lower(name)) WHERE deleted_at IS NULL;
+CREATE TABLE trade_group_definition_members (
+  definition_id       uuid NOT NULL REFERENCES trade_group_definitions(id) ON DELETE CASCADE,
+  exchange_account_id uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
+  enabled             boolean NOT NULL DEFAULT true,
+  created_by          uuid REFERENCES users(id) ON DELETE SET NULL,
+  updated_by          uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (definition_id, exchange_account_id)
+);
+CREATE INDEX ix_tgdm_account ON trade_group_definition_members (exchange_account_id);
+```
+
+The environment guards (SR-E28-16), all `ENABLE ALWAYS` and refusing with SQLSTATE 23514 under their own name:
+
+- `trg_tgd_write_once` (BEFORE UPDATE on definitions): `id` and `env` never change.
+- `trg_tgdm_env` (BEFORE INSERT OR UPDATE OF `definition_id`, `exchange_account_id` on members): the member's account is in the definition's environment. It reads the account `FOR SHARE`, as `trg_tgl_env` does.
+- `trg_ea_env_in_use` (BEFORE UPDATE OF `env` on `exchange_accounts`): an account's environment is fixed once it is a member of a definition or has a leg. Blanket immutability of `exchange_accounts.env` is #2333's; this guard is the part E28-T01 owns. It relies on READ COMMITTED where `env` changes (a REPEATABLE READ update would not see a member or leg committed after its snapshot), a dependency #2333 removes.
+
+`trg_trade_group_definitions_touch` and `trg_trade_group_definition_members_touch` are bookkeeping.
+
+```sql
+CREATE FUNCTION tgd_write_once() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE changed text;
+BEGIN
+  changed := CASE
+    WHEN NEW.id IS DISTINCT FROM OLD.id THEN 'id'
+    WHEN NEW.env IS DISTINCT FROM OLD.env THEN 'env'
+  END;
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION 'trg_tgd_write_once: trade_group_definitions.% is write-once', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tgd_write_once';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_tgd_write_once BEFORE UPDATE ON trade_group_definitions
+  FOR EACH ROW EXECUTE FUNCTION tgd_write_once();
+ALTER TABLE trade_group_definitions ENABLE ALWAYS TRIGGER trg_tgd_write_once;
+CREATE TRIGGER trg_trade_group_definitions_touch BEFORE UPDATE ON trade_group_definitions
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE FUNCTION tgdm_env_check() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE definition_env text; account_env text;
+BEGIN
+  SELECT d.env::text INTO definition_env FROM public.trade_group_definitions d WHERE d.id = NEW.definition_id;
+  SELECT a.env::text INTO account_env FROM public.exchange_accounts a
+    WHERE a.id = NEW.exchange_account_id FOR SHARE;
+  IF definition_env IS NOT NULL AND account_env IS NOT NULL AND definition_env <> account_env THEN
+    RAISE EXCEPTION 'trg_tgdm_env: a member account is outside its definition environment'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tgdm_env';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_tgdm_env BEFORE INSERT OR UPDATE OF definition_id, exchange_account_id
+  ON trade_group_definition_members FOR EACH ROW EXECUTE FUNCTION tgdm_env_check();
+ALTER TABLE trade_group_definition_members ENABLE ALWAYS TRIGGER trg_tgdm_env;
+CREATE TRIGGER trg_trade_group_definition_members_touch BEFORE UPDATE ON trade_group_definition_members
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE FUNCTION ea_env_in_use_check() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+BEGIN
+  IF NEW.env IS DISTINCT FROM OLD.env AND (
+      EXISTS (SELECT FROM public.trade_group_definition_members m WHERE m.exchange_account_id = OLD.id)
+      OR EXISTS (SELECT FROM public.trade_group_legs l WHERE l.exchange_account_id = OLD.id)) THEN
+    RAISE EXCEPTION 'trg_ea_env_in_use: the environment of an account in a trade group or a definition is fixed'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ea_env_in_use';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_ea_env_in_use BEFORE UPDATE OF env ON exchange_accounts
+  FOR EACH ROW EXECUTE FUNCTION ea_env_in_use_check();
+ALTER TABLE exchange_accounts ENABLE ALWAYS TRIGGER trg_ea_env_in_use;
+```
+
+**Implementation note (E28-T01, revision `0039_trade_groups`).** The revision creates the three enums of §1.2, the four tables and their triggers, and the three foreign keys that revisions 0013 and 0029 deferred to it: `orders.trade_group_leg_id` and `executions.trade_group_leg_id` (§3.3.4, §3.3.6; 0029) and `rule_runs.trade_group_id` (§3.4.3; 0013), each added `NOT VALID` and then validated (C-5.6) after a pre-flight check that no row names a group or leg yet. Toward `executions`, `ON DELETE SET NULL` is refused by `trg_exec_append` once an execution names the leg, so a leg with executions is never deleted (the §3.2.5 precedent). `cv_app` holds no DELETE on `trade_groups`, `trade_group_legs` or `trade_group_definitions` where the role exists: a group and its legs are history, and a definition leaves by soft delete; members keep DELETE. The money columns of `trade_groups` and `trade_group_legs`, `trade_groups.intent_note` and `algo_params` and the legs' `rejection_code` and `rejection_message` are class P1 (§12) and carry a `PII:` comment (C-5.9); `profile_snapshot` and the definitions are P0. The downgrade refuses while any group, leg, definition or member row exists (C-5.2).
 
 #### 3.3.4 `orders` — local mirror of exchange orders
 
@@ -1666,7 +1920,7 @@ CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = '
 
 **Native stop-loss fields.** `take_profit`, `stop_loss` and `tpsl_mode` hold the TP/SL attached on create (`24-internal-schemas.md` §8.1 `Order`, §8.8 rule 1), so an order row records its native stop from its first insert (C-2.6; [main-orchestrator ruling recorded on #845](https://github.com/CandleViewer/CandleViewer/issues/845#issuecomment-6220571436)). `ord_tp_px` and `ord_sl_px` refuse a price of 0 or less: Bybit's `"0"` clears a TP/SL (`24-internal-schemas.md` §8.9), so a stored 0 would read as an attached stop; a TP or SL that is absent or cleared is stored as NULL. `tpsl_mode` takes the values of `positions.tpsl_mode` (§3.3.7), in Bybit casing like every enumerated text column of this table; §8.1's `full` and `partial` map onto them.
 
-**Implementation note (E29-T01, revision `0029_oms_core`).** `trade_group_leg_id`, here and in `executions` (§3.3.6), is created without its FK because `trade_group_legs` (§3.3.3) does not exist yet. The E28-T01 revision that creates `trade_group_legs` adds both FKs, `NOT VALID` and then validated (C-5.6), as [recorded on #905](https://github.com/CandleViewer/CandleViewer/issues/905#issuecomment-6220575333); `ix_orders_leg` and `ix_exec_leg` exist already. The monetary columns of `orders`, `executions`, `positions` and `position_snapshots` (§12, class P1: every `numeric(38,18)` column) carry a `PII:` column comment (C-5.9), and so do the columns that keep the exchange's answer to an order, `orders.reject_code` and `reject_message` and `order_events.payload`, `ret_code` and `ret_msg` (§12, class P1: the answer can repeat the order's money values).
+**Implementation note (E29-T01, revision `0029_oms_core`).** `trade_group_leg_id`, here and in `executions` (§3.3.6), was created without its FK because `trade_group_legs` (§3.3.3) did not exist yet. Revision `0039_trade_groups` (E28-T01), which creates `trade_group_legs`, adds both FKs, `NOT VALID` and then validated (C-5.6), as [recorded on #905](https://github.com/CandleViewer/CandleViewer/issues/905#issuecomment-6220575333), under the names Postgres gives the inline `REFERENCES` above (`orders_trade_group_leg_id_fkey`, `executions_trade_group_leg_id_fkey`); `ix_orders_leg` and `ix_exec_leg` serve them. The monetary columns of `orders`, `executions`, `positions` and `position_snapshots` (§12, class P1: every `numeric(38,18)` column) carry a `PII:` column comment (C-5.9), and so do the columns that keep the exchange's answer to an order, `orders.reject_code` and `reject_message` and `order_events.payload`, `ret_code` and `ret_msg` (§12, class P1: the answer can repeat the order's money values).
 
 **Vocabulary (E29-T03, revision `0034_order_vocabulary`).** `lifecycle_state` holds the B1 chart's state verbatim (`order_lifecycle_state`, §1.2) beside its persisted form in `state` (§3.3.1). It is nullable with no default and needs no backfill, as nothing writes `orders` yet (E29-T04 wires the OMS). B1's write-ahead step (`oms.order_steps`, E29-T03 #847) sets `lifecycle_state` beside `state` on every create, step and fill, and a write that names none keeps NULL (§3.3.5). `ord_lifecycle` admits a `lifecycle_state` only beside the `state` that `24-internal-schemas.md` §8.2 maps it to, so the two columns never disagree (`ORDER_STATE_OF` in `storage/repositories/orders.py`; a unit test pins the pairs to it, and a refused pair is SQLSTATE 23514). `ix_orders_open` also covers three of the four non-terminal values the revision adds to `order_state` (`triggered`, `unknown` and `quarantined`), so `list_open` returns those orders; `held`, like `untracked`, holds an order the OMS does not own (`28-statechart-catalogue.md` B1, INV-B1-n), so it is not open. The index is rebuilt in the revision's transaction, not `CONCURRENTLY`: a concurrent build waits for every older snapshot of the database, a booting replica's wait for the migration advisory lock included, and nothing writes `orders` yet (§9.3 rule 3 asks for it over 1 M rows). The downgrade refuses while a row holds an `order_state` or `order_event_kind` value or a `lifecycle_state` that the revision added.
 
@@ -2028,7 +2282,7 @@ CREATE TRIGGER trg_re_append BEFORE UPDATE OR DELETE ON rule_events
 
 Retention: `rule_runs` + `rule_events` for **non-matched** runs are aggressively pruned (7 days, since a 250 ms evaluator produces ~345 k rows/day/rule); matched runs are kept 24 months and archived to Parquet. This is encoded in §7.
 
-**Implementation note (E35-T02, revision `0013_rules`).** `scope_account_id`, `rule_runs.scope_account_id` and `rule_runs.trade_group_id` are created without their FKs until `exchange_accounts` (E27) and `trade_groups` (E34) exist; those tickets add the constraints. `trg_re_append` calls `rule_events_forbid_mutation()` (a sibling of `forbid_mutation()` in the DDL above): UPDATE is always refused, DELETE only as the FK cascade of an already-deleted parent run, so no role (owner or app) can directly delete an event. `trg_rr_evidence` (`rule_runs_guard_evidence()`) refuses deleting matched/error runs younger than 24 months. Error runs are deliberately never pruned by the 7-day job (evidence, low volume). The 24-month Parquet archive of matched runs is not due until 2028 and is tracked as a follow-up (recorded on #868).
+**Implementation note (E35-T02, revision `0013_rules`).** `scope_account_id` and `rule_runs.scope_account_id` are created without their FKs until `exchange_accounts` (E27) exists; that ticket adds the constraints. `rule_runs.trade_group_id` got its FK (`rule_runs_trade_group_id_fkey`, `NOT VALID` and then validated) with `trade_groups` in revision `0039_trade_groups` (E28-T01, which persists trade groups per the F-25 ruling on #905). `trg_re_append` calls `rule_events_forbid_mutation()` (a sibling of `forbid_mutation()` in the DDL above): UPDATE is always refused, DELETE only as the FK cascade of an already-deleted parent run, so no role (owner or app) can directly delete an event. `trg_rr_evidence` (`rule_runs_guard_evidence()`) refuses deleting matched/error runs younger than 24 months. Error runs are deliberately never pruned by the 7-day job (evidence, low volume). The 24-month Parquet archive of matched runs is not due until 2028 and is tracked as a follow-up (recorded on #868).
 
 To avoid writing 345 k rows/day of nothing, the engine only persists a `rule_runs` row when `matched = true`, when `status='error'`, or when the rule is in `simulate` mode with explicit "record all evaluations" enabled (per-rule flag `rules.settings.record_all` in `settings`). Non-persisted evaluations are counted in Prometheus only.
 
@@ -3671,6 +3925,8 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `orders` (PG)                         | ∞                  | —                                      | ∞             | —                            | Ledger of record                                                                  |
 | `order_events` (PG)                   | 24 mo live         | 7 y                                    | 7 y           | archive_parquet              | Monthly partitions detached                                                       |
 | `executions` (PG)                     | ∞                  | 7 y mirror                             | ∞             | archive_parquet              | Financial record                                                                  |
+| `trade_groups`, `trade_group_legs`    | ∞                  | —                                      | ∞             | —                            | Trading history; the replay anchor answers at any age (SR-E29-07)                 |
+| `trade_group_definitions` (+members)  | ∞                  | —                                      | ∞             | —                            | Configuration; definitions are soft-deleted                                       |
 | `positions` (PG, current)             | ∞                  | —                                      | ∞             | —                            | Single row per account/symbol                                                     |
 | `position_snapshots` (PG)             | 90 d               | 24 mo                                  | 24 mo         | archive_parquet              |                                                                                   |
 | `wallet_balances` (PG)                | 180 d              | 7 y                                    | 7 y           | archive_parquet              |                                                                                   |
@@ -3838,7 +4094,7 @@ NAMING_CONVENTION = {
 | `0009_sessions_step_up_state`   | `sessions.step_up_elevations`, `step_up_failures`, `readonly_until` (step-up state on the session row, B16) — **E09-S04**                                                                                                                                                                  |
 | `0005_api_keys`                 | `api_keys`, `api_key_rotations`, withdrawal-off constraint — landed as `0017_exchange_accounts_api_keys` (E27-T01); write-once trigger `0024_api_keys_write_once` (#2336)                                                                                                                  |
 | `0005_profiles`                 | `account_profiles` + ladder trigger — landed as `0037_account_profiles` (E28-T01 #905, with `account_profile_revisions`, §3.2.4–§3.2.5)                                                                                                                                                    |
-| `0006_trading_core`             | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances` — `orders` to `position_snapshots` = `0029_oms_core` (E29-T01); rest pending                                                                              |
+| `0006_trading_core`             | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances` — `orders` to `position_snapshots` = `0029_oms_core` (E29-T01); `trade_groups`, `trade_group_legs` = `0039_trade_groups` (E28-T01); rest pending          |
 | `0007_recorder`                 | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies` — landed as `0011_recorder` (E16-T01); `replay_sessions` landed in E26-T01 as `0023_replay_sessions` (#624)                                                                                               |
 | `0008_rules`                    | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                                                                       |
 | `0009_alerts`                   | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                                                                     |
@@ -3855,6 +4111,7 @@ NAMING_CONVENTION = {
 | `0036_users_purge`              | `users.purge_after`, `anonymised_at`, CHECK `users_purge_shape` (§3.1.1): the deferred PII purge's schedule and its mark (§12) — **E42-T10 #2650**; the downgrade refuses while a purge is pending                                                                                         |
 | `0037_account_profiles`         | `account_profiles`, `account_profile_revisions`, `sizing_mode`, `offset_unit`, the ladder, version, revision and bootstrap triggers and the backfill (§3.2.4, §3.2.5) — **E28-T01 #905 PR-1**; the downgrade refuses once a profile was written                                            |
 | `0038_risk_state`               | `risk_lockouts`, `risk_policy` (seeded singleton) and `kill_switch_state` (seeded global row) (§3.11); `DELETE` revoked from `cv_app` — **E39-T02 #882**; the downgrade refuses while risk state exists beyond the seed                                                                    |
+| `0039_trade_groups`             | `trade_groups`, `trade_group_legs`, `trade_group_definitions`, `trade_group_definition_members`, three enums, the environment, write-once and profile triggers, the leg and rule-run FKs (§3.3.2–§3.3.3a) — **E28-T01 #905 PR-2**; the downgrade refuses while any row exists              |
 
 ---
 
@@ -4166,6 +4423,12 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `machine_drain_journal`                                | `payload`                               | P1         | json, plaintext                                 | A drained event, replayed once after restore; can repeat order values; holds no credential, token or key; never logged                          |
 | `machine_events`                                       | `payload`                               | P1         | json, plaintext; hash-chained (`row_hash`)      | Event data; append-only (C-5.7), kept on erase like `order_events`; holds no credential, token or key; never logged                             |
 | `account_profiles`, `account_profile_revisions`        | all                                     | P0         | plaintext; revisions append-only                | Profile configuration: no personal data or key material (E28-X01 A-08: Confidential, integrity-critical; SR-E28-07)                             |
+| `trade_groups`, `trade_group_legs`                     | monetary columns                        | P1         | plaintext                                       | Financial personal data; never sent to third parties                                                                                            |
+| `trade_groups`                                         | `intent_note`                           | P1         | plaintext                                       | Free text a user wrote at ticket time; never logged                                                                                             |
+| `trade_groups`                                         | `algo_params`                           | P1         | jsonb, plaintext                                | Algo parameters that can repeat the order's prices and quantities; never logged                                                                 |
+| `trade_group_legs`                                     | `rejection_code`, `rejection_message`   | P1         | text, redacted before insert                    | Exchange text that can repeat the order's money values, like `orders.reject_*`                                                                  |
+| `trade_group_legs`                                     | `profile_snapshot`                      | P0         | jsonb, write-once                               | The `AccountProfile` projection: no personal data or key material (SR-E28-07)                                                                   |
+| `trade_group_definitions`, `..._members`               | all                                     | P0         | plaintext                                       | Group configuration (E28-X01 A-09: Confidential, integrity-critical)                                                                            |
 | Everything else                                        | —                                       | P0         | —                                               |                                                                                                                                                 |
 
 Enforcement:

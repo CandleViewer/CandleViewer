@@ -94,6 +94,11 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "risk_lockouts",
         "risk_policy",
         "kill_switch_state",
+        # E28-T01 (0039_trade_groups)
+        "trade_group_definitions",
+        "trade_group_definition_members",
+        "trade_groups",
+        "trade_group_legs",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected

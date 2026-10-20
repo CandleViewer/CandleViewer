@@ -697,21 +697,26 @@ def test_a_revision_that_cannot_be_written_rolls_the_profile_write_back(pg_dsn: 
     [
         "UPDATE account_profile_revisions SET version = version",
         "DELETE FROM account_profile_revisions",
-        "TRUNCATE account_profile_revisions",
+        "TRUNCATE account_profile_revisions CASCADE",
     ],
 )
 @pytest.mark.parametrize("replica", [False, True], ids=["origin", "replica"])
 def test_revisions_cannot_be_rewritten(pg_dsn: str, verb: str, replica: bool) -> None:
     """INSERT-only (SR-E28-07): `forbid_mutation()` per row and `audit_refuse_truncate()` per
-    statement, both `ENABLE ALWAYS`, so the replica role does not switch them off."""
+    statement, both `ENABLE ALWAYS`, so the replica role does not switch them off. The TRUNCATE
+    cascades, because `trade_group_legs` (0039) references the table and a plain one stops at that
+    foreign key first. The cascade also reaches tables with truncate guards of their own, so the
+    refusal must name this table: its trigger fires first, and only while it exists."""
     with _conn(_fresh(pg_dsn)) as c:
         _account(c)
         before = c.execute("SELECT * FROM account_profile_revisions ORDER BY id").fetchall()
         with c.transaction():
             if replica:
                 c.execute("SET LOCAL session_replication_role = replica")
-            with pytest.raises(psycopg.errors.RaiseException):
+            with pytest.raises(psycopg.errors.RaiseException) as refused:
                 c.execute(verb)
+            message = refused.value.diag.message_primary or ""
+            assert message.startswith("table account_profile_revisions is append-only"), message
             raise psycopg.Rollback
         assert c.execute("SELECT * FROM account_profile_revisions ORDER BY id").fetchall() == before
 

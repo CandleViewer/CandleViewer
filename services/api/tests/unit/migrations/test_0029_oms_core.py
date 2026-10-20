@@ -25,7 +25,8 @@ _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
 _REV, _PREV = "0029_oms_core", "0028_incidents_backups"
 _UP, _DOWN = f"{_PREV}:{_REV}", f"{_REV}:{_PREV}"
 _BLOCKS = ("3.3.4 `orders`", "3.3.5 `order_events`", "3.3.6 `executions`", "3.3.7 `positions`")
-#: The one documented deviation (Sec.3.3.4 note): `trade_group_legs` (E28-T01) does not exist yet.
+#: The one documented deviation (Sec.3.3.4 note): `trade_group_legs` did not exist yet, so 0029
+#: created both columns without their FK; 0039_trade_groups (E28-T01 #905) adds them.
 _LEG_FK = " REFERENCES trade_group_legs(id) ON DELETE SET NULL"
 #: Added by `0034_order_vocabulary`, whose own test pins them: the column, its CHECK, and
 #: `ix_orders_open` rebuilt with the new open states.
@@ -112,12 +113,16 @@ def test_upgrade_ddl_is_the_plan_doc_ddl_verbatim_but_the_leg_fk(heading: str) -
     assert _norm(_doc_block(heading).replace(_LEG_FK, "")) in _up()
 
 
-def test_only_the_two_leg_references_are_deferred() -> None:
+def test_only_the_two_leg_references_were_deferred_and_the_models_carry_them() -> None:
+    """0029 created both columns bare; the models carry the FKs 0039_trade_groups adds."""
     doc = "".join(_doc_block(h) for h in _BLOCKS)
     assert doc.count(_LEG_FK) == 2 and "trade_group_legs" not in _up()
     for table in ("orders", "executions"):
         leg = _TABLES[table].c.trade_group_leg_id
-        assert _LEG_FK in _doc_table(table) and leg.nullable and not leg.foreign_keys
+        assert _LEG_FK in _doc_table(table) and leg.nullable
+        assert {(fk.column.table.name, fk.ondelete) for fk in leg.foreign_keys} == {
+            ("trade_group_legs", "SET NULL")
+        }
 
 
 def test_ord_link_fmt_admits_exactly_the_two_domain_id_shapes() -> None:
@@ -231,7 +236,7 @@ def test_models_mirror_the_foreign_keys_and_their_delete_rules(table: Table) -> 
         re.MULTILINE,
     )
     got = {(fk.parent.name, fk.column.table.name, fk.ondelete) for fk in table.foreign_keys}
-    assert got == {fk for fk in doc if fk[1] != "trade_group_legs"} and got
+    assert got == set(doc) and got
 
 
 @pytest.mark.parametrize("table", _TABLES.values(), ids=list(_TABLES))
