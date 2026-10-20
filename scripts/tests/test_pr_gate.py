@@ -529,6 +529,7 @@ def test_plan_has_every_family_of_steps_and_each_tool_gets_its_argv(
     assert semgrep[semgrep.index("--config") + 1] == ".semgrep/cv-x.yml"
     assert semgrep[-1] == "."  # the root, as CI scans it: `.semgrepignore` applies (#3936)
     assert {f"--include=/{BARS}", f"--include=/{extra}"} <= set(semgrep)
+    assert BARS not in semgrep and extra not in semgrep  # a named target would skip the ignore file
     gitleaks = _argv(calls, steps["gitleaks"])
     assert gitleaks[:4] == ["gitleaks", "git", "--log-opts", "abc1234..HEAD"]
     # the CodeQL pattern check and the tests
@@ -543,12 +544,20 @@ def test_semgrep_includes_are_anchored_and_escape_the_glob_syntax() -> None:
     assert pr_gate.semgrep_include("a.py") == "--include=/a.py"  # not its namesakes elsewhere
     got = pr_gate.semgrep_include("apps/web/routes/[id]/a*b?.ts")
     assert got == r"--include=/apps/web/routes/\[id\]/a\*b\?.ts"
+    assert pr_gate.semgrep_include("a\\b.py") == r"--include=/a\\b.py"
 
 
 SEMGREP_RULE = "rules:\n- id: cv-x\n  pattern: bad()\n  message: bad\n  languages: [python]\n"
 SEMGREP_RULE += "  severity: ERROR\n"
 GENERATED_MODELS = f"{API}/candleviewer/api/_generated/openapi_models.py"
 needs_semgrep = pytest.mark.skipif(not shutil.which("semgrep"), reason="semgrep not installed")
+
+
+@pytest.fixture
+def semgrep_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Semgrep keeps its log and settings under HOME: one in `tmp_path` keeps the run there."""
+    (tmp_path / "home").mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
 
 def _semgrep_step(root: Path, changed: list[str]) -> Any:
@@ -561,6 +570,7 @@ def _semgrep_step(root: Path, changed: list[str]) -> Any:
 
 
 @needs_semgrep
+@pytest.mark.usefixtures("semgrep_home")
 def test_a_regenerated_file_the_ignore_file_skips_passes_the_semgrep_step(tmp_path: Path) -> None:
     """#3936: CI's scan skips `_generated/` (`.semgrepignore`), so the gate's does too."""
     generated = _write(tmp_path, GENERATED_MODELS, "bad()\n")
@@ -568,6 +578,7 @@ def test_a_regenerated_file_the_ignore_file_skips_passes_the_semgrep_step(tmp_pa
 
 
 @needs_semgrep
+@pytest.mark.usefixtures("semgrep_home")
 def test_a_finding_in_a_changed_file_the_scan_reads_still_fails_it(tmp_path: Path) -> None:
     generated = _write(tmp_path, GENERATED_MODELS, "bad()\n")
     source = _write(tmp_path, f"{API}/candleviewer/a.py", "bad()\n")
@@ -576,13 +587,16 @@ def test_a_finding_in_a_changed_file_the_scan_reads_still_fails_it(tmp_path: Pat
 
 
 @needs_semgrep
+@pytest.mark.usefixtures("semgrep_home")
 def test_an_unchanged_namesake_of_a_changed_file_is_not_scanned(tmp_path: Path) -> None:
     """Semgrep reads the include as meant: anchored, and `[id]` as a name, not a class that
     would also select `i/` or `d/`."""
     for unchanged in ("tools/a.py", "i/a.py", "d/a.py"):
         _write(tmp_path, unchanged, "bad()\n")  # namesakes with a finding, none changed
-    changed = [_write(tmp_path, "a.py"), _write(tmp_path, "[id]/a.py")]
-    assert _semgrep_step(tmp_path, changed).run() == ("PASS", "")
+    changed = [_write(tmp_path, "a.py"), _write(tmp_path, "[id]/a.py", "bad()\n")]
+    status, output = _semgrep_step(tmp_path, changed).run()
+    assert status == "FAIL" and "[id]/a.py" in output  # selected: a void include would pass
+    assert not any(name in output for name in ("tools/a.py", "i/a.py", "d/a.py"))
 
 
 #: Tracked files under the generated outputs of tools/ci/check_gen_freshness.py.
