@@ -1,9 +1,8 @@
 """B10 / F6-2 (#3876, decision on #35): a public-trade frame refused over the cap leaves a gap.
 
-The cap (`MAX_PRINTS_PER_BATCH`) stays the E08-X02 hostile-upstream control: such a frame is still
-refused whole, counted and logged. It now also opens a gap at the last published print, on the path
-a print rejected after publish takes (`test_rejected_trade_after_publish_marks_gap`), so the next
-accepted batch publishes one `gap` event and consumers resync instead of losing prints silently.
+The cap (`MAX_PRINTS_PER_BATCH`, the E08-X02 control) still refuses such a frame whole, counted and
+logged, and now also opens a gap at the last published print, as a print rejected after publish does
+(`test_rejected_trade_after_publish_marks_gap`): the next accepted batch publishes one `gap` event.
 Oversized frames repeat the print entries of a recorded capture (C-13.5); no shape is invented.
 """
 
@@ -18,19 +17,13 @@ from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy
 from candleviewer.exchange.base.trade_print import MAX_PRINTS_PER_BATCH
 from candleviewer.exchange.bybit.trades import parse_trade_frame, trade_topic
-from candleviewer.ingestion.metrics import ingest_rejected_total, trade_prints_rejected_total
+from candleviewer.ingestion import metrics
 from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
-from tests._corpus import frames
+from tests._corpus import corpus_path, frames
 
 RECORDED = frames("ws/recorded_publicTrade_BTCUSDT.jsonl")  # live capture, up to 12 prints/frame
-PUBLIC_TRADE = (
-    "ws/recorded_publicTrade_BTCUSDT.jsonl",
-    "ws/clean_publicTrade_BTCUSDT.jsonl",
-    "ws/clean_publicTrade_ETHUSDT.jsonl",
-    "ws/clean_publicTrade_SOLUSDT.jsonl",
-    "ws/publicTrade_BTCUSDT.jsonl",
-    "ws/reconnect_publicTrade_ETHUSDT.jsonl",
-)
+#: Every public-trade capture in the corpus (C-13.5).
+PUBLIC_TRADE = sorted(f"ws/{p.name}" for p in corpus_path("ws").glob("*publicTrade_*.jsonl"))
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 
 
@@ -47,8 +40,12 @@ def _ts(frame: str) -> list[int]:
 
 
 def _rejections() -> tuple[float, float]:
-    labelled = ingest_rejected_total.labels(stream="trade", reason="malformed")
-    return float(trade_prints_rejected_total._value.get()), float(labelled._value.get())
+    labelled = metrics.ingest_rejected_total.labels(stream="trade", reason="malformed")
+    return float(metrics.trade_prints_rejected_total._value.get()), float(labelled._value.get())
+
+
+def _drained(sub: Any) -> list[Any]:
+    return [sub.queue.get_nowait() for _ in range(sub.queue.qsize())]
 
 
 class _Tape:
@@ -79,16 +76,6 @@ class _Tape:
             await self.stream.handle_frame(frame)
             await self.stream.wait_backfills()
 
-    @staticmethod
-    def _drain(sub: Any) -> list[Any]:
-        return [sub.queue.get_nowait() for _ in range(sub.queue.qsize())]
-
-    def gap_events(self) -> list[GapEvent]:
-        return self._drain(self.gaps)
-
-    def published(self) -> list[Any]:
-        return self._drain(self.prints)
-
 
 async def test_a_frame_over_the_cap_is_still_counted_and_logged_and_now_marks_one_gap() -> None:
     tape = _Tape()
@@ -109,10 +96,10 @@ async def test_a_frame_over_the_cap_is_still_counted_and_logged_and_now_marks_on
         }
     ]
     assert tape.stream.open_gaps() == {"BTCUSDT": (max(_ts(RECORDED[0])), "rejected_frame")}
-    assert tape.gap_events() == []  # the window's own close publishes the marker
+    assert _drained(tape.gaps) == []  # the window's own close publishes the marker
 
     await tape.feed(RECORDED[2])
-    (gap,) = tape.gap_events()
+    (gap,) = _drained(tape.gaps)
     assert (gap.symbol, gap.reason, gap.recovered) == ("BTCUSDT", "rejected_frame", False)
     assert (gap.start_us, gap.end_us) == (max(_ts(RECORDED[0])), min(_ts(RECORDED[2])))
 
@@ -125,7 +112,7 @@ async def test_the_refused_frames_gap_is_built_as_for_a_print_rejected_after_pub
     for refused in (json.dumps(rejected), _oversized(RECORDED[1])):
         tape = _Tape()
         await tape.feed(RECORDED[0], refused, RECORDED[2])
-        gaps += tape.gap_events()
+        gaps += _drained(tape.gaps)
 
     after_publish, over_cap = gaps
     assert after_publish.model_dump(exclude={"event_id"}) == over_cap.model_dump(
@@ -139,11 +126,14 @@ async def test_a_flood_of_frames_over_the_cap_leaves_one_gap_per_window() -> Non
     tape = _Tape()
     await tape.feed(RECORDED[0])
     before = _rejections()
+    backfills = metrics.trade_backfill_rows_total.labels(result="unavailable")  # no fetcher
+    tried = float(backfills._value.get())
     await tape.feed(*(_oversized(f) for f in RECORDED[1:4]))
     await tape.feed(RECORDED[4])
 
     assert _rejections() == (before[0] + 3, before[1] + 3)
-    (gap,) = tape.gap_events()
+    assert float(backfills._value.get()) == tried + 1
+    (gap,) = _drained(tape.gaps)
     assert (gap.start_us, gap.end_us) == (max(_ts(RECORDED[0])), min(_ts(RECORDED[4])))
 
 
@@ -153,8 +143,8 @@ async def test_a_frame_over_the_cap_before_any_published_print_marks_no_gap() ->
     tape = _Tape()
     await tape.feed(_oversized(RECORDED[0]), RECORDED[1])
 
-    assert tape.stream.open_gaps() == {} and tape.gap_events() == []
-    assert len(tape.published()) == len(_ts(RECORDED[1]))
+    assert tape.stream.open_gaps() == {} and _drained(tape.gaps) == []
+    assert len(_drained(tape.prints)) == len(_ts(RECORDED[1]))
 
 
 async def test_the_recorded_public_trade_frames_replay_with_no_refusal_and_no_gap() -> None:
@@ -166,5 +156,5 @@ async def test_the_recorded_public_trade_frames_replay_with_no_refusal_and_no_ga
 
     assert max(len(_ts(frame)) for frame in corpus) <= MAX_PRINTS_PER_BATCH
     assert _rejections() == before
-    assert tape.gap_events() == [] and tape.stream.open_gaps() == {}
-    assert {(e.symbol, e.trade_id) for e in tape.published()} == ids
+    assert _drained(tape.gaps) == [] and tape.stream.open_gaps() == {}
+    assert {(e.symbol, e.trade_id) for e in _drained(tape.prints)} == ids
