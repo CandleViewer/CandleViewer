@@ -1,5 +1,6 @@
 """Offline break-glass Owner MFA reset: the CLI flow (E09-S11 #2119 slice 4, SR-023; threat
-model U10 and Sec.3.6.1, KV-E08, ADR-0009 Amendment 1). Slice 5 composes the ports.
+model U10 and Sec.3.6.1, KV-E08, ADR-0009 Amendment 1). `admin.breakglass_wiring` composes the
+ports and `python -m candleviewer.breakglass` runs the flow (slice 5).
 
 Fixed order: the host journal under the run lock; the write-ahead `auth.break_glass_attempt`;
 `--live` against the configured environment; the KEK proof; the cv-api probe; the Owner; a TTY
@@ -160,8 +161,8 @@ class BreakGlassPorts:
     open_direct: Callable[[], Awaitable[AuditTrail | None]]
     #: `secrets.prove_kek_possession`: metadata only, never enrols (decision O1).
     prove_kek: Callable[[], Awaitable[KekCheckResult]]
-    #: True while another session of the CLI's database role is connected (R2c). Slice 5
-    #: composes the `pg_stat_activity` probe and its integration test; here it is a port.
+    #: True while another session of the CLI's database role is connected (R2c): the
+    #: `pg_stat_activity` probe of `SqlAlchemyBreakGlassDatabase.others_connected`.
     api_running: Callable[[], Awaitable[bool]]
     #: The id of the active Owner with this username or email, else None.
     resolve_owner: Callable[[str], Awaitable[uuid.UUID | None]]
