@@ -1898,6 +1898,37 @@ A refusal is the `403 trading_disabled` problem with a `reason` extension member
 
 `detail` is human text for the operator; it never carries an id or a secret.
 
+### 8.11 Risk state and the gate's verdict (E39)
+
+_Added for E39-T02 (#882)._ The domain objects of `services/api/candleviewer/risk/models.py`: frozen pydantic v2,
+`extra="forbid"`. Each persisted one mirrors its table in `21-database-schema.md` §3.11 and refuses what the table's
+CHECKs refuse. Money and measured values are `Decimal` (a `float` is refused); every timestamp is timezone-aware UTC.
+Threat model: `docs/security/threat-models/E39-risk-killswitch.md` (E39-X01).
+
+| Type              | Fields                                                                                                                                                                                                   | Rules                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RiskDecision`    | `allowed`, `code: RiskRefusal \| None`, `message`, `cap: str \| None`, `limit`, `actual` (`Decimal \| None`), `evaluated_at`                                                                             | Allowed has no `code` and names no cap; a refusal has exactly one `code`. `message` names only the caller's own account's figures. `limit` and `actual` are any finite `Decimal`: never persisted, so not bounded to a column. For a portfolio-level cap they are portfolio figures: E39-S01 returns them to the Owner only and names only the limit kind to anyone else (E39-X01 SR-E39-14)                                             |
+| `RiskRefusal`     | `risk_limit_breached`, `account_locked`, `trading_disabled`, `risk_state_unavailable`, `symbol_not_allowed`                                                                                              | The internal set E39-T01 evaluates; the codes a client sees are registered in `22-api-openapi.yaml` by E39-S01                                                                                                                                                                                                                                                                                                                           |
+| `LockoutState`    | One `risk_lockouts` row: `id`, `exchange_account_id`, `user_id`, `reason: LockoutReason`, `threshold`, `actual_value`, `since`, `until`, `released_at`, `released_by`, `release_reason`, `actions_taken` | `manual` has no `until` (`rl_manual`); `until` after `since`; a release is a person's (`released_by` and `release_reason` together) or the clock's (neither, at or after a stored `until`) (`rl_release`), never before `since` (`rl_released`); `release_reason` 3..280, 3 after trimming; `threshold` and `actual_value` fit `numeric(38,18)`, so a writer quantizes a computed figure first. `is_active` while `released_at` is unset |
+| `LockoutReason`   | `daily_loss`, `consecutive_losses`, `max_positions`, `manual`                                                                                                                                            | `RiskSummary.accounts[].lockout.reason`                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `KillSwitchState` | One `kill_switch_state` row: `id`, `scope: KillSwitchScope`, `exchange_account_id`, `engaged`, `engaged_at`, `engaged_by`, `reason`, `options`, `updated_at`                                             | `global` names no account and `accounts` names one; an engaged row has its time and reason; `reason` 3..280, 3 after trimming                                                                                                                                                                                                                                                                                                            |
+| `KillSwitchScope` | `global`, `accounts`                                                                                                                                                                                     | `KillSwitch.scope`                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+The `jsonb` keys, closed sets each:
+
+- `risk_lockouts.actions_taken` (`LockoutActions`): `orders_cancelled`, `positions_flattened`, non-negative counts
+  of what the lockout did when it opened.
+- `kill_switch_state.options` (`KillSwitchOptions`): `cancel_open_orders` (default `true`), `flatten_positions`
+  (`false`) and `disarm_rules` (`true`), the `SetKillSwitchRequest` options with their defaults.
+- `risk_policy.breach_behaviour`: one key per limit column of `risk_policy` (`max_total_notional_usd`,
+  `max_daily_loss_usd`, `max_drawdown_pct`, `max_open_positions`, `max_leverage`, `max_orders_per_minute`,
+  `per_symbol_concentration_pct`), each `warn`, `block` or `flatten`; `rp_behaviour` refuses a missing key, another
+  key and any other value.
+
+`risk_policy.override_extra_loss_max_usd` bounds the loss allowance an override may grant (E39-X01 D-4, default 0);
+the allowance and the override's grace window are E39-S02's. A lockout's `released_at` is written when the release
+happens, never scheduled ahead.
+
 ---
 
 ## 9. Trade groups and fan-out

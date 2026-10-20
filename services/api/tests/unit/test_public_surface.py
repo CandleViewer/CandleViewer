@@ -239,6 +239,17 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReplayRunPort",
         "SourceFactory",
     },
+    # E39-T02 (#882): the risk state and the gate's verdict (24-internal-schemas.md §8.11).
+    "M17": {
+        "KillSwitchOptions",
+        "KillSwitchScope",
+        "KillSwitchState",
+        "LockoutActions",
+        "LockoutReason",
+        "LockoutState",
+        "RiskDecision",
+        "RiskRefusal",
+    },
 }
 
 

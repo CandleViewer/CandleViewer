@@ -90,6 +90,10 @@ def test_metadata_declares_every_table_from_0001() -> None:
         # E28-T01 (0037_account_profiles)
         "account_profiles",
         "account_profile_revisions",
+        # E39-T02 (0038_risk_state)
+        "risk_lockouts",
+        "risk_policy",
+        "kill_switch_state",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected

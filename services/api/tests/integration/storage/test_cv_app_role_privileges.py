@@ -222,3 +222,23 @@ def test_account_profile_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
     assert held[("cv_app", "account_profiles")] == ("INSERT SELECT UPDATE",)
     assert held[("cv_ro", "account_profile_revisions")] == ("SELECT",)
     assert held[("cv_ro", "account_profiles")] == ("SELECT",)
+
+
+def test_risk_state_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
+    """The E39 risk state is kept indefinitely (21 Sec.3.11): a release updates its row and nothing
+    deletes one, so `cv_app` holds no DELETE on the three tables and `cv_ro` only SELECT."""
+    probe = (
+        "SELECT string_agg(p, ' ' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', "
+        "'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p "
+        "WHERE has_table_privilege(%s, %s, p)"
+    )
+    tables = ("risk_lockouts", "risk_policy", "kill_switch_state")
+    with psycopg.connect(cv_app_dsn) as conn:
+        held = {
+            (role, table): conn.execute(probe, (role, table)).fetchone()
+            for role in ("cv_app", "cv_ro")
+            for table in tables
+        }
+    for table in tables:
+        assert held[("cv_app", table)] == ("INSERT SELECT UPDATE",), table
+        assert held[("cv_ro", table)] == ("SELECT",), table
