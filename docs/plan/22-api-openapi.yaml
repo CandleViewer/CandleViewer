@@ -14650,7 +14650,12 @@ components:
       properties:
         user: { $ref: "#/components/schemas/User" }
         permissions: { type: array, items: { type: string } }
-        account_scope: { type: array, items: { type: string, format: uuid } }
+        account_scope:
+          {
+            type: array,
+            items: { type: string, format: uuid },
+            description: "Accounts whose view grant is live and not frozen; an Owner holds no grant rows, so [] does not mean all.",
+          }
         allowed_environments: { type: array, items: { $ref: "#/components/schemas/Environment" } }
         kill_switch: { $ref: "#/components/schemas/KillSwitch" }
         server_time: { type: string, format: date-time }

@@ -8909,6 +8909,7 @@ export interface components {
       session: components["schemas"]["SessionState"];
     };
     SessionInfo: {
+      /** @description Accounts whose view grant is live and not frozen; an Owner holds no grant rows, so [] does not mean all. */
       account_scope: string[];
       allowed_environments?: components["schemas"]["Environment"][];
       api_version?: string;
