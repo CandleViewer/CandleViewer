@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from candleviewer.admin.backups import limits
+from candleviewer.admin.backups.catalogue import READ_BUDGET_S
 from candleviewer.admin.backups.gate import Admission, BackupConflict, BackupJobGate, JobAdmission
 from candleviewer.admin.backups.limits import ADMIT_WAIT_S, JOB_DEADLINE_S
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobKind
@@ -189,6 +190,29 @@ async def test_a_lock_held_past_the_wait_bound_refuses_and_registers_nothing() -
     await _start(gate, runner, RUN, X)  # the cancelled holder released the lock
 
 
+async def test_serialized_holds_the_lock_alone_and_refuses_past_the_wait() -> None:
+    """SR-BK3-01: a verification's outcome takes the lock alone: no check and no entry, so an
+    admission waits for it, and a write that cannot take it in time is refused as one is."""
+    gate = BackupJobGate(admit_wait_s=0.05)
+    async with asyncio.timeout(_BOUND), gate.serialized():
+        assert gate.active() == []
+        with pytest.raises(OpsUnavailable, match="busy"):
+            await _start(gate, _runner(), RUN, X)
+        with pytest.raises(OpsUnavailable, match="busy"):
+            async with gate.serialized():
+                pass
+    await _start(gate, _runner(), RUN, X)  # released at the block's end
+
+
+async def test_serialized_waits_as_long_as_its_caller_asks() -> None:
+    """A verification's outcome waits `OUTCOME_WAIT_S`, past a delete's hold, not `ADMIT_WAIT_S`."""
+    gate = BackupJobGate(admit_wait_s=60.0)
+    async with asyncio.timeout(_BOUND), gate.serialized():
+        with pytest.raises(OpsUnavailable, match="busy"):
+            async with gate.serialized(0.05):
+                pass
+
+
 async def test_a_job_the_runner_cannot_start_holds_no_entry() -> None:
     def full(*args: object) -> None:
         raise RuntimeError("job store full")
@@ -301,3 +325,10 @@ def test_the_shipped_bounds_are_pinned() -> None:
     budgets = (limits.RECORD_BUDGET_S, limits.WRITE_BUDGET_S, limits.LOST_READ_BUDGET_S)
     assert (budgets, limits.WRITE_TRIES, limits.LOST_RUNS_LIMIT) == ((2.0, 2.0, 2.0), 2, 16)
     assert (limits.RUNS_PER_HOUR, limits.PLAN_BUDGET_S) == (4, 2.0)
+    verifying = (limits.VERIFIES_PER_HOUR, limits.EVIDENCE_BUDGET_S, limits.OUTCOME_WAIT_S)
+    assert (verifying, limits.OUTCOME_MARGIN_S) == ((12, 2.0, 30.0), 60.0)
+    assert limits.VERIFY_RESOLVE_BUDGET_S == 2.0  # a verification's own resolve (decision 14)
+    # A verification's outcome, after its check: the lock wait, two records, the row, a reload.
+    tries = limits.WRITE_TRIES * limits.WRITE_BUDGET_S
+    outcome = limits.OUTCOME_WAIT_S + 2 * limits.RECORD_BUDGET_S + tries + READ_BUDGET_S
+    assert outcome < limits.OUTCOME_MARGIN_S

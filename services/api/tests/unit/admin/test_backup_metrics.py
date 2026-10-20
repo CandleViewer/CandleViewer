@@ -30,6 +30,7 @@ from candleviewer.observability.metrics import (
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Settings
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
+from candleviewer.storage.repositories.backups import BACKUP_ERROR_CODES
 from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
 from tests.unit.admin._backup_fakes import NOW, row
 from tests.unit.observability.test_auth_backstop_alert_rules import _route_for, _rule
@@ -189,13 +190,13 @@ def test_a_recorded_success_is_served_on_the_scraped_registry_with_env(
     assert re.search(served, text, re.MULTILINE)
 
 
-def _restores(registry: CollectorRegistry) -> dict[str, float]:
-    """The served restore counts by result; each sample carries the facade's `env` label."""
+def _restores(registry: CollectorRegistry, name: str = "restore_jobs", by: str = "result") -> Any:
+    """The served counts of `cv_{name}_total` by `by`; each sample carries the facade's `env`."""
     return {
-        s.labels["result"]: s.value
+        s.labels[by]: s.value
         for family in registry.collect()
         for s in family.samples
-        if s.name == "cv_restore_jobs_total" and s.labels["env"] == "demo"
+        if s.name == f"cv_{name}_total" and s.labels["env"] == "demo"
     }
 
 
@@ -223,11 +224,31 @@ def test_restore_result_label_is_the_closed_set() -> None:
     }
 
 
+def test_verify_failure_reason_label_is_the_closed_set() -> None:
+    """BK-9: every failed verification counts by its job's code, each bound at import, so an
+    inconclusive `store_unavailable` is told apart from a conclusive failure (AD-T05)."""
+    registry = CollectorRegistry()
+    collector = metrics.export_backup_metrics(registry, env="demo")
+    child = metrics.verify_failures_total.labels("store_unavailable")
+    was = child._value.get()
+    try:
+        before = _restores(registry, "backup_verify_failures", "reason")
+        metrics.count_verify_failure("store_unavailable")
+        with pytest.raises(KeyError):
+            metrics.count_verify_failure(cast(Any, "disk_full"))
+        after = _restores(registry, "backup_verify_failures", "reason")
+    finally:
+        collector.close()
+        child._value.set(was)  # the module's counter, as this test found it
+    moved = {code: after[code] - before[code] for code in after}
+    assert moved == {code: float(code == "store_unavailable") for code in BACKUP_ERROR_CODES}
+
+
 def test_catalogue_caps_are_the_closed_label_sets() -> None:
     rows = {s.name: (s.labels, s.max_series, s.exported) for s in CATALOGUE}
     assert {name: rows[name] for name in metrics.EXPORTED_NAMES} == {
         "cv_backup_last_success_age_seconds": (("kind",), len(metrics.KINDS), True),
-        "cv_backup_verify_failures_total": ((), 1, True),
+        "cv_backup_verify_failures_total": (("reason",), len(BACKUP_ERROR_CODES), True),
         "cv_backup_download_source_rate_limited_total": ((), 1, True),
         "cv_restore_jobs_total": (("result",), len(metrics.RESTORE_RESULTS), True),
     }

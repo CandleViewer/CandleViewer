@@ -20,6 +20,10 @@
 - BK-13: the restore guard reads maintenance mode fresh from the flag repository
   (`FlagStoreMaintenance`) and positions stay unknown. Nothing builds it until BK-14 mounts the
   restore after D7 (#3084).
+- BK-9: a verification answers `501 not_implemented` until a backup engine wires its
+  `ScratchVerifier` and the artefact reader (#3319), through the app's one admission gate, at most
+  `VERIFIES_PER_HOUR` per user (in-process); its evidence is read from the audit trail, and it
+  moves or reloads BK-5's freshness as the runs and the delete do.
 - BK-10: a download link is issued once the catalogue is read and `CV_BACKUP_ROOT` is set; until
   then `POST /admin/backups/{backupId}/download` answers `501` before any challenge.
 - BK-11: the fetch serves the issue's links, once that is wired on the real backend with an
@@ -45,13 +49,15 @@ from candleviewer.admin.backups.downloads import (
     FetchPorts,
     UserPermissions,
 )
+from candleviewer.admin.backups.evidence import AuditRunEvidence, RecordPages
 from candleviewer.admin.backups.gate import BackupJobGate
-from candleviewer.admin.backups.limits import FETCHES_PER_HOUR, RUNS_PER_HOUR
+from candleviewer.admin.backups.limits import FETCHES_PER_HOUR, RUNS_PER_HOUR, VERIFIES_PER_HOUR
 from candleviewer.admin.backups.links import DownloadLinks
 from candleviewer.admin.backups.metrics import BackupFreshness, export_backup_metrics
 from candleviewer.admin.backups.ports import JOB_ERROR_CODES, BackupJobError, JobEnd
 from candleviewer.admin.backups.rows import LostCount, LostRuns, RunAudit, RunRows
 from candleviewer.admin.backups.runs import BackupRuns
+from candleviewer.admin.backups.verify import BackupVerifications
 from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.service import DEFAULT_READ_BUDGET_MS
 from candleviewer.api.audit_limiter import AuditVerifyLimiter
@@ -259,3 +265,24 @@ def build_backup_fetch(
     )
     hourly = AuditVerifyLimiter(rate_per_hour=FETCHES_PER_HOUR)
     return downloads.with_fetch(FetchPorts(rows, identity, hourly))
+
+
+def build_backup_verifications(
+    settings: Settings,
+    jobs: AdminJobStore,
+    audit: RunAudit,
+    *,
+    gate: BackupJobGate,
+    system_settings: SystemSettings | None,
+    trail: RecordPages,
+    freshness: BackupFreshness | None,
+) -> BackupVerifications:
+    """`verifyBackup`'s service through the app's one `gate`, with no verifier or artefact reader
+    yet (#3319 wires both, the reader once SEC-FU-L1 holds), the run evidence over `trail`, and
+    BK-5's `freshness`: a pass moves it, a conclusive failure reloads it (BK-12's `recompute`)."""
+    store = _catalogue(settings, system_settings)
+    limit = AuditVerifyLimiter(rate_per_hour=VERIFIES_PER_HOUR)
+    return BackupVerifications(
+        BackupCatalogue(store), store, None, None, evidence=AuditRunEvidence(trail), gate=gate,
+        jobs=AdminJobRunner(jobs), audit=audit, limit=limit, freshness=freshness,
+    )  # fmt: skip

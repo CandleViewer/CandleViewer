@@ -2619,12 +2619,14 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "cv_backup_verify_failures_total",
         "counter",
         "verifications",
-        (),
-        "Backup verifications that failed, whatever the check.",
-        "dashboard only",
+        ("reason",),
+        "Backup verifications that failed, by reason: checksum_mismatch, checksum_unbound, "
+        "artefact_missing or verify_failed (conclusive), or store_unavailable, "
+        "audit_unavailable or internal_error (inconclusive: the row is left as it was).",
+        "dashboard only; an inconclusive reason is no evidence against the backup (AD-T05)",
         _L,
         "E42",
-        max_series=1,
+        max_series=7,  # the seven `BACKUP_ERROR_CODES`
         exported=True,
     ),
     _s(

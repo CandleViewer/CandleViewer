@@ -15,6 +15,7 @@ is cancelled. A delete runs no job: under `admit_delete` BK-12 evaluates `backup
 removes the artefact (`remover.remove` under the lock) and marks the row, one delete at a time
 (SR-BK0-08). A download link runs no job either: under `admit_link` BK-10 decides whether the
 backup is usable and writes its record, so neither interleaves with a delete; no job refuses it.
+`serialized()` takes the lock alone for a job's own write, a verification's outcome (BK-9).
 
 Bounds (`limits`): an admission waits `ADMIT_WAIT_S` for the lock, then `OpsUnavailable` (503
 `store_unavailable`, retryable) with nothing registered; every await inside an admission needs
@@ -82,17 +83,27 @@ class BackupJobGate:
         return self._held(Admission(self, "link", backup_id))
 
     @asynccontextmanager
-    async def _held[A: Admission](self, admission: A) -> AsyncIterator[A]:
+    async def serialized(self, wait_s: float | None = None) -> AsyncIterator[None]:
+        """The lock alone, for a write no admission may interleave with (SR-BK3-01: a
+        verification's outcome against a delete's count and mark): no check and no entry, and
+        the same refusal once `wait_s` (`ADMIT_WAIT_S` by default) is spent."""
         try:
-            async with asyncio.timeout(self._admit_wait_s):
+            async with asyncio.timeout(self._admit_wait_s if wait_s is None else wait_s):
                 await self._lock.acquire()
         except TimeoutError:
             raise OpsUnavailable("backups: the admission lock is busy") from None
         try:
-            yield admission
+            yield
         finally:
-            admission.open = False
             self._lock.release()
+
+    @asynccontextmanager
+    async def _held[A: Admission](self, admission: A) -> AsyncIterator[A]:
+        async with self.serialized():
+            try:
+                yield admission
+            finally:
+                admission.open = False
 
     def _refusal(self, kind: JobKind | _NoJob, backup_id: UUID) -> ConflictRule | None:
         if kind == "link":

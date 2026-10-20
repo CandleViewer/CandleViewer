@@ -69,6 +69,8 @@ rules:
       #   kind outside them never makes a series (`admin/backups/metrics.KINDS`); max_series=5.
       # result, also (E42-T05, #966, cv_restore_jobs_total): {refused, succeeded, failed,
       #   cancelled}, each bound at import (`admin/backups/metrics.RESTORE_RESULTS`); max_series=4.
+      # reason, also (E42-T05, #966, cv_backup_verify_failures_total): the seven `Backup.error`
+      #   codes, each bound at import (`storage/repositories/backups.BACKUP_ERROR_CODES`); max_series=7.
       # class, domain, reason, state (ADR-0037 S4a): {reserved, shared}; a registered audit
       #   action's first segment or `other` (34); section 15.6's refusals and `timeout` (14 with
       #   `class`), its anomaly reasons, or {held, stopped}; {open, held, stopped}.

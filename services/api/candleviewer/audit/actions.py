@@ -190,6 +190,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "onboarding.checklist_tamper_rejected",
         "backup.run",
         "backup.restore",
+        # E42-T05 BK-9 (SR-E42-11): a verification requested, then its outcome at
+        # `stage: finished` (`admin/backups/verify.py`).
+        "backup.verified",
         # E42-T05 BK-10 (SR-E42-11): a download link issued, or refused after its step-up grant
         # was spent (`admin/backups/downloads.py`); BK-11's fetch writes it at `stage: served`.
         "backup.downloaded",

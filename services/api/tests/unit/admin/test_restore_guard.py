@@ -7,6 +7,7 @@ read. Every wait is bounded (`BOUND`) or runs on the loop's fake clock."""
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -190,11 +191,17 @@ async def test_the_maintenance_read_is_cut_at_the_default_flag_budget(
     loop, now = asyncio.get_running_loop(), [1000.0]
     monkeypatch.setattr(loop, "time", lambda: now[0])  # the loop's fake clock: no real wait (M1)
     reading = asyncio.create_task(FlagStoreMaintenance(_Flags(HANG)).read())
+    cut_at, tick = 1000.5, time.get_clock_info("monotonic").resolution  # 500 ms: the default
     try:
-        for now[0], cut in ((1000.0, False), (1000.499, False), (1000.5, True)):
-            for _ in range(5):
+        for now[0], cut in ((1000.0, False), (1000.45, False), (cut_at, True)):
+            # A loop runs a timer up to a clock tick early (about 15.6 ms on Windows), so a "not
+            # yet" probe stays well clear of the cut: one that drifts too close fails here, loudly.
+            assert cut or cut_at - now[0] > 2 * tick, f"probe {now[0]} within two ticks of the cut"
+            for _ in range(200):  # until it ends, bounded: never a fixed count of loop turns
+                if reading.done():
+                    break
                 await asyncio.sleep(0)
-            assert reading.done() is cut  # 500 ms, `flags.read_budget_ms`'s default
+            assert reading.done() is cut  # still pending before `flags.read_budget_ms`, cut at it
         assert reading.result() is None
     finally:
         reading.cancel()

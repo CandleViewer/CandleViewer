@@ -37,9 +37,10 @@ LINK_RECORD_BUDGET_S: Final = 2.0  # one `backup.downloaded` record
 RUNS_PER_HOUR: Final = 4
 PLAN_BUDGET_S: Final = 2.0  # the engine's `plan`, under the admission lock
 RECORD_BUDGET_S: Final = 2.0  # one `backup.run` record
-#: A catalogue write, a run's end (BK-8) or a delete's mark (BK-12), and its tries: each write is
-#: guarded (a run ends only while `running`, a mark lands only while `deleted_at IS NULL`), so a
-#: try after a commit lost on the way back changes nothing.
+#: A catalogue write, a run's end (BK-8), a delete's mark (BK-12) or a verification's outcome
+#: (BK-9), and its tries: each write is guarded (a run ends only while `running`, a mark lands
+#: only while `deleted_at IS NULL`, an outcome only on a row neither `running` nor deleted), so
+#: a try after a commit lost on the way back changes nothing.
 WRITE_BUDGET_S: Final = 2.0  # one catalogue write; the store caps each statement at 1 s itself
 WRITE_TRIES: Final = 2
 LOST_READ_BUDGET_S: Final = 2.0  # the boot pass's one page of `running` rows
@@ -60,3 +61,16 @@ FETCH_READ_BUDGET_S: Final = 2.0
 MISSES_PER_MINUTE: Final = 10
 #: One read of a served artefact (a 1 MiB chunk): past it the download is cut.
 STREAM_READ_BUDGET_S: Final = 30.0
+#: `verifyBackup` (BK-9): "A user may start at most 12 verifications in a rolling hour"; one counts
+#: once its `requested` record is written. Its records take `RECORD_BUDGET_S` each.
+VERIFIES_PER_HOUR: Final = 12
+EVIDENCE_BUDGET_S: Final = 2.0  # one read of a backup's records in the audit trail
+#: A verification's one artefact resolve, in its job and never under the lock: its own bound, so the
+#: link issue's `RESOLVE_BUDGET_S` (held under the lock) stays the link's.
+VERIFY_RESOLVE_BUDGET_S: Final = 2.0
+#: A verification's outcome waits this long for the lock, past the longest hold (a delete's, about
+#: 22 s at worst, BK-12), so an hours-long check never loses its outcome to a short wait.
+OUTCOME_WAIT_S: Final = 30.0
+#: A verification's check stops this long before its job's deadline, so a job past it still writes
+#: its outcome (`internal_error`): the lock wait, a record, the row and the freshness, each bounded.
+OUTCOME_MARGIN_S: Final = 60.0

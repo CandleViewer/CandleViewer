@@ -99,14 +99,17 @@ def run_record(
     }  # fmt: skip
 
 
-async def recorded(record: Awaitable[None], stage: str, backup_id: UUID) -> bool:
-    """One `backup.run` record within its budget; `False`, its class logged, when unwritten."""
+async def recorded(
+    record: Awaitable[None], stage: str, backup_id: UUID, event: str = "backups.run_unrecorded"
+) -> bool:
+    """One `backup.*` record within its budget; `False`, its class logged as `event`, when
+    unwritten."""
     try:
         async with asyncio.timeout(limits.RECORD_BUDGET_S):
             await record
     except Exception as exc:  # not made durable in time (C-2.9)
         where = {"stage": stage, "backup_id": str(backup_id)}
-        _log().error("backups.run_unrecorded", **where, error=type(exc).__name__)
+        _log().error(event, **where, error=type(exc).__name__)
         return False
     return True
 

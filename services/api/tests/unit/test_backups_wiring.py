@@ -3,7 +3,8 @@ positions. BK-4: the catalogue reads answer `501` on every backend until `BACKUP
 set (Q3); once it is, what each backend serves. BK-8: a run answers `501` until an engine is
 wired, through the app's one admission gate. BK-10: the link issue needs that and a backup root,
 and then reads artefacts there. BK-11: the fetch, over the issue's links. BK-12: a delete answers
-`501` until an artefact remover is wired, on the same gate; the remover's port states its bounds."""
+`501` until an artefact remover is wired, on the same gate; the remover's port states its bounds.
+BK-9: a verification answers `501` until its engine is wired, with the app's freshness."""
 
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ import candleviewer.backups_wiring as wiring
 from candleviewer.admin.backups import limits, ports
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.downloads import LinkNotUsable, LinkRecord
+from candleviewer.admin.backups.evidence import AuditRunEvidence
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.metrics import BackupFreshness
 from candleviewer.admin.backups.ports import BackupJobError, JobEnd, JobErrorCode, OpenPositions
@@ -477,3 +479,74 @@ def test_every_answer_to_the_fetch_path_is_stamped_outside_the_pinned_guards(
     answer = http.get(f"/admin/backups/{uuid4()}/download/{'A' * 43}")
     stamps = answer.headers.get("cache-control"), answer.headers.get("referrer-policy")
     assert (answer.status_code, stamps) == (status, ("no-store", "no-referrer"))
+
+
+def _verifications(backend: Literal["fake", "real"]) -> tuple[Any, ...]:
+    audit, gate, trail = SimpleNamespace(emit=AsyncMock()), BackupJobGate(), SimpleNamespace()
+    fresh = BackupFreshness(None)
+    built = wiring.build_backup_verifications(
+        Settings(storage_backend=backend), AdminJobStore(), audit, gate=gate,
+        system_settings=None, trail=cast(Any, trail), freshness=fresh,
+    )  # fmt: skip
+    return built, audit, gate, trail, fresh
+
+
+@pytest.mark.parametrize("backend", ["fake", "real"])
+async def test_a_verification_answers_501_until_a_verifier_is_wired(
+    backend: Literal["fake", "real"], engines: list[Any]
+) -> None:
+    verifications, audit, gate, trail, fresh = _verifications(backend)
+    with pytest.raises(OpsNotWired):
+        await verifications.start(principal("owner"), UUID(int=1), write_ahead=AsyncMock())
+    assert (audit.emit.await_count, engines, verifications._store) == (0, [], None)
+    rate = cast(AuditVerifyLimiter, verifications._limit)._rate
+    assert (verifications._gate, rate) == (gate, limits.VERIFIES_PER_HOUR)  # the app's one gate
+    assert verifications._freshness is fresh  # BK-5's, with BK-12's `recompute` (SR-BK9-D04)
+    evidence = verifications._evidence
+    assert isinstance(evidence, AuditRunEvidence) and evidence._pages is trail  # the audit trail
+
+
+@pytest.mark.usefixtures("catalogued")
+async def test_once_catalogued_a_verification_still_waits_for_its_engine(
+    engines: list[Any],
+) -> None:
+    verifications = _verifications("real")[0]
+    with pytest.raises(OpsNotWired):  # no `ScratchVerifier` and no artefact reader (#3319)
+        await verifications.start(principal("owner"), UUID(int=1), write_ahead=AsyncMock())
+    assert (verifications._verifier, verifications._reader, engines) == (None, None, ["admin"])
+    assert isinstance(verifications._store, Store)
+
+
+def test_create_app_hands_its_one_backups_gate_to_the_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BK-8c builds the one gate; BK-10b's link issue, BK-12's delete and this verification take
+    it (one pin each), and the verification holds the freshness the lifespan loads."""
+    built, seen, made = list[BackupJobGate](), list[dict[str, Any]](), list[Any]()
+    init, build = BackupJobGate.__init__, wiring.build_backup_verifications
+
+    def counted(gate: BackupJobGate, *args: Any, **kwargs: Any) -> None:
+        built.append(gate)
+        init(gate, *args, **kwargs)
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        made.append(build(*args, **kwargs))
+        return made[-1]
+
+    monkeypatch.setattr(wiring, "BACKUPS_CATALOGUED", True)  # so BK-5 builds a freshness
+    monkeypatch.setattr(BackupJobGate, "__init__", counted)
+    monkeypatch.setattr(app_module, "build_backup_verifications", spy)
+    app = app_module.create_app()
+    assert ("POST", "/admin/backups/{backupId}/verify") in served_operations(app)
+    assert built == [app.state.backups_gate] == [kwargs["gate"] for kwargs in seen]
+    assert made[0]._freshness is app.state.backup_freshness is not None  # SR-BK9-D04
+    assert isinstance(seen[0]["trail"], app_module._LazyAuditQuery)  # the evidence's audit read
+
+
+async def test_the_lazy_audit_query_forwards_every_keyword_to_the_live_query_service() -> None:
+    """The evidence's only live read path, resolved per call as the writer is."""
+    query = SimpleNamespace(query=AsyncMock(return_value="page"))
+    lazy = app_module._LazyAuditQuery(cast(Any, SimpleNamespace(query=query)))
+    assert await lazy.query(raw=True, limit=16, subject_id="b") == "page"
+    query.query.assert_awaited_once_with(raw=True, limit=16, subject_id="b")

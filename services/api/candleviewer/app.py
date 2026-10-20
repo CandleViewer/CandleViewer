@@ -89,6 +89,7 @@ from candleviewer.api.admin_backup_download import (
     make_admin_backup_download_router,
 )
 from candleviewer.api.admin_backup_links import make_admin_backup_links_router
+from candleviewer.api.admin_backup_verify import make_admin_backup_verify_router
 from candleviewer.api.admin_backups import make_admin_backup_runs_router, make_admin_backups_router
 from candleviewer.api.admin_capacity import make_admin_capacity_router
 from candleviewer.api.admin_jobs import LostJobsCount, make_admin_jobs_router
@@ -176,6 +177,7 @@ from candleviewer.backups_wiring import (
     build_backup_fetch,
     build_backup_freshness,
     build_backup_runs,
+    build_backup_verifications,
     serve_backup_metrics,
 )
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
@@ -454,6 +456,16 @@ class _LazyAuditEmitter:
 
     async def emit(self, action: str, **kwargs: Any) -> None:
         await self._audit.writer.emit(action, **kwargs)
+
+
+class _LazyAuditQuery:
+    """Resolves `audit.query` per call, as `_LazyAuditEmitter` does the writer (BK-9's evidence)."""
+
+    def __init__(self, audit: AuditHandle) -> None:
+        self._audit = audit
+
+    async def query(self, **kwargs: Any) -> Any:  # an `AuditPage`: `app` may not import `audit`
+        return await self._audit.query.query(**kwargs)
 
 
 class _ReplayCoverage:
@@ -2025,6 +2037,19 @@ def create_app(
         resolved, backup_downloads, identity=identity, system_settings=admin_settings
     )
     app.include_router(make_admin_backup_download_router(backup_fetch, resolver=audit_resolver))
+    # BK-9: verifying a backup (`backups:write`), `501` until a backup engine wires its verifier
+    # (#3319), through the same one admission gate.
+    app.include_router(
+        make_admin_backup_verify_router(
+            build_backup_verifications(
+                resolved, admin_jobs, _LazyAuditEmitter(ctx.audit), gate=backups_gate,
+                system_settings=admin_settings, trail=_LazyAuditQuery(ctx.audit),
+                freshness=app.state.backup_freshness,  # BK-12's `recompute` reloads a kind
+            ),
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+        )
+    )  # fmt: skip
     # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
     retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)
     app.state.retention_manager = retention_manager
