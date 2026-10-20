@@ -1,7 +1,8 @@
 """G-7 (#3866, SR-E29-15): the REST client never resends an order create that has left.
 
-24 §8.6 "Order creates". Bodies are the corpus 503 (`rest/error_503.json`) and the `retCode`
-envelope the REST tests already use; failures are httpx's own errors from a `MockTransport`.
+24 §8.6 "Order creates", under any endpoint class. Bodies are the corpus 503
+(`rest/error_503.json`), the `retCode` envelope the REST tests already use and the unreadable
+bodies of `test_contract_errors.py`; failures are httpx's own errors from a `MockTransport`.
 """
 
 from __future__ import annotations
@@ -14,8 +15,10 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import AmbiguousResultError, ExchangeError, TransportError
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
+from candleviewer.exchange.bybit.metrics import bybit_rate_limited_total
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.signer import BybitSigner
@@ -51,6 +54,8 @@ LEFT: dict[str, Outcome] = {
     "remote-protocol": _raise(httpx.RemoteProtocolError),
     "bare-timeout": _raise(TimeoutError),
     "5xx": lambda _: httpx.Response(http_status(ERR_503), json=rest(ERR_503)),
+    "non-json": lambda _: httpx.Response(200, text='{"retCode":0,"res'),
+    "no-retcode": lambda _: httpx.Response(200, json={"result": {}}),
     "10016": _ret(10016),
     "10019": _ret(10019),
 }
@@ -62,7 +67,12 @@ NOT_SENT: dict[str, Outcome] = {
 }
 
 
-def _client(outcomes: list[Outcome], sent: Sent, sleeps: list[float]) -> BybitRestClient:
+def _client(
+    outcomes: list[Outcome],
+    sent: Sent,
+    sleeps: list[float],
+    governor: TokenBucketGovernor | None = None,
+) -> BybitRestClient:
     def handler(request: httpx.Request) -> httpx.Response:
         sent.append(request)
         return outcomes[min(len(sent), len(outcomes)) - 1](request)  # the last one repeats
@@ -73,17 +83,20 @@ def _client(outcomes: list[Outcome], sent: Sent, sleeps: list[float]) -> BybitRe
     return BybitRestClient(
         RestClientConfig(base_url="https://api-demo.bybit.com", max_retries=3),
         signer=BybitSigner(fake_capability("k"), CREDENTIAL_ID),
-        governor=TokenBucketGovernor(default_capacity=1e3, default_refill_per_s=1e3),
+        governor=governor or TokenBucketGovernor(default_capacity=1e3, default_refill_per_s=1e3),
         transport=httpx.MockTransport(handler),
         sleep=sleep,
     )
 
 
 async def _post(
-    outcomes: list[Outcome], path: str = CREATE, cls: EndpointClass = EndpointClass.ORDER
+    outcomes: list[Outcome],
+    path: str = CREATE,
+    cls: EndpointClass = EndpointClass.ORDER,
+    governor: TokenBucketGovernor | None = None,
 ) -> tuple[ExchangeError | None, Sent]:
     sent: Sent = []
-    async with _client(outcomes, sent, []) as client:
+    async with _client(outcomes, sent, [], governor) as client:
         body = {"symbol": "BTCUSDT", "orderLinkId": "cv-1"}
         try:
             await client.signed_request("POST", path, body=body, endpoint_class=cls)
@@ -92,13 +105,37 @@ async def _post(
     return None, sent
 
 
+@pytest.mark.parametrize("cls", list(EndpointClass), ids=str)
 @pytest.mark.parametrize("path", [CREATE, "/v5/order/create-batch"])
 @pytest.mark.parametrize("outcome", LEFT.values(), ids=LEFT.keys())
-async def test_a_create_that_left_is_ambiguous_and_sent_once(path: str, outcome: Outcome) -> None:
-    error, sent = await _post([outcome, OK], path)
+async def test_a_create_that_left_is_ambiguous_and_sent_once(
+    path: str, outcome: Outcome, cls: EndpointClass
+) -> None:
+    error, sent = await _post([outcome, OK], path, cls)
 
     assert isinstance(error, AmbiguousResultError) and len(sent) == 1
     assert error.order_link_id == "cv-1" and error.retryable is False
+
+
+@pytest.mark.parametrize("code", [10016, 10019])
+async def test_a_create_10016_or_10019_is_counted_as_raised_never_as_a_rate_limit(
+    code: int,
+) -> None:
+    """#2863, order paths: no bucket drain, no rate-limit counter; the venue's code is kept."""
+    counters = [
+        bybit_rate_limited_total.labels(code=str(code)),
+        exchange_errors_total.labels(**{"class": "RATE_LIMITED"}),
+        exchange_errors_total.labels(**{"class": "TRANSPORT_ERROR"}),
+    ]
+    before = [counter._value.get() for counter in counters]  # test-only read, as elsewhere
+    governor = TokenBucketGovernor(default_capacity=9, clock=lambda: 0.0)  # it never refills
+
+    error, _ = await _post([_ret(code)], governor=governor)
+
+    assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [0, 0, 1]
+    assert governor.remaining("public", EndpointClass.ORDER) == 8  # the attempt's own token
+    assert isinstance(error, AmbiguousResultError)
+    assert (error.exchange_ret_code, error.exchange_ret_msg) == (code, "x")
 
 
 @pytest.mark.parametrize("outcome", NOT_SENT.values(), ids=NOT_SENT.keys())
@@ -108,6 +145,15 @@ async def test_a_create_that_never_left_is_retried_under_the_same_id(outcome: Ou
 
     error, sent = await _post([outcome])  # the retries run out: plain, never ambiguous
     assert type(error) is TransportError and len(sent) == 4
+
+
+@pytest.mark.parametrize("code", [10006, 10002])
+async def test_a_create_the_venue_refused_unprocessed_is_retried_under_the_same_id(
+    code: int,
+) -> None:
+    """A rate-limit refusal, or the single 10002 re-measure: the venue created nothing."""
+    error, sent = await _post([_ret(code), OK])
+    assert error is None and len(sent) == 2 and sent[0].content == sent[1].content
 
 
 @pytest.mark.parametrize(
@@ -144,11 +190,14 @@ async def test_reads_keep_their_retry_with_full_jitter(signed: bool, outcome: st
 
 
 @given(
-    st.lists(st.sampled_from([*LEFT, *NOT_SENT, "10006", "10002", "ok"]), min_size=1, max_size=8)
+    st.lists(st.sampled_from([*LEFT, *NOT_SENT, "10006", "10002", "ok"]), min_size=1, max_size=8),
+    st.sampled_from(EndpointClass),
 )
-def test_no_outcome_sequence_sends_a_create_again_after_it_left(kinds: list[str]) -> None:
+def test_no_outcome_sequence_sends_a_create_again_after_it_left(
+    kinds: list[str], cls: EndpointClass
+) -> None:
     table = LEFT | NOT_SENT | {"10006": _ret(10006), "10002": _ret(10002), "ok": OK}
-    _, sent = asyncio.run(_post([table[kind] for kind in kinds]))
+    _, sent = asyncio.run(_post([table[kind] for kind in kinds], CREATE, cls))
 
     met = [kinds[min(i, len(kinds) - 1)] for i in range(len(sent))]
     assert not any(kind in LEFT for kind in met[:-1])

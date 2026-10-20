@@ -134,7 +134,8 @@ async def test_truncated_json_is_retried_transport_error() -> None:
 @respx.mock
 async def test_truncated_json_on_order_class_stays_unknown_state_without_retry() -> None:
     # #1909: ORDER class is never blindly retried (C-2.10); reconciliation owns recovery.
-    route = respx.post(f"{BASE}/v5/order/create").mock(
+    # A create's unreadable answer is ambiguous instead (#3866, 24 §8.6 "Order creates").
+    route = respx.post(f"{BASE}/v5/order/cancel").mock(
         return_value=httpx.Response(200, text='{"retCode":0,"res')
     )
     signer = BybitSigner(fake_capability("CONTRACT-KEY-1234"), CREDENTIAL_ID)
@@ -143,7 +144,7 @@ async def test_truncated_json_on_order_class_stays_unknown_state_without_retry()
         with pytest.raises(UnknownStateError):
             await client.signed_request(
                 "POST",
-                "/v5/order/create",
+                "/v5/order/cancel",
                 body={"symbol": "BTCUSDT", "orderLinkId": "cv-1"},
                 endpoint_class=EndpointClass.ORDER,
             )

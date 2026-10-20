@@ -442,6 +442,8 @@ class BybitRestClient:
             try:
                 data = json.loads(raw)
             except ValueError as exc:
+                if creates:  # cut mid-body, or not the venue's answer: the create left
+                    raise _answer_ambiguous(path, body, "a non-JSON body") from exc
                 if endpoint_class is not EndpointClass.ORDER:
                     # Idempotent read: a truncated/non-JSON body (proxy, reset
                     # mid-body) is a transport fault -> retry like a 5xx (E08-Q03 #6).
@@ -472,6 +474,8 @@ class BybitRestClient:
             has_ret_code = "retCode" in data
             ret_code = int(data["retCode"]) if has_ret_code else -1
             if not has_ret_code or (is_http_error and ret_code == 0):
+                if creates:
+                    raise _answer_ambiguous(path, body, "no usable retCode")
                 bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
                 exchange_errors_total.labels(**{"class": UnknownStateError.code.value}).inc()
                 raise UnknownStateError(
@@ -484,10 +488,8 @@ class BybitRestClient:
             ret_msg = str(data.get("retMsg", ""))
             if creates and ret_code in _AMBIGUOUS_RET_CODES:
                 # Not a rate limit (#2863): no bucket drain, counted as the error raised.
-                bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
-                exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
                 venue = {"exchange_ret_code": ret_code, "exchange_ret_msg": ret_msg}
-                raise _ambiguous(path, body, f"retCode {ret_code}", **venue)
+                raise _answer_ambiguous(path, body, f"retCode {ret_code}", **venue)
             error = map_ret_code(ret_code, ret_msg)
             exchange_errors_total.labels(**{"class": error.code.value}).inc()
 
@@ -592,6 +594,15 @@ def _ambiguous(
         order_link_id=link if isinstance(link, str) else None,
         **detail,
     )
+
+
+def _answer_ambiguous(
+    path: str, body: Mapping[str, Any] | None, cause: str, **detail: object
+) -> AmbiguousResultError:
+    """An answer to the create arrived but hides its outcome: counted as the error raised."""
+    bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
+    exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
+    return _ambiguous(path, body, cause, **detail)
 
 
 def _json_dumps(body: Mapping[str, Any]) -> str:
