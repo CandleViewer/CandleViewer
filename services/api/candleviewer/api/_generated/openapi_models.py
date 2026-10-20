@@ -1769,6 +1769,14 @@ class RecordedSymbol(BaseModel):
     rows_last_hour: int | None = None
     lag_ms: int | None = None
     added_by: UUID | None = None
+    lingering: bool | None = None
+    linger_until: AwareDatetime | None = None
+    refusal: Annotated[
+        Literal["symbol_cap", "disk_pressure", "chart_open", "position_open"] | None,
+        Field(
+            description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none. **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
+        ),
+    ] = None
 
 
 class Estimate(BaseModel):
@@ -1872,20 +1880,24 @@ class Symbol1(BaseModel):
     dropped_messages: int | None = None
     resyncs_last_hour: int | None = None
     last_event_at: AwareDatetime | None = None
-
-
-class RecordingStatus(BaseModel):
-    overall: Annotated[
-        Literal["healthy", "degraded", "warning", "down", "not_deployed"] | None,
+    lingering: bool | None = None
+    linger_until: AwareDatetime | None = None
+    refusal: Annotated[
+        Literal["symbol_cap", "disk_pressure", "chart_open", "position_open"] | None,
         Field(
-            description="`not_deployed` = module not built yet; ranks as healthy for `overall`. Rank: down > warning > degraded > healthy."
+            description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none. **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
         ),
     ] = None
-    connections: list[Connection] | None = None
-    symbols: list[Symbol1] | None = None
-    ingest_rate_msgs_per_sec: int | None = None
-    write_backlog_rows: int | None = None
-    generated_at: AwareDatetime | None = None
+
+
+class RecorderPolicySettings(BaseModel):
+    autostart_delay_s: Annotated[int | None, Field(ge=0)] = None
+    autostop_grace_s: Annotated[int | None, Field(ge=0)] = None
+    max_symbols: Annotated[int | None, Field(ge=1)] = None
+    warn_pct: Annotated[int | None, Field(ge=1, le=100)] = None
+    autostop_pct: Annotated[int | None, Field(ge=1, le=100)] = None
+    halt_pct: Annotated[int | None, Field(ge=1, le=100)] = None
+    autorecord_enabled: bool | None = None
 
 
 class Tier(BaseModel):
@@ -1917,6 +1929,10 @@ class StorageUsage(BaseModel):
     tiers: list[Tier] | None = None
     symbols: list[Symbol2] | None = None
     generated_at: AwareDatetime | None = None
+    cap_bytes: Annotated[int | None, Field(ge=1)] = None
+    level: Literal[0, 1, 2, 3] | None = None
+    write_gate: Literal["open", "closed"] | None = None
+    write_gate_reason: Literal["disk_halt", "volume_refused"] | None = None
 
 
 class RetentionPolicyInput(BaseModel):
@@ -6150,6 +6166,22 @@ class KeyTestResult(BaseModel):
             description="The verification as far as the pipeline got. Omitted when the REST half reached no verdict (a timeout, an outage, a refused signature, a clock outside the `recv_window` or a rate limit): an earlier check's standing result is never shown in its place, because an outage must not read as a pass (SR-E27-18). A key the exchange refused before its rights were read is `KeyVerificationNotRead`.\n"
         ),
     ] = None
+
+
+class RecordingStatus(BaseModel):
+    overall: Annotated[
+        Literal["healthy", "degraded", "warning", "down", "not_deployed"] | None,
+        Field(
+            description="`not_deployed` = module not built yet; ranks as healthy for `overall`. Rank: down > warning > degraded > healthy."
+        ),
+    ] = None
+    connections: list[Connection] | None = None
+    symbols: list[Symbol1] | None = None
+    ingest_rate_msgs_per_sec: int | None = None
+    write_backlog_rows: int | None = None
+    generated_at: AwareDatetime | None = None
+    role_restricted: bool | None = None
+    policy: RecorderPolicySettings | None = None
 
 
 class OrderWithEvents(Order):
