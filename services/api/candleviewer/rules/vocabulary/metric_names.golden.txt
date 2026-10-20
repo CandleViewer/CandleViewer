@@ -5,6 +5,7 @@ adx
 atr
 available_margin
 avg_entry_price
+bar_volume
 basis
 big_trade_notional
 big_trade_zscore

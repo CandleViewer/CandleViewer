@@ -3,12 +3,19 @@
 `DEFAULT_DOCS` carries what the registry descriptor does not: the description
 and valid range shown in the picker. A registry metric with no entry fails the
 completeness test (and logs a startup warning) so the two lists cannot drift.
+The metrics an M9 server kernel computes (`_KERNEL_BOUND`, E13-T02) take their
+unit, params, warmup, inputs and `nullable_when` from the indicator catalogue.
 """
 
 # ruff: noqa: E501 - dense data table, one metric per line
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Final
+
+from candleviewer.orderflow.indicators.catalogue import SERVER_DEFINITIONS, JsonValue
 from candleviewer.rules.vocabulary.registry import MetricDescriptor, MetricRegistry
 
 # name, title, unit ("enum:a|b" for enums), input, params, warmup, confidence, scope, description, range
@@ -16,8 +23,6 @@ _Row = tuple[str, str, str, str, str, int, str, str, str, str]
 _E, _S = "exact", "estimated"
 _T, _B, _R = "trades", "book", "bars"
 _FLOW: tuple[_Row, ...] = (
-    ("delta", "Delta", "qty", _T, "", 0, _E, "symbol", "Bar buy_volume - sell_volume", ""),
-    ("cvd", "CVD", "qty", _T, "anchor=session", 0, _E, "symbol", "Running sum of signed volume from the anchor", ""),
     ("cvd_slope", "CVD slope", "ratio", _T, "n=10", 10, _E, "symbol", "Least-squares slope of CVD over n bars", ""),
     ("cvd_bar_change", "CVD bar change", "qty", _T, "", 0, _E, "symbol", "CVD change over the last closed bar", ""),
     ("min_delta", "Min delta", "qty", _T, "", 0, _E, "symbol", "Intrabar delta minimum", ""),
@@ -67,16 +72,9 @@ _MARKET: tuple[_Row, ...] = (
     ("liquidation_cluster_distance", "Liquidation cluster distance", "count", "liquidations", "", 0, _E, "symbol", "Ticks to the nearest liquidation cluster", ">=0"),
     ("liquidation_notional", "Liquidation notional", "notional", "liquidations", "window_ms=60000", 0, _E, "symbol", "Liquidated notional in the window", ">=0"),
     ("price", "Price", "price", _R, "source=last", 0, _E, "symbol", "Last / mark / index price", ">0"),
-    ("atr", "ATR", "price", _R, "n=14", 14, _E, "symbol", "Wilder average true range", ">=0"),
-    ("ema", "EMA", "price", _R, "n", 0, _E, "symbol", "Exponential moving average", ">0"),
-    ("sma", "SMA", "price", _R, "n", 0, _E, "symbol", "Simple moving average", ">0"),
-    ("rsi", "RSI", "pct", _R, "n=14", 14, _E, "symbol", "Relative strength index", "0..100"),
-    ("swing_high", "Swing high", "price", _R, "n=5", 11, _E, "symbol", "Most recent confirmed pivot high", ">0"),
-    ("swing_low", "Swing low", "price", _R, "n=5", 11, _E, "symbol", "Most recent confirmed pivot low", ">0"),
     ("realized_vol", "Realised volatility", "pct", _R, "n=20", 20, _E, "symbol", "Close-close log-return stdev, annualised", ">=0"),
     ("parkinson_vol", "Parkinson volatility", "pct", _R, "n=20", 20, _E, "symbol", "High-low range volatility estimator", ">=0"),
     ("garman_klass_vol", "Garman-Klass volatility", "pct", _R, "n=20", 20, _E, "symbol", "OHLC volatility estimator", ">=0"),
-    ("adx", "ADX", "ratio", _R, "n=14", 28, _E, "symbol", "Wilder average directional index", "0..100"),
     ("hurst", "Hurst exponent", "ratio", _R, "window=512", 512, _S, "symbol", "R/S analysis slope", "0..1"),
     ("market_regime", "Market regime", "enum:trending|ranging|volatile|mixed", _R, "", 512, _S, "symbol", "Regime from ADX, Hurst and ATR%", ""),
     ("open_interest", "Open interest", "qty", "oi", "", 0, _E, "symbol", "Open interest in contracts", ">=0"),
@@ -96,8 +94,6 @@ _MARKET: tuple[_Row, ...] = (
     ("profile_lvn_distance", "LVN distance", "count", _T, "", 0, _E, "symbol", "Ticks to the nearest low-volume node", ">=0"),
     ("profile_single_print_present", "Single print present", "bool", _T, "", 0, _E, "symbol", "A single-print region exists", ""),
     ("naked_poc_distance", "Naked POC distance", "count", _T, "", 0, _E, "symbol", "Ticks to the nearest untested POC", ">=0"),
-    ("vwap", "VWAP", "price", _T, "anchor=session", 0, _E, "symbol", "Volume-weighted average price", ">0"),
-    ("vwap_band_sigma", "VWAP band sigma", "zscore", _T, "", 0, _E, "symbol", "Distance from VWAP in standard deviations", ""),
     ("developing_va_width", "Developing VA width", "count", _T, "", 0, _E, "symbol", "Width of the developing value area in ticks", ">=0"),
 )  # fmt: skip
 _ACCOUNT: tuple[_Row, ...] = (
@@ -127,6 +123,52 @@ _ACCOUNT: tuple[_Row, ...] = (
 )  # fmt: skip
 _ROWS: tuple[_Row, ...] = _FLOW + _MARKET + _ACCOUNT
 
+# metric, indicator, output, title, tape, description, range
+_Bound = tuple[str, str, str, str, bool, str, str]
+_TAPE, _NO_TAPE = True, False
+#: Rule metrics an M9 server kernel computes (E13-T02): one output of a `SERVER_DEFINITIONS`
+#: entry. Their unit (the output's), params (with `params_schema`), warmup, inputs, cadence,
+#: `nullable_when` and confidence come from the indicator catalogue, never from here, so this
+#: list and `GET /indicators` cannot drift. `tape` adds the `trades` input, as the order-flow
+#: rows above have it: these values come from the aggressor split and the traded volume of bars
+#: built from a symbol's recorded trades, so `requires_recording` stays true and a symbol off the
+#: recorded-symbol list gets them unavailable, with the recorder action (24 §7.2). Binding a
+#: `client_worker` indicator here would make it `server` (ADR-0034 rule 2): that needs its
+#: kernel first.
+_KERNEL_BOUND: tuple[_Bound, ...] = (
+    ("delta", "delta", "delta", "Delta", _TAPE, "Bar buy_volume - sell_volume", ""),
+    ("cvd", "cvd", "cvd", "CVD", _TAPE, "Running sum of signed volume from the anchor", ""),
+    ("bar_volume", "volume", "volume", "Bar volume", _TAPE, "Volume of the last closed bar", ">=0"),
+    ("atr", "atr", "atr", "ATR", _NO_TAPE, "Wilder average true range", ">=0"),
+    ("ema", "ema", "ema", "EMA", _NO_TAPE, "Exponential moving average", ">0"),
+    ("sma", "sma", "sma", "SMA", _NO_TAPE, "Simple moving average", ">0"),
+    ("rsi", "rsi", "rsi", "RSI", _NO_TAPE, "Relative strength index", "0..100"),
+    ("swing_high", "zigzag", "swing_high", "Swing high", _NO_TAPE, "Most recent confirmed pivot high", ">0"),
+    ("swing_low", "zigzag", "swing_low", "Swing low", _NO_TAPE, "Most recent confirmed pivot low", ">0"),
+    ("adx", "adx", "adx", "ADX", _NO_TAPE, "Wilder average directional index", "0..100"),
+    ("vwap", "vwap", "vwap", "VWAP", _TAPE, "Volume-weighted average price", ">0"),
+    ("vwap_band_sigma", "vwap", "band_sigma", "VWAP band sigma", _TAPE, "Distance from VWAP in standard deviations", ""),
+)  # fmt: skip
+
+
+def _bound(row: _Bound) -> MetricDescriptor:
+    """A kernel-bound metric's descriptor, from its indicator definition."""
+    metric, indicator, output, title, tape, _, _ = row
+    definition = SERVER_DEFINITIONS[indicator]
+    if output not in {o.id for o in definition.outputs}:
+        raise ValueError(f"{metric}: {indicator} has no output {output}")
+    inputs = (*definition.inputs, _T) if tape else definition.inputs
+    return MetricDescriptor.model_validate(
+        {
+            "name": metric, "title": title, "unit": definition.output_unit(output),
+            "value_type": definition.value_type, "scope": definition.scope, "inputs": inputs,
+            "params": {k: str(v) for k, v in definition.json_defaults().items()},
+            "warmup_bars": definition.warmup_bars(), "cadence": definition.cadence,
+            "nullable_when": definition.nullable_when, "deterministic": definition.deterministic,
+            "confidence": definition.confidence,
+        }
+    )  # fmt: skip
+
 
 def _build() -> tuple[tuple[MetricDescriptor, ...], dict[str, tuple[str, str]]]:
     descs: list[MetricDescriptor] = []
@@ -147,10 +189,20 @@ def _build() -> tuple[tuple[MetricDescriptor, ...], dict[str, tuple[str, str]]]:
         }  # fmt: skip
         descs.append(MetricDescriptor.model_validate(kwargs))
         docs[name] = (desc, rng)
+    for row in _KERNEL_BOUND:
+        descs.append(_bound(row))
+        docs[row[0]] = (row[5], row[6])
     return tuple(descs), docs
 
 
 DEFAULT_DESCRIPTORS, DEFAULT_DOCS = _build()
+_INDICATOR_OF: Final[Mapping[str, str]] = MappingProxyType({r[0]: r[1] for r in _KERNEL_BOUND})
+
+
+def kernel_params_schema(metric: str) -> dict[str, JsonValue] | None:
+    """The `params_schema` of a kernel-bound metric, its indicator's (a fresh copy); else None."""
+    indicator = _INDICATOR_OF.get(metric)
+    return None if indicator is None else SERVER_DEFINITIONS[indicator].params_schema()
 
 
 def default_registry() -> MetricRegistry:

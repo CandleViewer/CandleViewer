@@ -1,0 +1,189 @@
+{
+  "$note": "GENERATED - do not hand-edit. Regenerate with `cd services/api && CV_REGEN_GOLDEN=1 pytest tests/unit/orderflow/indicators/test_golden_vectors.py`. A diff here moves every indicator instance, cache and metric key: bump INDICATOR_SPEC_VERSION.",
+  "indicator_spec_version": 1,
+  "source": "tape",
+  "vectors": [
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "ema",
+      "note": "ema(21) on 1m",
+      "params": {
+        "n": 21
+      },
+      "spec_hash": "fcaadf406c5d0fa04f3eec173561db0a9532c6c1570467b024b23a5a0434a011"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "ema",
+      "note": "ema(21.0): the same identity as ema(21)",
+      "params": {
+        "n": 21.0
+      },
+      "spec_hash": "fcaadf406c5d0fa04f3eec173561db0a9532c6c1570467b024b23a5a0434a011"
+    },
+    {
+      "bar_spec_hash": "243a2e966460a213138db11e49fe6b6b2ca7f7c8d994e8f05384c0f6c5bfd88f",
+      "canonical_json": "{\"bar_spec_hash\":\"243a2e966460a213138db11e49fe6b6b2ca7f7c8d994e8f05384c0f6c5bfd88f\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "ema",
+      "note": "ema(21) on 5m: another bar spec",
+      "params": {
+        "n": 21
+      },
+      "spec_hash": "26f9e3e723abea1cbe2b84d0ccb1e3ca727056765c0ad926914f29436e4cc23c"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"sma\",\"params\":{\"n\":\"20\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "sma",
+      "note": "sma(20)",
+      "params": {
+        "n": 20
+      },
+      "spec_hash": "28f47088f89b99fb64bccc5ebe6edf7507390d8744e538a1ab246e2e21ab7476"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"rsi\",\"params\":{\"n\":\"14\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "rsi",
+      "note": "rsi(14)",
+      "params": {
+        "n": 14
+      },
+      "spec_hash": "a81788388f624fcd55479153f08d62420273785115bdaf0250bb5d1b59c48e9a"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"atr\",\"params\":{\"n\":\"14\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "atr",
+      "note": "atr(14)",
+      "params": {
+        "n": 14
+      },
+      "spec_hash": "33d789bb1188e5abf2c11c4a21e6535cabe6a859b9f31232bca27ee06f44a993"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"adx\",\"params\":{\"n\":\"14\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "adx",
+      "note": "adx(14)",
+      "params": {
+        "n": 14
+      },
+      "spec_hash": "3147eac6957a8dc22e2e44dd867cc751a0033d2e39df34601047e85344252a98"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"vwap\",\"params\":{\"anchor\":\"session\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "vwap",
+      "note": "vwap(session)",
+      "params": {
+        "anchor": "session"
+      },
+      "spec_hash": "1eea7f0423bbb0d045f9d2b5fe977b9c4b7807f3bed6715a54129e75734a898f"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"cvd\",\"params\":{\"anchor\":\"session\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "cvd",
+      "note": "cvd(session)",
+      "params": {
+        "anchor": "session"
+      },
+      "spec_hash": "6f67b68a964acf32a5f119bbebfdc938104bded26df4b26d868f669db54e28a8"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"cvd\",\"params\":{\"anchor\":\"utc_day\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "cvd",
+      "note": "cvd(utc_day)",
+      "params": {
+        "anchor": "utc_day"
+      },
+      "spec_hash": "a785756e2c5713a48a2df324e107e464c241bcf219313fb6feb21cfd4e485ef1"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"volume\",\"params\":{},\"source\":\"tape\",\"v\":1}",
+      "indicator": "volume",
+      "note": "volume: no params",
+      "params": {},
+      "spec_hash": "d62a52420a6afc92f99e778b9a8b1fa60d5cb7ea4f3151bf6c684c88c4b3ed05"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"delta\",\"params\":{},\"source\":\"tape\",\"v\":1}",
+      "indicator": "delta",
+      "note": "delta: no params",
+      "params": {},
+      "spec_hash": "8000af5beec74b4ad7c0c796ce8849456229a62ba1520a056796b5c27c6f22fe"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, 0)",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 0
+      },
+      "spec_hash": "8137e9ce1d213c8d97a5076872b5f3c99fcdd0cd8840aff56f81e6ad57a9c122"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag, keys in another order",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 0
+      },
+      "spec_hash": "8137e9ce1d213c8d97a5076872b5f3c99fcdd0cd8840aff56f81e6ad57a9c122"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0.1\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, 0.1)",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 0.1
+      },
+      "spec_hash": "13d13887df5dae583b362aaa23925664595c6614d8059bcf2aaa9fad6a719ebe"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0.0000001\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, 1e-7): no exponent",
+      "params": {
+        "depth": 5,
+        "deviation_pct": 1e-07
+      },
+      "spec_hash": "78315c14d66c06b585c80b7c99732d37eb67ea38b8c0f945fa64d4ad318fffee"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"zigzag\",\"params\":{\"depth\":\"5\",\"deviation_pct\":\"0\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "zigzag",
+      "note": "zigzag(5, -0.0): -0 is 0",
+      "params": {
+        "depth": 5,
+        "deviation_pct": -0.0
+      },
+      "spec_hash": "8137e9ce1d213c8d97a5076872b5f3c99fcdd0cd8840aff56f81e6ad57a9c122"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"bollinger\",\"params\":{\"mult\":\"2.5\",\"n\":\"20\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "bollinger",
+      "note": "bollinger(20, 2.5): client_worker",
+      "params": {
+        "mult": 2.5,
+        "n": 20
+      },
+      "spec_hash": "716f8c56d4dc8e6c0f7bf0aad396b02607e9b5213f942f45f13e1862042c4d65"
+    }
+  ]
+}

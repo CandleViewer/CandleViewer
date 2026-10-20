@@ -18,7 +18,7 @@ from candleviewer.rules.vocabulary.catalogue import (
     TARGET_SEMANTICS,
     TRIGGERS,
 )
-from candleviewer.rules.vocabulary.metrics import DEFAULT_DOCS
+from candleviewer.rules.vocabulary.metrics import DEFAULT_DOCS, kernel_params_schema
 from candleviewer.rules.vocabulary.registry import RECORDED_INPUTS, MetricRegistry
 
 
@@ -50,6 +50,9 @@ def undescribed_metrics(registry: MetricRegistry) -> list[str]:
 def _signal(d: Any, symbol: str | None, recorded: Collection[str] | None) -> dict[str, Any]:
     desc, rng = DEFAULT_DOCS.get(d.name, ("", ""))
     needs = sorted(set(d.inputs) & RECORDED_INPUTS)
+    schema = kernel_params_schema(d.name)  # a kernel-bound metric: its indicator's schema
+    if schema is None:
+        schema = {"type": "object", "properties": {k: {"default": v} for k, v in d.params.items()}}
     entry: dict[str, Any] = {
         "id": d.name,
         "display_name": d.title,
@@ -58,10 +61,7 @@ def _signal(d: Any, symbol: str | None, recorded: Collection[str] | None) -> dic
         "unit": d.unit,
         "valid_range": rng or None,
         "enum_values": list(d.enum_values),
-        "params_schema": {
-            "type": "object",
-            "properties": {k: {"default": v} for k, v in d.params.items()},
-        },
+        "params_schema": schema,
         "warmup_bars": d.warmup_bars,
         "deterministic": d.deterministic,
         "confidence": d.confidence,

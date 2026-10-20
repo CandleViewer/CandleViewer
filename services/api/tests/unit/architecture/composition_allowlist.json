@@ -142,10 +142,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "GET /indicators": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "GET /journal/analytics": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
