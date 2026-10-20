@@ -26,6 +26,7 @@ from referencing import Registry
 from referencing.jsonschema import DRAFT202012
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.drawings_models import MAX_JSON_DEPTH
 from candleviewer.api.indicator_presets_models import PresetInput, PresetInvalidError
 from candleviewer.api.indicator_presets_service import (
     IndicatorPresetService,
@@ -165,6 +166,45 @@ async def test_an_import_past_500_live_presets_is_limit_reached_and_imports_noth
         await env.service.import_from_bundle(principal(), [body(name="x"), body(name="y")])
     assert err.value.rule == "limit_reached"
     assert len(env.repo.own_live(str(USER_A))) == PRESETS_PER_USER_MAX - 1
+
+
+#: Deep enough that a recursive encoder overflows the stack on every supported Python.
+_HOSTILE_DEPTH = 100_000
+
+
+def _nested(levels: int) -> Any:
+    """`levels` objects deep: `{"k": {"k": ... 1}}`."""
+    value: Any = 1
+    for _ in range(levels):
+        value = {"k": value}
+    return value
+
+
+async def test_a_bundle_nested_past_the_body_bound_is_json_too_deep_never_a_recursion_error() -> (
+    None
+):
+    """IR-33 / SR-E13-06: the nesting is measured first, without recursion, so a hostile item
+    is a 422 before anything encodes it, and nothing is read, written or audited."""
+    env = _Env()
+    with pytest.raises(PresetInvalidError) as err:
+        await env.service.import_from_bundle(principal(), [body(params=_nested(_HOSTILE_DEPTH))])
+    message = f"An indicator preset nests deeper than {MAX_JSON_DEPTH} levels."
+    assert err.value.errors == [
+        {"field": "indicator_presets", "rule": "json_too_deep", "message": message}
+    ]
+    assert env.repo.calls == [] and env.audit.calls == []
+
+
+@pytest.mark.parametrize(
+    ("levels", "rule"), [(MAX_JSON_DEPTH - 1, "params_too_deep"), (MAX_JSON_DEPTH, "json_too_deep")]
+)
+async def test_a_bundle_item_may_nest_as_deep_as_a_create_body(levels: int, rule: str) -> None:
+    """An item holding `params` `levels` deep nests `levels + 1` deep: at the body bound
+    (`MAX_JSON_DEPTH`) it reaches the item checks, one level more is refused whole."""
+    env = _Env()
+    with pytest.raises(PresetInvalidError) as err:
+        await env.service.import_from_bundle(principal(), [body(params=_nested(levels))])
+    assert [e["rule"] for e in err.value.errors] == [rule]
 
 
 async def test_not_an_array_is_refused() -> None:

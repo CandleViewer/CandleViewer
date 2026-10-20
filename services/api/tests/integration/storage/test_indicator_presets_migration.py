@@ -8,6 +8,7 @@ docker socket in WSL).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -29,6 +30,7 @@ from candleviewer.db.seed import upsert_builtin_indicator_presets
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
+_REVISION_FILE = _ROOT / "candleviewer" / "migrations" / "versions" / "0040_indicator_presets.py"
 _BUILTINS = (
     "SELECT id::text, owner_user_id, indicator_code, name, params, style, pane_target, "
     "is_builtin, is_favourite, created_at, updated_at, deleted_at FROM indicator_presets "
@@ -36,6 +38,16 @@ _BUILTINS = (
 )
 
 Conn = psycopg.Connection[tuple[Any, ...]]
+
+
+def _down_revision() -> str:
+    """The revision 0040 revises, read from its file as the unit test reads it: a re-parent
+    edits the migration and the lockfile only, and the round trip undoes 0040 alone."""
+    spec = importlib.util.spec_from_file_location("rev_0040_it", _REVISION_FILE)
+    assert spec is not None and spec.loader is not None
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    return str(revision.down_revision)
 
 
 def _alembic(dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
@@ -232,7 +244,7 @@ def _active_owner(c: Conn) -> None:
 def test_round_trip_up_down_up_with_the_refused_downgrade(pg_dsn: str) -> None:
     """C-5.2 and C-5.5: a user preset, live or soft-deleted, refuses the downgrade; the
     built-ins alone do not; `upgrade head` seeds them again."""
-    prev = "0038_risk_state"
+    prev = _down_revision()
     with _conn(pg_dsn) as c:
         c.execute("DELETE FROM indicator_presets WHERE NOT is_builtin")
         owner = _user(c)

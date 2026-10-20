@@ -146,6 +146,7 @@ PRESET_NAME_MAX: Final = 80
 PRESET_BODY_MAX_BYTES: Final = 16 * 1024
 #: SR-E13-07: live (not deleted) presets per user (409 `limit_reached`).
 PRESETS_PER_USER_MAX: Final = 500
-#: SR-E13-07: a bundle import is refused whole beyond this many presets or bytes of preset JSON.
+#: SR-E13-07: a bundle import is refused whole beyond this many presets or bytes of preset JSON,
+#: the bytes measured as the array's jsonb text (`jsonb_text_bytes`), not as the bytes received.
 BUNDLE_IMPORT_PRESETS_MAX: Final = 200
 BUNDLE_IMPORT_MAX_BYTES: Final = 1024 * 1024

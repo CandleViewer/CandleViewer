@@ -2777,8 +2777,10 @@ two CHECKs are the original specification; E13-T03 added the other four (ruling 
 `ip_style_shape` are the database half of SR-E13-06 (E13 threat model IR-33: each JSON object at
 most 4096 bytes as Postgres prints `jsonb`, the text the API measures too), and `ip_name_len` is the
 API's 1..80 `name` bound. The API reads built-ins and the caller's own rows, writes only the
-caller's own non-built-in rows, and soft-deletes (`deleted_at`); nothing deletes a row, and soft
-deletes are kept (no purge job).
+caller's own non-built-in rows, and deletes nothing: a delete sets `deleted_at`, and soft-deleted
+rows are kept (no purge job). Rows go only when their owner's `users` row is deleted
+(`ON DELETE CASCADE`); `cv_app` holds `DELETE` on the table through the default privileges
+(`infra/scripts/pg_bootstrap.sql`), but no statement of the preset repository uses it.
 
 ```sql
 CREATE TABLE indicator_presets (
@@ -4275,8 +4277,10 @@ label in its order: `name` is the label verbatim, `indicator_code` the text befo
 `id` is uuid5 of `<indicator_code>/<name>`, so a layout pane or a bundle can refer to a built-in
 by a stable id. `params` are the indicator's complete parameters where the catalogue
 (`orderflow/indicators/catalogue.py`, 24 §7.2) defines it, and `pane_target` follows its `pane`
-(`price` → `overlay`, `sub` → `subpane`); the other rows hold `{}` and a placeholder `pane_target`
-until the epic that registers the indicator amends them in a new revision.
+(`price` → `overlay`, `sub` → `subpane`); `cvd(never reset)` holds the anchor listed below, which
+the `cvd` descriptor does not accept, and the rows of an unregistered indicator hold `{}` and a
+placeholder `pane_target` until the epic that registers the indicator amends them in a new
+revision.
 
 | Labels                                                                                                     | `indicator_code` | `params`                   | `pane_target` | Valid against the catalogue today                                                             |
 | ---------------------------------------------------------------------------------------------------------- | ---------------- | -------------------------- | ------------- | --------------------------------------------------------------------------------------------- |
@@ -4292,7 +4296,9 @@ until the epic that registers the indicator amends them in a new revision.
 Built-ins never change through the API: a write aimed at one is `403` rule `builtin_immutable`
 (audited `rbac.denied`), and "customise" saves a user-owned copy (`createIndicatorPreset`), which is
 validated like any save, so copying a row marked "no" above is refused until its indicator is
-registered. Names are unique per owner, so a copy may keep the built-in's name.
+registered (for `cvd(never reset)`: until the `cvd` descriptor has an anchor it accepts; today the
+copy is `422` rule `enum` on `params.anchor`). Names are unique per owner, so a copy may keep the
+built-in's name.
 
 ### 10.6 Default hotkey profile (`CandleViewer Default`, `requires_arm = true`)
 
@@ -4447,6 +4453,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `replay_sessions`                                      | `bookmarks`                             | P1         | jsonb                                           | User notes on recorded timestamps; read only by `user_id` in the WHERE clause; purged with the user (CASCADE)                                   |
 | `drawings`                                             | `label`, `geometry`, `style`            | P0         | text / jsonb                                    | User-authored chart annotations; free text, no credentials or PII intended                                                                      |
 | `workspaces`, `layouts`, `layout_panes`                | `name`, `grid_spec`, `pane_config`      | P0         | text / jsonb                                    | User layout preferences; never logged. Pane settings must never carry credentials or account identifiers                                        |
+| `indicator_presets`                                    | `name`, `params`, `style`               | P0         | text / jsonb                                    | User indicator settings (`name` is free text); no credentials or PII intended; never logged or audited                                          |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
 | `exchange_accounts`                                    | `policy_disarm_code` and its times      | P0         | plaintext                                       | A fixed rule code and two times (0031), never text, an IP or a UID; Viewers read the same code in `account.disabled_by_policy`                  |

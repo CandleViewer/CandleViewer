@@ -1,8 +1,12 @@
 """E13-T03 (#427): the four `/indicator-presets*` operations through the real app (session,
 CSRF, RBAC, the router and its service over an in-memory store) answer only what
-22-api-openapi.yaml documents, with schema-valid bodies, at every status each operation declares
-that the app can reach. (`404` on the two collection operations is declared but unreachable: no
-collection operation reads a stored preset by id.)"""
+22-api-openapi.yaml documents, with schema-valid bodies, at each status the tests below reach.
+Three declared statuses are not reached here. `404` on the two collection operations cannot
+occur: no collection operation reads a stored preset by id. `401` on a write: the pack's
+unauthenticated actor has no session, so the CSRF guard answers first (`403`
+`csrf_token_invalid`); an expired bearer of a live session would reach the route's `401`, and
+the pack mints none. `403` on the list: every role holds `workspaces:read`. The router tests
+check those two by status (`tests/indicator_presets/test_presets_api_rbac.py`)."""
 
 from __future__ import annotations
 

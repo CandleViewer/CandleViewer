@@ -1901,15 +1901,15 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=11,
     ),
     # E13-T03: indicator presets, registered by `create_app()` for the router; the gauge is read
-    # again after each create, delete and import, the counter counts each write refused for its
-    # target (audited `rbac.denied` too).
+    # at startup and again after each create, delete and import, the counter counts each write
+    # refused for its target (audited `rbac.denied` too).
     _s(
         "indicator_presets_total",
         "gauge",
         "presets",
         ("builtin",),
         "Live (not soft-deleted) indicator presets of all owners by builtin (true|false), read "
-        "again after each create, delete and import (E13-T03).",
+        "at startup and again after each create, delete and import (E13-T03).",
         "dashboard only",
         _P,
         "E13",

@@ -9,12 +9,14 @@ import uuid
 from typing import Any
 
 import pytest
-from _presets_env import BUILTIN_IDS, EMA9, PRESET_KEYS, USER_A, Env, body
+from _presets_env import BUILTIN_IDS, EMA9, PRESET_KEYS, USER_A, VIEWER, Env, body
 
 from candleviewer.api.indicator_presets import make_indicator_presets_router
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.limits import PRESETS_PER_USER_MAX
 from candleviewer.storage.repositories.indicator_presets import PresetShapeError
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 MISSING = "00000000-0000-4000-8000-0000000000ff"
 
@@ -216,3 +218,32 @@ def test_a_delete_that_loses_a_race_with_another_delete_is_404() -> None:
 def test_the_router_refuses_to_be_built_without_an_audit_emitter() -> None:
     with pytest.raises(TypeError, match="audit emitter is required"):
         make_indicator_presets_router(lambda: None, None, None, default_catalogue())  # type: ignore[arg-type]  # the refusal is the point
+
+
+def test_every_problem_carries_the_registry_title_of_its_code() -> None:
+    """`title` is the `x-error-codes` registry's (`ERROR_META`, generated from 22), the same
+    string every other router answers for that code, for all eight codes this one emits."""
+    env = Env()
+    made = env.create()
+    answered = [
+        env.c.post("/indicator-presets", json=body()),  # 409 name_taken
+        env.c.post("/indicator-presets", json=body(params={"n": 0})),  # 422
+        env.c.delete(f"/indicator-presets/{MISSING}"),  # 404
+        env.c.post("/indicator-presets", content=b"{" + b" " * (16 * 1024) + b"}"),  # 413
+    ]
+    env.audit.fail = AuditUnavailable("down")
+    answered.append(env.c.delete(f"/indicator-presets/{made['id']}"))  # 503 audit_unavailable
+    env.audit.fail = None
+    env.repo_up = False
+    answered.append(env.c.get("/indicator-presets"))  # 503 store_unavailable
+    env.user = VIEWER
+    answered.append(env.c.post("/indicator-presets", json=body()))  # 403
+    env.user = None
+    answered.append(env.c.get("/indicator-presets"))  # 401
+    problems = [r.json() for r in answered]
+    assert sorted(p["code"] for p in problems) == [
+        "audit_unavailable", "conflict", "forbidden", "not_found", "payload_too_large",
+        "store_unavailable", "unauthenticated", "validation_failed",
+    ]  # fmt: skip
+    for problem in problems:
+        assert problem["title"] == ERROR_META[ErrorCode(problem["code"])].title, problem["code"]

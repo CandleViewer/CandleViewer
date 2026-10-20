@@ -14,6 +14,11 @@ race another writer of the same owner (SR-E13-07). Uniqueness is decided by `ux_
 violation maps to `PresetConflictError("name_taken")`; a CHECK violation on `ip_params_shape` or
 `ip_style_shape` maps to `PresetShapeError`. Every UPDATE bumps `updated_at` strictly
 monotonically, even inside one clock tick.
+
+An import renames a held name rather than meet that index, so it compares the keys the index
+compares: `lower()` in Postgres, of the stored names (`_NAMES_OWN`) and of each name it may give
+(`_FOLD`, which reads no table). Python's `str.lower` folds some characters otherwise (U+0130 to
+'i' plus U+0307, where Postgres under a libc collation gives 'i'), so no key is computed here.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from candleviewer.storage.repositories.indicator_presets import (
     MAX_IMPORT_PRESETS,
@@ -36,7 +42,7 @@ from candleviewer.storage.repositories.indicator_presets import (
     PresetNotFoundError,
     PresetRow,
     PresetShapeError,
-    unique_name,
+    name_candidates,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 
@@ -80,8 +86,12 @@ _COUNT_OWN = sa.text(
     "WHERE owner_user_id = CAST(:owner AS uuid) AND NOT is_builtin AND deleted_at IS NULL"
 )
 _NAMES_OWN = sa.text(
-    "SELECT indicator_code, name FROM indicator_presets "
+    "SELECT indicator_code, lower(name) AS name_key FROM indicator_presets "
     "WHERE owner_user_id = CAST(:owner AS uuid) AND NOT is_builtin AND deleted_at IS NULL"
+)
+_FOLD = sa.text(
+    "SELECT lower(n) AS name_key FROM unnest(CAST(:names AS text[])) "
+    "WITH ORDINALITY AS c(n, i) ORDER BY i"
 )
 _INSERT = sa.text(
     "INSERT INTO indicator_presets (id, owner_user_id, indicator_code, name, params, style, "
@@ -160,6 +170,24 @@ def _sqlstate_and_constraint(exc: IntegrityError) -> tuple[str | None, str | Non
         if name:
             return state, str(name)
     return state, None
+
+
+async def _fold(session: AsyncSession, names: list[str]) -> list[str]:
+    """Postgres's own `lower()` of each of `names`, in order: the key `ux_ip_name` compares."""
+    return [str(key) for (key,) in (await session.execute(_FOLD, {"names": names})).all()]
+
+
+async def _free_name(session: AsyncSession, name: str, taken: set[str]) -> tuple[str, str]:
+    """The first of `name_candidates(name, ...)` whose key `taken` lacks, with that key: `name`
+    itself when it is free, else one of `len(taken) + 2` candidates, which always hold a free
+    one (their keys are distinct but for `name` repeating one, and `taken` blocks at most
+    `len(taken)` of them)."""
+    (key,) = await _fold(session, [name])
+    if key not in taken:
+        return name, key
+    candidates = name_candidates(name, len(taken) + 2)
+    keys = await _fold(session, candidates)
+    return next((c, k) for c, k in zip(candidates, keys, strict=True) if k not in taken)
 
 
 def map_integrity(exc: IntegrityError) -> PresetConflictError | PresetShapeError | None:
@@ -253,12 +281,12 @@ class SqlAlchemyIndicatorPresetRepository:
                 if live + len(items) > MAX_LIVE_PRESETS:
                     raise PresetConflictError("limit_reached")
                 taken: dict[str, set[str]] = {}
-                for code, name in (await uow.session.execute(_NAMES_OWN, {"owner": owner})).all():
-                    taken.setdefault(str(code), set()).add(str(name).lower())
+                for code, held in (await uow.session.execute(_NAMES_OWN, {"owner": owner})).all():
+                    taken.setdefault(str(code), set()).add(str(held))
                 for preset_id, fields in items:
-                    names = taken.setdefault(fields.indicator_code, set())
-                    free = unique_name(fields.name, names)
-                    names.add(free.lower())
+                    keys = taken.setdefault(fields.indicator_code, set())
+                    free, key = await _free_name(uow.session, fields.name, keys)
+                    keys.add(key)
                     named = dataclasses.replace(fields, name=free)
                     params = _write_params(preset_id, owner, named)
                     rows.append((await uow.session.execute(_INSERT, params)).mappings().one())

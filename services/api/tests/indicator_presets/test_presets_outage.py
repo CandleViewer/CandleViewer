@@ -1,7 +1,7 @@
 """IR-24 / AC-18 for `/indicator-presets` (E13-T03, #427): a failing store through the real app
 (`create_app()`, its middleware and error redaction) answers an RFC 9457 body that names no SQL,
 no file path, no bound parameter and none of the submitted JSON: 503 `store_unavailable` for an
-outage, a generic 500 for a bug."""
+outage, a generic 500 for a bug. Also the app's own preset series and their startup read."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from _presets_env import ATR14, EMA9
+from _presets_env import ATR14, EMA9, FakePresetRepo
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError, OperationalError
 from structlog.testing import capture_logs
@@ -92,3 +92,18 @@ def test_the_app_registers_the_two_preset_series_with_their_catalogue_bounds(wor
         register = facade.gauge if spec.kind == "gauge" else facade.counter
         same = register(spec.name, spec.help, spec.labels, max_series=spec.max_series)
         assert same is (wired.presets if spec.kind == "gauge" else wired.denied)
+
+
+async def test_the_app_reads_the_preset_gauge_from_its_own_store_at_startup(world: World) -> None:
+    """`create_app()` leaves the primer on `app.state` for the lifespan to start (the composition
+    guard checks that it does); it reads the app's store into the app's gauge."""
+    world.app.state.indicator_presets_repository = FakePresetRepo()
+    await world.app.state.indicator_presets_gauge.prime()
+    facade = world.app.state.metrics_facade
+    got = {
+        builtin: facade.registry.get_sample_value(
+            "indicator_presets_total", {"env": facade.env, "builtin": builtin}
+        )
+        for builtin in ("true", "false")
+    }
+    assert got == {"true": 18.0, "false": 0.0}

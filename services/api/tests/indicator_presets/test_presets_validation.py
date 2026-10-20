@@ -5,9 +5,10 @@ themselves are pinned at the model level in `test_presets_models.py`."""
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
 import pytest
 from _presets_env import Env, body
 
@@ -148,18 +149,23 @@ def test_a_body_at_16_kib_is_read_and_one_byte_more_is_413_before_parsing() -> N
     assert r.json()["detail"] == f"The request body exceeds {PRESET_BODY_MAX_BYTES} bytes."
 
 
-def test_a_2_mib_streamed_body_stops_being_read_past_the_cap() -> None:
-    """AC-08: no `Content-Length`, so the streaming cap stops the read one chunk past 16 KiB."""
-    env, sent = Env(), []
+async def test_a_2_mib_streamed_body_stops_being_read_past_the_cap() -> None:
+    """AC-08: with no `Content-Length` the stream is read only until it passes 16 KiB, one chunk
+    past the cap: the app pulls a handful of the 512 chunks a client offers, never 2 MiB."""
+    env, pulled = Env(), []
 
-    def chunks() -> Iterator[bytes]:
+    async def chunks() -> AsyncIterator[bytes]:
         for _ in range(2 * 1024 // 4):  # 512 chunks of 4 KiB = 2 MiB
-            sent.append(1)
+            pulled.append(1)
             yield b" " * 4096
 
-    r = env.c.post("/indicator-presets", content=chunks(),
-                   headers={"content-type": "application/json"})  # fmt: skip
+    transport = httpx.ASGITransport(app=env.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        r = await client.post("/indicator-presets", content=chunks(),
+                              headers={"content-type": "application/json"})  # fmt: skip
     assert (r.status_code, r.json()["code"]) == (413, "payload_too_large")
+    assert "content-length" not in r.request.headers  # the streaming cap, not the declared one
+    assert len(pulled) <= PRESET_BODY_MAX_BYTES // 4096 + 1
     _no_write(env)
 
 

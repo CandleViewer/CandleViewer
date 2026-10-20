@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
 from pydantic_core import PydanticCustomError
@@ -52,14 +52,12 @@ from candleviewer.orderflow.indicators.limits import (
     PRESET_JSON_MAX_KEYS,
     PRESET_NAME_MAX,
 )
-from candleviewer.storage.repositories.indicator_presets import PresetFields
+from candleviewer.storage.repositories.indicator_presets import PaneTarget, PresetFields
 
 #: 22 `IndicatorPresetInput.indicator_code.pattern` and the CHECK `ip_code`.
 INDICATOR_CODE_PATTERN: Final = r"^[a-z0-9_]{2,32}$"
 _CODE: Final = re.compile(INDICATOR_CODE_PATTERN)
 _CFG: Final = ConfigDict(frozen=True, extra="forbid")
-
-PaneTarget = Literal["overlay", "subpane"]
 
 
 class PresetInvalidError(Exception):
@@ -219,6 +217,6 @@ def preset_fields(
 
 
 __all__ = [
-    "INDICATOR_CODE_PATTERN", "PaneTarget", "PresetInput", "PresetInvalidError", "json_depth",
+    "INDICATOR_CODE_PATTERN", "PresetInput", "PresetInvalidError", "json_depth",
     "jsonb_text_bytes", "preset_fields",
 ]  # fmt: skip

@@ -34,6 +34,8 @@ NAME_MAX: Final = 80
 
 OtherClass = Literal["builtin", "foreign"]
 ConflictRule = Literal["name_taken", "limit_reached"]
+#: The CHECK `ip_target`: where a preset draws (22 `IndicatorPresetInput.pane_target`).
+PaneTarget = Literal["overlay", "subpane"]
 
 
 class PresetNotFoundError(Exception):
@@ -68,7 +70,7 @@ class PresetFields:
     name: str
     params: dict[str, Any]
     style: dict[str, Any]
-    pane_target: Literal["overlay", "subpane"]
+    pane_target: PaneTarget
     is_favourite: bool
 
 
@@ -82,7 +84,7 @@ class PresetRow:
     name: str
     params: dict[str, Any]
     style: dict[str, Any]
-    pane_target: Literal["overlay", "subpane"]
+    pane_target: PaneTarget
     is_builtin: bool
     is_favourite: bool
     created_at: datetime
@@ -145,8 +147,8 @@ class IndicatorPresetRepository(Protocol):
     ) -> list[PresetRow]:
         """Insert every item or none, in one transaction under the owner's advisory lock: past
         the cap is `PresetConflictError("limit_reached")`; a name the owner (or an earlier item)
-        already holds for that indicator gets the first free ` (2)`, ` (3)`, ... suffix, cut so
-        the name stays within `NAME_MAX` characters. Never overwrites."""
+        already holds for that indicator, case-folded as `ux_ip_name` folds it (Postgres's
+        `lower()`), takes the first free of `name_candidates`. Never overwrites."""
         ...
 
     async def count_live_by_builtin(self) -> dict[bool, int]:
@@ -154,23 +156,18 @@ class IndicatorPresetRepository(Protocol):
         ...
 
 
-def unique_name(name: str, taken: set[str]) -> str:
-    """`name`, or the first `name (n)` (n = 2, 3, ...) whose lower case `taken` lacks, the name
-    cut first so the result fits `NAME_MAX` characters; trailing spaces of the cut are dropped
-    (a stored name is trimmed). `taken` holds lower-cased names."""
-    if name.lower() not in taken:
-        return name
-    n = 2
-    while True:
-        suffix = f" ({n})"
-        candidate = name[: NAME_MAX - len(suffix)].rstrip() + suffix
-        if candidate.lower() not in taken:
-            return candidate
-        n += 1
+def name_candidates(name: str, count: int) -> list[str]:
+    """The first `count` names an import may give a preset called `name`: `name` itself, then
+    `name (2)`, `name (3)`, ..., each cut first so it fits `NAME_MAX` characters, with the
+    cut's trailing spaces dropped (a stored name is trimmed). The suffixed ones stay distinct
+    case-folded (each ends in its own ` (n)`); only `name` itself can repeat one of them (a name
+    of `NAME_MAX` characters that ends ` (2)`)."""
+    suffixes = [f" ({n})" for n in range(2, count + 1)]
+    return [name, *(name[: NAME_MAX - len(s)].rstrip() + s for s in suffixes)][:count]
 
 
 __all__ = [
     "MAX_IMPORT_PRESETS", "MAX_LIVE_PRESETS", "NAME_MAX", "ConflictRule",
-    "IndicatorPresetRepository", "Occupancy", "OtherClass", "PresetConflictError",
-    "PresetFields", "PresetNotFoundError", "PresetRow", "PresetShapeError", "unique_name",
+    "IndicatorPresetRepository", "Occupancy", "OtherClass", "PaneTarget", "PresetConflictError",
+    "PresetFields", "PresetNotFoundError", "PresetRow", "PresetShapeError", "name_candidates",
 ]  # fmt: skip

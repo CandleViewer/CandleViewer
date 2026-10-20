@@ -8,10 +8,10 @@ Sec.10.5 (one row per label, in its order) and every id to `builtin_preset_id`.
 - `name` is the Sec.10.5 label verbatim and `indicator_code` the text before its `(`.
 - `params` are the indicator's complete parameters where the catalogue
   (`orderflow/indicators/catalogue.py`) defines the indicator, and `pane_target` follows its
-  `pane` (`price` draws over the price pane, `sub` in a sub-pane of its own). Nine labels name an
-  indicator no catalogue registers yet (`delta`, a rule metric kept out of `V1_INDICATORS`, and
-  the eight R2 indicators of E18, E19, E23 and E24): those carry `{}` and a placeholder
-  `pane_target` until their owning epic amends them in a new revision.
+  `pane` (`price` draws over the price pane, `sub` in a sub-pane of its own). Nine rows name an
+  indicator no catalogue registers yet: `delta`, a rule metric kept out of `V1_INDICATORS`, and
+  seven R2 indicators of E18, E19, E23 and E24 over eight rows (`oi` has two). Those carry `{}`
+  and a placeholder `pane_target` until their owning epic amends them in a new revision.
 - `cvd(never reset)` asks for an anchor the cvd descriptor does not have (`session` or
   `utc_day`; 24 Sec.7.2 has no `since_load`), and the `vwap` row with its 1 and 2 sigma bands
   holds `vwap(session)`'s parameters: the bands are outputs, not parameters. Both are seeded as

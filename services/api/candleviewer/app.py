@@ -126,7 +126,10 @@ from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.idle_lock import IdleLockMiddleware
 from candleviewer.api.indicator_presets import make_indicator_presets_router
-from candleviewer.api.indicator_presets_service import IndicatorPresetMetrics
+from candleviewer.api.indicator_presets_service import (
+    IndicatorPresetMetrics,
+    IndicatorPresetsGaugePrimer,
+)
 from candleviewer.api.indicators import make_indicators_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
@@ -2453,6 +2456,10 @@ def create_app(
             ("reason",), max_series=2,
         ),
     )  # fmt: skip
+    # The gauge's first read, at startup (lifespan-started), so its series precede any write.
+    app.state.indicator_presets_gauge = IndicatorPresetsGaugePrimer(
+        lambda: app.state.indicator_presets_repository, app.state.indicator_presets_metrics
+    )
     app.include_router(
         make_indicator_presets_router(
             lambda: app.state.indicator_presets_repository,

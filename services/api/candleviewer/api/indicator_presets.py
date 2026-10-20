@@ -35,6 +35,7 @@ from pydantic import ValidationError
 from candleviewer.api.drawings_models import MAX_JSON_DEPTH, format_errors
 from candleviewer.api.indicator_presets_models import PresetInput, PresetInvalidError
 from candleviewer.api.indicator_presets_service import (
+    AuditEmitter,
     IndicatorPresetMetricsLike,
     IndicatorPresetService,
     PresetBuiltinImmutableError,
@@ -57,18 +58,20 @@ from candleviewer.storage.repositories.indicator_presets import (
     PresetRow,
     PresetShapeError,
 )
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.limits import json_depth_exceeds
 
-#: The registered `x-error-codes` this router emits: code -> (status, catalogue title).
-_CODES: Final[dict[str, tuple[int, str]]] = {
-    "unauthenticated": (401, "Missing, malformed or expired access token"),
-    "forbidden": (403, "Authenticated but lacking the required permission"),
-    "not_found": (404, "Resource does not exist or is out of the caller's scope"),
-    "conflict": (409, "Concurrent modification or state conflict"),
-    "payload_too_large": (413, "Request body or batch exceeds the operation's size ceiling"),
-    "validation_failed": (422, "Request body or parameters failed schema validation"),
-    "store_unavailable": (503, "QuestDB / Postgres / Parquet tier unavailable"),
-    "audit_unavailable": (503, "Write-ahead audit record could not be written"),
+#: The registered `x-error-codes` this router emits: code -> HTTP status. A problem's `title` is
+#: the registry's own (`ERROR_META`, generated from 22), as every other router answers it.
+_STATUS: Final[dict[str, int]] = {
+    "unauthenticated": 401,
+    "forbidden": 403,
+    "not_found": 404,
+    "conflict": 409,
+    "payload_too_large": 413,
+    "validation_failed": 422,
+    "store_unavailable": 503,
+    "audit_unavailable": 503,
 }
 #: 503s carry the contract's `Retry-After` (`ServiceUnavailable`).
 _RETRY_AFTER_S: Final = 5
@@ -81,10 +84,6 @@ _CONFLICTS: Final = {
     "limit_reached": "You have reached the limit of saved indicator presets.",
 }
 _SHAPE_RULES: Final = {"params": "params_too_large", "style": "style_not_allowed"}
-
-
-class _Emitter(Protocol):
-    async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
 class _Resolver(Protocol):
@@ -112,11 +111,12 @@ def _rule(field: str, rule: str, message: str) -> dict[str, str]:
 
 
 class _Problem(Exception):
-    """RFC 9457 problem for a registered code; status and title come from `_CODES`."""
+    """RFC 9457 problem for a registered code: its status from `_STATUS`, its title from the
+    registry."""
 
     def __init__(self, code: str, detail: str, **extra: Any) -> None:
         super().__init__(detail)
-        self.status, self.title = _CODES[code]
+        self.status, self.title = _STATUS[code], ERROR_META[ErrorCode(code)].title
         self.code, self.detail, self.extra = code, detail, extra
 
     def response(self) -> JSONResponse:
@@ -279,7 +279,7 @@ def _new_id() -> UUID:
 def make_indicator_presets_router(
     repo_provider: Callable[[], IndicatorPresetRepository | None],
     principal_resolver: _Resolver | None,
-    audit: _Emitter,
+    audit: AuditEmitter,
     catalogue: IndicatorCatalogue,
     *,
     metrics: IndicatorPresetMetricsLike | None = None,
@@ -324,7 +324,7 @@ def make_indicator_presets_router(
         rows = await service.list_visible(str(principal.user_id))
         return JSONResponse({"items": [dump(r) for r in rows]})
 
-    @router.post("/indicator-presets")
+    @router.post("/indicator-presets")  # nosem: audit-write-required reason=audited-below-the-handler-in-IndicatorPresetService-indicator_preset.created-write-ahead-#427 owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def create_indicator_preset(request: Request) -> Response:
         principal = await caller(request, Permission.WORKSPACES_WRITE)
         raw = await _read_capped(request, PRESET_BODY_MAX_BYTES)
@@ -332,7 +332,7 @@ def make_indicator_presets_router(
         row = await service.create(principal, _parse(raw))
         return JSONResponse(dump(row), 201)
 
-    @router.put("/indicator-presets/{presetId}")
+    @router.put("/indicator-presets/{presetId}")  # nosem: audit-write-required reason=audited-below-the-handler-in-IndicatorPresetService-indicator_preset.updated-write-ahead-and-rbac.denied-refusals-#427 owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def update_indicator_preset(
         request: Request, preset_id: Annotated[str, Path(alias="presetId")]
     ) -> Response:
@@ -343,7 +343,7 @@ def make_indicator_presets_router(
         row = await service.replace(principal, pid, _parse(raw))
         return JSONResponse(dump(row))
 
-    @router.delete("/indicator-presets/{presetId}")
+    @router.delete("/indicator-presets/{presetId}")  # nosem: audit-write-required reason=audited-below-the-handler-in-IndicatorPresetService-indicator_preset.deleted-write-ahead-and-rbac.denied-refusals-#427 owner=@CandleViewer/security review=2027-03-25  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def delete_indicator_preset(
         request: Request, preset_id: Annotated[str, Path(alias="presetId")]
     ) -> Response:

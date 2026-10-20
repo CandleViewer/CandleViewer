@@ -16,12 +16,14 @@ Audit records name the preset (`object_kind` `indicator_preset`, `object_id` its
 `indicator_code` and `content_sha256`, the digest of the canonical preset, never its
 parameters (IR-19). The digest is not called `*hash*`: the audit redaction drops such fields.
 A denial is counted in `indicator_preset_denied_total{reason}` before its record is written, as
-`enforce()` counts (SR-125), and logged with the actor, the target and the reason;
-`indicator_presets_total{builtin}` is read again after each create, delete and import.
+`enforce()` counts (SR-125), and logged with the actor, the target and the reason.
+`indicator_presets_total{builtin}` is read at startup (`IndicatorPresetsGaugePrimer`, which the
+lifespan starts) and again after each create, delete and import.
 """
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -33,16 +35,18 @@ from uuid import UUID
 import structlog
 from pydantic import ValidationError
 
-from candleviewer.api.drawings_models import format_errors
+from candleviewer.api.drawings_models import MAX_JSON_DEPTH, format_errors
 from candleviewer.api.indicator_presets_models import (
     PresetInput,
     PresetInvalidError,
+    json_depth,
     jsonb_text_bytes,
     preset_fields,
 )
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import BoundedMetric
 from candleviewer.orderflow.indicators.catalogue import IndicatorCatalogue
 from candleviewer.orderflow.indicators.limits import (
@@ -61,6 +65,8 @@ from candleviewer.storage.repositories.indicator_presets import (
 DenialReason = Literal["not_owner", "builtin_immutable"]
 #: At most this many field errors in one 422 (the drawings and workspaces bound).
 _MAX_ERRORS = 20
+#: The startup read of `indicator_presets_total` waits at most this long for the store.
+GAUGE_PRIME_TIMEOUT_S = 10.0
 
 
 class PresetStoreUnavailableError(Exception):
@@ -79,7 +85,9 @@ class PresetBundleTooLargeError(Exception):
         self.rule = rule
 
 
-class _Emitter(Protocol):
+class AuditEmitter(Protocol):
+    """The audit writer as the router and the service use it (`_LazyAuditEmitter` in the app)."""
+
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
@@ -124,6 +132,67 @@ def bundle_item(row: PresetRow) -> dict[str, Any]:
     }  # fmt: skip
 
 
+async def refresh_presets_gauge(
+    repo: IndicatorPresetRepository, metrics: IndicatorPresetMetricsLike
+) -> None:
+    """`indicator_presets_total{builtin}` from the store, both series (a class with no live
+    preset reads 0). A store outage leaves the gauge as it was, logged, and never fails the
+    caller; anything else is a bug and propagates."""
+    try:
+        counts = await repo.count_live_by_builtin()
+    except Exception as exc:  # re-raised below unless the store is unreachable
+        if not is_storage_outage(exc):
+            raise
+        _log().warning("indicator_presets_gauge_stale", error=type(exc).__name__)
+        return
+    for builtin in (True, False):
+        metrics.presets.labels(str(builtin).lower()).set(counts.get(builtin, 0))
+
+
+class IndicatorPresetsGaugePrimer:
+    """Reads `indicator_presets_total{builtin}` once at startup, so both series are exported
+    before the first write (each create, delete and import reads it again). The lifespan starts
+    it (`app.state.indicator_presets_gauge`) and stops it, which cancels a read still in flight;
+    the read waits at most `timeout_s`. With no store (the fake backend) it reads nothing; an
+    outage, a store that does not answer in time or a bug leaves the series unset until the next
+    write, and is logged."""
+
+    def __init__(
+        self,
+        repo_provider: Callable[[], IndicatorPresetRepository | None],
+        metrics: IndicatorPresetMetricsLike,
+        *,
+        timeout_s: float = GAUGE_PRIME_TIMEOUT_S,
+    ) -> None:
+        self._repo_provider, self._metrics, self._timeout_s = repo_provider, metrics, timeout_s
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Spawn the one read (a second start spawns nothing)."""
+        if self._task is None:
+            self._task = spawn(self.prime(), name="indicator-presets-gauge")
+
+    async def prime(self) -> None:
+        repo = self._repo_provider()
+        if repo is None:
+            return
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                await refresh_presets_gauge(repo, self._metrics)
+        except TimeoutError:
+            _log().warning("indicator_presets_gauge_stale", error="TimeoutError")
+        except Exception:  # a bug: logged here, never left unretrieved in the task
+            _log().exception("indicator_presets_gauge_failed")
+
+    async def stop(self) -> None:
+        """Cancel the read if it still runs and wait for it; a cancellation of the caller
+        still propagates."""
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
 class IndicatorPresetService:
     """One per router; `repo_provider` is read on every call (the store may come and go)."""
 
@@ -131,7 +200,7 @@ class IndicatorPresetService:
         self,
         repo_provider: Callable[[], IndicatorPresetRepository | None],
         catalogue: IndicatorCatalogue,
-        audit: _Emitter,
+        audit: AuditEmitter,
         *,
         new_id: Callable[[], UUID],
         metrics: IndicatorPresetMetricsLike | None = None,
@@ -177,19 +246,9 @@ class IndicatorPresetService:
         return PresetNotFoundError(preset_id)
 
     async def _refresh_gauge(self, repo: IndicatorPresetRepository) -> None:
-        """After a committed write: a store outage here leaves the gauge stale until the next
-        write, never fails the request; anything else is a bug and propagates."""
-        if self._metrics is None:
-            return
-        try:
-            counts = await repo.count_live_by_builtin()
-        except Exception as exc:  # re-raised below unless the store is unreachable
-            if not is_storage_outage(exc):
-                raise
-            _log().warning("indicator_presets_gauge_stale", error=type(exc).__name__)
-            return
-        for builtin in (True, False):
-            self._metrics.presets.labels(str(builtin).lower()).set(counts.get(builtin, 0))
+        """After a committed write (`refresh_presets_gauge`): an outage never fails it."""
+        if self._metrics is not None:
+            await refresh_presets_gauge(repo, self._metrics)
 
     async def list_visible(self, owner: str) -> list[PresetRow]:
         """The built-ins and the caller's live presets (never another user's, SR-051)."""
@@ -258,10 +317,12 @@ class IndicatorPresetService:
         """`WorkspaceBundle.indicator_presets`, imported whole or not at all (SR-E13-07,
         IR-06, IR-35): each item is validated again exactly as a create (so `is_builtin` and
         `owner_user_id` are refused as unknown fields, and the caller owns what is imported);
-        refused whole past `BUNDLE_IMPORT_PRESETS_MAX` items or `BUNDLE_IMPORT_MAX_BYTES` of
-        preset JSON, on any invalid item, or past `PRESETS_PER_USER_MAX` live presets. A name
-        the caller already holds for that indicator is renamed (` (2)`, ...), never overwritten.
-        One `indicator_preset.imported` record is written ahead of the rows."""
+        refused whole past `BUNDLE_IMPORT_PRESETS_MAX` items, with an item nested deeper than a
+        create body may be (`MAX_JSON_DEPTH`, measured without recursion before anything
+        encodes it, IR-33), past `BUNDLE_IMPORT_MAX_BYTES` of preset JSON, on any invalid item,
+        or past `PRESETS_PER_USER_MAX` live presets. A name the caller already holds for that
+        indicator is renamed (` (2)`, ...), never overwritten. One `indicator_preset.imported`
+        record is written ahead of the rows."""
         if not isinstance(items, list):
             message = "indicator_presets must be an array."
             raise PresetInvalidError([{"field": "indicator_presets", "rule": "list_type",
@@ -269,6 +330,10 @@ class IndicatorPresetService:
         if len(items) > BUNDLE_IMPORT_PRESETS_MAX:
             message = f"A bundle imports at most {BUNDLE_IMPORT_PRESETS_MAX} presets."
             raise PresetBundleTooLargeError("too_many_presets", message)
+        if json_depth(items) > MAX_JSON_DEPTH + 1:  # the array, then items as deep as a body
+            message = f"An indicator preset nests deeper than {MAX_JSON_DEPTH} levels."
+            raise PresetInvalidError([{"field": "indicator_presets", "rule": "json_too_deep",
+                                       "message": message}])  # fmt: skip
         if jsonb_text_bytes(items) > BUNDLE_IMPORT_MAX_BYTES:
             message = f"A bundle imports at most {BUNDLE_IMPORT_MAX_BYTES} bytes of presets."
             raise PresetBundleTooLargeError("too_large", message)
@@ -310,7 +375,8 @@ class IndicatorPresetService:
 
 
 __all__ = [
-    "IndicatorPresetMetrics", "IndicatorPresetMetricsLike", "IndicatorPresetService",
-    "PresetBuiltinImmutableError", "PresetBundleTooLargeError", "PresetStoreUnavailableError",
-    "bundle_item", "content_sha256",
+    "GAUGE_PRIME_TIMEOUT_S", "AuditEmitter", "IndicatorPresetMetrics", "IndicatorPresetMetricsLike",
+    "IndicatorPresetService", "IndicatorPresetsGaugePrimer", "PresetBuiltinImmutableError",
+    "PresetBundleTooLargeError", "PresetStoreUnavailableError", "bundle_item", "content_sha256",
+    "refresh_presets_gauge",
 ]  # fmt: skip

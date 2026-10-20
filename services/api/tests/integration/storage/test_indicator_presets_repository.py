@@ -2,8 +2,9 @@
 migration 0040).
 
 Owner scoping (the list is the caller's rows and the built-ins; writes never reach a built-in or
-another user's row), the soft delete, `ux_ip_name` -> `name_taken`, the race-safe 500 cap and the
-atomic bundle import. CI only (testcontainers; no docker socket locally).
+another user's row), the soft delete, `ux_ip_name` -> `name_taken` and the import's renaming by
+that index's own fold, the race-safe 500 cap, the atomic bundle import, and the ticket's round
+trip through `IndicatorPresetService`. CI only (testcontainers; no docker socket locally).
 """
 
 from __future__ import annotations
@@ -21,7 +22,11 @@ import pytest
 import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.api.indicator_presets_models import PresetInput
+from candleviewer.api.indicator_presets_service import IndicatorPresetService
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.db.builtin_indicator_presets import BUILTIN_PRESETS
+from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.storage.repositories.indicator_presets import (
     MAX_LIVE_PRESETS,
     PresetConflictError,
@@ -35,6 +40,7 @@ from candleviewer.storage.repositories.indicator_presets_sqlalchemy import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.indicator_presets._presets_env import Audit, body
 
 pytestmark = pytest.mark.integration
 
@@ -231,3 +237,68 @@ async def test_counts_by_builtin_cover_every_owner(
     after = await repo.count_live_by_builtin()
     assert after[True] == len(BUILTIN_PRESETS)
     assert after[False] == before.get(False, 0) + 1
+
+
+async def test_occupancy_leaves_out_the_preset_being_renamed(
+    repo: SqlAlchemyIndicatorPresetRepository, pg_dsn: str
+) -> None:
+    """`exclude_id` (a replace's own row): its own name is free to it, another's is not."""
+    a = _user(pg_dsn)
+    fast = await repo.create(a, str(uuid.uuid4()), _f("Fast"))
+    slow = await repo.create(a, str(uuid.uuid4()), _f("Slow"))
+    assert not (await repo.occupancy(a, ("ema", "FAST"), exclude_id=fast.id)).name_taken
+    assert (await repo.occupancy(a, ("ema", "FAST"), exclude_id=slow.id)).name_taken
+
+
+async def test_import_renames_by_the_fold_of_ux_ip_name_never_by_pythons(
+    repo: SqlAlchemyIndicatorPresetRepository, pg_dsn: str
+) -> None:
+    """This database's `lower()` (libc collation) folds U+0130 onto 'i', where Python's
+    `str.lower` gives 'i' plus U+0307: the import renames the name the index would refuse (no
+    409) and keeps the one it admits."""
+    dotted, combining = "\u0130stanbul", "i\u0307stanbul"
+    with _sync(pg_dsn) as c:
+        folds = c.execute(
+            "SELECT lower(%s) = lower('istanbul'), lower(%s) = lower(%s)",
+            (dotted, dotted, combining),
+        ).fetchone()
+    assert folds == (True, False)  # the premise; Python's fold says (False, True)
+    a = _user(pg_dsn)
+    await repo.create(a, str(uuid.uuid4()), _f(dotted))
+    await repo.create(a, str(uuid.uuid4()), _f(combining, code="sma", n=20))
+    rows = await repo.import_many(
+        a, [(str(uuid.uuid4()), _f("istanbul")), (str(uuid.uuid4()), _f(dotted, "sma", n=20))]
+    )
+    assert [r.name for r in rows] == ["istanbul (2)", dotted]
+
+
+def _principal(user: str) -> AuditPrincipal:
+    perms = frozenset({"workspaces:read", "workspaces:write"})
+    return AuditPrincipal(uuid.UUID(user), "u", perms, session_id=uuid.uuid4(), ip="10.0.0.9")
+
+
+async def test_the_service_round_trip_create_list_update_delete_export_import(
+    repo: SqlAlchemyIndicatorPresetRepository, pg_dsn: str
+) -> None:
+    """The ticket's integration plan on the real store: create -> list -> update -> delete ->
+    export bundle -> import bundle, through `IndicatorPresetService`."""
+    a, b = _user(pg_dsn), _user(pg_dsn)
+    service = IndicatorPresetService(lambda: repo, default_catalogue(), Audit(), new_id=uuid.uuid4)
+    first = await service.create(_principal(a), PresetInput.model_validate(body(name="Fast")))
+    keep = await service.create(
+        _principal(a), PresetInput.model_validate(body(name="Slow", params={"n": 50}))
+    )
+    assert {first.id, keep.id} <= {r.id for r in await service.list_visible(a)}
+    faster = PresetInput.model_validate(body(name="Faster", params={"n": 5}))
+    updated = await service.replace(_principal(a), first.id, faster)
+    assert (updated.name, updated.params, updated.updated_at > first.updated_at) == (
+        "Faster", {"n": 5}, True,
+    )  # fmt: skip
+    await service.soft_delete(_principal(a), keep.id)
+    exported = await service.export_for_bundle(a)
+    assert exported == [body(name="Faster", params={"n": 5})]
+    imported = await service.import_from_bundle(_principal(b), exported)
+    assert [(r.owner_user_id, r.name, r.params, r.is_builtin) for r in imported] == [
+        (b, "Faster", {"n": 5}, False)
+    ]
+    assert [r.id for r in await service.list_visible(b) if not r.is_builtin] == [imported[0].id]

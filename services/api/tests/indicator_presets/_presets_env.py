@@ -25,7 +25,7 @@ from candleviewer.storage.repositories.indicator_presets import (
     PresetFields,
     PresetNotFoundError,
     PresetRow,
-    unique_name,
+    name_candidates,
 )
 
 USER_A = uuid.UUID("00000000-0000-4000-8000-00000000000a")
@@ -173,9 +173,10 @@ class FakePresetRepo:
         for r in self.own_live(owner):
             taken.setdefault(r.indicator_code, set()).add(r.name.lower())
         out = []
-        for preset_id, fields in items:
+        for preset_id, fields in items:  # this fake folds as `_taken` does (Python's lower)
             names = taken.setdefault(fields.indicator_code, set())
-            free = unique_name(fields.name, names)
+            free = next(c for c in name_candidates(fields.name, len(names) + 2)
+                        if c.lower() not in names)  # fmt: skip
             names.add(free.lower())
             out.append(self._insert(owner, preset_id, dataclasses.replace(fields, name=free)))
         return out
@@ -266,6 +267,7 @@ class Env:
             lambda: self.repo if self.repo_up else None, _Resolver() if wired else None,
             self.audit, default_catalogue(), metrics=self.metrics, new_id=new_ids(),
         ))  # fmt: skip
+        self.app = app  # for an `httpx.ASGITransport` (a streamed body read as it arrives)
         self.c = TestClient(app)
 
     def create(self, **over: Any) -> dict[str, Any]:

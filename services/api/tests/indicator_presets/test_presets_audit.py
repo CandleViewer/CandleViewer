@@ -1,9 +1,11 @@
 """`/indicator-presets` audit and metrics (E13-T03, #427; C-2.9, IR-19, O1): every write is
 recorded ahead of the row, the record carries the code and a content digest but never the
-parameters, a refused record stores nothing, and the two series follow the writes."""
+parameters, a refused record stores nothing, and the two series follow the writes (the gauge is
+read at startup too)."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -27,7 +29,11 @@ from sqlalchemy.exc import OperationalError
 from structlog.testing import capture_logs
 
 from candleviewer.api.indicator_presets_models import PresetInput
-from candleviewer.api.indicator_presets_service import IndicatorPresetService, content_sha256
+from candleviewer.api.indicator_presets_service import (
+    IndicatorPresetService,
+    IndicatorPresetsGaugePrimer,
+    content_sha256,
+)
 from candleviewer.audit.redact import redact
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
@@ -206,3 +212,92 @@ async def test_a_gauge_read_that_fails_for_a_bug_is_not_swallowed() -> None:
     repo.count_live_by_builtin = broken  # type: ignore[method-assign]  # a bug, not an outage
     with pytest.raises(RuntimeError):
         await service.create(principal(), PresetInput.model_validate(body()))
+
+
+# --- the gauge at startup ---------------------------------------------------------------------
+
+_PRIMER_TASK = "indicator-presets-gauge"
+
+
+def _primer_tasks() -> list[asyncio.Task[Any]]:
+    return [t for t in asyncio.all_tasks() if t.get_name() == _PRIMER_TASK]
+
+
+def _hanging(entered: asyncio.Event) -> Any:
+    """A `count_live_by_builtin` whose store never answers."""
+
+    async def hangs() -> dict[bool, int]:
+        entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError("never answered")
+
+    return hangs
+
+
+async def test_the_gauge_is_read_at_startup_before_any_write() -> None:
+    """Both series are exported from the start, not only after the first create, delete or
+    import; a user class with no live preset reads 0."""
+    repo, metrics = FakePresetRepo(), Metrics()
+    await IndicatorPresetsGaugePrimer(lambda: repo, metrics).prime()
+    assert metrics.presets.values == {("true",): 18, ("false",): 0}
+    assert [name for name, _ in repo.calls] == ["count_live_by_builtin"]
+
+
+async def test_start_reads_the_gauge_once_in_a_task_of_its_own() -> None:
+    repo, metrics = FakePresetRepo(), Metrics()
+    primer = IndicatorPresetsGaugePrimer(lambda: repo, metrics)
+    primer.start()
+    primer.start()  # the lifespan starts it once; a second start reads nothing more
+    (task,) = _primer_tasks()
+    await task
+    assert metrics.presets.values == {("true",): 18, ("false",): 0}
+    assert [name for name, _ in repo.calls] == ["count_live_by_builtin"]
+    await primer.stop()  # a finished read: nothing left to cancel
+
+
+async def test_stop_cancels_a_read_still_in_flight() -> None:
+    repo, metrics, entered = FakePresetRepo(), Metrics(), asyncio.Event()
+    repo.count_live_by_builtin = _hanging(entered)  # type: ignore[method-assign]  # store hangs
+    primer = IndicatorPresetsGaugePrimer(lambda: repo, metrics)
+    primer.start()
+    await entered.wait()
+    await primer.stop()
+    await primer.stop()  # a second stop has nothing to cancel
+    assert _primer_tasks() == [] and metrics.presets.values == {}
+
+
+async def test_a_store_that_does_not_answer_in_time_leaves_the_gauge_unset() -> None:
+    repo, metrics, entered = FakePresetRepo(), Metrics(), asyncio.Event()
+    repo.count_live_by_builtin = _hanging(entered)  # type: ignore[method-assign]  # store hangs
+    with capture_logs() as logs:
+        await IndicatorPresetsGaugePrimer(lambda: repo, metrics, timeout_s=0).prime()
+    assert entered.is_set() and metrics.presets.values == {}
+    assert {"event": "indicator_presets_gauge_stale", "error": "TimeoutError",
+            "log_level": "warning"} in logs  # fmt: skip
+
+
+async def test_a_store_outage_at_startup_leaves_the_gauge_unset_and_is_logged() -> None:
+    repo, metrics = FakePresetRepo(), Metrics()
+    repo.fail = OperationalError("SELECT 1", {}, ConnectionError("gone"))
+    with capture_logs() as logs:
+        await IndicatorPresetsGaugePrimer(lambda: repo, metrics).prime()
+    assert metrics.presets.values == {}
+    assert {"event": "indicator_presets_gauge_stale", "error": "OperationalError",
+            "log_level": "warning"} in logs  # fmt: skip
+
+
+async def test_a_bug_at_startup_is_logged_and_never_leaves_the_task_failed() -> None:
+    repo, metrics = FakePresetRepo(), Metrics()
+    repo.fail = RuntimeError("bug")
+    with capture_logs() as logs:
+        await IndicatorPresetsGaugePrimer(lambda: repo, metrics).prime()
+    assert metrics.presets.values == {}
+    assert [(e["event"], e["log_level"]) for e in logs] == [
+        ("indicator_presets_gauge_failed", "error")
+    ]
+
+
+async def test_without_a_store_the_primer_reads_and_sets_nothing() -> None:
+    metrics = Metrics()
+    await IndicatorPresetsGaugePrimer(lambda: None, metrics).prime()
+    assert metrics.presets.values == {}

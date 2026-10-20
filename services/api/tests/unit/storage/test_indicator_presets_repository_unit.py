@@ -9,6 +9,7 @@ Real-Postgres behaviour (the cap race, `ux_ip_name`, round trips) lives in
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,13 +27,15 @@ from candleviewer.storage.repositories.indicator_presets import (
     PresetNotFoundError,
     PresetRow,
     PresetShapeError,
-    unique_name,
+    name_candidates,
 )
 
 _T = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 _OWNER = "00000000-0000-4000-8000-00000000000a"
 _STATEMENTS = {n: v for n, v in vars(mod).items() if isinstance(v, sa.TextClause)}
 _WRITES = ("_INSERT", "_UPDATE", "_SOFT_DELETE")
+#: Statements that read no table: the owner lock and Postgres's own `lower()` of given names.
+_TABLELESS = frozenset({"_LOCK_OWNER", "_FOLD"})
 
 
 def _fields(name: str = "Fast", code: str = "ema") -> PresetFields:
@@ -54,11 +57,11 @@ def _mapping(**over: object) -> dict[str, object]:
 def test_the_statement_set_is_pinned() -> None:
     assert set(_STATEMENTS) == {
         "_LOCK_OWNER", "_LIST", "_GET_OWN", "_OTHER_CLASS", "_OCCUPANCY", "_COUNT_OWN",
-        "_NAMES_OWN", "_INSERT", "_UPDATE", "_SOFT_DELETE", "_COUNT_LIVE",
+        "_NAMES_OWN", "_FOLD", "_INSERT", "_UPDATE", "_SOFT_DELETE", "_COUNT_LIVE",
     }  # fmt: skip
 
 
-@pytest.mark.parametrize("name", sorted(set(_STATEMENTS) - mod.UNSCOPED - {"_LOCK_OWNER"}))
+@pytest.mark.parametrize("name", sorted(set(_STATEMENTS) - mod.UNSCOPED - _TABLELESS))
 def test_every_write_statement_filters_owner(name: str) -> None:
     """IR-01/SR-051: the owner filter is part of each statement itself, never added later."""
     text = str(_STATEMENTS[name])
@@ -68,6 +71,22 @@ def test_every_write_statement_filters_owner(name: str) -> None:
         assert "AND (owner_user_id = CAST(:owner AS uuid) OR owner_user_id IS NULL)" in text
     else:  # the caller's own rows, never a built-in
         assert "owner_user_id = CAST(:owner AS uuid) AND NOT is_builtin" in text
+
+
+@pytest.mark.parametrize("name", sorted(_TABLELESS))
+def test_the_owner_lock_and_the_fold_read_no_table(name: str) -> None:
+    assert "FROM indicator_presets" not in str(_STATEMENTS[name])
+
+
+def test_import_keys_are_postgres_lower_as_ux_ip_name_folds_them() -> None:
+    """The keys an import compares are `lower()` in Postgres, the expression `ux_ip_name`
+    indexes, of the stored names and of every name it may give; never Python's `str.lower`."""
+    names = str(_STATEMENTS["_NAMES_OWN"])
+    assert names.startswith("SELECT indicator_code, lower(name) AS name_key FROM indicator_presets")
+    fold = str(_STATEMENTS["_FOLD"])
+    assert fold.startswith("SELECT lower(n) AS name_key FROM unnest(CAST(:names AS text[]))")
+    assert fold.endswith(" WITH ORDINALITY AS c(n, i) ORDER BY i")
+    assert ".lower()" not in inspect.getsource(mod)
 
 
 def test_only_two_statements_are_unscoped_and_they_return_no_row_data() -> None:
@@ -170,24 +189,24 @@ def test_limit_reached_has_no_field() -> None:
     assert (err.rule, err.field) == ("limit_reached", None)
 
 
-# --- unique_name (bundle import) ----------------------------------------------------------------
+# --- name_candidates (bundle import) -----------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("name", "taken", "expected"),
+    ("name", "count", "expected"),
     [
-        ("Fast", set(), "Fast"),
-        ("Fast", {"fast"}, "Fast (2)"),
-        ("Fast", {"fast", "fast (2)"}, "Fast (3)"),
-        ("x" * 80, {"x" * 80}, "x" * 76 + " (2)"),
-        ("a" * 75 + "     b", {"a" * 75 + "     b"}, "a" * 75 + " (2)"),  # the cut is trimmed
+        ("Fast", 1, ["Fast"]),
+        ("Fast", 3, ["Fast", "Fast (2)", "Fast (3)"]),
+        ("x" * 80, 2, ["x" * 80, "x" * 76 + " (2)"]),
+        ("a" * 74 + "     b", 2, ["a" * 74 + "     b", "a" * 74 + " (2)"]),  # the cut is trimmed
+        ("y" * 76 + " (2)", 3, ["y" * 76 + " (2)"] * 2 + ["y" * 76 + " (3)"]),  # one repeat only
     ],
 )
-def test_unique_name_suffixes_within_80_characters(
-    name: str, taken: set[str], expected: str
+def test_name_candidates_are_the_name_then_its_suffixed_copies_within_80_characters(
+    name: str, count: int, expected: list[str]
 ) -> None:
-    got = unique_name(name, taken)
-    assert got == expected and len(got) <= NAME_MAX
+    got = name_candidates(name, count)
+    assert got == expected and all(len(candidate) <= NAME_MAX for candidate in got)
 
 
 # --- methods against a stub unit of work ------------------------------------------------------
@@ -235,6 +254,31 @@ class _Session:
         return self._script.pop(0)
 
 
+#: LATIN CAPITAL LETTER I WITH DOT ABOVE, and the 'i' + COMBINING DOT ABOVE Python lowers it to.
+_I_DOT, _I_COMBINING = "\u0130", "i\u0307"
+
+
+def _pg_lower(text: str) -> str:
+    """Postgres's `lower()` under a libc collation: one character at a time, the simple case
+    mapping, so U+0130 folds onto 'i'; Python's `str.lower` gives 'i' plus U+0307."""
+    return "".join("i" if ch == _I_DOT else ch.lower() for ch in text)
+
+
+class _Folding(_Session):
+    """`_FOLD` answered as Postgres would (`fold` of each name, in order); the rest scripted."""
+
+    def __init__(self, script: list[_Result], fold: Callable[[str], str] = _pg_lower) -> None:
+        super().__init__(script)
+        self._fold = fold
+
+    async def execute(self, stmt: sa.TextClause, params: dict[str, Any] | None = None) -> _Result:
+        if stmt is not mod._FOLD:
+            return await super().execute(stmt, params)
+        self.executed.append("_FOLD")
+        self.params.append(params or {})
+        return _Result([{"name_key": self._fold(n)} for n in (params or {})["names"]])
+
+
 class _Uow:
     def __init__(self, session: _Session) -> None:
         self.session, self.commits = session, 0
@@ -251,7 +295,7 @@ class _Uow:
 
 class _Rel:
     def __init__(self, *script: _Result) -> None:
-        self.uow = _Uow(_Session(list(script)))
+        self.uow = _Uow(_Folding(list(script)))
 
     def unit_of_work(self) -> _Uow:
         return self.uow
@@ -408,11 +452,22 @@ async def test_import_many_past_the_live_cap_is_limit_reached_and_inserts_nothin
     assert uow.session.executed == ["_LOCK_OWNER", "_COUNT_OWN"]
 
 
+def _sent(uow: _Uow, statement: str) -> list[dict[str, Any]]:
+    """The bound parameters of each `statement` executed, in order."""
+    session = uow.session
+    return [p for n, p in zip(session.executed, session.params, strict=True) if n == statement]
+
+
+def _inserts(uow: _Uow) -> list[tuple[str, str, str]]:
+    """(id, indicator_code, name) of each `_INSERT`, in order."""
+    return [(p["id"], p["indicator_code"], p["name"]) for p in _sent(uow, "_INSERT")]
+
+
 async def test_import_many_renames_collisions_with_stored_and_earlier_items_never_overwrites() -> (
     None
 ):
     stored = _Result(
-        [{"indicator_code": "ema", "name": "Fast"}, {"indicator_code": "sma", "name": "X"}]
+        [{"indicator_code": "ema", "name_key": "fast"}, {"indicator_code": "sma", "name_key": "x"}]
     )
     inserted = [_Result([_mapping(id=i, name=n)]) for i, n in
                 (("a", "Fast (2)"), ("b", "fast (3)"), ("c", "Slow"), ("d", "Fast"))]  # fmt: skip
@@ -421,14 +476,33 @@ async def test_import_many_renames_collisions_with_stored_and_earlier_items_neve
              ("d", _fields("Fast", code="rsi"))]  # fmt: skip
     rows = await repo.import_many(_OWNER, items)
     assert [r.id for r in rows] == ["a", "b", "c", "d"] and uow.commits == 1
-    written = [(p["id"], p["indicator_code"], p["name"]) for p in uow.session.params[3:]]
-    assert written == [("a", "ema", "Fast (2)"), ("b", "ema", "fast (3)"), ("c", "ema", "Slow"),
-                       ("d", "rsi", "Fast")]  # fmt: skip
-    assert uow.session.executed == ["_LOCK_OWNER", "_COUNT_OWN", "_NAMES_OWN", *["_INSERT"] * 4]
+    assert _inserts(uow) == [("a", "ema", "Fast (2)"), ("b", "ema", "fast (3)"),
+                             ("c", "ema", "Slow"), ("d", "rsi", "Fast")]  # fmt: skip
+    assert uow.session.executed == [
+        "_LOCK_OWNER", "_COUNT_OWN", "_NAMES_OWN",
+        "_FOLD", "_FOLD", "_INSERT",  # "Fast" is held: its candidates are folded next
+        "_FOLD", "_FOLD", "_INSERT", "_FOLD", "_INSERT", "_FOLD", "_INSERT",
+    ]  # fmt: skip
+    candidates = [p["names"] for p in _sent(uow, "_FOLD")]
+    assert candidates[:2] == [["Fast"], ["Fast", "Fast (2)", "Fast (3)"]]  # held keys + 2
+
+
+async def test_import_many_folds_names_as_postgres_does_not_as_python_does() -> None:
+    """`ux_ip_name` decides with Postgres's `lower()`, which folds U+0130 onto 'i' where
+    Python's `str.lower` gives 'i' plus U+0307; the import takes every key from Postgres, so it
+    renames what the index would refuse and keeps what the index admits."""
+    stored = _Result([{"indicator_code": "ema", "name_key": _pg_lower(f"{_I_DOT}stanbul")},
+                      {"indicator_code": "sma", "name_key": f"{_I_COMBINING}stanbul"}])  # fmt: skip
+    assert f"{_I_DOT}stanbul".lower() == f"{_I_COMBINING}stanbul"  # where Python alone would go
+    inserted = [_Result([_mapping(id="a")]), _Result([_mapping(id="b")])]
+    repo, uow = _repo(_Result([{"lock": None}]), _count(2), stored, *inserted)
+    items = [("a", _fields("istanbul")), ("b", _fields(f"{_I_DOT}stanbul", code="sma"))]
+    await repo.import_many(_OWNER, items)
+    assert _inserts(uow) == [("a", "ema", "istanbul (2)"), ("b", "sma", f"{_I_DOT}stanbul")]
 
 
 async def test_import_many_maps_an_integrity_error_and_commits_nothing() -> None:
-    class _Raising(_Session):
+    class _Raising(_Folding):
         async def execute(
             self, stmt: sa.TextClause, params: dict[str, Any] | None = None
         ) -> _Result:
