@@ -46,6 +46,8 @@ _BODY_KINDS = {
     "5": ("footprint", 2, 33),
     "6": ("heatmap_column", 1, 16),
 }
+#: A heatmap frame is one column: its header's `record_count` is 1 (23 section 3.4).
+_HEATMAP_COLUMNS_PER_FRAME = 1
 #: The envelope's `t` values, 23 section 3.1: closed, so compared exactly.
 _FRAME_TYPES = (
     "hello",
@@ -149,6 +151,7 @@ def _golden_of_the_facts(contract: Contract) -> Contract:
         }
         for kind, (name, version, stride) in _BODY_KINDS.items()
     }
+    golden["body_kinds"]["6"]["header_record_count"] = _HEATMAP_COLUMNS_PER_FRAME
     golden["envelope"] = {**contract["envelope"], "frame_types": list(_FRAME_TYPES)}
     golden["close_codes"] = copy.deepcopy(_CLOSE_CODES)
     golden["subprotocols"] = copy.deepcopy(_SUBPROTOCOLS)
@@ -267,6 +270,7 @@ BREAKING: list[Any] = [
     pytest.param(_set("body_kinds|3|record_stride", 24), id="body-kind-stride-changed"),
     pytest.param(_set("body_kinds|4|format_version", 3), id="body-kind-version-changed"),
     pytest.param(_delete("body_kinds|4"), id="body-kind-removed"),
+    pytest.param(_set("body_kinds|6|header_record_count", 2), id="heatmap-column-count-changed"),
     pytest.param(_append("envelope|frame_types", "cancel"), id="frame-type-added"),
     pytest.param(_remove("envelope|frame_types", "ctl"), id="frame-type-removed"),
     pytest.param(_remove("close_codes|gateway", 4429), id="close-code-removed"),

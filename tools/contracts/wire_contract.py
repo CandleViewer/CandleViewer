@@ -125,9 +125,10 @@ DECLARED: Final[dict[str, Mapping[str, Any]]] = {
 }
 #: What this tool pins that a golden may not hold yet: a group that `compare` reads with `.get`
 #: (`body_kinds`, `control_frames`, `enums`, `bounds`, `error_codes`, `limits` or `topics`; the
-#: other five are read directly, and a golden without one is malformed), or a declared member as
-#: `bounds.<name>`, `enums.<name>` or `limits.<key>`. Empty when every pin is recorded. To start
-#: pinning something new, name it here, run `--extend`, and remove the name in the same change.
+#: other five are read directly, and a golden without one is malformed), a declared member as
+#: `bounds.<name>`, `enums.<name>` or `limits.<key>`, or the path of a new member of a pinned layout
+#: such as `body_kinds.6.header_record_count`. Empty when every pin is recorded. To start pinning
+#: something new, name it here, run `--extend`, and remove the name in the same change.
 PIN_ADDITIONS: Final[frozenset[str]] = frozenset()
 #: Every group of the golden. A golden that lacks one, or has it empty, promises nothing there.
 GROUPS: Final = (
@@ -209,6 +210,8 @@ def _source_of(path: str, golden: Mapping[str, Any], impl: Mapping[str, Any]) ->
     kind = (impl.get(top) or {}).get(kind_id) or (golden.get(top) or {}).get(kind_id)
     if not kind:
         return _SOURCES[top]
+    if path.endswith(".header_record_count"):  # written by the encoder, not declared in the layout
+        return f"{_API}/binary.py _header_count (encode), kind {kind['name']}"
     source = f"packages/protocol/cvwb-layout.json -> kinds[{kind['name']}]"
     return source + (".record_bytes" if path.endswith(".record_stride") else "")
 
@@ -235,7 +238,11 @@ class _Diff:
                     self.add(BREAKING, f"{path}.{k}", g[k], _MISSING, "removed")
             for k in i:
                 if k not in g:
-                    self.add(BREAKING, f"{path}.{k}", _MISSING, i[k], "added to a pinned layout")
+                    new = f"{path}.{k}"
+                    if new in PIN_ADDITIONS:  # a pin this change starts: --extend may record it
+                        self.add(ADDITIVE, new, _MISSING, i[k], "new pin")
+                    else:
+                        self.add(BREAKING, new, _MISSING, i[k], "added to a pinned layout")
         elif isinstance(g, list) and isinstance(i, list) and len(g) == len(i):
             for n, (a, b) in enumerate(zip(g, i, strict=True)):
                 self.exact(f"{path}[{n}]", a, b)
@@ -819,6 +826,38 @@ def _layout_findings(layout: Mapping[str, Any]) -> list[Finding]:
     return out
 
 
+def _frame_units(layout: Mapping[str, Any], found: list[Finding]) -> dict[str, int]:
+    """The header `record_count` of each kind whose body counts its own rows (a counted body
+    prefix), as `ws.binary.encode` writes it for every vector frame of the kind: one unit per
+    frame (23 section 3.4). A decoder may take that count as the rule (it is the one a frame
+    carries), so a server that wrote another is a change to the wire, and it is pinned."""
+    from candleviewer.ws import binary
+    from candleviewer.ws.cvwb_vectors import vector_frames
+
+    head = {f["name"]: f for f in _fields(layout["header"])}["record_count"]
+    code, at = "<" + _struct_code(head["type"]), head["offset"]
+    counted = {
+        k["id"]: k["name"]
+        for k in layout["kinds"]
+        if any(f.get("count") for f in _fields(k.get("body_prefix", [])))
+    }
+    counts: dict[int, set[int]] = {}
+    for _, frame in vector_frames():
+        if frame.body_kind in counted:
+            data = binary.encode(frame)
+            counts.setdefault(frame.body_kind, set()).add(struct.unpack_from(code, data, at)[0])
+    src = f"{_API}/binary.py (encode), observed on ws/cvwb_vectors.vector_frames()"
+    units: dict[str, int] = {}
+    for kid, name in sorted(counted.items()):
+        seen = counts.get(kid, set())
+        if len(seen) != 1:
+            path, labels = f"body_kinds.{kid}.header_record_count", ("one count", "ws/binary.py")
+            found.append(_inconsistent(path, "one count", sorted(seen), labels, src, name))
+            continue
+        units[str(kid)] = next(iter(seen))
+    return units
+
+
 def _close_codes(found: list[Finding]) -> dict[str, Any]:
     """Every `bye` reason with the (code, reconnect) its builders answer, which must be one answer;
     and the code sets."""
@@ -919,10 +958,13 @@ def collect(
         found.append(
             _inconsistent(path, frame_types, envelope["frame_types"], labels, _SOURCES["envelope"])
         )
+    kinds = _kinds(layout)
+    for kid, count in _frame_units(layout, found).items():
+        kinds[kid]["header_record_count"] = count
     contract = {
         "contract": CONTRACT,
         "header": _header(layout),
-        "body_kinds": _kinds(layout),
+        "body_kinds": kinds,
         "envelope": envelope,
         "control_frames": bundle.control_frames(),
         "enums": bundle.enums(),

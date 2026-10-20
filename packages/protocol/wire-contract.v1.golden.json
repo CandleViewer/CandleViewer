@@ -123,7 +123,8 @@
           {"name": "price_step", "type": "i64", "offset": 12, "size": 8},
           {"name": "row_count", "type": "u32", "offset": 20, "size": 4, "count": true}
         ]
-      }
+      },
+      "header_record_count": 1
     }
   },
   "envelope": {

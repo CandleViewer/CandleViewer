@@ -84,7 +84,7 @@ C-6.3. When in doubt, it is breaking.
 ### What the golden pins, and what it does not
 
 `wire-contract.v1.golden.json` pins: the 24-byte header and every body kind field by field (offsets,
-sizes, reserved bytes, header flag names, `format_version`, length rule); the envelope (frame types,
+sizes, reserved bytes, header flag names, `format_version`, length rule, and the heatmap's one column per frame); the envelope (frame types,
 members, the members each frame type requires, the member types a frame type adds); every control frame
 of §13.1 to §13.6 (required members, the JSON type of each member, whether it admits others); the pinned
 enumerations (two of them open); the close codes with the reason-to-code map and each `reconnect`; the
@@ -115,8 +115,10 @@ pass: restore it from git (`git restore -- packages/protocol/wire-contract.v1.go
 creates the first golden and refuses to overwrite one, and a diff that `--extend` refuses is breaking.
 A bound, enumeration or limit that `wire_contract.py` declares and the golden lacks is reported as damage;
 any other member removed from the golden by hand reads as a promise never made and shows as a deleted line
-in the golden's diff. To start pinning something new, name it in `PIN_ADDITIONS` in `wire_contract.py`, run
-`--extend`, and remove the name in the same change.
+in the golden's diff. To start pinning something new, name it in `PIN_ADDITIONS` in `wire_contract.py` (a group that
+`compare` reads with `.get`: `body_kinds`, `control_frames`, `enums`, `bounds`, `error_codes`, `limits` or `topics`; a
+bound, enumeration or limit the tool declares; or a new member of a pinned kind by its path, as
+`body_kinds.6.header_record_count` was), run `--extend`, and remove the name in the same change.
 
 ### Additive: free, no `cv.v2`
 
@@ -152,6 +154,8 @@ in the golden's diff. To start pinning something new, name it in `PIN_ADDITIONS`
   contract.
 - Naming a header flag bit or a reserved record byte: the golden pins the header and every record field
   by name, offset and size, so it needs `cv.v2` although decoders ignore the bytes.
+- A heatmap frame with other than one column (its header's `record_count`, which the golden pins): it needs
+  `cv.v2`.
 - Changing what consumes a sequence number, what a `snap` resets, or what a resync does (23 §3.3, §7).
 - Changing the envelope codec rules: framing, the `e` values, the subprotocol names.
 

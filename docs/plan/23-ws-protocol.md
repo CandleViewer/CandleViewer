@@ -104,7 +104,7 @@ The version is negotiated by the subprotocol (`cv.v1.*`, §2.2) and carried by `
 
 **Freeze (E17-T07, #572, 2026-10-20).** `cv.v1` is frozen. `packages/protocol/wire-contract.v1.golden.json`, generated from the implementation by `tools/contracts/wire_contract.py` and never edited by hand, pins:
 
-- the 24-byte binary header and every body kind's layout, field by field: offsets, sizes, the reserved bytes and the header flag names included;
+- the 24-byte binary header and every body kind's layout, field by field: offsets, sizes, the reserved bytes and the header flag names included, and that a heatmap frame carries one column (its header's `record_count` is 1);
 - the envelope: its frame types, its members and their types, the members each frame type requires, and the member types a frame type adds (`s` is an integer on every `d`);
 - every control frame of §13.1 to §13.6: its required members, the JSON type of each member and whether it admits others;
 - the pinned server-to-client enumerations of §13 (two of them open), the close codes with the reasons that map to them and each reason's `reconnect`, the error codes with their scope, `retryable` and close code, the six advertised limits (each as a floor or a ceiling, at the shipped defaults), the topic names with the name of each payload schema, and the subprotocols;

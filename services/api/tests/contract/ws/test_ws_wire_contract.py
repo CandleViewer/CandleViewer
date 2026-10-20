@@ -128,6 +128,9 @@ BREAKING: list[Any] = [
     # the golden pins the declared layout exactly: a header flag name and a reserved byte are in it
     pytest.param(_append("header|flags", "compressed"), id="header-flag-named"),
     pytest.param(_name_reserved_byte, id="reserved-byte-named"),
+    # a heatmap frame is one column: the golden pins its header's `record_count` (23 section 3.4)
+    pytest.param(_set("body_kinds|6|header_record_count", 2), id="heatmap-column-count-changed"),
+    pytest.param(_delete("body_kinds|6|header_record_count"), id="heatmap-column-count-removed"),
     # what the pre-freeze tightening set: `s` on a `d`, and the bounds of the options and `sub_id`
     pytest.param(_set("envelope|per_type_properties|d|s", "integer|null"), id="d-s-nullable-again"),
     pytest.param(_delete("envelope|per_type_properties|d"), id="d-members-removed"),
@@ -234,6 +237,44 @@ def test_codec_stride_drift_without_declaration_edit_fails(monkeypatch: pytest.M
     drift = [f for f in wc.breaking(findings) if f.path == "consistency.body_kinds.3.record_stride"]
     assert [(f.golden, f.impl) for f in drift] == [(22, 24)]
     assert "ws/binary.py" in wc.render(findings)
+
+
+def _writes_two_heatmap_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The encoder puts 2 in the header's `record_count` of a heatmap frame."""
+    real = binary.encode
+
+    def two_columns(frame: Any, weight: int = 0) -> bytes:
+        raw = bytearray(real(frame, weight))
+        if frame.body_kind == 6:
+            raw[12:16] = (2).to_bytes(4, "little")  # the header's `record_count` (offset 12, u32)
+        return bytes(raw)
+
+    monkeypatch.setattr(binary, "encode", two_columns)
+
+
+def test_a_server_that_writes_two_heatmap_columns_fails_the_golden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    golden = _golden()  # before the patch: the cached baseline is the real codec's, in any order
+    _writes_two_heatmap_columns(monkeypatch)
+    findings = wc.check(golden, wc.collect())
+    changed = [f for f in wc.breaking(findings) if f.path == "body_kinds.6.header_record_count"]
+    assert [(f.golden, f.impl) for f in changed] == [(1, 2)]
+    text = wc.render(findings)
+    assert "cv.v2" in text and "ws/binary.py _header_count" in text  # the encoder, not the layout
+
+
+def test_a_wrong_heatmap_count_is_one_finding_and_never_a_length_rule_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The decoder refuses a heatmap frame whose count is not 1, so a trailing byte cannot be
+    probed on it: the kind's `length_rule` is not reported, and the one finding is the count."""
+    golden = _golden()
+    _writes_two_heatmap_columns(monkeypatch)
+    findings = wc.check(golden, wc.collect())
+    assert [(f.severity, f.path) for f in findings] == [
+        (wc.BREAKING, "body_kinds.6.header_record_count")
+    ]
 
 
 def test_two_bye_builders_that_disagree_are_a_finding(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -512,6 +553,34 @@ def test_a_name_in_pin_additions_is_extended_and_not_damage(
     path.write_text(wc.render_golden(golden), encoding="utf-8")
     assert wc.main(["--extend", "--golden", str(path)]) == 0
     assert json.loads(path.read_text(encoding="utf-8")) == _golden()  # the pin is recorded
+
+
+def test_a_new_member_of_a_pinned_kind_is_breaking_unless_pin_additions_names_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    golden = _golden()
+    del golden["body_kinds"]["6"]["header_record_count"]
+    findings = wc.compare(golden, _base().contract)
+    assert [(f.severity, f.path) for f in findings] == [
+        (wc.BREAKING, "body_kinds.6.header_record_count")
+    ]
+    assert findings[0].note == "added to a pinned layout"
+    monkeypatch.setattr(wc, "PIN_ADDITIONS", frozenset({"body_kinds.6.header_record_count"}))
+    findings = wc.compare(golden, _base().contract)
+    assert [(f.severity, f.path, f.note) for f in findings] == [
+        (wc.ADDITIVE, "body_kinds.6.header_record_count", "new pin")
+    ]
+    path = tmp_path / "golden.json"
+    path.write_text(wc.render_golden(golden), encoding="utf-8")
+    assert wc.main(["--extend", "--golden", str(path)]) == 0
+    assert json.loads(path.read_text(encoding="utf-8")) == _golden()  # the pin is recorded
+    monkeypatch.setattr(wc, "PIN_ADDITIONS", frozenset())
+    assert wc.main(["--golden", str(path)]) == 0  # and checks without the name
+
+
+def test_no_pin_addition_is_left_in_the_tool() -> None:
+    """A name is listed to extend the golden and removed in the same change, so none stays."""
+    assert wc.PIN_ADDITIONS == frozenset()
 
 
 def test_a_group_in_pin_additions_is_extended_and_not_damage(
