@@ -512,7 +512,9 @@ the disable committed but no purge is scheduled: repeat the call. Once the date 
 reaper anonymises the user and revokes every credential (password, MFA methods, recovery codes,
 live sessions) in one transaction, `users.anonymise` written ahead. Its log line
 `users_anonymised` counts each batch, and a row it passed over is counted by its error class at
-error level; nothing alerts on an overdue purge yet (UL-F6).
+error level; nothing alerts on an overdue purge yet (UL-F6). A run that a failure ended (the read,
+the audit writer or the database refusing) is retried after 15 minutes, doubling up to a day. A
+socket close that fails is counted on that line too, and the session's B16 record is still written.
 One transaction sets the status, revokes the sessions and grants and writes `users.disable` ahead;
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the

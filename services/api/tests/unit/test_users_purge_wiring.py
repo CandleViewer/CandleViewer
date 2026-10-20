@@ -6,6 +6,7 @@ cascade's do (S4): its sockets close, then B16 REVOKE records it, whose action w
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -16,8 +17,12 @@ import pytest
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
 from candleviewer.storage.repositories.user_purge_sqlalchemy import SqlAlchemyUserPurgeStore
-from candleviewer.storage.retention.users_purge_tasks import UsersPurgeTask
-from candleviewer.user_cascade_wiring import PurgedSessions, build_users_purge_task
+from candleviewer.storage.retention.users_purge_tasks import SESSION_END_TIMEOUT_S, UsersPurgeTask
+from candleviewer.user_cascade_wiring import (
+    PURGED_CLOSE_TIMEOUT_S,
+    PurgedSessions,
+    build_users_purge_task,
+)
 
 _SID = uuid.uuid4()
 _NOW = datetime(2026, 10, 19, 9, 0, tzinfo=UTC)
@@ -64,6 +69,45 @@ async def test_a_purged_session_whose_row_is_gone_fails_after_its_sockets_close(
     with pytest.raises(LookupError):
         await PurgedSessions(_auth(w), w, w.publish).end(_SID, _NOW)
     assert w.log == [("socket", str(_SID), "user_disabled"), ("row", str(_SID))]
+
+
+async def test_a_failed_socket_close_still_records_b16_then_raises() -> None:
+    """A sink that raises costs nothing else, as `publish_revoked` isolates it and the disable's
+    `socket_close` step is a step of its own: B16 still records the REVOKE on the session's chart,
+    then the sink's error is raised for the reaper to count (the row is revoked already)."""
+    w = _World()
+
+    async def publish(session_id: str, reason: str) -> None:
+        w.log.append(("socket", session_id, reason))
+        raise RuntimeError("hub down")
+
+    with pytest.raises(RuntimeError, match="hub down"):
+        await PurgedSessions(_auth(w), w, publish).end(_SID, _NOW)
+    assert w.log == [
+        ("socket", str(_SID), "user_disabled"),
+        ("row", str(_SID)),
+        ("b16", "row", _NOW, "user_disabled"),
+    ]
+
+
+async def test_a_hung_socket_close_is_cut_by_its_own_bound_and_b16_still_records() -> None:
+    """The close is bounded within the reaper's per-session bound, so a slow one never costs the
+    record: B16 records the REVOKE, then the close's timeout is raised."""
+    w = _World()
+
+    async def publish(session_id: str, reason: str) -> None:
+        await asyncio.Event().wait()
+
+    run = asyncio.create_task(
+        PurgedSessions(_auth(w), w, publish, close_timeout_s=0).end(_SID, _NOW)
+    )
+    try:
+        done, _ = await asyncio.wait({run}, timeout=5)
+        assert run in done and isinstance(run.exception(), TimeoutError)
+    finally:
+        run.cancel()
+    assert w.log == [("row", str(_SID)), ("b16", "row", _NOW, "user_disabled")]
+    assert 0 < PURGED_CLOSE_TIMEOUT_S < SESSION_END_TIMEOUT_S  # the record keeps the rest
 
 
 async def test_the_chart_is_looked_up_when_a_session_ends_not_when_built() -> None:

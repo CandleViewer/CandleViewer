@@ -65,7 +65,7 @@ from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import (
     SqlAlchemyUserLifecycleStore,
 )
 from candleviewer.storage.repositories.user_purge_sqlalchemy import SqlAlchemyUserPurgeStore
-from candleviewer.storage.retention.users_purge_tasks import UsersPurgeTask
+from candleviewer.storage.retention.users_purge_tasks import SESSION_END_TIMEOUT_S, UsersPurgeTask
 
 if TYPE_CHECKING:
     from candleviewer.auth.service import AuthService
@@ -284,23 +284,46 @@ def build_user_disable_service(
     )
 
 
+#: Bounds a purged session's socket close within its end, so a slow close still leaves its B16
+#: record the rest of the reaper's bound (`SESSION_END_TIMEOUT_S`).
+PURGED_CLOSE_TIMEOUT_S: Final = SESSION_END_TIMEOUT_S / 2
+
+
 class PurgedSessions:
     """`users_purge_tasks.SessionEnder` (E42-T10 #2650). A session the anonymisation revoked in its
     transaction ends as a disable's does (S4): its sockets close (`bye user_disabled`, 4403), then
     B16 `REVOKE`, whose action writes `auth.session_revoked` (R5). A disabled user should hold
     none: the disable revoked them, and a mint or a refresh refuses the user. The chart is looked
-    up when a session ends, since it exists only once `AuthService.start()` ran."""
+    up when a session ends, since it exists only once `AuthService.start()` ran. The close is
+    bounded and isolated as the disable's `socket_close` step is: one that fails or is late never
+    costs the record, and its error is raised once B16 has recorded, for the reaper to count."""
 
-    def __init__(self, auth: AuthService, rows: SessionRows, publish: RevocationSink) -> None:
+    def __init__(
+        self,
+        auth: AuthService,
+        rows: SessionRows,
+        publish: RevocationSink,
+        *,
+        close_timeout_s: float = PURGED_CLOSE_TIMEOUT_S,
+    ) -> None:
         self._auth, self._rows, self._publish = auth, rows, publish
+        self._close_timeout_s = close_timeout_s
 
     async def end(self, session_id: uuid.UUID, now: datetime) -> None:
-        """Raises `LookupError` for a row that is gone, or what the sink or the chart raises."""
-        await self._publish(str(session_id), REVOKED_REASON)
+        """Raises `LookupError` for a row that is gone, what the chart raises, or, once B16 has
+        recorded, what the close raised (its timeout included)."""
+        unclosed: Exception | None = None
+        try:
+            async with asyncio.timeout(self._close_timeout_s):
+                await self._publish(str(session_id), REVOKED_REASON)
+        except Exception as exc:  # isolated, as `publish_revoked` isolates the sink
+            unclosed = exc
         record = await self._rows.find_by_id(str(session_id))
         if record is None:
             raise LookupError("revoked session row not found")
         await self._auth.step_up.chart.revoke(record, now, REVOKED_REASON)
+        if unclosed is not None:  # recorded; the session still counts as not ended
+            raise unclosed
 
 
 def build_users_purge_task(

@@ -14,7 +14,10 @@ disable's does (`SessionEnder`: sockets closed, `REVOKE` recorded), each bounded
 user that fails is rolled back by the store, counted by its error class and passed over, so one
 row that keeps failing never holds back the users after it; the next run retries it. A failure
 every later user would share ends the run: the audit writer refusing or late, or the store
-unreachable. One line per batch with its counts and outcome, never an id, a name or driver text.
+unreachable. A run that a failure ended (that, or its read refused) is retried after
+`RETRY_SECONDS`, doubled for each such run in a row up to the interval, so an outage costs minutes
+rather than a day. One line per batch with its counts and outcome, never an id, a name or driver
+text.
 """
 
 from __future__ import annotations
@@ -40,6 +43,9 @@ from candleviewer.storage.repositories.user_purge import (
 from candleviewer.storage.repositories.user_purge_sqlalchemy import MAX_ANONYMISE_BATCH
 
 INTERVAL_SECONDS = 24 * 3600
+#: The first retry after a run that a failure ended, doubled for each such run in a row up to
+#: `INTERVAL_SECONDS` (as the funding refresh backs off): a purge is a promise, not best effort.
+RETRY_SECONDS = 15 * 60
 #: Batches per run; bounds one run, the next run continues the backlog.
 MAX_BATCHES_PER_RUN = 20
 #: Bounds each session's end (its socket close and its B16 record), as the disable's steps are.
@@ -110,11 +116,13 @@ class UsersPurgeTask:
         *,
         sessions: SessionEnder,
         interval_s: float = INTERVAL_SECONDS,
+        retry_s: float = RETRY_SECONDS,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         session_end_timeout_s: float = SESSION_END_TIMEOUT_S,
     ) -> None:
         self._store, self._sessions = store, sessions
-        self._interval_s = interval_s
+        self._interval_s, self._retry_s = interval_s, retry_s
+        self._next_retry_s = retry_s  # the delay after the next run that a failure ends
         self._sleep = sleep
         self._session_end_timeout_s = session_end_timeout_s
         self._task: asyncio.Task[None] | None = None
@@ -141,17 +149,22 @@ class UsersPurgeTask:
             user_id, actor_user_id=actor_user_id, request_id=request_id, session_id=session_id
         )
 
-    async def run_once(self) -> None:
+    async def run_once(self) -> bool:
+        """One run; False when a failure ended it (its read refused, or a failure every later
+        user would share), True when it read to the end of the backlog or to its bound."""
         after: DuePurge | None = None
         for _ in range(MAX_BATCHES_PER_RUN):
             try:
                 due = await self._store.due(MAX_ANONYMISE_BATCH, after=after)
             except Exception as exc:  # the loop survives; the class only, never driver text
                 logger().error("users_purge_failed", error=type(exc).__name__)
-                return
-            if not await self._batch(due) or len(due) < MAX_ANONYMISE_BATCH:
-                return
+                return False
+            if not await self._batch(due):
+                return False
+            if len(due) < MAX_ANONYMISE_BATCH:
+                return True
             after = due[-1]  # the next read starts after it, past whoever failed or was skipped
+        return True
 
     async def _batch(self, due: Sequence[DuePurge]) -> bool:
         """Anonymise `due` one user at a time; False once a shared failure ended the run. Logged
@@ -186,10 +199,19 @@ class UsersPurgeTask:
             else:
                 batch.sessions_ended += 1
 
+    def _next_delay(self, completed: bool) -> float:
+        """The interval after a run that went through, which resets the backoff; after one that a
+        failure ended, the retry delay, doubled for the next such run, never past the interval."""
+        if completed:
+            self._next_retry_s = self._retry_s
+            return self._interval_s
+        delay = min(self._next_retry_s, self._interval_s)
+        self._next_retry_s = min(self._next_retry_s * 2, self._interval_s)
+        return delay
+
     async def _loop(self) -> None:
         while True:
-            await self.run_once()
-            await self._sleep(self._interval_s)
+            await self._sleep(self._next_delay(await self.run_once()))
 
     def start(self) -> None:
         if self._task is None:

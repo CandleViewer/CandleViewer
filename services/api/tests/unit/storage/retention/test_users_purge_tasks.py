@@ -1,10 +1,11 @@
 """E42-T10 S13 (#2650, #965 O6): the anonymisation reaper's task. A run walks the due users once in
 bounded batches off the request path, one transaction per user (the store's); a user that fails is
 counted by its class and passed over, so it never holds back the users after it, and a failure
-every later user would share ends the run; a session the anonymisation revoked ends on B16 after
-the commit. One log line per batch, counts only. The task runs whatever `retention_enabled` says,
-and `?purge=true` schedules through it only while it runs (orchestrator ruling, 2026-10-20); the
-deployed app builds it, and the route's door, over one store on the real backend only."""
+every later user would share ends the run, which is then retried sooner; a session the
+anonymisation revoked ends on B16 after the commit. One log line per batch, counts only. The task
+runs whatever `retention_enabled` says, and `?purge=true` schedules through it only while it runs
+(orchestrator ruling, 2026-10-20); the deployed app builds it, and the route's door, over one store
+on the real backend only."""
 
 from __future__ import annotations
 
@@ -33,7 +34,12 @@ from candleviewer.storage.repositories.user_purge_sqlalchemy import (
     SqlAlchemyUserPurgeStore,
 )
 from candleviewer.storage.retention import policy
-from candleviewer.storage.retention.users_purge_tasks import MAX_BATCHES_PER_RUN, UsersPurgeTask
+from candleviewer.storage.retention.users_purge_tasks import (
+    INTERVAL_SECONDS,
+    MAX_BATCHES_PER_RUN,
+    RETRY_SECONDS,
+    UsersPurgeTask,
+)
 from candleviewer.user_cascade_wiring import PurgedSessions
 
 _AT = datetime(2026, 10, 19, 9, 0, tzinfo=UTC)
@@ -287,6 +293,34 @@ async def test_a_failed_read_is_logged_and_the_loop_survives() -> None:
     ]
     assert not task.running
     await task.stop()  # stopped: a no-op
+
+
+async def test_a_run_a_failure_ended_is_retried_sooner_backing_off_to_the_interval() -> None:
+    """A run that a failure ended (its read refused, or a failure every later user would share)
+    is retried after `retry_s`, doubled for each such run in a row and never past the interval, so
+    an outage costs minutes rather than a day; a run that goes through waits the interval and
+    resets the backoff. A poisoned user is no such failure (it is passed over)."""
+    (user,) = _due(1)
+    refused: list[tuple[DuePurge, ...] | Exception] = [OSError("refused") for _ in range(4)]
+    store = _Store([*refused, (), (user,)], {user.user_id: PurgeAuditUnavailableError("down")})
+    delays: list[float] = []
+    done = asyncio.Event()
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) == 6:
+            done.set()
+            await asyncio.Event().wait()
+        await asyncio.sleep(0)
+
+    task = _task(store, sleep=sleep, interval_s=50, retry_s=10)
+    task.start()
+    try:
+        await asyncio.wait_for(done.wait(), 2)
+    finally:
+        await task.stop()
+    assert delays == [10, 20, 40, 50, 50, 10]
+    assert 0 < RETRY_SECONDS < INTERVAL_SECONDS
 
 
 async def test_schedule_is_refused_unless_the_reaper_runs() -> None:

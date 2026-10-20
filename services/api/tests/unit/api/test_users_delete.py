@@ -577,6 +577,31 @@ def test_a_reaper_that_stops_after_the_disable_leaves_the_user_disabled_unschedu
     assert "purge:read" not in w.log and w.of("users.delete") == []
 
 
+@pytest.mark.parametrize("refusal", ["audit_unavailable", "purge_unavailable"])
+def test_a_retry_after_a_503_between_the_two_commits_converges(
+    refusal: str, spec: dict[str, Any]
+) -> None:
+    """The two commits (22 deleteUser): the disable commits, then the schedule is refused, by the
+    audit writer (`users.delete`) or by a reaper that stopped meanwhile. The retry the answer asks
+    for converges: the disable's no-op (AC5, no second `users.disable`), then the schedule 90 days
+    out on the injected clock, with one `users.delete`."""
+    fail = {"users.delete": [AuditUnavailable("down")]} if refusal == "audit_unavailable" else {}
+    w = _World(fail=fail)
+    door, rel = _purging(w, running=(True, False) if refusal == "purge_unavailable" else (True,))
+    client = _client(w, _principal("owner", spec), user_purge=door)
+    first = client.delete(_PATH.format(TARGET) + _PURGE)
+    assert (first.status_code, first.json()["code"]) == (503, refusal)
+    assert w.rel.committed and not rel.committed  # disabled, no purge scheduled
+    w.rel.rows[LOCK_USER] = [("disabled",)]  # what the disable's commit left behind
+    door.answers = [True]  # the reaper runs again
+    second = client.delete(_PATH.format(TARGET) + _PURGE)
+    assert second.status_code == 204
+    _conforms(spec, second)
+    assert len(w.of("users.disable")) == len(w.of("users.delete")) == 1
+    due = _PURGE_NOW + timedelta(days=90)
+    assert rel.committed and rel.written == {"id": str(TARGET), "purge_after": due}
+
+
 def test_a_scheduled_purge_logs_one_line_with_the_request_id_and_no_pii(
     spec: dict[str, Any],
 ) -> None:
