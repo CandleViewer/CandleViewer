@@ -553,12 +553,13 @@ async def test_migration_pre_2204_snapshot_is_refused_loudly_never_silently_rest
         audit=audit,
         seal=hmac_sealer(keys, old),
         machine_hash_of=old_reg.hash,
+        pager=pager,
     ).persist(res.interpreter, key=key)
     env = repo.rows[key]
     assert env.machine_hash == OLD_HASHES[machine]
     restorer = Restorer(
         registry=REG, keys=keys, journal=InMemoryDrainJournal(), audit=audit, pager=pager,
-        latch=ChainTripLatch(), plugins=lambda: [], clock=SimulatedClock(),
+        latch=ChainTripLatch(), plugins=lambda _key: [], clock=SimulatedClock(),
         lane=lane_of(machine),
     )  # fmt: skip
     from candleviewer.statechart.persistence import RestoreRefusedError

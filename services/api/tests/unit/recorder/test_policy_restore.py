@@ -32,7 +32,7 @@ def _restorer(journal: InMemoryDrainJournal) -> Restorer:
         audit=Audit(),
         pager=Pager(),
         latch=ChainTripLatch(),
-        plugins=lambda: [],
+        plugins=lambda _key: [],
         clock=default_clock(),
         lane="platform",
     )
@@ -51,6 +51,7 @@ async def _lingering_snapshot(clock: FakeClock) -> tuple[SealedSnapshot, InMemor
         audit=Audit(),
         seal=hmac_sealer(Keys(), _REG.get("recording")),
         machine_hash_of=_REG.hash,
+        pager=Pager(),
     ).persist(p._charts["ETHUSDT"], key=KEY)
     await p.stop()
     return repo.rows[KEY], journal

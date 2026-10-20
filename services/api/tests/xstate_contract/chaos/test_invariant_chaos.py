@@ -19,6 +19,7 @@ import pytest
 from xstate_statemachine import QueueOverflowError
 
 from candleviewer.statechart.config import CV_INBOX_BOUND
+from candleviewer.statechart.persistence import split_sealed_drain
 from tests.xstate_contract._harness import (
     SPELLINGS,
     Charts,
@@ -64,9 +65,8 @@ def test_ledger_covers_every_catalogue_invariant() -> None:
     pending = {inv for inv, n, _t in ROWS if n in PENDING_CHARTS}
     assert covered | pending == {inv for inv, _n, _t in ROWS}
     assert covered.isdisjoint(pending)
-    assert all(chart_for_number(n) is None for n in PENDING_CHARTS), (
-        "a pending chart has landed: drop it from PENDING_CHARTS"
-    )
+    landed = "a pending chart has landed: drop it from PENDING_CHARTS"
+    assert all(chart_for_number(n) is None for n in PENDING_CHARTS), landed
     assert len(covered) == len(LEDGER) >= 80
     assert {f for _i, _m, f in LEDGER} <= set(FAMILIES)
     assert set(FAMILIES) == {f for _i, _m, f in LEDGER}, "every family is exercised"
@@ -95,7 +95,8 @@ async def _kill_restart(machine: str, charts: Charts) -> None:
     back = await restart(live, env)
     try:
         assert_sound(machine, back.interp)
-        assert await back.journal.replay_once(back.key, back.interp) == 0  # exactly once
+        drain, _ = split_sealed_drain(env.snapshot)
+        assert (await back.journal.replay_once(back.key, back.interp, drain)).replayed == 0
         assert back.pager.pages == [] and back.audit.quarantined == []
     finally:
         await back.interp.stop()

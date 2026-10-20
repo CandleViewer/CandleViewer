@@ -926,11 +926,11 @@ def _persistence() -> tuple[_Sealed, dict[str, Any]]:
     reg, sealed, journal = Registry(), _Sealed(), InMemoryDrainJournal()
     persist = Persister(
         repo=sealed, journal=journal, audit=sealed, seal=hmac_sealer(sealed, reg.get("replay")),
-        machine_hash_of=reg.hash,
+        machine_hash_of=reg.hash, pager=sealed,
     )  # fmt: skip
     restore = Restorer(
         registry=reg, keys=sealed, journal=journal, audit=sealed, pager=sealed,
-        latch=ChainTripLatch(), plugins=tuple, clock=default_clock(), lane="control",
+        latch=ChainTripLatch(), plugins=lambda _key: (), clock=default_clock(), lane="control",
     )  # fmt: skip
     return sealed, {"persister": persist, "snapshots": sealed, "restorer": restore}
 

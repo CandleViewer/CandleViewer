@@ -3,7 +3,9 @@
 `seal`/`open_sealed` authenticate the chart, the blob, `machine_hash`, `version` and the
 `MachineKey` (kind, entity, env) behind a layout marker, `SEAL_LAYOUT_V`, that is independent of
 `SNAPSHOT_V` (the library snapshot floor, CV-C52). An envelope opens only for the key it was sealed
-for, and a tag sealed under an earlier input layout never verifies.
+for, and a tag sealed under an earlier input layout never verifies. Layout 3 (E50-T62 round 2)
+keeps layout 2's parts under its own label, and the blob it seals carries the drained set
+(24 §17.6); its serializer refuses NaN and Infinity.
 """
 
 from __future__ import annotations
@@ -34,10 +36,10 @@ BLOB: dict[str, Any] = {"version": 3}
 MACHINE_HASH = "ab" * 32
 KEY = MachineKey("gold", "00000000-0000-0000-0000-000000000001", "demo")
 
-#: The v2 input, one length-prefixed part each, in order: layout label, chart, blob,
+#: The v3 input, one length-prefixed part each, in order: layout label, chart, blob,
 #: machine_hash, version, then the machine key (kind, entity, env).
 GOLDEN_PARTS = [
-    b"cv-snapshot-seal-v2",
+    b"cv-snapshot-seal-v3",
     b'{"id":"gold"}',
     b'{"version":3}',
     MACHINE_HASH.encode(),
@@ -53,6 +55,10 @@ GOLDEN: dict[int, tuple[str, str]] = {
     2: (
         "4184b04fd71794ac95fb7b7b49af3ff42bd8c8af2e1fc9457de1258d5e1f439a",
         "3195aa06d3470573f3e1868f192615b24e7e2549ff45e8db61d4b9267b61ccb6",
+    ),
+    3: (
+        "6c43f08c0afff1e8eb7b81a597dccacc2e1c87dae2f9db513833ab57586f1460",
+        "84680a09f4549b39f719dc563ff1f6614916ffc8558a2075e13cedc5353c4b79",
     ),
 }
 #: The same fixed inputs sealed by the pre-binding `seal()` (no layout part, no machine key).
@@ -155,6 +161,20 @@ def test_open_sealed_old_input_layout_is_refused() -> None:
     old = dataclasses.replace(_sealed_for(KEY), seal=Seal(key_id="k1", tag=_legacy_tag(FakeKeys())))
     with pytest.raises(ValueError, match="bad HMAC"):
         _open(old, KEY)
+
+
+def test_open_sealed_layout_2_tag_is_refused() -> None:
+    """E50-T62 round 2: no upcaster; a layout-2 tag never verifies under layout 3."""
+    assert SEAL_LAYOUT_V == 3
+    old = dataclasses.replace(_sealed_for(KEY), seal=Seal(key_id="k1", tag=GOLDEN[2][1]))
+    with pytest.raises(ValueError, match="bad HMAC"):
+        _open(old, KEY)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_mac_input_refuses_nan_and_infinity(value: float) -> None:
+    with pytest.raises(ValueError, match="JSON compliant"):
+        _mac_input(KEY, CHART, {"version": 3, "context": {"x": value}}, MACHINE_HASH, 3)
 
 
 def test_seal_layout_version_matches_the_golden_value() -> None:

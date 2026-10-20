@@ -26,6 +26,7 @@ from candleviewer.statechart.persistence import (
     RestoreRefusedError,
     SealedSnapshot,
     hmac_sealer,
+    split_sealed_drain,
 )
 from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import (
@@ -71,7 +72,7 @@ class Rig:
             audit=self.audit,
             pager=self.pager,
             latch=self.latch,
-            plugins=lambda: [AuditTap()],
+            plugins=lambda _key: [AuditTap()],
             clock=SimulatedClock(),
             lane=lane_of(self.machine),
         )
@@ -99,6 +100,7 @@ async def _persisted(
         audit=rig.audit,
         seal=hmac_sealer(rig.keys, reg.get(machine)),
         machine_hash_of=reg.hash,
+        pager=rig.pager,
     ).persist(interp, key=rig.key)
     return rig, repo.rows[rig.key], before
 
@@ -121,7 +123,8 @@ async def test_round_trip_at_quiescence_point_is_identical_and_replays_once(
         assert res.replayed == 1 and not res.degraded
         await settle()
         assert interp.error is None  # an unknown replayed event never bricks
-        assert await rig.journal.replay_once(rig.key, interp) == 0  # exactly once
+        drain, _ = split_sealed_drain(env.snapshot)
+        assert (await rig.journal.replay_once(rig.key, interp, drain)).replayed == 0  # once
     finally:
         await interp.stop()
 
@@ -172,3 +175,34 @@ async def test_chain_trip_latch_survives_restore(
         assert rig.pager.pages == ["P1"]
     finally:
         await res.interpreter.stop()
+
+
+@pytest.mark.parametrize("machine", MACHINES)
+async def test_a_restored_machine_persists_again_under_the_next_generation(
+    machine: str, charts: Charts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2 for the catalogue (CR-E50T62R2-07): every committed chart, once restored, persists again,
+    under its life's epoch and the next generation, and that snapshot restores cleanly."""
+    instrument(machine, monkeypatch, "async_def")
+    rig, env, before = await _persisted(machine, _rest(machine), charts)
+    first = await rig.restorer().restore(rig.key, env)
+    await settle()
+    repo = Repo()
+    await Persister(
+        repo=repo,
+        journal=rig.journal,
+        audit=rig.audit,
+        seal=hmac_sealer(rig.keys, rig.registry.get(machine)),
+        machine_hash_of=rig.registry.hash,
+        pager=rig.pager,
+    ).persist(first.interpreter, key=rig.key)
+    again = repo.rows[rig.key]
+    assert first.interpreter.status == "stopped"
+    assert again.snapshot["cv_epoch"] == env.snapshot["cv_epoch"]
+    assert (env.snapshot["cv_generation"], again.snapshot["cv_generation"]) == (1, 2)
+    second = await rig.restorer().restore(rig.key, again)
+    try:
+        assert set(second.interpreter.current_state_ids) == before["states"]
+        assert rig.pager.pages == [] and rig.audit.quarantined == []
+    finally:
+        await second.interpreter.stop()

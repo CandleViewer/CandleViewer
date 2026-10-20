@@ -112,6 +112,7 @@ async def kill(live: Live) -> Any:
         audit=live.audit,
         seal=hmac_sealer(live.keys, live.registry.get(live.machine)),
         machine_hash_of=live.registry.hash,
+        pager=live.pager,
     ).persist(live.interp, key=live.key)
     assert not live.interp.is_running, f"{live.machine}: kill left it running"
     return repo.rows[live.key]
@@ -127,7 +128,7 @@ async def restart(live: Live, envelope: Any) -> Live:
         audit=live.audit,
         pager=live.pager,
         latch=live.latch,
-        plugins=lambda: [AuditTap()],
+        plugins=lambda _key: [AuditTap()],
         clock=clock,
         lane=lane_of(live.machine),
     ).restore(live.key, envelope)
