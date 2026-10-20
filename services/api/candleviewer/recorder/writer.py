@@ -261,8 +261,8 @@ def _levels(ev: BookSnapshotLike) -> list[tuple[str, LevelLike]]:
 
 
 def delta_records(ev: BookDeltaLike) -> list[WalRecord]:
-    """One row per level. `prev_update_id` and `ts_match` (µs, Bybit `cts`) are recorded so a
-    replay re-emits them rather than deriving them (0006, 24 Sec.13.7)."""
+    """One row per level. `prev_update_id` and `ts_match` (µs, the exchange's match time) are
+    recorded so a replay re-emits them rather than deriving them (0006, 24 Sec.13.7)."""
     out: list[WalRecord] = []
     for sub, (side, lv) in enumerate(_levels(ev)):
         row: dict[str, object] = {

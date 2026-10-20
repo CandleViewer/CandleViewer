@@ -19,8 +19,8 @@ TRADES_SCHEMA = TableSchema(
     boolean_field_columns=("is_block",),
 )
 
-# `ts_match` (Bybit `cts`, µs) is a TIMESTAMP column (0006, E26-T03), so it is written as a
-# timestamp field, never as a LONG.
+# `ts_match` (the exchange's match time, µs) is a TIMESTAMP column (0006, E26-T03), so it is
+# written as a timestamp field, never as a LONG.
 ORDERBOOK_DELTAS_SCHEMA = TableSchema(
     name="orderbook_deltas",
     tag_columns=("symbol", "side", "action"),

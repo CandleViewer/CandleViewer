@@ -93,8 +93,9 @@ class RecordedTrade:
 
 @dataclass(frozen=True, slots=True)
 class RecordedBookDelta:
-    """One changed level; `size == 0` removes it. `prev_update_id` and `ts_match` (µs, Bybit
-    `cts`) are recorded from E26-T03 on; `None` on rows recorded before (24 Sec.13.7)."""
+    """One changed level; `size == 0` removes it. `prev_update_id` and `ts_match` (µs, the
+    exchange's match time) are recorded from E26-T03 on; `None` on rows recorded before
+    (24 Sec.13.7)."""
 
     depth: int
     side: str
@@ -115,7 +116,7 @@ class RecordedBookSnapshot:
     cross_seq: int | None
     bids: tuple[Level, ...]
     asks: tuple[Level, ...]
-    ts_match: int | None = None  # µs, Bybit `cts`; recorded from E26-T03 on (24 Sec.13.7)
+    ts_match: int | None = None  # µs, the exchange's match time; from E26-T03 on (24 Sec.13.7)
 
 
 @dataclass(frozen=True, slots=True)

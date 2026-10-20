@@ -150,18 +150,18 @@ class _Playback:
         now = run._time.now()
         if now >= run._progress_at:
             run._progress_at = now + run._interval
-            run._port.on_progress(run._clock.stats())
+            run._port.on_progress(run.stats())
         await run._injector.deliver(event)
 
     def on_gap(self, gap: ReplayGap, *, stopped: bool) -> None:
         run = self._run
         if gap.stream in BOOK_STREAMS:
             run._gapped[gap.symbol] = None
-        run._port.on_gap(gap, stopped=stopped, stats=run._clock.stats())
+        run._port.on_gap(gap, stopped=stopped, stats=run.stats())
 
     def on_backpressure(self, active: bool) -> None:
         run = self._run
-        run._port.on_backpressure(active, run._clock.stats())
+        run._port.on_backpressure(active, run.stats())
 
     def on_stop(self, reason: StopReason, error: Exception | None) -> None:
         self._run._error = error  # the driver reports the stop, once it knows about the loop
