@@ -25,7 +25,10 @@ from websockets.frames import Frame, Opcode
 
 from candleviewer.observability.frame_lines import FrameLineFilter, frame_summary
 from candleviewer.observability.logging import configure_logging, reset_logging
-from tests.unit.observability.test_uvicorn_log_routing import _replay_boot
+from tests.unit.observability.test_uvicorn_log_routing import (
+    _fresh_uvicorn_loggers,  # noqa: F401
+    _replay_boot,
+)
 
 
 def _token(n: int) -> str:
