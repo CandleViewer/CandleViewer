@@ -192,7 +192,7 @@ def test_contract_indicators_ctl_retunes_the_instances_and_re_snapshots() -> Non
         assert snap["meta"]["reason"] == "reconfigure"
         ((instance,),) = [snap["p"]["instances"]]
         assert instance["key"] == key and [p["index"] for p in instance["points"]] == [0, 1, 2, 3]
-    assert running(rig.engine, M1) == 2  # the old one keeps its grace
+    assert running(rig.engine, M1) == 1  # the old one, held by this `ctl` alone: no grace
 
 
 def test_contract_indicators_refusals_name_the_entry_and_never_clamp() -> None:

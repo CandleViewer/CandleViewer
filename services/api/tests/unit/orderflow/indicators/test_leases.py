@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from candleviewer.orderflow.errors import IndicatorError, InstanceCapError
+from candleviewer.orderflow.errors import IndicatorError, InstanceCapError, InstanceChurnError
 from candleviewer.orderflow.indicators.leases import InstanceCaps, InstanceLeases
 from candleviewer.orderflow.indicators.metrics import CAP_REJECTED, SUBSCRIPTIONS, bucket_of
 from tests.unit.orderflow.indicators._engine import counter
@@ -102,37 +102,49 @@ def test_the_subscription_gauge_buckets_users_by_instances_held_never_by_id() ->
     ]
 
 
-def test_an_instance_a_user_released_counts_toward_that_user_until_its_grace_ends() -> None:
-    """IR-31 (security review of the WS delivery): releasing 8 and starting 8 others never runs
-    more than 8 for one user; another user is not charged, and holding one again ends the charge."""
+def test_a_user_holds_eight_and_runs_twenty_four_with_those_released_in_their_grace() -> None:
+    """IR-31 (reviews of the WS delivery): a user holds at most 8 instances and, with those the
+    user released that are still in their grace, runs at most 24. Two full flips (release 8, hold
+    8 others) are admitted within a grace; past 24 the refusal has its own message, saying it ends
+    with the grace, and counts as `user`. Another user is not charged, holding a released one
+    again ends its charge, and the grace's end ends the rest."""
     leases = InstanceLeases(grace_us=30_000_000)
     _hold(leases, SYM, 8, "u1")
-    for i in range(8):
-        leases.release((SYM, _key(i)), f"u1-c{i}", now_us=0)
+    for start in (0, 8):  # two flips
+        for i in range(start, start + 8):
+            leases.release((SYM, _key(i)), f"u1-c{i}", now_us=1_000)
+        _hold(leases, SYM, 8, "u1", start=start + 8)
+    assert _refused(leases, SYM, _key(99), "u1") == "user"  # a ninth held: the held cap
+    leases.release((SYM, _key(23)), "u1-c23", now_us=2_000)  # 7 held, 17 released
     before = counter(CAP_REJECTED["user"])
-    assert _refused(leases, OTHER, _key(50), "u1") == "user"  # 8 in their grace are u1's
+    with pytest.raises(InstanceChurnError) as caught:
+        leases.check(OTHER, [_key(50)], "u1")
+    assert (caught.value.cap, caught.value.limit) == ("user", 24)
+    assert str(caught.value) == (
+        "Server indicator instances you released in the last 30 s still count; "
+        "retry once they expire."
+    )
     assert counter(CAP_REJECTED["user"]) - before == 1
-    leases.check(OTHER, [_key(50)], "u2")
-    leases.acquire((SYM, _key(0)), "u2-c0", "u2")  # held again: no longer charged to u1
-    leases.check(OTHER, [_key(50)], "u1")
-    assert len(leases.expired(30_000_000)) == 7  # the other seven's grace ends
-    _hold(leases, OTHER, 8, "u1", start=60)
+    leases.check(OTHER, [_key(50)], "u2")  # another user is not charged
+    leases.check(SYM, [_key(23)], "u1")  # holding one it released again adds none
+    leases.acquire((SYM, _key(0)), "u2-c0", "u2")  # held again, by anyone: no longer u1's
+    leases.check(OTHER, [_key(50)], "u1")  # 7 held, 16 released, 1 new: 24
+    assert len(leases.expired(30_001_000)) == 15  # the flips' grace ends (u2 holds the 16th)
+    _hold(leases, OTHER, 1, "u1", start=60)  # 8 held, 1 released
+    assert _refused(leases, OTHER, _key(70), "u1") == "user"
 
 
-def test_a_replace_after_a_replace_counts_the_instances_the_first_one_released() -> None:
-    """A WS `ctl` is checked as holding its new set alone, but what it released stays charged to
-    its user for the grace: a second swap of all 8 within it is refused."""
+def test_sole_names_the_instances_a_replacing_consumer_alone_holds() -> None:
+    """A WS `ctl` forgets the replaced instances it alone held (`IndicatorEngine._let_go`), so
+    a retune leaves nothing in a grace: `sole` is True for one lease only, the consumer's."""
     leases = InstanceLeases()
-    for i in range(8):
-        leases.acquire((SYM, _key(i)), "ctl-sub", "u1")
-    leases.check(SYM, [_key(i) for i in range(10, 18)], "u1", "ctl-sub")  # the first swap
-    for i in range(10, 18):
-        leases.acquire((SYM, _key(i)), "ctl-sub", "u1")
-    for i in range(8):
-        leases.release((SYM, _key(i)), "ctl-sub", now_us=0)
-    with pytest.raises(InstanceCapError):
-        leases.check(SYM, [_key(i) for i in range(20, 28)], "u1", "ctl-sub")
-    leases.check(SYM, [_key(i) for i in range(20, 28)], None, "ctl-sub")  # a system consumer
+    leases.acquire((SYM, _key(1)), "ctl-sub", "u1")
+    leases.acquire((SYM, _key(2)), "ctl-sub", "u1")
+    leases.acquire((SYM, _key(2)), "other", "u2")
+    assert leases.sole((SYM, _key(1)), "ctl-sub")
+    assert not leases.sole((SYM, _key(2)), "ctl-sub")  # shared
+    assert not leases.sole((SYM, _key(1)), "other")  # not its lease
+    assert not leases.sole((SYM, _key(3)), "ctl-sub")  # no such instance
 
 
 def test_drop_forgets_an_instance_with_no_grace_and_no_charge() -> None:

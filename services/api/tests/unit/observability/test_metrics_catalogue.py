@@ -7,6 +7,7 @@ import json
 import os
 import re
 import typing
+from collections.abc import Sized
 from pathlib import Path
 
 import structlog
@@ -311,7 +312,7 @@ def test_indicator_metrics_are_live_bounded_and_never_per_user() -> None:
     assert compute.buckets is not None and 0.02 in compute.buckets  # budget #6's p95 edge
     assert "user" in DISALLOWED_LABEL_NAMES
     assert all(_UNIT_SUFFIX.search(n) or n in _SUFFIX_EXCEPTIONS for n in specs), specs
-    bound = {
+    bound: dict[str, Sized] = {
         "indicator_compute_seconds": indicator_metrics.COMPUTE,
         "indicator_recompute_total": indicator_metrics.RECOMPUTES,
         "indicator_subscriptions": indicator_metrics.SUBSCRIPTIONS,

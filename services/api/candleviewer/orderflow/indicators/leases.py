@@ -8,13 +8,16 @@ An instance lives while it has a lease; after the last release it is kept `grace
 
 Caps (`limits.py`), checked by `check` before anything is held: a NEW distinct instance is refused
 past `per_symbol` instances on its symbol or `process` instances in all, counting those in their
-grace; a user is refused past `per_user` distinct instances held, or released by that user and
-still in their grace (IR-31: releasing and starting others never runs more than `per_user` for
-one user; holding one again, by anyone, ends that charge). Joining a running instance counts
-toward the user's cap only. `user=None` (a system consumer) is exempt from the user cap only. A
-refusal is counted (`indicator_cap_rejected_total{cap}`) and changes nothing. Pure bookkeeping:
-no I/O and no task; the engine acts on what it returns. Every instance of the process is one entry
-here, so the caps also bound the engine's memo (IR-36).
+grace. A user is refused past `per_user` distinct instances held, and past `churn` instances held
+and released by that user that are still in their grace (IR-31: subscribe and unsubscribe churn;
+holding one again, by anyone, ends its charge), with a message of its own that says the refusal
+ends with a grace. Joining a running instance counts toward the user's caps only. `user=None` (a
+system consumer) is exempt from the user caps only. A refusal is counted
+(`indicator_cap_rejected_total{cap}`; a churn refusal as `user`) and changes nothing. A consumer
+that replaces its instances (a WS `ctl`) is checked as holding the new set alone; the engine
+`drop`s each replaced instance it held alone (`sole`), so a retune leaves nothing in a grace. Pure
+bookkeeping: no I/O and no task; the engine acts on what it returns. Every instance of the
+process is one entry here, so the caps also bound the engine's memo (IR-36).
 """
 
 from __future__ import annotations
@@ -24,11 +27,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Final
 
-from candleviewer.orderflow.errors import IndicatorError, InstanceCapError
+from candleviewer.orderflow.errors import IndicatorError, InstanceCapError, InstanceChurnError
 from candleviewer.orderflow.indicators.limits import (
     INSTANCE_CAP_PER_SYMBOL,
     INSTANCE_CAP_PER_USER,
     INSTANCE_CAP_PROCESS,
+    INSTANCE_CHURN_CAP_PER_USER,
     INSTANCE_GRACE_US,
 )
 from candleviewer.orderflow.indicators.metrics import CAP_REJECTED, Cap, set_subscriptions
@@ -41,6 +45,7 @@ class InstanceCaps:
     per_user: int = INSTANCE_CAP_PER_USER
     per_symbol: int = INSTANCE_CAP_PER_SYMBOL
     process: int = INSTANCE_CAP_PROCESS
+    churn: int = INSTANCE_CHURN_CAP_PER_USER
 
 
 DEFAULT_CAPS: Final = InstanceCaps()
@@ -66,15 +71,22 @@ class InstanceLeases:
         entry = self._held.get(key)
         return entry is not None and consumer in entry.holders
 
-    def _mine(self, user: str, consumer: str | None) -> set[Key]:
+    def sole(self, key: Key, consumer: str) -> bool:
+        """True when `consumer` holds the one lease on `key`."""
+        entry = self._held.get(key)
+        return entry is not None and list(entry.holders) == [consumer]
+
+    def _mine(self, user: str, consumer: str | None) -> tuple[set[Key], set[Key]]:
         """The keys `user` holds through a consumer other than `consumer`, and those in a grace
         `user`'s release started."""
-        return {
-            key
-            for key, entry in self._held.items()
-            if any(u == user and c != consumer for c, u in entry.holders.items())
-            or (not entry.holders and entry.released_by == user)
-        }
+        held: set[Key] = set()
+        released: set[Key] = set()
+        for key, entry in self._held.items():
+            if any(u == user and c != consumer for c, u in entry.holders.items()):
+                held.add(key)
+            elif not entry.holders and entry.released_by == user:
+                released.add(key)
+        return held, released
 
     def check(
         self, symbol: str, keys: Iterable[str], user: str | None, consumer: str | None = None
@@ -84,8 +96,13 @@ class InstanceLeases:
         consumer that replaces its instances (a WS `ctl`) is checked as holding the new set alone.
         """
         wanted = {(symbol, k) for k in keys}
-        if user is not None and len(self._mine(user, consumer) | wanted) > self._caps.per_user:
-            raise self._refuse("user", self._caps.per_user)
+        if user is not None:
+            held, released = self._mine(user, consumer)
+            if len(held | wanted) > self._caps.per_user:
+                raise self._refuse("user", self._caps.per_user)
+            if len(held | released | wanted) > self._caps.churn:
+                CAP_REJECTED["user"].inc()
+                raise InstanceChurnError(self._caps.churn, self._grace // 1_000_000)
         new = wanted - self._held.keys()
         if not new:
             return

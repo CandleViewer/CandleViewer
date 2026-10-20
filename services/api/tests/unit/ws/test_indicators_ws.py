@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -85,6 +86,16 @@ async def test_the_source_waits_for_an_instance_and_discloses_a_quarantine() -> 
     assert source.build(unbuildable) is None and source.generation(unbuildable) == 0
 
 
+def _validated_into(out: list[dict[str, Any]]) -> Callable[[dict[str, Any]], None]:
+    """A frame sink that validates each frame (§13, §14.10), then keeps it in `out`."""
+
+    def sink(frame: dict[str, Any]) -> None:
+        validate(frame)
+        out.append(frame)
+
+    return sink
+
+
 async def test_each_group_of_subscribers_gets_exactly_its_own_instances() -> None:
     """Two connections on one channel name different instances: each `d` of a close carries a
     subscriber's own instances, and validates against §14.10."""
@@ -100,7 +111,7 @@ async def test_each_group_of_subscribers_gets_exactly_its_own_instances() -> Non
         services = SubscriptionServices(upstream=UpstreamRefs(), snapshots=source)
         authz = ConnectionAuthz(principal(), services)
         emitter = TopicEmitter(
-            lambda f, out=out: (validate(f), out.append(f)),
+            _validated_into(out),
             connection_id=f"c{n}", wall_ms=lambda: 1, clock=lambda: 0.0, source=source,
         )  # fmt: skip
         hub.register(authz, emitter)

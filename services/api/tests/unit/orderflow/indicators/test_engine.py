@@ -19,6 +19,7 @@ from candleviewer.bars.models import BarSpec
 from candleviewer.bars.series_store import Hold, SeriesStore
 from candleviewer.orderflow.errors import (
     InstanceCapError,
+    InstanceChurnError,
     InstanceRefusedError,
     RecomputeRefusedError,
 )
@@ -233,15 +234,84 @@ async def test_a_released_instance_keeps_its_grace_then_goes() -> None:
 
 
 async def test_a_replacing_admission_swaps_the_consumers_instances() -> None:
+    """A WS `ctl` (security review of the WS delivery, IR-31): a replaced instance the consumer
+    alone held is forgotten at once, with no grace and nothing charged to its user; one another
+    consumer holds runs on for that consumer."""
     store, engine, _hold = await _engine()
-    (old,) = admit(engine, EMA3)
+    old, shared = admit(engine, [*EMA3, {"indicator": "sma", "params": {"n": 3}}])
+    admit(engine, [{"indicator": "sma", "params": {"n": 3}}], consumer="c2", user="u2")
     for k in range(5):
         await close(store, engine, wave(k))
     new = resolve_instances([{"indicator": "sma", "params": {"n": 2}}], M1)
-    engine.admit(SYM, M1, new, "c1", "u1", history=500, replacing=(old.key,))
-    assert holders(engine._leases, (SYM, old.key)) == 0  # in its grace, no lease left
+    engine.admit(SYM, M1, new, "c1", "u1", history=500, replacing=(old.key, shared.key))
+    assert (SYM, old.key) not in engine._leases._held  # no grace
+    assert engine.snapshot(SYM, old.key, 500) is None and instances(engine) == 2
+    assert holders(engine._leases, (SYM, shared.key)) == 1  # c2's
     batch = engine.snapshot(SYM, new[0].key, 500)
     assert batch is not None and len(batch.points) == 5  # primed from the store's 5 bars
+
+
+async def test_retunes_at_the_user_cap_leave_nothing_in_a_grace() -> None:
+    """IR-31 (security review of the WS delivery): a `ctl` that swaps all eight instances of a
+    user at the cap leaves none of the old ones running in a grace (8 held and 8 released for
+    30 s, before), so the user retunes again at once, as often as the rebuild budget allows."""
+    _, engine, _hold = await _engine(now_us=_Now())
+    eights = [[{"indicator": "ema", "params": {"n": n}} for n in range(k, k + 8)] for k in (2, 20)]
+    held = [r.key for r in admit(engine, eights[0])]
+    for turn in range(4):
+        new = resolve_instances(eights[(turn + 1) % 2], M1)
+        engine.admit(
+            SYM, M1, new, "c1", "u1", history=500, replacing=tuple(held), reason="param_change"
+        )
+        held = [r.key for r in new]
+        assert set(engine._leases._held) == {(SYM, k) for k in held}
+        assert instances(engine) == 8
+
+
+THREE = [{"indicator": name} for name in ("volume", "vwap", "cvd")]
+
+
+async def test_a_flip_of_three_indicators_every_5_s_is_admitted_for_good() -> None:
+    """IR-31 (code review of the WS delivery): a user with volume, vwap and cvd on a chart flips
+    it to the next symbol every 5 s on fake time, unsubscribing the old chart first. Each flip
+    starts three new instances and leaves three in their grace: at most six releases of three in
+    a grace, with three held, is 21, under the churn cap for good. Nothing is refused, and no
+    refusal names a cap the user is not at."""
+    now = _Now()
+    _, engine, _hold = await _engine(now_us=now)
+    refused = counter(CAP_REJECTED["user"])
+    keys = [r.key for r in resolve_instances(THREE, M1)]
+    for flip in range(13):  # a minute of flips
+        if flip:
+            engine.release(f"FLIP{flip - 1}USDT", keys, "chart")
+        engine.admit(
+            f"FLIP{flip}USDT", M1, resolve_instances(THREE, M1), "chart", "u1", history=500
+        )
+        now.us += 5_000_000
+    assert counter(CAP_REJECTED["user"]) == refused
+
+
+async def test_churn_past_its_cap_is_refused_with_its_own_retryable_message() -> None:
+    """IR-31: flipping eight instances every 5 s, a user holds 8 and has released 16 by the third
+    flip (24). The fourth is refused, saying the released ones still count until they expire (a
+    retryable `subscription_limit` on the WS), and counted as `user`; once the first release's
+    grace ends, it is admitted."""
+    now = _Now()
+    _, engine, _hold = await _engine(now_us=now)
+    eight = [{"indicator": "ema", "params": {"n": n}} for n in range(2, 10)]
+    keys = [r.key for r in resolve_instances(eight, M1)]
+    for flip in range(3):
+        if flip:
+            engine.release(f"S{flip - 1}USDT", keys, "chart")
+        engine.admit(f"S{flip}USDT", M1, resolve_instances(eight, M1), "chart", "u1", history=500)
+        now.us += 5_000_000
+    engine.release("S2USDT", keys, "chart")  # at 15 s: 24 released, none held
+    refused = counter(CAP_REJECTED["user"])
+    with pytest.raises(InstanceChurnError, match="released in the last 30 s still count"):
+        engine.admit("S3USDT", M1, resolve_instances(eight, M1), "chart", "u1", history=500)
+    assert counter(CAP_REJECTED["user"]) - refused == 1
+    now.us = 35_000_000  # the release at 5 s is out of its grace
+    engine.admit("S3USDT", M1, resolve_instances(eight, M1), "chart", "u1", history=500)
 
 
 async def test_an_update_that_raises_is_contained_counted_and_re_primes(

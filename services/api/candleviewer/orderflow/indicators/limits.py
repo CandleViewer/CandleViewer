@@ -52,13 +52,19 @@ PSAR_ACCELERATION_STEP: Final = Decimal("0.001")
 
 #: SR-E13-03: the most distinct server instances (`(symbol, spec_hash)`) one user may hold, one
 #: symbol may run and the process may run. An instance in its release grace still counts toward
-#: the symbol and process caps (it still costs CPU and memory), and toward the cap of the user
-#: whose release started that grace, until it ends or someone holds the instance again (IR-31:
-#: churn through releases never runs more than 8 for one user); joining a running instance counts
-#: toward the user's cap only; a system consumer (`user=None`) is exempt from the user cap only.
+#: the symbol and process caps (it still costs CPU and memory); joining a running instance counts
+#: toward the user's caps only; a system consumer (`user=None`) is exempt from the user caps only.
 INSTANCE_CAP_PER_USER: Final = 8
 INSTANCE_CAP_PER_SYMBOL: Final = 32
 INSTANCE_CAP_PROCESS: Final = 128
+#: IR-31: the most distinct instances one user may hold and have released that are still in
+#: their grace, together (subscribe and unsubscribe churn: a symbol or timeframe flip starts new
+#: instances and leaves the old ones folding until their grace ends). Three times the held cap:
+#: a flip of three instances every 5 s stays under it for good (at most six releases of three in
+#: a grace, plus the three held: 21), and so do two full flips of eight in 30 s (24). Holding a
+#: released instance again, by anyone, ends its charge; a WS `ctl` drops the instances it
+#: replaces that no one else holds, so a retune leaves none in a grace.
+INSTANCE_CHURN_CAP_PER_USER: Final = 3 * INSTANCE_CAP_PER_USER
 #: An instance whose last lease is released is kept this long (US-MKT-005's 30 s), so a quick
 #: resubscribe finds it computed.
 INSTANCE_GRACE_US: Final = 30_000_000
@@ -75,9 +81,16 @@ MAX_CONCURRENT_RECOMPUTES: Final = 2
 #: the series store's tail alone.
 RECOMPUTE_TIMEOUT_S: Final = 5.0
 #: C-2.17: a full recompute reads stored bars in pages of at most this many rows and yields to
-#: the event loop after each, and folds them this many bars at a time with a yield between.
+#: the event loop after each, and folds them in chunks of this many kernel updates (a time
+#: series' fillers included; one bar's fillers, at most `MAX_FILL_SLOTS`, never split) with a
+#: yield between.
 HISTORY_PAGE_ROWS: Final = 1_000
-PRIME_CHUNK_BARS: Final = 512
+PRIME_CHUNK_UPDATES: Final = 512
+#: C-2.17: the most kernel updates (fillers included) a prime may fold synchronously, its
+#: instances together: a full dense series store for eight instances. A prime that needs more
+#: runs as a full recompute (a task on a slot, `PRIME_CHUNK_UPDATES` at a time); one that must
+#: run at once with no slot free folds only the newest bars within it, split evenly per instance.
+MAX_SYNC_PRIME_UPDATES: Final = 8_000
 
 # --- Instance state (`engine`) ---------------------------------------------------------------
 

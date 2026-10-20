@@ -13,29 +13,40 @@ named here is a constant of `limits.py`.
 - **Admission.** `resolve_instances` checks a request against the catalogue before anything is
   held: a `compute: server` indicator, its `params_schema` (`validate_params`, never clamped), a
   series a session anchor can read (not renko), no instance twice. `check` applies the window
-  bound (SR-E13-04) and the caps (`leases`, SR-E13-03); `admit` checks again, takes the leases and
-  starts each new instance, and undoes all of it if anything then raises. Kernels are built here
-  only, from validated parameters.
+  bound (SR-E13-04) and the caps (`leases`, SR-E13-03, IR-31); `admit` checks again, takes the
+  leases and starts each new instance, and undoes all of it if anything then raises. A `ctl` that
+  replaces instances forgets at once each replaced one no other consumer holds: no grace, and no
+  churn charged to its user. Kernels are built here only, from validated parameters.
 - **Priming.** A new instance folds the closed bars the series store holds (up to 1 000, of the
-  series' current generation). When its warmup plus the subscription's history needs older bars
-  and the generation has them (the store's oldest index is above 0), a full recompute reads them
-  (`HistoryRead`, time series only) on one of `MAX_CONCURRENT_RECOMPUTES` slots, in a task the
-  engine owns. With every slot taken the admission is refused, never queued. The instance is not
-  ready until its bars are folded: its snapshots wait, and the listener's `ready` flushes them. A
-  read that fails or passes `RECOMPUTE_TIMEOUT_S` primes from the store alone (logged). Only read
-  bars older than the store's oldest are folded: the store, ahead of the engine on the emit path,
-  holds every close since. The task folds `PRIME_CHUNK_BARS` bars at a time and yields between
-  (C-2.17; `StoredHistory` yields after each page too). The series' closes that land meanwhile
-  are held back, at most `MAX_POINTS`, and folded in order before the instance is ready; a
-  generation change or a store repair meanwhile, or more closes than that, primes it from the
-  store alone instead.
+  series' current generation). Its cost is counted in kernel updates, a time series' fillers
+  included (`_updates`): a sparse series' 1 000 bars can take a million. When its warmup plus the
+  subscription's history needs older bars and the generation has them (the store's oldest index
+  is above 0), a full recompute reads them (`HistoryRead`, time series only) on one of
+  `MAX_CONCURRENT_RECOMPUTES` slots, in a task the engine owns; when the store's bars suffice but
+  folding them takes more than `MAX_SYNC_PRIME_UPDATES` updates for the new instances together, a
+  full recompute folds them alone. A smaller prime runs at once. With every slot taken the
+  admission is refused, never queued. The instance is not ready until its bars are folded: its
+  snapshots wait, and the listener's `ready` flushes them. A read that fails, passes
+  `RECOMPUTE_TIMEOUT_S` or is incomplete (`HistoryIncompleteError`: rows withheld, or bars that
+  skip an index or stop short of the store's oldest) primes from the store alone (logged). Only
+  read bars older than the store's oldest are folded: the store, ahead of the engine on the emit
+  path, holds every close since. The task folds `PRIME_CHUNK_UPDATES` kernel updates at a time
+  and yields between (C-2.17; one bar's fillers are never split, and `StoredHistory` yields after
+  each page too). The series' closes that land meanwhile are held back, at most `MAX_POINTS`, and
+  folded in order before the instance is ready; a generation change or a store repair meanwhile,
+  or more closes than that, primes it from the store alone instead, at once and within
+  `MAX_SYNC_PRIME_UPDATES`.
+- **Budgets.** A prime that must run at once but would pass its budget (a re-prime, or the end of
+  a recompute, with no slot free) folds only the newest bars within it: the kernel starts at the
+  oldest of those, as after a restart, and a new warmup follows.
 - **Sessions.** A session-anchored instance (`vwap`, `cvd`: `Kernel.anchor_us`) restarts at each
   period start. Its read reaches back to the start of the period holding the oldest bar it needs,
   and it never serves a value of a period it did not fold from that period's start: such a value
   is `None` (`read`: `warmup`) until the next period begins. A fold holds a period whole from the
-  generation's first bar (index 0), or from a read's window start; else only from its own first
-  bar (a non-time series, no free slot, a failed read), and after a kernel restart only from the
-  bar it restarted at.
+  generation's first bar (index 0), from a read's window start, or from just past the newest bar
+  a budget left out; else only from its own first bar (a non-time series, no free slot, a failed
+  or incomplete read). After a kernel restart it holds the restart bar's period whole when the gap
+  began in an earlier period, and otherwise only from that bar.
 - **Time series** are densified as `BarSeries.densify()` does: a filler, flat at the previous close
   with no volume, advances the kernel and publishes no point. A gap of more than `MAX_FILL_SLOTS`
   empty slots restarts the kernel at the bar after it (a new warmup follows) rather than fold that
@@ -50,8 +61,9 @@ named here is a constant of `limits.py`.
 - **Generations and repairs.** A close in another generation than an instance's is a swap: every
   instance of the series re-primes from the store (which reset first), and the listener
   re-snapshots the series (`generation_swap`). A store repair re-primes it too (`history_repair`,
-  the store's repair hook). A re-prime counts `reason="backfill"`; one that needs a read and finds
-  no free slot primes from the store alone.
+  the store's repair hook). A re-prime counts `reason="backfill"`; one that needs a full recompute
+  and finds no free slot primes from the store alone, at once, within `MAX_SYNC_PRIME_UPDATES` for
+  the series' instances together (`Budgets`).
 - **Reads.** `read` returns `Available(value, generation, index, build_version)` or `Unavailable`:
   `missing` (no ready instance), `parity_flagged` (an injected hook, never by default), `stale`
   (more than `STALE_AFTER_BARS` closes behind its series, or another generation), `warmup` (the
@@ -60,6 +72,9 @@ named here is a constant of `limits.py`.
 
 Bounds (C-2.18): instances by the caps, each with at most `MAX_POINTS` points, its ring and at most
 `MAX_POINTS` held-back closes; recompute tasks by the slots; each read by `RECOMPUTE_TIMEOUT_S`.
+C-2.17: a synchronous prime folds at most `MAX_SYNC_PRIME_UPDATES` kernel updates, and a
+recompute holds the loop for one page, or one chunk of `PRIME_CHUNK_UPDATES` and one bar's
+fillers, at a time.
 The emit path removes the instances whose grace has ended at most every `SWEEP_EVERY_US`, so an
 unheld one folds closes for at most that long past its grace. The state is in memory only: a
 restart re-primes (24 §7.4). An instance update that raises is counted
@@ -75,6 +90,7 @@ import asyncio
 import itertools
 import math
 import time
+from bisect import bisect_left
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -93,6 +109,7 @@ from candleviewer.bars.series_store import Latest
 from candleviewer.bars.time_builder import LATE_WINDOW_US
 from candleviewer.observability.context import spawn
 from candleviewer.orderflow.errors import (
+    HistoryIncompleteError,
     IndicatorParamError,
     InstanceRefusedError,
     InvalidParamsError,
@@ -116,8 +133,9 @@ from candleviewer.orderflow.indicators.limits import (
     MAX_CONCURRENT_RECOMPUTES,
     MAX_FILL_SLOTS,
     MAX_POINTS,
+    MAX_SYNC_PRIME_UPDATES,
     MAX_WINDOW_BARS,
-    PRIME_CHUNK_BARS,
+    PRIME_CHUNK_UPDATES,
     RECOMPUTE_TIMEOUT_S,
     STALE_AFTER_BARS,
     SWEEP_EVERY_US,
@@ -149,6 +167,8 @@ Need = tuple[int, int | None]
 #: `(symbol, spec, generation, start_us, end_us) -> [(index, bar)]`: the closed tape-built bars of
 #: that generation opening in `[start_us, end_us)`, oldest first (`StoredHistory`).
 HistoryRead = Callable[[str, BarSpec, int, int, int], Awaitable[Sequence[tuple[int, BarInput]]]]
+#: `(generation, start_us, end_us)`: the stored-bar read priming some instances takes.
+Window = tuple[int, int, int]
 
 _CATALOGUE: Final = default_catalogue()
 
@@ -309,8 +329,11 @@ class StoredHistory:
     """`HistoryRead` over `BarReader.read_bars` (parameterised SQL only): the closed tape-built bars
     of a generation, oldest first, in pages of at most `HISTORY_PAGE_ROWS` rows and `max_rows` in
     all, yielding to the loop after each page (C-2.17: a page's integrity checks and conversions
-    run without a yield). `reader` is the one it reads through: `create_app` passes the series
-    store's own, on the `bars_hydrate` connection (20-architecture §4.2, D-G2)."""
+    run without a yield). Another generation's rows and kline rows are left out; a page that
+    withheld rows (`integrity_degraded`, SR-E12-11) or a bar of the generation it cannot fold (not
+    closed, or no index or delta) raises `HistoryIncompleteError`: an incomplete read is a failed
+    one, never folded as empty slots. `reader` is the one it reads through: `create_app` passes the
+    series store's own, on the `bars_hydrate` connection (20-architecture §4.2, D-G2)."""
 
     def __init__(self, reader: RangeReader, *, max_rows: int = MAX_WINDOW_BARS) -> None:
         self.reader, self._max_rows = reader, max_rows
@@ -326,13 +349,15 @@ class StoredHistory:
             page = await self.reader.read_bars(
                 symbol, spec, start_us, end_us, limit, after_us=after
             )
+            if page.integrity_degraded:
+                raise HistoryIncompleteError("A page of stored bars withheld rows.")
             taken += len(page.rows)
             for row in page.rows:
                 s = stored_bar(row)
-                if not (s.tape_built and s.confirmed and s.generation == generation):
-                    continue
-                if s.index is None or s.delta is None:
-                    continue
+                if not s.tape_built or s.generation != generation:
+                    continue  # a kline row, or another generation's: no bar of this one
+                if s.index is None or s.delta is None or not s.confirmed:
+                    raise HistoryIncompleteError("A stored bar of the generation cannot be read.")
                 values = (s.open, s.high, s.low, s.close, s.volume, s.delta)
                 o, h, lo, c, v, d = (float(x) for x in values)
                 out.append((s.index, BarInput(s.ts_us, o, h, lo, c, v, d, False)))
@@ -425,6 +450,47 @@ def _fill(last: BarInput | None, t: int, step: int) -> list[BarInput] | None:
     return out
 
 
+def _fillers(a: int, b: int, step: int) -> int:
+    """How many fillers `_fill` folds between bars opening at `a` and `b`: none past
+    `MAX_FILL_SLOTS`, where the kernel restarts instead."""
+    n = (b - a - 1) // step if step else 0
+    return n if 0 < n <= MAX_FILL_SLOTS else 0
+
+
+def _updates(times: Sequence[int], step: int) -> int:
+    """The kernel updates a fold of bars opening at `times` (oldest first) takes: one per bar,
+    and a time series' fillers."""
+    return len(times) + sum(_fillers(a, b, step) for a, b in itertools.pairwise(times))
+
+
+def _within(times: Sequence[int], step: int, budget: int) -> int:
+    """The position of the oldest of the bars opening at `times` (oldest first) a fold can start
+    at and take at most `budget` kernel updates (fillers included) to the newest, which it always
+    reaches."""
+    spent = 1
+    for at in range(len(times) - 1, 0, -1):
+        spent += 1 + _fillers(times[at - 1], times[at], step)
+        if spent > budget:
+            return at
+    return 0
+
+
+def _consecutive(bars: Bars) -> bool:
+    """True when `bars`' indexes run up one by one: a generation's real bars, none missing."""
+    if not bars:
+        return True
+    first = bars[0][0]
+    return list(map(itemgetter(0), bars)) == list(range(first, first + len(bars)))
+
+
+@dataclass(frozen=True, slots=True)
+class _Task:
+    """A full recompute's work: the stored-bar read it takes first, or None to fold the series
+    store's bars alone."""
+
+    window: Window | None
+
+
 def _oldest_open(newest_us: int, step: int, need: Need) -> int:
     """The open time of the oldest bar a time-series `need` folds: its bars back from the newest
     and, for a session-anchored one, back to the start of the period holding that bar."""
@@ -482,10 +548,10 @@ class IndicatorEngine:
     ) -> None:
         """Raise what `admit` would refuse now, counted, in this order: a window over
         `MAX_WINDOW_BARS` (`Requested.span`; `RecomputeRefusedError` `window`), a cap
-        (`InstanceCapError`), and a new instance that needs a read with no slot free
-        (`RecomputeRefusedError` `recompute`; decided from the store, so only once the series is
-        held). `consumer`: one that replaces its own instances (`leases.check`). Changes nothing
-        but the removal of instances whose grace has ended."""
+        (`InstanceCapError`), and new instances whose priming needs a full recompute with no slot
+        free (`RecomputeRefusedError` `recompute`; decided from the store, so only once the
+        series is held: `_plan`). `consumer`: one that replaces its own instances
+        (`leases.check`). Changes nothing but the removal of instances whose grace has ended."""
         self._sweep()
         for r in requested:
             if r.span(spec, history) > MAX_WINDOW_BARS:
@@ -493,7 +559,8 @@ class IndicatorEngine:
                 message = f"{r.definition.id} needs more than {MAX_WINDOW_BARS} bars."
                 raise RecomputeRefusedError("window", message)
         self._leases.check(symbol, [r.key for r in requested], user, consumer)
-        if self._read_for(symbol, spec, requested, history) is not None and not self._reader():
+        needs = self._needs(symbol, spec, requested, history)
+        if self._plan(symbol, spec, needs) is not None and not self._slot():
             CAP_REJECTED["recompute"].inc()
             raise RecomputeRefusedError("recompute", "Every indicator recompute slot is taken.")
 
@@ -510,14 +577,14 @@ class IndicatorEngine:
         reason: RecomputeReason | None = None,
     ) -> None:
         """`check`, then hold every instance of `requested` for `consumer` and start the new ones
-        (module docstring). With `replacing`, the consumer's leases on those keys are released
-        once the new ones are held (a WS `ctl`), and `reason` counts each instance it starts.
-        Nothing is held when it raises: a refusal takes nothing, and a raise after it undoes what
-        this call took (`_unwind`). The series must be held in the store."""
+        (module docstring). With `replacing`, the consumer's instances of those keys that the new
+        set leaves out are let go once the new ones are held (a WS `ctl`, `_let_go`), and `reason`
+        counts each instance it starts. Nothing is held when it raises: a refusal takes nothing,
+        and a raise after it undoes what this call took (`_unwind`). The series must be held in
+        the store."""
         mine = consumer if replacing else None
         self.check(symbol, spec, requested, user, history=history, consumer=mine)
-        window = self._read_for(symbol, spec, requested, history)
-        read = None if window is None else self._reader()
+        task = self._plan(symbol, spec, self._needs(symbol, spec, requested, history))
         taken: list[Key] = []  # leases this call gave the consumer
         created: set[Key] = set()  # of those, instances no one held or kept before
         fresh: list[_Instance] = []
@@ -536,9 +603,9 @@ class IndicatorEngine:
                     fresh.append(self._start(symbol, spec, r, history))
                 else:
                     inst.history = max(inst.history, history)
-            if window is not None and read is not None:
-                self._spawn(read, symbol, spec, fresh, window)
-            elif fresh:  # the store's bars suffice (`check` refused a read with no slot)
+            if task is not None and fresh:  # `check` found a slot for it
+                self._spawn(symbol, spec, fresh, task)
+            elif fresh:  # the store's bars, within `MAX_SYNC_PRIME_UPDATES` (`_plan`)
                 gen, bars = self._store_bars(symbol, spec)
                 for inst in fresh:
                     self._prime(inst, gen, bars)
@@ -546,7 +613,7 @@ class IndicatorEngine:
             self._unwind(consumer, taken, created, fresh)
             raise
         keys = {r.key for r in requested}
-        self.release(symbol, [k for k in replacing if k not in keys], consumer)
+        self._let_go(symbol, [k for k in replacing if k not in keys], consumer)
         if reason is not None and fresh:
             RECOMPUTES[reason].inc(len(fresh))
         self._bump((symbol, spec.spec_hash))
@@ -566,16 +633,30 @@ class IndicatorEngine:
         for inst in fresh:
             self._forget(inst)
 
-    def _read_for(
+    def _needs(
         self, symbol: str, spec: BarSpec, requested: Sequence[Requested], history: int
-    ) -> tuple[int, int, int] | None:
-        """The read that starting the new instances of `requested` takes (`_window`), if any."""
-        needs = [
+    ) -> list[Need]:
+        """What priming the instances of `requested` that do not run yet needs."""
+        return [
             (r.warmup() + history, r.anchor_us(spec))
             for r in requested
             if (symbol, r.key) not in self._instances
         ]
-        return self._window(symbol, spec, needs)
+
+    def _let_go(self, symbol: str, keys: Sequence[str], consumer: str) -> None:
+        """The instances a `ctl` replaced: one that `consumer` alone held is forgotten at once,
+        with no grace and nothing charged to its user (IR-31: replaced, not released); the
+        others lose `consumer`'s lease (`release`)."""
+        shared: list[str] = []
+        for key in keys:
+            if not self._leases.sole((symbol, key), consumer):
+                shared.append(key)
+                continue
+            self._leases.drop((symbol, key))
+            inst = self._instances.get((symbol, key))
+            if inst is not None:
+                self._forget(inst)
+        self.release(symbol, shared, consumer)
 
     def release(self, symbol: str, keys: Sequence[str], consumer: str) -> None:
         """Drop `consumer`'s leases on `keys`; an instance with none left keeps its grace. Never
@@ -648,9 +729,7 @@ class IndicatorEngine:
             return None, []
         return latest.generation, [(b.index, bar_input(b)) for b in latest.closed]
 
-    def _window(
-        self, symbol: str, spec: BarSpec, needs: Sequence[Need]
-    ) -> tuple[int, int, int] | None:
+    def _window(self, symbol: str, spec: BarSpec, needs: Sequence[Need]) -> Window | None:
         """`(generation, start_us, end_us)` of the read that priming `needs` takes (module
         docstring: back to the oldest bar any of them folds, `_oldest_open`), or None when the
         store's bars suffice, or no read can serve them (no reader, not a time series)."""
@@ -666,29 +745,41 @@ class IndicatorEngine:
             return None
         return latest.generation, start, newest.open_time + 1
 
-    def _reader(self) -> HistoryRead | None:
-        """The stored-bar read when a slot is free to run it now, else None."""
-        if self._history is None or self._stopping or self._busy >= self._slots:
+    def _plan(self, symbol: str, spec: BarSpec, needs: Sequence[Need]) -> _Task | None:
+        """How priming instances with `needs` runs: None when the store's bars suffice for them
+        and folding those takes at most `MAX_SYNC_PRIME_UPDATES` kernel updates for them all
+        (`_updates`: a sparse time series' fillers count), so the caller folds them at once; else
+        a full recompute, which first reads the stored bars `_window` names, if any."""
+        if not needs:
             return None
+        window = self._window(symbol, spec, needs)
+        if window is not None:
+            return _Task(window)
+        latest = self._latest(symbol, spec)
+        if latest is None or latest.generation is None:
+            return None
+        times = [b.open_time for b in latest.closed]
+        if len(needs) * _updates(times, _step_us(spec)) <= MAX_SYNC_PRIME_UPDATES:
+            return None
+        return _Task(None)
+
+    def _slot(self) -> bool:
+        """True when a full recompute can start now: a slot is free, the engine is not stopping,
+        and a loop runs to run it on."""
+        if self._stopping or self._busy >= self._slots:
+            return False
         try:
             asyncio.get_running_loop()
-        except RuntimeError:  # no loop to run the read on
-            return None
-        return self._history
+        except RuntimeError:  # no loop to run the task on
+            return False
+        return True
 
-    def _spawn(
-        self,
-        read: HistoryRead,
-        symbol: str,
-        spec: BarSpec,
-        insts: list[_Instance],
-        window: tuple[int, int, int],
-    ) -> None:
-        """Take a slot and run the read and the priming in a task the engine owns."""
-        task = spawn(self._backfill(read, symbol, spec, insts, window), name="indicator-backfill")
+    def _spawn(self, symbol: str, spec: BarSpec, insts: list[_Instance], task: _Task) -> None:
+        """Take a slot and run the full recompute in a task the engine owns (`_backfill`)."""
+        running = spawn(self._backfill(symbol, spec, insts, task.window), name="indicator-backfill")
         self._busy += 1
-        self._tasks.add(task)
-        task.add_done_callback(self._finished)
+        self._tasks.add(running)
+        running.add_done_callback(self._finished)
 
     def _finished(self, task: asyncio.Task[None]) -> None:
         """A recompute task ended, however (a cancelled one may never have started): its slot
@@ -699,27 +790,29 @@ class IndicatorEngine:
             _log().error("indicator_backfill_crashed", error_type=type(exc).__name__)
 
     async def _backfill(
-        self,
-        read: HistoryRead,
-        symbol: str,
-        spec: BarSpec,
-        insts: list[_Instance],
-        window: tuple[int, int, int],
+        self, symbol: str, spec: BarSpec, insts: list[_Instance], window: Window | None
     ) -> None:
-        generation, start, end = window
-        rows: Sequence[tuple[int, BarInput]] = ()
+        """A full recompute: the read of `window`, if any, whose bars must run up one index at a
+        time (one that fails, times out or is incomplete is logged, and the store's bars alone
+        prime), then each instance still running primed from it (`_fold_read`), then `ready`."""
+        rows: Bars = ()
+        generation: int | None = None
         since: int | None = None
-        try:
-            async with asyncio.timeout(RECOMPUTE_TIMEOUT_S):
-                rows = await read(symbol, spec, generation, start, end)
-            since = start
-        except Exception as exc:  # primed from the store alone, logged; a cancellation raises
-            _log().warning(
-                "indicator_backfill_failed",
-                symbol=symbol,
-                spec_hash=spec.spec_hash,
-                error_type=type(exc).__name__,
-            )
+        if window is not None and self._history is not None:
+            generation, start, end = window
+            try:
+                async with asyncio.timeout(RECOMPUTE_TIMEOUT_S):
+                    got = await self._history(symbol, spec, generation, start, end)
+                if not _consecutive(got):
+                    raise HistoryIncompleteError("The stored bars skip an index.")
+                rows, since = got, start
+            except Exception as exc:  # primed from the store alone, logged; a cancellation raises
+                _log().warning(
+                    "indicator_backfill_failed",
+                    symbol=symbol,
+                    spec_hash=spec.spec_hash,
+                    error_type=type(exc).__name__,
+                )
         for inst in insts:
             if self._instances.get((symbol, inst.req.key)) is inst:  # not expired meanwhile
                 await self._fold_read(inst, generation, rows, since)
@@ -728,32 +821,44 @@ class IndicatorEngine:
             self._listener.ready(symbol, spec)
 
     async def _fold_read(
-        self, inst: _Instance, generation: int, older: Bars, since_us: int | None
+        self, inst: _Instance, generation: int | None, older: Bars, since_us: int | None
     ) -> None:
-        """Prime `inst` from a read of `generation` (`since_us`: its window's start, None when it
-        failed): its bars older than the store's, then the store's, `PRIME_CHUNK_BARS` at a time
-        with a yield between, while the instance is not ready; then the closes held back
-        meanwhile, as `emit` would have folded them (module docstring). Otherwise the store's
-        bars alone, synchronously: another generation, a reset or repair meanwhile, too many
-        closes held back, or one it cannot place."""
+        """Prime `inst` from the store's bars, after a read's `older` bars of `generation`
+        (`since_us`: the read's window start; None with no read, or a failed one) while the store
+        holds that generation and `older` runs up to its oldest bar (else that read is incomplete:
+        logged, and the store's bars alone), `PRIME_CHUNK_UPDATES` kernel updates at a time with a
+        yield between, while the instance is not ready; then the closes held back meanwhile, as
+        `emit` would have folded them (module docstring). A reset or repair meanwhile, too many
+        closes held back, or one it cannot place: the store's bars at once, within
+        `MAX_SYNC_PRIME_UPDATES` (`_prime`)."""
         gen, stored = self._store_bars(inst.symbol, inst.bar_spec)
-        if gen != generation:
-            self._prime(inst, gen, stored)
-            return
-        first = stored[0][0] if stored else None
-        bars = sorted((p for p in older if first is None or p[0] < first), key=itemgetter(0))
-        bars.extend(stored)
+        bars: Bars = stored
+        if gen != generation:  # no read, or one of another generation: the store's bars alone
+            since_us = None
+        elif older:
+            first = stored[0][0] if stored else older[-1][0] + 1
+            cut = bisect_left(older, first, key=itemgetter(0))  # `older` runs up (`_backfill`)
+            if cut and older[cut - 1][0] != first - 1:  # it ends short of the store's oldest
+                _log().warning(
+                    "indicator_backfill_failed",
+                    symbol=inst.symbol,
+                    spec_hash=inst.req.key,
+                    index=first,
+                    error_type=HistoryIncompleteError.__name__,
+                )
+                since_us = None
+            else:
+                bars = [*older[:cut], *stored]
         key, spent = (inst.symbol, inst.req.key), 0.0
         inst.held, inst.dirty = [], False
         try:
             self._restart(inst, gen, since_us)
             keep = len(bars) - (inst.ring.maxlen or 0)  # only the ring's bars keep a checkpoint
-            for at in range(0, len(bars), PRIME_CHUNK_BARS):
+            at: int | None = 0
+            while at is not None and at < len(bars):
                 started = time.perf_counter()
-                whole = self._fold(inst, bars[at : at + PRIME_CHUNK_BARS], keep - at, bars[-1][0])
+                at = self._fold(inst, bars, keep, bars[-1][0], start=at, budget=PRIME_CHUNK_UPDATES)
                 spent += time.perf_counter() - started
-                if not whole:
-                    break
                 await asyncio.sleep(0)  # C-2.17: the loop runs between chunks
                 if self._instances.get(key) is not inst:  # expired meanwhile
                     return
@@ -762,12 +867,15 @@ class IndicatorEngine:
             inst.held = None
         started = time.perf_counter()
         if inst.dirty or not self._replay(inst, gen, held):
-            self._prime(inst, *self._store_bars(inst.symbol, inst.bar_spec))
+            gen, stored = self._store_bars(inst.symbol, inst.bar_spec)
+            self._prime(inst, gen, stored, budget=MAX_SYNC_PRIME_UPDATES)
             return
         inst.ready = True
         COMPUTE[inst.req.kernel.indicator].observe(spent + time.perf_counter() - started)
 
-    def _replay(self, inst: _Instance, gen: int, held: Sequence[tuple[int, BarUpdate]]) -> bool:
+    def _replay(
+        self, inst: _Instance, gen: int | None, held: Sequence[tuple[int, BarUpdate]]
+    ) -> bool:
         """Fold the closes held back while a read's fold ran, as `emit` would have; False at one
         of another generation than `gen`, or one the instance cannot place (`_update`)."""
         for generation, u in held:
@@ -775,19 +883,25 @@ class IndicatorEngine:
                 return False
         return True
 
-    def _prime(self, inst: _Instance, gen: int | None, bars: Bars) -> None:
+    def _prime(
+        self, inst: _Instance, gen: int | None, bars: Bars, *, budget: int | None = None
+    ) -> None:
         """Fold `bars` (oldest first, of generation `gen`) into a fresh kernel, synchronously: no
-        close can land in between."""
+        close can land in between. With `budget`, only the newest of them a fold of at most that
+        many kernel updates reaches (`_within`): the kernel starts at the oldest of those, and a
+        period that began before it is withheld (`_first`)."""
         started = time.perf_counter()
-        self._restart(inst, gen, None)
-        if bars:
-            self._fold(inst, bars, len(bars) - (inst.ring.maxlen or 0), bars[-1][0])
+        cut = _within([x.t for _, x in bars], inst.step, budget) if budget and bars else 0
+        self._restart(inst, gen, bars[cut - 1][1].t + 1 if cut else None)
+        if cut < len(bars):
+            keep = len(bars) - cut - (inst.ring.maxlen or 0)
+            self._fold(inst, bars[cut:], keep, bars[-1][0])
         inst.ready = True
         COMPUTE[inst.req.kernel.indicator].observe(time.perf_counter() - started)
 
     def _restart(self, inst: _Instance, gen: int | None, since_us: int | None) -> None:
-        """A fresh kernel with nothing folded, in generation `gen`; `since_us`: the start of the
-        read window its fold covers, if any (`_first`)."""
+        """A fresh kernel with nothing folded, in generation `gen`; `since_us`: where the bars its
+        fold covers start, when a read's window or a budget set it (`_first`)."""
         inst.kernel = self._kernel(inst.req, inst.context)
         inst.points.clear()
         inst.ring.clear()
@@ -795,15 +909,29 @@ class IndicatorEngine:
         inst.folded = inst.seq = 0
         inst.generation, inst.since_us, inst.complete_us = gen, since_us, None
 
-    def _fold(self, inst: _Instance, bars: Bars, keep: int, newest: int) -> bool:
-        """Fold `bars` into the instance, one point each; a bar at a position from `keep` on keeps
-        a checkpoint (only the ring's bars need one). False when a kernel raised: counted and
-        logged (`_failed`), and the instance restarts empty after bar `newest`."""
-        gen, index = inst.generation or 0, None
+    def _fold(
+        self,
+        inst: _Instance,
+        bars: Bars,
+        keep: int,
+        newest: int,
+        *,
+        start: int = 0,
+        budget: int | None = None,
+    ) -> int | None:
+        """Fold `bars` from position `start` into the instance, one point each, until the kernel
+        updates it took (fillers included) reach `budget`, or to the end: the position to go on
+        from. A bar at a position from `keep` on keeps a checkpoint (only the ring's bars need
+        one). None when a kernel raised: counted and logged (`_failed`), and the instance restarts
+        empty after bar `newest`."""
+        gen, index, at, spent = inst.generation or 0, None, start, 0
         try:
-            for position, (index, x) in enumerate(bars):
-                values = self._advance(inst, index, x, checkpoint=position >= keep)
+            while at < len(bars) and (budget is None or spent < budget):
+                index, x = bars[at]
+                values, updates = self._advance(inst, index, x, checkpoint=at >= keep)
                 inst.points.append(Point(gen, index, x.t, self._shown(inst, x.t, values)))
+                spent += updates
+                at += 1
         except Exception as exc:  # contained: the instance restarts empty after these bars
             self._failed(inst, index, exc, "indicator_prime_failed")
             inst.kernel = self._kernel(inst.req, inst.context)
@@ -811,8 +939,8 @@ class IndicatorEngine:
             inst.ring.clear()
             inst.last, inst.last_index, inst.since_us = None, newest, None
             inst.folded = inst.seq = 0
-            return False
-        return True
+            return None
+        return at
 
     def _failed(self, inst: _Instance, index: int | None, exc: Exception, event: str) -> None:
         """Count (`bar_emit_sink_errors_total{reason="indicators"}`) and log a kernel failure."""
@@ -827,7 +955,9 @@ class IndicatorEngine:
 
     def _reprime_series(self, symbol: str, spec: BarSpec, reason: Reprime) -> None:
         """Re-prime every ready instance of the series (`backfill`) and re-snapshot it; one whose
-        read's fold is under way ends with the store's bars (`_fold_read`)."""
+        read's fold is under way ends with the store's bars (`_fold_read`). A re-prime that needs
+        a full recompute (`_plan`) runs one when a slot is free; else it folds the store's bars
+        at once, within `MAX_SYNC_PRIME_UPDATES` split evenly across the instances (C-2.17)."""
         series = (symbol, spec.spec_hash)
         on_series = self._series.get(series, {})
         for inst in on_series.values():
@@ -837,17 +967,16 @@ class IndicatorEngine:
         if not insts:
             return
         RECOMPUTES["backfill"].inc(len(insts))
-        needs = [(i.req.warmup() + i.history, i.anchor_us) for i in insts]
-        window = self._window(symbol, spec, needs)
-        read = None if window is None else self._reader()
-        if window is not None and read is not None:
+        task = self._plan(symbol, spec, [(i.req.warmup() + i.history, i.anchor_us) for i in insts])
+        if task is not None and self._slot():
             for inst in insts:
-                inst.ready = False  # its snapshots wait for the read (`ready`)
-            self._spawn(read, symbol, spec, insts, window)
+                inst.ready = False  # its snapshots wait for the recompute (`ready`)
+            self._spawn(symbol, spec, insts, task)
         else:
             gen, bars = self._store_bars(symbol, spec)
+            budget = None if task is None else MAX_SYNC_PRIME_UPDATES // len(insts)
             for inst in insts:
-                self._prime(inst, gen, bars)
+                self._prime(inst, gen, bars, budget=budget)
         self._bump(series)
         if self._listener is not None:
             self._listener.resnapshot(symbol, spec, reason)
@@ -923,7 +1052,7 @@ class IndicatorEngine:
             x = bar_input(bar)
             if inst.last_index is not None and bar.index <= inst.last_index:
                 return self._amend(inst, bar.index, x)
-            values = self._advance(inst, bar.index, x)
+            values, _ = self._advance(inst, bar.index, x)
         except Exception as exc:  # contained to this instance: the others still get the close
             self._failed(inst, bar.index, exc, "indicator_update_failed")
             return None
@@ -935,8 +1064,9 @@ class IndicatorEngine:
 
     def _advance(
         self, inst: _Instance, index: int, x: BarInput, *, checkpoint: bool = True
-    ) -> Outputs:
-        """Fold a real bar, after its fillers, keeping the ring of a time series."""
+    ) -> tuple[Outputs, int]:
+        """Fold a real bar, after its fillers, keeping the ring of a time series: its values, and
+        the kernel updates that took (the bar and its fillers)."""
         fills = _fill(inst.last, x.t, inst.step)
         entry: _Entry | None = None
         if inst.ring.maxlen:
@@ -949,6 +1079,7 @@ class IndicatorEngine:
             self._first(inst, index, x.t, restarted=fills is None)
         if fills is None:  # a gap past `MAX_FILL_SLOTS`: the kernel restarts at this bar
             inst.kernel, inst.folded = self._kernel(inst.req, inst.context), 0
+            fills = []
         else:
             for f in fills:
                 inst.kernel.update(f)
@@ -959,16 +1090,23 @@ class IndicatorEngine:
         if entry is not None:
             entry.values = values
             inst.ring.append(entry)
-        return values
+        return values, 1 + len(fills)
 
     @staticmethod
     def _first(inst: _Instance, index: int, t: int, *, restarted: bool) -> None:
-        """A kernel's first bar, at open time `t`: a session-anchored instance holds the periods
-        from here on whole (`complete_us`), from its read's window start when one primed it, or
-        all of them from the generation's first bar (module docstring)."""
+        """A kernel's first bar, at open time `t`: a session-anchored instance holds periods
+        whole (`complete_us`): every one when this is the generation's first bar; else those from
+        where its fold's bars start, when a read's window or a budget set that (just past the
+        newest bar it left out); else those from `t`. After a restart (a gap past
+        `MAX_FILL_SLOTS`) it holds them from `t`, or from the start of `t`'s period when the gap
+        began in an earlier one: no bar of that period precedes this one (module docstring)."""
         if inst.anchor_us is None or (index == 0 and not restarted):
             return
-        known = t if restarted or inst.since_us is None else inst.since_us
+        if restarted:
+            start = session_start(t, inst.anchor_us)
+            known = start if inst.last is not None and start > inst.last.t else t
+        else:
+            known = t if inst.since_us is None else inst.since_us
         inst.complete_us = known if inst.complete_us is None else max(inst.complete_us, known)
 
     def _amend(self, inst: _Instance, index: int, x: BarInput) -> list[Point] | None:

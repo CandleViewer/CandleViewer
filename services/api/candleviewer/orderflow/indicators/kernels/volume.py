@@ -69,8 +69,10 @@ class VwapKernel(Kernel):
     sources = ("hlc3",)
     nullable_when = (
         "None until a bar with volume closes in the current session; each session, starting at "
-        "the bar spec's session anchor, begins without a value. band_sigma is also None while "
-        "sigma is 0 to within rounding (at most |vwap| * 2^-40)."
+        "the bar spec's session anchor, begins without a value. The server also serves None for "
+        "the rest of a session it could not fold from its start (an instance started or "
+        "restarted inside it). band_sigma is also None while sigma is 0 to within rounding (at "
+        "most |vwap| * 2^-40)."
     )
 
     def __init__(
@@ -143,8 +145,9 @@ class CvdKernel(Kernel):
     param_names = ("anchor",)
     sources = (None,)
     nullable_when = (
-        "None only before the first bar; the sum restarts from 0 at each anchor (the session "
-        "start, or 00:00 UTC for utc_day)."
+        "None before the first bar; the sum restarts from 0 at each anchor (the session start, "
+        "or 00:00 UTC for utc_day). The server also serves None for the rest of a period it "
+        "could not fold from its start (an instance started or restarted inside it)."
     )
 
     def __init__(

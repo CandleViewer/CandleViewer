@@ -40,20 +40,23 @@ def test_limits_every_fractional_range_starts_and_ends_on_its_step() -> None:
 
 
 #: SR-E13-03 (instances: 8 per user, 32 per symbol, 128 per process, 30 s grace, swept at most a
-#: second after it), SR-E13-04 (a window of at most 250 000 bars, 2 recomputes at once, each read
-#: bounded), C-2.17 (a recompute's read pages and fold chunks) and an instance's own state (its
-#: points, checkpoint spacing, longest filled gap and staleness).
+#: second after it), IR-31 (24 held and released in their grace, per user), SR-E13-04 (a window of
+#: at most 250 000 bars, 2 recomputes at once, each read bounded), C-2.17 (a recompute's read pages
+#: and fold chunks, and the most kernel updates a prime folds at once) and an instance's own state
+#: (its points, checkpoint spacing, longest filled gap and staleness).
 CAPS = {
     "INSTANCE_CAP_PER_USER": 8,
     "INSTANCE_CAP_PER_SYMBOL": 32,
     "INSTANCE_CAP_PROCESS": 128,
+    "INSTANCE_CHURN_CAP_PER_USER": 24,
     "INSTANCE_GRACE_US": 30_000_000,
     "SWEEP_EVERY_US": 1_000_000,
     "MAX_WINDOW_BARS": 250_000,
     "MAX_CONCURRENT_RECOMPUTES": 2,
     "RECOMPUTE_TIMEOUT_S": 5.0,
     "HISTORY_PAGE_ROWS": 1_000,
-    "PRIME_CHUNK_BARS": 512,
+    "PRIME_CHUNK_UPDATES": 512,
+    "MAX_SYNC_PRIME_UPDATES": 8_000,
     "MAX_POINTS": 1_000,
     "CHECKPOINT_EVERY": 8,
     "MAX_FILL_SLOTS": 1_000,

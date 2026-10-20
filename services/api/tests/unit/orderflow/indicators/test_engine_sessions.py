@@ -74,6 +74,17 @@ class _Tail:
         return BarTail([(GEN, b) for b in newest], since_us=0, fetched=len(newest))
 
 
+class _Keyed:
+    """The store's hydration read for several symbols: each one's bars, all of generation `GEN`."""
+
+    def __init__(self, series: dict[str, list[Bar]]) -> None:
+        self.series = series
+
+    async def __call__(self, symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        newest = self.series[symbol][-limit:]
+        return BarTail([(GEN, b) for b in newest], since_us=0, fetched=len(newest))
+
+
 class _Stored:
     """`HistoryRead` over every stored bar, by open time: each call's window, held by `go`, raising
     `fail` when set."""
@@ -256,6 +267,72 @@ async def test_a_kernel_restart_inside_a_session_withholds_the_rest_of_it() -> N
     await close(store, engine, nxt)
     got = engine.read(SYM, r.key)
     assert isinstance(got, Available) and got.value == float(nxt.delta)
+
+
+@pytest.mark.parametrize("raw", ANCHORED, ids=["vwap", "cvd", "cvd-utc-day"])
+async def test_a_restart_on_the_first_bar_of_a_new_session_serves_that_session(
+    raw: list[dict[str, Any]],
+) -> None:
+    """Review of the WS delivery: a gap past `MAX_FILL_SLOTS` that runs into the next session
+    restarts the kernel on that session's first bar, so no bar of the session precedes the
+    restart: it is served whole, as a fold from that bar gives it (a fresh instance whose read
+    starts inside the gap serves the same), never withheld until the session after."""
+    store = SeriesStore()
+    _hold = await store.ensure(SYM, M1)
+    engine = IndicatorEngine(store)
+    (r,) = admit(engine, raw)
+    for i in range(3):
+        await close(store, engine, _bar(i, slot=360 + i))  # 06:00 on day one
+    first = _bar(3, slot=NEXT_SESSION + 30)  # 00:30 the next day: 1 107 empty slots before it
+    await close(store, engine, first)
+    got = engine.read(SYM, r.key)
+    assert isinstance(got, Available)
+    assert (repr(got.value),) == _continuous(r, [first])[-1][:1]
+    second = _bar(4, slot=NEXT_SESSION + 31)
+    await close(store, engine, second)
+    got = engine.read(SYM, r.key)
+    assert isinstance(got, Available)
+    assert (repr(got.value),) == _continuous(r, [first, second])[-1][:1]
+
+
+async def test_a_re_prime_within_budget_serves_a_session_that_begins_after_what_it_leaves_out() -> (
+    None
+):
+    """C-2.17 (security review of the WS delivery): with the one recompute slot taken, a re-prime
+    of eight instances folds at once only the newest bars within `MAX_SYNC_PRIME_UPDATES`, 1 000
+    kernel updates each. Here those are the next day's 900 bars from 00:30; the bar the fold
+    leaves out is the day before's, so no bar of the new session precedes the fold, and its
+    session instances serve that session whole."""
+    day_one = [_bar(k, slot=300 + 10 * k) for k in range(100)]  # 05:00 to 21:30, 10 min apart
+    day_two = [_bar(100 + k, slot=NEXT_SESSION + 30 + k) for k in range(900)]  # from 00:30
+    ticks = [_bar(i) for i in range(100, 110)]
+    store = SeriesStore(_Keyed({SYM: [*day_one, *day_two], "ETHUSDT": ticks}))
+    holds = [await store.ensure(SYM, M1), await store.ensure("ETHUSDT", M1)]
+    gate = asyncio.Event()
+
+    async def waiting(*_: object) -> list[tuple[int, BarInput]]:
+        await gate.wait()
+        return []
+
+    engine = IndicatorEngine(store, history=waiting, slots=1)
+    eight = [*(raw for each in ANCHORED for raw in each), {"indicator": "volume"}, *EMA3]
+    eight += [{"indicator": "sma", "params": {"n": 2}}]
+    eight += [{"indicator": "rsi", "params": {"n": 2}}, {"indicator": "atr", "params": {"n": 2}}]
+    requested = admit(engine, eight, history=0)
+    await _done(engine)  # 2 070 kernel updates each, 16 560 in all: a full recompute
+    sma = resolve_instances([{"indicator": "sma", "params": {"n": 20}}], M1)
+    engine.admit("ETHUSDT", M1, sma, "c2", None, history=5)  # its read takes the slot
+    engine.history_repair(SYM, M1, 1)
+    for r in requested[:3]:
+        batch = engine.snapshot(SYM, r.key, 1_000)
+        assert batch is not None and [p.index for p in batch.points] == list(range(100, 1_000))
+        got = engine.read(SYM, r.key)
+        assert isinstance(got, Available)
+        assert (repr(got.value),) == _continuous(r, day_two)[-1][:1]
+    gate.set()
+    await _done(engine)
+    for hold in holds:
+        hold.release()
 
 
 def test_a_session_instance_s_window_counts_a_day_back_to_its_session_start() -> None:
