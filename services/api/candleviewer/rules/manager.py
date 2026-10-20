@@ -588,6 +588,13 @@ class RulesManager:
     async def get(self, rule_id: str, actor: Actor) -> dict[str, Any]:
         return await self._present(await self._visible_row(rule_id, actor))
 
+    async def visible_rule_ids(self, actor: Actor) -> frozenset[str]:
+        """The rules *actor* may read, exactly as `list_rules` lists them (not deleted, and the
+        `_visible` predicate, under which the Owner reaches every rule), for a read model that
+        joins rule history (`GET /notifications`, E40-T04)."""
+        rows = await self._s.all()
+        return frozenset(r.id for r in rows if not r.deleted and self._visible(r, actor))
+
     async def update(
         self,
         rule_id: str,

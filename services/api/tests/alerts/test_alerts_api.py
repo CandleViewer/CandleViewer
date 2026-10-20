@@ -9,6 +9,7 @@ import pytest
 from _alert_api_env import PRICE_CROSS, USER_B, Env
 from fastapi.testclient import TestClient
 
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import UNSTORABLE_TEXT
 
 ACTION = {"node_id": "a1", "type": "place_order", "params": {"side": "buy", "qty": "1"}}
@@ -159,3 +160,16 @@ def test_audit_write_failure_means_no_state_change(env: Env) -> None:
     assert c.put(f"/alerts/{a['id']}/enabled", json={"enabled": False}).status_code == 500
     assert c.delete(f"/alerts/{a['id']}").status_code == 500
     assert env.repo.rows == snapshot and a["id"] not in env.repo.deleted
+
+
+def test_a_refused_audit_write_is_the_declared_503_and_nothing_persists(env: Env) -> None:
+    """Write-ahead (C-2.9) through the shared route class: the problem the contract declares, not
+    a bare 500."""
+
+    async def refuse(action: str, **kw: Any) -> None:
+        raise AuditUnavailable("WAL full")
+
+    env.audit.emit = refuse  # type: ignore[method-assign]  # fault injection
+    r = env.c.post("/alerts", json=PRICE_CROSS)
+    assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
+    assert env.repo.rows == {}

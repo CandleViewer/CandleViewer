@@ -92,15 +92,15 @@ async def test_settle_failed_dead_letters_and_raises_one_notice() -> None:
 
 
 async def test_get_owned_and_bounded_ack_all() -> None:
-    rel = _Rel(_Result([_row(status="sent")]), _Result([]), _Result([], rowcount=4))
+    rel = _Rel(_Result([_row(status="sent")]), _Result([]), _Result([(4,), (3,), (2,), (1,)]))
     repo = SqlAlchemyAlertDeliveryRepository(rel)  # type: ignore[arg-type]  # structural fake
     got = await repo.get_owned(7, "u1")
     assert got is not None and got.id == 7
     assert await repo.get_owned(7, "u2") is None
     assert rel.calls[1][1] == {"id": 7, "by": "u2"}
-    assert await repo.ack_all("u1", cap=4) == 4
+    assert await repo.ack_all("u1", cap=4) == [4, 3, 2, 1]  # the ids, for the alerts topic
     sql, p = rel.calls[2]
-    assert "LIMIT :cap" in sql and p == {"by": "u1", "cap": 4}
+    assert "LIMIT :cap" in sql and "RETURNING id" in sql and p == {"by": "u1", "cap": 4}
 
 
 def test_outbox_job_row_satisfies_the_dispatcher_port() -> None:

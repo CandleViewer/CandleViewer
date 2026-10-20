@@ -15,21 +15,21 @@ check and before the store is read.
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
 # handler signatures at definition time (string annotations cannot see the closures).
 
-import inspect
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from candleviewer.alerts.compiler import AlertCompiler, validate_template
 from candleviewer.alerts.errors import AlertIrInvalid
-from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.api.alerts_http import Problem as _Problem
+from candleviewer.api.alerts_http import ProblemRoute as _ProblemRoute
+from candleviewer.api.alerts_http import caller
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.rules.manager import Actor
@@ -82,54 +82,6 @@ class AlertInput(BaseModel):
 class _EnabledBody(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     enabled: bool
-
-
-class _Problem(Exception):
-    def __init__(self, status: int, code: str, title: str, detail: str, **extra: Any) -> None:
-        super().__init__(detail)
-        self.status, self.code, self.title, self.detail, self.extra = (
-            status, code, title, detail, extra,
-        )  # fmt: skip
-
-    def response(self) -> JSONResponse:
-        return JSONResponse(
-            status_code=self.status,
-            media_type="application/problem+json",
-            content={
-                "type": f"https://candleviewer.local/errors/{self.code}",
-                "title": self.title,
-                "status": self.status,
-                "code": self.code,
-                "detail": self.detail,
-                **self.extra,
-            },
-        )
-
-
-class _Refused(Exception):
-    """A ready refusal raised from a dependency: the shared SR-026 query refusal, sent as is."""
-
-    def __init__(self, response: JSONResponse) -> None:
-        super().__init__(response.status_code)
-        self.response = response
-
-
-class _ProblemRoute(APIRoute):
-    """Turns `_Problem` (or a ready `_Refused`) raised in a dependency or handler into an RFC 9457
-    response."""
-
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        inner = super().get_route_handler()
-
-        async def handler(request: Request) -> Response:
-            try:
-                return await inner(request)
-            except _Problem as p:
-                return p.response()
-            except _Refused as r:
-                return r.response
-
-        return handler
 
 
 def _not_found() -> _Problem:
@@ -211,25 +163,8 @@ def make_alerts_router(
         perm: str, query: frozenset[str] | None = None
     ) -> Callable[[Request], Awaitable[Actor]]:
         """*query*: the operation's declared query parameters; any other key is refused (SR-026)
-        once the caller holds *perm*, before anything is read."""
-
-        async def dep(request: Request) -> Actor:
-            if d.resolver is None:
-                raise _Problem(501, "not_implemented", "Not implemented", "no principal resolver")
-            got = d.resolver(request)
-            actor: Actor | None = await got if inspect.isawaitable(got) else got
-            if actor is None:
-                raise _Problem(401, "unauthorized", "Unauthorized", "no verified session")
-            if perm not in actor.perms:
-                raise _Problem(403, "forbidden", "Forbidden", f"requires {perm}",
-                               required_permissions=[perm])  # fmt: skip
-            if query is not None:
-                refusal = undeclared_query_refusal(request, query)
-                if refusal is not None:
-                    raise _Refused(refusal)
-            return actor
-
-        return dep
+        once the caller holds *perm*, before anything is read (`alerts_http.caller`)."""
+        return caller(d.resolver, perm, query)
 
     def owned(
         perm: str, query: frozenset[str] | None = None

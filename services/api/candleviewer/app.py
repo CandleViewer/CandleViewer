@@ -99,6 +99,7 @@ from candleviewer.api.admin_kek import make_admin_kek_router
 from candleviewer.api.admin_ops import make_admin_incident_ack_router, make_admin_ops_router
 from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.admin_statecharts import make_statechart_router
+from candleviewer.api.alert_deliveries import make_alert_deliveries_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
@@ -129,6 +130,7 @@ from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
 from candleviewer.api.me import make_me_router
+from candleviewer.api.notifications import make_notifications_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.openapi_publish import install_contract_openapi
@@ -288,6 +290,7 @@ from candleviewer.replay.sessions_service import (
 from candleviewer.retention_wiring import build_retention_manager
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
+from candleviewer.rules.manager import Actor
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_store_pg import PostgresRuleStore
 from candleviewer.settings import (
@@ -334,6 +337,9 @@ from candleviewer.storage.repositories.instruments_sqlalchemy import (
 )
 from candleviewer.storage.repositories.invites_sqlalchemy import SqlAlchemyInviteRepository
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
+from candleviewer.storage.repositories.notifications_sqlalchemy import (
+    SqlAlchemyNotificationRepository,
+)
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -2308,6 +2314,31 @@ def create_app(
         if reason is not None:
             _alert_rejects.labels(reason).inc()
 
+    # E40-T04: the delivery inbox, mounted before the CRUD router (whose `/alerts/{alertId}`
+    # would take `GET /alerts/deliveries`), and the unified notification history.
+    app.include_router(
+        make_alert_deliveries_router(
+            lambda: SqlAlchemyAlertDeliveryRepository(_alert_pg),
+            rules_actor.resolve if rules_actor else None,
+            _LazyAuditEmitter(ctx.audit),
+            metric=_alert_delivery_sink(metrics_facade),
+        )
+    )
+
+    async def _visible_rules(actor: Actor) -> frozenset[str]:
+        mgr = ctx.rules.manager()  # the rules module stopped: no rule rows, never every rule
+        return frozenset() if mgr is None else await mgr.visible_rule_ids(actor)
+
+    # C-2.11: account-bound rows are this process's exchange environment only. Built once, so an
+    # environment the read model does not know fails the boot, not the first request.
+    _notifications = SqlAlchemyNotificationRepository(_alert_pg, env=resolved.environment.value)
+    app.include_router(
+        make_notifications_router(
+            lambda: _notifications,
+            rules_actor.resolve if rules_actor else None,
+            _visible_rules,
+        )
+    )
     app.include_router(
         make_alerts_router(
             lambda: SqlAlchemyAlertRepository(_alert_pg),
@@ -2444,6 +2475,18 @@ def _alert_dispatcher(
     """E40-T04: `alert.deliver` outbox poller. Email stays disabled (suppressed) until the
     E04 relay transport is provisioned; no network transport is constructed here."""
     adapters = default_adapters(None, webhook_enabled=webhook_enabled)  # refuses webhook=on
+    return AlertDispatcher(
+        SqlAlchemyAlertDispatchStore(pg),
+        adapters,
+        worker=f"api-{os.getpid()}-{uuid.uuid4().hex[:8]}",
+        now=lambda: datetime.now(UTC),
+        metric=_alert_delivery_sink(facade),
+    )
+
+
+def _alert_delivery_sink(facade: Metrics) -> Callable[[str, tuple[str, ...]], Any]:
+    """The `cv_alert_delivery_*` sink shared by the dispatcher and the desktop report-back
+    route (E40-T04): identical re-registration returns the same series."""
     m = {
         "cv_alert_delivery_total": facade.counter(
             "cv_alert_delivery_total", "Settled alert deliveries.", ("transport", "state"),
@@ -2462,13 +2505,7 @@ def _alert_dispatcher(
         b = m[name]
         return b.labels(*labels) if labels else b.child()
 
-    return AlertDispatcher(
-        SqlAlchemyAlertDispatchStore(pg),
-        adapters,
-        worker=f"api-{os.getpid()}-{uuid.uuid4().hex[:8]}",
-        now=lambda: datetime.now(UTC),
-        metric=_sink,
-    )
+    return _sink
 
 
 def _alert_evaluator_factory(

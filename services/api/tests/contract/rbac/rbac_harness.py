@@ -357,6 +357,45 @@ class _AlertRepo:
         return None
 
 
+class _AlertDeliveryRepo:
+    """Empty delivery inbox (E40-T04): nothing to list, ack or report (no SQL, no mutation);
+    the retention purge task built from the same class finds nothing expired."""
+
+    async def get(self, delivery_id: int) -> None:
+        return None
+
+    async def alert_owner(self, alert_id: str) -> None:
+        return None
+
+    async def unacked_count(self, user_id: str) -> int:
+        return 0
+
+    async def list_page(self, **_kw: Any) -> Page[Any]:
+        return Page([], None)
+
+    async def ack(self, delivery_id: int, user_id: str) -> None:
+        return None
+
+    async def ack_all(self, user_id: str, cap: int = 1000) -> list[int]:
+        return []
+
+    async def report_desktop(self, delivery_id: int, **_kw: Any) -> None:
+        return None
+
+    async def fetch_expired(self, days: int, limit: int = 5000) -> list[Any]:
+        return []
+
+    async def delete_ids(self, ids: list[int]) -> int:
+        return 0
+
+
+class _NotificationRepo:
+    """Empty `GET /notifications` read model (E40-T04, no SQL)."""
+
+    async def list_page(self, scope: Any, **_kw: Any) -> tuple[list[Any], None]:
+        return [], None
+
+
 class _AuditQuery:
     """`AuditQueryService` stand-in returning empty, valid results (no DB)."""
 
@@ -603,6 +642,8 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
 
     mp.setattr(appmod, "build_identity_provider", lambda _settings: _Identity(spec))
     mp.setattr(appmod, "SqlAlchemyAlertRepository", lambda _pg: _AlertRepo())
+    mp.setattr(appmod, "SqlAlchemyAlertDeliveryRepository", lambda _pg: _AlertDeliveryRepo())
+    mp.setattr(appmod, "SqlAlchemyNotificationRepository", lambda _pg, **_kw: _NotificationRepo())
     # E16-T06: the real retention manager exists only on the `real` storage backend; the purge
     # route is mounted either way, so give it the call-recording stand-in (never plans/deletes).
     purge_backend = _PurgeBackend()
