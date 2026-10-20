@@ -55,12 +55,14 @@ Owner calls with dates: O2 prototypes (2026-10-22), O3 price-zoom modifier and i
 
 Per `docs/design/README.md` ("UX-research tickets still design in Penpot") the boards go on a **clean page `E11-D01`** in the CandleViewer file
 (team `b564c72c-f31f-81ec-8008-b109a9175d0b`, file `b564c72c-f31f-81ec-8008-b112c6fdc116`); the 2026-10-14 page ("E11-D01 Chart navigation
-research") holds other agents' boards and is left untouched. Exports land in `docs/design/E11/img/E11-D01-*.png` via
-`docs/design/_tools/penpot_export.py`; no image is embedded until it exists. Planned boards: **1 Method and personas** (P1/P2/P3 cards from `10`);
+research") holds other agents' boards and is left untouched. Exports land in `docs/design/E11/img/E11-D01-<nn>-<board>.png` (one PNG
+per board, `01-method-personas` … `08-contradictions`) via `docs/design/_tools/penpot_export.py`; no image is embedded until it
+exists. Planned boards: **1 Method and personas** (P1/P2/P3 cards from `10`);
 **2 Findings cards Q1–Q6** (finding, basis, contradiction flag); **3 Decisions at a glance and principles** (the one-pager); **4 Key-map wireframe** (D4
 vocabulary and legend; E11-S13, E11-D02); **5 Data-table column comparison** (US-CHART-014 vs SCR-045 vs E11-S14 vs `05` §6.3; E11-S14, E11-D04);
 **6 Aggregation disclosure options** (W1–W4 and placements; E11-S12, E11-D02); **7 Competitive teardown** (scale menus and go-to-date in TradingView,
-DeepCharts, Bookmap; pending the owner's live, redacted screenshots, protocol §3/§9; E11-D03).
+DeepCharts, Bookmap; pending the owner's live, redacted screenshots, protocol §3/§9; E11-D03); **8 Contradictions with planned
+behaviour** (the §Contradictions table as a frame: id, the two sources, the recommended side, who decides).
 
 ## Method note
 
