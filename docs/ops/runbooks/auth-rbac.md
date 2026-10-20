@@ -1175,12 +1175,20 @@ Written 2026-10-19 for #3009 S4a. The alert runbooks are the anchors `alert-audi
 `alert-auditlaneseqregressed` of `docs/plan/07-release-and-prr.md`; this section says where their
 signals come from and how the lane key is rotated.
 
+**Partly blocked.** The signals and the retirement rule hold wherever cv-api runs the lane, but
+compose runs the fake backend (no lane, §12) and gives the `api` service one lane key secret
+(S2b-2b2, #3737) and no `CV_AUDIT_LANE_PREVIOUS_KEY_FILE`: rotating the key under compose is
+**BLOCKED — not implemented** until a second file secret and that variable are provisioned (#3009).
+
 - **Signals.** cv-api serves the lane's series (`cv_audit_lane_*`) and the writer's refusals
   (`cv_audit_writer_refused_total{domain}`) on the metrics listener (`127.0.0.1:9108`, §6), read at
   the scrape from memory: per-process counters at 0 from start, and the lane's gauges (depth,
   bytes, the oldest unit's age, the head `seq`, the state, `quarantine/`'s size) only while a lane
   runs. `cv_audit_lane_journal_first` is the flag value the façade uses, cached: during a flag-store
-  outage the admin API shows the stored value, the gauge the one in force.
+  outage the admin API shows the stored value, the gauge the one in force. The writer's count is of
+  refusals, not slowness: a hung WAL shows as deadline misses until its failure latch refuses.
+  A count a boot sets before the first scrape (an anomaly row of its scan, frame 1 of a new lane)
+  is read while the process is under 15 minutes old, so a long stop hides none of them.
 - **Severity.** Every lane alert is a `ticket` for now. ADR-0037 makes seven of them pages, never
   muted by quiet hours, but a new page needs the Owner (#2701): until it is granted, quiet hours
   (22:00-07:00 UTC) mute them, and the event alerts hold 9 h 30 m so that one firing at night is

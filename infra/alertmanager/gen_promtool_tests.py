@@ -263,7 +263,16 @@ def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
 # #3009 S4a: a lane refusal or anomaly at 6 min, by its labels.
 _REFUSED = 'cv_audit_lane_refused_total{{class="shared",env="live",reason="{}"}}'
 _ANOMALY = 'cv_audit_lane_anomalies_total{{env="live",reason="{}"}}'
-_CREATED = 'cv_audit_lane_created_total{env="live"}'
+# A count a boot sets before the first scrape, read while the process (prometheus_client's
+# process_start_time_seconds, same target) is under 15 minutes old (SR-S4A2-01, SR-S4A2-02).
+_ON = 'instance="api:9108",job="candleviewer-api"'
+_START = f"process_start_time_seconds{{{_ON}}}"
+_CREATED = f'cv_audit_lane_created_total{{env="live",{_ON}}}'
+_BOOTED = 'cv_audit_lane_anomalies_total{{env="live",' + _ON + ',reason="{}"}}'
+# A restart gap of 30 minutes: the old process at 0 until 5 min, the new one from 36 min (2160 s),
+# whose scan already counted 1; and a first boot at 30 min (1800 s) with no history at all.
+_GAP, _GAP_START = "0+0x5 _x30 1+0x20", "0+0x5 _x30 2160+0x20"
+_FIRST, _FIRST_START = "_x30 1+0x20", "_x30 1800+0x20"
 
 # alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
 MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
@@ -362,27 +371,47 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("10m", False, {_LATCH: "1+0x4 0+0x15"}),  # the restart
     ),
     # #3009 S4a. A stopped lane or a refusal fires; a held lane's refusals are AuditLaneDrainHeld's.
+    # A healthy lane (not stopped, nothing refused) is silent; a refusal holds 9 h 30 m past the
+    # window, as the other held rules (S4A2-C2, S4A2-N2).
     "AuditLaneRefusing": (
         ("10m", True, {_STATE.format("stopped"): _RISE}),
         ("10m", True, {_REFUSED.format("full"): _RISE}),
         ("10m", False, {_STATE.format("held"): _RISE, _REFUSED.format("held"): _RISE}),
+        ("10m", False, {_STATE.format(x): f"{int(x == 'open')}+0x20" for x in ("stopped", "open")}),
+        ("10m", False, {_REFUSED.format("full"): "0+0x20"}),
+        ("9h49m", True, {_REFUSED.format("full"): _RISE}),
+        ("9h52m", False, {_REFUSED.format("full"): _RISE}),
     ),
-    # A critical anomaly is AuditLaneAnomaly's, a torn tail alone AuditLaneTornTail's.
+    # A critical anomaly is AuditLaneAnomaly's, a torn tail alone AuditLaneTornTail's. One a boot's
+    # scan counted fires after a restart gap or with no history; a young process at 0 is silent,
+    # and an old one once its 15 minutes and the hold have passed.
     "AuditLaneAnomaly": (
         ("10m", True, {_ANOMALY.format("frame_rejected"): _RISE}),
         ("10m", False, {_ANOMALY.format("torn_tail"): _RISE}),
+        ("45m", True, {_BOOTED.format("frame_rejected"): _GAP, _START: _GAP_START}),
+        ("40m", True, {_BOOTED.format("seq_gap"): _FIRST, _START: _FIRST_START}),
+        ("10m", False, {_BOOTED.format("frame_rejected"): "0+0x20", _START: "0+0x20"}),
+        ("45m", False, {_BOOTED.format("torn_tail"): _GAP, _START: _GAP_START}),
+        ("10h", False, {_BOOTED.format("frame_rejected"): "1+0x700", _START: "0+0x700"}),
+        ("9h49m", True, {_ANOMALY.format("frame_rejected"): _RISE}),
+        ("9h52m", False, {_ANOMALY.format("frame_rejected"): _RISE}),
     ),
     "AuditLaneTornTail": (
         ("10m", True, {_ANOMALY.format("torn_tail"): _RISE}),
         ("10m", False, {_ANOMALY.format("frame_rejected"): _RISE}),
+        ("45m", True, {_BOOTED.format("torn_tail"): _GAP, _START: _GAP_START}),
+        ("10m", False, {_BOOTED.format("torn_tail"): "0+0x20", _START: "0+0x20"}),
+        ("9h49m", True, {_ANOMALY.format("torn_tail"): _RISE}),
+        ("9h52m", False, {_ANOMALY.format("torn_tail"): _RISE}),
     ),
-    # Frame 1 at the first boot (no history) and at a later boot fire; a process that made its lane
-    # is quiet once its 15 minutes and the 9 h 30 m hold have passed; no lane made never fires.
+    # Frame 1 fires while its process is young: the first boot, and a re-creation by the process
+    # after the creator, four minutes on (SR-S4A2-02). A process that made its lane is quiet once
+    # its 15 minutes and the 9 h 30 m hold have passed; a young one that made none never fires.
     "AuditLaneCreated": (
-        ("5m", True, {_CREATED: "1+0x700"}),
-        ("25m", True, {_CREATED: "0+0x20 1+0x700"}),
-        ("10h", False, {_CREATED: "1+0x700"}),
-        ("25m", False, {_CREATED: "0+0x30"}),
+        ("5m", True, {_CREATED: "1+0x700", _START: "0+0x700"}),
+        ("610m", True, {_CREATED: "1+0x600 _x4 1+0x30", _START: "0+0x600 _x4 36300+0x30"}),
+        ("10h", False, {_CREATED: "1+0x700", _START: "0+0x700"}),
+        ("10m", False, {_CREATED: "0+0x30", _START: "0+0x30"}),
     ),
 }
 
@@ -442,7 +471,18 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
     # #3009 S4a: a lower head after a restart gap of 30 minutes is a drop too; an operator
     # removing copies from `quarantine/` is no growth.
     "AuditLaneSeqRegressed": [("10+1x10 _x30 3+1x10", "55m", True)],
-    "AuditLaneQuarantineGrowing": [("400+0x10 0+0x20", "20m", False)],
+    # S4A2-N2: each held rule fires to the end of its hold and not past it; a backlog that
+    # drained at 15 min holds until 9 h 45 m (SR-S4A2-04), growth seen until 70 min until 10 h 40 m.
+    "AuditSinkRefusing": [("0+0x5 1+0x700", "9h49m", True), ("0+0x5 1+0x700", "9h52m", False)],
+    "AuditLaneBacklogAged": [
+        ("0+60x14 0+0x700", "9h44m", True),
+        ("0+60x14 0+0x700", "9h47m", False),
+    ],
+    "AuditLaneQuarantineGrowing": [
+        ("400+0x10 0+0x20", "20m", False),
+        ("100+0x10 400+0x700", "10h39m", True),
+        ("100+0x10 400+0x700", "10h42m", False),
+    ],
 }
 
 

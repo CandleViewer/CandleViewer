@@ -361,6 +361,10 @@ groups:
       # (#2701), so each of those says so; a ticket is muted 22:00-07:00 UTC, so an event rule
       # holds with `keep_firing_for: 9h30m` (ws_gateway.yml header). Component `audit_lane`, or
       # `audit_sink` for the writer, so PostgresDown's inhibition (component `audit`) hides none.
+      # A count that a boot sets before the first scrape is not an increase once the restart gap
+      # passes the window, so those rules read it while the process is young (under 15 minutes,
+      # by prometheus_client's process_start_time_seconds on the same listener). A refusal at a
+      # boot is not read that way: a refusing sink or lane refuses again once callers arrive.
       - alert: AuditSinkRefusing
         # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
         # A record a caller waited on was refused by the audit writer: its action failed closed.
@@ -378,6 +382,7 @@ groups:
         # The oldest unconfirmed lane unit waited over 10 minutes: the sink is not taking them.
         expr: max by (env) (cv_audit_lane_oldest_age_seconds) > 600
         for: 0m
+        keep_firing_for: 9h30m
         labels:
           severity: ticket
           component: audit_lane
@@ -411,8 +416,12 @@ groups:
           runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlanerefusing"
       - alert: AuditLaneAnomaly
         # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
-        # A critical `audit.lane_anomaly` row: lane material that was not authentic or in sequence.
-        expr: sum by (env) (increase(cv_audit_lane_anomalies_total{reason!="torn_tail"}[15m])) > 0
+        # A critical `audit.lane_anomaly` row: lane material that was not authentic or in sequence;
+        # a boot's scan counts its rows before the first scrape, read by the young-process arm.
+        expr: >-
+          sum by (env) (increase(cv_audit_lane_anomalies_total{reason!="torn_tail"}[15m])) > 0
+          or max by (env) (cv_audit_lane_anomalies_total{reason!="torn_tail"} and on (job, instance)
+          (time() - process_start_time_seconds < 900)) > 0
         for: 0m
         keep_firing_for: 9h30m
         labels:
@@ -422,8 +431,12 @@ groups:
           summary: "The audit lane recorded a critical anomaly (tampering or damage)"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlaneanomaly"
       - alert: AuditLaneTornTail
-        # A torn tail alone is a ticket (ADR-0037): an append a crash cut short, a warning row.
-        expr: sum by (env) (increase(cv_audit_lane_anomalies_total{reason="torn_tail"}[15m])) > 0
+        # A torn tail alone is a ticket (ADR-0037): an append a crash cut short, a warning row,
+        # which the next boot's scan finds (so the young-process arm, as AuditLaneAnomaly).
+        expr: >-
+          sum by (env) (increase(cv_audit_lane_anomalies_total{reason="torn_tail"}[15m])) > 0
+          or max by (env) (cv_audit_lane_anomalies_total{reason="torn_tail"} and on (job, instance)
+          (time() - process_start_time_seconds < 900)) > 0
         for: 0m
         keep_firing_for: 9h30m
         labels:
@@ -433,7 +446,8 @@ groups:
           summary: "The audit lane found a torn tail (an append cut short by a crash)"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-auditlaneanomaly"
       - alert: AuditLaneQuarantineGrowing
-        # A ticket (ADR-0037): `quarantine/` grew, evidence kept for good with its PII (Q8).
+        # A ticket (ADR-0037): `quarantine/` grew, evidence kept for good with its PII (Q8). After
+        # a restart gap over the hour, a boot's copy shows through its anomaly row's rule instead.
         expr: max by (env) (delta(cv_audit_lane_quarantine_bytes[1h])) > 0
         for: 0m
         keep_firing_for: 9h30m
@@ -457,10 +471,11 @@ groups:
       - alert: AuditLaneCreated
         # page promotion pending owner approval (#2701; ADR-0037 lists it as a page)
         # A process wrote frame 1 of a new lane: the first boot, or a lane that was lost. The count
-        # is set before the first scrape, so the rule reads it, not an increase, for 15 minutes.
+        # is set before the first scrape, so the rule reads it while that process is young: every
+        # creation fires, a re-creation by the process after the creator's too (SR-S4A2-02).
         expr: >-
-          max by (env) (max_over_time(cv_audit_lane_created_total[15m])) > 0
-          unless on (env) max by (env) (max_over_time(cv_audit_lane_created_total[15m] offset 15m)) > 0
+          max by (env) (cv_audit_lane_created_total and on (job, instance)
+          (time() - process_start_time_seconds < 900)) > 0
         for: 0m
         keep_firing_for: 9h30m
         labels:

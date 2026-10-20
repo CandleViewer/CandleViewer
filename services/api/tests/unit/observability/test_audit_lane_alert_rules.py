@@ -24,7 +24,7 @@ _PRR = "docs/plan/07-release-and-prr.md#alert-"
 #: alert -> (anchor, held past the quiet hours, a page in ADR-0037)
 LANE: dict[str, tuple[str, bool, bool]] = {
     "AuditSinkRefusing": ("auditsinkrefusing", True, True),
-    "AuditLaneBacklogAged": ("auditlanebacklogaged", False, True),
+    "AuditLaneBacklogAged": ("auditlanebacklogaged", True, True),  # SR-S4A2-04
     "AuditLaneRefusing": ("auditlanerefusing", True, True),
     "AuditLaneDrainHeld": ("auditlanerefusing", False, True),
     "AuditLaneBootOvershoot": ("auditlanerefusing", False, False),
@@ -74,3 +74,12 @@ def test_each_rule_has_promtool_cases_that_fire_and_stay_silent_and_a_drill_row(
         fired = {bool(c["exp_alerts"]) for c in cases if c["alertname"] == name}
         assert fired == {True, False}, name
         assert re.search(rf"^\| {name} \| ticket \|", matrix, re.MULTILINE), name
+
+
+def test_each_count_a_boot_sets_is_read_while_its_process_is_young() -> None:
+    """SR-S4A2-01, -02: a boot's scan counts its anomaly rows, and frame 1 its creation, before
+    the first scrape, so after a restart gap no `increase()` sees them. Those rules also read the
+    count while the process is under 15 minutes old; the promtool cases pin how they fire."""
+    young = "and on (job, instance) (time() - process_start_time_seconds < 900)"
+    read = {name for name, rule in _rules().items() if young in " ".join(rule["expr"].split())}
+    assert read == {"AuditLaneAnomaly", "AuditLaneTornTail", "AuditLaneCreated"}
