@@ -24,7 +24,8 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   record (below) overwrites it, so if that write fails the refused blob stays and keeps its
   floor. A refused blob never raises. A blob with no watermark has no replay point, so bars
   emitted after it could not be reproduced: it cold-starts the series too (quietly) and only
-  sets the generation floor.
+  sets the generation floor. A blob whose replay meets a print the builder refuses (SR-E12-15's
+  per-print cap) is refused too (`replay_refused`, #2762), else it could never be caught up.
 - **Generation (#2662).** A fresh builder restarts `index` at 0, so a cold start begins a new
   generation (epoch): `max(now_ms, floor + 1)`. `now_ms` is the set's injected UTC wall clock
   (`now_us // 1000`). `floor` is the highest generation known for the series: the one a blob
@@ -121,6 +122,11 @@ _RESTORE_ERRORS = (BarsError, ValueError, KeyError, TypeError, IndexError, Arith
 #: Load outcomes that cold-start a series without a discard (not counted, no health reason).
 _QUIET_REASONS: Final = ("ok", "missing", "no_watermark")
 BuilderFactory = Callable[[BarSpec, str], BarBuilder]
+
+
+class _ReplayRefused(Exception):
+    """A restored series' builder refused a replayed print (SR-E12-15's per-print cap): its blob
+    cannot be caught up, so the series is built again cold (#2762)."""
 
 
 def _log() -> structlog.stdlib.BoundLogger:
@@ -425,7 +431,11 @@ class BarBuilderSet:
             async with lane.lock:
                 # A series still in teardown (expired, lock not yet taken) is re-adopted.
                 if all(e.spec.spec_hash != key[1] for e in lane.entries):
-                    entry = await self._build(spec, symbol, builder, lane)
+                    try:
+                        entry = await self._build(spec, symbol, builder, lane)
+                    except _ReplayRefused:  # its blob cannot catch up: refused, built cold
+                        builder = self._factory(spec, symbol)
+                        entry = await self._build(spec, symbol, builder, lane, refused=True)
                     lane.entries = (*lane.entries, entry)
         except Exception as exc:
             outcome.set_result(exc)  # every registrant waiting on it raises it too
@@ -468,17 +478,24 @@ class BarBuilderSet:
         return lane
 
     # -- restore / replay ------------------------------------------------------------------
-    async def _build(self, spec: BarSpec, symbol: str, builder: BarBuilder, lane: _Lane) -> _Entry:
+    async def _build(
+        self, spec: BarSpec, symbol: str, builder: BarBuilder, lane: _Lane, *, refused: bool = False
+    ) -> _Entry:
         """Restore or cold-start a series. Runs under `lane.lock`, so no live trade is applied
         meanwhile. A restored series replays the tape after its watermark, then the lane's
         recent ring: trades the lane already applied that the async tape writer may not have
         landed yet. Both are deduped by the advancing watermark, so the series is exactly
         caught up to `lane.mark` before it joins (BI-5). The replay holds the lane lock; moving
-        it to a staged entry outside the lock is a follow-up."""
+        it to a staged entry outside the lock is a follow-up. A replayed print the builder
+        refuses raises `_ReplayRefused`; the series is then built again with `refused`, which
+        reads no blob and cold-starts, its discard counted as `replay_refused` (#2762)."""
         t0 = time.perf_counter()
         h = spec.spec_hash
         key = (symbol, h)
-        stored, reason = await self._store.load(symbol, h)
+        if not refused:
+            stored, reason = await self._store.load(symbol, h)
+        else:  # the generation still rises above the blob's: `_remember` noted it on the restore
+            stored, reason = None, "replay_refused"
         recorded = -1 if stored is None else stored.generation  # -1: no blob parsed
         wm = None if stored is None else stored.watermark
         if stored is not None and wm is None:
@@ -576,7 +593,11 @@ class BarBuilderSet:
 
     async def _catch_up(self, entry: _Entry, skip: _Mark, t: TradeEvent) -> None:
         if not skip.covers(t.ts_event, t.trade_id):
-            await self._emit(entry, entry.builder.on_trade(t))
+            try:
+                ups = entry.builder.on_trade(t)
+            except BarsError as exc:  # a print it refuses (SR-E12-15): this restore cannot stand
+                raise _ReplayRefused from exc
+            await self._emit(entry, ups)
             skip.advance(t.ts_event, t.trade_id)
 
     # -- hot path --------------------------------------------------------------------------
