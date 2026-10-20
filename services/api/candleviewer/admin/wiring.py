@@ -182,7 +182,8 @@ def build_audit_verify_job(
     audit: AuditService, settings: Settings, metrics: Metrics, runner: VerifyRunner | None
 ) -> AuditVerifyJob | None:
     """The start-up and nightly verify job (#2111), or `None` while no runner is wired (nothing
-    runs or pages). No I/O; the lifespan starts it once the audit module is up."""
+    runs; in `live` the verify gauge stays 0 and `AuditVerifyNotPassing` pages). No I/O; the
+    lifespan starts it once the audit module is up."""
     if runner is None:
         return None
     return AuditVerifyJob(

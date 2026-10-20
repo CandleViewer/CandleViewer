@@ -2825,7 +2825,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "Unix time the last start-up or nightly audit chain verify run passed; the job's start "
         "until one does; 0 while no verify runner is wired.",
-        "AuditVerifyNotPassing (no pass for 26 h, page; 0 never pages)",
+        "AuditVerifyNotPassing (no pass for 26 h, or 0 in live: no runner wired; page)",
         _L,
         "E09",
     ),

@@ -144,7 +144,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         audit_verify = getattr(app.state, "audit_verify_job", None)
         if audit_verify is not None:  # #2111: after `start_all`, so the audit writer is up
             audit_verify.start()
-        else:  # #2111: no verify runner is wired (#2966), so nothing checks the audit chain
+        else:  # #2111: the fake backend wires no verify runner (#2966), so nothing checks the chain
             logger().warning("audit.verify_job_not_wired")
         disk_budget = getattr(app.state, "disk_budget", None)
         if disk_budget is not None:  # E16-T07: one supervised sampling task

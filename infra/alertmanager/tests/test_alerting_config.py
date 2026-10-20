@@ -728,15 +728,18 @@ def test_net_binding_alert_pages_as_soon_as_the_guard_trips() -> None:
 def test_audit_verify_alert_pages_when_no_run_has_passed_for_26_hours() -> None:
     """#2111: a start-up or nightly verify run that keeps stopping finds no break, so
     `AuditChainVerificationFailed` stays silent; this page covers it. No run passed for 26 h (the
-    daily run plus 2 h): by the gauge within one process, by the counter across restarts. A gauge
-    at 0 (no runner wired) is dropped by `> 0` and the counter has no series then: no page. Its
-    own component, so the page-over-ticket rule inhibits none of the `audit` tickets (next)."""
+    daily run plus 2 h): by the gauge within one process, by the counter across restarts. #2966:
+    a gauge at 0 in `live` pages too: the job sets it as it starts, so 0 is no runner wired. In
+    another environment 0 is the fake backend and is quiet (`> 0` drops it from the first clause
+    and the counter has no series). Its own component, so the page-over-ticket rule inhibits
+    none of the `audit` tickets (next)."""
     rules = _rules()
     rule = {r["alert"]: r for r in rules}["AuditVerifyNotPassing"]
     assert rule["expr"] == (
         "time() - max by (env) (cv_audit_verify_last_ok_timestamp_seconds > 0) > 26 * 3600 "
         'or (sum by (env) (increase(cv_audit_verify_runs_total{result!="ok"}[26h])) > 0 '
-        'unless sum by (env) (increase(cv_audit_verify_runs_total{result="ok"}[26h])) > 0)'
+        'unless sum by (env) (increase(cv_audit_verify_runs_total{result="ok"}[26h])) > 0) '
+        'or max by (env) (cv_audit_verify_last_ok_timestamp_seconds{env="live"}) == 0'
     )
     assert rule["for"] == "0m"
     assert rule["labels"] == {"severity": "page", "component": "audit_verify"}

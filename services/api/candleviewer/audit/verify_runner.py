@@ -16,9 +16,9 @@ The runner owns everything a run records:
 - the chain gauge and the failure counter;
 - the `audit_chain_break` system event (contract #2392/#2446, E42-T02 design D6).
 
-So the job writes no audit record and sets none of those series. The E42-T02 verify chain
-supplies the real runner (from `candleviewer.api`). Until the composition root wires one, the
-job has no runner and stays inert.
+So the job writes no audit record and sets none of those series. The real runner is
+`candleviewer.api.audit_verify_runner.ChainVerifyRunner` (#2966), which the composition root wires
+on the real backend; with none wired (the fake backend) the job does not exist.
 
 Outcome rules (fail closed):
 - `ok` only when the run walked the whole chain, genesis to the head read when it started,
