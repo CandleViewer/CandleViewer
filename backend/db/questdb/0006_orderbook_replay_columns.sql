@@ -12,6 +12,11 @@
 -- the registered Parquet column sets for exactly these columns (storage/cold/exporter.py
 -- ALLOWED_ADDITIONS, 21-database-schema.md Sec.5.2). Do not hand-edit a column without updating
 -- 21-database-schema.md Sec.4.2/4.3 in the same PR.
+-- Inverse, for an operator (QuestDB batches have no down step), once the code writing these
+-- columns is rolled back:
+--   ALTER TABLE orderbook_deltas DROP COLUMN prev_update_id;
+--   ALTER TABLE orderbook_deltas DROP COLUMN ts_match;
+--   ALTER TABLE orderbook_snapshots DROP COLUMN ts_match;
 
 ALTER TABLE orderbook_deltas ADD COLUMN prev_update_id LONG;
 ALTER TABLE orderbook_deltas ADD COLUMN ts_match TIMESTAMP;
