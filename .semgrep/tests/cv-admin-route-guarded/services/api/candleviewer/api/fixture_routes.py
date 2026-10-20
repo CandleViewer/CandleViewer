@@ -97,9 +97,7 @@ def mount(app: FastAPI, extra: APIRouter, resolver, audit, permission: Permissio
     app.include_router(extra)  # ok: cv-admin-route-guarded
     app.include_router(admin_router(permission, resolver=resolver, audit=audit))  # ruleid: cv-admin-route-guarded
     app.include_router(admin_router(permission=permission, resolver=resolver, audit=audit))  # ruleid: cv-admin-route-guarded
-    app.include_router(  # ok: cv-admin-route-guarded
-        admin_router(permission=Permission.ADMIN_READ, resolver=resolver, audit=audit)
-    )
+    app.include_router(admin_router(permission=Permission.ADMIN_READ, resolver=resolver, audit=audit))  # ok: cv-admin-route-guarded
     app.add_api_route("/admin/direct-call", live_probe)  # ruleid: cv-admin-route-guarded
     app.mount("/admin/files", extra)  # ruleid: cv-admin-route-guarded
     app.mount(path="/admin", app=extra)  # ruleid: cv-admin-route-guarded

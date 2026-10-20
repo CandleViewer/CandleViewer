@@ -154,6 +154,40 @@ def _public_methods(cls: type) -> Iterator[tuple[str, object]]:
             yield name, member
 
 
+class _Sample:
+    """Every kind of member the sweep must tell apart."""
+
+    LIMIT = 3  # a value, not a method
+
+    @staticmethod
+    def build() -> None: ...
+
+    @classmethod
+    def default(cls) -> None: ...
+
+    def act(self) -> None: ...
+
+    @property
+    def size(self) -> int:
+        return 0
+
+    @cached_property
+    def total(self) -> int:
+        return 0
+
+    def _hidden(self) -> None: ...
+
+
+def test_the_sweep_yields_exactly_the_public_methods() -> None:
+    assert [name for name, _ in _public_methods(_Sample)] == [
+        "build",
+        "default",
+        "act",
+        "size",
+        "total",
+    ]
+
+
 def test_every_public_method_of_an_admin_class_is_declared() -> None:
     checked, missing = 0, []
     for cls in _admin_classes():

@@ -15,7 +15,8 @@ store's lock (C-2.9). Each checks itself at import, so a bad declaration fails t
 import, which every test of the module meets: an unregistered or malformed action raises
 `UnknownAuditAction`, a reason outside `EXEMPT_REASONS` raises `ValueError`, and a second
 declaration of one function raises `TypeError`. Put the declaration directly above the `def`,
-under `@property` or `@asynccontextmanager`, which do not return the function they wrap.
+under `@property`, `@cached_property`, `@staticmethod`, `@classmethod` or `@asynccontextmanager`,
+which do not return the function they wrap.
 """
 
 from __future__ import annotations

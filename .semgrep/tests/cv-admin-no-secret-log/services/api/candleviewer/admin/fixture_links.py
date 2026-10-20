@@ -92,6 +92,12 @@ def prefix(token: str) -> None:
     tail = token[-4:]
     _log().info("fetch", tail=tail)  # ruleid: cv-admin-no-secret-log
     _log().info("fetch", middle=token[2:6])  # ruleid: cv-admin-no-secret-log
+    _log().info("fetch", whole=token[:])  # ruleid: cv-admin-no-secret-log
+    _log().info("fetch", every_other=token[::2])  # ruleid: cv-admin-no-secret-log
+    _log().info("fetch", reversed=token[::-1])  # ruleid: cv-admin-no-secret-log
+    _log().info("fetch", odd=token[1::2])  # ruleid: cv-admin-no-secret-log
+    _log().info("fetch", even_head=token[:8:2])  # ruleid: cv-admin-no-secret-log
+    _log().info("fetch", stepped=token[1:9:2])  # ruleid: cv-admin-no-secret-log
     _log().info("fetch", length=len(token[:4]))  # ok: cv-admin-no-secret-log
 
 

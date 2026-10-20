@@ -4,6 +4,12 @@ import importlib
 from .. import flags_wiring  # ruleid: cv-admin-no-flag-lookup
 from ..admin.flags import catalogue  # ruleid: cv-admin-no-flag-lookup
 from ..oms import errors  # ok: cv-admin-no-flag-lookup
+from ..admin import flags  # ruleid: cv-admin-no-flag-lookup
+from ..admin import flags as gates  # ruleid: cv-admin-no-flag-lookup
+from ...admin import flags as deep  # ruleid: cv-admin-no-flag-lookup
+from ... import flags_wiring as fw  # ruleid: cv-admin-no-flag-lookup
+from ..admin import errors as admin_errors  # ok: cv-admin-no-flag-lookup
+from candleviewer.admin import http  # ok: cv-admin-no-flag-lookup
 
 WIRING = importlib.import_module("candleviewer.flags_wiring")  # ruleid: cv-admin-no-flag-lookup
 

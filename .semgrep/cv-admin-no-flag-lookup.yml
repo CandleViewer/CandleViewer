@@ -28,10 +28,20 @@ rules:
           - metavariable-regex:
               metavariable: $MOD
               regex: ^(candleviewer\.|\.+)?(admin\.)?(flags(\..+)?|flags_wiring)$
-      - pattern: from candleviewer.admin import flags
-      - pattern: from candleviewer import flags_wiring
+      # the flag package or the wiring module imported by name from its parent package, absolute
+      # or relative at any depth (Semgrep binds `$PKG` to the part before `import`)
+      - patterns:
+          - pattern: from $PKG import flags
+          - metavariable-regex:
+              metavariable: $PKG
+              regex: ^(candleviewer\.|\.+)admin$
+      - patterns:
+          - pattern: from $PKG import flags_wiring
+          - metavariable-regex:
+              metavariable: $PKG
+              regex: ^(candleviewer|\.+)$
+      # admin/http.py's own spelling: the flag package beside it
       - pattern: from . import flags
-      - pattern: from .. import flags_wiring
       - pattern: importlib.import_module("=~/^\.*(candleviewer\.)?(admin\.)?(flags|flags_wiring)(\..*)?$/", ...)
       # a call naming a flag (`get_flag(...)`, `FlagService(...)`, `x.is_enabled()`)
       - patterns:
