@@ -353,6 +353,8 @@ class BarReader:
         tail_scan_rows: int = MAX_TAIL_SCAN_ROWS,
     ) -> None:
         self._conn = conn
+        # Tests and the bench pass smaller values; the query builder caps any value at
+        # MAX_TAIL_SCAN_ROWS (clamped, not refused: a cap must not fail a read).
         self._scan_rows = tail_scan_rows
         self._rebuilds = RebuildRegistry(schedule_rebuild, clock)
         self._now_us = now_us

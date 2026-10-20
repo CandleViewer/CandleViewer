@@ -98,8 +98,7 @@ being folded is the judge (#3660): with no row of the series' generation, a clea
 first bar it finds held, whatever came before it (a close from the ring, one during the read, or
 one after a failed or degraded read or a live swap), and one not clean checks none. A restart
 that empties a series read clean with rows meets the same check, with that read's window, so its
-first close above 0 counts a gap: one count, one warning and one read, harmless (#3660 (b)).
-Not after a bounded read (D2-M4): bars below its start may exist. An
+first close above 0 counts a gap: one count, one warning and one read, harmless (#3660 (b)). An
 `ensure` re-reads it, no sooner than its re-read interval after the last read. The bars it holds
 newer than the stored rows survive the re-read, and so do, when the read withholds rows
 (SR-E12-11), the ones it holds below the newest row (D2-H1b). A gap that stays (D2-H2): a read
