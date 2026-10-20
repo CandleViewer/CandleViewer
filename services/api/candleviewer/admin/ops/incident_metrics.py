@@ -24,6 +24,7 @@ from typing import Any, Final, Protocol
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.observability.context import spawn
 from candleviewer.observability.metrics import CollectorRegistry, ScrapeCollector, ScrapedFamily
 from candleviewer.observability.metrics_catalogue import CATALOGUE
@@ -69,9 +70,11 @@ class OpenIncidentsGauge:
         self._task: asyncio.Task[None] | None = None
 
     @property
+    @audit_exempt("read")
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    @audit_exempt("read")
     def families(self) -> list[ScrapedFamily]:
         """What a scrape serves: memory and the clock only, no I/O (the scrape's own thread)."""
         reading = self._reading  # one read: the refresher may replace it meanwhile
@@ -80,6 +83,7 @@ class OpenIncidentsGauge:
             samples = (((), float(reading[0])),)
         return [ScrapedFamily(NAME, _SPEC.kind, _SPEC.help, _SPEC.labels, samples)]
 
+    @audit_exempt("read")
     async def refresh(self) -> None:
         """One bounded read. A good one replaces the reading; any failure, a timeout included,
         drops it, so the series has no sample until a read succeeds again. The log line has the
@@ -100,11 +104,13 @@ class OpenIncidentsGauge:
             await self.refresh()
             await self._sleep(self._interval_s)
 
+    @audit_exempt("lifecycle")
     def start(self) -> None:
         """Read now, then every interval, on a tracked task (idempotent); no store, no loop."""
         if self._source is not None and self._task is None:
             self._task = spawn(self._loop(), name="incidents-open-gauge")
 
+    @audit_exempt("lifecycle")
     async def stop(self) -> None:
         task, self._task = self._task, None
         if task is not None:
