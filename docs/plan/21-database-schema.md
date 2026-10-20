@@ -2771,14 +2771,23 @@ CREATE INDEX ix_dr_range       ON drawings (symbol, anchor_start, anchor_end) WH
 
 #### 3.8.4 `indicator_presets`
 
+Shipped as `0040_indicator_presets` (E13-T03, #427) with the §10.5 built-ins as its seed. The first
+two CHECKs are the original specification; E13-T03 added the other four (ruling Q5):
+`ip_builtin_owner` is the twin of `ct_builtin_owner` (§3.8.2), `ip_params_shape` and
+`ip_style_shape` are the database half of SR-E13-06 (E13 threat model IR-33: each JSON object at
+most 4096 bytes as Postgres prints `jsonb`, the text the API measures too), and `ip_name_len` is the
+API's 1..80 `name` bound. The API reads built-ins and the caller's own rows, writes only the
+caller's own non-built-in rows, and soft-deletes (`deleted_at`); nothing deletes a row, and soft
+deletes are kept (no purge job).
+
 ```sql
 CREATE TABLE indicator_presets (
   id             uuid PRIMARY KEY,
   owner_user_id  uuid REFERENCES users(id) ON DELETE CASCADE,   -- NULL = built-in
-  indicator_code text NOT NULL,          -- 'ema' | 'vwap' | 'atr' | 'cvd' | 'delta' | 'profile' | 'footprint' | …
+  indicator_code text NOT NULL,          -- an `IndicatorDef.id` of the catalogue (the API refuses any other)
   name           text NOT NULL,
-  params         jsonb NOT NULL DEFAULT '{}'::jsonb,
-  style          jsonb NOT NULL DEFAULT '{}'::jsonb,
+  params         jsonb NOT NULL DEFAULT '{}'::jsonb,   -- complete and canonical (every parameter)
+  style          jsonb NOT NULL DEFAULT '{}'::jsonb,   -- closed E13-D04 token vocabulary; `{}` until it ships
   pane_target    text NOT NULL DEFAULT 'overlay',  -- overlay | subpane
   is_builtin     boolean NOT NULL DEFAULT false,
   is_favourite   boolean NOT NULL DEFAULT false,
@@ -2786,7 +2795,11 @@ CREATE TABLE indicator_presets (
   updated_at     timestamptz NOT NULL DEFAULT now(),
   deleted_at     timestamptz,
   CONSTRAINT ip_target CHECK (pane_target IN ('overlay','subpane')),
-  CONSTRAINT ip_code   CHECK (indicator_code ~ '^[a-z0-9_]{2,32}$')
+  CONSTRAINT ip_code   CHECK (indicator_code ~ '^[a-z0-9_]{2,32}$'),
+  CONSTRAINT ip_builtin_owner CHECK ((is_builtin = true AND owner_user_id IS NULL) OR (is_builtin = false AND owner_user_id IS NOT NULL)),
+  CONSTRAINT ip_name_len CHECK (char_length(name) BETWEEN 1 AND 80),
+  CONSTRAINT ip_params_shape CHECK (jsonb_typeof(params) = 'object' AND octet_length(params::text) <= 4096),
+  CONSTRAINT ip_style_shape  CHECK (jsonb_typeof(style) = 'object' AND octet_length(style::text) <= 4096)
 );
 CREATE UNIQUE INDEX ux_ip_name ON indicator_presets (coalesce(owner_user_id,'00000000-0000-0000-0000-000000000000'::uuid), indicator_code, lower(name)) WHERE deleted_at IS NULL;
 CREATE INDEX ix_ip_fav ON indicator_presets (owner_user_id) WHERE is_favourite AND deleted_at IS NULL;
@@ -4099,7 +4112,7 @@ NAMING_CONVENTION = {
 | `0008_rules`                    | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                                                                       |
 | `0009_alerts`                   | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                                                                     |
 | `0010_journal`                  | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                                                                            |
-| `0011_workspace`                | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; rest pending                                                                   |
+| `0011_workspace`                | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; `indicator_presets` = `0040_indicator_presets`; rest pending                   |
 | `0012_governance`               | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`                                                     |
 | `0013_partitioning`             | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                                                                              |
 | `0030_auth_keys`                | `auth_keys`, the per-environment auth keyring (§3.1.5a, ADR-0009 Amendment 4) — **#2152 S2**, landed after `0029_oms_core`; the downgrade refuses while any row exists                                                                                                                     |
@@ -4112,6 +4125,7 @@ NAMING_CONVENTION = {
 | `0037_account_profiles`         | `account_profiles`, `account_profile_revisions`, `sizing_mode`, `offset_unit`, the ladder, version, revision and bootstrap triggers and the backfill (§3.2.4, §3.2.5) — **E28-T01 #905 PR-1**; the downgrade refuses once a profile was written                                            |
 | `0038_risk_state`               | `risk_lockouts`, `risk_policy` (seeded singleton) and `kill_switch_state` (seeded global row) (§3.11); `DELETE` revoked from `cv_app` — **E39-T02 #882**; the downgrade refuses while risk state exists beyond the seed                                                                    |
 | `0039_trade_groups`             | `trade_groups`, `trade_group_legs`, `trade_group_definitions`, `trade_group_definition_members`, three enums, the environment, write-once and profile triggers, the leg and rule-run FKs (§3.3.2–§3.3.3a) — **E28-T01 #905 PR-2**; the downgrade refuses while any row exists              |
+| `0040_indicator_presets`        | `indicator_presets` (§3.8.4) with its four added CHECKs, `ux_ip_name`, `ix_ip_fav`, and the 18 §10.5 built-ins seeded `ON CONFLICT DO NOTHING` under fixed ids — **E13-T03 #427**; the downgrade refuses while any user preset exists, a soft-deleted one included                         |
 
 ---
 
@@ -4252,6 +4266,33 @@ One `retention_policies` row per `stream_kind` with `scope='default'` matching �
 ### 10.5 Built-in indicator presets
 
 `ema(9)`, `ema(21)`, `ema(50)`, `ema(200)`, `vwap(session)`, `vwap(session, ±1σ, ±2σ)`, `atr(14)`, `cvd(session reset)`, `cvd(never reset)`, `delta(bar)`, `volume_profile(VA 70 %, session)`, `delta_profile(VA 70 %)`, `oi(absolute)`, `oi(delta per bar)`, `funding(annualised)`, `speed_of_tape(5 s)`, `imbalance_tracker(300 %, stack 3)`, `market_regime(default)`.
+
+Seeded by `0040_indicator_presets` (E13-T03) with `owner_user_id = NULL`, `is_builtin = true`,
+`style = {}` and `is_favourite = false`, `ON CONFLICT DO NOTHING` (re-runnable;
+`candleviewer.db.seed.upsert_builtin_indicator_presets` runs the same rows). The rows live in
+`candleviewer/db/builtin_indicator_presets.py`, pinned by a test to the list above, one row per
+label in its order: `name` is the label verbatim, `indicator_code` the text before `(`, and the
+`id` is uuid5 of `<indicator_code>/<name>`, so a layout pane or a bundle can refer to a built-in
+by a stable id. `params` are the indicator's complete parameters where the catalogue
+(`orderflow/indicators/catalogue.py`, 24 §7.2) defines it, and `pane_target` follows its `pane`
+(`price` → `overlay`, `sub` → `subpane`); the other rows hold `{}` and a placeholder `pane_target`
+until the epic that registers the indicator amends them in a new revision.
+
+| Labels                                                                                                     | `indicator_code` | `params`                   | `pane_target` | Valid against the catalogue today                                                             |
+| ---------------------------------------------------------------------------------------------------------- | ---------------- | -------------------------- | ------------- | --------------------------------------------------------------------------------------------- |
+| `ema(9)`, `ema(21)`, `ema(50)`, `ema(200)`                                                                 | `ema`            | `{"n": 9}` … `{"n": 200}`  | `overlay`     | yes                                                                                           |
+| `vwap(session)`, `vwap(session, ±1σ, ±2σ)`                                                                 | `vwap`           | `{"anchor": "session"}`    | `overlay`     | yes; the bands are `vwap` outputs, not parameters, so the two rows hold the same parameters   |
+| `atr(14)`                                                                                                  | `atr`            | `{"n": 14}`                | `subpane`     | yes                                                                                           |
+| `cvd(session reset)`                                                                                       | `cvd`            | `{"anchor": "session"}`    | `subpane`     | yes                                                                                           |
+| `cvd(never reset)`                                                                                         | `cvd`            | `{"anchor": "since_load"}` | `subpane`     | no: the `cvd` anchor is `session` or `utc_day` (24 §7.2 has no `since_load`)                  |
+| `delta(bar)`                                                                                               | `delta`          | `{}`                       | `subpane`     | no: `delta` is a rule metric with a kernel, kept out of the chart catalogue (`V1_INDICATORS`) |
+| `volume_profile(…)`, `delta_profile(…)`, `imbalance_tracker(…)`                                            | as labelled      | `{}`                       | `overlay`     | no: no descriptor yet (E18, E19, E23, E24 register them)                                      |
+| `oi(absolute)`, `oi(delta per bar)`, `funding(annualised)`, `speed_of_tape(5 s)`, `market_regime(default)` | as labelled      | `{}`                       | `subpane`     | no: no descriptor yet                                                                         |
+
+Built-ins never change through the API: a write aimed at one is `403` rule `builtin_immutable`
+(audited `rbac.denied`), and "customise" saves a user-owned copy (`createIndicatorPreset`), which is
+validated like any save, so copying a row marked "no" above is refused until its indicator is
+registered. Names are unique per owner, so a copy may keep the built-in's name.
 
 ### 10.6 Default hotkey profile (`CandleViewer Default`, `requires_arm = true`)
 
