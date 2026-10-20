@@ -64,10 +64,24 @@ _CARVED_OUT = (
 _ID_ROUTES = [
     (f"{method.upper()} {path}", op)
     for path, method, op in _ROUTES
-    if path.startswith(("/orders/{orderId}", "/positions/{positionId}"))
+    if path.startswith(
+        ("/orders/{orderId}", "/positions/{positionId}", "/trade-groups/{tradeGroupId}")
+    )
 ]
 _BULK = ("cancelAllOrders", "closeAllPositions")
 _ARM_TOKEN = {"$ref": "#/components/parameters/ArmToken"}
+#: The allow-lists of the stored exchange records (SR-E29-08): adding a field is a contract change.
+_CALL_FIELDS = frozenset(
+    "event_id at transport method endpoint op req_id topic http_status ret_code ret_msg "
+    "latency_ms request_redacted response_redacted".split()
+)
+_RECORD_FIELDS = frozenset(
+    "order_link_id exchange_order_id symbol side order_type qty price time_in_force reduce_only "
+    "close_on_trigger position_idx trigger_price trigger_by trigger_direction take_profit "
+    "stop_loss tpsl_mode trailing_stop activation_price tp_size sl_size tp_trigger_by "
+    "sl_trigger_by category order_filter leverage order_status filled_qty remaining_qty "
+    "avg_fill_price reject_reason exec_id exec_qty exec_price fee is_maker".split()
+)
 
 
 def _words(text: str) -> str:
@@ -162,6 +176,7 @@ def test_place_order_takes_an_opening_order_as_an_entry_whatever_its_intent() ->
     )
     # AC-08: a mislabelled opening order with no stop is refused for both rules.
     assert "carries both `native_stop_required` and `intent_mismatch`" in text
+    assert "so `placeOrder` refuses them with `intent_mismatch` too" in text
 
 
 def test_an_open_position_stop_is_never_cleared_whatever_the_profile_says() -> None:
@@ -195,9 +210,15 @@ def test_the_stored_exchange_records_have_closed_schemas_and_bounded_strings() -
             field
             for field, node in schema["properties"].items()
             if "string" in node.get("type", ())
-            and not ({"maxLength", "enum", "format", "pattern"} & set(node))
+            and not ({"maxLength", "enum", "format"} & set(node))
         ]
         assert unbounded == []
+        containers = [
+            f for f, node in schema["properties"].items() if node.get("type") in ("object", "array")
+        ]
+        assert containers == []
+    assert set(_SCHEMAS["ExchangeCallRecord"]["properties"]) == _CALL_FIELDS
+    assert set(_SCHEMAS["ExchangeRecordFields"]["properties"]) == _RECORD_FIELDS
     codes = _SCHEMAS["ExchangeRecordFields"]["properties"]
     for code in ("order_status", "reject_reason"):  # exchange codes, never message text
         assert codes[code]["pattern"] == "^[A-Za-z0-9_]{1,64}$"
@@ -269,10 +290,12 @@ def test_forbidden_names_the_scope_and_arm_refusals() -> None:
     forbidden = _SPEC["components"]["responses"]["Forbidden"]
     text = _words(forbidden["description"])
     assert (
-        "`placeOrder`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named "
-        "in their body that is outside the caller's grants, and one that does not exist, alike "
-        "with `code: account_scope_denied` (see `AccountScopeDenied`)" in text
+        "`placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an "
+        "exchange account named in their body that is outside the caller's grants, and one that "
+        "does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`)" in text
     )
+    leg = _SCHEMAS["TradeGroupLegInput"]["properties"]["exchange_account_id"]["description"]
+    assert "refuses the whole group alike with `403 account_scope_denied`" in leg
     account = _SCHEMAS["PlaceOrderRequest"]["properties"]["exchange_account_id"]["description"]
     assert "one that does not exist are refused alike (`403 account_scope_denied`)" in account
     assert "it may be `code: session_not_armed` (SR-043" in text
@@ -282,7 +305,10 @@ def test_forbidden_names_the_scope_and_arm_refusals() -> None:
 
 def test_an_arm_refusal_binds_no_idempotency_key() -> None:
     binding = _words(_SPEC["info"]["description"]).split("**Binding point (#2304).**", 1)[1]
-    assert "the arm state's `session_not_armed` of SR-043" in binding.split(". ", 1)[0]
+    assert (
+        "`step_up_required` and the arm state's `session_not_armed` of SR-043"
+        in binding.split(". ", 1)[0]
+    )
 
 
 @pytest.mark.parametrize("operation", _BULK)
@@ -306,6 +332,8 @@ def test_bulk_account_results_hold_exchange_outcomes_only() -> None:
 
 def test_every_order_mutation_is_either_armed_or_carved_out() -> None:
     assert sorted(_ARMED + _CARVED_OUT) == _MUTATIONS
+    for operation in _MUTATIONS:  # each documents its refusals (scope, arm, gate) in one place
+        assert _OPS[operation]["responses"]["403"] == _ref("responses", "Forbidden"), operation
 
 
 @pytest.mark.parametrize("operation", _ARMED)
@@ -314,7 +342,6 @@ def test_a_risk_increasing_order_mutation_declares_the_arm_token(operation: str)
     op = _OPS[operation]
     assert _ARM_TOKEN in op["parameters"]
     assert "arm_token" not in _request_properties(op)
-    assert op["responses"]["403"] == _ref("responses", "Forbidden")  # it documents the refusal
 
 
 @pytest.mark.parametrize("operation", _CARVED_OUT)
@@ -336,8 +363,10 @@ def test_the_arm_token_is_refused_with_a_registered_code_and_spares_the_carve_ou
     assert "The token is never logged (C-12.6)." in text
     assert "reduce-only ones included" in text
     assert (
-        "it for a leverage change in either direction, which that section does not classify" in text
+        "it for `reversePosition` and for a leverage change in either direction, which that "
+        "section does not classify. One live account among a request's targets is enough" in text
     )
+    assert "it is decided after authentication, RBAC and account-scope resolution" in text
     assert "so is a token issued without the live step-up" in text
     entry = next(e for e in _SPEC["x-error-codes"] if e["code"] == "session_not_armed")
     assert (entry["status"], entry["retryable"]) == (403, False)

@@ -2536,7 +2536,12 @@ class TradeGroupLegInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    exchange_account_id: UUID
+    exchange_account_id: Annotated[
+        UUID,
+        Field(
+            description="A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any leg is sent; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13)."
+        ),
+    ]
     overrides: Annotated[
         Overrides | None,
         Field(
@@ -5157,7 +5162,11 @@ class ExchangeRecordFields(BaseModel):
     ] = None
     order_status: Annotated[
         str | None,
-        Field(description="The exchange's order status code.", pattern="^[A-Za-z0-9_]{1,64}$"),
+        Field(
+            description="The exchange's order status code.",
+            max_length=64,
+            pattern="^[A-Za-z0-9_]{1,64}$",
+        ),
     ] = None
     filled_qty: Annotated[
         str | None,
@@ -5178,7 +5187,11 @@ class ExchangeRecordFields(BaseModel):
     avg_fill_price: Decimal | None = None
     reject_reason: Annotated[
         str | None,
-        Field(description="The exchange's reject reason code.", pattern="^[A-Za-z0-9_]{1,64}$"),
+        Field(
+            description="The exchange's reject reason code.",
+            max_length=64,
+            pattern="^[A-Za-z0-9_]{1,64}$",
+        ),
     ] = None
     exec_id: Annotated[str | None, Field(max_length=64)] = None
     exec_qty: Annotated[

@@ -346,12 +346,12 @@ info:
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
     recorded only after the request has passed every admission check: authentication and CSRF,
-    the session state (`session_read_only`, the idle lock of #2300, a view-as context's
-    `view_as_read_only` and `view_as_expired` of #3085, and the arm state's `session_not_armed`
-    of SR-043) and authorisation (RBAC, account scope
-    and `step_up_required`). A request refused by any of them stores no
-    idempotency record and executes nothing; only the refusal's own effects remain (such as its
-    audit record, where that refusal is audited, and for `step_up_required` the challenge it
+    the session state (`session_read_only`, the idle lock of #2300, and a view-as context's
+    `view_as_read_only` and `view_as_expired` of #3085) and authorisation (RBAC, account scope,
+    `step_up_required` and the arm state's `session_not_armed` of SR-043). A request refused by
+    any of them stores no idempotency record and executes nothing; only the refusal's own
+    effects remain (such as its audit record, where that refusal is audited, and for
+    `step_up_required` the challenge it
     issues). The identical request re-sent with the same key once the cause is cleared (after an
     unlock or a successful step-up) is therefore a first submission: it executes once and is not
     answered from the idempotency store (no `Idempotency-Replayed`). This is what lets a client
@@ -5026,7 +5026,8 @@ paths:
           `scale_out`, `flatten`) on an entry, or an opening one (`entry`, `scale_in`) on an
           order that is not an entry; `errors[]` lists every rule that fails, so a mislabelled
           opening order with no stop to apply carries both `native_stop_required` and
-          `intent_mismatch`.
+          `intent_mismatch`. `reverse` and `algo_child` are server-assigned (`reversePosition`,
+          the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too.
         * `Idempotency-Key` is REQUIRED. The server derives a deterministic `orderLinkId`
           (≤36 chars) from it, so a retried request can never double-submit.
         * The kill-switch, if engaged for the account or globally, rejects with
@@ -12989,16 +12990,19 @@ components:
       required: false
       description: |
         The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
-        `arm_token` body field (OM-S01). On a live account every order mutation that opens or
+        `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
         increases exposure requires it, as the order-entry gate classifies them
         (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-        reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
-        component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
-        `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
-        change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
-        `403 session_not_armed`, audited, before any exchange call; so is a token issued
-        without the live step-up (see `POST /settings/arm`). It is checked with the
-        session-state checks, before the idempotency lookup: a refused request binds no
+        reduce-only ones included) and an amend with any risk-increasing component (quantity
+        up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+        `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+        leverage change in either direction, which that section does not classify. One live
+        account among a request's targets is enough. Missing, expired, revoked or bound to
+        another session → `403 session_not_armed`, audited, before any exchange call; so is a
+        token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+        gate, it is decided after authentication, RBAC and account-scope resolution, so a
+        foreign or missing id still answers `404` and a foreign body account
+        `account_scope_denied`; and before the idempotency lookup: a refused request binds no
         `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
         need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
         refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -13363,7 +13367,7 @@ components:
                   idle_locked_at: "2026-09-14T10:46:02Z",
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. On a live account's order mutation that opens or increases exposure it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)."
       content:
         application/problem+json:
           schema:
@@ -13401,7 +13405,7 @@ components:
                   title: "The session is not armed for a live order mutation (SR-043)",
                   status: 403,
                   detail: "Arm the session for live trading, then send the request again.",
-                  instance: "urn:cv:req:0193f2bb-2224",
+                  instance: "urn:cv:req:0193f2bb-222a",
                   code: session_not_armed,
                 }
             kekUnavailable:
@@ -13510,7 +13514,7 @@ components:
                   code: csrf_token_invalid,
                 }
     AccountScopeDenied:
-      description: "The targeted exchange account is outside the caller's granted scope. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`)."
+      description: "The targeted exchange account is outside the caller's granted scope. An account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`)."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -16341,7 +16345,12 @@ components:
       additionalProperties: false
       required: [exchange_account_id]
       properties:
-        exchange_account_id: { type: string, format: uuid }
+        exchange_account_id:
+          {
+            type: string,
+            format: uuid,
+            description: "A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any leg is sent; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13).",
+          }
         overrides:
           type: object
           additionalProperties: false
@@ -19019,7 +19028,8 @@ components:
         as on `Order` and `Execution`. The adapter keeps no other field; adding one is a
         contract change. Strings are bounded as the store's redactor bounds them: codes and ids
         64 characters, `ret_msg` 2048. `order_status` and `reject_reason` are the exchange's
-        codes, so the adapter keeps them only in that shape (letters, digits and underscores).
+        codes, so the adapter keeps them only in that shape (letters, digits and underscores);
+        a value of any other shape is dropped, never stored.
       properties:
         order_link_id: { type: string, maxLength: 36 }
         exchange_order_id: { type: ["string", "null"], maxLength: 64 }
@@ -19052,6 +19062,7 @@ components:
         leverage: { $ref: "#/components/schemas/Decimal" }
         order_status:
           type: ["string", "null"]
+          maxLength: 64
           pattern: "^[A-Za-z0-9_]{1,64}$"
           description: The exchange's order status code.
         filled_qty: { $ref: "#/components/schemas/Decimal" }
@@ -19059,6 +19070,7 @@ components:
         avg_fill_price: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
         reject_reason:
           type: ["string", "null"]
+          maxLength: 64
           pattern: "^[A-Za-z0-9_]{1,64}$"
           description: The exchange's reject reason code.
         exec_id: { type: string, maxLength: 64 }
