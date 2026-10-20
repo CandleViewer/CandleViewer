@@ -392,7 +392,7 @@ Every table below lists column name, type, nullability, default and constraints.
 | `created_at`           | timestamptz | no   | `now()`                   |                                           |
 | `updated_at`           | timestamptz | no   | `now()`                   | trigger `set_updated_at`                  |
 | `deleted_at`           | timestamptz | yes  | NULL                      | soft delete                               |
-| `purge_after`          | timestamptz | yes  | NULL                      | Purge date, E42-T10 (`0035`, §12)         |
+| `purge_after`          | timestamptz | yes  | NULL                      | Purge date, E42-T10 (`0036`, §12)         |
 | `anonymised_at`        | timestamptz | yes  | NULL                      | Set by the purge reaper (§12)             |
 
 ```sql
@@ -428,10 +428,10 @@ COMMENT ON COLUMN users.email IS 'PII: contact identifier; purge on account eras
 COMMENT ON COLUMN users.password_hash IS 'SECRET: Argon2id digest; never logged, never returned by API';
 ```
 
-**Deferred purge (E42-T10, migration `0035_users_purge`).** `DELETE /users/{userId}?purge=true` disables the user and sets `purge_after` 90 days out (`users.delete` written ahead); the purge reaper anonymises a `disabled` user once it has passed, revoking every credential in the same transaction (§12), and stamps `anonymised_at`. A re-enable before then (E42-T09's `PATCH` to `active`) clears `purge_after` in its own transaction, its `users.enable` naming the date (#965 R6); once `anonymised_at` is set every change to the user is refused, an enable included (`409 conflict`). `users_purge_shape` admits `anonymised_at` only on a scheduled purge. Neither column is PII (§12, class P0).
+**Deferred purge (E42-T10, migration `0036_users_purge`).** `DELETE /users/{userId}?purge=true` disables the user and sets `purge_after` 90 days out (`users.delete` written ahead); the purge reaper anonymises a `disabled` user once it has passed, revoking every credential in the same transaction (§12), and stamps `anonymised_at`. A re-enable before then (E42-T09's `PATCH` to `active`) clears `purge_after` in its own transaction, its `users.enable` naming the date (#965 R6); once `anonymised_at` is set every change to the user is refused, an enable included (`409 conflict`). `users_purge_shape` admits `anonymised_at` only on a scheduled purge. Neither column is PII (§12, class P0).
 
 ```sql
--- 0035_users_purge (E42-T10): the deferred PII purge's schedule and its mark
+-- 0036_users_purge (E42-T10): the deferred PII purge's schedule and its mark
 ALTER TABLE users
   ADD COLUMN purge_after   timestamptz,
   ADD COLUMN anonymised_at timestamptz,
@@ -3476,7 +3476,7 @@ NAMING_CONVENTION = {
 | `0033_machine_persistence`      | `machine_snapshots`, `machine_drain_journal`, `machine_events` (24 §17.6): sealed snapshots, the drain journal (stamped once) and the append-only event log — **E50-T61**; the downgrade refuses while any holds a row                                                                     |
 | `0034_order_vocabulary`         | five `order_state` values, `order_event_kind` `kill` and `adopt`, `orders.lifecycle_state` and `ord_lifecycle` (§1.2, §3.3.4), `ix_orders_open` rebuilt — **E29-T03 #847 slice 2**; the downgrade refuses while a row holds an added value                                                 |
 | `0035_machine_persistence_json` | `machine_snapshots.snapshot`, `machine_drain_journal.payload`, `machine_events.payload` and `fault` become `json` (24 §17.6): sealed and digested values read back byte for byte; `trg_mdj_stamp_once` compares `payload` as text — **#3857**; the downgrade refuses while any holds a row |
-| `0035_users_purge`              | `users.purge_after`, `anonymised_at`, CHECK `users_purge_shape` (§3.1.1): the deferred PII purge's schedule and its mark (§12) — **E42-T10 #2650**; the downgrade refuses while a purge is pending                                                                                         |
+| `0036_users_purge`              | `users.purge_after`, `anonymised_at`, CHECK `users_purge_shape` (§3.1.1): the deferred PII purge's schedule and its mark (§12) — **E42-T10 #2650**; the downgrade refuses while a purge is pending                                                                                         |
 
 ---
 

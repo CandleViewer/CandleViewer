@@ -1,4 +1,4 @@
-"""`0035_users_purge` (E42-T10 #2650, S2): offline render, plan-doc parity, the downgrade guard
+"""`0036_users_purge` (E42-T10 #2650, S2): offline render, plan-doc parity, the downgrade guard
 and what it drops, and the model mirror. Real Postgres (the round trip on an empty and a seeded
 database, the CHECK and the refused downgrade): tests/integration/storage/
 test_users_purge_migration.py."""
@@ -18,7 +18,7 @@ from candleviewer.db import models
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_REV, _PREV = "0035_users_purge", "0034_order_vocabulary"
+_REV, _PREV = "0036_users_purge", "0035_machine_persistence_json"
 _COLUMNS = ("purge_after", "anonymised_at")
 _LOCK, _RESET = "SET LOCAL lock_timeout = '5s';", "SET LOCAL lock_timeout = DEFAULT;"
 
@@ -55,7 +55,7 @@ def _in_order(sql: str, steps: list[str]) -> bool:
     return positions == sorted(positions)
 
 
-def test_revision_chains_onto_0034_order_vocabulary() -> None:
+def test_revision_chains_onto_0035_machine_persistence_json() -> None:
     assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", f"{_PREV}:{_REV}")
 
 
@@ -64,7 +64,7 @@ def test_the_revision_register_lists_the_revision() -> None:
     assert f"| `{_REV}` " in _DOC.read_text(encoding="utf-8").split("### 9.4 ", 1)[1]
 
 
-def test_0035_adds_nullable_columns() -> None:
+def test_0036_adds_nullable_columns() -> None:
     """C-5.1, Sec.9.3 rule 2: the second ```sql block of Sec.3.1.1, verbatim, under a bounded lock
     wait (C-5.6): two nullable `timestamptz` columns with no default (no rewrite) and the CHECK that
     only a scheduled purge is ever marked done. No GRANT (the default privileges cover added
@@ -78,7 +78,7 @@ def test_0035_adds_nullable_columns() -> None:
     assert "GRANT" not in _up() and "COMMENT ON" not in _up()
 
 
-def test_0035_downgrade_only_new_columns() -> None:
+def test_0036_downgrade_only_new_columns() -> None:
     """C-5.2: it refuses while a purge is pending (dropping `purge_after` would cancel it
     silently), then drops the CHECK and the two columns and nothing else."""
     assert _in_order(
@@ -87,7 +87,7 @@ def test_0035_downgrade_only_new_columns() -> None:
             _LOCK,
             "LOCK TABLE users IN SHARE MODE;",
             "WHERE purge_after IS NOT NULL AND anonymised_at IS NULL) THEN",
-            "RAISE EXCEPTION '0035_users_purge downgrade refused:",
+            "RAISE EXCEPTION '0036_users_purge downgrade refused:",
             "ALTER TABLE users DROP CONSTRAINT users_purge_shape, "
             "DROP COLUMN anonymised_at, DROP COLUMN purge_after;",
             _RESET,

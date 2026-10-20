@@ -1,4 +1,4 @@
-"""Integration: `0035_users_purge` on real Postgres 16 (E42-T10 #2650, S2). The round trip on an
+"""Integration: `0036_users_purge` on real Postgres 16 (E42-T10 #2650, S2). The round trip on an
 empty and a seeded database removes only the two new columns and their CHECK and keeps every row;
 the CHECK refuses an anonymisation mark with no schedule; the downgrade refuses while a purge is
 pending. `testcontainers` in CI; not run on the laptop (no docker socket)."""
@@ -22,7 +22,7 @@ from testcontainers.postgres import PostgresContainer
 pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
-_PREV = "0034_order_vocabulary"
+_PREV = "0035_machine_persistence_json"
 _TEMPLATE = "users_purge_head_template"
 _NEW = ("purge_after", "anonymised_at")
 _SHAPE = (
@@ -149,6 +149,6 @@ def test_the_downgrade_refuses_while_a_purge_is_pending(pg_dsn: str) -> None:
         )
         before = c.execute(_VERSION).fetchone(), _catalog(c)
     refused = _alembic(dsn, "downgrade", _PREV)
-    assert refused.returncode != 0 and "0035_users_purge downgrade refused" in refused.stderr
+    assert refused.returncode != 0 and "0036_users_purge downgrade refused" in refused.stderr
     with _conn(dsn) as c:
         assert (c.execute(_VERSION).fetchone(), _catalog(c)) == before

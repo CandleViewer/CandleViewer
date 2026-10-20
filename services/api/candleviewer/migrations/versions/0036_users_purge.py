@@ -1,7 +1,7 @@
 """users: the deferred PII purge's schedule, purge_after and anonymised_at (E42-T10 #2650)
 
-Revision ID: 0035_users_purge
-Revises: 0034_order_vocabulary
+Revision ID: 0036_users_purge
+Revises: 0035_machine_persistence_json
 Create Date: 2026-10-19
 
 Slice S2 of #2650 (#965 O6): purely additive (C-5.1), `docs/plan/21-database-schema.md` Sec.3.1.1's
@@ -28,8 +28,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0035_users_purge"
-down_revision: str | None = "0034_order_vocabulary"
+revision: str = "0036_users_purge"
+down_revision: str | None = "0035_machine_persistence_json"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -59,7 +59,7 @@ LOCK TABLE users IN SHARE MODE;
 DO $BODY$
 BEGIN
   IF EXISTS (SELECT 1 FROM users WHERE purge_after IS NOT NULL AND anonymised_at IS NULL) THEN
-    RAISE EXCEPTION '0035_users_purge downgrade refused: a user deleted with purge=true is still waiting for the anonymisation its users.delete audit record names, which dropping purge_after would cancel silently. Fix forward with a new revision instead (C-5.2); never clear purge_after in SQL';
+    RAISE EXCEPTION '0036_users_purge downgrade refused: a user deleted with purge=true is still waiting for the anonymisation its users.delete audit record names, which dropping purge_after would cancel silently. Fix forward with a new revision instead (C-5.2); never clear purge_after in SQL';
   END IF;
 END $BODY$;
 ALTER TABLE users

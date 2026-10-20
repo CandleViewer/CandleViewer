@@ -161,7 +161,7 @@ users = Table(
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("deleted_at", TIMESTAMP(timezone=True)),
-    # E42-T10 (`0035_users_purge`): the deferred PII purge's schedule and its mark (#965 O6).
+    # E42-T10 (`0036_users_purge`): the deferred PII purge's schedule and its mark (#965 O6).
     Column("purge_after", TIMESTAMP(timezone=True)),
     Column("anonymised_at", TIMESTAMP(timezone=True)),
     CheckConstraint("position('@' in email) > 1", name="users_email_fmt"),
