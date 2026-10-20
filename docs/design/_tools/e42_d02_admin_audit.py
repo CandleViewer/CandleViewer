@@ -151,8 +151,10 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "hc-text",
     ),
     (
-        "CR: admin header band — REJECTED pair (secondary text directly on the tint; "
-        "the badge is a raised pill instead)",
+        (
+            "CR: admin header band — REJECTED pair (secondary text directly on the tint; "
+            "the badge is a raised pill instead)"
+        ),
         "color.text.secondary",
         "CR:color.surface.admin-tint",
         "rejected-text",
@@ -164,8 +166,10 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "non-text",
     ),
     (
-        "CR: admin accent rule against the band — REJECTED as a carrier "
-        "(the edge against the page is the carrier)",
+        (
+            "CR: admin accent rule against the band — REJECTED as a carrier "
+            "(the edge against the page is the carrier)"
+        ),
         "CR:color.border.admin",
         "CR:color.surface.admin-tint",
         "rejected-non-text",
@@ -229,6 +233,15 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("focus ring on the page surface", "color.focus.ring", "color.surface.app", "non-text"),
     ("focus ring on tiles / rows", "color.focus.ring", "color.surface.raised", "non-text"),
     ("focus ring on dialogs", "color.focus.ring", "color.surface.overlay", "non-text"),
+    (
+        (
+            "focus ring on the admin band — REPORTED pair "
+            "(fails light, so the band never holds a focusable control)"
+        ),
+        "color.focus.ring",
+        "CR:color.surface.admin-tint",
+        "rejected-non-text",
+    ),
     (
         "skip link / 'Exit view-as' button text",
         "color.text.on-action",
