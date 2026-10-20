@@ -460,7 +460,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ),
     # --- entry point -----------------------------------------------------------------------
     (
-        "view switch: selected segment text (Chart | Table)",
+        "view switch: selected segment text (Chart / Table)",
         "color.text.primary",
         "color.surface.selected",
         "text",
@@ -516,13 +516,20 @@ JND = 5.0
 # --- column-width arithmetic (E11-D01 D5, measured on the real tokens) -----------------------
 MONO_ADVANCE_EM = 0.6  # JetBrains Mono advance width (E11-D01 Q5-a, jetbrains.com/lp/mono)
 PRIMARY_COLUMNS: list[tuple[str, int]] = [  # (column, character budget incl. sign and separators)
-    ("time", 8),
+    (
+        "time",
+        5,
+    ),  # hh:mm at intervals >= 1 m; sub-minute bars show mm:ss (the hour is a boundary rule)
     ("open", 9),
     ("high", 9),
     ("low", 9),
     ("close", 9),
     ("volume", 8),
     ("delta", 8),
+    (
+        "state",
+        7,
+    ),  # forming / Est. / POC: the row-state word (lens F-2); the full list is in `flags`
 ]
 EXTENDED_FIRST: tuple[str, int] = ("CVD", 9)
 FIXED_CSS_PX = {"expander": 24, "actions": 24, "scrollbar": 12}  # size.target.min x2 + a scrollbar
@@ -541,11 +548,9 @@ def _dim(name: str) -> float:
 
 
 def fit_table() -> list[str]:
-    out = [
-        "| density | text scale | font px | cell pad | primary 7 cols | + CVD "
-        "| 640 CSS px | 320 CSS px |",
-        "|---|---|---|---|---|---|---|---|",
-    ]
+    header = "| density | text scale | font px | cell pad | primary 8 cols | + CVD "
+    header += "| 640 CSS px | 320 CSS px |"
+    out = [header, "|---|---|---|---|---|---|---|---|"]
     for dens, (_type_tok, size_tok, pad_tok, inset_tok) in DENSITY.items():
         size = _dim(size_tok)
         pad = _dim(pad_tok)
@@ -661,6 +666,22 @@ def main() -> int:
     for line in fit_table():
         print(line)
 
+    tally = {"adopted": 0, "decorative": 0, "rejected": 0, "hc-text": 0}
+    for _, _, _, role in PAIRS:
+        if role.startswith("rejected"):
+            tally["rejected"] += 1
+        elif role == "decorative":
+            tally["decorative"] += 1
+        else:
+            tally["adopted"] += 1
+            if role == "hc-text":
+                tally["hc-text"] += 1
+    print(
+        f"\nTally: {len(PAIRS)} rows = {tally['adopted']} adopted (gated; "
+        f"{tally['hc-text']} of them hc-text) + {tally['decorative']} decorative (not gated) "
+        f"+ {tally['rejected']} rejected (reported, not gated); x {len(THEMES)} themes; "
+        f"{len(CVD_PAIRS)} CVD pairs"
+    )
     print(f"\nFAIL count (gated rows only): {failed}")
     return 1 if failed else 0
 
