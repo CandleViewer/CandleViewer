@@ -180,7 +180,7 @@ class MarketEvent(DomainEvent):
 
 ## 2. Normalized market-data events
 
-Eight event families. All are produced _only_ by the exchange adapter (§14), all are immutable, and all are recorded (§13). The replay engine re-emits the recorded trade and book events field-identical for every recorded field; the fields it derives are deterministic and listed in §13.7 (*Re-emitted events*).
+Eight event families. All are produced _only_ by the exchange adapter (§14), all are immutable, and all are recorded (§13). The replay engine re-emits the recorded trade and book events field-identical for every recorded field; the fields it derives are deterministic and listed in §13.7 (_Re-emitted events_).
 
 ```mermaid
 flowchart LR
