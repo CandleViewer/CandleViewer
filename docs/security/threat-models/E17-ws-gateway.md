@@ -5,7 +5,9 @@
   2027-01-15). WS-D15's controls (SR-192, #2292; a per-connection budget for its denial records, #3185) are built and
   its row is re-scored residual Low (#3185; Medium in #3123 before the budget; recorded as RR-08 in
   `04-security-program.md` §16.1, closure proposed, owner sign-off pending); WS-D16's controls (SR-193, #2293; a
-  limit per user across its connections, #3476) are built and its row is residual Low.
+  limit per user across its connections, #3476) are built and its row is residual Low. WS-D11 to WS-D14 are
+  proposed residual Low since #2176 built the server's transport limits (§10; the owner confirms in
+  `docs/security/reviews/e17-ws-review.md` §5).
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow
   (C-12.1). Format mirrors `E13-indicators.md`. Reuses the E09 auth/RBAC model (`e09-auth-rbac.md`, U-rows);
   those threats are **referenced, not duplicated**. Upstream Bybit connection security is E08's model.
@@ -25,9 +27,9 @@
 
 In scope: the `/ws/v1` endpoint and module M23 — subprotocol negotiation, `hello`/`welcome`, `auth`/`auth_ok`
 and in-place re-auth, heartbeats and close codes (E17-S01); the topic registry, parser, per-topic permission
-matrix, limits and live revocation (E17-S02); snapshot+delta sequencing and resync (E17-S03, not built yet);
+matrix, limits and live revocation (E17-S02); snapshot+delta sequencing and resync (E17-S03);
 coalescing and the outbound budget (E17-T03, built behind a flag that is off by default, §6); the CVWB binary
-codec on both ends (E17-T02); the web client and its decode worker (E17-T04, not built yet); error registry
+codec on both ends (E17-T02); the web client and its decode worker (E17-T04); error registry
 (E17-T05) and observability (E17-T06).
 
 Out of scope: implementing controls (owned by the tickets in §9); executing adversarial tests (E17-X02);
@@ -43,11 +45,11 @@ open gaps, already tracked:
 | Gap                                                                                                                                                                                                                 | Tracked in            | Rows affected       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------- |
 | Closed by #2155: a process-wide cap on sockets awaiting their first `auth_ok` (64, the next is shed with `1013`), a 6 s bound on each `auth` call (`1011` past it), and an explicit `maxsize` on the outbound queue | #2155                 | WS-S03, WS-D01, D02 |
-| Web client offers subprotocols but never sends `hello`/`auth`                                                                                                                                                       | #413 (S5, from #2155) | WS-S05, WS-E05      |
+| Closed by #413: the web client's connection sends `hello`, then `auth` through a `TokenSource`; the shell's token source is open (#2712), and the `/api/v1/ws` path is closed by #3916                              | #413 (E17-T04), #2712 | WS-S05, WS-E05      |
 | Closed by #2525: on the real backend the deployed principal is store-backed (`StorePrincipalLoader`, `ws_wiring.py`); the fake backend keeps deny-all                                                               | #377                  | WS-S01, WS-E01      |
 | Closed by #2483: `cv.v1.msgpack` is served, and its client frames reach only the SR-185 decoder (WS-T08)                                                                                                            | E17-T07 / ADR-0005    | WS-T08              |
-| Server WS limits: `server.py` sets message size (inflated, reassembled), deflate (`cv.v1.json` only) and keepalive; no inbound queue limit is in force; header deadline and fragment cap: #2176                     | #2176, #415           | WS-D11..D14         |
-| Coalescing, the 8 MiB / 2 000-frame budget and the overflow ladder (E17-T03, built behind `CV_WS_BACKPRESSURE_ENABLED`, off); snapshot/resync and the resync rate limit (E17-S03)                                   | 23 §8.6, #2900, #411  | WS-D01, D03..D06    |
+| Closed by #2176 (#3890): a deadline for request headers, a cap on fragments per message, a bound on queued messages, a budget for every inbound frame and a drain bound on a close (SR-191, 23 §16.2)               | #2176                 | WS-D11..D14         |
+| Coalescing, the 8 MiB / 2 000-frame budget and the overflow ladder (E17-T03, built behind `CV_WS_BACKPRESSURE_ENABLED`, off)                                                                                        | 23 §8.6, #2900        | WS-D01              |
 
 ## 2. Data-flow diagram and trust boundaries
 
@@ -188,10 +190,10 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-D08 | F10-F13          | Expensive-topic amplification: 200-depth book plus 2 000-column heatmap across 40 symbols                                                                                                                                                                                                                                                                         | M   | M   | Medium | Per-family throttles, minimum 50 ms and adaptive throttle classes (E17-T03: built behind the flag, off); encode-once-send-many; symbol cap; budgets measured by k6 (E17-Q03, #568) Requirement: SR-073.                                                                                                                                                                                                                                                                                                | E17-T03, E17-Q03 | load                      | M     | Medium                    |
 | WS-D09 | F7, P3           | Revocation fan-out blocked by one stalled socket                                                                                                                                                                                                                                                                                                                  | L   | M   | Low    | Subscriptions dropped synchronously before I/O; each send under a 2 s timeout; stalled socket unregistered and closed Requirement: SR-073, SR-074.                                                                                                                                                                                                                                                                                                                                                     | E17-S02          | unit                      | M     | Low                       |
 | WS-D10 | F15, P9          | Decode fault or huge frame crashes the browser main thread                                                                                                                                                                                                                                                                                                        | M   | L   | Low    | Decode in a worker (E17-T04); decoder errors are typed and non-fatal; 4 MiB outbound frame cap with chunked snapshots Requirement: SR-128.                                                                                                                                                                                                                                                                                                                                                             | E17-T04, E17-S03 | unit, e2e                 | M     | Low                       |
-| WS-D11 | F1-F2, P1        | Server-level WS message size applies before the app check: the ASGI server reassembles and decompresses a message before the 256 KiB check runs, so WS-D06 alone does not bound memory                                                                                                                                                                            | M   | M   | Medium | `server.py` sets `ws_max_size` to 260 KiB (the 256 KiB cap plus 4 KiB), applied to the reassembled, inflated message (SR-191); the transport bounds still open are #2176's (§10)                                                                                                                                                                                                                                                                                                                       | #2176            | integration               | M     | Low after #2176           |
-| WS-D12 | F1-F2, P1        | permessage-deflate amplification: a small compressed frame inflates to a large message before any app check                                                                                                                                                                                                                                                       | M   | M   | Medium | `server.py` agrees permessage-deflate for `cv.v1.json` only, and the 260 KiB message size bounds the inflated message before any app check (SR-191); the protocol does not require compression (§3.5)                                                                                                                                                                                                                                                                                                  | #2176            | integration               | M     | Low after #2176           |
-| WS-D13 | F1-F2, P1        | Fragmentation reassembly: many continuation frames held open to accumulate buffered state                                                                                                                                                                                                                                                                         | M   | M   | Medium | The server message-size limit bounds the bytes of a reassembled message; no per-connection inbound queue limit is in force (the setting is inert for the WS protocol class in use); a cap on fragments per message is #2176's (SR-191); the auth timeout closes idle sockets awaiting `auth_ok`                                                                                                                                                                                                        | #2176, E17-S01   | integration               | M     | Low after #2176           |
-| WS-D14 | F1, P1           | Slowloris on the upgrade: HTTP upgrade requests sent slowly to hold server slots before the app sees the socket                                                                                                                                                                                                                                                   | L   | M   | Low    | `server.py` sets the WS ping (15 s) and pong timeout (45 s) for open sockets, not a deadline for request headers, which is #2176's (SR-191); tailnet-only reachability (SR-045/047)                                                                                                                                                                                                                                                                                                                    | #2176            | integration               | M     | Low after #2176           |
+| WS-D11 | F1-F2, P1        | Server-level WS message size applies before the app check: the ASGI server reassembles and decompresses a message before the 256 KiB check runs, so WS-D06 alone does not bound memory                                                                                                                                                                            | M   | M   | Medium | Configured (#3890, #2176; SR-191, 23 §16.2): `server.py` sets `ws_max_size` to 260 KiB (the 256 KiB cap plus 4 KiB), applied to the reassembled, inflated message; a socket holds at most 1 024 messages for the app, read 6 KiB at a time, with reading paused past them                                                                                                                                                                                                                              | #2176            | integration               | M     | Low (proposed)            |
+| WS-D12 | F1-F2, P1        | permessage-deflate inflation: a small compressed frame inflates to a large message before any app check                                                                                                                                                                                                                                                           | M   | M   | Medium | Configured (#3890; SR-191): `server.py` agrees permessage-deflate for `cv.v1.json` only, and the 260 KiB message size bounds the inflated message before any app check: a message that would inflate past it is refused `1009` before it is inflated whole (AC-24); the protocol does not require compression (§3.5)                                                                                                                                                                                   | #2176            | integration               | M     | Low (proposed)            |
+| WS-D13 | F1-F2, P1        | Fragmentation reassembly: many continuation frames held open to accumulate buffered state                                                                                                                                                                                                                                                                         | M   | M   | Medium | The message size bounds a reassembled message; configured (#3890): a message holds at most 64 fragments, each charged 64 B against that size (`1009`), data after the server's close is not buffered, every inbound frame, control frames included, draws on a per-connection budget (256, refilled at 64 a second; `4429`), and at most 1 024 messages wait for the app (SR-191, 23 §16.2); the auth timeout closes idle sockets awaiting `auth_ok`                                                   | #2176, E17-S01   | integration               | M     | Low (proposed)            |
+| WS-D14 | F1, P1           | Slow upgrade requests: HTTP upgrade request headers sent slowly to hold server slots before the app sees the socket                                                                                                                                                                                                                                               | L   | M   | Low    | Configured (#3890): a request line and headers must arrive within 10 s and 32 KiB, or the connection closes; `limit_concurrency` is 256, live WebSockets not counted, and an idle HTTP keep-alive ends at 5 s; a close that has not drained in 5 s is aborted (SR-191, 23 §16.2); `server.py` sets the WS ping (15 s) and pong timeout (45 s) for open sockets; tailnet-only reachability (SR-045/047)                                                                                                 | #2176            | integration               | M     | Low (proposed)            |
 | WS-D15 | F5, F16, P2, DS1 | Audit-store flooding: one 256 KiB `sub` frame carries ~21,842 entries; every entry denied with `forbidden` or `account_scope_denied`, and every private-family entry whatever its code, awaits an fsync'd denial audit append through the serialized writer that write-ahead order, auth and key audits also use (C-2.9). A full WAL makes audited actions refuse | M   | H   | High   | As built: a `sub` of over 50 entries is refused whole before any entry is read (one small `err`, no audit row); a processed frame's audited refusals are one `ws.subscribe.denied` record and its reply holds at most 50 results (SR-192, #2292); a connection writes at most 20 such records in a minute, the rest counted (#3185)                                                                                                                                                                    | #2292, #3185     | unit, load, chaos (AC-29) | M     | Low                       |
 | WS-D16 | F5, F11, P2, P4  | Forced snapshot rebuilds bypass the resync limit: `ctl` changes to identity options (`resnapshot: true`, reason `reconfigure`) and unsub/sub churn (up to 50 snapshots per `sub`) rebuild snapshots; private families are never cached                                                                                                                            | M   | M   | Medium | A budget per connection and an exact one per user (SR-193, #3476; 23 §7.5, §16.2): `resync`, `ctl` re-snapshots and `sub` starts draw on both, which also bound the grant records of private-topic churn (#2174). Outside: `backpressure` rebuilds (slow consumer: §8.4 ladder; flag on, a `bars` share drop too, bounded by the share's refill and the 3-redrop close; producer bug: model §6) and `replay_seek` (the replay API's)                                                                   | #2293, #3476     | unit, contract (AC-30/31) | M     | Low: per connection, user |
 | WS-D17 | F13, P1          | The planned shutdown outruns the container stop budget, or uvicorn's drain never ends: SIGKILL cuts off the storage flushes and secrets zeroing of the module teardown. Outside the sum today: `BarsRuntime.stop` (up to 30 s with bars on) and the metrics listener's unbounded drain, each able to use the budget alone (#2878); #2827 adds a 2 s term to it    | M   | M   | Medium | `Settings` refuses a `CV_WS_SHUTDOWN_GRACE_MS` that cannot fit `CV_API_STOP_BUDGET_S` (grace + 2 s flush + drain + 16 s for one hung module + 0.2 s of ticks; the lifespan's earlier stops are outside it); uvicorn drain bounded, and not below the 4 s one close can need; compose `stop_grace_period` equals the budget. Each stop's cut is cooperative: one that ignores its cancellation or blocks the loop runs on to the SIGKILL (the note in `Settings._refuse_unfittable_stop_budget`, #3361) | #2565, #2878     | unit                      | M     | Low                       |
@@ -226,8 +228,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 
 Every STRIDE category has analysed rows. Counts: 52 rows (WS-D15, WS-D16 added 2026-10-13; WS-D17 added 2026-10-16;
 WS-I09 and WS-I10 added 2026-10-17); two Highs (WS-D01 and WS-D15, inherent); no residual High (WS-D15 re-scored Medium in #3123, Low in #3185);
-residual Medium: WS-D08, and WS-D11 to WS-D14 until
-#2176 merges (open items, §10).
+residual Medium: WS-D08 (WS-D11 to WS-D14 left the list when #2176 built the server's transport limits, as proposed in §10).
 
 ## 4. WS authentication and the 10-second unauthenticated window
 
@@ -257,7 +258,8 @@ The argument is that the window is **bounded and cheap**:
   closes first. This is not literally "nothing beyond the socket", but it is constant-size per connection and
   independent of attacker input.
   These are the gateway's allocations; the transport's below them are bounded by the server-level limits of SR-191
-  (WS-D11 to WS-D14, #2176), which are partly open (§10).
+  (WS-D11 to WS-D14, #2176): a deadline and a size bound on request headers, a budget for every inbound frame and
+  a bound on queued messages (§10).
 - **Not unique to an identity.** The 8-connections-per-user cap applies only after auth, because before auth
   there is no user. That is why the process-wide cap below exists.
 - **Bounded in count (#2155).** At most 64 sockets (`MAX_UNAUTHENTICATED_SOCKETS`) count from `accept` to their
@@ -273,7 +275,7 @@ Tailscale only, with loopback/WSL-internal binds
 (SR-045, SR-047), so "who can reach the port" means **a device already on the tailnet**. This is stated, not
 assumed: if the exposure model changes (N3 in `04-security-program.md` §5.10), WS-S03 and WS-D07 rise to
 High and the cap's size is reviewed first. Rated **Low** since #2155 (Medium before it). The cap bounds what sockets
-that have not authenticated can hold; a per-source share of it is a follow-up for WS-D07 (#3146).
+that have not authenticated can hold; a per-source share of it for WS-D07 was deferred past GA (#3146, closed as not planned on 2026-10-19).
 
 Related: token replay, token theft, and re-auth identity switching are WS-S01, WS-S02, WS-S04; the session
 model itself is E09's (U13).
@@ -329,7 +331,8 @@ set, so a withdrawn account cannot be emitted after the synchronous step. The re
   follows only when frames of it were dropped (23 §9.5); a socket that the change evicts gets its `bye` with
   nothing queued ahead of it. Invariant: no row of a removed account or of a removed permission's topic reaches
   the client once the change is applied, ahead of the frame that announces it (`permission_change`, or `auth_ok`
-  on an in-place re-`auth`, which sends none) or after it. Residual: a frame whose send has begun is not recalled;
+  on an in-place re-`auth`, which sends none) or after it. Residual: frames already handed to the transport (its
+  write buffer and the kernel's send buffer) are not recalled;
   `system` frames are cut to the account scope at queue time; frames of a subscription that ended before the
   change (an `unsub`, a `resync_rate_limited` revoke) precede its `unsub_ok` / `revoked` as before. Tests:
   E17-T03's `test_narrowing_delivers_no_row_of_a_removed_account_after_permission_change` (flag on, a full window
@@ -365,7 +368,7 @@ security review in the same PR.
 | Auth call bound                        | 6 s per call                    | Handshake stall (D02)        | —                              | merged (#2155)                                 |
 | Outbound budget                        | 8 MiB or 2 000 frames           | Slow consumer (D01)          | Epic AC: memory per connection | built, flag off (#412); 1 024 frames while off |
 | `bars.*` share                         | 50 % of each limit              | D01, D08/D16                 | book/trades fidelity           | built, flag off (#399)                         |
-| Max outbound frame                     | 4 MiB, chunked snapshots        | D10                          | Snapshot latency               | planned E17-S03                                |
+| Max outbound frame                     | 4 MiB, chunked snapshots        | D10                          | Snapshot latency               | merged (#411)                                  |
 | Rebuild budget                         | §16.2: topic, connection, user  | Forced rebuilds (D03, D16)   | Snapshot rebuild cost          | merged                                         |
 | Min throttle                           | 50 ms (0 for orders/executions) | Amplification (D08)          | Budget #3 tick-to-screen       | built, flag off (#412)                         |
 | Fan-out send timeout                   | 2 s                             | Revocation fan-out (D09)     | —                              | merged                                         |
@@ -398,8 +401,10 @@ window: that re-snapshot falls outside the rebuild budget and has no rate bound,
 `cv_ws_overflow_total{reason="unmergeable"}` is the signal, and each such update is logged with its family and topic.
 
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
-heatmaps. Encode-once-send-many keeps CPU flat in client count, except for a merged window with the flag on: each
-binary subscription encodes its own (#3353), about 10 µs per distinct bar measured, for up to 4 096 bars a window.
+heatmaps. Encode-once-send-many keeps CPU flat in client count for a rendered public snapshot (`SnapshotCache`);
+a delta and a JSON chunk are encoded per subscription and connection, and with the flag on each binary
+subscription encodes its own merged window (#3353), about 10 µs per distinct bar measured, for up to 4 096 bars a
+window.
 Per-user cost is real and unmeasured until E17-Q03 (#568), whose load run, like #571's re-measure of its overhead
 on the flag-on path, is to include a binary `bars` series with many subscribers and a burst of distinct bars.
 Tracked as **RSK-063**.
@@ -448,7 +453,7 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 | AC-03 | Send 3 `auth` frames with invalid tokens                                                                                                   | 4401 + `warning` audit entry                                                                                                                            | S03, R03        |
 | AC-04 | Re-auth on a live M1 socket with a valid token of another user                                                                             | Counted as failure; socket identity unchanged                                                                                                           | S04             |
 | AC-05 | As M1, `sub positions` with `exchange_account_ids` = [B]; then [A, B]; then a random UUID                                                  | `account_scope_denied` (same message for B and random); [A,B] narrowed to [A]; audit `ws.subscribe.denied`                                              | E01, I02, I03   |
-| AC-06 | As V, `sub orders`                                                                                                                         | `forbidden`; audit                                                                                                                                      | E01             |
+| AC-06 | As V, `sub orders`                                                                                                                         | Granted: served read-only (23 §6.3); not granted: `account_scope_denied`; without `orders:read`: `forbidden`; audit                                     | E01             |
 | AC-07 | `sub` `positions` with a `replay_session_id`                                                                                               | `invalid_options`                                                                                                                                       | E03             |
 | AC-08 | Topic names: extra segments, `*`, `../`, unknown family, unknown symbol, 10 KiB name                                                       | `unknown_topic` / `invalid_topic`, never a fault                                                                                                        | T04             |
 | AC-09 | `opts` with unknown keys, wrong types, NaN-like strings, huge numbers; `sub` entry with extra fields                                       | `invalid_options` per topic; batch continues                                                                                                            | T03, T06        |
@@ -466,8 +471,8 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 | AC-21 | As V, read `system` after a kill-switch engage                                                                                             | Only role-neutral fields                                                                                                                                | I05, E04        |
 | AC-22 | Offer only `cv.v1.msgpack`                                                                                                                 | `cv.v1.msgpack` echoed; its frames are decoded only under the SR-185 bounds (#2483)                                                                     | T08             |
 | AC-23 | Open a socket with a foreign `Origin` header                                                                                               | Rejected at upgrade: HTTP 403 before `accept`, auth never reached (SR-183, #2239)                                                                       | S06             |
-| AC-24 | Send a compressed inbound message whose inflated size exceeds the protocol cap; send one message as many small continuation fragments      | Refused at the server limit, not after full inflation (after #2176)                                                                                     | D11-D13         |
-| AC-25 | Open many upgrade requests and send their headers slowly                                                                                   | Server times them out (after #2176)                                                                                                                     | D14             |
+| AC-24 | Send a compressed inbound message whose inflated size exceeds the protocol cap; send one message as many small continuation fragments      | Refused at the server limit, not after full inflation (#2176)                                                                                           | D11-D13         |
+| AC-25 | Open many upgrade requests and send their headers slowly                                                                                   | Server times them out (#2176)                                                                                                                           | D14             |
 | AC-26 | Engage the kill switch; observe a connected and a reconnecting client                                                                      | `system` reflects it within 1 s; UI never shows "not killed" while stale                                                                                | E04, E06        |
 | AC-27 | Two users subscribe to `positions` for different accounts on the same symbol; capture both streams                                         | No frame for one account reaches the other subscriber                                                                                                   | I08             |
 | AC-28 | Subscribe the same public topic live and with a `replay_session_id`                                                                        | Two subscriptions, separate sequences; replay frames flagged `replay`                                                                                   | T09             |
@@ -475,7 +480,7 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 | AC-30 | Loop `ctl` identity-option flips on one topic, and 50-entry unsub/sub churn, for 60 s                                                      | The shared budget caps rebuilds and the `ws.subscribe.granted` rows each cycle writes; `resync_rate_limited`; no unbounded snapshot builds (SR-193)     | WS-D16          |
 | AC-31 | Spread `sub` starts, re-snapshotting `ctl`s and `resync`s of one user over several sockets, closing and reopening them, for 60 s           | The user's sockets together draw at most 1 600 rebuilds in any 60 s; past it `resync_rate_limited`, never revoked; one record a window (#3476)          | WS-D16          |
 
-AC-29 as built (#2292): the frame is refused whole before any entry is read, so it writes no audit row; a frame within the cap writes at most one aggregated `ws.subscribe.denied` record (23-ws-protocol.md §5.2). Its "audited order path still succeeds" leg is E17-X02's (#415).
+AC-29 as built (#2292): the frame is refused whole before any entry is read, so it writes no audit row; a frame within the cap writes at most one aggregated `ws.subscribe.denied` record (23-ws-protocol.md §5.2). Its "audited order path still succeeds" leg is E17-X02's (#415): an order-class record through the same audit writer; a real OMS path is NOT RUN (`docs/security/abuse-cases/e17-ws.md`).
 AC-30 as built (#2293): a contract test on the fake clock, through the real gateway on both wires: a `ctl` flip each second and an `unsub` and `sub` of 50 topics every 2 s, for 60 s with a new generation each step, get `resync_rate_limited` on both paths, take at most 5 re-snapshots and 5 restarts per topic, keep the socket open, and get capacity back once the window slides. The load run stays with E17-Q03.
 AC-31 as built (#3476): a contract test on the fake clock, through the real gateway on both wires, with a user limit of 12: two sockets of one user start 8 topics each, and the last 4 starts, a `resync` and a resuming `ctl` get `resync_rate_limited`, never a `revoked`; once both sockets close, a new socket is still refused until the window slides. Unit tests pin the 1 600 over five connections, the draw an accepted `sub` holds until it starts or ends, and the idle sweep. A second row, with an audit sink and a user limit of 1, sees one `ws.rebuild.refused` record per window: a resuming `ctl`'s, a `resync`'s a window later, then a `sub` entry's. An entry a permission change ends while it waits draws nothing on its user, so the bound is exact, and a request that ends before its record is written leaves the record to the user's next refusal.
 
@@ -609,7 +614,7 @@ PR; local aliases `SR-E17-01..07` in the rows above map 1:1 to SR-183..SR-189; S
 | Ticket                      | Obligation                                                                                                                                                                                                                              |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | E17-K01                     | Spike (closed); no control. Its binary-vs-JSON decision fixes which decoders are exposed (T01, T08)                                                                                                                                     |
-| E17-T01                     | Generated WS schemas are the strict validation source (SR-040); `ws_message_schemas` gate keeps doc and code equal                                                                                                                      |
+| E17-T01                     | Generated WS schemas define the frames, and the `ws_message_schemas` gate keeps doc and code equal; client frames are checked by the gateway's own strict checks (SR-040)                                                               |
 | E17-T02                     | CVWB bounds-checked decode (SR-128) and fuzz corpus (SR-155) — merged; T01                                                                                                                                                              |
 | E17-S01                     | Handshake, timeouts, attempts, rate limit, frame cap, re-auth identity, no query-string token (S01-S06, T02, D05-D07, E05, I01); Origin allow-list SR-183; nested-JSON handling SR-184; #2155 follow-ups (pre-auth cap, await timeouts) |
 | E17-S02                     | Registry, option schema, per-account `decide`, generic denial, revocation, audit (T03-T06, I02, I03, E01-E03, R01, R02, D04, D09); snapshot versioning SR-189 (merged, #2318)                                                           |
@@ -625,7 +630,7 @@ PR; local aliases `SR-E17-01..07` in the rows above map 1:1 to SR-183..SR-189; S
 | E17-Q03                     | k6 load: confirms §6 numbers and AC-19; feeds RSK-063                                                                                                                                                                                   |
 | E17-Q04                     | E2E: kill-switch over WS (AC-21), revocation UI (AC-13)                                                                                                                                                                                 |
 | E17-X01                     | This model                                                                                                                                                                                                                              |
-| E17-X02                     | Executes AC-01..AC-31; decoder fuzzing; SAST rule that no WS handler reads the query string or logs a token                                                                                                                             |
+| E17-X02                     | Executes AC-01..AC-31 (`docs/security/abuse-cases/e17-ws.md`); decoder fuzzing; SAST rules: no WS handler reads the query string or logs a token                                                                                        |
 | E17-D01 / D02 / D03 / D04   | Design: no security control; degraded/revoked states must not imply data is current                                                                                                                                                     |
 | E09 / E08 / E26 / E29 / E34 | Referenced: session and RBAC (S01, S02, E02), upstream (P5), replay ownership (E03), producer account routing (I02), kill switch (E04)                                                                                                  |
 
@@ -635,9 +640,9 @@ owner tickets by comment: SR-185 to E17-T07 #572; SR-190 test to E17-S02/E17-T03
 WS-E04 1 s bound to E17-Q02 #410 and E17-Q04 #569. Follow-ups #2172-#2176 and #2155 are on the project board.
 
 **Gaps that become work.** Every control gap is already a ticket or owned by a named open E17 ticket: #2155
-(web hello/auth, moved to #413; its cap and call bounds are built) and #2176 (server WS limits, SR-191). SR-189
-(snapshot versioning, E17-S02) is implemented (#2318) and is no longer a gap. SR-183..SR-188 are requested as
-scope on the open tickets named above.
+(web hello/auth, moved to #413; its cap and call bounds are built). #2176 (server WS limits, SR-191) is built
+(#3890) and SR-189 (snapshot versioning, E17-S02) is implemented (#2318): neither is a gap now. SR-183..SR-188 are
+requested as scope on the open tickets named above.
 
 ## 10. Residual risks, review and sign-off
 
@@ -701,19 +706,38 @@ scope on the open tickets named above.
 - **Narrowed entries (#415):** an entry that `23-ws-protocol.md` §6.2 narrowed is listed in its frame's one denial
   record (`WARNING`, `account_scope_denied`) and draws on the denial-record budget (WS-R01, WS-D15).
 - **WS-R03:** a rate budget for authentication failure audit rows that spans REST and WS is E09's item (#3009).
-- **Residual Medium (not eliminated; WS-D15 left this list when its budget was built, #3185):**
-  - WS-D11 to WS-D14: of the transport-layer limits, `server.py` sets the message size (inflated and reassembled),
-    deflate per subprotocol and the WS keepalive; no inbound queue limit is in force, and the request-header
-    deadline and the per-message fragment cap are #2176's. Low once #2176 merges. Further transport-level items
-    are tracked under #415. Part of **RSK-063**.
+- **Residual Medium (not eliminated; WS-D15 left this list when its budget was built, #3185, and WS-D11 to WS-D14
+  when #2176 built the server's transport limits, as proposed below):**
   - WS-D08: per-user amplification on hot symbols is bounded but unmeasured until E17-Q03. **RSK-063**.
-- **Contingent Low:** WS-D01, WS-T07 and WS-D10 are rated on planned controls (E17-T03, E17-S03,
-  E17-T04); re-triaged at each PR's security review if the control is missing. WS-D01's E17-T03 control is built
+- **Contingent Low:** WS-D01 and WS-T07 are rated on controls that are built and not yet in force,
+  re-triaged at each PR's security review if the control is missing. WS-D01's E17-T03 control is built
   behind `CV_WS_BACKPRESSURE_ENABLED`, which is off by default (#412), so its Low stays contingent until the flag is
-  on, after the gates `23-ws-protocol.md` §8.6 lists (#413, #571, #410, #568; #2900
-  removes the flag); with the flag off, the 1 024-frame push bound is the control in force. WS-E02 was Low
+  on, after the gates `23-ws-protocol.md` §8.6 lists (#413, #571, #410, #568; #2900, the flag's removal, is
+  deferred past GA: its issue was closed as not planned on 2026-10-19); with the flag off, the 1 024-frame push
+  bound is the control in force. WS-T07's E17-S03 gap guard has no production caller yet (E17-R-22, #604).
+  WS-D10 is Low as built (E17-T04's worker decode, E17-S03's chunked snapshots). WS-E02 was Low
   contingent on SR-189, which is implemented (#2318), so it is Low as built.
   **RSK-064** (continuous authorisation) is Mitigating in `32-risk-register.md`.
+- **WS-D11 to WS-D14 proposed Low after #2176 (E17-X02 review, #415):** the server's transport limits are
+  configured (#3890; SR-191, 23 §16.2, `docs/ops/runbooks/ws-server-limits.md`): `ws_max_size` 260 KiB on the
+  reassembled, inflated message, deflate for `cv.v1.json` only, `limit_concurrency` 256 with live WebSockets
+  outside it, a deadline (10 s) and a size bound (32 KiB) on request headers, a 5 s idle keep-alive, at most 64
+  fragments a message, a budget for every inbound frame, control frames included, at most 1 024 queued messages
+  a socket, and a 5 s drain bound on a close. The five items that the PR of #2176 (#3890) lists as outside its
+  scope (a request body that does not arrive, an upload cut after its answer, handler tasks counted against
+  `limit_concurrency`, a large response written whole, the queue bound's bytes per connection) are owned by this
+  model: the Security engineer rates them with these rows. WS-D14's residual: the deadline bounds how long a
+  connection that has not completed its headers holds a slot, not the rate at which connections open, which this
+  gateway does not bound (`23-ws-protocol.md` §16.2). That rate is the network layer's (tailnet-only reachability,
+  SR-045 and SR-047), and the Low holds only while it stays so (§4). Likelihood Low and impact Medium, with that
+  reachability: Low. Proposed in `docs/security/reviews/e17-ws-review.md`; the owner's sign-off is pending there.
+- **E17-X02 review residuals (#415):** the review's findings and dispositions are in
+  `docs/security/reviews/e17-ws-review.md` §2; those recorded as residuals wait for the owner's acceptance
+  there. Two belong to this model. The idle lock (E09-S03) does not end a socket: a session that idle-locks
+  keeps its subscriptions until its access token expires, at most one access-token lifetime (12 min);
+  revisit if that lifetime grows or reachability goes beyond the tailnet (E17-R-27, WS-S01). View-as sessions
+  (`23-ws-protocol.md` §9.6, #3085) are not built, so no socket can carry another user's scope; their gateway
+  half needs a row here and must keep WS-S04's identity guard (E17-R-26).
 - **Lowered by #2155:** WS-S03 and WS-D07 are Low: at most 64 sockets await auth per process, and each `auth` call
   is bounded at 6 s (§4). They were **RSK-063**'s first trigger; #3145 re-rates WG1 and RSK-063 to match.
 - No High residual: WS-D15 was the one (re-scored Medium in #3123, then Low in #3185, above). The
@@ -772,3 +796,4 @@ scope on the open tickets named above.
 | 2026-10-19 | author (agent; PR for #415 fair scheduling)       | §4, §6: slot bound 10 s plus the 2 s close flush bound (flag off too); §8: cap precedence (classification only); no rating or count changes  |
 | 2026-10-19 | author (agent; PR for #415 findings)              | WS-D11..D14, §1.1, §4, §6, §10: server limits as set; WS-D13 Medium until #2176; WS-T01, WS-T08, WS-R01, WS-R02, AC-18 as built              |
 | 2026-10-20 | author (agent; PR for #3635)                      | §8: revocation close failures name the real metric and the ticket (#3497, #3635); no rating or count changes                                 |
+| 2026-10-20 | author (agent; PR for #415 review record)         | WS-D11..D14 Low after #2176, configured (#3890) (§1.1, §3.5, §3.7, §4, §10); §1, §5, §6, §9, AC-06/24/25 as built; review residuals (§10)    |
