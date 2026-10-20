@@ -93,6 +93,10 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
    machine-local), then `python scripts/relayroom-enter-credentials.py` (masked input; nothing
    echoed).
 3. `python scripts/relayroom-main-doctor.py` → must print `READY` (exit 0).
+   Transition note (2026-10-20): a checkout that hand-filled `.mcp.json` while the file was still
+   tracked shows it as modified/conflicted after pulling this change — resolve with
+   `git rm --cached .mcp.json` and never `git add` it; an indexed path bypasses `.gitignore` and
+   would re-track the connect-code URL.
 4. In the Code session: `/mcp` → reconnect `candleviewer-relayroom`.
 5. Tell Atlas "RelayRoom credentials entered"; Atlas then runs §8: `whoami` → `roster` → `inbox` →
    progress event → `[SETUP-CHECK]` thread to `human` with a nonce → you reply `ACK <nonce>` in the
