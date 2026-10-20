@@ -100,12 +100,19 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_projected_full_timestamp",
         "recorder_disk_budget_last_sample_timestamp_seconds",
         "recorder_disk_budget_breakdown_age_seconds",
+        # The nightly roll-off (`recorder/rolloff.py`, E16-T05): unscraped until #3794.
+        "recorder_rolloff_bytes_total",
+        "recorder_rolloff_duration_seconds",
+        "recorder_rolloff_failures_total",
+        "recorder_rolloff_streams_unlisted_total",
+        "recorder_watermark_lag_days",
     }
 )
 
 
 def export_recorder_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
-    """Serve the StreamWriter series on `registry` (the scraped one) with `env`."""
+    """Serve the StreamWriter, disk-budget and roll-off series on `registry` (the scraped one)
+    with `env`."""
     return ReexportCollector(registry, names=EXPORTED_NAMES, const_labels={"env": env})
 
 

@@ -132,6 +132,14 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {"env": "live"},
     ),
+    # #3794: one run that lists no day for a stream holding aged partitions is a ticket.
+    "RollOffStreamUnlisted": (
+        'recorder_rolloff_streams_unlisted_total{env="live",stream="orderbook_delta"}',
+        "0+0x10 1+0x10",
+        "0+0x20",
+        "15m",
+        {"env": "live", "stream": "orderbook_delta"},
+    ),
     "CredentialVerificationFailures": (
         "credential_verification_failures_total",
         "0+0x10 1+0x10",

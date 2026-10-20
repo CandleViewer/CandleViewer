@@ -55,6 +55,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "recorder_disk_pressure_level",
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
+        "recorder_watermark_lag_days",  # E16-T05's, named in its runbook; catalogued by #3794
         "bars_symbol_cardinality",
         "indicator_subscriptions",  # named by the E13-T02 ticket's Observability section (#426)
         "cv_ws_connection_class",

@@ -1459,6 +1459,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | OMS | `bybit_clock_drift_ms` | gauge | alert > 1500 ms |
 | Rules | `rule_evaluations_total`, `rule_fires_total{rule_id}`, `rule_autodisarm_total` | counter | rule-storm detection |
 | Recorder | `recorder_rows_total{stream}`, `recorder_bytes_written_total{symbol,stream}`, `recorder_spill_bytes`, `recorder_write_backlog_rows`, `recorder_flush_duration_seconds`, `disk_used_ratio`, `disk_free_bytes`, `recorder_disk_pressure_level`, `recorder_bytes_per_day{symbol}`, `recorder_projected_full_timestamp`, `recorder_disk_budget_last_sample_timestamp_seconds`, `recorder_disk_budget_breakdown_age_seconds` | counter/gauge/histogram | disk ratio > 0.8 (page > 0.95); pressure level > 0 for 24 h, last sample > 5 min old (page); spill > 0 for 5 min (warning); backlog p95 > 0; flush p95 > 50 ms (E16-T03, E16-T07) |
+| Roll-off | `recorder_rolloff_bytes_total{stream}`, `recorder_rolloff_duration_seconds`, `recorder_rolloff_failures_total{reason}`, `recorder_rolloff_streams_unlisted_total{stream}`, `recorder_watermark_lag_days{stream}` | counter/histogram/gauge | `RollOffStreamUnlisted` (ticket): a run listed no closed day for a stream whose hot table holds aged partitions, any increase in 25 h; failures by reason per the roll-off runbook (E16-T05, #3794) |
 | Replay | `replay_events_read_total{stream,tier}` | counter | recorded events replay sources read, each counted once: a capped read's re-read last instant and a re-exported copy are not counted again (E26-T02); throughput, no alert |
 | Replay | `replay_gap_warnings_total` | counter | `ReplayGap` markers replay sources emitted (E26-T02); informational: the replayed range has recording gaps |
 | Replay | `replay_source_read_seconds{tier}` | histogram | replay storage read latency (E26-T02); warning when p95 > 1 s |
@@ -1566,6 +1567,13 @@ Key self-check set (E27-T03, #836; runbooks in section 9 and `docs/ops/runbooks/
 (`system_ticket.yml`, `component: key_selfcheck`; page promotion pending owner approval, #2701) —
 `KeySelfCheckFailed` (one alert per failing rule), `KeySelfCheckLatched` (the job's read-only latch, held until a
 restart; quiet while a key fails), `KeySelfCheckRunMissed`; Ticket (SR-034) — `KeyExpiringWithin14Days`, `KeyExpiringWithin7Days`, `KeyExpiringWithin1Day`.
+
+Roll-off (E16-T05, #3794): Ticket — `RollOffStreamUnlisted` (`system_ticket.yml`,
+`component: recorder`) when `recorder_rolloff_streams_unlisted_total{stream}` rose in 25 h: a nightly
+run listed no closed day for a stream whose hot table holds partitions older than two days, so that
+stream sits outside retention. The series starts at 0 for every roll-off stream, so the first such
+run fires it. If the guard's own query fails, the run goes on and counts
+`recorder_rolloff_failures_total{reason="unlisted_check_failed"}` instead.
 
 WS gateway set (E17-T06, `infra/prometheus/alerts/ws_gateway.yml`, `component: gateway`, runbooks in
 `07-release-and-prr.md` section 9, promtool cases in `infra/prometheus/tests/ws_alerts.test.yml`), all

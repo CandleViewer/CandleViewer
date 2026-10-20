@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Literal
 
 #: Why a `DROP PARTITION` could not be confirmed (closed set: safe as a metric label).
-DropNotAppliedReason = Literal["suspended", "timeout", "unexpected_shape"]
+DropNotAppliedReason = Literal["suspended", "timeout", "unexpected_shape", "missing"]
 
 #: Why a WAL table's apply could not be confirmed caught up (closed set: safe as a metric label).
 WalNotAppliedReason = Literal["suspended", "timeout", "unexpected_shape"]

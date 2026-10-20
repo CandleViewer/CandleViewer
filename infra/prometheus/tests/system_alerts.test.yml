@@ -541,6 +541,31 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: recorder_rolloff_streams_unlisted_total{env="live",stream="orderbook_delta"}
+    values: 0+0x10 1+0x10
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: RollOffStreamUnlisted
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: recorder
+        env: live
+        stream: orderbook_delta
+      exp_annotations:
+        summary: Roll-off listed no closed day for a stream whose hot table holds
+          aged partitions
+        runbook_url: docs/plan/07-release-and-prr.md#alert-rolloffstreamunlisted
+- interval: 1m
+  input_series:
+  - series: recorder_rolloff_streams_unlisted_total{env="live",stream="orderbook_delta"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: RollOffStreamUnlisted
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: credential_verification_failures_total
     values: 0+0x10 1+0x10
   alert_rule_test:

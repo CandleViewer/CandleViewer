@@ -4,10 +4,9 @@ The generated two-hour corpus goes to QuestDB over ILP; `replay_wiring` composes
 and `auto` reads one tier chosen from the cold manifests (ADR-0035 decision 4): (1) nothing
 archived reads QuestDB; (2) the first hour exported is a straddle, refused; (3) both hours
 exported and their day dropped from QuestDB, the watermark never advanced (#2347), must read
-Parquet, where watermark routing would read a hole. Digests match the unit test's. The day-
-partitioned `trades` drop through roll-off's own `drop_day`; `drop_day` names day partitions,
-which QuestDB refuses for the hour-partitioned `orderbook_deltas`, so its hours are dropped by
-their own `table_partitions` names.
+Parquet, where watermark routing would read a hole. Digests match the unit test's. Both tables
+drop through roll-off's own `drop_day`: the day partition of `trades`, and the hour partitions of
+`orderbook_deltas`, which is `PARTITION BY HOUR` (#3794).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from candleviewer.settings import Settings
 from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.questdb_source import QuestDbHotTierSource
-from candleviewer.storage.cold.rolloff_ops import QuestDbHotPartitions, day_name
+from candleviewer.storage.cold.rolloff_ops import QuestDbHotPartitions
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.ilp_writer import IlpWriter
 from candleviewer.storage.questdb.runner import run_migrations
@@ -49,7 +48,6 @@ questdb_container = hot_tier.questdb_container
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 STREAMS = (StreamKind.TRADES, StreamKind.ORDERBOOK_DELTA)
 TABLES = {StreamKind.TRADES: "trades", StreamKind.ORDERBOOK_DELTA: "orderbook_deltas"}
-HOURLY = frozenset({"orderbook_deltas"})  # `PARTITION BY HOUR` in backend/db/questdb
 REQUEST = ReplayRequest.model_validate(
     {
         "symbols": (SYMBOL,),
@@ -64,20 +62,6 @@ async def _replay(tiers: ReplayTiers) -> list[ReplayItem]:
     config = ReadAheadConfig(window_us=7 * 60_000_000)  # read windows cross the hour boundary
     async with ReplaySource(REQUEST, tiers, config=config) as source:
         return [item async for item in source]
-
-
-async def _drop_day(pg: hot_tier._AsyncpgExecutor, stream: StreamKind) -> None:
-    """Drop the corpus day from QuestDB: roll-off's own `drop_day` for a day-partitioned table,
-    the day's hour partitions by their own names for an hour-partitioned one."""
-    table = TABLES[stream]
-    if table not in HOURLY:
-        await QuestDbHotPartitions(pg).drop_day(stream, H0)
-        return
-    sql = f"SELECT name FROM table_partitions('{table}')"  # noqa: S608  # nosec B608 - test-owned literal
-    hours = [str(r["name"]) for r in await pg.fetch(sql) if str(r["name"]).startswith(day_name(H0))]
-    assert hours  # the corpus hours are partitions of their own
-    names = ", ".join(f"'{hour}'" for hour in hours)
-    await pg.fetch(f"ALTER TABLE {table} DROP PARTITION LIST {names}")
 
 
 async def _export(exporter: ColdExporter, hour: int) -> None:
@@ -127,7 +111,7 @@ async def test_auto_reads_one_tier_by_manifest_coverage_on_real_questdb_and_parq
             await _replay(tiers)
         await _export(exporter, 1)
         for stream, table in TABLES.items():  # 3. the day leaves QuestDB, watermark untouched
-            await _drop_day(pg, stream)
+            await QuestDbHotPartitions(pg).drop_day(stream, H0)
             await hot_tier.wait_for_row_count(conn, table, 1)
         from_parquet = await _replay(tiers)
 

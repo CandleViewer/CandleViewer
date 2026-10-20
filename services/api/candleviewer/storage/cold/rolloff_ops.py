@@ -4,9 +4,11 @@ The recorder's `RollOffJob` (M11) may not import a storage driver (ADR-0003),
 so everything that touches pyarrow / QuestDB lives here behind small ports:
 
 * `QuestDbHotPartitions` — closed-day inventory, symbols per day, and the
-  `ALTER TABLE ... DROP PARTITION LIST` (table from the closed allowlist via
-  `checked_identifier`, the date literal validated before `sql_string_literal`),
-  then a wall-clock-bounded wait until QuestDB has applied it (WAL DDL is async).
+  `ALTER TABLE ... DROP PARTITION LIST` of the day's own partitions, the day for a
+  `PARTITION BY DAY` table and its hours for a `PARTITION BY HOUR` one (table from
+  the closed allowlist via `checked_identifier`, each name validated before
+  `sql_string_literal`), then a wall-clock-bounded wait until QuestDB has applied it
+  (WAL DDL is async).
 * `ColdArchiver` — orchestrates the existing `ColdExporter` (never forked) and
   adds the read-back verification the ticket requires: the written file is
   re-read and its row count AND a canonical content digest must equal the hot
@@ -76,7 +78,8 @@ _US_PER_HOUR = 3_600_000_000
 DROP_APPLY_TIMEOUT_S = 120.0
 DROP_POLL_MIN_S = 0.02
 DROP_POLL_MAX_S = 0.2
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")  # ASCII digits only, unlike `\d`
+_HOUR_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$")  # `PARTITION BY HOUR` names
 _PROVENANCE = frozenset({"_export_run_id", "_exported_at", "_source"})
 _DIGEST_ROWS = 8192
 VERIFICATION_FAILED = "archive_verification_failed"
@@ -167,6 +170,35 @@ def _as_int(value: object) -> int | None:
         return None
 
 
+def partition_day(name: str) -> str | None:
+    """The `yyyy-MM-dd` day a partition belongs to: a DAY partition or one of the day's HOUR
+    partitions (`orderbook_deltas`, #3794). Any other name is no day of roll-off's."""
+    if _DATE_RE.fullmatch(name):
+        return name
+    return name[:10] if _HOUR_RE.fullmatch(name) else None
+
+
+def _timestamp_us(value: object) -> int | None:
+    """A `table_partitions` timestamp as UTC µs; QuestDB's are naive UTC. None when absent."""
+    if not isinstance(value, datetime):
+        return None
+    moment = value if value.tzinfo else value.replace(tzinfo=UTC)
+    return int(moment.timestamp() * 1_000_000)
+
+
+def _aged(row: dict[str, object], before_us: int) -> bool:
+    """A partition whose newest row is older than `before_us`. Fail closed: a row without the
+    column, or with a value that is not a timestamp (a shape or driver change), counts as aged;
+    an emptied one (NULL `maxTimestamp`) does not."""
+    if "maxTimestamp" not in row:
+        return True
+    value = row["maxTimestamp"]
+    if value is None:
+        return False
+    newest = _timestamp_us(value)
+    return newest is None or newest < before_us
+
+
 def _emptied(row: dict[str, object]) -> bool:
     """A listed partition that holds nothing (QuestDB keeps a dropped one listed until purge).
 
@@ -213,7 +245,7 @@ class QuestDbHotPartitions:
     async def _partitions(self, stream: StreamKind) -> list[dict[str, object]]:
         # Table from the TABLE_BY_STREAM allowlist, emitted as an escaped literal.
         literal = sql_string_literal(_hot_table(stream))
-        sql = f"SELECT name, diskSize FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
+        sql = f"SELECT name, diskSize, numRows, minTimestamp FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
         return await self._fetch(sql)
 
     async def disk_bytes(self, streams: Sequence[StreamKind]) -> int:
@@ -222,17 +254,27 @@ class QuestDbHotPartitions:
         return sum(int(str(r.get("diskSize") or 0)) for r in rows)
 
     async def closed_days(self, stream: StreamKind, before_us: int) -> list[int]:
-        """Start (UTC µs) of every DAY partition that ends at or before `before_us`."""
-        days: list[int] = []
+        """Start (UTC µs) of every day that ends at or before `before_us` and has a partition:
+        its DAY partition, or any of its HOUR partitions (#3794: an hourly table was never
+        listed, so roll-off skipped it without a trace)."""
+        days: set[int] = set()
         for row in await self._partitions(stream):
-            name = str(row.get("name", ""))
-            if not _DATE_RE.fullmatch(name):
+            name = partition_day(str(row.get("name", "")))
+            if name is None:
                 continue
             start = int(datetime.strptime(name, "%Y-%m-%d").replace(tzinfo=UTC).timestamp())
             start_us = start * 1_000_000
             if start_us + US_PER_DAY <= before_us:
-                days.append(start_us)
+                days.add(start_us)
         return sorted(days)
+
+    async def aged_partitions(self, stream: StreamKind, before_us: int) -> int:
+        """How many partitions hold only rows older than `before_us`, whatever their names: the
+        guard that tells a table roll-off cannot list from one with nothing to roll off."""
+        literal = sql_string_literal(_hot_table(stream))
+        sql = f"SELECT name, maxTimestamp FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted table via checked_identifier, escaped by sql_string_literal
+        rows = await self._fetch(sql)
+        return sum(1 for r in rows if _aged(r, before_us))
 
     async def symbols_in(self, stream: StreamKind, rng: TimeRange) -> list[str]:
         return sorted(await self.row_counts(stream, rng))
@@ -258,21 +300,44 @@ class QuestDbHotPartitions:
         }
 
     async def drop_day(self, stream: StreamKind, day_start_us: int) -> None:
+        """Drop the day's own live partitions by name, in one statement: the DAY partition, or
+        every HOUR partition of the day (#3794: a day name is refused for a `PARTITION BY HOUR`
+        table). A day with no live partition is `missing`, never a driver error."""
         table = _hot_table(stream)
-        name = day_name(day_start_us)
-        if not _DATE_RE.fullmatch(name):  # pragma: no cover - strftime guarantees the shape
-            raise ValueError("bad partition name")
-        # Allowlisted table via checked_identifier; day escaped by sql_string_literal.
-        stmt = f"ALTER TABLE {table} DROP PARTITION LIST " + sql_string_literal(name)
+        day = day_name(day_start_us)
+        names = await self._day_partitions(stream, table, day)
+        # Allowlisted table via checked_identifier; each name escaped by sql_string_literal.
+        stmt = f"ALTER TABLE {table} DROP PARTITION LIST " + ", ".join(
+            sql_string_literal(n) for n in names
+        )
         await self._fetch(stmt)
-        await self._await_dropped(table, name)
+        await self._await_dropped(table, day, frozenset(names))
 
-    async def _await_dropped(self, table: str, name: str) -> None:
+    async def _day_partitions(self, stream: StreamKind, table: str, day: str) -> list[str]:
+        """The names of `day`'s live partitions, read before the DROP under a bound of its own
+        (`apply_timeout_s`, as long as the wait's). An emptied one, still listed until QuestDB
+        purges it, holds nothing and is not named."""
+        start = self._clock()
+        try:
+            async with asyncio.timeout(self._apply_timeout_s):
+                rows = await self._partitions(stream)
+        except TimeoutError:
+            raise self._not_applied(table, day, "timeout", start) from None
+        if any(not r.get("name") for r in rows):
+            raise self._not_applied(table, day, "unexpected_shape", start)
+        mine = [r for r in rows if partition_day(str(r["name"])) == day]
+        names = sorted(str(r["name"]) for r in mine if not _emptied(r))
+        if not names:
+            raise self._not_applied(table, day, "missing", start)
+        return names
+
+    async def _await_dropped(self, table: str, name: str, parts: frozenset[str]) -> None:
         """WAL tables apply DDL asynchronously: return only once the day is gone, else raise.
 
-        Gone = absent from `table_partitions`, or listed but emptied (`_emptied`). A suspended WAL
-        can never apply the drop: fail fast. `apply_timeout_s` bounds the whole wait, every poll
-        included (a hung query too). The DROP is never re-issued; a failure is never success.
+        Gone = none of its `parts` listed in `table_partitions`, or each listed one emptied
+        (`_emptied`). A suspended WAL can never apply the drop: fail fast. `apply_timeout_s`
+        bounds the whole wait, every poll included (a hung query too). The DROP is never
+        re-issued; a failure is never success.
         """
         literal = sql_string_literal(table)
         sql = f"SELECT name, numRows, minTimestamp FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted table via checked_identifier, escaped by sql_string_literal; the day is matched in Python
@@ -283,7 +348,7 @@ class QuestDbHotPartitions:
                     rows = await self._fetch(sql)
                     if any(not r.get("name") for r in rows):
                         raise self._not_applied(table, name, "unexpected_shape", start)
-                    if not any(str(r.get("name")) == name and not _emptied(r) for r in rows):
+                    if not any(str(r.get("name")) in parts and not _emptied(r) for r in rows):
                         return
                     if await self._wal_suspended(table):
                         raise self._not_applied(table, name, "suspended", start)

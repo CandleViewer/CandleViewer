@@ -267,6 +267,63 @@ async def test_hot_drop_non_wal_table_and_idempotent_second_drop() -> None:
     assert await store.drop_day(T, DAY_US) is False
 
 
+class _HourlyPg:
+    """A non-WAL `PARTITION BY HOUR` table (`orderbook_deltas`, #3794): a DROP removes every
+    named hour at once; `ghost` is an emptied hour QuestDB still lists."""
+
+    def __init__(self) -> None:
+        self.parts = {"2026-08-01T00": 100, "2026-08-01T01": 200, "2026-08-02T00": 5}
+        self.ghost: dict[str, object] = {
+            "name": "2026-07-31T23",
+            "diskSize": 0,
+            "numRows": 0,
+            "minTimestamp": None,
+        }
+        self.drops: list[str] = []
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        if "wal_tables" in sql:
+            return []
+        if "table_partitions" in sql:
+            live: list[dict[str, object]] = [
+                {"name": n, "diskSize": s, "numRows": 5, "minTimestamp": "x"}
+                for n, s in self.parts.items()
+            ]
+            return [*live, dict(self.ghost)]
+        if sql.startswith("ALTER TABLE"):
+            self.drops.append(sql)
+            for name in sql.split("LIST ", 1)[1].split(", "):
+                self.parts.pop(name.strip("'"))
+            return []
+        return [{"symbol": "BTCUSDT", "n": 7}]
+
+
+D = StreamKind.ORDERBOOK_DELTA
+
+
+async def test_hot_store_days_sums_an_hourly_tables_hours_into_their_day() -> None:
+    """#3794: retention saw day-named partitions only, so its reaper and preview never listed
+    `orderbook_deltas`. An emptied hour is not data; the open day is not closed."""
+    store = QuestDbRetentionHotStore(_HourlyPg(), apply_timeout_s=1.0, poll_s=0.001)
+    days = await store.days(D, DAY_US + 86_400_000_000)  # 2026-08-02 is still open
+
+    assert [(d.start_us, d.bytes, d.rows_by_symbol) for d in days] == [
+        (DAY_US, 300, {"BTCUSDT": 7})
+    ]
+
+
+async def test_hot_drop_of_an_hourly_day_drops_its_hours_and_is_idempotent() -> None:
+    pg = _HourlyPg()
+    store = QuestDbRetentionHotStore(pg, apply_timeout_s=1.0, poll_s=0.001)
+
+    assert await store.drop_day(D, DAY_US) is True
+    assert pg.drops == [
+        "ALTER TABLE orderbook_deltas DROP PARTITION LIST '2026-08-01T00', '2026-08-01T01'"
+    ]
+    assert list(pg.parts) == ["2026-08-02T00"]
+    assert await store.drop_day(D, DAY_US) is False  # gone: a resumed pass is a no-op
+
+
 async def test_checkpoint_round_trip_clear_and_corrupt(tmp_path: Path) -> None:
     reg = DatasetRegistry(tmp_path)
     ck = FileRetentionCheckpoint(reg)

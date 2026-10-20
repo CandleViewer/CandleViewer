@@ -5,12 +5,19 @@ Owner: recorder-replay. Code: `services/api/candleviewer/recorder/rolloff.py` (`
 
 ## How it works
 
-Nightly, per stream, closed QuestDB DAY partitions older than every present symbol's hot window
+Nightly, per stream, closed QuestDB days older than every present symbol's hot window
 (`retention_policies.retain_days`; pinned = never) are exported via the existing cold exporter, then
 re-read: row count **and** a canonical content SHA-256 must equal the hot source, and the manifest
-SHA-256 must re-verify. Only when **every** symbol in that day verifies is the partition audited
+SHA-256 must re-verify. Only when **every** symbol in that day verifies is the day audited
 (`retention.purge`) and dropped. Days are processed newest-first. Watermarks live at
 `<CV_PARQUET_ROOT>/_manifests/_watermarks/<stream>/symbol=<SYM>.json` and only move forward.
+
+A day is its `yyyy-MM-dd` partition, or, for a `PARTITION BY HOUR` table (`orderbook_deltas`), its
+`yyyy-MM-ddTHH` partitions: they are listed together and dropped in one statement (#3794). A table
+holding partitions older than two days while roll-off lists no day for it fires
+`RollOffStreamUnlisted` (ticket, `docs/plan/07-release-and-prr.md`). If that check's own query
+fails, the run goes on with the next stream and counts
+`recorder_rolloff_failures_total{reason="unlisted_check_failed"}`.
 
 ## Stuck watermark (`recorder_watermark_lag_days` > hot window + 2)
 
@@ -22,14 +29,19 @@ SHA-256 must re-verify. Only when **every** symbol in that day verifies is the p
 4. A day that keeps failing pins the watermark below it for the whole stream by design; it never
    skips ahead over data that is still hot.
 5. `rolloff_skipped_locked`: another instance holds the advisory lock; check for a hung run.
-6. `system_event code=rolloff.drop_unconfirmed` (CRITICAL) with
-   `recorder_rolloff_failures_total{reason="drop_not_applied_<reason>"}`: the DROP was issued but
-   QuestDB never confirmed it within `apply_timeout_s`. Nothing was lost — the cold copy verified
-   before the DROP, the day stays `retained` and the watermark did not move. `reason=suspended`:
+6. `system_event code=rolloff.drop_unconfirmed` (WARNING for `timeout` and `missing`, CRITICAL
+   otherwise) with `recorder_rolloff_failures_total{reason="drop_not_applied_<reason>"}`: the DROP
+   was issued but QuestDB never confirmed it within `apply_timeout_s`, or, when the day's partition
+   listing came back without names or without a live partition, it was never issued. Nothing was
+   lost — the cold copy verified before the DROP, the day stays `retained` and the watermark did not
+   move. `reason=suspended`:
    the WAL is suspended; inspect `wal_tables()` and run `ALTER TABLE <table> RESUME WAL;` after
    fixing the cause — the next nightly run re-issues the drop. `reason=timeout`: QuestDB is slow or
    unreachable; the next run retries. `reason=unexpected_shape`: `table_partitions()` returned rows
-   without a `name` — a QuestDB version/driver change; stop and file an issue.
+   without a `name` — a QuestDB version/driver change; stop and file an issue. `reason=missing`
+   (WARNING): the day had no live partition left when the drop came, so no DROP was issued; it
+   left QuestDB another way after this run verified its archive (a concurrent drop or retention).
+   Check `table_partitions()` and the retention log.
 
 ## Quarantined file
 
@@ -39,10 +51,11 @@ Quarantined files are removed from the manifest, so no DuckDB view or cold read 
 Verify-on-read and the weekly scrub (`STORAGE_COLD_FILE_QUARANTINED`) quarantine the same way, with
 no sidecar; a part they found missing leaves an empty directory.
 
-While the partition's quarantine directory exists, every cold read of that partition refuses rather
+While the partition's quarantine directory exists, the cold readers refuse that partition rather
 than serve the parts that remain as all of it (#3477): `/market/klines` answers 503 for that month,
 a replay over it fails typed (also when `auto` routing reads its coverage), and the cold repository
-raises. The directory cannot tell a partition that is still missing a part from one a later run
+raises. The DuckDB analytics views (`storage/cold/duckdb_views.py`, not used by the app) glob the
+partition's files and read neither the manifest nor the mark. The directory cannot tell a partition that is still missing a part from one a later run
 re-exported in full, nor whether QuestDB still holds the day, so the reads refuse until an operator
 deletes it (step 4). Retention deletes a partition with its manifest but never touches
 `_quarantine/`: once the manifest is gone the partition no longer refuses, since nothing is left to
