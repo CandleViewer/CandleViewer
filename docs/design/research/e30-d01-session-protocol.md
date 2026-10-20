@@ -4,7 +4,9 @@
   "the report" below. F#, SC-#, DJ-#, OQ-# and "report §n" refer to it; a bare "§n" is a section of this file.
 - **Status:** not yet run. Every planned duration below is an allocation inside a 60-minute session, not an
   observed time; the budget is summed in §3. **No participant, timing or quote exists yet**; results are
-  appended to the report as a dated addendum (OQ-11).
+  appended to the report as a dated addendum (OQ-11). **Revision 2026-10-20 (r2):** the stimulus declares the
+  report's §1a recommended defaults; Probe C runs three tickets; Probe D seeds seven cases; Probe B shows five
+  lock-state frames and a reconnect check; Probe F gains steps F-a and F-b.
 - **Roles:** the moderator is never the participant. The owner is a participant (ticket Scope) and is tagged
   **P1** on the session sheet and in both affinity maps, because the owner also set the locked decisions and
   approves the report; a second human moderates the owner's session, or an agent runs this script with the
@@ -54,53 +56,65 @@ owner's `approved` comment on #826 replaces CDO sign-off (Agent-delivery adaptat
 
 - **Stimulus:** two sources. Probes A, D and F use the E30-D02 SCR-060 frames (every state) and the E30-D03
   frames for SCR-076, SCR-077, SCR-158 and the SCR-061 selector slice, exported as a clickable prototype; Probe B
-  uses the report's Board 2 (the 15-frame legibility matrix) and Probe C the report's Board 3 (segmented-control
-  and mode-per-field tickets), both on Penpot page `E30-D01` and exported to `docs/design/E30/img/`
+  uses the report's Board 2 (the 15-frame legibility matrix) and Probe C the report's Board 3 (three tickets: segmented
+  control, mode-per-field and the hybrid), both on Penpot page `E30-D01` and exported to `docs/design/E30/img/`
   (`E30-D01-<board>.png`). Sessions start when all of these exist (OQ-11). Numbers come from the instrument and
   profile fixtures named by E30-D02 / E30-Q01 (real tick and lot sizes), never from this document. **Timing
   source:** every time in this protocol is read from the screen recording at 30 fps (≈33 ms resolution, enough
   for second-scale answers); no instrumented prototype exists or is planned, and nothing here assumes one.
-- **Declared key map (assumption pending OQ-1, SC-1):** `docs/generated/default-keymap.md` Ticket rows and
-  SCR-060 Interactions — `B`/`S` set side, `1..4` quantity presets, `Alt+B`/`Alt+A`/`Alt+M` snap price, `R`
-  reduce-only, `Ctrl+Shift+T` arm/disarm, `Ctrl+Enter` submit, `Esc` clear. Sizing-mode switching and stop entry
+- **Declared key map (the report §1a SC-1 recommended default, pending OQ-1):** `docs/generated/default-keymap.md`
+  Ticket rows and SCR-060 Interactions — `B`/`S` set side, `1..4` quantity presets **acting only while the ticket
+  region has focus** (F20: the chart's `1..9` interval presets share the digits), `Alt+B`/`Alt+A`/`Alt+M` snap
+  price, `R` reduce-only, `Ctrl+Shift+T` arm/disarm, `Ctrl+Enter` submit, `Esc` clear. Buy/sell market and the
+  cycle-sizing-mode action are unbound. Sizing-mode switching and stop entry
   have no default key in the keymap, 05 §3.2 or SCR-060 (E30-S05 lists a cycle-sizing-mode action and buy/sell
   limit at bid/ask without keys), so the stimulus reaches them by `Tab` (F14) until the owner binds them; if the
-  owner decides otherwise, update this line and the stimulus before the first session. A hotkey that only
-  _opens_ the Demo/Live switch dialog (`Ctrl+Shift+L` in 17 §7; SCR-074 says click-only) is recorded, not
-  scored, in Probe F.
-- **Declared arm variant (assumption pending OQ-2/OQ-3, SC-2/SC-3):** armed = server token with a visible
-  remaining-time cue (F6); arming in DEMO is the chord; arming in LIVE is the chord plus an explicit confirm step
-  (CMP-229 A11y "a deliberate second action"; E30-S04 "a single keystroke can never arm in Live"; F17); when
-  armed in DEMO, any submit (preset or `Ctrl+Enter`) skips SCR-076 (policy "never when armed", E30-S04); in LIVE a
-  market order always shows SCR-076 with no default-focused confirm button (SCR-076 checklist; E30-S04). Record
-  the variant on every session sheet.
-- **Declared stop entry (assumption pending SC-8):** the timed task enters the stop as a **price** in the SL
-  field of CMP-119 BracketEditor; SCR-060 draws the unit list `ticks|%|R` and the API has `price` (22 `OffsetUnit`),
-  so the prototype adds a price unit until the owner decides. Probe F tabs to that field.
+  owner decides otherwise, update this line and the stimulus before the first session. Whenever focus is in a text
+  field the arm indicator shows its hotkeys-paused line ("ARMED 4:32 · hotkeys paused — typing in Price", F19).
+  A hotkey that only _opens_ the Demo/Live switch dialog (`Ctrl+Shift+L` in 17 §7; SCR-074 says click-only) is
+  recorded, not scored, in Probe F.
+- **Declared arm variant (the report §1a SC-2/SC-3 recommended defaults, pending OQ-2/OQ-3):** armed = server token
+  with a visible remaining-time cue (F6; `mm:ss` updated at ≤1 Hz, announced at 60 s, 10 s and the disarm); arming
+  in DEMO is the chord; arming in LIVE is the chord plus the CMP-044 confirm dialog ("Arm one-click trading — LIVE
+  · Main · active size 0.25 BTC · for 5:00?") with no default-focused confirm, `Enter` accepted after 400 ms and
+  `Esc` to cancel (CMP-229 A11y "a deliberate second action"; E30-S04 "a single keystroke can never arm in Live";
+  F17); when armed in DEMO, any submit (preset or `Ctrl+Enter`) skips SCR-076 (policy "never when armed", E30-S04);
+  in LIVE **every order type** shows SCR-076 with no default-focused confirm button (SCR-076 checklist; E30-S04;
+  the owner may relax this to market orders only by exception). Record the variant on every session sheet.
+- **Declared stop entry (the report §1a SC-8 recommended default, pending OQ-9):** the timed task enters the stop as
+  a **price** in the SL field of CMP-119 BracketEditor; the stimulus draws the unit list `ticks` / `%` / `price` with
+  the implied R read out beside the stop (24 §9.3.1: R is not a stop input). Probe F tabs to that field.
 - **Environment treatment (locked):** DEMO/LIVE band (CMP-074) plus local badge (CMP-075) plus the Live
   chrome accent and the accessible name (SCR-075); never colour-only (`05-accessibility-standard.md` §4).
-- **Seeded rejections** (one per report §4 class plus the unknown-outcome state: six fixture frames, never a live
+- **Seeded rejections** (one per report §4 class plus the unknown-outcome state: seven fixture frames, never a live
   call): post-only would cross with a "reprice" suggestion (correctable; US-ORD-002; E30-T02; E30-Q01 fixture — a
   tick-size violation reaching the exchange is a client defect per 13 §19 subsection 18.1, SC-10);
   `risk_limit_breached` with the binding limit in the chip (limit/account); `exchange_rate_limited` with a
   retry-after (transient); a `502 exchange_error` carrying `exchange.ret_code/ret_msg` (exchange/unknown); entry
   accepted with the native stop not attached, shown as "order live, protective stop pending" and resolving to
-  retry, then flatten (protective-stop failure; C-2.6; US-ORD-013 scenario 2; 24 §8.8; 06 §5.2); and **no ack
+  retry, then flatten (protective-stop failure; C-2.6; US-ORD-013 scenario 2; 24 §8.8; 06 §5.2); a **stale wallet**
+  (`balance_stale: true` after 10 s, 22 `/exchange-accounts`): the wallet-fed fields shaded with "Last update 14 s
+  ago" (CMP-078), risk-based sizing disabled with its reason (US-ORD-014 scenario 3), the preview greyed
+  `(estimated)`, and the submit answered by the one-lot mismatch rejection (US-ORD-004 NFR; F18); and **no ack
   within 2 s** — "submitting" becomes "Awaiting exchange confirmation — reconciling" with duplicate submits
   blocked (SCR-060 Performance, States), resolving to accepted after a further 6 s (designer judgement). The
   report §4 table carries the pre-registered predicted first action per class; Probe D confirms or refutes each.
-- **Lock-state frames (F4):** four frames — arm-locked (SCR-060 locked), idle session lock (13 §19 subsection
+- **Lock-state frames (F4, F21):** five frames — arm-locked (SCR-060 locked), idle session lock (13 §19 subsection
   18.6; the E09 SCR-005 re-auth modal over the ticket), daily-loss lockout ("Daily loss limit reached — trading
-  locked until 00:00 UTC", SCR-060) and the viewer's read-only lock notice (SCR-060 RBAC). A frame that E30-D02 or
-  E09-D02 did not draw is skipped and recorded as "not shown".
+  locked until 00:00 UTC", SCR-060), the viewer's read-only lock notice (SCR-060 RBAC), and the return from a
+  disconnect — SCR-152 ("Trading is disabled while offline. Your exchange-side stop-losses are unaffected."), then
+  the reconciliation line ("While you were offline: 1 order filled, 1 stop moved by a rule"), then the ticket
+  re-enabled but LOCKED with the reason "disconnected" in the indicator (F21). A frame that E30-D02 or E09-D02 did
+  not draw is skipped and recorded as "not shown".
 
 ## 3. Probe sets and time budget
 
-Budget: opening script and consent 3 · primer 2 · A 5 · B 12 · C 13 · D 11 · E 5 · debrief 3 = **54 min**. The
+Budget: opening script and consent 3 · primer 2 · A 5 · B 13 · C 15 · D 11 · E 5 · debrief 3 = **57 min**. The
 keyboard-first participant drops Probe E (its walkthrough is covered by the owner checklist, §6) and adds Probe
-F 7 = **56 min**; if Probe F cannot start by minute 48, stop and run it as a separate 20–30-minute keyboard-only
-session, or book that participant for 75 minutes when they agree. Think-aloud is used in Probes A, B condition
-(a), D and E only — never during a timed trial (§4) and never during Probe B condition (b), whose times are logged.
+F 9 = **61 min**, over the hour: book that participant for 75 minutes when they agree, otherwise run Probe F as a
+separate 20–30-minute keyboard-only session (the default); if Probe F cannot start by minute 48, stop and split.
+Think-aloud is used in Probes A, B condition (a), D and E only — never during a timed trial (§4) and never during
+Probe B condition (b), whose times are logged.
 
 **Probe A — pre-submit glance (RQ1, 5 min).** Show a filled SCR-060 for 2 seconds, then a blank screen. Ask:
 "What was on it?" (free recall, record order of recall). Then forced choice from the report §2 inventory: "Before
@@ -108,7 +122,7 @@ pressing submit, what would you check?" (pick up to three, in order; three is de
 with the armed LIVE variant. Record: items recalled in order; items chosen; any item named that is not on the
 ticket. F3 (moving price helpers) is not testable with static frames and is not probed here.
 
-**Probe B — armed/locked and demo/live, including concept probe (a) (RQ2, 12 min).** Three treatments
+**Probe B — armed/locked and demo/live, including concept probe (a) (RQ2, 13 min).** Three treatments
 (persistent badge, banner, tinted chrome; order counterbalanced across participants); stimulus = report Board 2,
 15 frames: per treatment armed/locked × DEMO/LIVE plus that treatment's own fail-closed `unknown` frame.
 Condition (a), accuracy: the 15 colour frames in random order, each shown for about 2 seconds then masked; ask
@@ -122,7 +136,7 @@ protanopia and tritanopia check is computed on the token pairs, not run as a ses
 (`docs/research/_tools/cvd_simulate.py` or `tools/contrast/color-math.mjs`; 05 §9.3 A11Y-C003; E30-D02 AC);
 protan/tritan frame renders need `cvd_sim.py` extended or Chrome DevTools vision-deficiency emulation. Record:
 answer, correctness, time, confidence, and the direction of every misread — LIVE read as DEMO and armed read as
-locked are flagged. Then the four lock-state frames (§2; F4): "What is locked here, why, and how would you
+locked are flagged. Then the five lock-state frames (§2; F4, F21): "What is locked here, why, and how would you
 resume?" Then ask: "You press a size preset in this state — what do you expect to happen? And in LIVE?" (SC-3
 expectation, verbatim); arm in DEMO, then in LIVE with the second action — "What, if anything, about the second
 step was unclear or slowed you down?" (verbatim; input for F17 copy, not a design change); which element told
@@ -130,28 +144,40 @@ them the state; whether an open or a closed padlock means "trading enabled" to t
 as the current state or as the action (report §6 Bookmap); finally the arm indicator with the remaining-time cue
 — what do they expect at zero? Optional noticing check (F6; E30-D04 requires auto-disarm to be noticeable): while
 the participant answers the padlock question, the moderator advances the prototype to the auto-disarmed frame
-("30 min inactivity", US-ORD-005) without comment; record whether, and after how long, they notice.
+("30 min inactivity", US-ORD-005) without comment; record whether, and after how long, they notice. **Reconnect
+check (F21):** then advance through the disconnect sequence — SCR-152, the reconciliation line, the ticket back
+but LOCKED — and ask "Are you armed? What happened while you were offline?"; record whether they re-arm before
+reading the reconciliation line, and whether paying the LIVE second action again drew a comment.
 
-**Probe C — sizing, concept probe (b), stop legibility and the timed task (13 min).** Show the
-segmented-control ticket and the mode-per-field ticket (report Board 3; counterbalanced). Each opens in the
-**wrong mode** for the task (quantity mode when the task needs risk %, and the reverse on the second ticket) so
-that a mode slip can occur. Task: "Set this to 0.5 % risk." Record the sizing mode they land in, whether the
-computed quantity was visible to them without asking, and any mode slip (typing a quantity into a percentage
-field or vice versa) — the DJ-8 flip rule counts these (report §5b: more slips on the segmented ticket than on
-mode-per-field, with at least two participants slipping, flips F12). Stop legibility (F13), with the stop
-filled: "Where does this stop value come from, and who holds it once the order is placed — the exchange or the
-app?"; then clear the stop field so the blocked-submit state appears (E30-D02 "cannot be left empty") and ask
-what they would do. Then run the timed task (§4) with the mouse twice, DEMO then LIVE or the reverse
-(counterbalanced), on the sizing-mode ticket they prefer; the keyboard-first participant repeats both in Probe F.
+**Probe C — sizing, concept probe (b), stop legibility and the timed task (15 min).** Show the three tickets —
+A segmented control, B mode-per-field, C hybrid (one input + unit switch + read-outs of every framing; report
+Board 3; order counterbalanced). Each opens in the **wrong unit** for the task (quantity when the task needs
+risk %, and the reverse on the next ticket) so that a mode slip can occur. Task: "Set this to 0.5 % risk." Record
+the sizing unit they land in, whether the computed quantity was visible to them without asking, and any mode slip
+(typing a quantity into a percentage field or vice versa) — the DJ-8 flip rule counts these (report §5b: the
+hybrid is confirmed if it shows no more slips than B and fewer than A; more slips on C than on B, with at least
+two participants slipping, flips the default to B). Stop legibility (F13), with the stop filled: "Where does this
+stop value come from, and who holds it once the order is placed — the exchange or the app?"; then clear the stop
+field so the blocked-submit state appears (E30-D02 "cannot be left empty") and ask what they would do.
+**Reduce-only (F13):** with an open 0.40 long on the stimulus, toggle `R` and ask "Does this order open or reduce?
+What happened to the stop section?"; then show a sell of 0.50 without reduce-only and ask what "Closes 0.40 long,
+opens 0.10 short — stop required for the new side" means to them. **Stale wallet (F18):** switch to the
+stale-wallet frame (wallet-fed fields shaded "Last update 14 s ago", risk-based sizing disabled with its reason,
+the preview greyed `(estimated)`) and ask "Would you submit this now? Which of these numbers do you trust?" Then
+run the timed task (§4) with the mouse twice, DEMO then LIVE or the reverse (counterbalanced), on the ticket they
+prefer; the keyboard-first participant repeats both in Probe F.
 
-**Probe D — seeded rejections (RQ3, 11 min).** Submit each of the six seeded cases from §2. **Do not prompt**
+**Probe D — seeded rejections (RQ3, 11 min).** Submit each of the seven seeded cases from §2. **Do not prompt**
 for the first 15 seconds (designer judgement): record whether they re-read the ticket, retry (as-is or after
 editing), or abandon (`Esc`), and the first thing they name when asked "What happened?"; score each against the
 report §4 predicted first action (confirmed / refuted). Then ask what they would want to see first, and whether
 they believe the attempt was recorded (F11). For the transient case, ask what they expect the system to do when
 the retry-after elapses (SC-6: nothing until they confirm, or an automatic retry). For the no-ack case, record
 every submit press during the wait and what they expected a second press to do. For the protective-stop case,
-ask "Are you protected right now? What is the system doing?" and what they would do meanwhile (OQ-12).
+ask "Are you protected right now? What is the system doing?" and what they would do meanwhile (OQ-12). For the
+stale-wallet case, record whether they noticed the shading before the one-lot mismatch rejection and what they
+expected the server to do with their quantity (US-ORD-004 NFR; F18). Once, after all seven: "Did you expect a
+sound for any of these?" (SCR-114's "sound on fill" is the plan's only audio cue; F9).
 
 **Probe E — comparative walkthroughs on the participant's own strategy (5 min).** Products are assigned across
 participants before the first session so that TradingView, Bookmap and Bybit are each walked by at least two
@@ -163,12 +189,19 @@ have (report §6 sources: TradingView's one-click mode skipping the ticket, Book
 and doubling as a panel toggle, Bybit's "Demo Trading" header label and optional TP/SL checkbox) and what told
 them so.
 
-**Probe F — keyboard-only pass of the placement task (the keyboard-first participant, 7 min).** Mouse
+**Probe F — keyboard-only pass of the placement task (the keyboard-first participant, 9 min).** Mouse
 disconnected. Arm in LIVE with the keyboard only (`Ctrl+Shift+T` plus the declared second action; record whether
 it completes without a pointer). Run the §4 task with the declared key map: `Tab` to the sizing-mode control (or
 the E30-S05 cycle action if the owner has bound a key), choose risk %, `Tab` to the SL field (price unit, §2) and
 type the stop price the moderator gives, verify the computed quantity, `Ctrl+Enter`; in LIVE the SCR-076 modal
 appears — confirm with `Enter` only after 400 ms (SCR-076 A11y) and before the 20 s inactivity auto-cancel.
+**Step F-a — what fires (F19, F20):** with the caret in the `Price` field press `B` twice; record whether the
+hotkeys-paused line in the arm indicator was noticed, where they looked, and whether a third `B` after `Tab`-ing
+out was expected to fire. Then with the chart region focused press `3`, and with the ticket focused press `3`;
+record whether the interval change and the size-preset change were each noticed, and whether the arm indicator's
+size line was read. **Step F-b — hold-to-confirm (F19; 05 §3.1 rule 4):** press the flatten key; record whether
+the hold progress was perceivable without sight of the ring, whether the discrete-press fallback (a second press
+within 5 s) completed it without holding, and whether `Esc` cancelled it.
 Record: Tab count to each field, any unreachable control, focus returning to the invoker after the modal closes
 (05 §3.4 item 4), no hotkey that switches environment (C-2.11; a hotkey that only opens the switch dialog is
 recorded, not scored, §2), whether the 20 s countdown and the 400 ms delay were perceivable without sight of the
@@ -228,14 +261,18 @@ Session id · date · participant persona (P1 = the owner / P2a / P2b / comparab
 colour-vision deficiency and assistive-technology use · declared arm variant, key map and stop entry (§2) ·
 stimulus build id · Probe A recall order and forced choices · Probe B per-frame answers, times, confidence,
 misreads with direction, lock-state answers, preset expectation, second-action verbatims, padlock reading,
-noticing-check result · Probe C starting mode, mode landed in, result visible (y/n), mode slips, stop-source and
-stop-holder answers, cleared-stop reaction · Probe D per case (six): re-read / retry-as-is / retry-after-edit /
-abandon, prediction confirmed or refuted, first thing named, "was it recorded?" (y/n/unsure), expectation at
-retry-after, submit presses during the no-ack wait, protective-stop answers · Probe E assigned product and
-expectation mismatches · Probe F Tab counts, unreachable controls, focus return (y/n), completion (y/n), LIVE arm
-completed without a pointer (y/n), opener-only hotkey seen (record only) · the §4 trial fields, in-flow checks
-and cued-review answers · debrief verbatims · moderator notes. Single-participant observations are marked
-**signal** in the write-up.
+noticing-check result, reconnect-check result (re-armed before reading the reconciliation line, y/n) · Probe C
+starting unit, unit landed in, result visible (y/n), mode slips per ticket (A/B/C), stop-source and stop-holder
+answers, cleared-stop reaction, reduce-only answers (opens or reduces; what the stop section did), stale-wallet
+answers (would submit now, y/n; which numbers trusted) · Probe D per case (seven): re-read / retry-as-is /
+retry-after-edit / abandon, prediction confirmed or refuted, first thing named, "was it recorded?" (y/n/unsure),
+expectation at retry-after, submit presses during the no-ack wait, protective-stop answers, stale shading noticed
+before the mismatch rejection (y/n), sound expected (which cases) · Probe E assigned product and expectation
+mismatches · Probe F Tab counts, unreachable controls, focus return (y/n), completion (y/n), LIVE arm completed
+without a pointer (y/n), opener-only hotkey seen (record only), hotkeys-paused line noticed (y/n; where they
+looked), digit-shadow changes noticed (interval y/n; size y/n; size line read y/n), hold-to-confirm fallback
+completed without holding (y/n; `Esc` cancelled y/n) · the §4 trial fields, in-flow checks and cued-review answers
+· debrief verbatims · moderator notes. Single-participant observations are marked **signal** in the write-up.
 
 **Quote bank (template; empty until a session runs):**
 
@@ -247,10 +284,12 @@ and cued-review answers · debrief verbatims · moderator notes. Single-particip
 
 **Now, before E30-D02 starts:**
 
-- [ ] Decide OQ-1..OQ-4, OQ-6 and OQ-9 (SC-8 stop units, SC-9 component placement, the sizing-control default) and give provisional copy for OQ-12; OQ-5 and OQ-13 (SC-10 correction offers) are due before E30-T02 (report §10)
-- [ ] Confirm or override the report's concept-probe verdicts: §5a (badge first, optional short banner line, never tint alone) and §5b (segmented control kept as the status quo; heuristic preference mode-per-field)
-- [ ] Confirm or override the proposed pass bars (DJ-5) and the Probe C flip rule (DJ-8)
-- [ ] Hands-on walkthroughs the documentation review could not settle (report §6): place one paper order in TradingView, arm one-click in Bookmap, open Bybit Demo; record the armed indicator (if any), how a rejection is displayed and how the Demo label is styled
+- [ ] Approve by exception: every source conflict and open question carries a recommended default (report §1a, §10) — confirm, or override only the ones you disagree with (OQ-1..OQ-4, OQ-6, OQ-9 and the OQ-12 draft copy before E30-D02 starts; OQ-5 and OQ-13 (SC-10 correction offers) before E30-T02)
+- [ ] Confirm or override the report's concept-probe verdicts: §5a (badge first, optional short banner line, never tint alone) and §5b (the hybrid — one input + unit switch + read-outs of every framing — as the default; mode-per-field the alternative; the segmented control alone no longer recommended)
+- [ ] Confirm the badge-treatment routing: the report §3 contrast matrix (no `env.*` pair reaches 7:1 in any theme; the neutral-pill text default) goes to E30-D04 with E05-D01's `env.live` open question
+- [ ] Confirm the reduce-only bracket state and the opens / reduces read-out (report §4 F13), and the positions source on SCR-060 (SC-9)
+- [ ] Confirm or override the proposed pass bars (DJ-5) and the Probe C flip rule (DJ-8, three tickets)
+- [ ] Hands-on walkthroughs the documentation review could not settle (report §6): place one paper order in TradingView, arm one-click in Bookmap, open Bybit Demo and, where Sierra Chart is available, enable Trade Simulation Mode and Trading Locked; record the armed indicator (if any), how a rejection is displayed, how the Demo / Paper Trading label is styled, how `[SIM]`, the Trade Window tint and the _Simulated_ confirmation read, and whether the lock's refusal was visible at the control
 - [ ] Comment `approved` on issue #826, or leave rework notes citing F#, SC-#, DJ-# or OQ-#
 
 **When the E30-D02 and E30-D03 frames and this ticket's Boards 2–3 exist (OQ-11):**
@@ -260,8 +299,12 @@ and cued-review answers · debrief verbatims · moderator notes. Single-particip
 - [ ] Do the 0.5 % task with the mouse; record (do not estimate) the time from first keystroke or click to the ack state
 - [ ] Per placement, write down the three things you checked in the last two seconds before pressing submit (RQ1)
 - [ ] Repeat the task keyboard-only; count the Tab stops and note any field you could not reach
-- [ ] Trigger one rejection per class (correctable, limit, transient, exchange, protective-stop pending, no ack within 2 s); note the first thing you read and your next action
-- [ ] Switch sizing mode both ways (qty → risk %, risk % → qty); note whether the computed result stayed visible
+- [ ] Trigger one rejection per class (correctable, limit, transient, exchange, protective-stop pending, stale wallet → one-lot mismatch, no ack within 2 s); note the first thing you read and your next action
+- [ ] Switch sizing unit both ways (qty → risk %, risk % → qty) on the hybrid ticket; note whether the read-outs stayed visible and whether a slip was visible at once
+- [ ] With an open position, toggle reduce-only; note what the stop section did and whether the opens / reduces line was clear
+- [ ] With the caret in the Price field press B; note whether you saw the hotkeys-paused line and where
+- [ ] Disconnect and reconnect (pull the network for 15 s); note whether the ticket came back locked, what you read first, and whether you re-armed before reading the reconciliation line
+- [ ] Let the wallet go stale (pause the private feed); note which numbers you still trusted and whether risk sizing was disabled with a reason
 - [ ] Note where the stop-loss or the arm step cost you the most time or attention — verbatim; input for F13/F6/F17 copy, never a design change
 - [ ] Note whether an open padlock read to you as "enabled" or as "unlocked / safe", and whether the glyph read as the state or as the action
 - [ ] Try to make DEMO look like LIVE, or armed look like locked, in greyscale; note what still told them apart
