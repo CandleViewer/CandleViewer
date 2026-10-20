@@ -381,7 +381,13 @@ from candleviewer.user_cascade_wiring import build_user_disable_service, build_u
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
-from candleviewer.ws.gateway import Authenticate, AuthRefused, GatewayHub, make_ws_router
+from candleviewer.ws.gateway import (
+    Authenticate,
+    AuthRefused,
+    GatewayHub,
+    include_ws_router,
+    make_ws_router,
+)
 from candleviewer.ws.indicators_publish import IndicatorsPublisher
 from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
 from candleviewer.ws.machines import MachineStateRegistry
@@ -1532,7 +1538,8 @@ def create_app(
     ws_backpressure = (
         BackpressureConfig.from_settings(resolved) if resolved.ws_backpressure_enabled else None
     )
-    app.include_router(
+    include_ws_router(  # #3907: `/ws` and, under the server base, `/api/v1/ws`
+        app,
         make_ws_router(
             authenticate=ws_authenticate or _session_authenticator(ctx, enrolment_refusals),
             registry=ws_registry,
@@ -1553,7 +1560,7 @@ def create_app(
             # `visibility` admits; a key the registry does not define reaches the Owner alone.
             flag_visible=default_registry().visible_to,
             backpressure=ws_backpressure,
-        )
+        ),
     )
     # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.
     ctx.mesh_system_topic_publisher.direct_sinks.append(ws_hub.broadcast_system)

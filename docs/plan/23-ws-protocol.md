@@ -65,6 +65,8 @@ wss://<host>/api/v1/ws
 
 The endpoint is on the REST backend's origin: the page's own origin in a browser, and the origin the shell provides on the desktop (ADR-0038). Same Tailscale-only exposure and same TLS termination as REST. Plain `ws://` is accepted only on loopback: for local development and for the packaged desktop shell's host-local backend (SR-049).
 
+**As built (#3907).** The gateway serves this path, the external URL the web client opens, and the same route without the server base, `/ws`, which the conformance harness and the load profiles use. Both are one route of one gateway: the router is included twice (`include_ws_router`), so both run the same handshake, Origin check, limits and audit, and a refusal record names the contract-relative path `/ws` for either. Any other WebSocket path is refused before `accept`.
+
 ### 2.2 Subprotocol negotiation
 
 The client lists the subprotocols it can speak in `Sec-WebSocket-Protocol`, and the server picks by its own order (below):
