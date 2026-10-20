@@ -20,6 +20,15 @@ each series (`ensure`) and registers it with the bar set (`register`): no per-us
   the stored tail and folds each live close onto it, the oldest bar dropped past the cap.
 - **Clock:** the lane's virtual clock is the set's and the reader's; the engine calls `tick` once a
   second of it (the set's ticker cadence: clock closes, the 60 s state blobs).
+- **Judged by:** budget #8's figure (R1) and its flatness from hour 2 (R2), the cap checks (R3) and,
+  on the full profile, the plateau (R4): the Theil-Sen slope of the RSS the lanes add per symbol
+  over the last 12 h of scenario time, at most 0.18 MB/h (`budgets.check_plateau`; the flatness
+  band alone admits about 0.42). The smoke has no such window.
+- **Inert series:** the five `delta` series never close here. The feed alternates buy and sell
+  prints of 0.001 (`Lane._trade_frame`), so a draft's |delta| stays at or under 0.001, and a delta
+  bar closes only once |delta| reaches its threshold, which is 1 or more on the wire. Their
+  5 x 1 000 hydrated bars are in the level; their fold path is not exercised, and they add nothing
+  to `bars_closes_folded`.
 - **Not composed**, with what each leaves out of budget #8's figure:
   - the bar writer: its queue (10 000 rows, about 10-17 MiB full) and its source-precedence map
     (the last 200 000 row keys, about 70 MiB at that cap, reached after about 15 h with 3
