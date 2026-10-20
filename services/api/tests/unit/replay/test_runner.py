@@ -41,6 +41,7 @@ from candleviewer.replay import (
 from candleviewer.replay.injector import replay_event_id
 from candleviewer.replay_wiring import (
     LIVE_EVENT_MODELS,
+    ReplayBooks,
     build_replay_injector,
     build_replay_run,
     replay_source_factory,
@@ -346,6 +347,68 @@ async def test_a_book_stream_gap_resets_that_books_replay_until_the_next_snapsho
 async def test_a_gap_on_another_stream_leaves_the_replay_book_live() -> None:
     bus = await _replay_book([*CHAINED_BOOK[:2], gap(3, 5, TRADES), *CHAINED_BOOK[2:]])
     assert [e.update_id for e in bus.market() if isinstance(e, BookDelta)] == [501, 502, 601]
+
+
+class ResetFailed(Exception):
+    """What a replay book's reset raises when it fails."""
+
+
+class FailsFirstGapReset:
+    """`ReplayBookHook` over the session's real replay books whose first per-symbol reset (a
+    recording gap's) raises before it touches a book: one transient failure."""
+
+    def __init__(self, bus: Bus) -> None:
+        self.books = ReplayBooks(bus, SESSION)
+        self.resets: list[str | None] = []  # the `symbol` of every reset asked for, in order
+        self.failure = ResetFailed("the replay book reset failed")
+        self._failed = False
+
+    async def apply(self, event: MarketEvent) -> None:
+        await self.books.apply(event)
+
+    async def reset(self, reason: str, *, symbol: str | None = None) -> None:
+        self.resets.append(symbol)
+        if symbol is not None and not self._failed:
+            self._failed = True
+            raise self.failure
+        await self.books.reset(reason, symbol=symbol)
+
+
+async def test_a_failed_gap_reset_is_retried_before_the_next_event_is_delivered() -> None:
+    """The run keeps a symbol marked until its book reset is done, so a transient failure never
+    lets the book bridge the gap (24 Sec.13.7): the playback ends `error` with the next event,
+    update 502 (which still chains onto 501), pending, and the next `play()` resets the book
+    first. 502 is never applied, and the book ends as it does after a reset that never failed."""
+    bus, port = LoggingBus(), RecordingPort()
+    hook = FailsFirstGapReset(bus)
+    req = request(streams=REEMITTED, end_us=60 * SECOND)
+    injector = ReplayInjector(
+        session_id=SESSION,
+        request=req,
+        tick_sizes={SYM: TICK},
+        bus=bus,
+        books=hook,
+        models=LIVE_EVENT_MODELS,
+    )
+    sources = Sources([*CHAINED_BOOK[:2], gap(3, 5, DELTAS), *CHAINED_BOOK[2:]])
+
+    def published() -> list[int]:
+        return [e.update_id for e in bus.market() if isinstance(e, BookDelta)]
+
+    async with make_run(sources, bus=bus, port=port, speed=UNBOUNDED, injector=injector) as run:
+        assert await run.play() == "error"
+        assert port.stops == [("error", hook.failure)]
+        assert hook.resets == [SYM] and published() == [501]  # 502 waits, undelivered
+        assert await run.play() == "range_end"
+    assert hook.resets == [SYM, SYM]  # retried, once more and then no more
+    assert published() == [501, 601]  # 502 never applied: the reset came first
+    statuses = [(s.state, s.reason) for _, _, s in bus.log if isinstance(s, BookStatus)]
+    assert statuses == [
+        (BookPhase.LIVE, "live"),
+        (BookPhase.DESYNCED, "recording_gap"),
+        (BookPhase.LIVE, "live"),
+    ]
+    assert port.stops == [("error", hook.failure), ("range_end", None)]
 
 
 # --- loop wrap (US-RPL-008) -----------------------------------------------------------------
