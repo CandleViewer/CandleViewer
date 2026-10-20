@@ -1233,13 +1233,13 @@ export interface Recorder {
   overall: "healthy" | "degraded" | "warning" | "down";
   role_restricted?: boolean;
   policy?: {
-    autostart_delay_s?: number;
-    autostop_grace_s?: number;
-    max_symbols?: number;
-    warn_pct?: number;
-    autostop_pct?: number;
-    halt_pct?: number;
-    autorecord_enabled?: boolean;
+    autostart_delay_s: number;
+    autostop_grace_s: number;
+    max_symbols: number;
+    warn_pct: number;
+    autostop_pct: number;
+    halt_pct: number;
+    autorecord_enabled: boolean;
   };
   connections?: {
     endpoint?: string;
@@ -1256,7 +1256,7 @@ export interface Recorder {
     lingering?: boolean;
     linger_until_ms?: number | null;
     /**
-     * Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3).
+     * Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. A role-restricted frame never carries position_open (R-I2). Open-ended for readers: adding a value is an additive change (C-6.3).
      */
     refusal?: "symbol_cap" | "disk_pressure" | "chart_open" | "position_open" | null;
     lag_ms?: number;
@@ -1278,9 +1278,17 @@ export interface Recorder {
     disk_free_bytes?: number;
     daily_growth_bytes?: number;
     cap_bytes?: number;
+    /**
+     * Recorded bytes (QuestDB plus Parquet), the meter's numerator over cap_bytes; not the volume's used space.
+     */
+    used_bytes?: number;
     level?: 0 | 1 | 2 | 3;
     write_gate?: "open" | "closed";
+    /**
+     * Why the write gate is closed, null when open. Open-ended for readers: adding a value is an additive change (C-6.3).
+     */
     write_gate_reason?: "disk_halt" | "volume_refused" | null;
+    accelerate_retention?: boolean;
     projected_full_at_ms?: number | null;
   };
 }

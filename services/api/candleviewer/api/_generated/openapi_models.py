@@ -1699,16 +1699,21 @@ class Interval(BaseModel):
 class Gap(BaseModel):
     from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
     to: AwareDatetime | None = None
-    reason: (
+    reason: Annotated[
         Literal[
             "ws_disconnect",
             "backend_restart",
             "retention_purge",
             "never_recorded",
             "exchange_outage",
+            "backpressure_drop",
+            "seq_jump",
         ]
-        | None
-    ) = None
+        | None,
+        Field(
+            description="`backpressure_drop`: rows dropped under write backpressure, the level-3 write gate included; `seq_jump`: an order-book update-id jump. **Open-ended for readers:** a reason a client does not know is still a gap (C-6.3)."
+        ),
+    ] = None
 
 
 class Stream(BaseModel):
@@ -1782,7 +1787,7 @@ class RecordedSymbol(BaseModel):
     refusal: Annotated[
         Literal["symbol_cap", "disk_pressure", "chart_open", "position_open"] | None,
         Field(
-            description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none. **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
+            description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none; `position_open` outranks `chart_open` when both hold, and a role-restricted view never carries `position_open` (R-I2). **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
         ),
     ] = None
 
@@ -1893,19 +1898,19 @@ class Symbol1(BaseModel):
     refusal: Annotated[
         Literal["symbol_cap", "disk_pressure", "chart_open", "position_open"] | None,
         Field(
-            description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none. **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
+            description="Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none; `position_open` outranks `chart_open` when both hold, and a role-restricted view never carries `position_open` (R-I2). **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3)."
         ),
     ] = None
 
 
 class RecorderPolicySettings(BaseModel):
-    autostart_delay_s: Annotated[int | None, Field(ge=0)] = None
-    autostop_grace_s: Annotated[int | None, Field(ge=0)] = None
-    max_symbols: Annotated[int | None, Field(ge=1)] = None
-    warn_pct: Annotated[int | None, Field(ge=1, le=100)] = None
-    autostop_pct: Annotated[int | None, Field(ge=1, le=100)] = None
-    halt_pct: Annotated[int | None, Field(ge=1, le=100)] = None
-    autorecord_enabled: bool | None = None
+    autostart_delay_s: Annotated[int, Field(ge=0)]
+    autostop_grace_s: Annotated[int, Field(ge=0)]
+    max_symbols: Annotated[int, Field(ge=1)]
+    warn_pct: Annotated[int, Field(ge=1, le=100)]
+    autostop_pct: Annotated[int, Field(ge=1, le=100)]
+    halt_pct: Annotated[int, Field(ge=1, le=100)]
+    autorecord_enabled: bool
 
 
 class Tier(BaseModel):
@@ -1940,7 +1945,13 @@ class StorageUsage(BaseModel):
     cap_bytes: Annotated[int | None, Field(ge=1)] = None
     level: Literal[0, 1, 2, 3] | None = None
     write_gate: Literal["open", "closed"] | None = None
-    write_gate_reason: Literal["disk_halt", "volume_refused"] | None = None
+    write_gate_reason: Annotated[
+        Literal["disk_halt", "volume_refused"] | None,
+        Field(
+            description="Why the write gate is closed, null when open. **Open-ended for readers:** adding a value is an additive change (C-6.3)."
+        ),
+    ] = None
+    accelerate_retention: bool | None = None
 
 
 class RetentionPolicyInput(BaseModel):

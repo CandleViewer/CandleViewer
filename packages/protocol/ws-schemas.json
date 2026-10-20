@@ -2639,6 +2639,15 @@
               "type": "integer"
             }
           },
+          "required": [
+            "autostart_delay_s",
+            "autostop_grace_s",
+            "max_symbols",
+            "warn_pct",
+            "autostop_pct",
+            "halt_pct",
+            "autorecord_enabled"
+          ],
           "type": "object"
         },
         "role_restricted": {
@@ -2647,6 +2656,9 @@
         "storage": {
           "additionalProperties": false,
           "properties": {
+            "accelerate_retention": {
+              "type": "boolean"
+            },
             "cap_bytes": {
               "minimum": 1,
               "type": "integer"
@@ -2675,6 +2687,11 @@
                 }
               ]
             },
+            "used_bytes": {
+              "description": "Recorded bytes (QuestDB plus Parquet), the meter's numerator over cap_bytes; not the volume's used space.",
+              "minimum": 0,
+              "type": "integer"
+            },
             "write_gate": {
               "enum": [
                 "open",
@@ -2682,6 +2699,7 @@
               ]
             },
             "write_gate_reason": {
+              "description": "Why the write gate is closed, null when open. Open-ended for readers: adding a value is an additive change (C-6.3).",
               "enum": [
                 "disk_halt",
                 "volume_refused",
@@ -2734,7 +2752,7 @@
                 ]
               },
               "refusal": {
-                "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3).",
+                "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. A role-restricted frame never carries position_open (R-I2). Open-ended for readers: adding a value is an additive change (C-6.3).",
                 "enum": [
                   "symbol_cap",
                   "disk_pressure",
