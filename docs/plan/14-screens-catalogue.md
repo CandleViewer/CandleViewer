@@ -2624,6 +2624,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-140 — Admin: recorder & storage
 
 - **UX research (E16-D01):** [recorder mental model, auto-record disclosure and disk framing](../design/research/e16-recorder-mental-model.md) — heuristic research, recommendations pending confirmation: owner decisions on the linger default and toast vs silent auto-record, a state-first disk headline, and the recorder contract asks (`lingering`, disk level and gate, `cap_bytes`).
+- **Design (E16-D02):** [hi-fi states, CMP-177 contract, copy, motion and redlines](../design/E16/E16-D02.md) (#323), owner approval pending.
 - **Type:** Page. **Route:** `/admin/recorder`.
 
 ```
@@ -2642,7 +2643,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 - **Data:** `GET /api/v1/recording/status`, `POST /api/v1/recording/symbols`, `DELETE /api/v1/recording/symbols/{recordedSymbolId}`, `PATCH /api/v1/recording/symbols/{recordedSymbolId}` (pin, retention, depth), `POST /api/v1/admin/recorder/compact`, `POST /api/v1/admin/recorder/purge`; live via WS `recorder`.
 - **Interactions:** start/stop recording, pin (keep forever), change depth tier, set per-symbol retention, purge expired data, compact cold storage.
-- **States:** running · starting (initial snapshot) · degraded (WS gaps recorded in a gap table with timestamps) · paused · disk warning at 80 % ("Disk 80 % full — recording stops at 95 % to protect the database") · disk critical (recording stopped, banner) · purge in progress.
+- **States:** running · starting (initial snapshot) · degraded (WS gaps recorded in a gap table with timestamps) · paused (disk level 2: auto-record paused at 90 %) · disk warning at 80 % ("Disk 80 % full — recording stops at 95 % to protect the database") · disk critical (recording stopped, banner) · purge in progress · empty (no symbols recorded yet).
 - **Validation:** stopping a recording warns that history stops accumulating and existing data is retained per policy; purging requires a typed confirm and lists exactly which ranges and how many GB will be deleted irreversibly; a symbol with an open position cannot be un-recorded ("SOLUSDT has an open position and is auto-recorded.").
 - **A11y:** the disk meter has numeric text; gaps are a table with start/end/duration.
 - **Performance:** status updates at 1 Hz; the page never blocks ingestion.
