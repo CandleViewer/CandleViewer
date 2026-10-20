@@ -93,6 +93,30 @@ async def test_a_flag_write_through_the_app_is_stepped_up_audited_and_pushed(
     assert b"cv_feature_flag_changes_total" in generate_latest(app.state.app_context.metrics)
 
 
+async def test_a_credential_shaped_reason_is_refused_and_recorded_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3438 (AD-I02): an Owner holding a fresh `flags` elevation still gets `422` on a reason
+    that carries a token, naming the rule on `reason`; the refusal record holds the marker."""
+    w, owner, _ = await _owner(monkeypatch)
+    listed = w.client.get("/admin/feature-flags", headers=_h(owner)).json()["items"]
+    read = next(item for item in listed if item["key"] == _KEY)["updated_at"]
+
+    def put(reason: str) -> Any:
+        body = {"value": False, "reason": reason, "expected_updated_at": read}
+        return w.client.put(f"/admin/feature-flags/{_KEY}", headers=_h(owner), json=body)
+
+    assert put("drill").json()["code"] == "step_up_required"
+    assert w.elevate(owner).json()["action_class"] == "flags"  # the fresh elevation
+    refused = put("rotated after the drill: access_token=hunter2")
+    assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
+    assert refused.json()["errors"] == [{"field": "reason", "rule": "credential_in_reason"}]
+    records = w.audit.of("flags.change")
+    assert [r["reason"] for r in records] == ["credential_in_reason"]
+    assert records[0]["after_state"]["reason"] == "<redacted:credential>"
+    assert "hunter2" not in str(records) and "hunter2" not in refused.text
+
+
 async def test_a_no_grace_flag_write_waits_for_the_step_up_bound_to_its_own_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

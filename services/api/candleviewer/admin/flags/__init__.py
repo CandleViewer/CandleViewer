@@ -1,6 +1,7 @@
 """Feature-flag service of the admin module (E42-T03): the code-only registry with its
 security-control allowlist, the flag definitions, the pure resolver, the cached read path and
-the write path (`FlagWriter`, its evidence rules and its store and user-directory ports).
+the write path (`FlagWriter`, its evidence and reason rules and its store and user-directory
+ports).
 The `MaintenanceGate` and the order-entry refusal counter, which the API-edge order-entry gate
 uses, are exported here too."""
 

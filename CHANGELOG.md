@@ -5124,3 +5124,4 @@ tracker).
 - **backend-platform**: the support bundle's secret scan and the log redaction agree on a quote that the log buffer escapes and on a value next to a truncation marker; the WebSocket audit record of a refused rebuild names its socket (#415) (#3946)
 - **backend-platform**: the redaction filter and the bundle scan agree on where a label starts and on the whitespace between a label and its value (#415) (#3946)
 - **electron-shell**: the backend answers CORS for every origin in `CV_ALLOWED_ORIGINS` (the desktop origin once listed) only while the Owner-only `desktop.backend_connection` flag is on, and its CSRF refusals then carry the same answer; no origin is reflected and no check changes (#3519) (#3967)
+- **accounts-admin**: a feature-flag change whose reason, or whose evidence link in more of its forms, carries a credential is refused, and no flag-change record holds one (#3438) (#3943)

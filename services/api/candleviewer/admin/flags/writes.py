@@ -7,9 +7,11 @@ request validation, the step-up gate, the `expected_updated_at` precondition and
 Validation runs under the lock, not before it as the contract orders it, because every 422 is
 audited with the row's `before`: a 422 holds the lock while it is audited, and an invalid request
 during a store outage answers 503. The rules: `reason` and `expected_updated_at` are required,
-values fit the kind, the live gate and the kill switches take no overrides, overrides name
-existing users (`unknown_user`, the only rule with a lookup, so it runs last), and `evidence.py`
-judges `evidence_url`, which enabling `trading.live_enabled` requires. The gate is one
+`reason.py` refuses a reason that carries a credential, values fit the kind, the live gate and
+the kill switches take no overrides, overrides name existing users (`unknown_user`, the only rule
+with a lookup, so it runs last), and `evidence.py` judges `evidence_url`, which enabling
+`trading.live_enabled` requires. Both judge their input once, before any record, so no record
+holds a refused reason or URL as given (a `not_found` one included). The gate is one
 elevation, `policy.step_up_class`. A stale write is a conflict.
 
 Audit (C-2.9): every attempt past RBAC is a `flags.change` record: a failure record for a 404 or
@@ -42,6 +44,7 @@ from candleviewer.admin.flags.metrics import flag_changes_total
 from candleviewer.admin.flags.policy import readable as readable
 from candleviewer.admin.flags.policy import step_up_class
 from candleviewer.admin.flags.policy import stored_transition as stored_transition
+from candleviewer.admin.flags.reason import check_reason
 from candleviewer.admin.flags.registry import FlagSpec, FlagValue, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag, override_matches
 from candleviewer.admin.flags.service import FlagService
@@ -133,10 +136,11 @@ class FlagWriter:
         if not principal.has("flags:write"):  # before every lookup and every 422
             raise FlagsWriteDenied("flags:write")
         evidence, audited_url = check_evidence_url(evidence_url)  # once per request
+        reason_rule, audited_reason = check_reason(reason)  # before any record, `not_found`'s too
         request = {
             "value": _audited(value),
             "overrides": _overrides(user_overrides),
-            "reason": reason,
+            "reason": audited_reason,
             "evidence_url": audited_url,
         }
         spec = self._service.registry.get(key)
@@ -163,7 +167,13 @@ class FlagWriter:
                 async with asyncio.timeout(self._timeout):  # bounds the row lock's hold
                     try:
                         expected = _validated(
-                            spec, value, user_overrides, reason, expected_updated_at, url_rule
+                            spec,
+                            value,
+                            user_overrides,
+                            reason,
+                            expected_updated_at,
+                            url_rule,
+                            reason_rule,
                         )
                         if user_overrides and await self._users.unknown(frozenset(user_overrides)):
                             raise FlagValidationError("unknown_user", "overrides")
@@ -214,10 +224,13 @@ def _validated(
     reason: str | None,
     expected_updated_at: datetime | None,
     url_rule: str | None,
+    reason_rule: str | None,
 ) -> datetime:
     """The precondition, once every rule without a lookup holds; raises the first refusal."""
     if not reason or not reason.strip():
         raise FlagValidationError("required", "reason")
+    if reason_rule is not None:  # `reason.py`'s rule: a credential the audit would record
+        raise FlagValidationError(reason_rule, "reason")
     if expected_updated_at is None:
         raise FlagValidationError("required", "expected_updated_at")
     if overrides and not spec.overridable:

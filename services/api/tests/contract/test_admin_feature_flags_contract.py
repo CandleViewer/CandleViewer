@@ -140,10 +140,12 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "`trading.live_enabled: true` without `evidence_url` is `422` (rule "
         "`gate_evidence_required`) and nothing is written. `evidence_url` must be an `https` URL "
         "(rule `https_required`) of at most 2048 characters (rule `string_too_long`). The audit "
-        "records it, so the write rejects userinfo and any query or fragment parameter named on a "
-        "token deny-list (rule `credential_in_url`); a path token is an accepted residual. The "
-        "service validates it (the generated model checks only the URI format), never "
-        "dereferences it and only enforces the precondition; E44-T04 owns the evidence binding.",
+        "records it, so the write rejects userinfo (one whose password holds a `/`, `?` or `#` "
+        "included) and any query or fragment parameter named on a token deny-list (rule "
+        "`credential_in_url`); a path token, and a password that begins with digits and a `/`, "
+        "which reads as a port, are accepted residuals. The service validates it (the generated "
+        "model checks only the URI format), never dereferences it and only enforces the "
+        "precondition; E44-T04 owns the evidence binding.",
         "If the flag store is unreachable (as `GET /admin/feature-flags` defines it), the write "
         "is `503 store_unavailable` and nothing is written. An unreadable stored row is not an "
         "outage: a write with a valid value repairs it.",
@@ -175,6 +177,31 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "transition of the stored value, never on a transient store failure or an unreadable row: "
         "a fail-closed engagement only refuses submissions. A boot that finds a stored `true` "
         "counts as a transition from unknown, so its side effects run.",
+        "The audit records `reason` as sent, so a `reason` that carries a credential is `422` "
+        "(rule `credential_in_reason`, field `reason`) and nothing is written. The text is read as "
+        "sent and in Unicode NFKC form, and it carries a credential when it holds (a) a name that "
+        "the token deny-list of `credential_in_url` names (a `_pass`, `_pw` or `_pwd` suffix "
+        "included), bound by `=` or `:`, alone, doubled or mixed and optionally followed by `>` "
+        "(`=`, `:`, `:=`, `==`, `=>`), or as a `--name value` option, to a value that is not a "
+        "placeholder (`***`, `<redacted>`, `[REDACTED]`, `****AB12`, `N/A`, `$VAR`, `${...}`, "
+        "`{{...}}`, `%VAR%`), a source file's name (`hashing.py:40`) being no such name; (b) a URL "
+        "that `credential_in_url` refuses, or one whose password holds a `/`, `?` or `#`; (c) "
+        "userinfo (`user:password@host`) outside a URL, unless it is an address (`mailto:`), a "
+        "time, a ratio, a price or an image digest; (d) `Bearer` or `Basic` with its credential; "
+        "(e) a credential named in words and followed by a token-shaped value, or by a "
+        "password-shaped one after a noun ending in `password`, `passphrase`, `passwd` or "
+        "`secret`; or (f) a private-key PEM block, a JWT, a GitHub, AWS access-key-id, Slack, "
+        "Google, Tailscale or `sk-` key, a recovery code or a backup download link. The everyday "
+        "names `session`, `key`, `code`, `auth`, `authorization`, `sign`, `signature`, `sig`, "
+        "`seed`, `hash`, `token`, `tokens`, `cookie`, `jwt`, `bearer`, `kek`, `dek`, `pass`, `mfa` "
+        "and `2fa` carry no credential with an everyday value (a word in lower, title or camel "
+        "case or of up to five capitals, a number of up to five digits, a market symbol, a flag "
+        "key, a ticket or issue, a slug or a `v` version; after `pass`, only a number; after "
+        "`hash`, a hex digest too) unless a word such as `API` or `exchange` qualifies the name: "
+        "`session: Asia open` and `code=500` pass, `API key: <value>` does not. Every "
+        "`flags.change` record that carries the request holds `reason` as `<redacted:credential>`, "
+        "never the text, and the response never echoes it. A credential that is none of these, "
+        "such as a bare password or key with no label, is an accepted residual.",
     ),
     "switch": (
         "Maintenance mode (`maintenance.mode`, set with `PUT /admin/feature-flags/{flagKey}`) is "
