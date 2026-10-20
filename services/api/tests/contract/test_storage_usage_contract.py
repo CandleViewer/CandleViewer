@@ -5,13 +5,14 @@ validates."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.recorder.models import StorageUsage
+from candleviewer.recorder.metrics import recorder_disk_pressure_level
+from candleviewer.recorder.models import DiskPressureLevel, StorageUsage
 from tests.unit.recorder._budget_fakes import CAP, GB, TOTAL, FakeMeter, make_budget
 
 _SPEC: dict[str, Any] = load_openapi_spec()
@@ -49,16 +50,16 @@ async def test_disk_budget_report_validates_against_the_schema() -> None:
 @pytest.mark.parametrize(
     ("free", "refused", "expected"),
     [
-        (TOTAL // 2, False, (0, "open", None)),
-        (TOTAL // 10, False, (2, "open", None)),
-        (TOTAL * 4 // 100, False, (3, "closed", "disk_halt")),
-        (TOTAL // 2, True, (3, "closed", "volume_refused")),
-        (TOTAL * 4 // 100, True, (3, "closed", "volume_refused")),
+        (TOTAL // 2, False, (0, "open", None, False)),
+        (TOTAL // 10, False, (2, "open", None, True)),
+        (TOTAL * 4 // 100, False, (3, "closed", "disk_halt", True)),
+        (TOTAL // 2, True, (3, "closed", "volume_refused", False)),
+        (TOTAL * 4 // 100, True, (3, "closed", "volume_refused", True)),
     ],
     ids=["normal", "autostop", "halt", "refused_volume", "refused_volume_at_halt"],
 )
 async def test_report_names_the_level_gate_and_cap_of_its_own_sample(
-    free: int, refused: bool, expected: tuple[int, str, str | None]
+    free: int, refused: bool, expected: tuple[int, str, str | None, bool]
 ) -> None:
     """Halt on the very first sample reports 3 at once; a refused volume does over a ladder at 0."""
     budget, _, _ = make_budget(FakeMeter(used=300 * GB, free=free))
@@ -66,5 +67,27 @@ async def test_report_names_the_level_gate_and_cap_of_its_own_sample(
     await budget.sample_once()
     report = budget.report()
     assert report is not None and report.cap_bytes == CAP
-    assert (report.level, report.write_gate, report.write_gate_reason) == expected
+    got = (report.level, report.write_gate, report.write_gate_reason, report.accelerate_retention)
+    assert got == expected
+    assert recorder_disk_pressure_level._value.get() == report.level  # the gauge reads the same
     api.StorageUsage.model_validate(report.model_dump(mode="json"))
+
+
+async def test_accelerate_retention_outlives_the_level() -> None:
+    """The flag is the ladder's own: it holds after level 2 releases (free 10 % -> 20 %)."""
+    meter = FakeMeter(used=300 * GB, free=TOTAL // 10)
+    budget, _, _ = make_budget(meter)
+    await budget.sample_once()
+    meter.free = TOTAL // 5
+    await budget.sample_once()
+    report = budget.report()
+    assert report is not None
+    assert (report.level, report.write_gate, report.accelerate_retention) == (0, "open", True)
+
+
+def test_the_mirror_names_the_contract_closed_sets() -> None:
+    fields = StorageUsage.model_fields
+    reasons = get_args(get_args(fields["write_gate_reason"].annotation)[0])
+    assert [int(level) for level in DiskPressureLevel] == _SCHEMA["level"]["enum"]
+    assert list(get_args(fields["write_gate"].annotation)) == _SCHEMA["write_gate"]["enum"]
+    assert [*reasons, None] == _SCHEMA["write_gate_reason"]["enum"]
