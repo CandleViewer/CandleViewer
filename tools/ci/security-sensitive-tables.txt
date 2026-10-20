@@ -9,6 +9,7 @@ api_keys
 auth_keys
 exchange_accounts
 account_profiles
+account_profile_revisions
 backups
 orders
 order_events

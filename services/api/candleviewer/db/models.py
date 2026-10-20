@@ -1491,6 +1491,184 @@ auth_keys = Table(
 )
 
 
+#: `account_profiles` and `account_profile_revisions` (E28-T01 #905, revision
+#: 0037_account_profiles, 21 Sec.3.2.4 and Sec.3.2.5). `version`, the revision rows and the
+#: bootstrap profile are written by triggers, which `alembic check` does not compare;
+#: `tests/unit/migrations/` pins them.
+SIZING_MODES: tuple[str, ...] = ("fixed_qty", "fixed_notional", "pct_equity", "risk_based")
+OFFSET_UNITS: tuple[str, ...] = ("ticks", "percent", "r_multiple", "atr")
+sizing_mode = ENUM(*SIZING_MODES, name="sizing_mode", metadata=metadata, create_type=False)
+offset_unit = ENUM(*OFFSET_UNITS, name="offset_unit", metadata=metadata, create_type=False)
+#: Percentages are stored as the percent a user sees (0..100), 21 Sec.3.2.4.
+_PERCENT = Numeric(9, 6)
+
+account_profiles = Table(
+    "account_profiles",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("name", Text, nullable=False),
+    Column("is_default", Boolean, nullable=False, server_default=text("false")),
+    Column("enabled", Boolean, nullable=False, server_default=text("true")),
+    Column("trading_enabled", Boolean, nullable=False, server_default=text("false")),
+    Column("version", Integer, nullable=False, server_default=text("1")),
+    Column("leverage", Numeric(10, 2), nullable=False, server_default=text("1")),
+    Column("margin_mode", Text, nullable=False, server_default=text("'cross'")),
+    Column("position_mode", Text, nullable=False, server_default=text("'one_way'")),
+    Column("sizing_mode", sizing_mode, nullable=False, server_default=text("'risk_based'")),
+    Column("size_fixed_qty", Numeric(38, 18)),
+    Column("size_fixed_notional_usd", Numeric(38, 18)),
+    Column("size_pct_equity", _PERCENT),
+    Column("risk_pct_equity", _PERCENT),
+    Column("risk_fixed_amount_usd", Numeric(38, 18)),
+    Column("min_leg_notional_usd", Numeric(38, 18), nullable=False, server_default=text("0")),
+    Column("sl_offset_value", Numeric(38, 18), nullable=False, server_default=text("10")),
+    Column("sl_offset_unit", offset_unit, nullable=False, server_default=text("'ticks'")),
+    Column("sl_atr_period", SmallInteger, nullable=False, server_default=text("14")),
+    Column("sl_atr_multiple", Numeric(10, 4), nullable=False, server_default=text("2")),
+    Column("fallback_sl_offset_pct", _PERCENT, nullable=False, server_default=text("2")),
+    Column("tp_offset_value", Numeric(38, 18)),
+    Column("tp_offset_unit", offset_unit),
+    Column("tp_ladder", JSONB),
+    Column("require_native_sl", Boolean, nullable=False, server_default=text("true")),
+    Column("max_position_notional_usd", Numeric(38, 18)),
+    Column("max_position_pct_equity", _PERCENT),
+    Column("max_daily_loss_usd", Numeric(38, 18)),
+    Column("max_daily_loss_pct", _PERCENT),
+    Column("max_open_positions", SmallInteger),
+    Column("max_concurrent_orders", SmallInteger),
+    Column("max_leverage_cap", Numeric(10, 2)),
+    Column("max_orders_per_minute", SmallInteger, nullable=False, server_default=text("30")),
+    Column("all_symbols", Boolean, nullable=False, server_default=text("false")),
+    Column("allowed_symbols", ARRAY(Text)),
+    Column("blocked_symbols", ARRAY(Text)),
+    Column("reduce_only_default", Boolean, nullable=False, server_default=text("false")),
+    Column("time_in_force_default", Text, nullable=False, server_default=text("'GTC'")),
+    Column("slippage_tolerance_bps", Integer, nullable=False, server_default=text("10")),
+    Column("created_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("updated_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("deleted_at", TIMESTAMP(timezone=True)),
+    CheckConstraint("leverage BETWEEN 1 AND 100", name="ap_leverage"),
+    CheckConstraint("require_native_sl = true", name="ap_native_sl"),
+    CheckConstraint("time_in_force_default IN ('GTC','IOC','FOK','PostOnly')", name="ap_tif"),
+    CheckConstraint("slippage_tolerance_bps BETWEEN 0 AND 1000", name="ap_slip"),
+    CheckConstraint("max_orders_per_minute BETWEEN 1 AND 600", name="ap_opm"),
+    CheckConstraint("sl_offset_value > 0", name="ap_sl_pos"),
+    CheckConstraint("(tp_offset_value IS NULL) = (tp_offset_unit IS NULL)", name="ap_tp_pair"),
+    CheckConstraint("tp_offset_value IS NULL OR tp_offset_value > 0", name="ap_tp_pos"),
+    CheckConstraint(
+        "max_open_positions IS NULL OR max_open_positions BETWEEN 1 AND 50", name="ap_maxpos"
+    ),
+    CheckConstraint(
+        "((sizing_mode = 'fixed_qty' AND size_fixed_qty > 0 AND size_fixed_notional_usd IS NULL "
+        "AND size_pct_equity IS NULL AND risk_pct_equity IS NULL "
+        "AND risk_fixed_amount_usd IS NULL) "
+        "OR (sizing_mode = 'fixed_notional' AND size_fixed_notional_usd > 0 "
+        "AND size_fixed_qty IS NULL AND size_pct_equity IS NULL AND risk_pct_equity IS NULL "
+        "AND risk_fixed_amount_usd IS NULL) "
+        "OR (sizing_mode = 'pct_equity' AND size_pct_equity > 0 AND size_pct_equity <= 100 "
+        "AND size_fixed_qty IS NULL AND size_fixed_notional_usd IS NULL "
+        "AND risk_pct_equity IS NULL AND risk_fixed_amount_usd IS NULL) "
+        "OR (sizing_mode = 'risk_based' AND size_fixed_qty IS NULL "
+        "AND size_fixed_notional_usd IS NULL AND size_pct_equity IS NULL "
+        "AND ((risk_pct_equity > 0 AND risk_pct_equity <= 100 AND risk_fixed_amount_usd IS NULL) "
+        "OR (risk_fixed_amount_usd > 0 AND risk_pct_equity IS NULL)))) IS TRUE",
+        name="ap_sizing_shape",
+    ),
+    CheckConstraint(
+        "tp_ladder IS NULL OR jsonb_typeof(tp_ladder) = 'array'", name="ap_ladder_shape"
+    ),
+    CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="ap_name"),
+    CheckConstraint("version >= 1", name="ap_version"),
+    CheckConstraint("margin_mode IN ('cross','isolated')", name="ap_margin_mode"),
+    CheckConstraint("position_mode IN ('one_way','hedge')", name="ap_position_mode"),
+    CheckConstraint("sl_offset_unit <> 'r_multiple'", name="ap_sl_unit"),
+    CheckConstraint("sl_atr_period BETWEEN 2 AND 200 AND sl_atr_multiple > 0", name="ap_atr"),
+    CheckConstraint(
+        "fallback_sl_offset_pct > 0 AND fallback_sl_offset_pct < 100", name="ap_fallback_sl"
+    ),
+    CheckConstraint("min_leg_notional_usd >= 0", name="ap_min_leg"),
+    CheckConstraint(
+        "max_position_notional_usd IS NULL OR max_position_notional_usd > 0",
+        name="ap_max_notional",
+    ),
+    CheckConstraint(
+        "max_position_pct_equity IS NULL "
+        "OR (max_position_pct_equity > 0 AND max_position_pct_equity <= 100)",
+        name="ap_max_pos_pct",
+    ),
+    CheckConstraint("max_daily_loss_usd IS NULL OR max_daily_loss_usd > 0", name="ap_daily_loss"),
+    CheckConstraint(
+        "max_daily_loss_pct IS NULL OR (max_daily_loss_pct > 0 AND max_daily_loss_pct <= 100)",
+        name="ap_daily_loss_pct",
+    ),
+    CheckConstraint(
+        "max_concurrent_orders IS NULL OR max_concurrent_orders BETWEEN 1 AND 500",
+        name="ap_max_orders",
+    ),
+    CheckConstraint(
+        "max_leverage_cap IS NULL "
+        "OR (max_leverage_cap BETWEEN 1 AND 100 AND leverage <= max_leverage_cap)",
+        name="ap_lev_cap",
+    ),
+    CheckConstraint(
+        "NOT trading_enabled OR ("
+        "(max_position_notional_usd IS NOT NULL OR max_position_pct_equity IS NOT NULL) "
+        "AND (max_daily_loss_usd IS NOT NULL OR max_daily_loss_pct IS NOT NULL) "
+        "AND max_open_positions IS NOT NULL AND max_concurrent_orders IS NOT NULL "
+        "AND max_leverage_cap IS NOT NULL)",
+        name="ap_trading_caps",
+    ),
+    CheckConstraint("NOT all_symbols OR allowed_symbols IS NULL", name="ap_all_symbols"),
+    CheckConstraint(
+        "leverage <> 'NaN' AND max_leverage_cap <> 'NaN' AND sl_atr_multiple <> 'NaN' "
+        "AND size_fixed_qty <> 'NaN' AND size_fixed_notional_usd <> 'NaN' "
+        "AND size_pct_equity <> 'NaN' AND risk_pct_equity <> 'NaN' "
+        "AND risk_fixed_amount_usd <> 'NaN' AND min_leg_notional_usd <> 'NaN' "
+        "AND sl_offset_value <> 'NaN' AND fallback_sl_offset_pct <> 'NaN' "
+        "AND tp_offset_value <> 'NaN' AND max_position_notional_usd <> 'NaN' "
+        "AND max_position_pct_equity <> 'NaN' AND max_daily_loss_usd <> 'NaN' "
+        "AND max_daily_loss_pct <> 'NaN'",
+        name="ap_finite",
+    ),
+    Index(
+        "ux_ap_name",
+        "exchange_account_id",
+        text("lower(name)"),
+        unique=True,
+        postgresql_where=text("deleted_at IS NULL"),
+    ),
+    Index(
+        "ux_ap_default",
+        "exchange_account_id",
+        unique=True,
+        postgresql_where=text("is_default AND deleted_at IS NULL"),
+    ),
+)
+
+#: Append-only (trg_apr_append, trg_apr_no_truncate); no FK to `account_profiles`, the history
+#: outlives the row.
+account_profile_revisions = Table(
+    "account_profile_revisions",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("profile_id", UUID(as_uuid=True), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("payload", JSONB, nullable=False),
+    Column("changed_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("changed_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("version >= 1", name="apr_version"),
+    CheckConstraint("jsonb_typeof(payload) = 'object'", name="apr_payload"),
+    UniqueConstraint("profile_id", "version", name="ux_apr_version"),
+)
+
+
 #: `drawings` (E14-T01, revision 0021_drawings; the layouts FK is in 0022_workspaces).
 DRAWING_TOOLS: tuple[str, ...] = (
     "trendline",

@@ -87,6 +87,9 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "machine_snapshots",
         "machine_drain_journal",
         "machine_events",
+        # E28-T01 (0037_account_profiles)
+        "account_profiles",
+        "account_profile_revisions",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected

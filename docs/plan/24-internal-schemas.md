@@ -1969,49 +1969,64 @@ class TradeGroupAggregate(BaseModel):
 ### 9.2 Per-account profile
 
 ```python
+class TakeProfitRung(BaseModel):
+    qty_pct: Decimal          # fraction of the leg's filled size, 0 < v <= 1; the rungs sum to <= 1
+    r: Decimal                # R multiple of the resolved stop distance, > 0
+
 class AccountProfile(BaseModel):
     profile_id: UUID
     account_id: AccountId
-    name: str
+    name: str                                     # 1..80 characters, unique per account
+    is_default: bool                              # the account's ceiling (E28-X01 D7)
     enabled: bool
+    trading_enabled: bool                         # every cap below is bounded when true (D11)
+    version: int                                  # set by the database: 1, then +1 per update
     # sizing
     sizing_mode: Literal["fixed_qty","fixed_notional","pct_equity","risk_based"]
     fixed_qty: Qty | None
     fixed_notional: Notional | None
     pct_equity: Decimal | None            # 0..1
     risk_pct_equity: Decimal | None       # 0..1, risk_based
-    risk_fixed_amount: Notional | None    # risk_based alternative
+    risk_fixed_amount: Notional | None    # risk_based alternative: exactly one of the two
+    min_leg_notional: Notional                    # below this the leg is skipped, not rejected
+    qty_rounding: Literal["floor"] = "floor"
     # leverage & mode
-    leverage: Decimal
+    leverage: Decimal                             # 1..100
     margin_mode: Literal["cross","isolated"]
     position_mode: Literal["one_way","hedge"]
-    # protective offsets
-    sl_offset_value: Decimal
-    sl_offset_unit: Literal["ticks","percent","r_multiple","atr"]
-    sl_atr_period: int = 14
-    sl_atr_multiple: Decimal = Decimal("2.0")
-    fallback_sl_offset_pct: Decimal = Decimal("0.02")
-    tp_legs: tuple[TakeProfitLeg, ...] = ()
-    tp_offset_unit: Literal["ticks","percent","r_multiple","atr"] = "r_multiple"
-    # risk caps (server-enforced, regardless of what the manager asks for)
+    # protective offsets: the native stop is mandatory (C-2.6)
+    require_native_sl: Literal[True] = True
+    sl_offset_value: Decimal                      # distance for ticks / percent (a fraction)
+    sl_offset_unit: Literal["ticks","percent","atr"]   # never r_multiple: the stop defines R
+    sl_atr_period: int                            # 2..200 (column default 14); atr: distance = ATR(period) * multiple
+    sl_atr_multiple: Decimal                      # > 0 (column default 2)
+    fallback_sl_offset_pct: Decimal               # 0 < v < 1 (column default 2 %, so 0.02); used when ATR is unavailable
+    tp_offset_value: Decimal | None               # set together with its unit
+    tp_offset_unit: Literal["ticks","percent","r_multiple","atr"] | None
+    tp_ladder: tuple[TakeProfitRung, ...] = ()
+    # risk caps (server-enforced, regardless of what the manager asks for; one gate each)
     max_position_notional: Notional | None
-    max_position_pct_equity: Decimal | None
+    max_position_pct_equity: Decimal | None       # 0..1
     max_daily_loss: Notional | None
-    max_daily_loss_pct: Decimal | None
-    max_open_positions: int | None
-    max_concurrent_orders: int | None
-    max_leverage_cap: Decimal | None
-    allowed_symbols: tuple[Symbol, ...] = ()     # empty = all
-    denied_symbols: tuple[Symbol, ...] = ()
-    trading_enabled: bool = True
-    # rounding
-    qty_rounding: Literal["floor"] = "floor"
-    min_leg_notional: Notional                    # below this the leg is skipped, not rejected
-    version: int
+    max_daily_loss_pct: Decimal | None            # 0..1
+    max_open_positions: int | None                # 1..50
+    max_concurrent_orders: int | None             # 1..500
+    max_leverage_cap: Decimal | None              # 1..100, >= leverage
+    max_orders_per_minute: int                    # 1..600
+    # symbols
+    all_symbols: bool                             # explicit; then allowed_symbols is empty
+    allowed_symbols: tuple[SymbolPattern, ...] = ()    # empty without all_symbols allows nothing
+    denied_symbols: tuple[SymbolPattern, ...] = ()     # applied after the allow-list
+    # order defaults
+    reduce_only_default: bool
+    time_in_force_default: Literal["GTC","IOC","FOK","PostOnly"]
+    slippage_tolerance_bps: int                   # 0..1000
     updated_at: TsUs
 ```
 
 Risk caps are **server-side and non-negotiable** — a manager cannot exceed them from the UI, an API call, or a rule (research 09 §10 recommendation). Every profile change is audited with a before/after diff.
+
+**As built (E28-T01, #905).** The model lives in `candleviewer.accounts.profiles` (M13) and repeats the rules of the `account_profiles` CHECKs and triggers (`21-database-schema.md` §3.2.4; SR-E28-08: the floor holds at every layer), so a leg's frozen copy is always a profile the database could hold. It is stricter in two places: a value its column would round, and a symbol entry that is neither a symbol nor an anchored suffix pattern. `profile_from_row` and `profile_values` are the one adapter to the stored row: percentages are percents (0–100) there and fractions here, an offset in `percent` included; a ladder rung's `pct` is `qty_pct`; `denied_symbols` is the column `blocked_symbols`; an empty tuple is a NULL list; `updated_at` is µs. Refusing a value its column would round means every valid profile round-trips with `Decimal` equality (a property test). `SymbolPattern` is a listed symbol or an anchored suffix pattern (`*USDT`, never a bare `*`), expanded against the instrument cache at evaluation time (E28-T04, SR-E28-06). Each cap maps to one enforcing gate in `candleviewer.accounts.profile_caps` (SR-E28-10). A ladder rung is relative (`TakeProfitRung`); `TakeProfitLeg` (§9.1), with its absolute `price`, is the resolved form on a leg.
 
 ### 9.3 Sizing algorithm
 
@@ -2021,9 +2036,9 @@ def size_leg(intent: OrderIntent, profile: AccountProfile,
     # 1. Gate
     if not profile.enabled or not profile.trading_enabled:
         return LegSizing.skip("profile_disabled")
-    if profile.allowed_symbols and intent.symbol not in profile.allowed_symbols:
-        return LegSizing.skip("symbol_not_allowed")
-    if intent.symbol in profile.denied_symbols:
+    if not profile.all_symbols and not matches(intent.symbol, profile.allowed_symbols):
+        return LegSizing.skip("symbol_not_allowed")   # an empty allow-list allows nothing (D11)
+    if matches(intent.symbol, profile.denied_symbols):
         return LegSizing.skip("symbol_denied")
 
     # 2. Reference price
@@ -2073,7 +2088,7 @@ def size_leg(intent: OrderIntent, profile: AccountProfile,
 
 **9.3.2 Clamp order** (deterministic, each recorded): `max_leverage_cap` → `max_position_pct_equity` → `max_position_notional` → remaining headroom under `max_daily_loss` → `inst.max_order_qty`/`max_mkt_order_qty` → available margin × 0.98. Applying clamps in a fixed order makes the resulting size explainable: the UI shows "reduced from 1.2 to 0.8 by max_position_notional".
 
-**9.3.3 Take-profit resolution.** `tp_legs` percentages must sum to ≤ 1; any remainder is left to be managed by stop/rules. `r_multiple` TPs are computed from the resolved stop distance. Each TP leg becomes a `reduce_only` limit order after the entry fills, sized `floor(filled_qty * qty_pct)` with the **last** leg absorbing the rounding remainder so the TP ladder always totals exactly the filled quantity.
+**9.3.3 Take-profit resolution.** The `tp_ladder` rungs' `qty_pct` must sum to ≤ 1; any remainder is left to be managed by stop/rules. `r_multiple` TPs are computed from the resolved stop distance. Each TP leg becomes a `reduce_only` limit order after the entry fills, sized `floor(filled_qty * qty_pct)` with the **last** leg absorbing the rounding remainder so the TP ladder always totals exactly the filled quantity.
 
 ### 9.4 Fan-out algorithm
 
@@ -4866,3 +4881,10 @@ These are contract-test obligations created by this pass; they belong in the CI 
 - A persist that fails after draining still consumes its generation, so a retry mints new `send_id`s and the failed attempt's rows are paged; a life's first written snapshot may therefore carry a generation above 1. Reusing the generation would let the retry's identical event take over the failed attempt's row, and that event would vanish without a page.
 - A persist fault on the append (a stamped row, or another `payload` text) is paged P1 and the persist continues, so its snapshot is still written: refusing it would let a planted row block persistence.
 - `replay_once` stamps only after the enqueue: a crash between the two re-delivers rather than drops, and the OMS reconciles (C-2.10).
+
+### 19.16 2026-10-20 — §9.2 `AccountProfile` reconciled with its table (E28-T01)
+
+- Every field of §9.2 has an `account_profiles` column and every column a field (`21-database-schema.md` §3.2.4), except `qty_rounding` (always `floor`, so not stored) and the bookkeeping columns `created_by`, `updated_by`, `created_at` and `deleted_at`. New here: `is_default`, `require_native_sl`, `tp_offset_value`, `max_orders_per_minute`, `reduce_only_default`, `time_in_force_default` and `slippage_tolerance_bps`, which the table had and the model lacked. New in the table: the fields the model had and the table lacked, those E28-X01 SR-E28-01 requires (`enabled`, `trading_enabled`, `version`, the four caps), and `all_symbols` (decision D11, below).
+- `tp_legs: tuple[TakeProfitLeg, ...]` becomes `tp_ladder: tuple[TakeProfitRung, ...]`: a profile holds relative rungs (`qty_pct`, `r`), and `TakeProfitLeg`'s absolute `price` exists only on a resolved leg (§9.1).
+- `sl_offset_unit` drops `r_multiple` (§9.3.1: the stop defines R) and `tp_offset_unit` pairs with `tp_offset_value`.
+- Decision D11 (E28-X01 §4.7; decided under the Owner's delegation on 2026-10-20 and recorded on #2701): `all_symbols` is explicit, so an empty allow-list allows nothing, and a trading-enabled profile bounds every cap. §9.3 step 1 reads `all_symbols` and matches patterns. US-PROF-003's scenario "Empty list means all" (`11-user-stories.md`) and `AccountProfileInput.allowed_symbols` (`22-api-openapi.yaml`) still read the old rule until E28-T02's contract step changes them (recorded on #906).
