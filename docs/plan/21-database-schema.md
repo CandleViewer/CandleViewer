@@ -185,6 +185,7 @@ erDiagram
     exchange_accounts ||--o{ user_account_access : grants
     exchange_accounts ||--o{ api_keys : owns
     exchange_accounts ||--o{ account_profiles : configured_by
+    account_profiles ||--o{ account_profile_revisions : versioned_by
     exchange_accounts ||--o{ exchange_accounts : parent_of
     api_keys ||--o{ api_key_rotations : rotated_by
 
@@ -228,8 +229,16 @@ erDiagram
     account_profiles {
         uuid id PK
         uuid exchange_account_id FK
+        int version
+        bool trading_enabled
         sizing_mode sizing_mode
         numeric max_daily_loss_usd
+    }
+    account_profile_revisions {
+        bigserial id PK
+        uuid profile_id
+        int version
+        jsonb payload
     }
 ```
 
@@ -1120,38 +1129,55 @@ CREATE TABLE kek_versions (
 
 #### 3.2.4 `account_profiles`
 
-Per-account execution profile applied when a trade group fans out. Exactly one profile per account is `is_default`; alternates are selectable per ticket (e.g. "scalp" vs "swing").
+Per-account execution profile applied when a trade group fans out. Exactly one profile per account is `is_default`; alternates are selectable per ticket (e.g. "scalp" vs "swing"). The default profile is the account's ceiling (E28-X01 D7): alternates, templates, overrides and rules only narrow it. Revision `0037_account_profiles` (E28-T01, #905) creates the table, its triggers, `account_profile_revisions` (§3.2.5) and the bootstrap of a default profile for every exchange account.
+
+The columns marked † were added by E28-T01 to close E28-X01 findings F-04 and F-06 (`docs/security/threat-models/E28-profiles-trade-groups.md` §11.1; SR-E28-01, SR-E28-07, SR-E28-08) and to give every field of the `AccountProfile` domain model (`24-internal-schemas.md` §9.2) a column. Percentages (`numeric(9,6)`) are stored as the percent a user sees (0–100); the domain model holds fractions (0–1), and one adapter maps between them (§9.2).
 
 | Column                      | Type           | Null | Default        | Constraints                                       |
 | --------------------------- | -------------- | ---- | -------------- | ------------------------------------------------- |
-| `id`                        | uuid           | no   | —              | PK                                                |
-| `exchange_account_id`       | uuid           | no   | —              | FK CASCADE                                        |
-| `name`                      | text           | no   | —              | Unique per account (case-insensitive)             |
+| `id`                        | uuid           | no   | —              | PK; write-once (`trg_ap_version`)                 |
+| `exchange_account_id`       | uuid           | no   | —              | FK CASCADE; write-once (`trg_ap_version`)         |
+| `name`                      | text           | no   | —              | 1–80 chars; unique per account, case-insensitive  |
 | `is_default`                | boolean        | no   | `false`        | Partial-unique: one default per account           |
+| `enabled` †                 | boolean        | no   | `true`         | Disabled: sizes nothing (`profile_disabled`)      |
+| `trading_enabled` †         | boolean        | no   | `false`        | Needs every cap bounded (`ap_trading_caps`, D11)  |
+| `version` †                 | integer        | no   | `1`            | ≥ 1; set by `trg_ap_version` (+1 per update)      |
 | `leverage`                  | numeric(10,2)  | no   | `1`            | `CHECK (leverage BETWEEN 1 AND 100)`              |
+| `margin_mode` †             | text           | no   | `'cross'`      | cross / isolated                                  |
+| `position_mode` †           | text           | no   | `'one_way'`    | one_way / hedge                                   |
 | `sizing_mode`               | sizing_mode    | no   | `'risk_based'` |                                                   |
 | `size_fixed_qty`            | numeric(38,18) | yes  | NULL           | required iff `sizing_mode='fixed_qty'`            |
 | `size_fixed_notional_usd`   | numeric(38,18) | yes  | NULL           | required iff `fixed_notional`                     |
 | `size_pct_equity`           | numeric(9,6)   | yes  | NULL           | 0 < v ≤ 100, required iff `pct_equity`            |
-| `risk_pct_equity`           | numeric(9,6)   | yes  | NULL           | 0 < v ≤ 100, required iff `risk_based`            |
-| `sl_offset_value`           | numeric(38,18) | no   | `10`           | > 0                                               |
-| `sl_offset_unit`            | offset_unit    | no   | `'ticks'`      |                                                   |
-| `tp_offset_value`           | numeric(38,18) | yes  | NULL           | > 0 when set                                      |
+| `risk_pct_equity`           | numeric(9,6)   | yes  | NULL           | 0 < v ≤ 100; `risk_based`: this xor the next      |
+| `risk_fixed_amount_usd` †   | numeric(38,18) | yes  | NULL           | > 0; the `risk_based` fixed-amount alternative    |
+| `min_leg_notional_usd` †    | numeric(38,18) | no   | `0`            | ≥ 0; a smaller leg is skipped, not rejected       |
+| `sl_offset_value`           | numeric(38,18) | no   | `10`           | > 0; a percent (1.5 = 1.5 %) in unit `percent`    |
+| `sl_offset_unit`            | offset_unit    | no   | `'ticks'`      | Never `r_multiple` (`ap_sl_unit`)                 |
+| `sl_atr_period` †           | smallint       | no   | `14`           | 2..200, used when `sl_offset_unit='atr'`          |
+| `sl_atr_multiple` †         | numeric(10,4)  | no   | `2`            | > 0, used when `sl_offset_unit='atr'`             |
+| `fallback_sl_offset_pct` †  | numeric(9,6)   | no   | `2`            | 0 < v < 100; stop when ATR is unavailable         |
+| `tp_offset_value`           | numeric(38,18) | yes  | NULL           | > 0 when set; a percent in unit `percent`         |
 | `tp_offset_unit`            | offset_unit    | yes  | NULL           | required iff tp value set                         |
-| `tp_ladder`                 | jsonb          | yes  | NULL           | `[{"pct":25,"r":1},…]`, Σpct ≤ 100                |
+| `tp_ladder`                 | jsonb          | yes  | NULL           | `[{"pct":25,"r":1},…]`, pct/r > 0, Σpct ≤ 100     |
 | `require_native_sl`         | boolean        | no   | `true`         | **Safety invariant (finding #21) — CHECK = true** |
 | `max_position_notional_usd` | numeric(38,18) | yes  | NULL           | > 0                                               |
+| `max_position_pct_equity` † | numeric(9,6)   | yes  | NULL           | 0 < v ≤ 100                                       |
 | `max_daily_loss_usd`        | numeric(38,18) | yes  | NULL           | > 0; triggers lockout                             |
+| `max_daily_loss_pct` †      | numeric(9,6)   | yes  | NULL           | 0 < v ≤ 100                                       |
 | `max_open_positions`        | smallint       | yes  | NULL           | 1..50                                             |
+| `max_concurrent_orders` †   | smallint       | yes  | NULL           | 1..500 (Bybit's per-symbol active-order ceiling)  |
+| `max_leverage_cap` †        | numeric(10,2)  | yes  | NULL           | 1..100 and ≥ `leverage`                           |
 | `max_orders_per_minute`     | smallint       | no   | `30`           | Rate-limit budget per UID                         |
-| `allowed_symbols`           | text[]         | yes  | NULL           | NULL = all listed linear USDT perps               |
+| `all_symbols` †             | boolean        | no   | `false`        | All listed linear USDT perps; needs NULL list     |
+| `allowed_symbols`           | text[]         | yes  | NULL           | NULL/empty allows nothing unless `all_symbols`    |
 | `blocked_symbols`           | text[]         | yes  | NULL           | Applied after allow-list                          |
 | `reduce_only_default`       | boolean        | no   | `false`        |                                                   |
 | `time_in_force_default`     | text           | no   | `'GTC'`        | GTC/IOC/FOK/PostOnly                              |
 | `slippage_tolerance_bps`    | integer        | no   | `10`           | 0..1000, guards market orders                     |
-| `created_by`/`updated_by`   | uuid           | yes  | NULL           |                                                   |
-| `created_at`/`updated_at`   | timestamptz    | no   | `now()`        |                                                   |
-| `deleted_at`                | timestamptz    | yes  | NULL           |                                                   |
+| `created_by`/`updated_by`   | uuid           | yes  | NULL           | `updated_by` = revision `changed_by` (§3.2.5)     |
+| `created_at`/`updated_at`   | timestamptz    | no   | `now()`        | `updated_at` set by `trg_account_profiles_touch`  |
+| `deleted_at`                | timestamptz    | yes  | NULL           | Soft delete; every read path filters it           |
 
 ```sql
 CREATE TABLE account_profiles (
@@ -1159,22 +1185,37 @@ CREATE TABLE account_profiles (
   exchange_account_id       uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE CASCADE,
   name                      text NOT NULL,
   is_default                boolean NOT NULL DEFAULT false,
+  enabled                   boolean NOT NULL DEFAULT true,
+  trading_enabled           boolean NOT NULL DEFAULT false,
+  version                   integer NOT NULL DEFAULT 1,
   leverage                  numeric(10,2) NOT NULL DEFAULT 1,
+  margin_mode               text NOT NULL DEFAULT 'cross',
+  position_mode             text NOT NULL DEFAULT 'one_way',
   sizing_mode               sizing_mode NOT NULL DEFAULT 'risk_based',
   size_fixed_qty            numeric(38,18),
   size_fixed_notional_usd   numeric(38,18),
   size_pct_equity           numeric(9,6),
   risk_pct_equity           numeric(9,6),
+  risk_fixed_amount_usd     numeric(38,18),
+  min_leg_notional_usd      numeric(38,18) NOT NULL DEFAULT 0,
   sl_offset_value           numeric(38,18) NOT NULL DEFAULT 10,
   sl_offset_unit            offset_unit NOT NULL DEFAULT 'ticks',
+  sl_atr_period             smallint NOT NULL DEFAULT 14,
+  sl_atr_multiple           numeric(10,4) NOT NULL DEFAULT 2,
+  fallback_sl_offset_pct    numeric(9,6) NOT NULL DEFAULT 2,
   tp_offset_value           numeric(38,18),
   tp_offset_unit            offset_unit,
   tp_ladder                 jsonb,
   require_native_sl         boolean NOT NULL DEFAULT true,
   max_position_notional_usd numeric(38,18),
+  max_position_pct_equity   numeric(9,6),
   max_daily_loss_usd        numeric(38,18),
+  max_daily_loss_pct        numeric(9,6),
   max_open_positions        smallint,
+  max_concurrent_orders     smallint,
+  max_leverage_cap          numeric(10,2),
   max_orders_per_minute     smallint NOT NULL DEFAULT 30,
+  all_symbols               boolean NOT NULL DEFAULT false,
   allowed_symbols           text[],
   blocked_symbols           text[],
   reduce_only_default       boolean NOT NULL DEFAULT false,
@@ -1185,28 +1226,167 @@ CREATE TABLE account_profiles (
   created_at                timestamptz NOT NULL DEFAULT now(),
   updated_at                timestamptz NOT NULL DEFAULT now(),
   deleted_at                timestamptz,
-  CONSTRAINT ap_leverage     CHECK (leverage BETWEEN 1 AND 100),
-  CONSTRAINT ap_native_sl    CHECK (require_native_sl = true),
-  CONSTRAINT ap_tif          CHECK (time_in_force_default IN ('GTC','IOC','FOK','PostOnly')),
-  CONSTRAINT ap_slip         CHECK (slippage_tolerance_bps BETWEEN 0 AND 1000),
-  CONSTRAINT ap_opm          CHECK (max_orders_per_minute BETWEEN 1 AND 600),
-  CONSTRAINT ap_sl_pos       CHECK (sl_offset_value > 0),
-  CONSTRAINT ap_tp_pair      CHECK ((tp_offset_value IS NULL) = (tp_offset_unit IS NULL)),
-  CONSTRAINT ap_tp_pos       CHECK (tp_offset_value IS NULL OR tp_offset_value > 0),
-  CONSTRAINT ap_maxpos       CHECK (max_open_positions IS NULL OR max_open_positions BETWEEN 1 AND 50),
-  CONSTRAINT ap_sizing_shape CHECK (
-      (sizing_mode = 'fixed_qty'       AND size_fixed_qty > 0          AND size_fixed_notional_usd IS NULL AND size_pct_equity IS NULL AND risk_pct_equity IS NULL)
-   OR (sizing_mode = 'fixed_notional'  AND size_fixed_notional_usd > 0 AND size_fixed_qty IS NULL          AND size_pct_equity IS NULL AND risk_pct_equity IS NULL)
-   OR (sizing_mode = 'pct_equity'      AND size_pct_equity > 0 AND size_pct_equity <= 100 AND size_fixed_qty IS NULL AND size_fixed_notional_usd IS NULL AND risk_pct_equity IS NULL)
-   OR (sizing_mode = 'risk_based'      AND risk_pct_equity > 0 AND risk_pct_equity <= 100 AND size_fixed_qty IS NULL AND size_fixed_notional_usd IS NULL AND size_pct_equity IS NULL)
-  ),
-  CONSTRAINT ap_ladder_shape CHECK (tp_ladder IS NULL OR jsonb_typeof(tp_ladder) = 'array')
+  CONSTRAINT ap_leverage       CHECK (leverage BETWEEN 1 AND 100),
+  CONSTRAINT ap_native_sl      CHECK (require_native_sl = true),
+  CONSTRAINT ap_tif            CHECK (time_in_force_default IN ('GTC','IOC','FOK','PostOnly')),
+  CONSTRAINT ap_slip           CHECK (slippage_tolerance_bps BETWEEN 0 AND 1000),
+  CONSTRAINT ap_opm            CHECK (max_orders_per_minute BETWEEN 1 AND 600),
+  CONSTRAINT ap_sl_pos         CHECK (sl_offset_value > 0),
+  CONSTRAINT ap_tp_pair        CHECK ((tp_offset_value IS NULL) = (tp_offset_unit IS NULL)),
+  CONSTRAINT ap_tp_pos         CHECK (tp_offset_value IS NULL OR tp_offset_value > 0),
+  CONSTRAINT ap_maxpos         CHECK (max_open_positions IS NULL OR max_open_positions BETWEEN 1 AND 50),
+  CONSTRAINT ap_sizing_shape   CHECK ((
+      (sizing_mode = 'fixed_qty'       AND size_fixed_qty > 0          AND size_fixed_notional_usd IS NULL AND size_pct_equity IS NULL AND risk_pct_equity IS NULL AND risk_fixed_amount_usd IS NULL)
+   OR (sizing_mode = 'fixed_notional'  AND size_fixed_notional_usd > 0 AND size_fixed_qty IS NULL          AND size_pct_equity IS NULL AND risk_pct_equity IS NULL AND risk_fixed_amount_usd IS NULL)
+   OR (sizing_mode = 'pct_equity'      AND size_pct_equity > 0 AND size_pct_equity <= 100 AND size_fixed_qty IS NULL AND size_fixed_notional_usd IS NULL AND risk_pct_equity IS NULL AND risk_fixed_amount_usd IS NULL)
+   OR (sizing_mode = 'risk_based'      AND size_fixed_qty IS NULL AND size_fixed_notional_usd IS NULL AND size_pct_equity IS NULL
+       AND ((risk_pct_equity > 0 AND risk_pct_equity <= 100 AND risk_fixed_amount_usd IS NULL)
+         OR (risk_fixed_amount_usd > 0 AND risk_pct_equity IS NULL)))
+  ) IS TRUE),  -- a NULL size compares to NULL, which a bare CHECK would let pass
+  CONSTRAINT ap_ladder_shape   CHECK (tp_ladder IS NULL OR jsonb_typeof(tp_ladder) = 'array'),
+  CONSTRAINT ap_name           CHECK (char_length(name) BETWEEN 1 AND 80),
+  CONSTRAINT ap_version        CHECK (version >= 1),
+  CONSTRAINT ap_margin_mode    CHECK (margin_mode IN ('cross','isolated')),
+  CONSTRAINT ap_position_mode  CHECK (position_mode IN ('one_way','hedge')),
+  CONSTRAINT ap_sl_unit        CHECK (sl_offset_unit <> 'r_multiple'),
+  CONSTRAINT ap_atr            CHECK (sl_atr_period BETWEEN 2 AND 200 AND sl_atr_multiple > 0),
+  CONSTRAINT ap_fallback_sl    CHECK (fallback_sl_offset_pct > 0 AND fallback_sl_offset_pct < 100),
+  CONSTRAINT ap_min_leg        CHECK (min_leg_notional_usd >= 0),
+  CONSTRAINT ap_max_notional   CHECK (max_position_notional_usd IS NULL OR max_position_notional_usd > 0),
+  CONSTRAINT ap_max_pos_pct    CHECK (max_position_pct_equity IS NULL OR (max_position_pct_equity > 0 AND max_position_pct_equity <= 100)),
+  CONSTRAINT ap_daily_loss     CHECK (max_daily_loss_usd IS NULL OR max_daily_loss_usd > 0),
+  CONSTRAINT ap_daily_loss_pct CHECK (max_daily_loss_pct IS NULL OR (max_daily_loss_pct > 0 AND max_daily_loss_pct <= 100)),
+  CONSTRAINT ap_max_orders     CHECK (max_concurrent_orders IS NULL OR max_concurrent_orders BETWEEN 1 AND 500),
+  CONSTRAINT ap_lev_cap        CHECK (max_leverage_cap IS NULL OR (max_leverage_cap BETWEEN 1 AND 100 AND leverage <= max_leverage_cap)),
+  CONSTRAINT ap_trading_caps   CHECK (NOT trading_enabled OR (
+        (max_position_notional_usd IS NOT NULL OR max_position_pct_equity IS NOT NULL)
+    AND (max_daily_loss_usd IS NOT NULL OR max_daily_loss_pct IS NOT NULL)
+    AND max_open_positions IS NOT NULL AND max_concurrent_orders IS NOT NULL AND max_leverage_cap IS NOT NULL)),
+  CONSTRAINT ap_all_symbols    CHECK (NOT all_symbols OR allowed_symbols IS NULL),
+  CONSTRAINT ap_finite         CHECK (
+        leverage <> 'NaN' AND max_leverage_cap <> 'NaN' AND sl_atr_multiple <> 'NaN'
+    AND size_fixed_qty <> 'NaN' AND size_fixed_notional_usd <> 'NaN' AND size_pct_equity <> 'NaN'
+    AND risk_pct_equity <> 'NaN' AND risk_fixed_amount_usd <> 'NaN' AND min_leg_notional_usd <> 'NaN'
+    AND sl_offset_value <> 'NaN' AND fallback_sl_offset_pct <> 'NaN' AND tp_offset_value <> 'NaN'
+    AND max_position_notional_usd <> 'NaN' AND max_position_pct_equity <> 'NaN'
+    AND max_daily_loss_usd <> 'NaN' AND max_daily_loss_pct <> 'NaN')  -- NaN passes a bound alone
 );
 CREATE UNIQUE INDEX ux_ap_name    ON account_profiles (exchange_account_id, lower(name)) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX ux_ap_default ON account_profiles (exchange_account_id) WHERE is_default AND deleted_at IS NULL;
 ```
 
-The TP-ladder sum rule (`Σ pct ≤ 100`) is enforced by trigger `trg_ap_ladder_sum` because it needs aggregation over the array.
+`ap_finite` keeps NaN out of every number. Postgres sorts NaN above every number, so a NaN passes a bound such as `> 0` by itself and would count as a cap under `ap_trading_caps`; a column with a precision cannot hold infinity, so NaN is the only such value.
+
+Four triggers keep the rules a CHECK cannot express. Each refusal is SQLSTATE 23514 (`check_violation`), names its trigger as the error's constraint (`USING CONSTRAINT`) and states its rule, never a value. Each function pins its `search_path` and names `public` tables in full.
+
+- `trg_ap_ladder_sum` (BEFORE INSERT OR UPDATE OF `tp_ladder`, `ENABLE ALWAYS`): every rung is an object whose `pct` and `r` are numbers above 0, and the `pct` values sum to at most 100. The sum is an aggregation over the array, so it cannot be a CHECK.
+- `trg_ap_version` (BEFORE INSERT OR UPDATE, `ENABLE ALWAYS`): `version` is 1 on insert and `OLD.version + 1` on every update, whatever the statement wrote, so no writer can rewind or skip a version; `id` and `exchange_account_id` are write-once.
+- `trg_account_profiles_touch` (BEFORE UPDATE): `set_updated_at()` (§1.4).
+- `trg_ap_revision` (AFTER INSERT OR UPDATE, `ENABLE ALWAYS`): writes the row, as `to_jsonb(NEW)`, to `account_profile_revisions` in the same transaction (§3.2.5). A soft delete is an update, so it bumps the version and leaves a revision too. Its function is `SECURITY DEFINER` (it runs as its owner, the migration role) and no other role may execute it, so a revision is written only by a profile write: the runtime role holds no INSERT on the history.
+
+```sql
+CREATE FUNCTION ap_ladder_sum_check() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.tp_ladder IS NULL OR jsonb_typeof(NEW.tp_ladder) <> 'array' THEN
+    RETURN NEW;  -- ap_ladder_shape refuses a non-array
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.tp_ladder) AS rung(v)
+             WHERE CASE WHEN jsonb_typeof(rung.v) = 'object'
+                         AND jsonb_typeof(rung.v -> 'pct') = 'number'
+                         AND jsonb_typeof(rung.v -> 'r') = 'number'
+                        THEN (rung.v ->> 'pct')::numeric <= 0 OR (rung.v ->> 'r')::numeric <= 0
+                        ELSE true END) THEN
+    RAISE EXCEPTION 'trg_ap_ladder_sum: every tp_ladder rung needs a number pct and r above 0'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ap_ladder_sum';
+  END IF;
+  IF (SELECT sum((rung.v ->> 'pct')::numeric) FROM jsonb_array_elements(NEW.tp_ladder) AS rung(v)) > 100 THEN
+    RAISE EXCEPTION 'trg_ap_ladder_sum: the tp_ladder pct values add up to more than the 100%% limit'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ap_ladder_sum';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_ap_ladder_sum BEFORE INSERT OR UPDATE OF tp_ladder ON account_profiles
+  FOR EACH ROW EXECUTE FUNCTION ap_ladder_sum_check();
+ALTER TABLE account_profiles ENABLE ALWAYS TRIGGER trg_ap_ladder_sum;
+
+CREATE FUNCTION ap_version_bump() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    NEW.version := 1;
+    RETURN NEW;
+  END IF;
+  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.exchange_account_id IS DISTINCT FROM OLD.exchange_account_id THEN
+    RAISE EXCEPTION 'trg_ap_version: account_profiles.id and exchange_account_id are write-once (SR-E28-07)'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ap_version';
+  END IF;
+  NEW.version := OLD.version + 1;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_ap_version BEFORE INSERT OR UPDATE ON account_profiles
+  FOR EACH ROW EXECUTE FUNCTION ap_version_bump();
+ALTER TABLE account_profiles ENABLE ALWAYS TRIGGER trg_ap_version;
+
+CREATE TRIGGER trg_account_profiles_touch BEFORE UPDATE ON account_profiles
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE FUNCTION ap_record_revision() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  INSERT INTO public.account_profile_revisions (profile_id, version, payload, changed_by)
+  VALUES (NEW.id, NEW.version, to_jsonb(NEW),
+          CASE WHEN TG_OP = 'INSERT' THEN NEW.created_by ELSE NEW.updated_by END);
+  RETURN NULL;
+END $$;
+REVOKE EXECUTE ON FUNCTION ap_record_revision() FROM PUBLIC;
+CREATE TRIGGER trg_ap_revision AFTER INSERT OR UPDATE ON account_profiles
+  FOR EACH ROW EXECUTE FUNCTION ap_record_revision();
+ALTER TABLE account_profiles ENABLE ALWAYS TRIGGER trg_ap_revision;
+```
+
+**Bootstrap.** An account is never profile-less in the data model. `trg_ea_default_profile` (AFTER INSERT on `exchange_accounts`, `ENABLE ALWAYS`) gives every new account a default profile named `Default`, and revision `0037_account_profiles` gives one to every account that exists when it runs. The bootstrap profile is `enabled` and not `trading_enabled` (SR-E28-01), sizes `risk_based` at 1 % of equity, and allows no symbol until the owner completes it, so it is inert until then. Its `version` is 1 and it has one revision, which is how the revision's downgrade tells it from a profile someone wrote: the downgrade refuses unless every profile is such a bootstrap and the revision count equals the profile count (a profile edited or deleted, a hard delete or cascade included, leaves an extra revision, and a created one fails the name and default test).
+
+**Privileges.** `cv_app` holds no DELETE on `account_profiles` where the role exists, as `0024` does for `api_keys`: a profile leaves by soft delete, an update that bumps its version and leaves a revision. A hard delete would leave no revision and could take an account's ceiling with it. An account's own deletion still removes its profiles through the `ON DELETE CASCADE`, whose RI action runs as the table's owner.
+
+```sql
+CREATE FUNCTION ea_default_profile() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  INSERT INTO public.account_profiles (id, exchange_account_id, name, is_default, risk_pct_equity, created_by, updated_by)
+  VALUES (gen_random_uuid(), NEW.id, 'Default', true, 1, NEW.created_by, NEW.created_by);
+  RETURN NULL;
+END $$;
+CREATE TRIGGER trg_ea_default_profile AFTER INSERT ON exchange_accounts
+  FOR EACH ROW EXECUTE FUNCTION ea_default_profile();
+ALTER TABLE exchange_accounts ENABLE ALWAYS TRIGGER trg_ea_default_profile;
+```
+
+#### 3.2.5 `account_profile_revisions`
+
+Append-only history of `account_profiles`: one row per insert and per update, written by `trg_ap_revision` in the transaction that changed the profile (E28-T01, SR-E28-07). `payload` is the whole profile row as it stood at that `version`, so the journal (E41) and `trade_group_legs.profile_snapshot` reconcile against the exact version a trade used. The table has no foreign key to `account_profiles`: the history outlives the row. `changed_by` follows `audit_log.actor_user_id` (§3.10.1): the reference to `users` is kept, and the append-only trigger refuses the `ON DELETE SET NULL` update as it refuses any other, so a user with history is never hard-deleted.
+
+INSERT-only (C-5.7 pattern): `trg_apr_append` (`forbid_mutation()`) refuses UPDATE and DELETE, `trg_apr_no_truncate` (`audit_refuse_truncate()`) refuses TRUNCATE, both `ENABLE ALWAYS`, and `INSERT`, `UPDATE`, `DELETE` and `TRUNCATE` are revoked from `cv_app` and `cv_ro` where those roles exist (`infra/scripts/pg_bootstrap.sql`): the only writer is `trg_ap_revision`'s `SECURITY DEFINER` function, so the runtime role can neither rewrite the history nor forge a revision for a version a profile has not reached (which would also block that profile's next write on `ux_apr_version`). Class P0 in §12's scheme (profile configuration: no personal data, credential, token or key); as an asset it is E28-X01 A-08, Confidential and integrity-critical, read only inside the caller's grants (`docs/security/threat-models/E28-profiles-trade-groups.md` §1.2).
+
+```sql
+CREATE TABLE account_profile_revisions (
+  id          bigserial PRIMARY KEY,
+  profile_id  uuid NOT NULL,
+  version     integer NOT NULL,
+  payload     jsonb NOT NULL,
+  changed_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+  changed_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT apr_version CHECK (version >= 1),
+  CONSTRAINT apr_payload CHECK (jsonb_typeof(payload) = 'object'),
+  CONSTRAINT ux_apr_version UNIQUE (profile_id, version)
+);
+CREATE TRIGGER trg_apr_append BEFORE UPDATE OR DELETE ON account_profile_revisions
+  FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
+CREATE TRIGGER trg_apr_no_truncate BEFORE TRUNCATE ON account_profile_revisions
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
+ALTER TABLE account_profile_revisions ENABLE ALWAYS TRIGGER trg_apr_append;
+ALTER TABLE account_profile_revisions ENABLE ALWAYS TRIGGER trg_apr_no_truncate;
+```
 
 ### 3.3 Trading: trade groups, legs, orders, events, executions, positions
 
@@ -3464,7 +3644,7 @@ NAMING_CONVENTION = {
 | `0007_sessions_idle_timeout`    | `sessions.idle_timeout_s` (per-session idle-lock timeout, B16) (fix #1634) — **landed in E09-S03**                                                                                                                                                                                         |
 | `0009_sessions_step_up_state`   | `sessions.step_up_elevations`, `step_up_failures`, `readonly_until` (step-up state on the session row, B16) — **E09-S04**                                                                                                                                                                  |
 | `0005_api_keys`                 | `api_keys`, `api_key_rotations`, withdrawal-off constraint — landed as `0017_exchange_accounts_api_keys` (E27-T01); write-once trigger `0024_api_keys_write_once` (#2336)                                                                                                                  |
-| `0005_profiles`                 | `account_profiles` + ladder trigger                                                                                                                                                                                                                                                        |
+| `0005_profiles`                 | `account_profiles` + ladder trigger — landed as `0037_account_profiles` (E28-T01 #905, with `account_profile_revisions`, §3.2.4–§3.2.5)                                                                                                                                                    |
 | `0006_trading_core`             | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances` — `orders` to `position_snapshots` = `0029_oms_core` (E29-T01); rest pending                                                                              |
 | `0007_recorder`                 | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies` — landed as `0011_recorder` (E16-T01); `replay_sessions` landed in E26-T01 as `0023_replay_sessions` (#624)                                                                                               |
 | `0008_rules`                    | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                                                                       |
@@ -3480,6 +3660,7 @@ NAMING_CONVENTION = {
 | `0034_order_vocabulary`         | five `order_state` values, `order_event_kind` `kill` and `adopt`, `orders.lifecycle_state` and `ord_lifecycle` (§1.2, §3.3.4), `ix_orders_open` rebuilt — **E29-T03 #847 slice 2**; the downgrade refuses while a row holds an added value                                                 |
 | `0035_machine_persistence_json` | `machine_snapshots.snapshot`, `machine_drain_journal.payload`, `machine_events.payload` and `fault` become `json` (24 §17.6): sealed and digested values read back byte for byte; `trg_mdj_stamp_once` compares `payload` as text — **#3857**; the downgrade refuses while any holds a row |
 | `0036_users_purge`              | `users.purge_after`, `anonymised_at`, CHECK `users_purge_shape` (§3.1.1): the deferred PII purge's schedule and its mark (§12) — **E42-T10 #2650**; the downgrade refuses while a purge is pending                                                                                         |
+| `0037_account_profiles`         | `account_profiles`, `account_profile_revisions`, `sizing_mode`, `offset_unit`, the ladder, version, revision and bootstrap triggers and the backfill (§3.2.4, §3.2.5) — **E28-T01 #905 PR-1**; the downgrade refuses once a profile was written                                            |
 
 ---
 
@@ -3789,6 +3970,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `machine_snapshots`                                    | `snapshot`                              | P1         | json, plaintext; HMAC tag (CV-C53)              | A machine context can repeat order and position values; holds no credential, token or key; never logged (24 §17.6)                              |
 | `machine_drain_journal`                                | `payload`                               | P1         | json, plaintext                                 | A drained event, replayed once after restore; can repeat order values; holds no credential, token or key; never logged                          |
 | `machine_events`                                       | `payload`                               | P1         | json, plaintext; hash-chained (`row_hash`)      | Event data; append-only (C-5.7), kept on erase like `order_events`; holds no credential, token or key; never logged                             |
+| `account_profiles`, `account_profile_revisions`        | all                                     | P0         | plaintext; revisions append-only                | Profile configuration: no personal data or key material (E28-X01 A-08: Confidential, integrity-critical; SR-E28-07)                             |
 | Everything else                                        | —                                       | P0         | —                                               |                                                                                                                                                 |
 
 Enforcement:

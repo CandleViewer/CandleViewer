@@ -201,3 +201,24 @@ def test_auth_keys_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
     with psycopg.connect(cv_app_dsn) as conn:
         held = [conn.execute(probe, (role,)).fetchone() for role in ("cv_app", "cv_ro")]
     assert held == [("INSERT SELECT UPDATE",), ("SELECT",)]
+
+
+def test_account_profile_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
+    """Profile history is written only by `trg_ap_revision`'s definer function (21 Sec.3.2.5,
+    SR-E28-07): `cv_app` reads it and holds no INSERT, UPDATE, DELETE or TRUNCATE on it; on the
+    live profile rows it holds no DELETE, as a profile leaves by soft delete (21 Sec.3.2.4)."""
+    probe = (
+        "SELECT string_agg(p, ' ' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', "
+        "'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p "
+        "WHERE has_table_privilege(%s, %s, p)"
+    )
+    with psycopg.connect(cv_app_dsn) as conn:
+        held = {
+            (role, table): conn.execute(probe, (role, table)).fetchone()
+            for role in ("cv_app", "cv_ro")
+            for table in ("account_profiles", "account_profile_revisions")
+        }
+    assert held[("cv_app", "account_profile_revisions")] == ("SELECT",)
+    assert held[("cv_app", "account_profiles")] == ("INSERT SELECT UPDATE",)
+    assert held[("cv_ro", "account_profile_revisions")] == ("SELECT",)
+    assert held[("cv_ro", "account_profiles")] == ("SELECT",)

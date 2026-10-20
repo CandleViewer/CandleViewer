@@ -176,6 +176,11 @@
       "path": "services/api/candleviewer/migrations/versions/0036_users_purge.py",
       "sha256": "527e63f2cafaea62eba263addee0deb74a40abd1b048905a9aba6cfe595767cf",
       "down_revision": "0035_machine_persistence_json"
+    },
+    "0037_account_profiles": {
+      "path": "services/api/candleviewer/migrations/versions/0037_account_profiles.py",
+      "sha256": "814b32f8d1ae7722992e0e9bec4b1ed296a5f503d4c000ce9826f9f13dae3737",
+      "down_revision": "0036_users_purge"
     }
   }
 }
