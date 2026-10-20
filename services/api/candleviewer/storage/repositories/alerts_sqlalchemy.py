@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import sqlalchemy as sa
@@ -50,11 +50,17 @@ def encode_cursor(ts: datetime, row_id: int | str) -> str:
 
 
 def decode_cursor(cursor: str) -> tuple[datetime, str]:
+    """`ValueError` for anything `encode_cursor` cannot have made: malformed, or a timestamp
+    without an offset (E40-T04 SR-E40T04A-04: a naive bind would fail in the driver, not 400)."""
     try:
         ts, rid = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-        return datetime.fromisoformat(ts), str(rid)
-    except (ValueError, TypeError) as exc:
+        when = datetime.fromisoformat(ts)
+        when.astimezone(UTC)  # an offset the instant cannot carry to UTC (year 1, +14:00)
+    except (ValueError, TypeError, OverflowError) as exc:
         raise ValueError("invalid cursor") from exc
+    if when.tzinfo is None or isinstance(rid, (dict, list)):
+        raise ValueError("invalid cursor")
+    return when, str(rid)
 
 
 def array_literal(values: tuple[str, ...]) -> str:

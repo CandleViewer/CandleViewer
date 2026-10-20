@@ -367,6 +367,9 @@ class _AlertDeliveryRepo:
     async def alert_owner(self, alert_id: str) -> None:
         return None
 
+    async def unacked_count(self, user_id: str) -> int:
+        return 0
+
     async def list_page(self, **_kw: Any) -> Page[Any]:
         return Page([], None)
 
@@ -640,7 +643,7 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     mp.setattr(appmod, "build_identity_provider", lambda _settings: _Identity(spec))
     mp.setattr(appmod, "SqlAlchemyAlertRepository", lambda _pg: _AlertRepo())
     mp.setattr(appmod, "SqlAlchemyAlertDeliveryRepository", lambda _pg: _AlertDeliveryRepo())
-    mp.setattr(appmod, "SqlAlchemyNotificationRepository", lambda _pg: _NotificationRepo())
+    mp.setattr(appmod, "SqlAlchemyNotificationRepository", lambda _pg, **_kw: _NotificationRepo())
     # E16-T06: the real retention manager exists only on the `real` storage backend; the purge
     # route is mounted either way, so give it the call-recording stand-in (never plans/deletes).
     purge_backend = _PurgeBackend()

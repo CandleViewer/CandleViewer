@@ -2,12 +2,15 @@
 listNotifications, `Notification`.
 
 The operation holds no permission of its own (`x-rbac: {permissions: [], scope: self}`): the
-caller must have a verified session, and visibility comes from the per-source filters, resolved
-here into a `NotificationScope` and applied in SQL before the union is merged
-(`storage/repositories/notifications_sqlalchemy.py`). A source the caller has no permission for
-is simply absent - never a 403, never a partial row. Rules are filtered by the rules module's
-own visibility predicate (`RulesManager.visible_rule_ids`), so a rule's history is visible here
-exactly when the rule itself is.
+caller must have a verified session (`alerts_http.caller` with no permission), and visibility comes
+from the per-source filters, resolved here into a `NotificationScope` and applied in SQL before
+the union is merged (`storage/repositories/notifications_sqlalchemy.py`). A source the caller has
+no permission for is simply absent - never a 403, never a partial row. Rules are filtered by the
+rules module's own visibility predicate (`RulesManager.visible_rule_ids`), so a rule's history is
+visible here exactly when the rule itself is. `system_events` is the Owner's alone
+(SR-E40T04A-01): the role-neutral view `23-ws-protocol.md` §15.9 gives Managers and Viewers on the
+`system` topic is not defined for these rows, so nothing of it is served to them; the Owner's
+`message` passes the shared redaction first, as `admin/ops/incidents.py` does.
 
 `Notification.id` is `uuid5(namespace, source_table + source_id)` (24-internal-schemas.md §1.6),
 so one source row always maps to one id. `source_id` stays contract-typed (a uuid, C-6.1): the
@@ -19,17 +22,17 @@ other sources until their owners define read state.
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
 # handler signatures at definition time (string annotations cannot see the closures).
 
-import inspect
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID, uuid5
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+import structlog
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
 
-from candleviewer.api.alerts import _Problem, _ProblemRoute, _Refused
-from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.api.alerts_http import Problem, ProblemRoute, Resolver, caller
+from candleviewer.observability.redaction import redact_text
 from candleviewer.rules.manager import Actor
 from candleviewer.storage.repositories.notifications import (
     SOURCES,
@@ -46,35 +49,48 @@ LIST_NOTIFICATIONS_QUERY = frozenset({"limit", "cursor", "kind", "unread_only"})
 Kind = Literal["alert", "rule", "order", "risk", "system"]
 KINDS: Final[tuple[Kind, ...]] = ("alert", "rule", "order", "risk", "system")
 _SYMBOL = re.compile(r"^[A-Z0-9]{2,20}USDT$")
-#: The rules the caller may read; None = every rule (the Owner), unavailable -> no rule rows.
-VisibleRules = Callable[[Actor], Awaitable[frozenset[str] | None]]
+#: The rules the caller may read (the rules module's predicate); unavailable -> no rule rows.
+VisibleRules = Callable[[Actor], Awaitable[frozenset[str]]]
+#: A redacted system message is cut to this many characters (the incident title's cut is 200;
+#: a notification's title is the whole message, so the bound is wider).
+SYSTEM_TITLE_MAX = 500
 
 _RULE_EVENT: Final = {"action_ok": "action done", "action_fail": "action failed",
                       "throttled": "throttled"}  # fmt: skip
 _ORDER_EVENT: Final = {
     "ack": "accepted", "reject": "rejected", "fill": "filled", "partial_fill": "partially filled",
     "amend_ack": "amended", "cancel_ack": "cancelled", "expire": "expired", "error": "failed",
+    "kill": "cancelled by the kill switch", "adopt": "adopted from the exchange (review it)",
 }  # fmt: skip
-_ORDER_SEVERITY: Final = {"reject": "error", "error": "error", "expire": "warning"}
+_ORDER_SEVERITY: Final = {
+    "reject": "error", "error": "error", "expire": "warning", "kill": "warning", "adopt": "warning",
+}  # fmt: skip
+#: The order outcomes whose `ret_code` is worth showing (an exchange refusal or error).
+_ORDER_CODED: Final = frozenset({"reject", "error"})
 #: SPA deep links (apps/web/src/routes/manifest.ts R-191, R-164, R-132); system rows have none.
 _ROUTE: Final = {"alert": "/alerts/{}", "rule": "/rules/{}/history", "order": "/positions/order/{}"}
 
 
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
 def notification_scope(
-    actor: Actor, kinds: Sequence[str], rule_ids: frozenset[str] | None
+    actor: Actor, kinds: Sequence[str], rule_ids: frozenset[str]
 ) -> NotificationScope:
-    """The caller's view per source: its permission, then its grants (Owner: all of them)."""
+    """The caller's view per source: its permission, then its grants (Owner: all accounts).
+    `system` is the Owner's alone (SR-E40T04A-01); no role is a way around it."""
     want = frozenset(kinds or KINDS)
     perms, owner = actor.perms, actor.is_owner
     return NotificationScope(
         user_id=actor.user_id,
         alerts="alert" in want and "alerts:read" in perms,
-        rules="rule" in want and "rules:read" in perms and rule_ids != frozenset(),
+        rules="rule" in want and "rules:read" in perms and bool(rule_ids),
         rule_ids=rule_ids,
         orders="order" in want and "orders:read" in perms,
         accounts=None if owner else frozenset(actor.granted_accounts),
-        system="system" in want,
-        system_all=owner,
+        system="system" in want and owner,
     )
 
 
@@ -87,13 +103,25 @@ def source_id(src: int, src_id: int) -> str:
     return str(uuid5(NOTIFICATION_NAMESPACE, f"{SOURCES[src]}:{src_id}"))
 
 
+def _system_title(r: NotificationRow) -> str:
+    """The Owner's system `message` after the shared redaction, then the cut (a cut first could
+    split a secret into an unmatched stub); a message that cannot be redacted is not shown."""
+    try:
+        return redact_text(r.title or "")[:SYSTEM_TITLE_MAX] or f"System event ({r.event})"
+    except Exception as exc:
+        _log().error("notifications.redaction_failed", error=type(exc).__name__)
+        return f"System event ({r.event})"
+
+
 def _title(r: NotificationRow) -> str:
     if r.nkind == "rule":
         return f"Rule {r.title}: {_RULE_EVENT.get(r.event, r.event)}"
     if r.nkind == "order":
         what = f"Order {_ORDER_EVENT.get(r.event, r.event)}"
         what = f"{r.symbol} {what[0].lower()}{what[1:]}" if r.symbol else what
-        return f"{what} (code {r.code})" if r.code and r.event in _ORDER_SEVERITY else what
+        return f"{what} (code {r.code})" if r.code and r.event in _ORDER_CODED else what
+    if r.nkind == "system":
+        return _system_title(r)
     return r.title or ""
 
 
@@ -115,31 +143,20 @@ def dump(r: NotificationRow) -> dict[str, Any]:
 
 def make_notifications_router(
     store_provider: Callable[[], NotificationStore | None],
-    actor_resolver: Callable[[Request], Any] | None,
+    actor_resolver: Resolver | None,
     visible_rules: VisibleRules | None,
 ) -> APIRouter:
-    router = APIRouter(tags=["alerts"], route_class=_ProblemRoute)
+    router = APIRouter(tags=["alerts"], route_class=ProblemRoute)
+    #: A verified session and no permission (the contract's empty `x-rbac`), then SR-026.
+    session = caller(actor_resolver, None, LIST_NOTIFICATIONS_QUERY)
 
-    async def readable_rules(actor: Actor) -> frozenset[str] | None:
+    async def readable_rules(actor: Actor) -> frozenset[str]:
         """No rules module wired: no rule rows (an empty set), never every rule."""
         return frozenset() if visible_rules is None else await visible_rules(actor)
 
-    async def caller(request: Request) -> Actor:
-        """A verified session, no permission (the contract's empty `x-rbac`), then SR-026."""
-        if actor_resolver is None:
-            raise _Problem(501, "not_implemented", "Not implemented", "no principal resolver")
-        got = actor_resolver(request)
-        actor: Actor | None = await got if inspect.isawaitable(got) else got
-        if actor is None:
-            raise _Problem(401, "unauthorized", "Unauthorized", "no verified session")
-        refusal = undeclared_query_refusal(request, LIST_NOTIFICATIONS_QUERY)
-        if refusal is not None:
-            raise _Refused(refusal)
-        return actor
-
     @router.get("/notifications")
     async def list_notifications(
-        actor: Annotated[Actor, Depends(caller)],
+        actor: Annotated[Actor, Depends(session)],
         limit: Annotated[int, Query(ge=1, le=500)] = 100,
         cursor: Annotated[str | None, Query(max_length=512)] = None,
         kind: Annotated[list[Kind] | None, Query()] = None,
@@ -147,7 +164,7 @@ def make_notifications_router(
     ) -> Response:
         store = store_provider()
         if store is None:
-            raise _Problem(503, "service_unavailable", "Unavailable", "notifications unavailable")
+            raise Problem(503, "service_unavailable", "Unavailable", "notifications unavailable")
         wants_rules = "rules:read" in actor.perms and (not kind or "rule" in kind)
         rule_ids = await readable_rules(actor) if wants_rules else frozenset()
         scope = notification_scope(actor, kind or (), rule_ids)
@@ -156,7 +173,7 @@ def make_notifications_router(
                 scope, unread_only=unread_only, cursor=cursor, limit=limit
             )
         except ValueError:
-            raise _Problem(400, "validation_failed", "Bad request", "invalid cursor") from None
+            raise Problem(400, "validation_failed", "Bad request", "invalid cursor") from None
         items = [dump(r) for r in rows]
         nxt = None if last is None else encode_cursor(last)
         meta = {"next_cursor": nxt, "has_more": nxt is not None, "count": len(items)}
@@ -169,6 +186,8 @@ __all__ = [
     "KINDS",
     "LIST_NOTIFICATIONS_QUERY",
     "NOTIFICATION_NAMESPACE",
+    "SYSTEM_TITLE_MAX",
+    "VisibleRules",
     "dump",
     "make_notifications_router",
     "notification_id",

@@ -1,9 +1,9 @@
 """E40-T04 `GET /notifications`: per-source scope from the caller's permissions and grants, the
 `Notification` shape (uuid5 ids, deep links, no source payloads), and the read's edges.
 
-The SQL that applies a scope is pinned in `tests/unit/storage/test_notifications_repository.py`
-and on real Postgres in `tests/integration/storage/test_notifications_union_pg.py`; here the
-store is a fake that records the scope it was given.
+The SQL that applies a scope is pinned in `tests/unit/storage/test_alert_inbox_store.py` and on
+real Postgres in `tests/integration/storage/test_notifications_union_pg.py`; here the store is a
+fake that records the scope it was given.
 """
 
 from __future__ import annotations
@@ -17,9 +17,11 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+from candleviewer.api import notifications
 from candleviewer.api.notifications import (
     LIST_NOTIFICATIONS_QUERY,
     NOTIFICATION_NAMESPACE,
+    SYSTEM_TITLE_MAX,
     dump,
     make_notifications_router,
     notification_id,
@@ -75,14 +77,14 @@ class Env:
     def __init__(self, *, wired: bool = True, rules_wired: bool = True) -> None:
         self.store = FakeStore()
         self.actor: Actor | None = Actor(USER, "s", VIEWER, frozenset({ACCT}))
-        self.visible: frozenset[str] | None = frozenset({RULE})
+        self.visible: frozenset[str] = frozenset({RULE})
         self.rule_calls = 0
         self.store_up = True
 
         def resolve(_r: Request) -> Actor | None:
             return self.actor
 
-        async def visible(_a: Actor) -> frozenset[str] | None:
+        async def visible(_a: Actor) -> frozenset[str]:
             self.rule_calls += 1
             return self.visible
 
@@ -112,9 +114,17 @@ def env() -> Env:
 
 def test_viewer_scope_is_every_source_it_holds_on_its_granted_accounts(env: Env) -> None:
     s = env.scope()
-    assert (s.alerts, s.rules, s.orders, s.system) == (True, True, True, True)
-    assert s.rule_ids == {RULE} and s.accounts == {ACCT}
-    assert s.system_all is False and s.user_id == USER
+    assert (s.alerts, s.rules, s.orders) == (True, True, True)
+    assert s.rule_ids == {RULE} and s.accounts == {ACCT} and s.user_id == USER
+
+
+@pytest.mark.parametrize("roles", ["viewer", "manager", "no permission at all"])
+def test_no_one_but_the_owner_gets_system_rows(env: Env, roles: str) -> None:
+    """SR-E40T04A-01: fail closed - no role-neutral view of `system_events` is approved."""
+    perms = frozenset() if roles == "no permission at all" else VIEWER | {"rules:write"}
+    env.actor = Actor(USER, "s", perms, frozenset({ACCT}))
+    assert env.scope().system is False
+    assert env.scope(kind=["system"]).system is False
 
 
 def test_a_user_without_orders_read_gets_no_order_source(env: Env) -> None:
@@ -126,17 +136,16 @@ def test_a_user_without_orders_read_gets_no_order_source(env: Env) -> None:
 def test_each_source_needs_its_own_permission(env: Env) -> None:
     env.actor = Actor(USER, "s", frozenset(), frozenset({ACCT}))
     s = env.scope()
-    assert (s.alerts, s.rules, s.orders) == (False, False, False)
-    assert s.system is True and s.system_all is False  # system holds no permission (§6.3)
-    assert env.rule_calls == 0  # no `rules:read`: the rule predicate is not even asked
+    assert (s.alerts, s.rules, s.orders, s.system) == (False, False, False, False)
+    assert s.empty and env.rule_calls == 0  # no `rules:read`: the predicate is not even asked
 
 
-def test_owner_scope_is_every_account_rule_and_system_row(env: Env) -> None:
+def test_owner_scope_is_every_account_the_listed_rules_and_the_system_stream(env: Env) -> None:
     env.actor = Actor(USER, "s", VIEWER, frozenset(), is_owner=True)
-    env.visible = None  # the rules module answers None for the Owner
+    env.visible = frozenset({RULE, "0c000000-0000-4000-8000-000000000002"})  # `list_rules`'
     s = env.scope()
-    assert s.accounts is None and s.rule_ids is None and s.rules is True
-    assert s.system_all is True
+    assert s.accounts is None and s.rule_ids == env.visible and s.rules is True
+    assert s.system is True
 
 
 def test_no_visible_rule_turns_the_rule_source_off(env: Env) -> None:
@@ -162,7 +171,7 @@ def test_a_manager_without_grants_sees_no_account_rows(env: Env) -> None:
     [
         (["alert"], (True, False, False, False)),
         (["rule", "order"], (False, True, True, False)),
-        (["system"], (False, False, False, True)),
+        (["system"], (False, False, False, False)),  # not the Owner (SR-E40T04A-01)
         (["risk"], (False, False, False, False)),
     ],
 )
@@ -180,8 +189,10 @@ def test_rule_predicate_is_skipped_when_rules_are_not_requested(env: Env) -> Non
 
 def test_scope_is_pure_over_the_actor() -> None:
     a = Actor(USER, "s", frozenset({"alerts:read"}), frozenset({ACCT}))
-    assert notification_scope(a, (), None).rules is False
+    assert notification_scope(a, (), frozenset({RULE})).rules is False  # no `rules:read`
     assert notification_scope(a, ("alert",), frozenset()).alerts is True
+    owner = Actor(USER, "s", frozenset(), frozenset(), is_owner=True)
+    assert notification_scope(owner, ("system",), frozenset()).system is True
 
 
 # --- the read ----------------------------------------------------------------------------
@@ -281,6 +292,8 @@ def test_rule_row_names_the_rule_and_the_outcome() -> None:
         ("error", None, "BTCUSDT order failed", "error"),
         ("expire", None, "BTCUSDT order expired", "warning"),
         ("fill", "0", "BTCUSDT order filled", "info"),
+        ("kill", "0", "BTCUSDT order cancelled by the kill switch", "warning"),
+        ("adopt", None, "BTCUSDT order adopted from the exchange (review it)", "warning"),
     ],
 )
 def test_order_row_title_and_severity(
@@ -299,5 +312,34 @@ def test_system_row_has_no_route_but_a_source_id() -> None:
     assert d["title"] == "Dead-man's-switch call owed"
 
 
+def test_a_system_message_passes_the_shared_redaction_then_the_cut() -> None:
+    secret = "token=" + "a1b2c3d4" * 6  # a credential-shaped value inside a free-text message
+    d = dump(_row("system", 4, 6, title=f"probe failed: {secret} " + "x" * 900, event="health"))
+    assert secret not in d["title"] and len(d["title"]) <= SYSTEM_TITLE_MAX
+    assert d["title"].startswith("probe failed: ")
+
+
+def test_a_system_message_that_cannot_be_redacted_is_not_shown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(_text: str) -> str:
+        raise RuntimeError("redaction rules failed to load")
+
+    monkeypatch.setattr(notifications, "redact_text", boom)
+    d = dump(_row("system", 4, 7, title="raw text", event="health_degraded"))
+    assert d["title"] == "System event (health_degraded)"
+
+
 def test_a_malformed_symbol_is_never_echoed() -> None:
     assert dump(_row("alert", 1, 1, symbol="<script>"))["symbol"] is None
+
+
+def test_no_answer_carries_a_withheld_source_field(env: Env) -> None:
+    """SR-E40T04A-06: the union's `payload`, `details`, `ret_msg` and the delivery `context`
+    never reach the wire, whatever a row holds."""
+    env.actor = Actor(USER, "s", VIEWER, frozenset(), is_owner=True)
+    env.store.rows = [_row(k, src, 9) for k, src in (("alert", 1), ("rule", 2), ("order", 3),
+                                                      ("system", 4))]  # fmt: skip
+    body = env.c.get("/notifications").text
+    for name in ("context", "payload", "details", "ret_msg", "_enc", "acked_by", "event", "code"):
+        assert f'"{name}' not in body, name

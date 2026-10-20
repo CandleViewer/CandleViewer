@@ -13,8 +13,10 @@ from datetime import timedelta
 import pytest
 from _alert_api_env import USER_A, USER_B
 from _deliveries_env import ALERT_A, ALERT_B, T0, Env
+from structlog.testing import capture_logs
 
-from candleviewer.api.alert_deliveries import ACK_ALL_BATCH, ACK_ALL_MAX_BATCHES
+from candleviewer.api import alert_deliveries
+from candleviewer.api.alert_deliveries import ACK_ALL_BATCH, ACK_ALL_MAX_BATCHES, DenialBudget
 
 
 @pytest.fixture
@@ -205,7 +207,22 @@ def test_ack_all_acknowledges_only_the_callers_sent_rows(env: Env) -> None:
     assert env.store.rows[queued.id].status == "queued"
     assert env.store.rows[other.id] == other
     (_, kw), = env.audit.calls  # fmt: skip
-    assert kw["after_state"] == {"status": "acked", "acknowledged": 3}
+    assert kw["before_state"] == {"status": "sent", "unacked": 3}
+    assert kw["after_state"] == {"status": "acked", "scope": "all_sent", "max": 5000}
+
+
+def test_ack_all_writes_its_record_before_any_batch_commits(env: Env) -> None:
+    """CR-03: write-ahead (C-2.9) - a failing audit writer leaves every row unacknowledged."""
+    d = env.store.add()
+
+    async def refuse(action: str, **kw: object) -> None:
+        raise RuntimeError("audit writer down")
+
+    env.audit.emit = refuse  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="audit writer down"):
+        env.c.post("/alerts/deliveries/ack-all")
+    assert env.store.rows[d.id].status == "sent" and env.store.ack_all_calls == []
+    assert env.changes == []
 
 
 def test_ack_all_with_nothing_to_acknowledge_is_zero_and_unaudited(env: Env) -> None:
@@ -347,3 +364,139 @@ def test_a_failing_hook_never_fails_the_committed_request(env: Env) -> None:
     r = env.c.post(f"/alerts/deliveries/{d.id}/ack")
     assert r.status_code == 200 and env.store.rows[d.id].status == "acked"
     assert env.changes == [[d.id]]
+
+
+def test_a_hook_that_outlives_its_bound_is_dropped_not_waited_on(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-08: the committed request answers; the topic repairs a lost delta itself."""
+    monkeypatch.setattr(alert_deliveries, "CHANGE_HOOK_TIMEOUT_S", 0.01)
+    env.change_hangs = True
+    d = env.store.add()
+    r = env.c.post(f"/alerts/deliveries/{d.id}/ack")
+    assert r.status_code == 200 and env.store.rows[d.id].status == "acked"
+    assert env.changes == [[d.id]]
+
+
+# --- lost races (CR-07) --------------------------------------------------------------------
+
+
+def test_ack_whose_row_vanished_after_losing_the_race_is_404(env: Env) -> None:
+    d = env.store.add()
+
+    async def lost(_id: int, _user: str) -> None:
+        del env.store.rows[d.id]  # gone (retention) between the update and the re-read
+        return None
+
+    env.store.ack = lost  # type: ignore[method-assign]
+    assert env.c.post(f"/alerts/deliveries/{d.id}/ack").status_code == 404
+    assert env.changes == []
+
+
+def test_desktop_report_that_loses_the_race_is_204_with_no_metric_and_no_hook(env: Env) -> None:
+    did = _desktop(env)
+
+    async def lost(*_a: object, **_kw: object) -> None:
+        return None  # the dispatcher (or another report) settled it first
+
+    env.store.report_desktop = lost  # type: ignore[method-assign]
+    r = env.c.post(f"/alerts/deliveries/{did}/desktop-outcome",
+                   json={"outcome": "shown", "permission": "granted"})  # fmt: skip
+    assert r.status_code == 204 and env.metrics.seen == [] and env.changes == []
+    assert env.audit.actions() == ["alert.desktop_outcome"]  # the attempt stays recorded
+
+
+def test_desktop_report_is_settled_for_the_caller_only(env: Env) -> None:
+    """SR-E40T04A-03: the store re-checks the owner in the update itself."""
+    did = _desktop(env)
+    env.c.post(f"/alerts/deliveries/{did}/desktop-outcome",
+               json={"outcome": "shown", "permission": "granted"})  # fmt: skip
+    assert env.store.desktop_reports == [(did, USER_A)]
+
+
+# --- the denial budget (SR-E40T04A-02) ------------------------------------------------------
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_denials_past_the_budget_are_counted_not_written() -> None:
+    clock = _Clock()
+    env = Env(denials=DenialBudget(per_window=2, window_s=60, clock=clock))
+    foreign = [env.store.add(user=USER_B, alert=ALERT_B).id for _ in range(5)]
+    for did in foreign:
+        assert env.c.post(f"/alerts/deliveries/{did}/ack").status_code == 404
+    assert [kw["object_id"] for kw in env.denials()] == [str(foreign[0]), str(foreign[1])]
+    assert all("after_state" not in kw for kw in env.denials())
+    clock.t += 60  # the window slides: the next record carries the three held back
+    assert env.c.post(f"/alerts/deliveries/{foreign[0]}/ack").status_code == 404
+    assert env.denials()[-1]["after_state"] == {"suppressed_before": 3}
+
+
+def test_a_held_denial_is_still_a_404_and_changes_nothing() -> None:
+    env = Env(denials=DenialBudget(per_window=1, window_s=60, clock=_Clock()))
+    b = env.store.add(user=USER_B, alert=ALERT_B)
+    for _ in range(3):
+        r = env.c.post(f"/alerts/deliveries/{b.id}/ack")
+        assert r.status_code == 404 and r.json()["code"] == "not_found"
+    assert env.store.rows[b.id] == b and len(env.denials()) == 1
+
+
+def test_the_list_filter_on_a_foreign_alert_spends_the_same_budget() -> None:
+    env = Env(denials=DenialBudget(per_window=1, window_s=60, clock=_Clock()))
+    env.store.add(user=USER_B, alert=ALERT_B)
+    for _ in range(2):
+        assert env.c.get("/alerts/deliveries", params={"alert_id": ALERT_B}).status_code == 404
+    assert len(env.denials()) == 1
+
+
+def test_each_caller_has_its_own_budget() -> None:
+    budget = DenialBudget(per_window=1, window_s=60, clock=_Clock())
+    assert budget.admit(USER_A) == 0 and budget.admit(USER_A) is None
+    assert budget.admit(USER_B) == 0
+
+
+def test_the_budget_is_bounded_and_logs_an_evicted_held_count() -> None:
+    budget = DenialBudget(per_window=1, window_s=60, max_callers=2, clock=_Clock())
+    with capture_logs() as logs:
+        budget.admit("u1")
+        assert budget.admit("u1") is None  # one held: the run's first is logged at once
+        budget.admit("u2")
+        budget.admit("u3")  # u1 is the least recently used: evicted with its held count
+    assert len(budget) == 2
+    assert [(e["event"], e.get("held")) for e in logs] == [
+        ("alert_denied_audit_held", None),
+        ("alert_denied_audit_held_evicted", 1),
+    ]
+    assert budget.admit("u1") == 0  # a fresh entry: the evicted count was logged, not carried
+
+
+@pytest.mark.parametrize(
+    ("per_window", "window_s", "max_callers"), [(0, 60, 1), (1, 0, 1), (1, 60, 0)]
+)
+def test_the_budget_refuses_bounds_that_are_not_positive(
+    per_window: int, window_s: float, max_callers: int
+) -> None:
+    with pytest.raises(ValueError, match="positive"):
+        DenialBudget(per_window=per_window, window_s=window_s, max_callers=max_callers)
+
+
+# --- what an answer never carries (SR-E40T04A-06) --------------------------------------------
+
+#: Delivery and source columns that are never served: the firing `context`, the alert's SECRET
+#: webhook columns, who acked, and the raw source payloads of the union's other branches.
+NEVER_SERVED = ("context", "webhook_url", "webhook_secret", "_enc", "acked_by", "payload",
+                "details", "ret_msg", "http_status", "attempt")  # fmt: skip
+
+
+def test_no_list_answer_carries_a_withheld_field(env: Env) -> None:
+    env.store.add(context={"symbol": "BTCUSDT", "webhook_url_enc": "x", "payload": {"a": 1}})
+    env.store.add(status="acked", acked_at=T0, acked_by=USER_A)
+    body = env.c.get("/alerts/deliveries").text
+    for name in NEVER_SERVED:
+        assert f'"{name}' not in body, name

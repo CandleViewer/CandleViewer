@@ -72,14 +72,17 @@ _GET_OWNED = _sql("SELECT @C@ FROM alert_deliveries WHERE id = :id AND user_id =
 _GET = _sql("SELECT @C@ FROM alert_deliveries WHERE id = :id")
 #: The owner of an alert, soft-deleted or not: its delivery history outlives the alert.
 _ALERT_OWNER = sa.text("SELECT owner_user_id::text FROM alerts WHERE id = CAST(:id AS uuid)")
-#: E40-T04 desktop report-back: only a `desktop` row still `queued` moves (conditional update).
+#: E40-T04 desktop report-back: only the caller's own `desktop` row still `queued` moves (a
+#: conditional update that re-checks the owner, as `_ACK_ONE` does: SR-E40T04A-03).
 _DESKTOP_SENT = _sql(
     "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), error_message = NULL "
-    "WHERE id = :id AND channel = 'desktop' AND status = 'queued' RETURNING @C@"
+    "WHERE id = :id AND user_id = CAST(:by AS uuid) AND channel = 'desktop' "
+    "AND status = 'queued' RETURNING @C@"
 )
 _DESKTOP_FAILED = _sql(
     "UPDATE alert_deliveries SET status = 'failed', error_message = :error "
-    "WHERE id = :id AND channel = 'desktop' AND status = 'queued' RETURNING @C@"
+    "WHERE id = :id AND user_id = CAST(:by AS uuid) AND channel = 'desktop' "
+    "AND status = 'queued' RETURNING @C@"
 )
 #: The channel-failure notice: an already-`sent` in_app record, so it never re-enters the
 #: outbox (no notice-about-a-notice loop) and shows in the inbox / `unacked_count`.
@@ -110,6 +113,9 @@ _LIST = _sql(
     "(queued_at, id) < (CAST(:after_ts AS timestamptz), CAST(:after_id AS bigint))) "
     "ORDER BY queued_at DESC, id DESC LIMIT :limit"
 )
+
+
+_INT64_MAX = 2**63 - 1
 
 
 def failure_notice_context(failed_delivery_id: int) -> str:
@@ -209,19 +215,20 @@ class SqlAlchemyAlertDeliveryRepository:
         return None if got is None else str(got[0])
 
     async def report_desktop(
-        self, delivery_id: int, *, error: str | None, notice_title: str
+        self, delivery_id: int, *, user_id: str, error: str | None, notice_title: str
     ) -> DeliveryRow | None:
-        """The shell's outcome for a `desktop` row still `queued`: `error is None` is
+        """The shell's outcome for *user_id*'s `desktop` row still `queued`: `error is None` is
         `queued -> sent`; otherwise `queued -> failed` with *error* plus ONE in-app
         channel-failure notice, in one transaction (as the dispatcher's terminal failure).
-        None when the row is not a queued desktop delivery: a repeated report is a no-op."""
+        None when the row is not that user's queued desktop delivery: a repeated report, or one
+        racing another, is a no-op."""
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
+            params: dict[str, Any] = {"id": delivery_id, "by": user_id}
             if error is None:
-                m = (await run(_DESKTOP_SENT, {"id": delivery_id})).mappings().first()
+                m = (await run(_DESKTOP_SENT, params)).mappings().first()
             else:
-                params = {"id": delivery_id, "error": error}
-                m = (await run(_DESKTOP_FAILED, params)).mappings().first()
+                m = (await run(_DESKTOP_FAILED, params | {"error": error})).mappings().first()
                 if m is not None:
                     await run(CHANNEL_FAILURE_NOTICE, {
                         "alert_id": m["alert_id"], "user_id": m["user_id"], "title": notice_title,
@@ -270,7 +277,7 @@ class SqlAlchemyAlertDeliveryRepository:
         cursor: str | None = None,
         limit: int = 50,
     ) -> Page[DeliveryRow]:
-        after_ts, after_id = decode_cursor(cursor) if cursor else (None, None)
+        after_ts, after_id = _delivery_cursor(cursor) if cursor else (None, None)
         params: dict[str, Any] = {
             "user": user_id,
             "alert_id": alert_id,
@@ -279,7 +286,7 @@ class SqlAlchemyAlertDeliveryRepository:
             "from_ts": from_ts,
             "to_ts": to_ts,
             "after_ts": after_ts,
-            "after_id": None if after_id is None else int(after_id),
+            "after_id": after_id,
             "limit": limit + 1,
         }
         async with self._relational.unit_of_work() as uow:
@@ -294,6 +301,19 @@ class SqlAlchemyAlertDeliveryRepository:
             row = (await uow.session.execute(stmt, params)).mappings().first()
             await uow.commit()
         return None if row is None else _row(row)
+
+
+def _delivery_cursor(cursor: str) -> tuple[datetime, int]:
+    """The keyset of `list_page`: a forged id that is no bigint is a `ValueError` (the route's
+    400), never a driver error at bind time (SR-E40T04A-04)."""
+    ts, raw = decode_cursor(cursor)
+    try:
+        row_id = int(raw)
+    except ValueError:
+        raise ValueError("invalid cursor") from None
+    if not 0 < row_id <= _INT64_MAX:
+        raise ValueError("invalid cursor")
+    return ts, row_id
 
 
 def _never() -> DeliveryRow:

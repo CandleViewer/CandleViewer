@@ -2325,13 +2325,14 @@ def create_app(
         )
     )
 
-    async def _visible_rules(actor: Actor) -> frozenset[str] | None:
-        mgr = ctx.rules.manager()
+    async def _visible_rules(actor: Actor) -> frozenset[str]:
+        mgr = ctx.rules.manager()  # the rules module stopped: no rule rows, never every rule
         return frozenset() if mgr is None else await mgr.visible_rule_ids(actor)
 
     app.include_router(
         make_notifications_router(
-            lambda: SqlAlchemyNotificationRepository(_alert_pg),
+            # C-2.11: account-bound rows are this process's exchange environment only.
+            lambda: SqlAlchemyNotificationRepository(_alert_pg, env=resolved.environment.value),
             rules_actor.resolve if rules_actor else None,
             _visible_rules,
         )

@@ -8,6 +8,7 @@ batches). The app mounts the deliveries router before the real `/alerts` CRUD ro
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -16,7 +17,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from candleviewer.api.alert_deliveries import make_alert_deliveries_router
+from candleviewer.api.alert_deliveries import DenialBudget, make_alert_deliveries_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary import default_registry
@@ -53,6 +54,7 @@ class FakeDeliveryStore:
         self.owners: dict[str, str] = {ALERT_A: USER_A, ALERT_B: USER_B}
         self.next_id = 100
         self.ack_all_calls: list[int] = []
+        self.desktop_reports: list[tuple[int, str]] = []
         self.clock = T0
 
     def add(self, *, user: str = USER_A, alert: str = ALERT_A, **over: Any) -> DeliveryRow:
@@ -73,6 +75,12 @@ class FakeDeliveryStore:
 
     async def alert_owner(self, alert_id: str) -> str | None:
         return self.owners.get(alert_id)
+
+    async def unacked_count(self, user_id: str) -> int:
+        return sum(
+            r.user_id == user_id and r.status == "sent" and r.acked_at is None
+            for r in self.rows.values()
+        )
 
     async def list_page(
         self,
@@ -127,10 +135,11 @@ class FakeDeliveryStore:
         return [r.id for r in todo]
 
     async def report_desktop(
-        self, delivery_id: int, *, error: str | None, notice_title: str
+        self, delivery_id: int, *, user_id: str, error: str | None, notice_title: str
     ) -> DeliveryRow | None:
+        self.desktop_reports.append((delivery_id, user_id))
         r = self.rows.get(delivery_id)
-        if r is None or r.channel != "desktop" or r.status != "queued":
+        if r is None or r.user_id != user_id or r.channel != "desktop" or r.status != "queued":
             return None
         if error is None:
             new = replace(r, status="sent", sent_at=self.clock, error_message=None)
@@ -145,10 +154,11 @@ class FakeDeliveryStore:
 class Env:
     """Both routers mounted as `create_app()` mounts them; `user`/`perms` switch the caller."""
 
-    def __init__(self, *, wired: bool = True) -> None:
+    def __init__(self, *, wired: bool = True, denials: DenialBudget | None = None) -> None:
         self.store, self.audit, self.metrics = FakeDeliveryStore(), Audit(), Metrics()
         self.changes: list[list[int]] = []
         self.change_fails = False
+        self.change_hangs = False
         self.user: str | None = USER_A
         self.perms = frozenset({"alerts:read", "alerts:write"})
         self.store_up = True
@@ -160,6 +170,8 @@ class Env:
             self.changes.append(list(ids))
             if self.change_fails:
                 raise RuntimeError("topic down")
+            if self.change_hangs:
+                await asyncio.Event().wait()  # never set: only the router's timeout ends it
 
         app = FastAPI()
         app.include_router(
@@ -170,6 +182,7 @@ class Env:
                 metric=self.metrics,
                 now=lambda: T0 + timedelta(hours=1),
                 on_change=on_change,
+                denials=denials,
             )
         )
         app.include_router(

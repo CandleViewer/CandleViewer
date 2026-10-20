@@ -2,7 +2,8 @@
 
 `GET /notifications` filters rule history by it, so a rule's events are visible exactly when
 `GET /rules` lists the rule (#3334's predicate: the Owner reaches every rule, anyone else only
-their own rules while every account any version names is granted).
+their own rules while every account any version names is granted; a deleted rule for no one,
+the Owner included).
 """
 
 from __future__ import annotations
@@ -22,10 +23,12 @@ async def _seed(m: RulesManager, kind: str, owner: Actor) -> str:
     return str((await m.create(ir, owner))["id"])
 
 
-async def test_the_owner_reaches_every_rule() -> None:
+async def test_the_owner_reaches_every_rule_but_a_deleted_one() -> None:
     m, _ = _mgr()
-    await _seed(m, "accountless", MANAGER)
-    assert await m.visible_rule_ids(OWNER) is None
+    theirs = await _seed(m, "accountless", MANAGER)
+    gone = await _seed(m, "fully_granted", OWNER)
+    await m.delete(gone, OWNER)
+    assert await m.visible_rule_ids(OWNER) == {theirs}
 
 
 async def test_a_manager_sees_only_their_own_fully_granted_rules() -> None:
@@ -55,6 +58,6 @@ async def test_it_agrees_with_list_rules_for_every_actor() -> None:
         await _seed(m, kind, MANAGER)
         await _seed(m, kind, OWNER)
     other = Actor("other", "s9", PERMS, frozenset({A1}))
-    for actor in (MANAGER, other):
+    for actor in (MANAGER, other, OWNER):
         listed = {str(i["id"]) for i in (await m.list_rules(actor, limit=100))["items"]}
         assert await m.visible_rule_ids(actor) == listed
