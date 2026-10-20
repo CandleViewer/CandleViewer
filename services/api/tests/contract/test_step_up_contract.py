@@ -87,7 +87,11 @@ def test_step_up_ok_requires_the_token_bundle_that_mfa_verify_returns(
 def test_step_up_ok_sets_the_rotated_cookies_exactly_as_refresh(spec: dict[str, Any]) -> None:
     headers = _ok(spec, "/auth/step-up")["headers"]
     assert set(headers) == {"Set-Cookie"}
-    assert headers == _ok(spec, "/auth/refresh")["headers"]
+    # ADR-0038: refresh also declares the desktop token header, since it issues the token in
+    # code; step-up does not yet, and gains the header in the PR that makes it issue one.
+    refresh = dict(_ok(spec, "/auth/refresh")["headers"])
+    assert refresh.pop("X-CSRF-Token") == {"$ref": "#/components/headers/CsrfTokenIssued"}
+    assert headers == refresh
 
 
 def test_step_up_ok_body_with_rotated_tokens_conforms(spec: dict[str, Any]) -> None:
