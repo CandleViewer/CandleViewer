@@ -11,8 +11,9 @@ not re-implemented), so the numbers agree with E30-D01's and E09-D03's.
 Usage: python3 -I docs/design/_tools/e11_d02_chassis_audit.py   (prints Markdown; exit 1 on a FAIL)
 
 A PASS/FAIL verdict applies the role's bar (text 4.5:1, non-text 3:1, `hc-text` 7:1 per
-`05-accessibility-standard.md` §5 item 6); rows marked `decorative` carry no meaning
-(`16-design-system-brief.md` §6 rule 7) and are reported, never gated. Candidate tokens that do not
+`05-accessibility-standard.md` §5 item 6; every gated row counts, the hc-text rows included); rows marked
+`decorative` carry no meaning (`16-design-system-brief.md` §6 rule 7) and `rejected-*` rows are pairs the spec
+considered and designed around — both are reported, never gated. Candidate tokens that do not
 exist yet (design-system change requests for E11-D05) are prefixed `CR:` and measured on the
 primitive they would alias, never on an invented hex.
 """
@@ -40,7 +41,7 @@ contrast_check = _load(ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 cvd = _load(ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py", "cvd_simulate")
 
 THEMES = ("dark", "light", "high-contrast")
-BAR = {"text": 4.5, "non-text": 3.0, "hc-text": 7.0, "decorative": None, "rejected-text": 4.5, "rejected-non-text": 3.0}
+BAR = {"text": 4.5, "non-text": 3.0, "hc-text": 7.0, "decorative": None, "rejected-text": 4.5, "rejected-non-text": 3.0, "rejected-hc-text": 7.0}
 # `rejected-*` rows are pairs the spec considered and designed around; they are reported with their bar, never gated.
 
 
@@ -66,7 +67,6 @@ PRIM = {k: v for k, v in T["dark"].items() if k.startswith("palette.")}
 # Candidate aliases for the E11-D05 change requests (CR:). Values are existing primitives per theme.
 CR = {
     "CR:color.replay.border": {"dark": "palette.purple.400", "light": "palette.purple.600", "high-contrast": "palette.purple.400"},
-    "CR:color.axis.text (hc override)": {"dark": "color.axis.text", "light": "color.axis.text", "high-contrast": "palette.neutral.800"},
     "CR:color.text.buy": {"dark": "palette.green.300", "light": "palette.light.green.700", "high-contrast": "palette.green.300"},
     "CR:color.text.sell": {"dark": "palette.red.300", "light": "palette.light.red.700", "high-contrast": "palette.red.300"},
 }
@@ -83,10 +83,10 @@ def col(theme: str, token: str) -> str:
 
 # (element, fg token, bg token, role)
 PAIRS: list[tuple[str, str, str, str]] = [
-    ("axis tick labels (CMP-188/189)", "color.axis.text", "color.surface.canvas", "text"),
-    ("axis tick labels, hc AAA target", "color.axis.text", "color.surface.canvas", "hc-text"),
-    ("CR: hc axis labels on neutral.800", "CR:color.axis.text (hc override)", "color.surface.canvas", "hc-text"),
-    ("axis mode tag log / % / inv", "color.text.tertiary", "color.surface.canvas", "text"),
+    ("axis tick labels (CMP-188/189) — adopted: color.text.tertiary (D7, CR-2)", "color.text.tertiary", "color.surface.canvas", "text"),
+    ("axis tick labels, hc AAA target (7:1) — adopted", "color.text.tertiary", "color.surface.canvas", "hc-text"),
+    ("axis tick labels — REJECTED pair (E05 color.axis.text, 5.96:1 in hc)", "color.axis.text", "color.surface.canvas", "rejected-hc-text"),
+    ("axis mode tag log / % / inv; time-strip zone tag (UTC)", "color.text.tertiary", "color.surface.canvas", "text"),
     ("legend label, focused pane label, readout values", "color.text.primary", "color.surface.canvas", "text"),
     ("legend value label, loading text", "color.text.secondary", "color.surface.canvas", "text"),
     ("unfocused pane label, hidden legend item", "color.text.tertiary", "color.surface.canvas", "text"),
@@ -124,16 +124,19 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("env badge DEMO border on pill", "color.env.demo", "color.surface.raised", "non-text"),
     ("env LIVE band on canvas", "color.env.live", "color.surface.canvas", "non-text"),
     ("env DEMO band on canvas", "color.env.demo", "color.surface.canvas", "non-text"),
-    ("cluster active segment text", "color.text.on-action", "color.action.primary.default", "text"),
-    ("cluster active segment fill", "color.action.primary.default", "color.surface.raised", "non-text"),
+    ("cluster pressed `auto` — REJECTED pair (primary-action fill = color.env.demo's hue)", "color.text.on-action", "color.action.primary.default", "rejected-text"),
+    ("cluster pressed `auto` text — adopted (D8)", "color.text.primary", "color.surface.selected", "text"),
+    ("cluster pressed check glyph — the ≥3:1 state carrier (D8)", "color.text.primary", "color.surface.selected", "non-text"),
+    ("cluster pressed border (reinforcement)", "color.border.strong", "color.surface.selected", "decorative"),
+    ("cluster pressed fill vs the raised cluster (reinforcement)", "color.surface.selected", "color.surface.raised", "decorative"),
     ("pane focus accent bar", "color.action.primary.default", "color.surface.canvas", "non-text"),
     ("focus ring core (CMP-039)", "color.focus.ring", "color.surface.canvas", "non-text"),
     ("focus ring on raised chrome", "color.focus.ring", "color.surface.raised", "non-text"),
     ("crosshair line", "color.crosshair", "color.surface.canvas", "non-text"),
     ("crosshair over a major gridline", "color.crosshair", "color.border.default", "non-text"),
     ("crosshair over a minor gridline", "color.crosshair", "color.grid.line", "non-text"),
-    ("session / day boundary line (dashed)", "color.axis.text", "color.surface.canvas", "non-text"),
-    ("maintenance band edge (dashed)", "color.axis.text", "color.surface.canvas", "non-text"),
+    ("session / day boundary line (dashed)", "color.text.tertiary", "color.surface.canvas", "non-text"),
+    ("maintenance band edge (dashed)", "color.text.tertiary", "color.surface.canvas", "non-text"),
     ("maintenance band hatch (texture)", "color.border.strong", "color.surface.canvas", "decorative"),
     ("major gridline (round numbers)", "color.border.default", "color.surface.canvas", "decorative"),
     ("minor gridline", "color.grid.line", "color.surface.canvas", "decorative"),
@@ -173,6 +176,7 @@ CVD_PAIRS: list[tuple[str, str, str]] = [
     ("replay border vs focus ring", "CR:color.replay.border", "color.focus.ring"),
     ("replay border vs env LIVE", "CR:color.replay.border", "color.env.live"),
     ("pane focus accent vs focus ring", "color.action.primary.default", "color.focus.ring"),
+    ("cluster pressed fill (surface.selected) vs env DEMO border", "color.surface.selected", "color.env.demo"),
     ("paused icon vs stale indicator", "color.status.warning.strong", "color.data-confidence.stale.indicator"),
     ("last-price up vs down pill", "color.candle.up", "color.candle.down"),
 ]
@@ -190,13 +194,14 @@ def main() -> int:
         if bar is None:
             verdict = "decorative (not gated)"
         else:
-            bad = [THEMES[i] for i, v in enumerate(vals) if v < bar]
-            if role == "hc-text":
+            if role.endswith("hc-text"):
                 bad = ["high-contrast"] if vals[2] < bar else []
+            else:
+                bad = [THEMES[i] for i, v in enumerate(vals) if v < bar]
             verdict = "PASS" if not bad else "FAIL: " + ", ".join(bad)
             if role.startswith("rejected"):
-                verdict = ("rejected by design — would " + verdict) if bad else "rejected by design (passes; not used)"
-            elif bad and not element.startswith("CR:") and role != "hc-text":
+                verdict = ("rejected by design — would " + verdict) if bad else "rejected by design (passes; not used — see the spec)"
+            elif bad and not element.startswith("CR:"):
                 failed += 1
         print(f"| {element} | `{fg}` | `{bg}` | {role} | {vals[0]:.2f} | {vals[1]:.2f} | {vals[2]:.2f} | {verdict} |")
 
