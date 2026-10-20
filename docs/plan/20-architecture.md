@@ -95,7 +95,7 @@ flowchart TB
     end
 
     subgraph EDGE["Edge"]
-        GW["API / WS Gateway<br/>FastAPI + Starlette<br/>REST v1, WS /ws/v1,<br/>authN/Z, per-conn backpressure,<br/>binary frame encoder"]
+        GW["API / WS Gateway<br/>FastAPI + Starlette<br/>REST v1, WS /api/v1/ws,<br/>authN/Z, per-conn backpressure,<br/>binary frame encoder"]
     end
 
     subgraph CORE["Backend modular monolith — services/api (single process, asyncio)"]
@@ -173,7 +173,7 @@ flowchart TB
 
 | #   | Container                           | Tech                                                                                                                                              | Responsibility                                                                                                                                                                                | Interfaces in                                         | Interfaces out                            | Scaling / state                                            |
 | --- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------- |
-| C1  | Web App                             | React 18, TS 5.x, Vite, Zustand (UI state) + Jotai (per-symbol high-frequency atoms), TanStack Query (REST), Dockview (layouts), Radix + Tailwind | All user-facing screens incl. RBAC-gated admin                                                                                                                                                | User input                                            | REST `/api/v1`, WS `/ws/v1`               | Stateless; per-user workspace persisted server-side        |
+| C1  | Web App                             | React 18, TS 5.x, Vite, Zustand (UI state) + Jotai (per-symbol high-frequency atoms), TanStack Query (REST), Dockview (layouts), Radix + Tailwind | All user-facing screens incl. RBAC-gated admin                                                                                                                                                | User input                                            | REST `/api/v1`, WS `/api/v1/ws`           | Stateless; per-user workspace persisted server-side        |
 | C2  | Chart Engine                        | TypeScript + WebGL2, Worker + OffscreenCanvas                                                                                                     | Candles, footprint, profiles, heatmap, overlays, drawings; hit-testing; gestures                                                                                                              | Typed data feeds from web app                         | Canvas pixels, interaction events         | Per chart instance; memory-budgeted (doc 26)               |
 | C3  | Electron Shell                      | Electron (pinned Chromium), `contextIsolation: true`, `nodeIntegration: false`, strict CSP                                                        | Desktop packaging, GPU flags, window/workspace persistence, OS-keychain bridge for the KEK, auto-update                                                                                       | IPC from renderer (allow-list preload)                | Local FS, OS keychain, updater            | One process tree per user machine                          |
 | C4  | API/WS Gateway                      | FastAPI + Starlette + uvicorn (uvloop), `websockets`                                                                                              | AuthN/Z, validation, subscription management, snapshot+delta fan-out, per-connection backpressure, binary encoding, rate limiting                                                             | HTTP/WS from C1                                       | Bus subscribe, module calls               | Single process v1; splittable per P7                       |
@@ -504,25 +504,29 @@ Determinism: given the same stored data and the same `BarSpec`/engine config, re
 ```mermaid
 flowchart TB
     HTTP["REST routers /api/v1<br/>auth, accounts, symbols, bars,<br/>orders, rules, journal, admin"] --> DEPS["Dependency chain<br/>session -> scope -> rate limit -> validate"]
-    WSIN["WS /ws/v1 (one per browser tab)"] --> HS["Handshake<br/>cookie auth + protocol version + capabilities"]
-    HS --> SUBM["SubscriptionManager<br/>per-connection topic set, scope-checked"]
-    SUBM --> SNAP["SnapshotService<br/>builds initial state per topic"]
-    SUBM --> FEED["FeedMultiplexer<br/>bus -> per-connection outbound"]
-    FEED --> CQ["CoalescingQueue<br/>per topic-class policy"]
-    CQ --> ENC["FrameEncoder<br/>JSON control frames,<br/>binary market-data frames"]
+    WSIN["WS /api/v1/ws (application route /ws)<br/>one socket per origin"] --> HS["Handshake<br/>Origin check, subprotocol,<br/>hello/welcome, first-frame bearer auth"]
+    HS --> SUBM["SubscriptionManager<br/>per-connection subscription set, scope-checked"]
+    SUBM --> SNAP["SnapshotService<br/>builds the snapshot of each topic"]
+    SUBM --> FEED["FeedMultiplexer<br/>owning modules -> per-connection streams"]
+    FEED --> CQ["CoalescingQueue<br/>per topic family (flag on)"]
+    CQ --> ENC["FrameEncoder<br/>MessagePack or JSON by subprotocol,<br/>CVWB binary payloads"]
     ENC --> WSOUT["Client socket"]
     DEPS --> MOD["Module service calls"]
 ```
 
-| Component             | Responsibility                                                                                                                                                                           | Detail                                                     |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `Handshake`           | Cookie session validation, protocol version negotiation, capability exchange (binary support, max cadence, compression)                                                                  | Rejects with a typed close code on version mismatch        |
-| `SubscriptionManager` | Holds the per-connection topic set; every `subscribe` is scope-checked against `ScopeResolver`; aggregates connection demand into upstream demand for `SubscriptionPlanner`              | Max 64 topics per connection (configurable)                |
-| `SnapshotService`     | Produces the initial full state (book top-N, last N bars, footprint window, profile state, heatmap window, open orders/positions) with the sequence number it is consistent with         | Snapshot and following deltas share one `seq` domain       |
-| `FeedMultiplexer`     | Bridges bus topics to connection queues; one bus subscription per topic shared by all connections                                                                                        | Zero re-subscription upstream per client                   |
-| `CoalescingQueue`     | Per topic-class policy (§4.2)                                                                                                                                                            | Bounded; overflow escalates to re-snapshot                 |
-| `FrameEncoder`        | Control frames as JSON; market-data frames as a compact binary layout (little-endian, fixed headers, typed arrays) per `23-ws-protocol.md`; MessagePack for mid-tier structured payloads | Client capability decides; JSON-only fallback always works |
-| `RateLimiter`         | Per-user and per-IP token buckets for REST; per-connection command budget for WS                                                                                                         | 429 with `Retry-After`                                     |
+**As built (E17-T07, #572).** The roles below are the ones this section named, plus a registry and a watchdog that the code has, and each row says which module of `services/api/candleviewer/ws/` plays it. The limits, frames and close codes are `23-ws-protocol.md`'s and are not restated here. The external URL is `/api/v1/ws`; the application mounts the route at `/ws` (23 §2.1). The web client holds one socket per origin through a `SharedWorker`, and one per tab in a browser without one; the gateway caps the sockets of a user (23 §4.3).
+
+| Component             | Responsibility                                                                                                                                                                                                                                                                                                 | Detail                                                                                                                                                                                                                                                                                                                           |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Handshake`           | Checks the upgrade's `Origin` against the allow-list, negotiates the subprotocol (`cv.v1.msgpack`, else `cv.v1.json`), answers `hello` with `welcome` (limits, heartbeat) and authenticates on the bearer token of the first `auth` frame. It reads no cookie and does not read `hello.capabilities` (23 §5.1) | A refused upgrade is answered with HTTP 403 before `accept` (23 §2.2, §2.5). `ws/lifecycle.py`, `ws/gateway.py`                                                                                                                                                                                                                  |
+| `SubscriptionManager` | Holds the per-connection subscription set; every `sub` is checked against the topic registry and E09's scope decision (`auth.scopes`); aggregates connection demand into upstream demand                                                                                                                       | The subscription caps (`max_subscriptions`, `max_topics_per_request`, `max_symbols_per_connection`) are in `welcome.limits` (23 §4.2) and are code constants, not settings. `ws/permissions.py` (`ConnectionAuthz`), `ws/topics.py`, `ws/upstream.py` (`UpstreamRefs`: one upstream lease per key, dropped after a grace period) |
+| `SnapshotService`     | Produces the initial full state of a topic from the snapshot source of its owning module, and again on a gap, a resync or a rebuild; a family whose source has not landed stays `snapshot_pending` (23 §7.7)                                                                                                   | A snapshot and its deltas share the subscription's `s` (23 §7.1). `ws/sequencing.py`; `SnapshotRouter` in `ws_wiring.py`                                                                                                                                                                                                         |
+| `FeedMultiplexer`     | Fans each event an owning module publishes out to every live subscription of its topic that the event is in scope for                                                                                                                                                                                          | `SequencingHub.publish` in `ws/sequencing.py`; the owning modules publish to it (wired in `ws_wiring.py`)                                                                                                                                                                                                                        |
+| `CoalescingQueue`     | Per topic-family policy (§4.2): each paced subscription has its own queue and window, and the connection's outbound budget holds what is queued (23 §8)                                                                                                                                                        | Flag on: bounded, and an overflow escalates to a re-snapshot (23 §8.4). Flag off: a fixed frame bound and no coalescing. `ws/coalescing.py`, `ws/pacing.py`, `ws/outbound.py`, `ws/pipeline.py`                                                                                                                                  |
+| `FrameEncoder`        | Encodes each frame in the encoding of the negotiated subprotocol: MessagePack or JSON. A payload with a binary form travels as a CVWB body (`e: "b"`, or `b64` on JSON), every other as a structured payload; control frames use the same encoding as data frames                                              | The subprotocol decides, not a client capability, and `cv.v1.json` always works (23 §2.2, §3.2, §3.4). `ws/codec.py`, `ws/binary.py`, `ws/outbound.py`                                                                                                                                                                           |
+| `RateLimiter`         | Per-user and per-IP token buckets for REST; per-connection inbound frame budget, per-user connect rate and socket cap for WS                                                                                                                                                                                   | REST: 429 with `Retry-After`. WS: `bye client_rate_limited` and close `4429` with `retry_after_ms` (23 §4.4, §8.5). `ws/lifecycle.py` (`InboundRateLimiter`, `ConnectRateLimiter`), `GatewayHub` in `ws/gateway.py`                                                                                                              |
+| `ConnectionRegistry`  | Holds the live authenticated sockets per user: a role or grant change re-evaluates each socket's subscriptions (`permission_change`, `revoked`), and a revoked session or a disabled user ends the socket with a `bye` and a close (23 §9.5)                                                                   | `ws/permissions.py` (`ConnectionRegistry`), `ws/revocation.py` (`RevocationHub`); producers call `WsEvents` in `ws_wiring.py`                                                                                                                                                                                                    |
+| `Watchdog`            | Owns the deadlines of one connection on injected clocks: the auth window, token expiry, the heartbeat and the unsolicited server `ping` (23 §9.1). The planned-shutdown notice and `bye` belong to the WS runtime (23 §9.4)                                                                                    | `Watchdog` in `ws/lifecycle.py`; `WsRuntime` in `ws_wiring.py`                                                                                                                                                                                                                                                                   |
 
 ---
 
@@ -1128,23 +1132,27 @@ sequenceDiagram
     participant BUS as Bus
     participant CE as Chart Engine (worker)
 
-    U->>GW: WS connect (session cookie) + hello{proto:1, binary:true}
-    GW->>GW: validate session, resolve scope
-    GW-->>U: welcome{proto:1, caps, server_time}
-    U->>GW: subscribe{book.BTCUSDT.200, footprint.BTCUSDT.1m, heatmap.BTCUSDT, trades.BTCUSDT}
-    GW->>GW: scope check per topic
+    U->>GW: WS upgrade (Origin checked, subprotocol cv.v1.msgpack or cv.v1.json negotiated)
+    U->>GW: hello{protocol, clock_ms}
+    GW-->>U: welcome{protocol, limits, heartbeat}
+    U->>GW: auth{access_token} (bearer token in the auth frame after welcome, never in the URL, no cookie)
+    GW->>GW: validate token, resolve roles and account scope
+    GW-->>U: auth_ok{permissions, account_scope, token_expires_at_ms}
+    U->>GW: sub{book.BTCUSDT.200, footprint.BTCUSDT.time.1, heatmap.BTCUSDT, trades.BTCUSDT}
+    GW->>GW: permission and scope check per topic
     GW->>SUB: ensure upstream demand
     alt not yet subscribed upstream
         SUB->>BY: subscribe (batched, <=10 topics)
         BY-->>NB: snapshot + deltas
     end
-    GW->>GW: SnapshotService.build(topic) at seq S
-    GW-->>U: snapshot{topic, seq:S, payload} (binary)
+    GW-->>U: sub_ok{results}
+    GW->>GW: SnapshotService.build(topic) at source seq S
+    GW-->>U: snap{ch, s, payload} (binary)
     NB->>BUS: BookDelta(seq S+1..)
     OF->>BUS: FootprintUpdate, HeatmapColumn
     BUS-->>GW: fan-out
-    GW->>GW: coalesce per topic-class policy
-    GW-->>U: delta{topic, seq, payload} (binary, ~50-100 ms cadence)
+    GW->>GW: coalesce per topic family (flag on)
+    GW-->>U: d{ch, s, payload} (binary, ~50-100 ms cadence)
     U->>CE: postMessage(transferable typed arrays)
     CE->>CE: update GPU buffers, schedule frame
     CE-->>U: rendered frame (target <=16.7 ms)
