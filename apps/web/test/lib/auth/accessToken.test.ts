@@ -1,11 +1,16 @@
 // #2712 (ADR-0020 decisions 1, 3, 5; 23 §4.3): the tab's in-memory access token, its refresh, its bearer
 // rule and the WS client's `TokenSource`. Fake timers and a stubbed `fetch`: no network, no wall clock.
+import { readFileSync, readdirSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
+  ORPHAN_WAIT_MS,
   REFRESH_LOCK,
   REFRESH_PATH,
+  REFRESH_SENT_KEY,
   REFRESH_WAIT_MS,
+  SIBLING_WAIT_MS,
   TOKEN_CHANNEL,
   accessToken,
   createAccessTokenHolder,
@@ -35,19 +40,39 @@ const authOf = (init: unknown): string | null =>
 const flush = async (): Promise<void> => {
   await vi.advanceTimersByTimeAsync(0);
 };
-/** A Web Locks stand-in shared by the tabs of a test: one holder of a name at a time. */
+/** A Web Locks stand-in shared by the tabs of a test: one holder of a name at a time (its task is the last argument). */
 function serialLocks() {
   let tail: Promise<unknown> = Promise.resolve();
   return {
-    request: vi.fn((_name: string, task: () => Promise<unknown>) => {
-      const run = tail.then(task);
+    request: vi.fn((_name: string, ...args: unknown[]) => {
+      const run = tail.then(args.at(-1) as () => Promise<unknown>);
       tail = run.catch(() => undefined);
       return run;
     }),
   };
 }
-/** A lock another tab holds and never lets go of. */
-const heldElsewhere = () => ({ request: () => new Promise<never>(() => undefined) });
+/** A lock another tab holds and never lets go of: a request waits until its signal, if it has one, aborts. */
+const heldElsewhere = () => ({
+  request: (_name: string, ...args: unknown[]) =>
+    new Promise<never>((_resolve, reject) => {
+      const { signal } = (args.length > 1 ? args[0] : {}) as LockOptions;
+      signal?.addEventListener("abort", () => reject(signal.reason));
+      if (signal?.aborted === true) reject(signal.reason);
+    }),
+});
+/** Web Locks where the first holder's tab closes: `close()` lets its lock go, its request still on the wire. */
+function closingTabLocks() {
+  const queued: (() => void)[] = [];
+  let held = false;
+  return {
+    close: () => queued.shift()?.(),
+    request: (_name: string, task: () => Promise<unknown>) => {
+      if (held) return new Promise((resolve) => queued.push(() => resolve(task())));
+      held = true;
+      return task();
+    },
+  };
+}
 /** A same-origin BroadcastChannel stand-in: a post reaches every other open channel of its name, as a task (a 1 ms timer under fake time). */
 function siblingChannels() {
   const open: Channel[] = [];
@@ -102,6 +127,7 @@ beforeEach(() => {
 afterEach(() => {
   holder.clear();
   accessToken.clear();
+  localStorage.removeItem(REFRESH_SENT_KEY); // the mark of a refresh no test answered
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -252,7 +278,7 @@ describe("refresh ahead of expiry, one refresh at a time", () => {
     await vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS);
     await expect(first).resolves.toEqual({ kind: "unavailable" });
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit; // the refresh's own call
-    expect(init.signal).toBeUndefined(); // the spent cookie is never presented again after a lost answer
+    expect(init.signal).toBeUndefined(); // this tab waits for the answer: it never presents the cookie again
     expect(init.keepalive).toBe(true); // a reload or a closed tab still stores the rotated cookie
     const second = holder.getToken(); // the WS client asks again
     await flush();
@@ -293,6 +319,22 @@ describe("refresh ahead of expiry, one refresh at a time", () => {
     expect(new Headers(calls[2]?.[1].headers).get("X-CSRF-Token")).toBe("reissued.mac");
   });
 
+  it.each([
+    ["is refused again", true, 2],
+    ["is not re-issued", false, 1],
+  ])("a refresh whose CSRF cookie %s answers failed", async (_name, reissued, posts) => {
+    let csrf = "stale.mac";
+    vi.spyOn(document, "cookie", "get").mockImplementation(() => `__Host-cv_csrf=${csrf}`);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === REFRESH_PATH) return json(403, { code: "csrf_token_invalid" });
+      if (reissued) csrf = "reissued.mac";
+      return json(200, {});
+    });
+    await expect(holder.refresh()).resolves.toBe("failed");
+    expect(fetchMock.mock.calls.filter(([url]) => url === REFRESH_PATH)).toHaveLength(posts);
+    expect(toSignIn).not.toHaveBeenCalled();
+  });
+
   it("stops waiting for a lock another tab never lets go of: 10 s for a token, or the caller's abort", async () => {
     vi.stubGlobal("navigator", { locks: heldElsewhere() });
     holder.set(bundle(1));
@@ -307,6 +349,20 @@ describe("refresh ahead of expiry, one refresh at a time", () => {
     abort.abort(); // e.g. the bootstrap's own timeout
     await expect(call).rejects.toMatchObject({ name: "AbortError" });
     expect(fetchMock).not.toHaveBeenCalled(); // nothing was presented without the lock
+  });
+
+  it("a call that mints a session stops waiting for that lock too, and is never sent: 10 s, or the caller's abort", async () => {
+    vi.stubGlobal("navigator", { locks: heldElsewhere() });
+    const login = holder.send("/api/v1/auth/login", { method: "POST" }, transport);
+    const timedOut = expect(login).rejects.toMatchObject({ name: "TimeoutError" });
+    await vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS);
+    await timedOut;
+    const abort = new AbortController();
+    const init = { method: "POST", signal: abort.signal };
+    const stepUp = holder.send("/api/v1/auth/step-up", init, transport);
+    abort.abort();
+    await expect(stepUp).rejects.toMatchObject({ name: "AbortError" });
+    expect(transport).not.toHaveBeenCalled();
   });
 });
 
@@ -330,15 +386,23 @@ describe("the WS TokenSource", () => {
     await expect(holder.getToken()).resolves.toMatchObject({ accessToken: tokenOf(2) });
   });
 
-  it("answers locked on 401 session_idle_locked and clears nothing", async () => {
+  it("answers locked on 401 session_idle_locked, clears nothing, and presents the cookie again only after 5 s or the unlock", async () => {
     holder.set(bundle(1));
     holder.invalidate();
-    fetchMock.mockResolvedValueOnce(refused("session_idle_locked"));
+    fetchMock.mockImplementation(async () => refused("session_idle_locked"));
     await expect(holder.getToken()).resolves.toEqual({ kind: "locked" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(holder.getToken()).resolves.toEqual({ kind: "locked" }); // the WS client asks again
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4_000);
+    await expect(holder.getToken()).resolves.toEqual({ kind: "locked" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     await holder.send("/api/v1/x", {}, transport);
     expect(authOf(transport.mock.calls[0]?.[0])).toBe(bearer(1));
     expect(toSignIn).not.toHaveBeenCalled();
-    fetchMock.mockResolvedValueOnce(refreshed(2)); // after the unlock, the same cookie refreshes
+    transport.mockResolvedValueOnce(json(200, {})); // SCR-005 lifts the lock
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    fetchMock.mockImplementation(async () => refreshed(2)); // and the same cookie refreshes
     await expect(holder.getToken()).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(2) });
   });
 });
@@ -599,5 +663,142 @@ describe("one token per origin: a bundle one tab receives, its sibling tabs hold
     const answers = await Promise.all(calls);
     expect(answers.map((res) => res.status)).toEqual([204, 204]);
     expect(fetchMock).toHaveBeenCalledTimes(2); // the page load's, and one renewal
+  });
+
+  it("a logout in one tab is forgotten in the other: no revoked bearer goes out, and nothing is refreshed", async () => {
+    const { api, tabs } = await twoTabs();
+    await tabs[0].send("/api/v1/auth/logout", { method: "POST" }, api);
+    await flush(); // the post reaches the sibling
+    await expect(tabs[1].getToken()).resolves.toEqual({ kind: "unavailable" });
+    await tabs[1].send("/api/v1/x", {}, api);
+    expect(authOf(api.mock.calls.at(-1)?.[0])).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the page load's only
+  });
+
+  it.each<[string, (now: number) => unknown]>([
+    ["no object", () => null],
+    ["a token that is no b64token", (now) => ({ accessToken: "a b", expiresAtMs: now + 1e6 })],
+    ["an expiry that is no number", () => ({ accessToken: tokenOf(9), expiresAtMs: Number.NaN })],
+    ["an expiry already past", (now) => ({ accessToken: tokenOf(9), expiresAtMs: now })],
+    ["the held token, due sooner", (now) => ({ accessToken: tokenOf(1), expiresAtMs: now + 61e3 })],
+  ])(
+    "holds nothing another same-origin context posts that is not a bundle: %s",
+    async (_name, message) => {
+      const Channel = siblingChannels();
+      vi.stubGlobal("BroadcastChannel", Channel);
+      const own = tab();
+      own.set(bundle(1));
+      new Channel(TOKEN_CHANNEL).postMessage(message(Date.now()));
+      await flush();
+      await expect(own.getToken()).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(1) });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("waits 1 s for the bundle of a sibling that rotated and closed, then refreshes once and lets the lock go", async () => {
+    const locks = serialLocks();
+    vi.stubGlobal("navigator", { locks });
+    vi.stubGlobal("BroadcastChannel", siblingChannels());
+    let csrf = "csrf-0";
+    vi.spyOn(document, "cookie", "get").mockImplementation(() => `__Host-cv_csrf=${csrf}`);
+    fetchMock.mockImplementation(async () => refreshed(2));
+    void locks.request(REFRESH_LOCK, () => later(100, () => (csrf = "csrf-1"))); // it posts nothing
+    const token = tab().getToken();
+    await vi.advanceTimersByTimeAsync(100 + SIBLING_WAIT_MS - 1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(token).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(2) });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const third = vi.fn(async () => undefined);
+    await locks.request(REFRESH_LOCK, third);
+    expect(third).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a refresh no tab saw answered: its keepalive request outlives the lock of a closed or reloaded tab", () => {
+  let csrf: string;
+  beforeEach(() => {
+    csrf = "csrf-0";
+    vi.spyOn(document, "cookie", "get").mockImplementation(() => `__Host-cv_csrf=${csrf}`);
+  });
+  /** The CSRF header each `POST /auth/refresh` carried: which session cookie it presented. */
+  const presented = (): (string | null)[] =>
+    (fetchMock.mock.calls as [string, RequestInit][])
+      .filter(([url]) => url === REFRESH_PATH)
+      .map(([, init]) => new Headers(init.headers).get("X-CSRF-Token"));
+  /** A tab sends a refresh and goes: it never sees the answer, whose rotated cookie lands `landsInMs` later. */
+  async function sentThenGone(landsInMs?: number): Promise<void> {
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(() => undefined));
+    void createAccessTokenHolder(vi.fn()).refresh();
+    await flush();
+    if (landsInMs !== undefined) setTimeout(() => (csrf = "csrf-1"), landsInMs);
+    fetchMock.mockImplementation(async () => refreshed(2));
+  }
+
+  it("a reload waits for the cookie that refresh stores, then presents that one, once", async () => {
+    await sentThenGone(300);
+    expect(localStorage.getItem(REFRESH_SENT_KEY)).toBe(String(Date.now())); // a time, never the token
+    const reloaded = holder.refresh(); // the new page's
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(reloaded).resolves.toBe("ok");
+    expect(presented()).toEqual(["csrf-0", "csrf-1"]); // the spent csrf-0 cookie is not presented again
+  });
+
+  it("a tab that waited on the lock for one that closed mid-refresh presents the cookie that refresh stores", async () => {
+    const locks = closingTabLocks();
+    vi.stubGlobal("navigator", { locks });
+    await sentThenGone(50);
+    const waited = holder.refresh();
+    await flush();
+    locks.close(); // the lock goes with the tab; its request does not
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(waited).resolves.toBe("ok");
+    expect(presented()).toEqual(["csrf-0", "csrf-1"]);
+  });
+
+  it.each([
+    ["live, it is presented", 200, "ok", ["csrf-0", "csrf-0"]],
+    ["spent, it is not: no session, and the family lives", 401, "lost", ["csrf-0"]],
+  ])(
+    "a cookie that never changes is first checked with GET /auth/session: %s",
+    async (_name, status, outcome, sent) => {
+      await sentThenGone();
+      fetchMock.mockImplementation(async (url: string) =>
+        url === REFRESH_PATH ? refreshed(2) : json(status, {}),
+      );
+      const reloaded = holder.refresh();
+      await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS);
+      await expect(reloaded).resolves.toBe(outcome);
+      expect(presented()).toEqual(sent);
+      const probes = (fetchMock.mock.calls as [string, RequestInit][]).filter(
+        ([url]) => url !== REFRESH_PATH,
+      );
+      expect(probes.map(([url, init]) => [url, authOf(init)])).toEqual([
+        ["/api/v1/auth/session", null],
+      ]);
+    },
+  );
+
+  it("this tab's own refresh whose answer was lost is checked the same way before the cookie goes again", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("the answer was lost"));
+    await expect(holder.refresh()).resolves.toBe("failed");
+    fetchMock.mockImplementation(async (url: string) =>
+      url === REFRESH_PATH ? refreshed(2) : json(401, {}),
+    );
+    const again = holder.refresh();
+    await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS);
+    await expect(again).resolves.toBe("lost");
+    expect(presented()).toEqual(["csrf-0"]);
+  });
+});
+
+describe("the test setup takes BroadcastChannel away for the token holder alone", () => {
+  it("no other src module uses one, so none runs channel-less in its tests unnoticed (it would stub its own)", () => {
+    const src = resolve(import.meta.dirname, "../../../src");
+    const users = readdirSync(src, { recursive: true, encoding: "utf8" }).filter(
+      (file) =>
+        /\.tsx?$/.test(file) && readFileSync(join(src, file), "utf8").includes("BroadcastChannel"),
+    );
+    expect(users.map((file) => file.split(sep).join("/"))).toEqual(["lib/auth/accessToken.ts"]);
   });
 });

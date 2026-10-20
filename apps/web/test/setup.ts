@@ -7,5 +7,6 @@ afterEach(() => {
 });
 
 // #2712: vitest hands jsdom Node's BroadcastChannel, which would join every token holder of a run, across
-// tests and files. Here the browser has none; a test that shares a token between tabs stubs its own.
+// tests and files. Here the browser has none; a test that shares a token between tabs stubs its own. A
+// guard in accessToken.test.ts fails once another src module uses one: its tests must stub it too.
 Reflect.deleteProperty(globalThis, "BroadcastChannel");
