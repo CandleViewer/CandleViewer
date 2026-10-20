@@ -1,8 +1,10 @@
 # E42-D01 — UX research: how the owner supervises, delegates and investigates in the admin area
 
-- **Ticket:** E42-D01 (issue #830) · **Status:** Draft, rev 5 of 2026-10-16 (the cross-lane review by
-  hcl-worker-2 on #830 and three docs delta reviews applied; the coordinator's recommendations of
-  2026-10-16 03:42Z folded in), every recommendation pending confirmation ·
+- **Ticket:** E42-D01 (issue #830) · **Status:** Draft, rev 6 of 2026-10-20 (refreshed by hcl-worker-2
+  against `main` at `0ab088d7` for the merged view-as contract #3164, the E42 threat model, the merged
+  #2392 and #2658, the closed #965 and the `post-ga` label on #2763 and #2764; rev 5 of 2026-10-16
+  applied the cross-lane review and three docs delta reviews and folded in the coordinator's
+  recommendations of 2026-10-16 03:42Z), every recommendation pending confirmation ·
   **Method:** heuristic evaluation + persona walkthrough against the catalogued screens and the
   contracts (see "Method note"; no live participant sessions were run)
 - **Scope:** the admin area as catalogued, SCR-120..149 (`14-screens-catalogue.md` §10) and the global
@@ -12,11 +14,11 @@
   #732) and profiles research (E28-D01, #820); quantitative usability metrics (the population is one
   owner plus a few managers; this report is qualitative by necessity and says so).
 - **Deliverable form (gap):** this file is markdown only. `docs/design/README.md` requires a UX-research
-  deliverable to be a research board on the ticket's Penpot page, "not a markdown file alone". The
-  Penpot plugin was not connected in the delivering session and is still not connected in this fix
-  round, so the §1 boards cannot be drawn now. hpe-worker-1 asks the owner on #830 (through #2701)
-  either for a waiver recorded on #830, or for the plugin to be connected so the boards follow before
-  approval (Deviations, item 1). The Mermaid diagrams below are additional, never the only deliverable.
+  deliverable to be a research board on the ticket's Penpot page, "not a markdown file alone", and a
+  design PR without the Penpot link and PNG exports is sent back. The §1 boards are not drawn yet; the
+  completion lane (hcl-worker-2, #830, 2026-10-20) draws them and embeds the exports before this PR
+  leaves draft, which supersedes the earlier waiver request (Deviations, item 1). The Mermaid diagrams
+  below are additional, never the only deliverable.
 
 ## Acceptance-criteria trace (E42-D01, issue #830)
 
@@ -24,7 +26,7 @@ Status key: **done** = delivered as the ticket words it; **heuristic-only** = de
 ticket's Agent-delivery adaptation (heuristic evaluation, no participants), so it stays a recommendation
 pending confirmation; **open** = needs live sessions, Penpot, or an owner decision, and is not claimed.
 The ticket stays open until the §10 sessions run (or the owner waives them) and the Penpot boards exist
-(or the owner records a waiver on #830; see Deviations).
+(see Deviations).
 
 | Ticket AC or deliverable                                                                                       | Section                                                                                                                 | Status                           |
 | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
@@ -33,60 +35,68 @@ The ticket stays open until the §10 sessions run (or the owner waives them) and
 | AC3: every listed vocabulary term has a keep (one-line explanation) or replace (replacement) decision          | §6                                                                                                                      | done, pending owner confirmation |
 | AC4: each of the four risk probes has a finding (understood / partially / misunderstood) and the copy change   | §7                                                                                                                      | heuristic-only                   |
 | AC5: report merged and linked from E42-D02 and E42-D03; catalogue amendments filed                             | this file; §12 AM-1..AM-10, each with its owner and filing route in §12.1; links on #831 and #886 are added by the lane | open until merge                 |
-| AC6: CDO (or delegate) review comment recorded                                                                 | the owner's `approved` comment on #830 (Agent-delivery adaptation)                                                      | open                             |
+| AC6: CDO (or delegate) review comment recorded                                                                 | the owner's `approved` on #830, or the orchestrator's under the owner's 2026-10-20 delegation (#2701)                   | open                             |
 | Deliverable: prioritised comprehension-risk list feeding E42-D02 and E42-D03 copy                              | §8                                                                                                                      | heuristic-only                   |
 | Deliverable: verbatim quotes                                                                                   | none exist and none are invented (§2)                                                                                   | open (sessions)                  |
 | Technical note: open-then-closed card sort; teach-back comprehension test                                      | §5 (heuristic run); §10 scenarios 4 and 5                                                                               | heuristic-only; live run open    |
 | Accessibility note: at least one keyboard-only session                                                         | §10, keyboard-only pass on scenario 1                                                                                   | open                             |
 | Security note: sanitised fixtures only; recording retention stated                                             | §10 "Data handling"                                                                                                     | done (rules stated)              |
 | Observability: the list feeds the `empty_state_shown` and `admin.onboarding_abandoned` questions               | §8, "Post-launch signal" column                                                                                         | done                             |
-| Research boards in Penpot (mandatory evidence per `docs/design/README.md`)                                     | §1; Deviations item 1 (waiver or plugin connection requested on #830 through #2701)                                     | open (plugin not connected)      |
+| Research boards in Penpot (mandatory evidence per `docs/design/README.md`)                                     | §1; Deviations item 1 (drawn by the completion lane before this PR leaves draft)                                        | open (boards not drawn yet)      |
 
 ## Deviations
 
 Recorded in one place so the PR can point here (`docs/design/README.md`; C-4.4; C-4.8).
 
 1. **Deliverable form.** This is a markdown report without the Penpot research boards the README
-   requires ("not a markdown file alone"). The plugin bridge was not connected in the delivering
-   session or in this fix round, so the §1 boards cannot be drawn now. hpe-worker-1 asks the owner on
-   #830 (through #2701) for an explicit waiver recorded on #830, or for the plugin to be connected so
-   the boards follow before approval. The §11 checklist is posted on #830 as a ready-to-post block
-   either way.
+   requires ("not a markdown file alone"); a design PR without the Penpot link and the PNG exports is
+   sent back (README, Approval rule), as this one was on 2026-10-20. The plugin bridge was not
+   connected in the delivering session or the rev 2 to 5 fix rounds, and hpe-worker-1 asked the owner
+   on #830 (through #2701) for a waiver or a connection; no waiver was recorded. The completion lane
+   (hcl-worker-2, #830, 2026-10-20) draws the §1 boards and embeds their exports before this PR leaves
+   draft. The §11 checklist is posted on #830.
 2. **Branch name.** The ticket names `design/admin-screens-research`; the branch is
    `design/e42-d01-admin-research`, which carries the epic key in the `<type>/<epic-key>-<slug>` form
    of C-4.4. The deliverable is the same; the PR body names this deviation.
-3. **Size (why one file, not several).** The report is 1013 lines against the 289 and 322 of
-   the two research precedents (`e09-auth-mental-models.md`, `e13-indicator-mental-models.md`),
-   because the ticket covers thirty screens (SCR-120..149) and fourteen stories rather than one
-   screen family. As one new file it counts as 1013 changed LOC, above C-4.8's 400-line preference
-   and its 800-line limit, so the PR needs `large-pr-approved` from a CODEOWNER with a written
-   justification; this item is that justification. It is not split because the ticket names one report
-   as its deliverable; because the acceptance-criteria trace, findings (F-), recommendations (R-),
-   decisions (AD-), amendments (AM-), risks (CR-) and open questions (OQ-) cite each other by id and
-   are meant to be read in one review; and because §10 fixes the convention that session findings are
-   appended here as a dated addendum, never as a new document. The change is documentation only, with
-   no code, generated files or lockfiles.
+3. **Size (why one file, not several).** The report is 1113 lines at rev 6 against the 289 and 322 of
+   the two research precedents (`e09-auth-mental-models.md`, `e13-indicator-mental-models.md`), because
+   the ticket covers thirty screens (SCR-120..149) and fourteen stories rather than one screen family.
+   As one new file it counts as 1113 changed LOC, above C-4.8's 400-line preference and its 800-line
+   limit, so the PR needs `large-pr-approved` with a written justification (granted by the orchestrator
+   on 2026-10-19 at 1013 lines); this item is that justification. It is not split because the ticket
+   names one report as its deliverable; because the acceptance-criteria trace, findings (F-),
+   recommendations (R-), decisions (AD-), amendments (AM-), risks (CR-) and open questions (OQ-) cite
+   each other by id and are meant to be read in one review; and because §10 fixes the convention that
+   session findings are appended here as a dated addendum, never as a new document. The change is
+   documentation only, with no code, generated files or lockfiles.
 4. **Method.** Moderated sessions are replaced by a heuristic evaluation and a persona walkthrough
    under the ticket's Agent-delivery adaptation (§2); every finding so produced is labelled
    `(heuristic)` and stays a recommendation pending confirmation.
 
 ## 1. Research boards (Penpot) — pending
 
-No Penpot page exists for this ticket yet; the plugin bridge was not connected in the delivering session.
-When it is, the following boards are drawn on page `E42-D01 Admin UX research` of the CandleViewer file
-and exported with `docs/design/_tools/penpot_export.py` into `docs/design/E42/img/`:
+No Penpot page exists for this ticket yet. The completion lane draws the boards below on page
+`E42-D01 Admin UX research` of the CandleViewer file, every board named with the `E42-D01/` prefix and
+built only from this report, and exports them with `docs/design/_tools/penpot_export.py` into
+`docs/design/E42/img/`:
 
-1. **Journey map, three lanes** (supervise, delegate, investigate) against the catalogued screens, with
-   the gates (SCR-149 unlock, SCR-006 step-up) and the audit emissions marked, from §4.0.
-2. **Card sort board**: the 26 information cards of §5.1, the open-sort bands of §5.2, and the closed
-   sort against the catalogue's grouping of §5.3.
-3. **Findings matrix**: F-S1..F-I6 against the heuristic set of §2, with the recommendation each feeds.
-4. **Vocabulary board**: the §6 decisions as term → in-product line pairs, for the teach-back test.
+1. **Cover and method** (`00`): the §2 method, its honest limits and the confidence key.
+2. **Roles and modes** (`01`): P1 with the P4 hat (P4-R, P4-E) and P2, against the three modes of §3.
+3. **Journeys** (`02` to `04`): supervise, delegate and investigate as flow frames from §4.0, with the
+   step-up gates (D8 retires the SCR-149 unlock), the audit emissions and the findings pinned where
+   they occur.
+4. **Findings cards** (`05`): F-S1..F-I6 with heuristic, recommendation and confidence.
+5. **Card sort** (`06`): the 26 cards of §5.1, the open-sort bands of §5.2 and the §5.4 reconciliation.
+6. **Annotated wireframes** (`07` to `12`): SCR-120 (§5), the freeze confirm (R-S1, R-S2), remove
+   access with open positions (R-P3), disable and delete (R-P1, R-P2), restore (R-P4) and view as (§6).
+7. **Vocabulary** (`13`) and **comprehension risks** (`14`): §6 and §8.
+8. **Comparison matrices** (`15` to `17`): OQ-13 Option A against B, the OQ-1 engage confirmation, and
+   the view-as kill-switch options of OQ-4.
+9. **Open questions with deciders** (`18`) and **amendments with owners** (`19`): §13 and §12.1.
 
 Until those exist this report is incomplete as a design deliverable (README: "not a markdown file
-alone"); the AC table and Deviations above say so, and the waiver or plugin connection is requested on
-#830 through #2701. When the boards are drawn they are added as a dated addendum with their PNG exports
-embedded, and the AC row is updated.
+alone"); the AC table and Deviations above say so. When the boards are drawn they are added as a dated
+addendum with their PNG exports embedded and the Penpot page link, and the AC row is updated.
 
 ## 2. Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
@@ -130,11 +140,22 @@ the strength of the basis, not a measurement: **High** = stated in a locked plan
 report under `docs/design/research/`, so there is nothing to "read rather than repeat". Where keys and
 profiles touch the admin modes, this report cites the E27 and E28 threat models
 (`docs/security/threat-models/E27-accounts.md`, `E28-profiles-trade-groups.md`) and defers the rest to
-those tickets. The E42 STRIDE model (E42-X01) is not written either; the security constraints below come
-from `04-security-program.md` (SR rows), `docs/security/threat-models/e09-auth-rbac.md`, the user-lifecycle
-appendix `docs/security/threat-models/e42-user-lifecycle.md` (probe 2 only) and the admin
-read-model decisions recorded on #963 (partial results, the kill switch never defaulted, the sub-account
-tier reported as `unrecorded` only when the store answered "no row").
+those tickets.
+
+**The E42 threat model.** Since rev 5 the E42 STRIDE model has been written and approved:
+`docs/security/threat-models/e42-admin.md` (E42-X01, #890, Approved 2026-10-18; summarised as Area 14 in
+`04-security-program.md` §5.15). It absorbs the user-lifecycle annex `e42-user-lifecycle.md`, whose ids
+still resolve. The rows that bear on this report: AD-F03 with AD-I05, AD-E04, SR-E42-03 and decision D6
+(view-as, §6 and AM-5); AD-F06 and D8 (SCR-149's 15-minute window against per-action step-up, F-D5);
+AD-F12 (no actor role or type on audit rows, F-I1); AD-F14 (the chain is unkeyed and its anchors are
+not built, a residual accepted until #1238 as RR-17, which the "Tamper check" copy of §6 respects);
+AD-F17 (the admin audit vocabulary, F-I2); and AD-F02 with D7 (a restore and the security state, probe
+4). On 2026-10-20 the orchestrator recorded RR-17, D7 and D8 on #890 under the owner's delegation of
+that day, reversibly: D7 is #3084's Option 3 and D8 keeps per-action step-up. Its D5 re-triages the
+view-as and SCR-149 rows when E42-D02's wireframes land. The other security constraints come from
+`04-security-program.md` (SR rows), `docs/security/threat-models/e09-auth-rbac.md` and the admin
+read-model decisions recorded on #963 (partial results, the kill switch never defaulted, the
+sub-account tier reported as `unrecorded` only when the store answered "no row").
 
 ## 3. What the three modes have in common (and why one IA will not do)
 
@@ -183,7 +204,8 @@ flowchart LR
 Every lane starts with a signal the owner did not choose, passes at least one server-side gate the UI
 cannot fake (SR-025 step-up, SCR-149 unlock, RBAC 403 + audit) and ends with a record the owner can read
 back (T10). The findings below are where the catalogued screens make that walk slower, more ambiguous or
-less honest than the stories demand.
+less honest than the stories demand. Since D8 was recorded (2026-10-20, #890), per-action step-up stays
+the model, so the SCR-149 unlock drawn above and named in §4.1 is amended away; the step-ups remain.
 
 ### 4.1 Supervise — "a manager's account is approaching its daily loss cap; what do you do?"
 
@@ -204,7 +226,7 @@ owner-override path with a typed reason, SCR-071).
 | F-S2 | The freeze dialog's option defaults disagree with the contract. SCR-072: "also cancel working orders" and "also flatten positions" are checkboxes "both default off"; `SetKillSwitchRequest` defaults `cancel_open_orders: true`, `flatten_positions: false`, `disarm_rules: true`. A dialog that shows "off" while the server defaults "on" changes the blast radius silently; `disarm_rules` is not drawn at all.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | H4, H1, H5       | R-S2 | High (SCR-072 text vs `22-api-openapi.yaml`)                                                                                                                                                      |
 | F-S3 | The supervise path has no registered hotkey; the shell control itself is specified. P4-E wants a Safety control "reachable from every screen (rail footer + global hotkey)"; CMP-211 PanicButtons is "always-reachable ... in the top bar and system tray" and SCR-010's component list includes it, so the control is placed. The gap is keymap registration: neither `apps/web/src/keymap/keymap.json` (the single source of the default keymap; `docs/generated/default-keymap.md` is generated from it) nor `05-accessibility-standard.md` §3.2 has a kill-switch, freeze or view-as-exit binding, and SCR-010's hotkey line names none (§3.2 puts Flatten all on `Ctrl+Shift+F`; none of the three carries `Ctrl+Shift+K`, which `04-security-program.md` §9.1 and `17-ux-diagrams.md` already name for the kill switch). SCR-124 requires "a single documented hotkey" for Exit view-as without naming one. | H7, A-O, T11     | R-S3 | Med (an absence in the keymap sources, a registration omission rather than a stated conflict; the control is catalogued in SCR-010); the key is already documented and awaits registration (OQ-7) |
 | F-S4 | "Approaching the cap" is a tightening decision, but the tightening control is three gates from the signal. SCR-071 carries the signal; the override is on SCR-122 behind the SCR-149 unlock and a `risk_caps` step-up; nothing on SCR-071 links to it. The gates are mandatory (SR-025); the walk is not.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | H7, H3           | R-S4 | Med (catalogue has no link; the gates are plan text)                                                                                                                                              |
-| F-S5 | Freshness and partial results are the supervise tiles' honesty problem. US-ADMIN-004: "every figure carries a freshness timestamp"; `AdminOverview` slices carry `status: ok, error, unavailable` and `generated_at`; #963: the kill switch is never defaulted to `false` when unread, and open positions have no provider yet (`unavailable`). A slice rendered as `0 open positions`, or an empty tile, reads as "all good".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | T5, H1           | R-S5 | High (contract plus the #963 decision record)                                                                                                                                                     |
+| F-S5 | Freshness and partial results are the supervise tiles' honesty problem. US-ADMIN-004: "every figure carries a freshness timestamp"; `AdminOverview` slices carry `status: ok, error, unavailable` and `generated_at`; #963: the kill switch is never defaulted to `false` when unread, and the overview's `trading` and `recorder` slices answer `unavailable` until their providers are wired (#963 QA, 2026-10-20). A slice rendered as `0 open positions`, or an empty tile, reads as "all good".                                                                                                                                                                                                                                                                                                                                                                                                              | T5, H1           | R-S5 | High (contract plus the #963 decision record)                                                                                                                                                     |
 | F-S6 | The owner is told to freeze from the manager's row, but the per-manager row is on SCR-071 and the per-user actions are on SCR-121/122; a freeze is `risk.freeze` on an account scope, a disable is `users.disable` on a person. The two look alike in a menu and differ completely in effect (freeze touches no persisted configuration and unfreeze restores exactly the prior state, P4-E scenario 7; disable revokes sessions and grants).                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | H2, H5           | R-S6 | Med (persona text plus the two screens' menus)                                                                                                                                                    |
 
 **Recommendations (supervise).**
@@ -225,22 +247,24 @@ owner-override path with a typed reason, SCR-071).
   register `Ctrl+Shift+K` for the kill-switch confirm (`04-security-program.md` §9.1
   and `17-ux-diagrams.md` already name it; `apps/web/src/keymap/keymap.json`,
   `05-accessibility-standard.md` §3.2 and `docs/generated/default-keymap.md` do not carry it), a freeze
-  binding and, only if view-as survives OQ-4, the Exit view-as key; all of them added to `keymap.json`, the single source
-  that the default-keymap document is generated from, and to the §3.2 default map under the §3.3
-  conflict rules (a trading-critical binding keeps its modifier). `scripts/keymap_lint.py` checks
-  `keymap.json` against the `Interactions/hotkeys` lines of the catalogue: SCR-010's line names no
-  kill-switch or freeze key, and SCR-124 has no such line, only the a11y requirement of "a single
-  documented hotkey", so both are updated in the same change and the lint passes before D02 asserts any
-  key (OQ-7). D02 draws the controls, not the keys, until registered.
+  binding and the Exit view-as key (SCR-124, contracted since #3164); all of them added to
+  `keymap.json`, the single source that the default-keymap document is generated from, and to the §3.2
+  default map under the §3.3 conflict rules (a trading-critical binding keeps its modifier).
+  `scripts/keymap_lint.py` checks `keymap.json` against the `Interactions/hotkeys` lines of the
+  catalogue: SCR-010's line names no kill-switch or freeze key, and SCR-124 has no such line, only the
+  a11y requirement of "a single documented hotkey", so both are updated in the same change and the lint
+  passes before D02 asserts any key (OQ-7). D02 draws the controls, not the keys, until registered.
 - **R-S4 — one link from the signal to the fix.** SCR-071's row menu gets "Tighten limits" deep-linking
-  to SCR-122's caps section; the SCR-149 gate appears as an overlay with the destination preserved
+  to SCR-122's caps section; the gate (under D8, the `risk_caps` step-up) appears as an overlay with the
+  destination preserved
   (SCR-149 checklist already requires the expiry-during-edit case); the resulting notice is the one
   E42-D03 scopes: "No positions will be closed. New entries are blocked; reduce-only actions remain
   available."
 - **R-S5 — a tile never shows a number it did not receive.** One degraded/stale treatment (the E42-D02
   cross-screen pattern): "unavailable" or "error" in words, the slice's `generated_at` as "as of
-  HH:MM:SS", and `kill_switch_engaged` rendered "unknown" whenever the trading slice is not `ok`. This is
-  the on-screen form of #963's "never defaulted".
+  HH:MM:SS", and `kill_switch_engaged` rendered "unknown" whenever the slice omits it (a degraded slice
+  still carries the value it read; unread fields are omitted, and today the whole slice is `unavailable`
+  until its provider is wired, #963). This is the on-screen form of #963's "never defaulted".
 - **R-S6 — Freeze and Disable are never neighbours in one menu.** Freeze lives with the risk controls
   (SCR-071, CMP-211) and says "touches no settings; undo restores exactly"; Disable lives in user
   administration (SCR-121/122) and lists its cascade (§7, probe 1).
@@ -257,15 +281,15 @@ and a bound profile on SCR-130/131 ("unbound accounts ... cannot trade until bou
 wraps all of this in a resumable wizard. The manager's test of success is P2 G3: limits visible before the
 first submit.
 
-| #    | Finding `(heuristic)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Heuristic   | Rec  | Confidence (basis)                                                      |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ---- | ----------------------------------------------------------------------- |
-| F-D1 | The invite screen offers a role the contract forbids. SCR-123 lists "username, role, initial account assignments" and validates "role manager requires at least one account assignment"; `CreateUserRequest` allows only `viewer` and the owner promotes after activation. The delegate flow is therefore two deliberate steps, and the catalogue hides the second.                                                                                                                                                                                                                                     | H4, H5, H1  | R-D1 | High (SCR-123 vs `22-api-openapi.yaml`, SR-027)                         |
-| F-D2 | Unbinding is drawn as unticking a checkbox and pressing Save, but the story demands a forced choice and the contract has no field for it. SCR-122's mock is `[x] sub_001 trade [x] live [x]`; US-ADMIN-002 says "unbinding requires an explicit choice: leave positions (owner takes over) or flatten first"; `PUT /users/{userId}/account-access` takes `grants[]` only. The E27 model already has the pattern for keys and accounts (KV-D03 and SR-E27-07: `leave_positions` or `flatten_first`, otherwise 409 with the consequence summary). E42-D03 scopes the dialog; nothing scopes the contract. | H5, T4, T11 | R-D2 | High (story, contract and SR-E27-07 text)                               |
-| F-D3 | Disable sits next to Delete with synonyms and no consequences. SCR-121: "deactivate, delete; bulk deactivate"; SCR-122: "Deactivate", "suspend"; the API and US-ADMIN-001 say "disable" (`status=disabled`; `DELETE /users/{id}` is "Disable a user (soft delete)"); SR-029 adds a positions decision ("flatten or leave their positions with a recorded decision") that no screen mentions.                                                                                                                                                                                                            | H2, H5, H6  | R-D3 | High (four documents, three verbs)                                      |
-| F-D4 | The capacity line can state a tier the system does not know. SCR-121 draws "3 of 5 used (20 with Business KYC)" and "Bybit allows 5 sub-accounts on your tier — you've used 5"; `SubaccountCapacity` returns `tier: null, cap: null` while `tier_source: unrecorded`, and omits `tier_source` when the store is unavailable (#963). US-ADMIN-014 NFR: "the tier is an explicit recorded fact, never inferred".                                                                                                                                                                                          | T5, H1      | R-D4 | High (contract plus #963)                                               |
-| F-D5 | Two gates, three durations, one word. The admin unlock (SCR-149: password + TOTP, 15 min, `auth.session_unlocked`) and the per-action step-up (`/auth/step-up`: password + TOTP, 5-minute grace per class, none for `live_enablement`, `killswitch` and `backups`) are different mechanisms; `12-sitemap.md` §4 still says 30 minutes and "TOTP code (not password)". The delegate flow meets both gates in one sitting (enter admin, change role, change caps).                                                                                                                                        | H4, H1, H6  | R-D5 | High for the inconsistency (three documents); the wording is a proposal |
-| F-D6 | "Cannot trade until a profile is bound" is a delegation precondition on a different screen from the delegation. SCR-130 flags unbound accounts; SCR-122's account row shows the bound profile name but has no "no profile" state; SCR-120's mock carries "1 account without risk caps (!)" that its checklist does not list. P4 pain: "fat-fingered admin action ... deleting a profile in use".                                                                                                                                                                                                        | H1, H5      | R-D6 | Med (inferred from SCR-130 and SCR-122 text)                            |
-| F-D7 | The 48 h key restriction is a wait the owner cannot shorten, so the flow must say _when_. US-ADMIN-013: "blocked with the exact unlock time and the rest of the flow continues"; SCR-122: granting live inside the window "shows a warning with the exact unlock time". Honoured in the plan; listed so D02 draws the absolute time and "Demo works meanwhile" (P2 scenario 1) rather than a generic warning.                                                                                                                                                                                           | H1, H9      | R-D7 | High (plan text; a check for D02, not a defect)                         |
+| #    | Finding `(heuristic)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Heuristic   | Rec  | Confidence (basis)                                                      |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ---- | ----------------------------------------------------------------------- |
+| F-D1 | The invite screen offers a role the contract forbids. SCR-123 lists "username, role, initial account assignments" and validates "role manager requires at least one account assignment"; `CreateUserRequest` allows only `viewer` and the owner promotes after activation. The delegate flow is therefore two deliberate steps, and the catalogue hides the second.                                                                                                                                                                                                                                                                                                                                                                     | H4, H5, H1  | R-D1 | High (SCR-123 vs `22-api-openapi.yaml`, SR-027)                         |
+| F-D2 | Unbinding is drawn as unticking a checkbox and pressing Save, but the story demands a forced choice and the contract has no field for it. SCR-122's mock is `[x] sub_001 trade [x] live [x]`; US-ADMIN-002 says "unbinding requires an explicit choice: leave positions (owner takes over) or flatten first"; `PUT /users/{userId}/account-access` (served since #3267) takes `grants[]` plus `acknowledge_unknown_positions`, demanded only while the open-position state is unavailable, and no choice. The E27 model already has the pattern for keys and accounts (KV-D03 and SR-E27-07: `leave_positions` or `flatten_first`, otherwise 409 with the consequence summary). E42-D03 scopes the dialog; nothing scopes the contract. | H5, T4, T11 | R-D2 | High (story, contract and SR-E27-07 text)                               |
+| F-D3 | Disable sits next to Delete with synonyms and no consequences. SCR-121: "deactivate, delete; bulk deactivate"; SCR-122: "Deactivate", "suspend"; the API and US-ADMIN-001 say "disable" (`status=disabled`; `DELETE /users/{id}` is "Disable a user (soft delete)"); SR-029 adds a positions decision ("flatten or leave their positions with a recorded decision") that no screen mentions.                                                                                                                                                                                                                                                                                                                                            | H2, H5, H6  | R-D3 | High (four documents, three verbs)                                      |
+| F-D4 | The capacity line can state a tier the system does not know. SCR-121 draws "3 of 5 used (20 with Business KYC)" and "Bybit allows 5 sub-accounts on your tier — you've used 5"; `SubaccountCapacity` returns `tier: null, cap: null` while `tier_source: unrecorded`, and omits `tier_source` when the store is unavailable (#963). US-ADMIN-014 NFR: "the tier is an explicit recorded fact, never inferred".                                                                                                                                                                                                                                                                                                                          | T5, H1      | R-D4 | High (contract plus #963)                                               |
+| F-D5 | Two gates, three durations, one word. The admin unlock (SCR-149: password + TOTP, 15 min, `auth.session_unlocked`) and the per-action step-up (`/auth/step-up`: password + TOTP, 5-minute grace per class, none for `live_enablement`, `killswitch` and `backups`) are different mechanisms; `12-sitemap.md` §4 still says 30 minutes and "TOTP code (not password)". The delegate flow meets both gates in one sitting (enter admin, change role, change caps). The E42 threat model found the 15-minute window unenforced on the server (AD-F06); its D8, recorded on #890 on 2026-10-20 under the owner's delegation, keeps per-action step-up only, so SCR-149's window is amended away.                                            | H4, H1, H6  | R-D5 | High for the inconsistency (three documents); the wording is a proposal |
+| F-D6 | "Cannot trade until a profile is bound" is a delegation precondition on a different screen from the delegation. SCR-130 flags unbound accounts; SCR-122's account row shows the bound profile name but has no "no profile" state; SCR-120's mock carries "1 account without risk caps (!)" that its checklist does not list. P4 pain: "fat-fingered admin action ... deleting a profile in use".                                                                                                                                                                                                                                                                                                                                        | H1, H5      | R-D6 | Med (inferred from SCR-130 and SCR-122 text)                            |
+| F-D7 | The 48 h key restriction is a wait the owner cannot shorten, so the flow must say _when_. US-ADMIN-013: "blocked with the exact unlock time and the rest of the flow continues"; SCR-122: granting live inside the window "shows a warning with the exact unlock time". Honoured in the plan; listed so D02 draws the absolute time and "Demo works meanwhile" (P2 scenario 1) rather than a generic warning.                                                                                                                                                                                                                                                                                                                           | H1, H9      | R-D7 | High (plan text; a check for D02, not a defect)                         |
 
 **Recommendations (delegate).**
 
@@ -274,14 +298,15 @@ first submit.
   with revoke and re-issue. **AM-4** (SCR-123 part).
 - **R-D2 — unbind with positions is a consequence-first dialog; what the contract carries is OQ-13.**
   Unticking an account that has open positions, working orders or running algos opens a dialog with
-  exactly two named choices (§7, probe 3) and `Esc` meaning "cancel, nothing changed". Today O2 (#965),
-  the open #2658 and #2648 say unbind never flattens or cancels: `PUT /users/{userId}/account-access`
-  takes only `acknowledge_unknown_positions`, and only while the open-position count is unavailable.
-  An explicit `leave_positions` or `flatten_first` choice on that route (409 with the consequence
-  summary, the SR-E27-07 shape) would overturn O2 and needs the admin → OMS module edge named in an ADR
-  (C-3.4); the coordinator's placement of that contract with E42-T04 (#965; the endpoint is admin's and
-  E28 only consumes it; RelayRoom SYNC-4 of 2026-10-16 03:42Z; #2701, #965 and #2658 do not carry this
-  placement) presupposes it.
+  exactly two named choices (§7, probe 3) and `Esc` meaning "cancel, nothing changed". O2 (#965) is
+  built: the merged #2658 contract and the served `setUserAccountAccess` (#3267) never flatten or cancel,
+  and #2648 keeps flattening out of scope; the route takes only `acknowledge_unknown_positions`, and only
+  while the open-position count is unavailable. An explicit `leave_positions` or `flatten_first` choice
+  on that route (409 with the consequence summary, the SR-E27-07 shape) would overturn O2 in served code
+  and needs the admin → OMS module edge named in an ADR (C-3.4); the coordinator's placement of that
+  contract with E42-T04 (the endpoint is admin's and E28 only consumes it; RelayRoom SYNC-4 of
+  2026-10-16 03:42Z) presupposes it, and E42-T04 closed on 2026-10-18 without it (#965, #2658 and #2701
+  never carried the placement).
   Keeping O2 needs neither. The owner decides (**OQ-13**); this report recommends keeping O2.
   Interface-first (C-6.1) before E42-D03 draws either as built. **AM-3**, **OQ-2**, **OQ-13**.
 - **R-D3 — one verb per lifecycle action.** "Disable" (reversible, lists the cascade), "Delete (keeps
@@ -291,11 +316,13 @@ first submit.
   tier, recorded 2026-09-12 [change]"; unrecorded: "3 sub-accounts in use · Tier not recorded — record it
   to see your cap"; unavailable: "3 in use · cap unavailable right now". The at-capacity copy explains the
   Business KYC path and the isolation trade-off of sharing a sub-account (US-ADMIN-014). **AM-4**.
-- **R-D5 — two verbs, two countdowns.** The area gate is "Unlock admin" and shows "Admin unlocked · 12:40
-  left" in CMP-087's chrome (the catalogue already requires the indicator); the action gate is "Confirm it's
-  you" and, inside a grace window, reuses E09-D02 §9's "Still trusted for this action · 02:14 remaining".
-  Neither "re-authentication" nor "step-up" appears in product copy (§6). `12-sitemap.md` §4 is amended
-  to 15 minutes and password + TOTP (related amendment, §12).
+- **R-D5 — one gate, named for what the owner does.** D8 (recorded on #890 on 2026-10-20 under the
+  owner's delegation) keeps per-action step-up only, so there is no area gate: the action gate is
+  "Confirm it's you" and, inside a grace window, reuses E09-D02 §9's "Still trusted for this action ·
+  02:14 remaining". Neither "re-authentication" nor "step-up" appears in product copy (§6). SCR-149, the
+  catalogue's §10 preamble and `12-sitemap.md` §4 are amended to the per-action model (related
+  amendments, §12). Only if the owner revokes D8 does an area gate return, as "Unlock admin" with "Admin
+  unlocked · 12:40 left" in CMP-087's chrome, the rev 5 proposal (OQ-6).
 - **R-D6 — the precondition is shown where the grant is made.** SCR-122's account row gets a state "No
   risk profile — alex can't trade this account until one is bound [Create profile]", and SCR-120 carries
   the count (§5).
@@ -314,37 +341,38 @@ step-up action (SR-025) producing signed NDJSON (`/admin/audit/export`), audited
 
 | #    | Finding `(heuristic)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Heuristic   | Rec  | Confidence (basis)                                                   |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ---- | -------------------------------------------------------------------- |
-| F-I1 | "Under what permissions" is not answerable from the record as contracted. SR-062 requires `role_at_time`; SCR-136 lists "role at the time"; CMP-173's `AuditEntry` has `role`; but neither the OpenAPI `AuditEntry` nor the `audit_log` DDL (`21-database-schema.md` §3.10.1) has a dedicated role or `actor_type` column or field: the DDL is structured (`actor_user_id`, `actor_label`, `object_kind`/`object_id`/`object_label`, `before_state`/`after_state`, `reason`). The jsonb `before_state`/`after_state` and the OpenAPI entry's free-form `detail` object can carry extra keys (the secrets sink already writes `actor_role` into `after_state`, `admin/wiring.py:78`), but that is one writer's convention, not a contract field a screen or filter can rely on. The current role is not the role at the time (US-ADMIN-001 role changes are audited precisely because they move). | H1, T10     | R-I1 | High (`22-api-openapi.yaml` and §3.10.1 vs SR-062, SCR-136, CMP-173) |
-| F-I2 | The action vocabulary differs between documents, which breaks the "filter by action" step. SCR-135's mock: `order.submitted`, `account.key_rotated`, `risk.lockout_triggered`; the typed registry `audit/actions.py` (seeded from §3.10.1's must-audit list, which is labelled non-exhaustive): `orders.submit`, `api_key.rotate`, `risk.freeze_manager`, `users.disable`; the `/admin/audit` example: `order.place`, `key.rotate`, `killswitch.engage`; SCR-121: `user.deactivated`. None of the catalogue or OpenAPI names listed here is registered; a filter built from any one list misses rows written under another.                                                                                                                                                                                                                                                                      | H4, H6      | R-I2 | High (four lists, no two equal)                                      |
+| F-I1 | "Under what permissions" is not answerable from the record as contracted. SR-062 requires `role_at_time`; SCR-136 lists "role at the time"; CMP-173's `AuditEntry` has `role`; but neither the OpenAPI `AuditEntry` nor the `audit_log` DDL (`21-database-schema.md` §3.10.1) has a dedicated role or `actor_type` column or field: the DDL is structured (`actor_user_id`, `actor_label`, `object_kind`/`object_id`/`object_label`, `before_state`/`after_state`, `reason`). The jsonb `before_state`/`after_state` and the OpenAPI entry's free-form `detail` object can hold extra keys (the secrets sink already writes `actor_role` into `after_state`, `admin/wiring.py:104`), but that is one writer's convention, not a contract field a screen or filter can rely on. The current role is not the role at the time (US-ADMIN-001 role changes are audited precisely because they move). | H1, T10     | R-I1 | High (`22-api-openapi.yaml` and §3.10.1 vs SR-062, SCR-136, CMP-173) |
+| F-I2 | The action vocabulary differs between documents, which breaks the "filter by action" step. SCR-135's mock: `order.submitted`, `account.key_rotated`, `risk.lockout_triggered`; the typed registry `audit/actions.py` (seeded from §3.10.1's must-audit list, which is labelled non-exhaustive): `orders.submit`, `api_key.rotate`, `risk.freeze_manager`, `users.disable`; SCR-121: `user.deactivated`. None of the catalogue names listed here is registered; a filter built from any one list misses rows written under another. The `/admin/audit` filter's example (`order.place`, `key.rotate`, `killswitch.engage` at rev 5) now names registered codes (#2392).                                                                                                                                                                                                                           | H4, H6      | R-I2 | High (three lists, no two equal)                                     |
 | F-I3 | The integrity failure must not look like a UI error, and the landing page does not carry it. SCR-135 specifies the critical banner ("this is a security incident, not a UI error"); the nightly verifier raises a `critical` system event (§3.10.1); SCR-120's tile checklist has no audit or integrity item.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | H1, H9, T10 | R-I3 | High (SCR-135 and §3.10.1 text; SCR-120 checklist)                   |
 | F-I4 | Jumping from a row to the thing it changed is the investigate accelerator and exists only as prose. SCR-135: "jump from any audit row to the related order, rule or user"; SCR-136: "linked artefacts"; the record carries `subject_type` and `subject_id`. Deleted or anonymised subjects have no live object to jump to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | H7, H6      | R-I4 | Med (prose requirement; the route map is a proposal)                 |
 | F-I5 | The manager's and viewer's view of the same question is deliberately smaller and must say so. US-ADMIN-009: a manager sees only entries describing their own actions, enforced server-side; SR-067: role-scoped projections, raw payloads owner-only; SCR-154 distinguishes "you lack the role" from "this account is not assigned to you".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | H1, H9      | R-I5 | High (plan text)                                                     |
-| F-I6 | Export is a step-up, signed, audited action drawn as a toolbar button, and the format drifts. SCR-135 shows `[csv]` and "export CSV/JSON"; the contract exports signed NDJSON with a detached signature (`/admin/audit/export`, permission `audit:export`); SR-025 and SR-067 require step-up for export.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | H1, H4, A-O | R-I6 | High (SCR-135 vs the contract and SR rows)                           |
+| F-I6 | Export is a step-up, signed, audited action drawn as a toolbar button, and the format drifts. SCR-135 shows `[csv]` and "export CSV/JSON"; the contract exports signed NDJSON with a detached signature (`/admin/audit/export`, permission `audit:export`); SR-025 and SR-067 require step-up for export. Until the owner decides the export signing-key custody (E42-T02 D1, #889) the route answers `501 not_implemented`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | H1, H4, A-O | R-I6 | High (SCR-135 vs the contract and SR rows)                           |
 
 **Recommendations (investigate).**
 
 - **R-I1 — the record carries the actor's role and type.** `actor_role` (role at the time) and
   `actor_type: human, rule, system` with `rule_id` and `rule_version` on `AuditEntry` and `audit_log`
-  (SR-062) are follow-up **#2763** (E42-T02 follow-up, blocked by #2392): a contract plus an additive,
-  nullable migration, not folded into E42-T02 (coordinator recommendation, 2026-10-16 03:42Z; owner
-  item on #2701). Until it lands SCR-136 shows "Role at the time: not recorded" and never infers from the
-  current role. **AM-6**, **OQ-8**.
+  (SR-062) are follow-up **#2763** (E42-T02 follow-up; its blocker #2392 has merged, and since
+  2026-10-19 it is labelled `post-ga`): a contract plus an additive, nullable migration, not folded into
+  E42-T02 (coordinator recommendation, 2026-10-16 03:42Z; owner item on #2701; AD-F12 in the E42 threat
+  model). Until it lands, after GA as labelled, SCR-136 shows "Role at the time: not recorded" on every
+  row and never infers from the current role. **AM-6**, **OQ-8**.
 - **R-I2 — one registered action vocabulary, shown as labels.** The registry is the typed
   `AUDIT_ACTIONS` set in `services/api/candleviewer/audit/actions.py`, seeded from the non-exhaustive
   must-audit list of `21-database-schema.md` §3.10.1 and extended by the PR that first emits a name
   (SR-E27-09 and the E27 model's §8.1: one registered vocabulary). It confirms F-I2: none of SCR-135's
-  or SCR-121's codes and none of the OpenAPI examples is registered. SCR-135's filter offers human
-  labels mapped from the registry ("Order submitted", "Key rotated"); the raw code is visible in
-  SCR-136. SCR-135's mock codes are corrected (**AM-9**) and the OpenAPI example text is listed with the
-  related amendments (§12).
+  or SCR-121's codes is registered, while the OpenAPI filter example now is (#2392). SCR-135's filter
+  offers human labels mapped from the registry ("Order submitted", "Key rotated"); the raw code is
+  visible in SCR-136. SCR-135's mock codes are corrected (**AM-9**).
 - **R-I3 — an Audit tile on SCR-120** with "Tamper check: verified to 2026-09-14 00:00" or "Tamper check
   FAILED at entry 1,204,118 — treat as a security incident", high-severity count for today, and a link
   (§5).
 - **R-I4 — `subject_type` → destination map drawn as link affordances**: order → order detail, rule → the
-  rule version, user → SCR-122, account → SCR-125, flag → SCR-145, backup → SCR-146. A deleted user
-  shows the read-time pseudonym `deleted-user-<short id>` (coordinator recommendation, probe 2) and no
-  link; the stored record is not rewritten (append-only), and SCR-136's raw record and hash view follows
-  OQ-3 (the record as stored, or the pseudonym carried outside the hashed entry).
+  rule version, user → SCR-122, account → SCR-125, flag → SCR-145, backup → SCR-146. A user erased after
+  a delete (the 90-day purge, probe 2) shows the read-time pseudonym `deleted-user-<12 hex>` (21 §12,
+  merged with #2658) and no link; the stored record is not rewritten (append-only), and SCR-136's raw
+  record and hash view follows OQ-3 (the record as stored, or the pseudonym carried outside the hashed
+  entry).
 - **R-I5 — scope stated in the page header** of the manager/viewer variant ("Showing your actions only")
   and in the filtered-to-nothing state (SCR-151 class 2: "No actions by you match these filters").
 - **R-I6 — export carries the audit-visibility marker** (E42-D02 convention: "recorded · needs your
@@ -383,8 +411,8 @@ Information items the catalogue (`14-screens-catalogue.md` §10) and the contrac
 | 21  | Security findings by severity, last scan                 | `/admin/security/summary`; SCR-137                                                         |
 | 22  | Live trading enabled                                     | `AdminOverview.trading.live_enabled`; SCR-137/145                                          |
 | 23  | Kill switch engaged, scope, by whom, since when          | `AdminOverview.trading.kill_switch_engaged`, `KillSwitch`                                  |
-| 24  | Open positions across accounts                           | `AdminOverview.trading.open_positions` (no provider yet, #963)                             |
-| 25  | Maintenance mode on (`maintenance.mode`)                 | SCR-148; flag contract in #2592 (E42-T03); the scheduled window is follow-up #2764, not v1 |
+| 24  | Open positions across accounts                           | `AdminOverview.trading.open_positions` (no trading provider yet, #963)                     |
+| 25  | Maintenance mode on (`maintenance.mode`)                 | SCR-148; flag contract in #2592 (E42-T03); the scheduled window is #2764, labelled post-GA |
 | 26  | Active sessions across users                             | SCR-137                                                                                    |
 
 ### 5.2 Open sort (heuristic): sorted by the question being asked
@@ -490,10 +518,10 @@ documentation keep their technical terms. All decisions pending owner confirmati
 | Term                           | Where it appears                                                                | Decision                                                     | In-product line or replacement                                                                                                                                                                                                                                                                                                                                                                                                                                           | Why `(heuristic)`                                                                                                                                                                                                                                                   |
 | ------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **step-up**                    | SR-025, `/auth/step-up`, SCR-006, US-ONB-005, the sitemap                       | **Replace** in copy                                          | Dialog title "Confirm it's you"; body "This action needs your password and a code." Inside a grace window: "Still trusted for this action · 02:14 remaining" (E09-D02 §9). For `live_enablement`, `killswitch` and `backups`: "This always needs a fresh code."                                                                                                                                                                                                          | H2: "step-up" names the mechanism, not what the user does. The title is owned by the shared SCR-005/006 chassis (E09-D02/D06); E42 reuses it and raises any conflict there.                                                                                         |
-| **re-authentication**          | SCR-149 title, `14-screens-catalogue.md` §10 preamble, CMP-087                  | **Replace** in copy                                          | "Unlock admin" (gate title); chrome badge "Admin unlocked · 12:40 left"; gate body keeps the catalogue sentence "Admin screens need a fresh confirmation" and adds "It stays unlocked for 15 minutes."                                                                                                                                                                                                                                                                   | F-D5: a different mechanism from the action gate needs a different verb; the countdown makes the 15 minutes visible (H1), as SCR-149 already requires.                                                                                                              |
+| **re-authentication**          | SCR-149 title, `14-screens-catalogue.md` §10 preamble, CMP-087                  | **Replace** in copy                                          | Not shown while D8 keeps per-action step-up only. If the owner revokes D8: "Unlock admin" (gate title); chrome badge "Admin unlocked · 12:40 left"; gate body keeps the catalogue sentence "Admin screens need a fresh confirmation" and adds "It stays unlocked for 15 minutes."                                                                                                                                                                                        | F-D5: a different mechanism from the action gate needs a different verb, and a countdown makes the 15 minutes visible (H1). D8 (recorded 2026-10-20, #890) keeps per-action step-up only, so SCR-149 goes and only "Confirm it's you" is drawn (OQ-6).              |
 | **elevation**                  | `elevated_until`, statechart B16 `auth × elevation`, ADR-0020                   | **Replace**: never user-facing                               | Shown only as the countdown above ("Still trusted for this action ..."); audit rows show "Confirmed with a fresh code at 14:02".                                                                                                                                                                                                                                                                                                                                         | H2; the word has no everyday meaning for the owner's task and collides with "elevation of privilege" in the threat models.                                                                                                                                          |
-| **impersonation / view as**    | SCR-121 row menu, SCR-124                                                       | **Keep "View as"**, drop "impersonation" everywhere in copy  | Menu: "View as alex (read-only)". Banner: "Viewing as alex (read-only) — you cannot act. alex has been notified. [Exit]". Entry: "Why are you viewing as alex?" (mandatory reason, 30-minute limit, recorded at high severity).                                                                                                                                                                                                                                          | SCR-124's own banner wording; "impersonation" implies acting as the person, which is exactly what the mode forbids (H2, H5). Not v1 per the coordinator (OQ-4, owner item on #2701); this decision applies only if the owner keeps the feature. Contract gap: AM-5. |
-| **hash chain**                 | US-ADMIN-008, SCR-135 "integrity: chain verified", SCR-136, SR-063              | **Replace** in primary copy, keep in the technical detail    | "Tamper check: verified to 2026-09-14 00:00 UTC" / "Tamper check failed at entry N — treat this as a security incident." Detail line: "Each record is linked to the one before it (hash chain), so any change or gap shows here."                                                                                                                                                                                                                                        | H2; the owner must act on "failed", not on the construction. SCR-136 keeps the raw record and hashes for the technically literate owner (P4 "understands encryption envelopes").                                                                                    |
+| **impersonation / view as**    | SCR-121 row menu, SCR-124, `POST /admin/view-as` (#3164)                        | **Keep "View as"**, drop "impersonation" everywhere in copy  | Menu: "View as alex (read-only)". Entry: "Why are you viewing as alex?" (required; kept in the audit log, never shown to alex) and "alex is told that you viewed as them, and when." Banner: "Viewing as alex · read-only · ends 10:30 [Exit view-as]". A refused change: "You're viewing as alex. Exit view-as to make changes." Ended by the server: "View-as ended at 10:30. Exit to continue as yourself."                                                           | "Impersonation" implies acting as that person, which the contract forbids (H2, H5): it refuses every change but your own session's and the C-2.6 safety writes, which run and are recorded as you (#3164), so the banner never says flatly "you cannot act" (AM-5). |
+| **hash chain**                 | US-ADMIN-008, SCR-135 "integrity: chain verified", SCR-136, SR-063              | **Replace** in primary copy, keep in the technical detail    | "Tamper check: verified to 2026-09-14 00:00 UTC" / "Tamper check failed at entry N — treat this as a security incident." Detail line: "Each record is linked to the one before it (hash chain), so a broken link or a gap shows here."                                                                                                                                                                                                                                   | H2; the owner must act on "failed", not on the construction. SCR-136 keeps the raw record and hashes for the technically literate owner (P4 "understands encryption envelopes"). No copy claims tampering is impossible (AD-F14).                                   |
 | **append-only**                | US-ADMIN-008, SCR-135 "stated on screen", SCR-136, C-5.7                        | **Replace** in copy                                          | "Records can only be added, never edited or deleted." (SCR-135 page statement and SCR-136 footer).                                                                                                                                                                                                                                                                                                                                                                       | SCR-135/136 already ask for the statement in words; "append-only" is the engineering term for it (H2).                                                                                                                                                              |
 | **kill switch**                | P4 G7, CMP-211, SCR-071/072, `/trading/kill-switch`, `KillSwitch`               | **Keep**, always with a scope word; never for flags          | Control: "Kill switch — all accounts". Confirm (conditional on OQ-1; written to the coordinator's recommendation of a one-click engage, with the three options drawn and their defaults as the owner decides): "Stops trading on every account: new orders are blocked, working orders are cancelled, rules are disarmed. Positions stay open unless you choose to flatten." Targeted scope is called "Freeze alex (sub_001)", never "kill switch".                      | It is the owner's own word (`10-personas.md` P4 G7) and the global control's name across the plan. The flag kind `is_killswitch` is called a "safety flag" in copy (US-ADMIN-007) so the word keeps one meaning (H4).                                               |
 | **maintenance mode**           | SCR-148, sitemap R-356/R-903                                                    | **Keep**                                                     | "Maintenance mode blocks new orders for everyone while you work. Running algos are cancelled. Recording continues. Exchange-side stop-losses stay active. Managers see a notice." (SCR-148's consequence list and the #2592 contract; SCR-148's Type line says "paused" instead, the conflict AM-8 raises, so the algo sentence is conditional on OQ-12; "Recording continues" holds unless `maintenance.keep_recorder` is `false`, when the line says recording stops.) | A common term with the right everyday meaning; the one-liner carries the facts that matter for money: orders blocked, algos cancelled rather than paused (a TWAP or iceberg must not resume on its own when maintenance ends), native stops unaffected (C-2.6).     |
@@ -513,9 +541,11 @@ copy as written, not an observation) and the copy change that follows.
 
 ### Probe 1 — disabling a user revokes sessions but keeps data
 
-- **Fact.** US-ADMIN-001: sessions revoked within 5 s, rules disarmed, data retained. API:
-  `status=disabled`, all sessions and all account grants revoked, rows never hard-deleted. SR-029 adds:
-  pending rule actions cancelled, and positions either flattened or left "with a recorded decision".
+- **Fact.** US-ADMIN-001: sessions revoked within 5 s, rules disarmed, data retained. API (served since
+  #3291): `status=disabled`, every session invalid within 5 s, every account grant soft-revoked (freeze
+  state and risk caps kept), rules disarmed, an open invite revoked, rows never hard-deleted. SR-029
+  adds: pending rule actions cancelled, and positions either flattened or left "with a recorded
+  decision".
 - **Where it lives.** SCR-121 row menu ("deactivate"), SCR-122 danger zone ("Deactivate"), no consequence
   copy in either entry.
 - **Finding `(heuristic)`: partially understood risk.** The owner will expect "deactivate" to stop the
@@ -530,68 +560,69 @@ copy as written, not an observation) and the copy change that follows.
   "recorded decision"); its choice B is conditional on OQ-13, because under O2 a disable never flattens.
   Confirm button: "Disable alex". Step-up (`users` class) applies (SR-025).
 - **Contract note.** SR-029 allows positions to be flattened or left, with a recorded decision. O2
-  (#965, accepted on an interim basis and open to veto on #2701) and the open #2658 choose leave:
-  `PATCH` (disable) and `DELETE /users/{id}` never flatten or cancel, record `positions_decision: leave`,
-  and take `acknowledge_unknown_positions` only while the open-position count is unavailable. A flatten
-  choice on disable exists only if the owner overturns O2 (**AM-3**, **OQ-13**).
+  (#965, accepted on an interim basis and open to veto on #2701) chooses leave and is built: in the
+  merged #2658 contract `PATCH` (disable) and `DELETE /users/{id}` never flatten or cancel, record
+  `positions_decision: leave`, and take `acknowledge_unknown_positions` only while the open-position
+  count is unavailable, which is every call until a position provider is wired (#963; the #965 QA record
+  has the source `not_deployed`). A flatten choice on disable exists only if the owner overturns O2
+  (**AM-3**, **OQ-13**).
 
 ### Probe 2 — deleting keeps anonymised history
 
 - **Fact.** US-ADMIN-001: "audit and journal history is retained under an anonymised reference, and the
   deletion itself is audited." API: `DELETE /users/{id}?purge=true` "anonymises PII after the 90-day
-  retention window". E42-T10 (#2650, split from E42-T04): 90 days after the delete `users.email` and
-  `users.username` become a stable surrogate, and audit rows "keep the name they were written with" and
-  are never updated; `actor_ip` stays in the audit rows (§12).
-  `21-database-schema.md` §12: username "retained in `audit_log.actor_label` after erase (pseudonymised to
-  `deleted-user-<id8>`)". The audit table forbids `UPDATE` (§3.10.1 trigger, C-5.7), so an in-place
-  pseudonymisation of `actor_label` cannot happen; the two statements cannot both be true as written.
-  **Coordinator recommendation (2026-10-16 03:42Z, owner item on #2701):** audit rows stay immutable;
-  `actor_label` is pseudonymised at read time by joining to `users`, so a deleted user is shown as
-  `deleted-user-<short id>` in the log; the §12 row is corrected (the recommendation names E42-T04; the
-  R2 split moved the §12 correction to E42-T10: #965 O6, #2650;
-  `docs/security/threat-models/e42-user-lifecycle.md` UL4-T1 and UL-F7). The recommendation also says
-  "and export"; that half is open (contract note).
+  retention window", and enabling the user before then "cancels a pending purge" (`updateUser`). E42-T10
+  (#2650, split from E42-T04, open): 90 days after the delete `users.email` and `users.username` become a
+  stable surrogate, `deleted-user-` plus 12 hex characters derived from the user id, and audit rows "keep
+  the name they were written with" and are never updated; `actor_ip` stays in the audit rows (§12).
+  `21-database-schema.md` §12, corrected by the merged #2658 (#965 O6;
+  `docs/security/threat-models/e42-user-lifecycle.md` UL4-T1 and UL-F7), now says what the coordinator
+  recommended on 2026-10-16 (owner item on #2701). Its `users.username` row reads "Verbatim in
+  append-only `audit_log.actor_label` (C-5.7); pseudonymised to `deleted-user-<12 hex>` on read/export
+  via `users`, not rewritten" (the §3.10.1 trigger forbids `UPDATE`). The pseudonym is an erased user's,
+  so it appears once the 90 days have passed. The export half is open (contract note).
 - **Where it lives.** SCR-121: "deleting a user requires typing their username plus step-up and explains
   what happens to their rules and journal entries (retained, reattributed to 'deleted user')".
 - **Finding `(heuristic)`: misunderstood risk.** "Delete" plus "reattributed to 'deleted user'" reads as
-  "their name disappears from the history now". Under the recommendation the name disappears only from
-  what is **shown**: the log reads `deleted-user-<short id>` from the moment of deletion, the stored rows
-  keep the name they were written with, and the login and e-mail are anonymised **after 90 days**. An
-  export keeps the stored name under both options OQ-3 weighs (a rewritten label would break the offline
-  chain check, and a pseudonym beside the stored label keeps the name in the file), so an owner who
-  compares an export with the live log sees two labels for one actor and may believe the history was
-  altered; an owner who expects the stored row to change may believe the deletion failed. The copy must
-  state both halves and promise nothing about exports.
+  "their name disappears from the history now". Under the merged §12 rule the name disappears only from
+  what is **shown**, and only **after 90 days**, when the login and e-mail are anonymised: from then on
+  the log reads `deleted-user-<12 hex>`, while the stored rows keep the name they were written with.
+  Until then the log still shows alex, so an owner who expects the name to go at once may believe the
+  deletion failed. An export keeps the stored name under both options OQ-3 weighs (a rewritten label
+  would break the offline chain check, and a pseudonym beside the stored label keeps the name in the
+  file), so an owner who compares an export with the live log may see two labels for one actor and
+  believe the history was altered. The copy must state the timing and promise nothing about exports.
 - **Copy change (R-P2).** Title: **"Delete alex (keeps history)"**. Body: "alex can't sign in again. ·
-  Their journal, rules and audit history are kept. · From now on the audit log shows alex
-  as deleted-user-…; the records themselves are never changed, only added. · After 90 days their e-mail
-  and login name are anonymised. · This can't be undone." Typed username, step-up (`users` class). The
-  90-day figure is the contract's; if the owner wants immediate anonymisation of the `users` row, that is
-  a contract change, not copy. The copy says nothing about exports until OQ-3 is decided.
-- **Contract note.** Coordinator recommendation (owner item on #2701): the stored `actor_label` is
-  untouched (the only reading the append-only trigger permits) and the pseudonym is applied at read time.
-  Placing that in the audit read model (E42-T02) is this report's proposal: no ticket or contract records
-  it, and #2763 gives read and export pseudonymisation to E42-T04 (#2658), whose diff does not carry it.
-  The `21-database-schema.md` §12 row is corrected (the recommendation names E42-T04; the R2 split moved
-  the §12 correction to E42-T10: #965 O6, #2650; `docs/security/threat-models/e42-user-lifecycle.md`
-  UL4-T1 and UL-F7). The export is not settled: the
-  `exportAuditLog` text in the open #2392 builds the file "so every link can be verified offline" and
-  says entries are "exported exactly as stored"; rewriting `actor_label` in the file would break the
-  SR-063 chain check, and a pseudonym placed beside the stored label keeps the name in the file. E42-T02
-  and E42-T04 choose between exports kept as stored and the pseudonym carried outside the hashed entry,
-  and SCR-136's raw record and hash view follows the same choice. The copy above promises only what
-  holds either way (**OQ-3**, open).
+  Their journal, rules and audit history are kept. · In 90 days their e-mail and login name are
+  anonymised, and the audit log then shows them as deleted-user-…; the records themselves are never
+  changed, only added. · Until then you can enable alex again, which cancels the anonymisation; it does
+  not give back their account access." Typed username, step-up (`users` class). The 90-day figure is the
+  contract's; if the owner wants immediate anonymisation of the `users` row, that is a contract change,
+  not copy. The copy says nothing about exports until OQ-3 is decided.
+- **Contract note.** The read and export rule is in `21-database-schema.md` §12 (merged with #2658):
+  the stored `actor_label` is untouched, the only reading the append-only trigger permits, and an erased
+  user's label is pseudonymised by joining `users`. The audit contract merged with #2392 does not carry
+  it: `AuditEntry.actor_username` is the "Actor label recorded at write time", and `exportAuditLog`
+  builds the file "so every link can be verified offline" with entries "exported exactly as stored" (the
+  route answers `501` until the export signing-key decision, E42-T02 D1, #889). Rewriting `actor_label`
+  in the file would break the SR-063 chain check, and a pseudonym placed beside the stored label keeps
+  the name in the file. #2763 placed the pseudonymisation with E42-T04 (#2658), which carried the §12
+  rule but changed neither `AuditEntry` nor the export, and E42-T04 has closed; the audit read and
+  export lane, E42-T02 (#889), reconciles the two merged texts before export ships, choosing between
+  exports kept as stored and the pseudonym carried outside the hashed entry, and SCR-136's raw record and
+  hash view follows the same choice. The copy above promises only what holds either way (**OQ-3**,
+  open).
 
 ### Probe 3 — unbinding with open positions forces a choice
 
 - **Fact.** US-ADMIN-002: "unbinding requires an explicit choice: leave positions (owner takes over) or
   flatten first." E27 model for the sibling case (last key, account disable or delete): SR-E27-07,
   explicit `leave_positions` or `flatten_first`, otherwise 409 with the consequence summary. P4-E
-  scenario 9: the action "looks routine but behaves like an emergency". The lifecycle lane's recorded
-  text says otherwise for unbind: O2 (#965, accepted on an interim basis and open to veto on #2701), the
-  open #2658 (`setUserAccountAccess`: "Removing an account never flattens positions or cancels orders")
-  and #2648 (out of scope: flattening on unbind) have unbind never flatten, and flatten-first stays a
-  separate OMS action (OQ-13).
+  scenario 9: the action "looks routine but behaves like an emergency". The lifecycle lane's built
+  contract says otherwise for unbind: O2 (#965, accepted on an interim basis and open to veto on #2701),
+  the merged #2658 (`setUserAccountAccess`: "Removing an account never flattens positions or cancels
+  orders"; served since #3267) and #2648 (out of scope: flattening on unbind) have unbind never flatten,
+  and flatten-first stays a separate OMS action (OQ-13).
 - **Where it lives.** SCR-122's account checkboxes and Save; no dialog in the catalogue; E42-D03 scopes
   one ("two named choices, no dismissal that silently picks one"). `PUT /users/{userId}/account-access`
   has no choice field (F-D2).
@@ -600,7 +631,8 @@ copy as written, not an observation) and the copy change that follows.
   stay open on Bybit with their native stop-losses (C-2.6) but with nobody in the app managing them (the
   "orphaned algos" P4-E names). The absence of any field in the contract means the server could not
   refuse the silent path even if the UI wanted it to (under #2658 it refuses only while the
-  open-position count is unavailable; OQ-13, sub-question 1).
+  open-position count is unavailable, which is every call until a position provider is wired, #963;
+  OQ-13, sub-question 1).
 - **Copy change (R-P3).** On unticking an account with positions, orders or algos, a dialog
   (`role="alertdialog"`, focus on Cancel): "alex has 2 open positions and 3 working orders on sub_001.
   Choose what happens when you remove their access:" — choice A **"Leave positions open — you take over"**:
@@ -615,15 +647,19 @@ copy as written, not an observation) and the copy change that follows.
   alex's access is removed only once every position is closed, so the copy adds a line: "If a position
   can't be closed, alex keeps access and nothing changes." Choice A's algo sentence is shown only if
   OQ-13's second sub-question answers that unbind stops the user's algos; neither #2658 nor #2648 says so
-  today.
-- **Contract note.** What `PUT /users/{userId}/account-access` carries is OQ-13, and this report no
-  longer treats the two sources as reconciled. Today O2 (#965), the open #2658 (`setUserAccountAccess`:
-  "Removing an account never flattens positions or cancels orders") and #2648 say unbind never flattens
-  and takes only `acknowledge_unknown_positions`, and only while the open-position count is unavailable.
-  The SR-E27-07 choice placed with E42-T04 (#965) (OQ-2; RelayRoom SYNC-4; #2701, #965 and #2658 do not
-  carry this placement) is Option B: it overturns O2 for unbind, changes #2658's and #2648's scope, and
-  needs an ADR for the admin → OMS edge (C-3.4). Option A keeps O2 and needs none of that (unless OQ-13's
-  sub-question 1 is answered "refuse") (**AM-3**, **OQ-2**, **OQ-13**).
+  today. Under either option D03 also draws the variant the contract demands while the count is
+  unavailable (`409 positions_unknown` unless acknowledged), the only reachable one until a provider is
+  wired: "CandleViewer can't read alex's positions on sub_001 right now. Removing access never closes
+  positions or cancels orders." with Cancel and "Remove access anyway".
+- **Contract note.** What `PUT /users/{userId}/account-access` carries is OQ-13, and this report does
+  not treat the two sources as reconciled. O2 (#965) is built: the merged #2658 (`setUserAccountAccess`:
+  "Removing an account never flattens positions or cancels orders"), served since #3267, and #2648 have
+  unbind never flatten, taking only `acknowledge_unknown_positions`, and only while the open-position
+  count is unavailable. The SR-E27-07 choice the coordinator placed with E42-T04 (OQ-2; RelayRoom
+  SYNC-4; never recorded on #2701, #965 or #2658, and E42-T04 closed on 2026-10-18) is Option B: it
+  overturns O2 for unbind, changes the served route and #2648's scope, and needs an ADR for the admin →
+  OMS edge (C-3.4). Option A keeps O2 and needs none of that (unless OQ-13's sub-question 1 is answered
+  "refuse") (**AM-3**, **OQ-2**, **OQ-13**).
 
 ### Probe 4 — restore changes nothing on Bybit
 
@@ -633,6 +669,12 @@ copy as written, not an observation) and the copy change that follows.
   unknown exchange orders are adopted as `untracked` for owner review; an audit-chain break blocks
   startup in `live`. SCR-146: "restore is blocked while any position is open unless the owner explicitly
   acknowledges ('You have 2 open positions. A restore does not change anything on Bybit. Continue?')".
+  The E42 threat model adds that a restore can roll back the security state itself (AD-F02, High; its
+  §6). Its D7, recorded on #890 on 2026-10-20 under the owner's delegation, is #3084's Option 3: Phase A
+  now, a restore refused unless the owner acknowledges the server-built list of revocation-class events
+  after the backup point (the acknowledgement expires after 10 minutes); Phase B at R4, a restore into
+  staging that re-applies the revocations, disables, role removals and audit tail. The route ships under
+  #3084 (BK-14), and #3319 (E45) owns the restore executor.
 - **Where it lives.** SCR-146 restore wizard, impact-preview step.
 - **Finding `(heuristic)`: partially understood risk.** The sentence exists, which is why this is not
   "misunderstood", but "does not change anything on Bybit" can be read two ways: as reassurance ("this is
@@ -645,12 +687,15 @@ copy as written, not an observation) and the copy change that follows.
   a `questdb snap` row in its mock; the entry contradicts both the contract and itself (**AM-7**).
 - **Copy change (R-P4).** Title: **"Restore CandleViewer data from 2026-09-13 04:00"**. Body: "Bybit is
   not affected: your real positions and orders stay exactly as they are now. · This rewinds
-  CandleViewer's own records (users, settings, orders as recorded, audit) to 2026-09-13 04:00. Anything
-  recorded after that time is replaced. · Trading is switched off during the restore and stays off until
-  you turn it back on. · Before you can, CandleViewer re-reads Bybit; anything it no longer recognises is
-  listed for you to review." Open-positions variant adds: "You have 2 open positions. They stay open on
-  Bybit with their exchange stop-losses." Typed confirmation of the backup date, step-up, reason field
-  (the contract requires `reason`).
+  CandleViewer's own records (users, settings, orders as recorded) to 2026-09-13 04:00. · Trading is
+  switched off during the restore and stays off until you turn it back on. · Before you can, CandleViewer
+  re-reads Bybit; anything it no longer recognises is listed for you to review." Open-positions variant
+  adds: "You have 2 open positions. They stay open on Bybit with their exchange stop-losses." Typed
+  confirmation of the backup date, step-up, reason field (the contract requires `reason`). What a restore
+  keeps follows D7: in Phase A the wizard lists the security changes made after the backup point and
+  waits for the owner to acknowledge them; from Phase B (R4) the body adds "Revocations, disabled users
+  and removed roles since then stay in force, the audit log keeps every record, and everyone is signed
+  out". The copy never says the audit log is rewound.
 
 ## 8. Prioritised comprehension-risk list (feeds E42-D02 and E42-D03 copy)
 
@@ -662,17 +707,17 @@ to watch, per the ticket's observability note.
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | CR-1  | Freeze needs a typed word, so the owner delays or mistypes during a runaway (F-S1, F-S2)                                                     | High     | D02 destructive-action ladder; SCR-072 (AM-2)            | Time from SCR-072 open to `risk.freeze`; `risk.freeze` with `outcome != success`                                                                       |
 | CR-2  | Unbinding is a settings edit; positions are orphaned without a decision (F-D2, probe 3; whether the server refuses the silent path is OQ-13) | High     | D03 unbind dialog; AM-3 contract (OQ-13)                 | 409 count on `account-access` (`positions_unknown`, and without the choice if OQ-13 picks Option B); `positions` left `untracked` after a grant change |
-| CR-3  | Restore is read as "undo trades" (probe 4)                                                                                                   | High     | D05 (SCR-146) copy; AM-7                                 | `backup.restored` followed by `untracked` orders; restores with open positions acknowledged                                                            |
-| CR-4  | Delete is read as "erases the stored name from history now"; the log shows the pseudonym while the rows keep the name (probe 2)              | Med-High | D03 delete dialog; OQ-3                                  | `users.delete` events followed by audit searches for the deleted username (the owner looking for "missing" rows)                                       |
+| CR-3  | Restore is read as "undo trades" (probe 4)                                                                                                   | High     | D05 (SCR-146) copy; AM-7                                 | `backup.restore` followed by `untracked` orders; restores with open positions acknowledged                                                             |
+| CR-4  | Delete is read as "erases the name from history now"; the log shows the pseudonym only after 90 days, and the rows keep the name (probe 2)   | Med-High | D03 delete dialog; OQ-3                                  | `users.delete` events followed by audit searches for the deleted username (the owner looking for "missing" rows)                                       |
 | CR-5  | "Disable" / "deactivate" / "suspend" are read as different things, or Disable is read as Delete (F-D3, probe 1)                              | Med      | D03 SCR-121/122 (AM-4)                                   | `users.disable` reverted by `users.enable` within minutes; `empty_state_shown{surface: users, reason: filtered}`                                       |
-| CR-6  | Two gates, three durations: the owner cannot predict when a code will be asked (F-D5)                                                        | Med      | D02 re-auth interruption pattern; CMP-087 badge; sitemap | `auth.step_up_failed` and `auth.session_unlocked` rates per admin session; abandoned edits after a gate                                                |
+| CR-6  | Two gates, three durations: the owner cannot predict when a code will be asked (F-D5)                                                        | Med      | D02 re-auth interruption pattern; SCR-149 & sitemap (D8) | `auth.step_up_failed` and `auth.session_unlocked` rates per admin session; abandoned edits after a gate                                                |
 | CR-7  | A tile's `unavailable` or `error` slice is read as zero or "fine" (F-S5)                                                                     | Med      | D02 degraded/stale expression; D03 SCR-120               | Slice `status != ok` frequency vs owner clicks into the degraded area                                                                                  |
 | CR-8  | "Kill switch" used for a flag kind, and "freeze" vs "kill switch" blur (§6)                                                                  | Med      | D04 SCR-145 grouping; D02 vocabulary                     | Flag toggles on safety flags reverted within minutes                                                                                                   |
 | CR-9  | The sub-account cap is shown as 5 when the tier is unrecorded (F-D4)                                                                         | Med      | D03 capacity line                                        | `settings.change` on `accounts.subaccount_tier`; at-capacity state shown with `tier_source = unrecorded`                                               |
 | CR-10 | "Locked" means sign-in lockout and risk lockout (§6)                                                                                         | Med      | D03 SCR-121 status chips                                 | Owner opens SCR-122 sessions for a risk-locked user (wrong fix path)                                                                                   |
 | CR-11 | The tamper-check failure is read as a UI error (F-I3)                                                                                        | Med      | D04 SCR-135 integrity state; D03 SCR-120 Audit tile      | `audit.viewed` without `security.*` follow-up after a verifier `critical` event                                                                        |
 | CR-12 | "Under what permissions" cannot be answered; the owner infers from today's role (F-I1)                                                       | Med      | AM-6 contract; D04 SCR-136                               | SCR-136 opened then SCR-122 opened for the same actor (the owner looking up the role by hand)                                                          |
-| CR-13 | "View as" is read as "act as", or the owner does not know the target is told (§6; not v1 per OQ-4, so only if kept)                          | Low-Med  | D03 SCR-124 banner and entry dialog; OQ-4                | Write attempts refused during view-as (`authz.denied` with the view-as session)                                                                        |
+| CR-13 | "View as" is read as "act as", or "read-only" as "nothing works", though safety writes still run as you; the 30-minute end is missed (§6)    | Med      | D03 SCR-124 banner, entry dialog, held state; AM-5       | `admin.view_as_refused` (`auth_view_as_refused_total{reason}`); `view_as_expired` refusals before an exit                                              |
 | CR-14 | Invite appears to grant "manager" but grants viewer; the owner forgets the second step (F-D1)                                                | Med      | D03 SCR-123; wizard (D05)                                | `admin.onboarding_abandoned`; invited users still `viewer` with no grants 7 days after redemption                                                      |
 | CR-15 | Export looks like a CSV download; the owner is surprised by the code prompt and the NDJSON file (F-I6)                                       | Low      | D04 SCR-135 export affordance                            | `audit.exported` attempts abandoned at step-up                                                                                                         |
 
@@ -685,19 +730,20 @@ events already named in the catalogue (SCR-151) and the ticket.
 | #     | Decision                                                                                                                                                                                                                                | Wireframe or hi-fi violates it if...                                                                             | Basis                                                                                                    |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | AD-1  | SCR-120 is three bands in tempo order (Right now; People and access; Evidence and controls), nine tiles, with the "Needs your action" strip above them                                                                                  | tiles are ordered by module, a stated tile is missing without the §5.4 argument, or the strip is absent          | §5; High for the trading tile (contract and #963), Med for the bands                                     |
-| AD-2  | A tile never shows a number it did not receive: `unavailable`/`error` in words, `generated_at` shown, kill switch "unknown" when the slice is not `ok`                                                                                  | a degraded slice renders `0`, a blank, or a green state                                                          | F-S5; High                                                                                               |
+| AD-2  | A tile never shows a number it did not receive: `unavailable`/`error` in words, `generated_at` shown, kill switch "unknown" when the slice omits it                                                                                     | a degraded slice renders `0`, a blank, or a green state                                                          | F-S5; High                                                                                               |
 | AD-3  | Engaging a freeze or the kill switch is one keyboard-operable confirm naming the blast radius and all three options explicitly; release is step-up with no grace and carries the typed `FREEZE` (the coordinator's OQ-1 recommendation) | a typed word is required to engage, an option relies on a server default, or release has no step-up              | F-S1, F-S2; High for the conflict, owner decision OQ-1, which also reaches the E10-D02 and E09-D06 specs |
 | AD-4  | Unbinding (and, subject to OQ-13, disabling) a user with positions, orders or algos opens the two-choice dialog with no pre-selection and `Esc` = cancel; choice B follows OQ-13                                                        | a checkbox plus Save removes a grant while positions exist, or a default choice is pre-selected                  | F-D2, probes 1 and 3; High for the dialog, choice B per OQ-13                                            |
 | AD-5  | Lifecycle verbs are "Disable", "Enable", "Delete (keeps history)", "Sign out everywhere"; status chips split "Locked out (sign-in)" from "Trading locked (risk)"                                                                        | "deactivate", "suspend" or a bare "Locked" appears                                                               | F-D3, §6; High                                                                                           |
-| AD-6  | The area gate is "Unlock admin" with a visible 15-minute countdown; the action gate is "Confirm it's you" with E09-D02 §9's grace wording; neither "step-up" nor "re-authentication" appears in copy                                    | either word appears in product copy, or the countdown is missing from the admin chrome                           | F-D5, §6; wording Med, mechanism High                                                                    |
+| AD-6  | No area gate while D8 keeps per-action step-up (recorded 2026-10-20); the action gate is "Confirm it's you" with E09-D02 §9's grace wording; neither "step-up" nor "re-authentication" appears in copy                                  | either word appears in product copy, or an admin-wide unlock is drawn while D8 stands                            | F-D5, §6, D8; wording Med, mechanism High                                                                |
 | AD-7  | Capacity has three drawn states (recorded, unrecorded, unavailable); the cap is never shown unless `tier_source = recorded`                                                                                                             | "5" or "20" is shown with the tier unknown                                                                       | F-D4; High                                                                                               |
 | AD-8  | Audit copy says "Tamper check" and "records can only be added, never edited or deleted"; the failure state names a security incident; SCR-120 carries the check                                                                         | "hash chain" or "append-only" is the primary label, or the failure looks like a toast                            | F-I3, §6; High                                                                                           |
 | AD-9  | SCR-136 shows "Role at the time" from the record or "not recorded", never the current role; action filters are labels from the registered vocabulary                                                                                    | the current role is displayed as the role at the time, or filter values are raw codes from a non-registered list | F-I1, F-I2; High                                                                                         |
-| AD-10 | Restore copy leads with "Bybit is not affected", states the rewind, the forced trading-off and the reconciliation review                                                                                                                | the dialog leads with the backup list, or omits the reconciliation step                                          | probe 4; High                                                                                            |
+| AD-10 | Restore copy leads with "Bybit is not affected", states the rewind, the forced trading-off, the reconciliation review and what D7 keeps                                                                                                 | the dialog leads with the backup list, or omits the reconciliation step                                          | probe 4, D7; High                                                                                        |
 
 ## 10. Session protocol (ready to run; owner or a future moderator)
 
-**Prototype.** The E42-D02 wireframes as a clickable Penpot prototype (SCR-149 → SCR-120 → each screen),
+**Prototype.** The E42-D02 wireframes as a clickable Penpot prototype (SCR-120 → each screen; SCR-149
+only if the owner revokes D8),
 with the states named in §4 reachable by a moderator switch (degraded tile, integrity failure, open
 positions on an account, tier unrecorded).
 
@@ -722,7 +768,8 @@ they could not.
 Observe the invite step (does the participant look for a role picker?), the grant step, and the
 precondition hunt (key, 48 h restriction, profile). Then unbind the account while the fixture shows two
 open positions. Ask: "What do you believe just happened to those positions?" / "Who manages them now?"
-Record verbatim.
+Then view as the new manager and ask: "What can you change from here?" / "Does the manager know?" /
+"What happens after 30 minutes?" (OQ-4). Record verbatim.
 
 **Scenario 3 — investigate (about 10 min).** Prompt: "An order was placed on sub_002 at 13:58 that you
 did not expect. Find out who placed it, when, and under what permissions." Observe the filter path (time,
@@ -741,8 +788,8 @@ probes of §7 as statements: "Disabling alex deletes their journal — true or f
 three siblings.
 
 **Debrief (about 5 min).** Any workaround stated or demonstrated ("I'd keep a second tab open so the
-admin unlock doesn't expire") is recorded verbatim and raised as STRIDE input for E42-X01, not designed
-around.
+admin unlock doesn't expire") is recorded verbatim and raised as STRIDE input for E42-X02 (#1220), which
+re-reads the E42 model now that E42-X01 has closed, not designed around.
 
 **Data handling.** Recordings (screen and voice) contain PII (`21-database-schema.md` §12 classes P1/P2;
 `04-security-program.md` asset A-19). They are stored only on the owner's encrypted host, never in the
@@ -753,9 +800,10 @@ observed facts.
 
 ## 11. Owner walkthrough checklist (ready to post on #830)
 
-hpe-worker-1 posts the block below on #830 as one comment; the owner ticks items as they are walked and
-answers in the same thread. Answers are appended here as a dated addendum (§10). Fixture names only, no
-real data.
+The block below is posted on #830 as one comment (hpe-worker-1, 2026-10-16, at rev 5); the completion
+lane updates that comment to this revision, whose view-as items changed. The owner ticks items as they
+are walked and answers in the same thread. Answers are appended here as a dated addendum (§10). Fixture
+names only, no real data.
 
 ```markdown
 ## E42-D01 owner walkthrough (docs/design/research/e42-admin.md)
@@ -774,13 +822,16 @@ Tick what you walked; one line per item on what you saw or expected. Fixture nam
 - [ ] Find an unexpected order in the audit log; say how you would establish the actor's role at the
       time, and what tells you the record was not altered
 - [ ] Start a restore with an open position; say what you expect to happen to that position on Bybit
-- [ ] Explain back, as if to a new manager: "Confirm it's you", "Unlock admin", "Tamper check",
-      "Kill switch", "Safety flag", "Maintenance mode" (and "View as", only if OQ-4 keeps it)
+- [ ] View as a manager; say what you expect you can change while viewing, whether they are told, and
+      what happens after 30 minutes
+- [ ] Explain back, as if to a new manager: "Confirm it's you", "Tamper check", "Kill switch",
+      "Safety flag", "Maintenance mode", "View as"
 - [ ] Say which of the nine SCR-120 tiles you would remove, and what you looked for and did not find
-- [ ] Decide OQ-1 (one-click engage, typed `FREEZE` only to release), OQ-4 (view-as: add a user story or
-      drop it), OQ-12 (maintenance cancels or pauses running algos) and OQ-13 (unbind and disable never
-      flatten, as O2 says, with a hand-off to the OMS flatten action: the recommended default; or the
-      owner overturns O2) on #2701, where all four are queued for you, or note them here
+- [ ] Decide OQ-1 (one-click engage, typed `FREEZE` only to release), OQ-4 (the kill switch while
+      viewing as someone: reachable, reachable with its options off, or refused), OQ-12 (maintenance
+      cancels or pauses running algos) and OQ-13 (unbind and disable never flatten, as O2 says, with a
+      hand-off to the OMS flatten action: the recommended default; or the owner overturns O2) on #2701,
+      where all four are queued for you, or note them here
 - [ ] Comment `approved` on #830, or leave rework notes citing the F-, R-, AD-, AM- and OQ- ids
 ```
 
@@ -789,34 +840,34 @@ Tick what you walked; one line per item on what you saw or expected. Fixture nam
 Raised as proposals, not silently designed around. Each is the smallest text change that makes the
 catalogue consistent with the stories, the contracts and the findings above.
 
-| #     | Entry                       | Amendment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | From                 |
-| ----- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| AM-1  | SCR-120                     | Replace the tile checklist item with the nine tiles in three bands of §5.4 plus the "Needs your action" strip; change the performance note from "one call plus `system`" to "the overview call plus `system` plus up to four small reads (flags, backups, audit, security), each tile independent" **or** record the additive-slice decision (OQ-5); add "a tile never shows a number it did not receive".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | §5, R-S5             |
-| AM-2  | SCR-071, SCR-072            | Engage: remove "typed confirm" / "requires typing `FREEZE`"; one keyboard-operable confirm (hold, or single if E10-D02's rule is amended) naming the blast radius; draw all three options (cancel working orders, flatten, disarm rules) with one canonical default aligned with `SetKillSwitchRequest`. Release: keep step-up (no grace) plus confirm, carrying the typed `FREEZE`. Coordinator recommendation (2026-10-16 03:42Z, owner item on #2701): one-click engage, typed `FREEZE` only to release, SCR-071/072 and the `SetKillSwitchRequest` defaults aligned to match. Pending OQ-1, which also reconciles `04-security-program.md` §9.1 (related amendments).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | F-S1, F-S2           |
-| AM-3  | SCR-122 (+ OpenAPI, ADR)    | Unbinding or disabling with open positions, orders or algos opens the consequence-first dialog (probe 3); what it can offer is owner decision OQ-13. O2 (#965, accepted on an interim basis and open to veto on #2701), the open #2658 (`deleteUser`, `updateUser`, `setUserAccountAccess`) and #2648 currently say unbind and disable never flatten or cancel, and flatten-first stays a separate OMS action; this report does not treat the SR-E27-07 choice as reconciled with them. Option A keeps O2: choice B hands off to the contracted OMS flatten action and the unbind then proceeds, with no contract change (unless OQ-13's sub-question 1 is answered "refuse"), no admin → OMS edge and no ADR. Option B overturns O2 for unbind: `PUT /users/{userId}/account-access` gains the SR-E27-07 choice (`leave_positions` or `flatten_first`, otherwise 409 with the consequence summary, anchored to the E27 model's KV-D03), owned by **E42-T04** (#965; the endpoint is admin's and E28 only consumes it; coordinator recommendation 2026-10-16 03:42Z; #2701, #965 and #2658 do not carry this placement, OQ-2); #2658's and #2648's scope changes; and `flatten_first` makes an admin endpoint drive OMS orders: `admin` (M21) may not depend on `oms` (M14) in CONSTITUTION §3, so the edge needs an ADR (C-3.4) before implementation. Contract-first (C-6.1) before E42-D03 draws either as built. | F-D2, probes 1 and 3 |
-| AM-4  | SCR-121, SCR-122, SCR-123   | Verbs: "Disable" / "Enable" / "Delete (keeps history)" / "Sign out everywhere"; status chips "Locked out (sign-in)" vs "Trading locked (risk)"; capacity line with the three states of R-D4; SCR-123 invites a viewer only (no role picker) and says the manager grant is a second step.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | F-D1, F-D3, F-D4     |
-| AM-5  | SCR-124                     | View-as is **not v1** (coordinator position, 2026-10-16 03:42Z; listed for the owner on #2701): no user story, route, flow, SR row or threat-model entry backs it, and no endpoint, WS frame or permission exists. The owner either adds a user story and a contract-first ticket with E42-X01 coverage, or the entry is dropped (C-1.2). Until then D02/D03 draw nothing for SCR-124, not even a "pending contract" frame; the Exit hotkey registration (R-S3) applies only if it is kept; its wrong story reference is corrected under AM-9.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | §6, OQ-4             |
-| AM-6  | SCR-136 (+ OpenAPI, schema) | `AuditEntry` and `audit_log` gain `actor_role` and `actor_type` (human, rule, system) with `rule_id`/`rule_version` (SR-062) as follow-up **#2763**, blocked by #2392 and owned by the audit-writer lane (E42-T02), as a contract plus an additive, nullable migration, not folded into E42-T02 (coordinator recommendation 2026-10-16 03:42Z, owner item on #2701). Because `entry_hash` is computed over the canonical row encoding (§3.10.1; SR-063), #2763 must version that canonical encoding so rows written before it still verify; as a migration touching the audit table it needs security code-owner approval (SR-066); and it replaces the role packing the code does today (`admin/wiring.py:71` writes `actor_label` as `<actor_kind>:<actor_role>`) rather than sitting beside it. SCR-136 shows "Role at the time: not recorded" for rows written before it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | F-I1                 |
-| AM-7  | SCR-146                     | The entry is inconsistent with itself and with the contract: its Type line lists a QuestDB snapshot and a Parquet sync per store and its mock shows a `questdb snap` row, while its checklist says "market history is not restored from these backups"; the restore `components` enum is `postgres, questdb, parquet, config`. Resolve all three the same way (OQ-10); adopt the probe-4 copy, leading with "Bybit is not affected" and naming the forced trading-off and the reconciliation review.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | probe 4              |
-| AM-8  | SCR-148                     | (a) Paused versus cancelled: the Type line says "algos paused" while the a11y consequence list says "Running algos are cancelled"; the merged #2592 contract for `maintenance.mode` (E42-T03, #964; `setFeatureFlag` in `22-api-openapi.yaml`: "Turning it on cancels only running emulated algos", side effects only on a stored value read as `true`) cancels running emulated algos, so "cancelled" is what will be built. Align the Type line to "cancelled" and keep the consequence list; the difference matters for a running TWAP or iceberg, which "paused" implies will resume (OQ-12). (b) Contract and scope: the contract is the flag `maintenance.mode` (`21-database-schema.md` §10.7, added by the merged #2592; audited `maintenance.enabled\|disabled`), not an endpoint (OQ-9 resolved); v1 keeps the on/off only, and the scheduled window and user message are follow-up #2764 (blocked by #964), drawn by D04 as follow-up, not v1. (c) The story reference US-REL-004 does not exist (AM-9).                                                                                                                                                                                                                                                                                                                                                                                                  | §5.1 card 25, §6     |
-| AM-9  | SCR-122..149 (traceability) | Two kinds of bad story reference on the first "Stories" line of each entry. Wrong, resolving to unrelated stories: SCR-122 `US-ADMIN-006` (recorder and retention), SCR-123 `US-ADMIN-003` (risk-limit administration), SCR-124 `US-ADMIN-007` (feature flags), SCR-146 `US-ADMIN-013..015` (013 is manager onboarding and 014 sub-account capacity, neither about backups, and 015 does not exist). Absent from `11-user-stories.md`: SCR-145 `US-REL-003`, SCR-148 `US-REL-004`, SCR-149 `US-ADMIN-016`. Correct the first kind (for SCR-146, drop the whole range) and remove the second, keeping each entry's second "Stories" line, which is right; correct SCR-135's action codes to the `audit/actions.py` registry and "CSV/JSON" to the signed NDJSON export.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | F-I2, F-I6           |
-| AM-10 | SCR-145                     | Flag key naming: SCR-145 shows `live_trading_enabled`, the contract's gated example is `trading.live_enabled`; pick one. Group trading-capability flags under "Safety flags" (US-ADMIN-007) and never label a flag "kill switch".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | §6                   |
+| #     | Entry                       | Amendment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | From                 |
+| ----- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| AM-1  | SCR-120                     | Replace the tile checklist item with the nine tiles in three bands of §5.4 plus the "Needs your action" strip; change the performance note from "one call plus `system`" to "the overview call plus `system` plus up to four small reads (flags, backups, audit, security), each tile independent" **or** record the additive-slice decision (OQ-5); add "a tile never shows a number it did not receive".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | §5, R-S5             |
+| AM-2  | SCR-071, SCR-072            | Engage: remove "typed confirm" / "requires typing `FREEZE`"; one keyboard-operable confirm (hold, or single if E10-D02's rule is amended) naming the blast radius; draw all three options (cancel working orders, flatten, disarm rules) with one canonical default aligned with `SetKillSwitchRequest`. Release: keep step-up (no grace) plus confirm, carrying the typed `FREEZE`. Coordinator recommendation (2026-10-16 03:42Z, owner item on #2701): one-click engage, typed `FREEZE` only to release, SCR-071/072 and the `SetKillSwitchRequest` defaults aligned to match. Pending OQ-1, which also reconciles `04-security-program.md` §9.1 (related amendments).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | F-S1, F-S2           |
+| AM-3  | SCR-122 (+ OpenAPI, ADR)    | Unbinding or disabling with open positions, orders or algos opens the consequence-first dialog (probe 3); what it can offer is owner decision OQ-13. O2 (#965, accepted on an interim basis and open to veto on #2701) is built: the merged #2658 (`deleteUser`, `updateUser`, `setUserAccountAccess`, served since #3291 and #3267) and #2648 say unbind and disable never flatten or cancel, and flatten-first stays a separate OMS action; this report does not treat the SR-E27-07 choice as reconciled with them. Option A keeps O2: choice B hands off to the contracted OMS flatten action and the unbind then proceeds, with no contract change (unless OQ-13's sub-question 1 is answered "refuse"), no admin → OMS edge and no ADR. Option B overturns O2 for unbind: `PUT /users/{userId}/account-access` gains the SR-E27-07 choice (`leave_positions` or `flatten_first`, otherwise 409 with the consequence summary, anchored to the E27 model's KV-D03), which the coordinator placed with **E42-T04** (the endpoint is admin's and E28 only consumes it; coordinator recommendation 2026-10-16 03:42Z, never recorded on #2701, #965 or #2658, OQ-2); E42-T04 closed on 2026-10-18, so Option B needs a new contract ticket; the served route and #2648's scope change; and `flatten_first` makes an admin endpoint drive OMS orders: `admin` (M21) may not depend on `oms` (M14) in CONSTITUTION §3, so the edge needs an ADR (C-3.4) before implementation. Contract-first (C-6.1) before E42-D03 draws either as built.                                                                                                        | F-D2, probes 1 and 3 |
+| AM-4  | SCR-121, SCR-122, SCR-123   | Verbs: "Disable" / "Enable" / "Delete (keeps history)" / "Sign out everywhere"; status chips "Locked out (sign-in)" vs "Trading locked (risk)"; capacity line with the three states of R-D4; SCR-123 invites a viewer only (no role picker) and says the manager grant is a second step.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | F-D1, F-D3, F-D4     |
+| AM-5  | SCR-124                     | View-as is contracted (#3164, merged 2026-10-17, for #3085 and the E42 threat model's AD-F03, D6 and SR-E42-03; SR-025 lists its start). `POST /admin/view-as` starts it: `users:write`, step-up class `users`, and a mandatory reason that only the start record keeps; Owner, self, invited and disabled targets are refused. `GET` and `DELETE /auth/session/view-as` read and end it, and nothing refuses leaving. While it lasts, reads answer in the target's scope only, and every write-method request answers `403 view_as_read_only`, except the viewer's own session operations and the C-2.6 protective writes with an account-scope kill-switch engage (the merged default, option b1 of the owner question on #2701, OQ-4), which run and are audited as the viewer. It ends 30 minutes after the start, never extended, or when the viewer or the target stops being eligible; the server then holds it, every call but the viewer's own and the protective writes answering `403 view_as_expired`, reads included, until the viewer exits. It is audited ahead (`admin.view_as_started` with the target notified, one `admin.view_as_ended`, one `admin.view_as_refused` per refusal under its own budget), the start and end at severity `warning`. The server slice is owed (#3085, open) and blocks E42-S03's view-as PR (#1134). Amend SCR-124 to the contract: the Type line and banner ("you cannot act" is not true of the protective writes, §6), the held end state in place of "auto-exit", `warning` in place of "high severity", and the Exit hotkey (R-S3, OQ-7); its wrong story reference is corrected under AM-9. | §6, OQ-4             |
+| AM-6  | SCR-136 (+ OpenAPI, schema) | `AuditEntry` and `audit_log` gain `actor_role` and `actor_type` (human, rule, system) with `rule_id`/`rule_version` (SR-062) as follow-up **#2763**, owned by the audit-writer lane (E42-T02) and labelled `post-ga` since 2026-10-19 (its blocker #2392 has merged), as a contract plus an additive, nullable migration, not folded into E42-T02 (coordinator recommendation 2026-10-16 03:42Z, owner item on #2701). Because `entry_hash` is computed over the canonical row encoding (§3.10.1; SR-063), #2763 must version that canonical encoding so rows written before it still verify; as a migration touching the audit table it needs security code-owner approval (SR-066); and it replaces the role packing the code does today (`admin/wiring.py:99` writes `actor_label` as `<actor_kind>:<actor_role>`) rather than sitting beside it. SCR-136 shows "Role at the time: not recorded" for rows written before it, which at GA is every row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | F-I1                 |
+| AM-7  | SCR-146                     | The entry is inconsistent with itself and with the contract: its Type line lists a QuestDB snapshot and a Parquet sync per store and its mock shows a `questdb snap` row, while its checklist says "market history is not restored from these backups"; the restore `components` enum is `postgres, questdb, parquet, config`. Resolve all three the same way (OQ-10); adopt the probe-4 copy, leading with "Bybit is not affected" and naming the forced trading-off and the reconciliation review.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | probe 4              |
+| AM-8  | SCR-148                     | (a) Paused versus cancelled: the Type line says "algos paused" while the a11y consequence list says "Running algos are cancelled"; the merged #2592 contract for `maintenance.mode` (E42-T03, #964; `setFeatureFlag` in `22-api-openapi.yaml`: "Turning it on cancels only running emulated algos", side effects only on a stored value read as `true`) cancels running emulated algos, so "cancelled" is what will be built. Align the Type line to "cancelled" and keep the consequence list; the difference matters for a running TWAP or iceberg, which "paused" implies will resume (OQ-12). (b) Contract and scope: the contract is the flag `maintenance.mode` (`21-database-schema.md` §10.7, added by the merged #2592; audited `maintenance.enabled\|disabled`), not an endpoint (OQ-9 resolved); v1 keeps the on/off only, and the scheduled window and user message are follow-up #2764, labelled `post-ga` (its blocker #964 has closed), drawn by D04 as post-GA, not v1. (c) The story reference US-REL-004 does not exist (AM-9).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | §5.1 card 25, §6     |
+| AM-9  | SCR-122..149 (traceability) | Two kinds of bad story reference on the first "Stories" line of each entry. Wrong, resolving to unrelated stories: SCR-122 `US-ADMIN-006` (recorder and retention), SCR-123 `US-ADMIN-003` (risk-limit administration), SCR-124 `US-ADMIN-007` (feature flags), SCR-146 `US-ADMIN-013..015` (013 is manager onboarding and 014 sub-account capacity, neither about backups, and 015 does not exist). Absent from `11-user-stories.md`: SCR-145 `US-REL-003`, SCR-148 `US-REL-004`, SCR-149 `US-ADMIN-016`. Correct the first kind (for SCR-146, drop the whole range) and remove the second, keeping each entry's second "Stories" line, which is right; correct SCR-135's action codes to the `audit/actions.py` registry and "CSV/JSON" to the signed NDJSON export.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | F-I2, F-I6           |
+| AM-10 | SCR-145                     | Flag key naming: SCR-145 shows `live_trading_enabled`, the contract's gated example is `trading.live_enabled`; pick one. Group trading-capability flags under "Safety flags" (US-ADMIN-007) and never label a flag "kill switch".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | §6                   |
 
 **Related amendments outside the catalogue (for their owners):**
 
 - `12-sitemap.md` §4: the step-up TTL (30 min) and mechanism ("TOTP code (not password)") are stale against
-  SCR-149 (15 min, password + TOTP) and `/auth/step-up` (password + TOTP, 5-minute per-class grace); name
-  the two gates separately (F-D5).
-- `21-database-schema.md` §12: `actor_label` cannot be pseudonymised in place under the append-only
-  trigger; the row is corrected (the recommendation names E42-T04; the R2 split moved the §12 correction
-  to E42-T10: #965 O6, #2650; `docs/security/threat-models/e42-user-lifecycle.md` UL-F7) and, on the
-  coordinator's recommendation, reworded to the read-time rule (join to `users`; a deleted user shows as
-  `deleted-user-<short id>` in the log; exports per OQ-3).
+  SCR-149 (15 min, password + TOTP) and `/auth/step-up` (password + TOTP, 5-minute per-class grace).
+  Under D8 (per-action step-up only, recorded 2026-10-20) it names only the action gate, and SCR-149
+  and the catalogue's §10 preamble are amended with it; the E42-T06 ADR (#1085) records D8 (F-D5).
+- `21-database-schema.md` §12: done by the merged #2658 (#965 O6;
+  `docs/security/threat-models/e42-user-lifecycle.md` UL-F7). The row keeps `actor_label` verbatim and
+  pseudonymises an erased user's label to `deleted-user-<12 hex>` at read and export time by joining
+  `users`, the coordinator's recommendation; its export half conflicts with the audit contract (OQ-3).
 - `apps/web/src/keymap/keymap.json` (the single source; `docs/generated/default-keymap.md` is generated
-  from it) and `05-accessibility-standard.md` §3.2 default map: add the kill-switch confirm, freeze and,
-  if OQ-4 keeps view-as, the Exit view-as bindings under the §3.3 conflict rules, with SCR-010's
-  `Interactions/hotkeys` line in `14-screens-catalogue.md` (which `scripts/keymap_lint.py` checks against
-  the keymap) and SCR-124's hotkey requirement (OQ-7).
+  from it) and `05-accessibility-standard.md` §3.2 default map: add the kill-switch confirm, freeze and
+  Exit view-as bindings under the §3.3 conflict rules, with SCR-010's `Interactions/hotkeys` line in
+  `14-screens-catalogue.md` (which `scripts/keymap_lint.py` checks against the keymap) and SCR-124's
+  hotkey requirement (OQ-7).
 - `04-security-program.md` §9.1: the global-kill row asks for a "confirm dialog with typed confirmation
   for live"; it is reconciled with OQ-1 and amended for engage if the owner confirms one-click engage
   (AM-2).
@@ -826,20 +877,22 @@ catalogue consistent with the stories, the contracts and the findings above.
   sends the locked-screen Emergency stop to "SCR-072 (typed FREEZE + reason, nothing pre-sent)" and
   follows SCR-072 once AM-2 is settled.
 - `22-api-openapi.yaml`: AM-3 (the account-access choice, only if OQ-13 picks Option B or, under Option
-  A, answers sub-question 1 "refuse"), AM-6 (audit role
-  and actor type, #2763),
-  the `/admin/audit` description's example action codes aligned to the registry (F-I2), the
-  `SetKillSwitchRequest` defaults once OQ-1 is decided (AM-2), and the view-as contract only if OQ-4
-  keeps the feature. AM-8 needs no OpenAPI change: `maintenance.mode` is a flag (#2592).
+  A, answers sub-question 1 "refuse"), AM-6 (audit role and actor type, #2763, post-GA), the
+  `SetKillSwitchRequest` defaults once OQ-1 is decided (AM-2), and the export half of OQ-3 (E42-T02).
+  Done since rev 5: the `/admin/audit` filter example names registered codes (#2392, F-I2), and the
+  view-as contract merged (#3164, AM-5). AM-8 needs no OpenAPI change: `maintenance.mode` is a flag
+  (#2592).
 - `27-adrs/`: only if OQ-13 picks Option B, the admin → OMS dependency edge that `flatten_first` on
-  `PUT /users/{userId}/account-access` opens (M21 → M14; C-3.4), raised by E42-T04 before implementation;
-  Option A needs no ADR.
+  `PUT /users/{userId}/account-access` opens (M21 → M14; C-3.4), raised by the contract ticket that
+  replaces the closed E42-T04 before implementation; Option A needs no ADR.
 - `services/api/candleviewer/audit/actions.py`: the admin names the catalogue uses are registered by the
-  PR that first emits each, a per-ticket task rather than a docs change. Registered today: `users.invited`,
-  `users.disable`, `backup.run` and `backup.restore`. Not registered: `maintenance.enabled|disabled`, the
-  view-as names and SCR-146's `backup.verified`, `backup.restored` and `backup.downloaded` (`restore`
-  against `restored` is one more F-I2 drift). The registered `users.invited` and `users.disable` are also
-  not the catalogue's `user.invited` and `user.deactivated` spellings.
+  PR that first emits each, a per-ticket task rather than a docs change. Registered today, among others:
+  `users.invited`, `users.disable`, `users.enable`, `users.access_change` (SCR-122's name since #3096),
+  `maintenance.enabled|disabled` (#3241), `backup.run|restore|verified|downloaded|deleted` (E42-T05;
+  SCR-146 has said `restore` since #3448) and `admin.view_as_started|ended|refused` (#3164), so the
+  audit names of SCR-122, SCR-124, SCR-146 and SCR-148 now match. Still drifting: SCR-121's and SCR-123's
+  `user.*` names against the registered `users.disable` and `users.invited`, SCR-145's `flag.changed`
+  against `flags.change`, and SCR-135's mock codes (AM-9).
 
 ### 12.1 Who owns each amendment and how it is filed (AC5)
 
@@ -851,21 +904,35 @@ filed where the table says. Nothing here is implemented by E42-D01.
 | ----- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
 | AM-1  | E42-D02 (#831) draws it; catalogue text by this lane                              | the docs PR; if OQ-5 picks additive `AdminOverview` slices, an issue on the E42 backend lane (the E42-T01 read model, #963)                                                                                                                                                                                      | OQ-5 (owner)          |
 | AM-2  | owner (OQ-1 on #2701); the `/trading/kill-switch` contract owner for the defaults | the docs PR for SCR-071/072 once decided; a contract PR for the `SetKillSwitchRequest` defaults, interface-first (C-6.1)                                                                                                                                                                                         | OQ-1 (owner)          |
-| AM-3  | owner (OQ-13, O2 veto list on #2701); E42-T04 (#965), E42-T08 (#2648) if Option B | Option A: the docs PR for the dialog and the hand-off, no contract change (unless OQ-13's sub-question 1 is answered "refuse"). Option B: E42-T04's next contract slice (SR-E27-07 shape; #2658's and #2648's scope changes) plus an ADR for the admin → OMS edge (C-3.4)                                        | OQ-13 (owner)         |
+| AM-3  | owner (OQ-13, O2 veto on #2701); a new contract ticket and E42-T08 (#2648) if B   | Option A: the docs PR for the dialog and the hand-off, no contract change (unless OQ-13's sub-question 1 is answered "refuse"). Option B: a new contract slice (E42-T04 is closed; SR-E27-07 shape; the served route and #2648's scope change) plus an ADR for the admin → OMS edge (C-3.4)                      | OQ-13 (owner)         |
 | AM-4  | E42-D03 (#886) carries the copy; catalogue text by this lane                      | the docs PR; verbs aligned with the #2658 lifecycle names (`users.disable`)                                                                                                                                                                                                                                      | nothing               |
-| AM-5  | owner (OQ-4 on #2701, listed by the coordinator)                                  | if dropped: the docs PR removes SCR-124 and the view-as part of its build story E42-S03 (C-1.2); if kept: a new user story in `11-user-stories.md`, a contract-first ticket and E42-X01 (#890) coverage                                                                                                          | OQ-4 (owner)          |
-| AM-6  | the audit-writer lane (E42-T02, #889)                                             | filed: **#2763** (contract plus additive migration; its body has the chain versioning and a `security-review` pass; this report also asks, in a comment on #2763, for the SR-063 and SR-066 references and the replacement of the `actor_label` packing, `admin/wiring.py:71`, which its body does not yet list) | #2392                 |
-| AM-7  | E42-D05 (#960) draws SCR-146; E42-T05 (#966) owns the backups read model          | the docs PR for the SCR-146 text once OQ-10 is decided; the `components` enum is confirmed or changed in E42-T05's contract                                                                                                                                                                                      | OQ-10 (owner)         |
-| AM-8  | E42-T03 (#964; contract #2592) for (a) and (b); E42-D04 (#887) draws it           | (a) the docs PR aligns the Type line to the contract after OQ-12; (b) filed: **#2764** for the window and the message; (c) under AM-9                                                                                                                                                                            | OQ-12 (owner) for (a) |
+| AM-5  | #3085 (server slice) and E42-S03 (#1134) build it; E42-D03 (#886) draws it        | the docs PR amends SCR-124 to the merged contract (#3164); the server slice is #3085, open, which blocks E42-S03's view-as PR                                                                                                                                                                                    | OQ-4 (owner)          |
+| AM-6  | the audit-writer lane (E42-T02, #889)                                             | filed: **#2763** (contract plus additive migration; its body has the chain versioning and a `security-review` pass; this report also asks, in a comment on #2763, for the SR-063 and SR-066 references and the replacement of the `actor_label` packing, `admin/wiring.py:99`, which its body does not yet list) | post-GA; OQ-8 (owner) |
+| AM-7  | E42-D05 (#960) draws SCR-146; E42-T05 (#966) owns the backups read model          | the docs PR for the SCR-146 text once OQ-10 is decided; the `components` enum is confirmed or changed in the restore contract, which #3084 carries under D7 (Option 3, recorded 2026-10-20)                                                                                                                      | OQ-10 (owner)         |
+| AM-8  | E42-T03 (#964, closed; contract #2592) for (a) and (b); E42-D04 (#887) draws it   | (a) the docs PR aligns the Type line to the contract after OQ-12; (b) filed: **#2764** for the window and the message, labelled `post-ga`; (c) under AM-9                                                                                                                                                        | OQ-12 (owner) for (a) |
 | AM-9  | this lane                                                                         | the docs PR (traceability and the SCR-135 codes and export wording); no decision needed                                                                                                                                                                                                                          | nothing               |
-| AM-10 | E42-T03 (#964); E42-D04 (#887) draws SCR-145                                      | the docs PR aligns SCR-145's key to the contract's `trading.live_enabled`; the "Safety flags" grouping is a D04 drawing decision                                                                                                                                                                                 | nothing               |
+| AM-10 | E42-T03 (#964, closed); E42-D04 (#887) draws SCR-145                              | the docs PR aligns SCR-145's key to the contract's `trading.live_enabled`; the "Safety flags" grouping is a D04 drawing decision                                                                                                                                                                                 | nothing               |
 
 ## 13. Open questions for the owner
 
 Resolved items stay listed with their resolution so the ids cited above remain stable. Owner items are
-queued for the owner on #2701: OQ-1, OQ-3, OQ-4 and OQ-8 in the coordinator's list, OQ-12 in
-hpe-worker-1's owner item, and OQ-13 as hpe-worker-1's new item. OQ-1's §9.1 and design-spec scope is
-this report's addition to the coordinator's item, which names neither.
+queued for the owner on #2701: OQ-1, OQ-3, OQ-4 and OQ-8 in the coordinator's list of 2026-10-16, OQ-12
+in hpe-worker-1's owner item, OQ-13 as hpe-worker-1's new item, and OQ-4's remaining choice in
+hpe-worker-1's view-as question of 2026-10-17. OQ-1's §9.1 and design-spec scope is this report's
+addition to the coordinator's item, which names neither. None of them has a recorded answer on #2701 or
+#830 yet.
+
+**What moved to post-GA, and what the owner still decides now.** The plan-first sweep of 2026-10-19
+(#2701) labelled P2 follow-ups `post-ga`: kept open, out of every queue. Two of this report's follow-ups
+are among them, although their blockers (#2392, #964) are gone: #2763, the actor role and type on audit
+rows (AM-6, OQ-8, F-I1), and #2764, the scheduled maintenance window and user message (AM-8(b), OQ-9).
+At GA, then, SCR-136 answers "Role at the time: not recorded" on every row, and SCR-148 is the on/off
+flag only, with D04 drawing the window as post-GA. Nothing else here moved: OQ-13 is an owner decision,
+not a follow-up, and Option A's hand-off target, E29-T07 (#915, P0), stays in the GA plan. Still decided
+now, before E42-D02 and E42-D03 draw: OQ-1, OQ-12, OQ-13 and OQ-4's kill-switch choice on #2701;
+whether GA accepts "not recorded" as the answer to "under what permissions" (OQ-8); and OQ-3's export
+half, which E42-T02 settles before export ships. The threat model's D7 (restore, probe 4) and D8 (the
+admin window, OQ-6) were recorded on #890 on 2026-10-20 under the owner's delegation, reversibly.
 
 - **OQ-1 (AM-2, OWNER DECISION, on #2701).** Confirm that engaging a freeze or the kill switch needs
   **no typed word** (personas P4-E and flow §20) and that SCR-071/072 are amended; and choose the
@@ -882,50 +949,68 @@ this report's addition to the coordinator's item, which names neither.
   defaults change to match. R-S1, R-S2, AD-3 and AM-2 are written to that recommendation. Release keeps
   step-up with no grace either way.
 - **OQ-2 (AM-3) — coordinator recommendation (RelayRoom SYNC-4, 2026-10-16 03:42Z), in conflict with
-  recorded text.** The recommendation places the explicit open-positions choice on
+  the built contract.** The recommendation places the explicit open-positions choice on
   `PUT /users/{userId}/account-access` (and on disable) with E42-T04 (#965), in the SR-E27-07 shape
-  (`leave_positions` or `flatten_first`); E28 only consumes it. #2701, #965 and #2658 do not carry this
-  placement. What they and #2648 do carry is O2: unbind and disable never flatten or cancel, and
-  flatten-first stays a separate OMS action. This report does not treat the two as reconciled; the
-  conflict is owner decision OQ-13, and the ADR for the admin → OMS edge (C-3.4) is needed only if the
-  owner picks Option B.
-- **OQ-3 (probe 2) — coordinator recommendation (2026-10-16 03:42Z), owner item on #2701; the export half
-  is open for E42-T02 and E42-T04.** Audit rows stay immutable; the log shows `deleted-user-<short id>`
-  by joining to `users`; the §12 row is corrected (the recommendation names E42-T04; the R2 split moved
-  the §12 correction to E42-T10: #965 O6, #2650; `docs/security/threat-models/e42-user-lifecycle.md`
-  UL-F7). Open: the export. The open #2392 builds the export "so every link can be verified offline" and
-  has entries "exported exactly as stored", so rewriting `actor_label` in the file would break the SR-063
-  chain check, and a pseudonym beside the stored label keeps the name in the file. E42-T02 and E42-T04
-  choose between exports kept as stored and the pseudonym carried outside the hashed entry; SCR-136's
-  raw record and hash view follows the same choice, and no copy promises that exports hide the name until
-  it is made. Still for the owner: is the 90-day delay before anonymising the `users` row intended?
-- **OQ-4 (AM-5, OWNER DECISION, on #2701).** "View as" (SCR-124): **add a user story or drop it** (C-1.2).
-  No user story, route, flow, contract, permission, SR row or STRIDE entry backs it, and its value against
-  audit plus SCR-122's "effective permissions" view is unmeasured. Coordinator position (2026-10-16
-  03:42Z): not v1 unless the owner says otherwise. If kept: the user story first, then a contract-first
-  ticket plus E42-X01 coverage before D03 draws it.
+  (`leave_positions` or `flatten_first`); E28 only consumes it. #2701, #965 and #2658 never carried this
+  placement, and E42-T04 closed on 2026-10-18 with O2 built: unbind and disable never flatten or cancel
+  (the merged #2658, served since #3291 and #3267; #2648 likewise), and flatten-first stays a separate
+  OMS action. This report does not treat the two as reconciled; the conflict is owner decision OQ-13,
+  and the ADR for the admin → OMS edge (C-3.4) is needed only if the owner picks Option B.
+- **OQ-3 (probe 2) — the read rule is in the schema document; the export half is open for E42-T02.**
+  Audit rows stay immutable, and an erased user's label shows as `deleted-user-<12 hex>` by joining
+  `users`: the coordinator's recommendation of 2026-10-16 (owner item on #2701), now
+  `21-database-schema.md` §12 through the merged #2658 (#965 O6;
+  `docs/security/threat-models/e42-user-lifecycle.md` UL-F7). It shows only after the 90-day purge.
+  Open: the export, and the audit contract's own read text. The merged #2392 builds the export "so every
+  link can be verified offline", with entries "exported exactly as stored", and its
+  `AuditEntry.actor_username` is the label recorded at write time; rewriting `actor_label` in the file
+  would break the SR-063 chain check, and a pseudonym beside the stored label keeps the name in the
+  file. E42-T04 is closed, so E42-T02 (#889) chooses between exports kept as stored and the pseudonym
+  carried outside the hashed entry before export ships (it answers `501` until the signing-key decision,
+  D1); SCR-136's raw record and hash view follows the same choice, and no copy promises that exports
+  hide the name until it is made. Still for the owner: is the 90-day delay before anonymising the
+  `users` row intended?
+- **OQ-4 (AM-5, OWNER DECISION, on #2701) — the scope question is overtaken; one choice remains.** The
+  2026-10-16 question ("add a user story or drop it"; coordinator position: not v1) was overtaken on
+  2026-10-17: the E42 threat model makes view-as server-defined or not shipped (D6; AD-F03, High, with
+  AD-I05, AD-E04 and SR-E42-03), the orchestrator placed #3085 in the E42 lane and accepted its contract
+  deviations D1 and D2, and #3164 merged the contract (AM-5). E42-S03 (#1134, P0) builds the screen once
+  #3085's server slice lands. Still open for the owner (hpe-worker-1's question on #2701, 2026-10-17):
+  while viewing, an account-scope kill-switch engage stays reachable with its options (b1, the merged
+  default), stays reachable with cancel, disarm and flatten forced off (b2), or is refused until the
+  viewer exits (b3); the C-2.6 protective writes stay reachable in all three. The banner's safety line
+  (§6) follows the answer. For §10: whether "read-only" is understood with that exception, whether the
+  owner knows the target is told (and never sees the reason), and whether the hard 30-minute end and the
+  held state after it are understood. No user story in `11-user-stories.md` names view-as; SCR-124's
+  wrong reference is AM-9's.
 - **OQ-5 (AM-1).** Accept the nine-tile, three-band SCR-120 and the "Needs your action" strip? And:
   additive `AdminOverview` slices for flags, backups, audit and security (C-6.3), or four small reads?
-- **OQ-6 (§6).** Confirm the vocabulary decisions, in particular "Confirm it's you" / "Unlock admin" as
-  the two gate titles (the SCR-005/006 chassis is E09-D02/D06's; any conflict is raised there), and
-  "Tamper check" for the chain verification.
+- **OQ-6 (§6).** Confirm the vocabulary decisions, in particular "Confirm it's you" as the gate title
+  (the SCR-005/006 chassis is E09-D02/D06's; any conflict is raised there), and
+  "Tamper check" for the chain verification. The E42 threat model's D8 was recorded on #890 on
+  2026-10-20 under the owner's delegation: per-action step-up stays (its option b; the E42-T06 ADR,
+  #1085, records it), so SCR-149 and the "Unlock admin" copy go and "Confirm it's you" is the one gate.
+  "Unlock admin" returns only if the owner revokes D8.
 - **OQ-7 (R-S3).** Register the kill-switch confirm (`Ctrl+Shift+K`, which `04-security-program.md` §9.1
   and `17-ux-diagrams.md` already name for it and which `apps/web/src/keymap/keymap.json`,
   `05-accessibility-standard.md` §3.2 and `docs/generated/default-keymap.md` do not carry), a freeze
-  binding and, if OQ-4 keeps view-as, the Exit view-as key in `keymap.json` (the single source) and the
-  §3.2 default map under the §3.3 conflict rules, with SCR-010's `Interactions/hotkeys` line, which
-  `scripts/keymap_lint.py` checks against `keymap.json`, and SCR-124's hotkey requirement, or pick other
-  keys. D02 draws the controls without asserting keys until then.
-- **OQ-8 (AM-6) — coordinator recommendation (2026-10-16 03:42Z), owner item on #2701.** `actor_role` and
-  `actor_type` are follow-up #2763 (contract plus additive, nullable migration), blocked by #2392 and
-  not folded into E42-T02. This report asks it, in a comment on #2763, to version the SR-063 canonical
-  encoding, carry SR-066 approval and replace the `actor_label` role packing (AM-6); its body has the
-  chain versioning and a `security-review` pass but does not yet cite SR-063 or SR-066 or list the
-  packing replacement.
-- **OQ-9 (AM-8) — resolved by the merged #2592 contract (E42-T03, #964).** A flag: `maintenance.mode`,
-  added to `21-database-schema.md` §10.7 by #2592 and audited as `maintenance.enabled|disabled`
-  (`setFeatureFlag` in `22-api-openapi.yaml`). v1 keeps the on/off only; the scheduled window and the
-  user message are #2764.
+  binding and the Exit view-as key in `keymap.json` (the single source) and the §3.2 default map under
+  the §3.3 conflict rules, with SCR-010's `Interactions/hotkeys` line, which `scripts/keymap_lint.py`
+  checks against `keymap.json`, and SCR-124's hotkey requirement, or pick other keys. An example hotkey
+  profile in `22-api-openapi.yaml` (`listHotkeyProfiles`) binds `killswitch.engage` to `Ctrl+Alt+K`,
+  so the choice aligns that example too. D02 draws the controls without asserting keys until then.
+- **OQ-8 (AM-6) — coordinator recommendation (2026-10-16 03:42Z), owner item on #2701; post-GA since
+  2026-10-19.** `actor_role` and `actor_type` are follow-up #2763 (contract plus additive, nullable
+  migration), not folded into E42-T02; its blocker #2392 has merged, and it is labelled `post-ga`. This
+  report asks it, in a comment on #2763, to version the SR-063 canonical encoding, carry SR-066 approval
+  and replace the `actor_label` role packing (AM-6); its body has the chain versioning and a
+  `security-review` pass but does not yet cite SR-063 or SR-066 or list the packing replacement. Still
+  for the owner now: at GA no row records the role at the time (AD-F12), so "under what permissions" is
+  answered "not recorded" (AD-9). Accept that for GA, or move #2763 back into the GA plan.
+- **OQ-9 (AM-8) — resolved by the merged #2592 contract (E42-T03, #964, closed).** A flag:
+  `maintenance.mode`, added to `21-database-schema.md` §10.7 by #2592 and audited as
+  `maintenance.enabled|disabled` (`setFeatureFlag` in `22-api-openapi.yaml`). v1 keeps the on/off only;
+  the scheduled window and the user message are #2764, labelled `post-ga` since 2026-10-19.
 - **OQ-10 (AM-7).** Restore scope: do the backups restore market history (the `questdb` and `parquet`
   components, and SCR-146's own Type line and mock) or not (SCR-146's checklist)? The probe-4 copy
   depends on it.
@@ -934,14 +1019,15 @@ this report's addition to the coordinator's item, which names neither.
 - **OQ-12 (AM-8, OWNER DECISION).** Maintenance mode and running algos: SCR-148's Type line says
   "paused", its consequence list says "cancelled", and the merged #2592 contract cancels running emulated algos
   when `maintenance.mode` turns on. Confirm "cancelled" (the Type line is aligned and the §6 one-liner
-  stands), or decide that algos pause and resume on exit, which is a contract change in E42-T03 (#964)
-  and a different consequence line. The difference is a running TWAP or iceberg: cancelled, it does not
-  resume on its own; paused, it does.
+  stands), or decide that algos pause and resume on exit, which is a contract change (E42-T03, #964,
+  has closed, so a new ticket) and a different consequence line. The difference is a running TWAP or
+  iceberg: cancelled, it does not resume on its own; paused, it does.
 - **OQ-13 (AM-3, OWNER DECISION, queued on #2701 with the O2 veto list).** Does an unbind (and a disable) with open
   positions ever flatten? O2 (#965, accepted on an interim basis; #2701 lists #965 O1–O7 among the
-  decisions open to veto), the open #2658 (`deleteUser`, `updateUser` and `setUserAccountAccess`:
-  positions and orders are never flattened or cancelled) and #2648 (out of scope: flattening on unbind)
-  say never, and flatten-first stays a separate OMS action. US-ADMIN-002 ("flatten first") and SR-029
+  decisions open to veto) is built and #965 closed on 2026-10-18: the merged #2658 (`deleteUser`,
+  `updateUser` and `setUserAccountAccess`: positions and orders are never flattened or cancelled; served
+  since #3291 and #3267) and #2648 (out of scope: flattening on unbind) say never, and flatten-first
+  stays a separate OMS action. US-ADMIN-002 ("flatten first") and SR-029
   ("flatten or leave") both offer it, and the E27 shape (SR-E27-07, KV-D03) is this report's anchor. On
   2026-10-16 the #2417 rulings (#2701, 13:58Z) accepted `flatten_first` for account delete, and #2417
   applies the SR-E27-07 choice to key revoke and account disable too. Unbind differs: it removes one
@@ -949,21 +1035,27 @@ this report's addition to the coordinator's item, which names neither.
   still manage or flatten the positions (US-ADMIN-002: "owner takes over"), whereas revoking the last key
   strands them (KV-D03, P4-E scenario 9) and SR-E27-07 treats disabling or deleting the account the same
   way. Choice B's copy (probe 3), AD-4's
-  "disabling" and R-P1's embedded block are conditional on the answer, the way §6 handles OQ-12.
+  "disabling" and R-P1's embedded block are conditional on the answer, the way §6 handles OQ-12. OQ-13
+  is not deferred by the 2026-10-19 sweep: Option A needs no new ticket (the dialog is E42-D03's and its
+  hand-off uses E29-T07's flatten action, #915, P0), and Option B needs one, which the filing freeze on
+  #2701 admits for an owner decision.
   - **Option A (this report's recommended default): keep O2.** Choice B of the dialog becomes a hand-off
     to the contracted OMS flatten action (`closePosition`, `closeAllPositions`; not yet served, E29-T07
     owns them), and the unbind proceeds once the positions are closed. Recommended because it needs no
-    admin → OMS edge, no ADR and no change to #2658 or #2648 (unless sub-question 1 is answered
-    "refuse"), and "flatten first" stays one deliberate step away.
+    admin → OMS edge, no ADR and no change to the served routes or #2648 (unless sub-question 1 is
+    answered "refuse"), and "flatten first" stays one deliberate step away.
   - **Option B: overturn O2 for unbind.** `PUT /users/{userId}/account-access` gains the
-    `leave_positions` or `flatten_first` choice (409 with the consequence summary), #2658's and #2648's
-    scope changes, and the admin → OMS edge (M21 → M14) needs an ADR (C-3.4). A flatten choice on
-    disable would need O2 overturned for disable as well.
+    `leave_positions` or `flatten_first` choice (409 with the consequence summary) in a new contract
+    ticket, since E42-T04 has closed; the served route and #2648's scope change, and the admin → OMS edge
+    (M21 → M14) needs an ADR (C-3.4). A flatten choice on disable would need O2 overturned for disable as
+    well.
   - **Sub-question 1 (under A).** #2658 demands an acknowledgement only while the open-position count is
-    unavailable, so the server still lets an unbind through when positions are known (CR-2's gap).
+    unavailable, so the server still lets an unbind through when positions are known (CR-2's gap). Today
+    the count is never available, so every removal needs the acknowledgement; the gap opens once a
+    position provider is wired (#963).
     Should the server refuse an unbind that carries no explicit choice from the caller (under O2 the
     server records `positions_decision: leave` itself), or is the dialog enough? Answering "refuse" adds
-    a server-side 409 under Option A and changes #2658 and #2648.
+    a server-side 409 under Option A and changes the served routes and #2648.
   - **Sub-question 2.** What happens to the user's running algos and armed rules on the unbound
     account? Neither #2658 nor #2648 says. Probe 3's choice A line "Any algos alex was running on this
     account are stopped" is shown only if the answer is that they stop.
@@ -990,24 +1082,32 @@ US-ADMIN-001..014, US-ONB-005, US-ONB-009, US-ACCT-006 · `14-screens-catalogue.
 CMP-173..179, CMP-210, CMP-211 · `18-traceability-matrix.md` §2.26 · `12-sitemap.md` §2 R-300..R-360,
 §4 · `13-user-flows.md` §4, §18.7, §20 · `17-ux-diagrams.md` (hotkey table) · `22-api-openapi.yaml` `/users`, `/users/{userId}`,
 `/users/{userId}/account-access`, `/roles`, `/permissions`, `/admin/*`, `/me/sessions`, `/auth/step-up`,
-`/trading/kill-switch`, schemas `AdminOverview`, `CapacityReport`, `SubaccountCapacity`, `AuditEntry`,
-`KillSwitch`, `SetKillSwitchRequest`, `FeatureFlag`, `CreateUserRequest`, `UserStatus` ·
-`23-ws-protocol.md` §6.2, §15.9 · `21-database-schema.md` §3.1, §3.9, §3.10, §8.2–8.4, §10.7, §12 ·
-`20-architecture.md` §3.10, §3.11 · `04-security-program.md` SR-025, SR-027, SR-029, SR-055, SR-060..069, §9.1
+`/trading/kill-switch`, `/admin/view-as`, `/auth/session/view-as` and the "View-as session" section,
+`exportAuditLog`, `listHotkeyProfiles`, schemas `AdminOverview`, `CapacityReport`, `SubaccountCapacity`,
+`AuditEntry`, `KillSwitch`, `SetKillSwitchRequest`, `FeatureFlag`, `CreateUserRequest`, `UserStatus`,
+`StartViewAsRequest`, `ViewAsContext` · `23-ws-protocol.md` §6.2, §9.6, §15.9 · `21-database-schema.md`
+§3.1, §3.9, §3.10, §8.2–8.4, §10.7, §12 · `20-architecture.md` §3.10, §3.11 · `04-security-program.md`
+SR-025, SR-027, SR-029, SR-055, SR-060..069, §5.15, §9.1
 · `05-accessibility-standard.md` §2, §3.1, §3.2, §3.3, §4, §10 · `docs/generated/default-keymap.md` ·
 `27-adrs/ADR-0010-auth-and-rbac.md`, `ADR-0009-secrets-and-key-management.md`,
 `ADR-0020-session-access-token-and-revocation-model.md`, `ADR-0025-audit-query-and-index-strategy.md` ·
 `docs/security/threat-models/e09-auth-rbac.md`, `E27-accounts.md` (SR-E27-07, SR-E27-09, KV-D03, §8.1),
-`E28-profiles-trade-groups.md`, `e42-user-lifecycle.md` (UL4-T1, UL-F7) · issues #963 (admin read-model decisions), #831 (E42-D02), #886
-(E42-D03), #887 (E42-D04), #960 (E42-D05), #890 (E42-X01), #889 (E42-T02), #964 (E42-T03), #965 (E42-T04),
-#966 (E42-T05), #2648 (E42-T08), #2650 (E42-T10), #732 (E27-D01, open), #820 (E28-D01, open), #2109 (invites grant viewer),
-#2392 (E42-T02 audit contract), #2417 (exchange-accounts contract; its rulings on #2701), #2592 (E42-T03 flags contract, merged; `maintenance.mode`), #2658 (E42-T04 S1
-lifecycle contract), #2763 (actor role and type follow-up), #2764 (maintenance window and message
-follow-up), #2701 (owner queue and decisions) · code `services/api/candleviewer/audit/actions.py`
+`E28-profiles-trade-groups.md`, `e42-admin.md` (AD-F02, AD-F03, AD-F06, AD-F12, AD-F14, AD-F17, AD-I05,
+AD-E04, SR-E42-03, D5 to D8), `e42-user-lifecycle.md` (UL4-T1, UL-F7) · issues #963 (E42-T01, admin
+read-model decisions), #831 (E42-D02), #886 (E42-D03), #887 (E42-D04), #960 (E42-D05), #890 (E42-X01,
+closed), #889 (E42-T02), #964 (E42-T03, closed), #965 (E42-T04, closed), #966 (E42-T05), #1085 (E42-T06),
+#1134 (E42-S03), #1220 (E42-X02), #2648 (E42-T08), #2650 (E42-T10), #915 (E29-T07), #732 (E27-D01, open),
+#820 (E28-D01, open), #2109 (invites grant viewer), #2392 (E42-T02 audit contract, merged), #2417
+(exchange-accounts contract; its rulings on #2701), #2592 (E42-T03 flags contract, merged;
+`maintenance.mode`), #2658 (E42-T04 S1 lifecycle contract, merged), #3085 (view-as server context,
+AD-F03), #3164 (view-as contract, merged), #3084 (restore contract, D7), #3096 (the disable service),
+#3267 and #3291 (served lifecycle routes), #2763 (actor role and type follow-up, `post-ga`), #2764
+(maintenance window and message follow-up, `post-ga`), #1238 (audit-chain anchors), #2701 (owner queue
+and decisions) · code `services/api/candleviewer/audit/actions.py`
 (`AUDIT_ACTIONS`), `services/api/candleviewer/admin/wiring.py`, `apps/web/src/keymap/keymap.json`,
 `scripts/keymap_lint.py` · `CONSTITUTION.md` §3 (M14 `oms`, M21
-`admin`), C-1.2, C-3.4, C-4.4, C-4.8 · `docs/design/README.md` · precedents
+`admin`), C-3.4, C-4.4, C-4.8 · `docs/design/README.md` · precedents
 `docs/design/research/e09-auth-mental-models.md`, `e13-indicator-mental-models.md`, `docs/design/E09/E09-D02.md`
 §9, `E09-D06.md` §2 item 5 and `docs/design/E10/E10-D02.md` (SCR-010, Security notes), both on OQ-1.
 
-— hpe-worker-1
+— hpe-worker-1 (rev 1 to 5); rev 6 refresh by hcl-worker-2
