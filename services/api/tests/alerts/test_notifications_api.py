@@ -24,6 +24,7 @@ from candleviewer.api.notifications import (
     make_notifications_router,
     notification_id,
     notification_scope,
+    source_id,
 )
 from candleviewer.rules.manager import Actor
 from candleviewer.storage.repositories.notifications import (
@@ -243,6 +244,15 @@ def test_id_is_uuid5_of_source_table_and_id() -> None:
     assert notification_id(2, 9) == notification_id(2, 9)
 
 
+def test_source_id_is_the_originating_rows_uuid_never_a_raw_id() -> None:
+    """Contract-typed (uuid): the 24 §1.6 scheme over `<table>:<event id>` (ruling on #1016)."""
+    assert source_id(1, 4471) == str(uuid5(NOTIFICATION_NAMESPACE, "alert_deliveries:4471"))
+    assert source_id(4, 5) == str(uuid5(NOTIFICATION_NAMESPACE, "system_events:5"))
+    assert source_id(1, 4471) != notification_id(1, 4471)
+    for src in (1, 2, 3, 4):
+        UUID(source_id(src, 7))  # always a uuid
+
+
 def test_alert_row_dump() -> None:
     r = _row("alert", 1, 4471, title="BTC reclaims 64k", body="BTCUSDT crossed 64000",
              read_at=T0, symbol="BTCUSDT", source_uuid=ALERT, event="in_app",
@@ -251,7 +261,8 @@ def test_alert_row_dump() -> None:
         "id": notification_id(1, 4471), "kind": "alert", "severity": "warning",
         "title": "BTC reclaims 64k", "body": "BTCUSDT crossed 64000",
         "created_at": T0.isoformat(), "read_at": T0.isoformat(), "symbol": "BTCUSDT",
-        "exchange_account_id": None, "source_id": ALERT, "route": f"/alerts/{ALERT}",
+        "exchange_account_id": None, "source_id": source_id(1, 4471),
+        "route": f"/alerts/{ALERT}",
     }  # fmt: skip
 
 
@@ -279,12 +290,12 @@ def test_order_row_title_and_severity(
              code=code, source_uuid=ORDER, account_id=ACCT)  # fmt: skip
     d = dump(r)
     assert (d["title"], d["severity"]) == (title, severity)
-    assert d["route"] == f"/positions/order/{ORDER}" and d["source_id"] == ORDER
+    assert d["route"] == f"/positions/order/{ORDER}" and d["source_id"] == source_id(3, 11)
 
 
-def test_system_row_has_no_route_and_a_null_source_without_correlation() -> None:
+def test_system_row_has_no_route_but_a_source_id() -> None:
     d = dump(_row("system", 4, 5, title="Dead-man's-switch call owed", severity="warning"))
-    assert d["route"] is None and d["source_id"] is None and d["kind"] == "system"
+    assert d["route"] is None and d["source_id"] == source_id(4, 5) and d["kind"] == "system"
     assert d["title"] == "Dead-man's-switch call owed"
 
 

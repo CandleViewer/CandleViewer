@@ -10,8 +10,10 @@ own visibility predicate (`RulesManager.visible_rule_ids`), so a rule's history 
 exactly when the rule itself is.
 
 `Notification.id` is `uuid5(namespace, source_table + source_id)` (24-internal-schemas.md §1.6),
-so one source row always maps to one id; `read_at` is `acked_at` for an alert delivery and null
-for the other sources until their owners define read state.
+so one source row always maps to one id. `source_id` stays contract-typed (a uuid, C-6.1): the
+same scheme over `<source_table>:<event id>`, never a raw bigint; the raw parent ids (alert, rule,
+order) travel only in `route`. `read_at` is `acked_at` for an alert delivery and null for the
+other sources until their owners define read state.
 """
 
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
@@ -80,6 +82,11 @@ def notification_id(src: int, src_id: int) -> str:
     return str(uuid5(NOTIFICATION_NAMESPACE, f"{SOURCES[src]}{src_id}"))
 
 
+def source_id(src: int, src_id: int) -> str:
+    """The originating row's own uuid (orchestrator ruling on #1016: `<table>:<event id>`)."""
+    return str(uuid5(NOTIFICATION_NAMESPACE, f"{SOURCES[src]}:{src_id}"))
+
+
 def _title(r: NotificationRow) -> str:
     if r.nkind == "rule":
         return f"Rule {r.title}: {_RULE_EVENT.get(r.event, r.event)}"
@@ -100,7 +107,8 @@ def dump(r: NotificationRow) -> dict[str, Any]:
         "severity": severity or "info", "title": _title(r), "body": r.body,
         "created_at": r.ts.isoformat(),
         "read_at": None if r.read_at is None else r.read_at.isoformat(),
-        "symbol": symbol, "exchange_account_id": r.account_id, "source_id": r.source_uuid,
+        "symbol": symbol, "exchange_account_id": r.account_id,
+        "source_id": source_id(r.src, r.src_id),
         "route": None if route is None or r.source_uuid is None else route.format(r.source_uuid),
     }  # fmt: skip
 
@@ -165,4 +173,5 @@ __all__ = [
     "make_notifications_router",
     "notification_id",
     "notification_scope",
+    "source_id",
 ]

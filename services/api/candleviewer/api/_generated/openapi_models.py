@@ -4934,7 +4934,7 @@ class Notification(BaseModel):
     read_at: Annotated[
         AwareDatetime | None,
         Field(
-            description="`acked_at` for alert deliveries; always null for rule, order and system rows until their owners define read state. `order_events` rows are omitted until E29 lands the table.\n"
+            description="`acked_at` for alert deliveries; always null for rule, order and system rows until their owners define read state. Order rows come from E29's `order_events`.\n"
         ),
     ] = None
     symbol: str | None = None
@@ -4942,7 +4942,7 @@ class Notification(BaseModel):
     source_id: Annotated[
         UUID | None,
         Field(
-            description="Id of the originating alert delivery, rule event, order or system event."
+            description='Deterministic id of the originating alert delivery, rule event, order event or system event: uuid5(namespace, source_table + ":" + source_id), the 24-internal-schemas.md §1.6 scheme, never a raw database id. Raw ids of the parent alert, rule or order travel only in `route`.\n'
         ),
     ] = None
     route: Annotated[
