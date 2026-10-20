@@ -96,6 +96,9 @@ _QUOTED: Final = r"""(?:"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)"""
 #: rest of its line (`Cookie: a=…; b=…`), and pydantic writes an input of any type (`{…}`, `[…]`).
 #: Read as the end of the name just matched, so the other names cost nothing more.
 _TO_LINE_END: Final = r"(?<=cookie)|(?<=input[-_]value)"
+#: Where a label starts, read as the bundle scan reads it: the redaction filter and the bundle scan
+#: agree on where a label starts.
+_LABEL_START: Final = r"(?:\b|(?<=\\[tnr]))"
 #: A label's `:` or `=` and the whitespace around it, read as the bundle scan reads them: the
 #: redaction filter and the bundle scan agree on whitespace between a label and its value.
 _LABEL_SPACE: Final = r"\s*[:=](?:\s|\\[tnr])*+"
@@ -105,8 +108,8 @@ _LABEL_SPACE: Final = r"\s*[:=](?:\s|\\[tnr])*+"
 #: bare one, after a `Bearer` or `Basic` scheme, to a space, comma or closing bracket, with any
 #: quoted part in it (`access_token="…"`).
 _LABELLED_VALUE: Final = re.compile(
-    rf"""(?ix)(?P<label>\b(?=[{_KEY_FIRST}]){_NOT_DOTTED}(?:{_KEY_NAMES})(?P<line>{_TO_LINE_END})?
-    ["']?{_LABEL_SPACE})
+    rf"""(?ix)(?P<label>{_LABEL_START}(?=[{_KEY_FIRST}]){_NOT_DOTTED}(?:{_KEY_NAMES})
+    (?P<line>{_TO_LINE_END})?["']?{_LABEL_SPACE})
     (?:(?P<quote>["']){_NO_VALUE}(?:\\.|(?!(?P=quote))[^\\\n])+
     |{_NO_VALUE}(?(line)[^\s"'][^\n]*
     |(?:(?:bearer|basic)[ \t]+)?[^\s"',}}\]](?:[^\s"',}}\]]|{_QUOTED})*))"""

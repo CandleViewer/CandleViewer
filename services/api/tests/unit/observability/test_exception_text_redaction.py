@@ -627,9 +627,23 @@ def test_the_redaction_filter_and_the_bundle_scan_agree_on_whitespace_between_a_
     assert list(scan_text(out)) == []
 
 
+@pytest.mark.parametrize("before", ["\\t", "\\n", "\\r"], ids=["a", "b", "c"])
+@pytest.mark.parametrize(("label", "value", "shown"), _LABEL_KINDS.values(), ids=_LABEL_KINDS)
+def test_the_redaction_filter_and_the_bundle_scan_agree_on_where_a_label_starts(
+    label: str, value: str, shown: str, before: str
+) -> None:
+    text, out = f"{before}{label} {value}", f"{before}{label} {shown}"
+
+    assert "labelled-secret" in set(scan_text(text))
+    for redact in (redact_text, redaction._redact_runs):
+        assert redact(text) == out
+        assert redact(out) == out
+    assert list(scan_text(out)) == []
+
+
 _WHITESPACE = [" ", "\t", "\n", "\r\n"]
 _SPACE_RUN = st.lists(st.sampled_from(_WHITESPACE), max_size=4).map("".join)
-_AROUND_PIECES = [*"ab9.,;:=()[]{}<>/-_*'\"", *_WHITESPACE]
+_AROUND_PIECES = [*"ab9.,;:=()[]{}<>/-_*'\"", *_WHITESPACE, "\\t", "\\n", "\\r"]
 _AROUND = st.lists(st.sampled_from(_AROUND_PIECES), max_size=10).map("".join)
 _FLAGGED = st.builds(
     lambda quote, value: quote + value + quote,
@@ -652,6 +666,7 @@ _LABELLED_TEXT = st.builds(
 @given(_LABELLED_TEXT)
 @example(f"token\n={_LABELLED_ONLY}")
 @example(f'{{"password"\r\n:\r\n\t"{_LABELLED_ONLY}"}}')
+@example(f"x\\tpassword={_LABELLED_ONLY}")
 def test_the_filter_and_the_scan_agree_on_whitespace_between_a_label_and_its_value_in_any_text(
     text: str,
 ) -> None:
