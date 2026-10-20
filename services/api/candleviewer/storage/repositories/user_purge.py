@@ -75,6 +75,12 @@ class PurgeUserNotDisabledError(Exception):
     `conflict`); nothing changed."""
 
 
+class PurgeUserAnonymisedError(Exception):
+    """The user's purge has run (`anonymised_at` set): an enable is refused (HTTP 409 `conflict`)
+    and nothing changes. The second line behind the credentials the anonymisation revoked
+    (orchestrator ruling, 2026-10-20): a surrogate row never becomes `active` again."""
+
+
 class PurgeAuditUnavailableError(Exception):
     """The write-ahead record was refused or outlived its bound, so the change rolled back (HTTP
     503 `audit_unavailable`)."""

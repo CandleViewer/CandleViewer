@@ -7,8 +7,11 @@ change was still uncommitted when its record was written (R5, write-ahead). Cove
 history stays under the surrogate and every audit row about the user is byte-identical), only an
 expired purge runs, every session's PII is nulled, every credential revoked in the same
 transaction (the orchestrator's acceptance addition), a batch is bounded, a row that keeps failing
-holds back no later user, the re-enable's cancel (R6) and the reaper's locked re-check (UL-F5),
-and a Manager's or a Viewer's `?purge=true` refused and audited with nothing changed.
+holds back no later user, the reaper's locked re-check (UL-F5), and a Manager's or a Viewer's
+`?purge=true` refused and audited with nothing changed. The re-enable runs E42-T09's own enable
+path (`SqlAlchemyUserAdminStore`, `PATCH` to `active`) with the route's write-ahead records: it
+cancels a pending purge (R6) ahead of `users.enable`, keeps it when that record is refused, and
+refuses an anonymised user with nothing changed.
 testcontainers: CI `integration` runs it.
 """
 
@@ -28,6 +31,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
 import pytest
 import sqlalchemy as sa
 from fastapi import FastAPI
@@ -38,22 +42,27 @@ from testcontainers.postgres import PostgresContainer
 
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.api.users import make_users_router
+from candleviewer.api.users import audit_user_update, make_users_router
 from candleviewer.auth.hashing import Hasher
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from candleviewer.storage.repositories.user_lifecycle import UserStatusChange
+from candleviewer.storage.repositories.user_lifecycle import UserPatch, UserStatusChange, UserUpdate
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import (
     SqlAlchemyUserLifecycleStore,
 )
-from candleviewer.storage.repositories.user_purge import anonymised_email, surrogate
+from candleviewer.storage.repositories.user_purge import (
+    PurgeUserAnonymisedError,
+    anonymised_email,
+    surrogate,
+)
 from candleviewer.storage.repositories.user_purge_sqlalchemy import (
     MAX_ANONYMISE_BATCH,
     SqlAlchemyUserPurgeStore,
-    cancel_pending_purge,
 )
+from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
 from candleviewer.storage.retention.users_purge_tasks import UsersPurgeTask
+from tests.integration.admin.test_user_admin_pg import _admin_app
 from tests.integration.admin.test_user_lifecycle_pg import _ACCOUNT, _GRANT, _ROLE, _floor
 from tests.unit.api.test_users_delete import _Auth, _principal
 
@@ -116,7 +125,10 @@ _SCHEDULE = sa.text(
     "UPDATE users SET status = 'disabled', purge_after = :at WHERE id = CAST(:id AS uuid)"
 )
 _ENABLE = sa.text("UPDATE users SET status = 'active' WHERE id = CAST(:id AS uuid)")
-_LOCK = sa.text("SELECT 1 FROM users WHERE id = CAST(:id AS uuid) FOR NO KEY UPDATE")
+_ENABLED = sa.text(
+    "SELECT before_state::text, after_state::text FROM audit_log "
+    "WHERE action = 'users.enable' AND object_id = :id"
+)
 _PASSWORD_HASH = sa.text("UPDATE users SET password_hash = :hash WHERE id = CAST(:id AS uuid)")
 _MFA = sa.text(
     "INSERT INTO mfa_methods (id, user_id, kind, label, secret_enc, confirmed_at) "
@@ -503,27 +515,42 @@ async def test_poisoned_row_skipped(db: Any) -> None:
     assert str(poisoned) not in repr(logs) and name not in repr(logs)
 
 
-async def _enable(rel: SqlAlchemyRelationalRepository, user: uuid.UUID) -> datetime | None:
-    """E42-T09's enable path as R6 has it call the cancel: in its own transaction, under the
-    user-row lock, beside the status change."""
-    async with rel.unit_of_work() as uow:
-        await uow.session.execute(_LOCK, {"id": str(user)})
-        await uow.session.execute(_ENABLE, {"id": str(user)})
-        cancelled = await cancel_pending_purge(uow.session, user)
-        await uow.commit()
-    return cancelled
+async def _enable(
+    rel: SqlAlchemyRelationalRepository, audit: Any, user: uuid.UUID, owner: uuid.UUID
+) -> UserUpdate | None:
+    """E42-T09's enable path (`PATCH` to `active`) on the real store, with the route's own
+    write-ahead records (`audit_user_update`) into `audit`: under the user-row lock it refuses an
+    anonymised user and cancels a pending purge (R6) ahead of `users.enable`."""
+    base = {"actor_label": str(owner), "actor_user_id": owner, "object_kind": "user"}
+
+    async def write_ahead(change: UserUpdate) -> None:
+        await audit_user_update(audit, change, {**base, "object_id": str(user)})
+
+    store = SqlAlchemyUserAdminStore(rel, owner_floor=_floor, audit_timeout_s=_WAIT_S)
+    patch = UserPatch(enable=True)
+    return await store.update_user(
+        user, patch, actor=owner, check=lambda _: None, audit=write_ahead
+    )
 
 
 async def test_reenable_cancels_purge(db: Any) -> None:
-    """R6, UL4-E1 (S14): re-enabled before `purge_after`, M's purge is cleared, and the reaper never
-    anonymises M, at the old date or after it. A cancel after the purge ran restores nothing."""
+    """R6, UL4-E1 (S14): re-enabled before `purge_after` through E42-T09's enable path, M's purge is
+    cleared in the enable's transaction; `users.enable`, written while M was still disabled with
+    the purge pending (ahead), states the cancelled date; the reaper never anonymises M, at the old
+    date or after it."""
     rel, engine = db
     owner = await _user(engine, "owner")
     m = await _user(engine, "manager", status="disabled")
-    clock, audit = _Clock(), _Audit(engine)
+    clock, audit, enabled = _Clock(), _Audit(engine), _Audit(engine)
     store = _purge(rel, audit, clock)
     await store.schedule(m, actor_user_id=owner)
-    assert await _enable(rel, m) == _PURGE_AT
+    change = await _enable(rel, enabled, m, owner)
+    assert change is not None and change.purge_cancelled == _PURGE_AT
+    ((action, seen),) = enabled.seen
+    assert action == "users.enable" and seen[4:] == ("disabled", _PURGE_AT, None)
+    ((before, after),) = await _read(engine, _ENABLED, m)
+    assert json.loads(before)["purge_after"] == _PURGE_AT.isoformat()
+    assert json.loads(after) == {"status": "active", "roles": ["manager"], "purge_after": None}
     clock.now = _PURGE_AT + _DAY
     assert m not in [d.user_id for d in await store.due(MAX_ANONYMISE_BATCH)]
     assert await store.anonymise(m) is None
@@ -533,10 +560,87 @@ async def test_reenable_cancels_purge(db: Any) -> None:
         None,
         None,
     )
+
+
+async def test_an_anonymised_user_is_never_enabled(db: Any) -> None:
+    """The orchestrator's 2026-10-20 ruling (second line): once M's purge has run, E42-T09's enable
+    path refuses M under the lock, before any write (`PurgeUserAnonymisedError`, the route's 409
+    `conflict`): M stays disabled under the surrogate, both purge columns kept, no record."""
+    rel, engine = db
+    owner = await _user(engine, "owner")
     gone = await _scheduled(engine, _T0 - _DAY)
-    assert await _purge(rel, audit, _Clock()).anonymise(gone) is not None
-    assert await _enable(rel, gone) is None  # nothing pending: no write, the mark stays
-    assert (await _read(engine, _ROW, gone))[0][5:] == (_T0 - _DAY, _T0)
+    assert await _purge(rel, _Audit(engine), _Clock()).anonymise(gone) is not None
+    kept, enabled = await _read(engine, _ROW, gone), _Audit(engine)
+    with pytest.raises(PurgeUserAnonymisedError):
+        await _enable(rel, enabled, gone, owner)
+    assert await _read(engine, _ROW, gone) == kept and enabled.seen == []
+    assert kept[0][:1] == (surrogate(gone),) and kept[0][4:] == ("disabled", _T0 - _DAY, _T0)
+    assert await _read(engine, _ENABLED, gone) == []
+
+
+async def _patch_active(
+    rel: SqlAlchemyRelationalRepository, audit: Any, owner: uuid.UUID, user: uuid.UUID
+) -> httpx.Response:
+    """An elevated Owner's `PATCH /users/{userId}` to `active`, through E42-T09's route over the
+    Postgres user admin store (`test_user_admin_pg._admin_app`), its records into `audit`."""
+    transport = httpx.ASGITransport(app=_admin_app(rel, audit))
+    headers = {"x-actor": str(owner), "Authorization": f"Bearer {owner}"}
+    async with httpx.AsyncClient(transport=transport, base_url="http://cv.test") as client:
+        return await client.patch(f"/users/{user}", json={"status": "active"}, headers=headers)
+
+
+async def test_reenable_route_cancels_purge(db: Any) -> None:
+    """ "Re-enabling cancels a pending purge" through the route (S14 on E42-T09's S11): 200, M is
+    active with no purge pending, `users.enable` names the cancelled date, and the reaper never
+    anonymises M once the old date has passed."""
+    rel, engine = db
+    owner = await _user(engine, "owner")
+    m = await _user(engine, "manager", status="disabled")
+    clock, audit = _Clock(), _Audit(engine)
+    store = _purge(rel, audit, clock)
+    await store.schedule(m, actor_user_id=owner)
+    r = await _patch_active(rel, audit, owner, m)
+    assert (r.status_code, r.json()["status"]) == (200, "active"), r.text
+    assert (await _read(engine, _ROW, m))[0][4:] == ("active", None, None)
+    ((before, _),) = await _read(engine, _ENABLED, m)
+    assert json.loads(before)["purge_after"] == _PURGE_AT.isoformat()
+    clock.now = _PURGE_AT + _DAY
+    assert await store.anonymise(m) is None and (await _read(engine, _ROW, m))[0][4] == "active"
+
+
+async def test_route_refuses_to_enable_an_anonymised_user(db: Any) -> None:
+    """The route's 409 `conflict` for an anonymised user, with one `rbac.denied` (`anonymised`)
+    recorded and nothing changed: no `users.enable`, the row as the reaper left it."""
+    rel, engine = db
+    owner = await _user(engine, "owner")
+    gone = await _scheduled(engine, _T0 - _DAY)
+    assert await _purge(rel, _Audit(engine), _Clock()).anonymise(gone) is not None
+    kept, audit = await _read(engine, _ROW, gone), _Audit(engine)
+    r = await _patch_active(rel, audit, owner, gone)
+    assert (r.status_code, r.json()["code"]) == (409, "conflict"), r.text
+    assert [action for action, _ in audit.seen] == ["rbac.denied"]
+    assert await _read(engine, _ROW, gone) == kept and await _read(engine, _ENABLED, gone) == []
+
+
+class _Refusing:
+    """An audit writer that refuses every record, as a stopped writer does."""
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        raise RuntimeError("audit down")
+
+
+async def test_reenable_with_audit_down_keeps_the_purge(db: Any) -> None:
+    """A refused `users.enable` record rolls the enable back whole (the route's 503
+    `audit_unavailable`): M stays disabled and the purge stays pending, so the reaper still runs
+    it once `purge_after` passes."""
+    rel, engine = db
+    owner = await _user(engine, "owner")
+    m = await _scheduled(engine, _PURGE_AT)
+    kept = await _read(engine, _ROW, m)
+    with pytest.raises(RuntimeError, match="audit down"):
+        await _enable(rel, _Refusing(), m, owner)
+    assert await _read(engine, _ROW, m) == kept and kept[0][4:6] == ("disabled", _PURGE_AT)
+    assert await _purge(rel, _Audit(engine), _Clock(_PURGE_AT + _DAY)).anonymise(m) is not None
 
 
 async def test_reenable_racing_reaper_keeps_user(db: Any) -> None:
@@ -544,12 +648,13 @@ async def test_reenable_racing_reaper_keeps_user(db: Any) -> None:
     starts; under the user-row lock the re-check sees it, and M stays active and unchanged, with
     no `users.anonymise`."""
     rel, engine = db
-    await _user(engine, "owner")
+    owner = await _user(engine, "owner")
     m = await _scheduled(engine, _T0 - _DAY)
     audit = _Audit(engine)
     store = _purge(rel, audit, _Clock())
     assert m in [d.user_id for d in await store.due(MAX_ANONYMISE_BATCH)]
-    assert await _enable(rel, m) == _T0 - _DAY
+    change = await _enable(rel, _Audit(engine), m, owner)
+    assert change is not None and change.purge_cancelled == _T0 - _DAY
     kept = await _read(engine, _ROW, m)
     assert await store.anonymise(m) is None
     assert await _read(engine, _ROW, m) == kept and audit.seen == []

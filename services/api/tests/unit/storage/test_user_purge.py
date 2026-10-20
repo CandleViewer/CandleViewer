@@ -534,3 +534,24 @@ async def test_cancel_is_a_noop_when_no_purge_is_pending_or_it_already_ran() -> 
     session = _Session(None)
     assert await m.cancel_pending_purge(cast(Any, session), _UID) is None
     assert session.ran == [(m._PENDING, {"id": str(_UID)})]
+
+
+@pytest.mark.parametrize(("mark", "expected"), [(True, True), (False, False), (None, False)])
+async def test_anonymised_reads_the_mark_under_the_callers_lock(
+    mark: bool | None, expected: bool
+) -> None:
+    """The enable path's refusal (#2650, second line): one read in the caller's transaction, under
+    its lock; `anonymised_at` set is True, unset or no row (deleted under the lock) is False."""
+
+    class _Mark:
+        def __init__(self) -> None:
+            self.ran = list[Any]()
+
+        async def execute(self, stmt: Any, params: Any = None) -> Any:
+            self.ran.append((stmt, params))
+            return SimpleNamespace(first=lambda: None if mark is None else (mark,))
+
+    session = _Mark()
+    assert await m.anonymised(cast(Any, session), _UID) is expected
+    assert session.ran == [(m._ANONYMISED, {"id": str(_UID)})]
+    assert "anonymised_at IS NOT NULL" in " ".join(str(m._ANONYMISED).split())

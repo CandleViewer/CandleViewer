@@ -16,8 +16,9 @@ every credential (orchestrator ruling, 2026-10-20): the password hash becomes th
 password" value, every MFA method and recovery code is deleted, and every live session is revoked
 as a disable revokes it (the lifecycle store's statement; B16 `REVOKE` follows the commit, the
 reaper's). It never reads a PII column or a secret and never touches `audit_log` (C-5.7, C-12.8).
-`cancel_pending_purge` is #965 R6's cancel for E42-T09's enable path, run inside that path's own
-transaction. The audit emitter is injected: storage (M10) may not import audit (M19).
+`anonymised` and `cancel_pending_purge` serve E42-T09's enable path inside its own transaction: an
+anonymised user is refused, and a pending purge is cancelled (#965 R6) ahead of its `users.enable`
+record. The audit emitter is injected: storage (M10) may not import audit (M19).
 """
 
 from __future__ import annotations
@@ -106,6 +107,7 @@ _PENDING = sa.text(
     "AND purge_after IS NOT NULL AND anonymised_at IS NULL FOR NO KEY UPDATE"
 )
 _CANCEL = sa.text("UPDATE users SET purge_after = NULL WHERE id = CAST(:id AS uuid)")
+_ANONYMISED = sa.text("SELECT anonymised_at IS NOT NULL FROM users WHERE id = CAST(:id AS uuid)")
 
 #: A record's `before_state` and `after_state`: status, times and counts, never PII or a secret.
 _States = tuple[dict[str, Any], dict[str, Any]]
@@ -134,6 +136,14 @@ def _due(row: Any, now: datetime) -> bool:
         and purge_after is not None
         and purge_after <= now
     )
+
+
+async def anonymised(session: AsyncSession, user_id: uuid.UUID) -> bool:
+    """For E42-T09's enable path, in its own transaction under its user-row lock and before any
+    write: whether the user's purge has run (`anonymised_at` set). Such a user is never enabled
+    again (`PurgeUserAnonymisedError`, the second line behind its revoked credentials)."""
+    row = (await session.execute(_ANONYMISED, {"id": str(user_id)})).first()
+    return row is not None and bool(row[0])
 
 
 async def cancel_pending_purge(session: AsyncSession, user_id: uuid.UUID) -> datetime | None:

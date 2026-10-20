@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 #: `AccountAccessGrant.level` (22-api-openapi.yaml): `trade` implies `read`.
@@ -73,6 +74,9 @@ class UserUpdate:
     user_id: uuid.UUID
     before: Mapping[str, Any]
     after: Mapping[str, Any]
+    #: The `purge_after` of the pending purge an enable cancelled in the same transaction (E42-T10
+    #: #2650, #965 R6), for its `users.enable` record; `None` when none was pending.
+    purge_cancelled: datetime | None = None
 
     @property
     def changed(self) -> bool:

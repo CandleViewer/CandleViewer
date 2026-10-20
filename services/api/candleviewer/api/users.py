@@ -43,7 +43,10 @@ are 400), a self-target of `roles` or `status` (an audited 403, SR-055), the ste
 A disable is `UserDisableService`'s whole cascade with `acknowledge_unknown_positions` as the
 DELETE reads it, and changes nothing else; every other change is one transaction of the user admin
 store under the owner lock (R7), written ahead as `users.enable`, `users.update`, `roles.grant`
-and `roles.revoke`, its role push counted after the commit. `GET /users/{userId}/sessions` lists
+and `roles.revoke`, its role push counted after the commit. An enable cancels a pending purge in
+that transaction, its `users.enable` naming the date (E42-T10 #2650, #965 R6), and is refused once
+the purge has run: 409 `conflict`, recorded as one `rbac.denied` (`anonymised`) as the owner
+floor's refusal is, nothing changed. `GET /users/{userId}/sessions` lists
 the user's live sessions as `listMySessions` does (no token material);
 `DELETE /users/{userId}/sessions/{sessionId}` addresses only a live session of that user (404
 otherwise, IDOR), writes the acting Owner's `users.session_revoked`, then records B16 REVOKE, whose
@@ -114,6 +117,7 @@ from candleviewer.storage.repositories.user_purge import (
     PurgeAuditUnavailableError,
     PurgeSchedule,
     PurgeUnavailableError,
+    PurgeUserAnonymisedError,
     PurgeUserNotDisabledError,
     PurgeUserNotFoundError,
 )
@@ -137,6 +141,8 @@ _RESEND_ACKNOWLEDGED: Final = "resend with acknowledge_unknown_positions=true"
 #: The detail of every write-ahead refusal (C-2.9): the change rolled back.
 _NOT_AUDITED: Final = "the audit record could not be written; nothing changed"
 _LAST_OWNER: Final = "the last active owner cannot be demoted"
+#: E42-T10 (#2650): an enable refused because the user's purge has run (409 `conflict`).
+_ANONYMISED: Final = "the user's data was purged; an anonymised user is never enabled again"
 #: The store's refusals, nothing changed (#2648 design (c).2); unknown and deleted alike.
 _REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
     aa.AccessSelfTargetError: (ErrorCode.FORBIDDEN, 403, "a caller's own grants cannot change"),
@@ -1003,18 +1009,22 @@ async def _audit_owner_revoke(
 
 async def audit_user_update(emitter: _Emitter, change: UserUpdate, base: Mapping[str, Any]) -> None:
     """The records of one PATCH, ahead of its commit: `users.enable` (R5: status and roles only,
-    nothing restored, R6), `users.update` for the name and the MFA flag (the field names only, so
-    no PII is copied, O6), and `roles.grant` / `roles.revoke` with the sets before and after."""
+    nothing restored, R6, plus the `purge_after` of a pending purge it cancelled, E42-T10 #2650),
+    `users.update` for the name and the MFA flag (the field names only, so no PII is copied, O6),
+    and `roles.grant` / `roles.revoke` with the sets before and after."""
     before, after = change.before, change.after
     held, kept = sorted(before["roles"]), sorted(after["roles"])
     if before["status"] != after["status"]:
+        cancelled = change.purge_cancelled  # a date, never PII
+        was = {} if cancelled is None else {"purge_after": cancelled.isoformat()}
+        now = {} if cancelled is None else {"purge_after": None}
         await emitter.emit(
             "users.enable",
             **base,
             outcome=AuditOutcome.SUCCESS,
             severity=Severity.WARNING,
-            before_state={"status": before["status"], "roles": held},
-            after_state={"status": after["status"], "roles": kept},
+            before_state={"status": before["status"], "roles": held, **was},
+            after_state={"status": after["status"], "roles": kept, **now},
         )
     if named := [f for f in ("display_name", "mfa_required") if before[f] != after[f]]:
         mfa = "mfa_required" in named
@@ -1219,6 +1229,20 @@ def make_user_admin_router(
             except (AuditError, RuntimeError):
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
             return _registered(ErrorCode.CONFLICT, 409, _LAST_OWNER)
+        except PurgeUserAnonymisedError:  # #2650: the purge ran, so never again; no change
+            try:  # recorded as the owner floor's refusal is: an Owner's change a rule refused
+                await emitter.emit(
+                    "rbac.denied",
+                    **base,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="anonymised",
+                    before_state={"status": shown["status"]},
+                    after_state={"status": "active"},
+                )
+            except (AuditError, RuntimeError):
+                return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+            return _registered(ErrorCode.CONFLICT, 409, _ANONYMISED)
         except _Stale:
             return _registered(ErrorCode.VERSION_CONFLICT, 412, _STALE)
         except _StatusRefused as exc:
