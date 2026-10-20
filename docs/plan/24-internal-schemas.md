@@ -4467,7 +4467,7 @@ A CI job regenerates all three and fails on any diff, so drift between this docu
 
 _Added 2026-09-24, when ADR-0016 was Accepted._ Every catalogue lifecycle (B1–B20, `28-statechart-catalogue.md`) runs on the pinned library through `cv.statechart.factory`. There is no shim. This section owns the persisted and published shapes the runtime produces. Behaviour is owned by `28`, and the component design by `20` §4.4 and `29` §1.
 
-**Tables** (migration `0033_machine_persistence`, E50-T61; stores: E50-T62; sink and wiring: E50-T63):
+**Tables** (migration `0033_machine_persistence`, E50-T61, and the `machine_persistence_json` revision, #3857; stores: E50-T62; sink and wiring: E50-T63):
 
 ```sql
 CREATE TABLE machine_snapshots (
@@ -4477,7 +4477,7 @@ CREATE TABLE machine_snapshots (
   cv_schema_version int         NOT NULL,   -- persistence.SEAL_LAYOUT_V at write time; diagnostic only
   lib_snapshot_ver  int         NOT NULL,   -- SealedSnapshot.version; CV-C52 minimum_version=3
   machine_hash      sha256_hex  NOT NULL,   -- sha256(canonical_json(chart)); must equal machine_hashes.lock
-  snapshot          jsonb       NOT NULL,   -- interpreter.get_persisted_snapshot() (root only; carries chain_trips)
+  snapshot          json        NOT NULL,   -- interpreter.get_persisted_snapshot() (root only; carries chain_trips)
   hmac_key_id       text        NOT NULL,   -- Seal.key_id
   hmac_tag          bytea       NOT NULL,   -- the 32 raw bytes of Seal.tag; input layout owned by 29 §1.3 (CV-C53)
   state_ids         text[]      NOT NULL,   -- denormalised from the blob, query/index only
@@ -4500,7 +4500,7 @@ CREATE TABLE machine_drain_journal (          -- CV-C65': drained events, replay
   lane          text        NOT NULL,
   ordinal       int         NOT NULL,         -- position in drain_pending() output, priority first
   event_type    text        NOT NULL,
-  payload       jsonb       NOT NULL,         -- JournalEntry.record (the persist_event output)
+  payload       json        NOT NULL,         -- JournalEntry.record (the persist_event output)
   receipt_error text,                         -- Receipt.error class name if set (e.g. InterpreterStoppedError)
   replayed_at   timestamptz,                  -- set once, by replay_once
   PRIMARY KEY (machine_kind, entity_id, env, send_id),
@@ -4519,11 +4519,11 @@ CREATE TABLE machine_events (                 -- append-only, hash-chained; CvAu
   entity_id    text        NOT NULL,
   env          text        NOT NULL,
   event_type   text        NOT NULL,
-  payload      jsonb       NOT NULL,
+  payload      json        NOT NULL,
   from_states  text[]      NOT NULL,
   to_states    text[]      NOT NULL,
   actions_run  text[]      NOT NULL,          -- from the actual execution list (MUST-02)
-  fault        jsonb,                         -- non-null exactly when phase = 'fault'
+  fault        json,                          -- non-null exactly when phase = 'fault'
   occurred_at  timestamptz NOT NULL,
   phase        text        NOT NULL,          -- MachineEventRow.phase: write-ahead row, commit row, or fault row
   prev_hash    sha256_hex  NOT NULL,          -- previous row_hash of the same (machine_kind, entity_id, env); 64 zeros first
@@ -4542,7 +4542,7 @@ CREATE INDEX ix_me_machine_seq ON machine_events (machine_kind, entity_id, env, 
 
 **Unsealed columns.** `state_ids`, `chain_trips`, `updated_at` and every other column outside the seal are for query and index only. The seal does not cover them, so a reader decides nothing from them and re-derives from the verified blob (as the inspector does); the one exception is the drain journal's stamp, `replayed_at`, whose residual the sealed drained set states. `hmac_tag` holds the 32 raw bytes of the HMAC-SHA256 tag (`Seal.tag` is their lowercase hex digest; the store converts both ways); `hmac_key_id` is a key reference, never key material.
 
-**Hash chain.** `prev_hash` and `row_hash` are `MachineEventRow`'s: `row_hash` is `sha256` over the canonical JSON of every other field (`row_digest`), `prev_hash` is the previous row's `row_hash` for the same machine key (64 zeros for the first). Within one machine, `seq` order is chain order. Type mapping from `MachineEventRow`: `occurred_at` (ISO-8601 UTC string) to `timestamptz`, `payload` and `fault` (dicts) to `jsonb`, `from_states`, `to_states` and `actions_run` (lists of strings) to `text[]`, `prev_hash` and `row_hash` (hex strings) to `sha256_hex`, and `machine_kind`, `entity_id`, `env`, `event_type` and `phase` (strings) to `text`. The digest covers `occurred_at` as the ISO-8601 UTC string the plugin emitted and `payload` and `fault` as JSON, so a store must return those byte-faithfully (the E50-T62 and E50-T63 integration tests assert it).
+**Hash chain.** `prev_hash` and `row_hash` are `MachineEventRow`'s: `row_hash` is `sha256` over the canonical JSON of every other field (`row_digest`), `prev_hash` is the previous row's `row_hash` for the same machine key (64 zeros for the first). Within one machine, `seq` order is chain order. Type mapping from `MachineEventRow`: `occurred_at` (ISO-8601 UTC string) to `timestamptz`, `payload` and `fault` (dicts) to `json`, `from_states`, `to_states` and `actions_run` (lists of strings) to `text[]`, `prev_hash` and `row_hash` (hex strings) to `sha256_hex`, and `machine_kind`, `entity_id`, `env`, `event_type` and `phase` (strings) to `text`. The digest covers `occurred_at` as the ISO-8601 UTC string the plugin emitted and `payload` and `fault` as JSON, so a store must return those byte-faithfully (the E50-T62 and E50-T63 integration tests assert it).
 
 **Payload columns are `json`, not `jsonb`** (#3857). `machine_snapshots.snapshot`, `machine_drain_journal.payload`, `machine_events.payload` and `machine_events.fault` are `json`. The seal (CV-C53) covers `canonical_json` of the blob and `row_hash` covers the canonical JSON of the row, so these columns must give back exactly what was written, and `jsonb` does not: it stores numbers as `numeric` and re-renders them, so a float of magnitude 1e16 or more (`1e+16`) reads back as the integer `10000000000000000`, and `-0.0` reads back as `0.0`. Over such a value a restore is refused as a bad seal and the chain stops verifying. `json` keeps the text as written, so reading it back returns the same values. No query reads inside these columns, so `json` lacking `jsonb`'s operators and indexes costs nothing. `json` has no equality operator either, so `trg_mdj_stamp_once` compares `payload` by its text: writing the same text over itself passes, any other change is refused. `0033_machine_persistence` created the four columns as `jsonb`; the `machine_persistence_json` revision (#3857) alters them to `json`. Its downgrade casts them back to `jsonb` only on an empty database: like `0033`'s, it refuses, naming the table, while any of the three holds a row, because the cast would re-render sealed numbers and their seals and row hashes would fail for good.
 

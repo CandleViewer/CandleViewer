@@ -166,6 +166,11 @@
       "path": "services/api/candleviewer/migrations/versions/0034_order_vocabulary.py",
       "sha256": "0ab7c4a4a306df923d2d701fb8ef7fbe2783d06cb03a9bba5e091d73aeb730d6",
       "down_revision": "0033_machine_persistence"
+    },
+    "0035_machine_persistence_json": {
+      "path": "services/api/candleviewer/migrations/versions/0035_machine_persistence_json.py",
+      "sha256": "e769a8432f3a103e8140e6fe965253d32d415cec9aab90b1cbe2143107724122",
+      "down_revision": "0034_order_vocabulary"
     }
   }
 }
