@@ -122,6 +122,15 @@ async def test_wait_for_wal_apply_never_converging_raises_a_typed_timeout_after_
     assert max(clock.slept) == 0.25  # the backoff doubles from 20 ms and caps at 250 ms
 
 
+async def test_wait_for_wal_apply_gives_up_at_its_30_s_default() -> None:
+    """#3092 (a #3077 review nit): the default bound is pinned too, not only an explicit one."""
+    clock, wal = _FakeClock(), _ScriptedWal([[_wal(4, 7)]])
+    with pytest.raises(StorageWalNotApplied) as exc:
+        await wait_for_wal_apply(wal, "_cv_migrations", sleep=clock.sleep, clock=clock)
+    assert exc.value.reason == "timeout"
+    assert 30.0 <= exc.value.waited_s < 30.25
+
+
 async def test_wait_for_wal_apply_suspended_table_fails_fast_without_waiting() -> None:
     """A suspended apply can never catch up: do not burn the bound, say so."""
     clock, wal = _FakeClock(), _ScriptedWal([[_wal(4, 7, suspended=True)]])
@@ -176,7 +185,8 @@ async def test_wait_for_wal_apply_driver_timeout_inside_a_poll_is_not_relabelled
 async def test_wait_for_wal_apply_cancellation_is_not_swallowed() -> None:
     wal = _HungWal()
     task = asyncio.create_task(wait_for_wal_apply(wal, "_cv_migrations"))
-    await wal.polling.wait()
+    # Bounded, so a wait that never polls fails here instead of hanging the lane (#3092).
+    await asyncio.wait_for(wal.polling.wait(), 5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
