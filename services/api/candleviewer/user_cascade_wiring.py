@@ -21,6 +21,9 @@ does, implements them over the rule engine's own interfaces.
 - `ScopeRefreshAdapter` refreshes the user's entry in the rule engine's scope snapshot at once; a
   refresh that fails drops the entry (no grant, no live arming) and re-raises.
 - `build_user_disable_service` (S6) composes the service behind `DELETE /users/{userId}`.
+- `PurgedSessions` (E42-T10 #2650) ends a session the purge reaper's anonymisation revoked as the
+  disable's steps end one: its sockets close, then B16 `REVOKE` writes `auth.session_revoked`.
+- `build_users_purge_task` (E42-T10) composes that reaper, which `?purge=true` schedules through.
 
 RBAC is the service's (`users:write`, SR-055); neither port is reachable from a route. Safety does
 not rest on these steps: O4 soft-revokes the grants in the disable's transaction and O5 makes the
@@ -38,7 +41,12 @@ from typing import TYPE_CHECKING, Any, Final
 
 import structlog
 
-from candleviewer.admin.user_disable import AuditEmitter, UserDisableService, UserSocketCloser
+from candleviewer.admin.user_disable import (
+    AuditEmitter,
+    SessionRows,
+    UserDisableService,
+    UserSocketCloser,
+)
 from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import assert_owner_floor
@@ -52,9 +60,12 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
+from candleviewer.storage.repositories.user_lifecycle import REVOKED_REASON
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import (
     SqlAlchemyUserLifecycleStore,
 )
+from candleviewer.storage.repositories.user_purge_sqlalchemy import SqlAlchemyUserPurgeStore
+from candleviewer.storage.retention.users_purge_tasks import UsersPurgeTask
 
 if TYPE_CHECKING:
     from candleviewer.auth.service import AuthService
@@ -271,3 +282,45 @@ def build_user_disable_service(
         scope=ScopeRefreshAdapter(lambda: rules.scope_state),
         clock=clock or _utc_now,
     )
+
+
+class PurgedSessions:
+    """`users_purge_tasks.SessionEnder` (E42-T10 #2650). A session the anonymisation revoked in its
+    transaction ends as a disable's does (S4): its sockets close (`bye user_disabled`, 4403), then
+    B16 `REVOKE`, whose action writes `auth.session_revoked` (R5). A disabled user should hold
+    none: the disable revoked them, and a mint or a refresh refuses the user. The chart is looked
+    up when a session ends, since it exists only once `AuthService.start()` ran."""
+
+    def __init__(self, auth: AuthService, rows: SessionRows, publish: RevocationSink) -> None:
+        self._auth, self._rows, self._publish = auth, rows, publish
+
+    async def end(self, session_id: uuid.UUID, now: datetime) -> None:
+        """Raises `LookupError` for a row that is gone, or what the sink or the chart raises."""
+        await self._publish(str(session_id), REVOKED_REASON)
+        record = await self._rows.find_by_id(str(session_id))
+        if record is None:
+            raise LookupError("revoked session row not found")
+        await self._auth.step_up.chart.revoke(record, now, REVOKED_REASON)
+
+
+def build_users_purge_task(
+    settings: Settings,
+    *,
+    auth: AuthService,
+    audit: AuditEmitter,
+    publish_revocation: RevocationSink,
+    clock: Callable[[], datetime] | None = None,
+) -> UsersPurgeTask | None:
+    """E42-T10 (#2650): the anonymisation reaper over the purge store, which is also the door
+    `DELETE /users/{userId}?purge=true` schedules through. `None` on the fake backend, which has no
+    store: `?purge=true` then answers `503 purge_unavailable`. The lifespan starts it whatever
+    `retention_enabled` says (orchestrator ruling, 2026-10-20). `clock` is the app's, as the
+    disable's (`purge_after` and the anonymisation instant). No I/O: the engine is lazy."""
+    if settings.storage_backend != "real":
+        return None
+    relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "user-purge")
+    store = SqlAlchemyUserPurgeStore(relational, audit=audit, clock=clock or _utc_now)
+    rows = SqlAlchemySessionRepository(
+        relational, lambda **fields: SessionRecord.model_validate(fields)
+    )
+    return UsersPurgeTask(store, sessions=PurgedSessions(auth, rows, publish_revocation))

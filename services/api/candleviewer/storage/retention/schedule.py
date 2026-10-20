@@ -96,14 +96,3 @@ class RetentionSchedule:
         if not self.enabled:
             return {}
         return {"incidents_purge": self.retention_cron}
-
-    def users_purge_jobs(self) -> dict[str, str]:
-        """The deferred PII purge (E42-T10): a user deleted with `?purge=true` is anonymised once
-        `users.purge_after` has passed, empty when off.
-
-        The value is the retention cron for reference only: the task is a fixed 24 h interval
-        loop (`UsersPurgeTask`), not cron-driven, like `incidents_jobs()`.
-        """
-        if not self.enabled:
-            return {}
-        return {"users_purge": self.retention_cron}

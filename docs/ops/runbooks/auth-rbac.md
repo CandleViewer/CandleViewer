@@ -503,8 +503,16 @@ are S4a's rows.
 `DELETE /users/{userId}` (`api/users.py`, E42-T04 #965) disables a user: Owner only, never your own
 account, after a step-up for action class `users` (§2). No position or order source is deployed
 yet, so it answers `409 positions_unknown` until it carries `acknowledge_unknown_positions=true`.
-Any other query parameter answers `422 validation_failed`, and `purge=true` answers `400` until
-E42-T10 serves it; neither changes anything.
+Any other query parameter answers `422 validation_failed` and changes nothing. `purge=true`
+(E42-T10) then schedules the user's anonymisation 90 days out, `users.delete` written ahead; while
+no purge reaper runs it answers `503 purge_unavailable` and changes nothing. The reaper runs on
+every deployment with a store, whatever `CV_RETENTION_ENABLED` says, and the lifespan starts it. A
+`503 audit_unavailable` or `503 purge_unavailable` whose `detail` says the user is disabled means
+the disable committed but no purge is scheduled: repeat the call. Once the date has passed the
+reaper anonymises the user and revokes every credential (password, MFA methods, recovery codes,
+live sessions) in one transaction, `users.anonymise` written ahead. Its log line
+`users_anonymised` counts each batch, and a row it passed over is counted by its error class at
+error level; nothing alerts on an overdue purge yet (UL-F6).
 One transaction sets the status, revokes the sessions and grants and writes `users.disable` ahead;
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the

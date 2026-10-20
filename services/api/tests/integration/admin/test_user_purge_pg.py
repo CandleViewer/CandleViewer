@@ -5,10 +5,11 @@ audit stand-in that appends each record to `audit_log` (as the writer's drain ap
 reads, on a connection of its own, the user row the record names: that read shows whether the
 change was still uncommitted when its record was written (R5, write-ahead). Covered: AC2 (the
 history stays under the surrogate and every audit row about the user is byte-identical), only an
-expired purge runs, every session's PII is nulled, a batch is bounded, the re-enable's cancel (R6)
-and the reaper's locked re-check (UL-F5), and a Manager's or a Viewer's `?purge=true` refused and
-audited with nothing changed. testcontainers: CI `integration` runs it (no docker socket on the
-laptop).
+expired purge runs, every session's PII is nulled, every credential revoked in the same
+transaction (the orchestrator's acceptance addition), a batch is bounded, a row that keeps failing
+holds back no later user, the re-enable's cancel (R6) and the reaper's locked re-check (UL-F5),
+and a Manager's or a Viewer's `?purge=true` refused and audited with nothing changed.
+testcontainers: CI `integration` runs it.
 """
 
 from __future__ import annotations
@@ -32,11 +33,13 @@ import sqlalchemy as sa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from structlog.testing import capture_logs
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.users import make_users_router
+from candleviewer.auth.hashing import Hasher
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -50,7 +53,6 @@ from candleviewer.storage.repositories.user_purge_sqlalchemy import (
     SqlAlchemyUserPurgeStore,
     cancel_pending_purge,
 )
-from candleviewer.storage.retention.schedule import RetentionSchedule
 from candleviewer.storage.retention.users_purge_tasks import UsersPurgeTask
 from tests.integration.admin.test_user_lifecycle_pg import _ACCOUNT, _GRANT, _ROLE, _floor
 from tests.unit.api.test_users_delete import _Auth, _principal
@@ -62,7 +64,7 @@ _WAIT_S = 30.0  # bounds every wait: a regression fails instead of hanging CI
 _T0 = datetime(2026, 10, 19, 9, 0, tzinfo=UTC)
 _DAY = timedelta(days=1)
 _PURGE_AT = _T0 + timedelta(days=90)
-_ON = RetentionSchedule.from_env({"CV_RETENTION_ENABLED": "true"})
+_PHRASE = "correct horse battery staple"  # the test user's sign-in phrase, hashed below
 # Enum, inet and jsonb parameters go in as text and are cast by Postgres, so no driver codec
 # decides how they are sent.
 _USER = sa.text(
@@ -115,6 +117,23 @@ _SCHEDULE = sa.text(
 )
 _ENABLE = sa.text("UPDATE users SET status = 'active' WHERE id = CAST(:id AS uuid)")
 _LOCK = sa.text("SELECT 1 FROM users WHERE id = CAST(:id AS uuid) FOR NO KEY UPDATE")
+_PASSWORD_HASH = sa.text("UPDATE users SET password_hash = :hash WHERE id = CAST(:id AS uuid)")
+_MFA = sa.text(
+    "INSERT INTO mfa_methods (id, user_id, kind, label, secret_enc, confirmed_at) "
+    "VALUES (CAST(:id AS uuid), CAST(:user AS uuid), 'totp', 'phone', :seal, now())"
+)
+_RECOVERY = sa.text(
+    "INSERT INTO recovery_codes (id, user_id, code_hash) "
+    "VALUES (CAST(:id AS uuid), CAST(:user AS uuid), CAST(:digest AS text))"
+)
+#: What a sign-in could use: the password hash, the MFA methods, the recovery codes, the live
+#: sessions.
+_CREDENTIALS = sa.text(
+    "SELECT (SELECT password_hash FROM users WHERE id = CAST(:id AS uuid)), "
+    "(SELECT count(*) FROM mfa_methods WHERE user_id = CAST(:id AS uuid)), "
+    "(SELECT count(*) FROM recovery_codes WHERE user_id = CAST(:id AS uuid)), "
+    "(SELECT count(*) FROM sessions WHERE user_id = CAST(:id AS uuid) AND revoked_at IS NULL)"
+)
 
 
 @pytest.fixture(scope="module")
@@ -238,6 +257,24 @@ def _purge(rel: SqlAlchemyRelationalRepository, audit: Any, clock: _Clock) -> An
     return SqlAlchemyUserPurgeStore(rel, audit=audit, clock=clock, audit_timeout_s=_WAIT_S)
 
 
+class _Sessions:
+    """The reaper's `SessionEnder` stand-in: it reads, on a connection of its own, whether the
+    session it is asked to end is revoked already, so `ended` shows B16 follows the commit."""
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        self.engine, self.ended = engine, list[tuple[uuid.UUID, datetime, bool]]()
+
+    async def end(self, session_id: uuid.UUID, now: datetime) -> None:
+        stmt = sa.text("SELECT revoked_at IS NOT NULL FROM sessions WHERE id = CAST(:id AS uuid)")
+        async with self.engine.connect() as conn:
+            revoked = (await conn.execute(stmt, {"id": str(session_id)})).scalar_one()
+        self.ended.append((session_id, now, revoked))
+
+
+def _reaper(store: Any, engine: AsyncEngine) -> UsersPurgeTask:
+    return UsersPurgeTask(store, sessions=_Sessions(engine))
+
+
 async def test_history_under_surrogate_after_90d(db: Any) -> None:
     """AC2 (S14, UL-AC12): an Owner disables manager M (the E42-T04 store) and schedules M's purge
     at T0; at T0 + 90 days the reaper runs. M's username is the surrogate and M's email
@@ -268,10 +305,10 @@ async def test_history_under_surrogate_after_90d(db: Any) -> None:
     scheduled = await store.schedule(m, actor_user_id=owner)
     assert (scheduled.purge_after, scheduled.changed) == (_PURGE_AT, True)
     clock.now = _PURGE_AT - timedelta(seconds=1)  # a second early: nothing runs
-    await UsersPurgeTask(store, _ON).run_once()
+    await _reaper(store, engine).run_once()
     assert (await _read(engine, _ROW, m))[0][0] == f"u-{m.hex[:12]}"
     clock.now = _PURGE_AT
-    await UsersPurgeTask(store, _ON).run_once()
+    await _reaper(store, engine).run_once()
     name = surrogate(m)
     (row,) = await _read(engine, _ROW, m)
     assert row == (name, anonymised_email(m), None, None, "disabled", _PURGE_AT, _PURGE_AT)
@@ -306,7 +343,7 @@ async def test_users_anonymise_ahead(db: Any) -> None:
     m = await _scheduled(engine, _T0 - _DAY)
     original = (await _read(engine, _ROW, m))[0]
     audit = _Audit(engine)
-    assert await _purge(rel, audit, _Clock()).anonymise(m) is True
+    assert await _purge(rel, audit, _Clock()).anonymise(m) is not None
     ((action, seen),) = audit.seen
     assert (action, seen) == ("users.anonymise", original)
     assert (await _read(engine, _ROW, m))[0][:2] == (surrogate(m), anonymised_email(m))
@@ -323,24 +360,26 @@ async def test_only_past_purge_after(db: Any) -> None:
     stale = await _scheduled(engine, _T0 - _DAY)
     await _exec(engine, _ENABLE, id=str(stale))
     kept = {u: await _read(engine, _ROW, u) for u in (later, plain, stale)}
-    await UsersPurgeTask(_purge(rel, _Audit(engine), _Clock()), _ON).run_once()
+    await _reaper(_purge(rel, _Audit(engine), _Clock()), engine).run_once()
     assert (await _read(engine, _ROW, due))[0][0] == surrogate(due)
     assert {u: await _read(engine, _ROW, u) for u in kept} == kept
 
 
 async def test_nulls_session_pii(db: Any) -> None:
     """O6, UL4-I1: every session of the user, live or ended, loses its IP, user agent, device
-    label and Tailscale node and keeps the rest; another user's sessions are not touched."""
+    label and Tailscale node and keeps the rest, but for a live one's end (revoked at the
+    anonymisation's instant, as a disable revokes it); another user's sessions are not touched."""
     rel, engine = db
     await _user(engine, "owner")
     m, other = await _scheduled(engine, _T0 - _DAY), await _user(engine, "manager")
-    await _session(engine, m)
+    live = await _session(engine, m)
     await _session(engine, m, ended=True)
     await _session(engine, other)
     before, theirs = await _read(engine, _SESSIONS, m), await _read(engine, _SESSIONS, other)
-    assert await _purge(rel, _Audit(engine), _Clock()).anonymise(m) is True
+    assert await _purge(rel, _Audit(engine), _Clock()).anonymise(m) is not None
     after = await _read(engine, _SESSIONS, m)
-    assert [s[:1] + (None,) * 4 + s[5:] for s in before] == after
+    ended = {live: (_T0, "user_disabled")}
+    assert [s[:1] + (None,) * 4 + ended.get(s[0], s[5:7]) + s[7:] for s in before] == after
     assert await _read(engine, _SESSIONS, other) == theirs
 
 
@@ -351,10 +390,117 @@ async def test_batch_bounded(db: Any) -> None:
     await _user(engine, "owner")
     users = [await _scheduled(engine, _T0 - _DAY * (i + 1)) for i in range(MAX_ANONYMISE_BATCH + 2)]
     store = _purge(rel, _Audit(engine), _Clock())
-    batch = await store.due(MAX_ANONYMISE_BATCH)
+    batch = [d.user_id for d in await store.due(MAX_ANONYMISE_BATCH)]
     assert len(batch) == MAX_ANONYMISE_BATCH and users[-1] in batch  # the oldest is in the first
-    await UsersPurgeTask(store, _ON).run_once()
-    assert all((await _read(engine, _ROW, u))[0][0] == surrogate(u) for u in users)
+    await _reaper(store, engine).run_once()
+    names = [(await _read(engine, _ROW, u))[0][0] for u in users]
+    assert names == [surrogate(u) for u in users]
+
+
+async def test_audit_byte_identical(db: Any) -> None:
+    """AC2, UL4-T1 (S13): every audit row about M, as the actor or as the object, is
+    byte-identical after the anonymisation (each row as `row_to_json`, in id order, its hash
+    columns included); the rows keep the name and the address they were written with (O6), and
+    the purge's own record only appends."""
+    rel, engine = db
+    await _user(engine, "owner")
+    m = await _scheduled(engine, _T0 - _DAY)
+    await _history(engine, m)
+    before = await _read(engine, _ABOUT, m)
+    assert len(before) == 2 and all(f"u-{m.hex[:12]}" in text for _, text in before)
+    assert await _purge(rel, _Audit(engine), _Clock()).anonymise(m) is not None
+    after = await _read(engine, _ABOUT, m)
+    assert after[: len(before)] == before
+    assert [json.loads(text)["action"] for _, text in after[len(before) :]] == ["users.anonymise"]
+
+
+class _CredentialsAhead(_Audit):
+    """`_Audit`, which also reads what a sign-in could use of the user the record names, on its
+    own connection, before it appends: `credentials` shows what was committed then."""
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        super().__init__(engine)
+        self.credentials = list[tuple[Any, ...]]()
+
+    async def emit(self, action: str, **f: Any) -> None:
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(_CREDENTIALS, {"id": f["object_id"]})).one()
+        self.credentials.append(tuple(row))
+        await super().emit(action, **f)
+
+
+async def test_credentials_revoked(db: Any) -> None:
+    """The acceptance addition (orchestrator ruling, 2026-10-20). In the anonymisation's own
+    transaction M's password hash becomes the no-usable-password value, every MFA method and
+    recovery code of M is deleted and M's live session is revoked (an ended one keeps its end), so
+    no password, factor or session of M can sign in afterwards. `users.anonymise` is written ahead,
+    while all of them still stand, and states the revocation in counts with no secret value; the
+    revoked session then ends on B16, after the commit. Another user's credentials are untouched."""
+    rel, engine = db
+    await _user(engine, "owner")
+    m, other = await _scheduled(engine, _T0 - _DAY), await _user(engine, "manager")
+    hasher = Hasher("pepper")
+    old_hash = await hasher.hash(_PHRASE)
+    for user in (m, other):
+        await _exec(engine, _PASSWORD_HASH, id=str(user), hash=old_hash)
+        seal = secrets.token_bytes(44)  # stands in for a sealed seed: never opened here
+        await _exec(engine, _MFA, id=str(uuid.uuid4()), user=str(user), seal=seal)
+        for _ in range(3):
+            digest = secrets.token_hex(32)
+            await _exec(engine, _RECOVERY, id=str(uuid.uuid4()), user=str(user), digest=digest)
+    live, ended = await _session(engine, m), await _session(engine, m, ended=True)
+    await _session(engine, other)
+    theirs = await _read(engine, _CREDENTIALS, other)
+    assert await hasher.verify(old_hash, _PHRASE)  # the phrase signed in before the purge
+    audit, sessions = _CredentialsAhead(engine), _Sessions(engine)
+    await UsersPurgeTask(_purge(rel, audit, _Clock()), sessions=sessions).run_once()
+    assert audit.credentials == [(old_hash, 1, 3, 1)]  # written ahead: all of them still stood
+    ((unusable, mfa, codes, still_live),) = await _read(engine, _CREDENTIALS, m)
+    assert (mfa, codes, still_live) == (0, 0, 0)
+    assert unusable.startswith("$argon2id$") and unusable != old_hash
+    assert not await hasher.verify(unusable, _PHRASE)
+    ends = {s[0]: s[5:7] for s in await _read(engine, _SESSIONS, m)}
+    assert ends == {live: (_T0, "user_disabled"), ended: (_T0 - _DAY, "logout")}
+    assert sessions.ended == [(live, _T0, True)]  # B16, once the revoke had committed
+    _, text = (await _read(engine, _ABOUT, m))[-1]
+    record = json.loads(text)
+    assert record["action"] == "users.anonymise"
+    assert {k: record["after_state"][k] for k in ("credentials_revoked", "sessions_revoked")} == {
+        "credentials_revoked": True,
+        "sessions_revoked": 1,
+    }
+    assert (
+        record["after_state"]["mfa_methods_deleted"],
+        record["after_state"]["recovery_rows_deleted"],
+    ) == (1, 3)
+    assert old_hash not in text and unusable not in text  # no secret value in the record
+    assert await _read(engine, _CREDENTIALS, other) == theirs
+
+
+async def test_poisoned_row_skipped(db: Any) -> None:
+    """Ruling 4 (UL4-D1): the oldest due user cannot be anonymised on any run, as its surrogate is
+    another user's username (the username pattern admits the prefix). The reaper rolls it back,
+    counts it by its class and anonymises every later due user in the same run; the poisoned row
+    is unchanged, and the next run retries it."""
+    rel, engine = db
+    await _user(engine, "owner")
+    poisoned = await _scheduled(engine, _T0 - 3 * _DAY)
+    later = [await _scheduled(engine, _T0 - _DAY) for _ in range(3)]
+    name = surrogate(poisoned)
+    await _exec(
+        engine, _USER, id=str(uuid.uuid4()), email=f"{name}@x.invalid", name=name, display=None,
+        status="active", ip=None,
+    )  # fmt: skip
+    kept = await _read(engine, _ROW, poisoned)
+    with capture_logs() as logs:
+        await _reaper(_purge(rel, _Audit(engine), _Clock()), engine).run_once()
+    assert await _read(engine, _ROW, poisoned) == kept
+    names = [(await _read(engine, _ROW, u))[0][0] for u in later]
+    assert names == [surrogate(u) for u in later]
+    (line,) = [e for e in logs if e["event"] == "users_anonymised"]
+    counts = (line["anonymised"], line["failed"], line["errors"], line["outcome"])
+    assert counts == (3, 1, {"IntegrityError": 1}, "partial")
+    assert str(poisoned) not in repr(logs) and name not in repr(logs)
 
 
 async def _enable(rel: SqlAlchemyRelationalRepository, user: uuid.UUID) -> datetime | None:
@@ -379,8 +525,8 @@ async def test_reenable_cancels_purge(db: Any) -> None:
     await store.schedule(m, actor_user_id=owner)
     assert await _enable(rel, m) == _PURGE_AT
     clock.now = _PURGE_AT + _DAY
-    assert m not in await store.due(MAX_ANONYMISE_BATCH)
-    assert await store.anonymise(m) is False
+    assert m not in [d.user_id for d in await store.due(MAX_ANONYMISE_BATCH)]
+    assert await store.anonymise(m) is None
     (row,) = await _read(engine, _ROW, m)
     assert row[:2] == (f"u-{m.hex[:12]}", f"u-{m.hex[:12]}@x.invalid") and row[4:] == (
         "active",
@@ -388,7 +534,7 @@ async def test_reenable_cancels_purge(db: Any) -> None:
         None,
     )
     gone = await _scheduled(engine, _T0 - _DAY)
-    assert await _purge(rel, audit, _Clock()).anonymise(gone) is True
+    assert await _purge(rel, audit, _Clock()).anonymise(gone) is not None
     assert await _enable(rel, gone) is None  # nothing pending: no write, the mark stays
     assert (await _read(engine, _ROW, gone))[0][5:] == (_T0 - _DAY, _T0)
 
@@ -402,10 +548,10 @@ async def test_reenable_racing_reaper_keeps_user(db: Any) -> None:
     m = await _scheduled(engine, _T0 - _DAY)
     audit = _Audit(engine)
     store = _purge(rel, audit, _Clock())
-    assert m in await store.due(MAX_ANONYMISE_BATCH)
+    assert m in [d.user_id for d in await store.due(MAX_ANONYMISE_BATCH)]
     assert await _enable(rel, m) == _T0 - _DAY
     kept = await _read(engine, _ROW, m)
-    assert await store.anonymise(m) is False
+    assert await store.anonymise(m) is None
     assert await _read(engine, _ROW, m) == kept and audit.seen == []
 
 
@@ -457,7 +603,7 @@ def test_forbidden_manager_viewer_audited(pg_dsn: str) -> None:
                 cast(Any, object()),
                 auth=cast(Any, _Auth([])),
                 user_disable=disable,
-                user_purge=_purge(rel, _Recorder(), _Clock()),
+                user_purge=UsersPurgeTask(_purge(rel, _Recorder(), _Clock()), sessions=unused),
             )
         )
         with TestClient(app, headers={"Authorization": "Bearer tok"}) as client:

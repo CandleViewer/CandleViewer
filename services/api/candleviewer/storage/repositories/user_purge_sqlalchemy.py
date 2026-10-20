@@ -11,10 +11,13 @@ then fails or is cancelled may have landed, so its record is closed by a `failur
 
 `anonymise` trusts nothing the batch read (`due`) saw: under the lock it acts only on a `disabled`
 user whose `purge_after` has passed and who is not anonymised yet (UL-F5), so a re-enable or a
-cancelled purge that commits in between keeps the user as they are. It never reads a PII column and
-never touches `audit_log` (C-5.7, C-12.8). `cancel_pending_purge` is #965 R6's cancel for E42-T09's
-enable path, run inside that path's own transaction. The audit emitter is injected: storage (M10)
-may not import audit (M19).
+cancelled purge that commits in between keeps the user as they are. Its transaction also revokes
+every credential (orchestrator ruling, 2026-10-20): the password hash becomes the "no usable
+password" value, every MFA method and recovery code is deleted, and every live session is revoked
+as a disable revokes it (the lifecycle store's statement; B16 `REVOKE` follows the commit, the
+reaper's). It never reads a PII column or a secret and never touches `audit_log` (C-5.7, C-12.8).
+`cancel_pending_purge` is #965 R6's cancel for E42-T09's enable path, run inside that path's own
+transaction. The audit emitter is injected: storage (M10) may not import audit (M19).
 """
 
 from __future__ import annotations
@@ -33,7 +36,10 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.user_lifecycle import REVOKED_REASON
 from candleviewer.storage.repositories.user_purge import (
+    Anonymised,
+    DuePurge,
     PurgeAuditEmitter,
     PurgeAuditUnavailableError,
     PurgeSchedule,
@@ -41,6 +47,7 @@ from candleviewer.storage.repositories.user_purge import (
     PurgeUserNotFoundError,
     anonymised_email,
     surrogate,
+    unusable_password_hash,
 )
 from candleviewer.storage.retention.policy import USERS_PURGE_AFTER_DAYS
 
@@ -62,10 +69,13 @@ _LOCK_FOR_SCHEDULE = sa.text(
     "WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL FOR NO KEY UPDATE"
 )
 _SCHEDULE = sa.text("UPDATE users SET purge_after = :purge_after WHERE id = CAST(:id AS uuid)")
-# The reaper's batch: oldest first, so a backlog drains in the order it fell due.
+# The reaper's batch: oldest first, so a backlog drains in the order it fell due, read after the
+# last user of the previous batch (`after_*`, NULL for the first) so a run never reads one twice.
 _DUE = sa.text(
-    "SELECT id FROM users WHERE status = 'disabled' AND anonymised_at IS NULL "
-    "AND purge_after <= :now ORDER BY purge_after, id LIMIT :limit"
+    "SELECT id, purge_after FROM users WHERE status = 'disabled' AND anonymised_at IS NULL "
+    "AND purge_after <= :now AND (CAST(:after_id AS uuid) IS NULL "
+    "OR (purge_after, id) > (CAST(:after_at AS timestamptz), CAST(:after_id AS uuid))) "
+    "ORDER BY purge_after, id LIMIT :limit"
 )
 # No `deleted_at` filter: a scheduled purge runs even if the row is soft-deleted later.
 _LOCK_FOR_ANONYMISE = sa.text(
@@ -74,11 +84,22 @@ _LOCK_FOR_ANONYMISE = sa.text(
 )
 _ANONYMISE = sa.text(
     "UPDATE users SET username = :username, email = :email, display_name = NULL, "
-    "last_login_ip = NULL, anonymised_at = :now WHERE id = CAST(:id AS uuid)"
+    "last_login_ip = NULL, password_hash = :unusable, anonymised_at = :now "
+    "WHERE id = CAST(:id AS uuid)"
+)
+# The lifecycle store's revoke (`user_disabled`): a disable revoked them all, and a mint or a
+# refresh refuses a disabled user, so one live here is a survivor; never a DELETE (no row is lost).
+_REVOKE_SESSIONS = sa.text(
+    "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
+    "WHERE user_id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING id"
 )
 _SCRUB_SESSIONS = sa.text(
     "UPDATE sessions SET ip = NULL, user_agent = NULL, device_label = NULL, "
     "tailscale_node = NULL WHERE user_id = CAST(:id AS uuid) RETURNING id"
+)
+_DROP_MFA = sa.text("DELETE FROM mfa_methods WHERE user_id = CAST(:id AS uuid) RETURNING id")
+_DROP_RECOVERY = sa.text(
+    "DELETE FROM recovery_codes WHERE user_id = CAST(:id AS uuid) RETURNING id"
 )
 _PENDING = sa.text(
     "SELECT purge_after FROM users WHERE id = CAST(:id AS uuid) "
@@ -86,7 +107,7 @@ _PENDING = sa.text(
 )
 _CANCEL = sa.text("UPDATE users SET purge_after = NULL WHERE id = CAST(:id AS uuid)")
 
-#: A record's `before_state` and `after_state`: status, times and a count, never PII (O6).
+#: A record's `before_state` and `after_state`: status, times and counts, never PII or a secret.
 _States = tuple[dict[str, Any], dict[str, Any]]
 
 
@@ -197,20 +218,27 @@ class SqlAlchemyUserPurgeStore:
             raise
         return PurgeSchedule(user_id, purge_after, changed=True)
 
-    async def due(self, limit: int) -> tuple[uuid.UUID, ...]:
-        """S13: at most `limit` users whose purge is due now, oldest date first. Takes no lock:
+    async def due(self, limit: int, *, after: DuePurge | None = None) -> tuple[DuePurge, ...]:
+        """S13: at most `limit` users whose purge is due now, oldest date first, from just after
+        `after` (the last user of the previous batch) or from the start. Takes no lock:
         `anonymise` re-checks each one under its own."""
         if not 1 <= limit <= MAX_ANONYMISE_BATCH:
             raise ValueError(f"limit must be 1..{MAX_ANONYMISE_BATCH}, got {limit}")
+        params = {
+            "now": self._clock(),
+            "limit": limit,
+            "after_at": None if after is None else after.purge_after,
+            "after_id": None if after is None else str(after.user_id),
+        }
         async with self._relational.unit_of_work() as uow:
-            params = {"now": self._clock(), "limit": limit}
             rows = (await uow.session.execute(_DUE, params)).all()
-        return tuple(_uuid(r[0]) for r in rows)
+        return tuple(DuePurge(r[1], _uuid(r[0])) for r in rows)
 
-    async def anonymise(self, user_id: uuid.UUID) -> bool:
-        """S13: anonymise one user (O6) in one transaction, `users.anonymise` ahead, if the locked
-        re-check still finds the purge due; True once committed, False when it found nothing to do
-        (re-enabled, cancelled, not due, or run already). Raises as `schedule` does."""
+    async def anonymise(self, user_id: uuid.UUID) -> Anonymised | None:
+        """S13: anonymise one user (O6) and revoke every credential of theirs in one transaction,
+        `users.anonymise` ahead, if the locked re-check still finds the purge due; what committed,
+        or `None` when it found nothing to do (re-enabled, cancelled, not due, or run already).
+        Raises as `schedule` does."""
         uid, now = str(user_id), self._clock()
         who = {"actor_label": ACTOR, "actor_user_id": None, "session_id": None, "request_id": None}
         written: _States | None = None
@@ -220,7 +248,7 @@ class SqlAlchemyUserPurgeStore:
                 await s.execute(_LOCK_TIMEOUT, {"timeout": self._lock_timeout})
                 row = (await s.execute(_LOCK_FOR_ANONYMISE, {"id": uid})).first()
                 if row is None or not _due(row, now):
-                    return False
+                    return None
                 status, purge_after, _ = row
                 await s.execute(
                     _ANONYMISE,
@@ -228,13 +256,28 @@ class SqlAlchemyUserPurgeStore:
                         "id": uid,
                         "username": surrogate(user_id),
                         "email": anonymised_email(user_id),
+                        "unusable": unusable_password_hash(),
                         "now": now,
                     },
                 )
-                scrubbed = len((await s.execute(_SCRUB_SESSIONS, {"id": uid})).all())
+                ids = {"id": uid}
+                rows = await s.execute(
+                    _REVOKE_SESSIONS, ids | {"now": now, "reason": REVOKED_REASON}
+                )
+                revoked = tuple(sorted(_uuid(r[0]) for r in rows.all()))
+                scrubbed = len((await s.execute(_SCRUB_SESSIONS, ids)).all())
+                mfa = len((await s.execute(_DROP_MFA, ids)).all())
+                codes = len((await s.execute(_DROP_RECOVERY, ids)).all())
                 await s.execute(CONSTRAINTS_NOW)
                 before = {"status": status, "purge_after": _iso(purge_after), "anonymised_at": None}
-                after = before | {"anonymised_at": now.isoformat(), "sessions_scrubbed": scrubbed}
+                after = before | {
+                    "anonymised_at": now.isoformat(),
+                    "sessions_scrubbed": scrubbed,
+                    "credentials_revoked": True,  # counts only, never a value (no secret)
+                    "sessions_revoked": len(revoked),
+                    "mfa_methods_deleted": mfa,
+                    "recovery_rows_deleted": codes,  # `recovery_code*` keys are redacted
+                }
                 await self._write_ahead(_ANONYMISE_ACTION, uid, (before, after), who)
                 written = (before, after)
                 await uow.commit()
@@ -243,7 +286,7 @@ class SqlAlchemyUserPurgeStore:
             if written is not None:
                 await self._close(_ANONYMISE_ACTION, uid, written, who)
             raise
-        return True
+        return Anonymised(user_id, now, revoked)
 
     async def _write_ahead(
         self, action: str, user_id: str, states: _States, who: dict[str, Any]

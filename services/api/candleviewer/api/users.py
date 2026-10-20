@@ -28,8 +28,9 @@ it alone decides an elevated caller.
 written before the last: `users:write`, then a self-target (both refusals audited before any
 lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key is 422, S7),
 then the change; with `purge=true` the purge's schedule follows it (E42-T10, `_schedule_purge`).
-`user_disable=None` fails closed with 501, and so does `purge=true` with `user_purge=None`, before
-anything changes. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
+`user_disable=None` fails closed with 501; while no purge reaper runs (none wired, or stopped),
+`purge=true` fails closed with 503 `purge_unavailable`, before anything changes. In the deployed
+app the path-gated `DANGEROUS_ROUTES` guard
 (`make_read_only_guard`) answers an un-elevated caller first, so this order is the second line: it
 alone decides an elevated caller.
 
@@ -112,6 +113,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
 from candleviewer.storage.repositories.user_purge import (
     PurgeAuditUnavailableError,
     PurgeSchedule,
+    PurgeUnavailableError,
     PurgeUserNotDisabledError,
     PurgeUserNotFoundError,
 )
@@ -232,8 +234,12 @@ class UserDisable(Protocol):
 
 
 class UserPurge(Protocol):
-    """`SqlAlchemyUserPurgeStore.schedule` (E42-T10 S14): a disabled user's purge 90 days out on
-    the injected clock, `users.delete` written ahead; a repeat keeps the first date."""
+    """`UsersPurgeTask` (E42-T10 S14): `running` while its reaper runs; `schedule` puts a disabled
+    user's purge 90 days out on the injected clock, `users.delete` written ahead, a repeat keeping
+    the first date, and refuses with `PurgeUnavailableError` once the reaper has stopped."""
+
+    @property
+    def running(self) -> bool: ...
 
     async def schedule(
         self,
@@ -468,8 +474,9 @@ async def _schedule_purge(
     the session that stepped up. The disable is its own audited change and stays if this step is
     refused, as the refusal says; a retry is the disable's no-op (AC5), then this step."""
     rid = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
+    unscheduled = "the user is disabled, but its purge was not scheduled: "
     try:
-        await purge.schedule(
+        scheduled = await purge.schedule(
             user_id,
             actor_user_id=actor,
             request_id=uuid.UUID(rid) if rid else None,
@@ -480,8 +487,11 @@ async def _schedule_purge(
     except PurgeUserNotDisabledError:  # a re-enable won the race: nothing scheduled
         return _registered(ErrorCode.CONFLICT, 409, "the user is no longer disabled; no purge")
     except PurgeAuditUnavailableError:
-        detail = "the user is disabled, but its purge was not scheduled: the audit record could "
-        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail + "not be written; retry")
+        detail = unscheduled + "the audit record could not be written; retry"
+        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+    except PurgeUnavailableError:  # the reaper stopped after the check (a shutdown)
+        detail = unscheduled + "no purge reaper is running; retry"
+        return _registered(ErrorCode.PURGE_UNAVAILABLE, 503, detail)
     except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
         if not is_storage_outage(exc):
             raise
@@ -489,6 +499,12 @@ async def _schedule_purge(
             "user purge store unavailable", error=type(exc).__name__, target_user_id=str(user_id)
         )
         return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+    _log().info(
+        "user purge scheduled",
+        target_user_id=str(user_id),
+        changed=scheduled.changed,
+        request_id=rid,
+    )
     return Response(status_code=204)
 
 
@@ -773,8 +789,9 @@ def make_users_router(
         if acknowledged is None or purge is None:
             detail = "acknowledge_unknown_positions and purge are each true or false"
             return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
-        if purge and user_purge is None:  # E42-T10: no purge store wired, so nothing is disabled
-            return _problem(501, "not_implemented", "Not implemented", "no purge store wired")
+        if purge and (user_purge is None or not user_purge.running):  # E42-T10, UL4-D1
+            detail = "no purge reaper is running; nothing was changed"
+            return _registered(ErrorCode.PURGE_UNAVAILABLE, 503, detail)
         try:
             await user_disable.disable(
                 user_id, actor=principal, acknowledge_unknown_positions=acknowledged

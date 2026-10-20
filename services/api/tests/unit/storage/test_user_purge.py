@@ -1,8 +1,9 @@
-"""E42-T10 (#2650, #965 O6): the surrogate, and `SqlAlchemyUserPurgeStore` over a fake unit of
-work: the schedule behind `DELETE /users/{userId}?purge=true` (`users.delete` ahead), the reaper's
-bounded read and its per-user anonymisation (`users.anonymise` ahead, after a locked re-check,
-UL-F5), and the cancel E42-T09's enable path calls (R6). Real Postgres:
-tests/integration/admin/test_user_purge_pg.py."""
+"""E42-T10 (#2650, #965 O6): the surrogate, the "no usable password" value, and
+`SqlAlchemyUserPurgeStore` over a fake unit of work: the schedule behind
+`DELETE /users/{userId}?purge=true` (`users.delete` ahead), the reaper's bounded keyset read and its
+per-user anonymisation (`users.anonymise` ahead, after a locked re-check, UL-F5), which revokes
+every credential in the same transaction (orchestrator ruling, 2026-10-20), and the cancel
+E42-T09's enable path calls (R6). Real Postgres: tests/integration/admin/test_user_purge_pg.py."""
 
 from __future__ import annotations
 
@@ -18,11 +19,14 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
 from candleviewer.audit.actions import UnknownAuditAction, validate_action
+from candleviewer.audit.redact import redact
+from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.invite_service import _placeholder_hash
 from candleviewer.storage.repositories import user_purge as purge
 from candleviewer.storage.repositories import user_purge_sqlalchemy as m
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW
@@ -32,8 +36,19 @@ _NOW = datetime(2026, 10, 19, 9, 0, tzinfo=UTC)
 _DUE_AT = _NOW - timedelta(seconds=1)  # a purge_after that has passed
 #: Ends a hang if the store stops bounding its write-ahead; never reached when it does.
 _GUARD_S = 5.0
-#: What the store may write into a lifecycle record (UL-F1, O6): ids, status, times and a count.
-_STATE_KEYS = {"status", "purge_after", "anonymised_at", "sessions_scrubbed"}
+#: What the store may write into a lifecycle record (UL-F1, O6): ids, status, times and counts.
+_STATE_KEYS = {
+    "status",
+    "purge_after",
+    "anonymised_at",
+    "sessions_scrubbed",
+    "credentials_revoked",
+    "sessions_revoked",
+    "mfa_methods_deleted",
+    "recovery_rows_deleted",
+}
+#: The repo's "no usable password" value: an Argon2id head and a random 32-hex tail.
+_UNUSABLE = re.compile(r"\$argon2id\$v=19\$m=65536,t=3,p=4\$[0-9a-f]{32}")
 _PII = ("email", "username", "display_name", "last_login_ip", "user_agent", "device_label")
 
 
@@ -51,14 +66,20 @@ class _Db:
         *,
         due: Sequence[uuid.UUID] = (),
         sessions: int = 2,
+        live: Sequence[uuid.UUID] = (),
+        mfa: int = 1,
+        codes: int = 10,
         commit_error: BaseException | None = None,
         audit_error: BaseException | None = None,
     ) -> None:
         self.rows: dict[Any, list[Any]] = {
             m._LOCK_FOR_SCHEDULE: [user] if user is not None else [],
             m._LOCK_FOR_ANONYMISE: [user] if user is not None else [],
-            m._DUE: [(_DriverUUID(str(u)),) for u in due],
+            m._DUE: [(_DriverUUID(str(u)), _DUE_AT) for u in due],
+            m._REVOKE_SESSIONS: [(_DriverUUID(str(u)),) for u in live],
             m._SCRUB_SESSIONS: [(uuid.uuid4(),) for _ in range(sessions)],
+            m._DROP_MFA: [(uuid.uuid4(),) for _ in range(mfa)],
+            m._DROP_RECOVERY: [(uuid.uuid4(),) for _ in range(codes)],
         }
         self.commit_error, self.audit_error = commit_error, audit_error
         self.log: list[Any] = []
@@ -155,10 +176,35 @@ def test_both_records_are_registered_audit_actions() -> None:
 
 
 def test_the_store_reads_no_pii_column() -> None:
-    """No statement the store runs selects or filters on a PII column: what it writes for a user
-    can only come from the id (the surrogate) or be NULL."""
-    for stmt in (m._LOCK_FOR_SCHEDULE, m._LOCK_FOR_ANONYMISE, m._DUE, m._PENDING):
+    """No statement the store runs selects or filters on a PII column or a secret: what it writes
+    for a user can only come from the id (the surrogate), be the no-usable-password value, or be
+    NULL."""
+    read = (m._LOCK_FOR_SCHEDULE, m._LOCK_FOR_ANONYMISE, m._DUE, m._PENDING)
+    for stmt in read:
         assert not [column for column in _PII if column in str(stmt)], str(stmt)
+        assert "password_hash" not in str(stmt) and "secret" not in str(stmt), str(stmt)
+    for stmt in (m._REVOKE_SESSIONS, m._SCRUB_SESSIONS, m._DROP_MFA, m._DROP_RECOVERY):
+        assert str(stmt).rstrip().endswith("RETURNING id"), str(stmt)  # ids only, to count
+
+
+# --- the no-usable-password value (orchestrator ruling, 2026-10-20) ---------------------------
+
+
+@settings(max_examples=25, deadline=None)
+@given(st.text(max_size=64))
+def test_no_password_verifies_against_the_unusable_hash(password: str) -> None:
+    """The anonymised row's password hash: `users_pwd_argon` admits it, the hasher refuses every
+    password against it (with or without the pepper), and each call draws a fresh random tail, so
+    it is the invite placeholder's shape and keeps nothing of the old hash."""
+    unusable = purge.unusable_password_hash()
+    assert _UNUSABLE.fullmatch(unusable) and unusable.startswith("$argon2id$")
+    assert _UNUSABLE.fullmatch(_placeholder_hash())  # the same value `InviteService` parks
+    assert unusable != purge.unusable_password_hash()
+
+    async def verified() -> list[bool]:
+        return [await Hasher(pepper).verify(unusable, password) for pepper in ("", "pepper")]
+
+    assert asyncio.run(verified()) == [False, False]
 
 
 # --- the schedule (S14: `users.delete` ahead, 90 days out) ------------------------------------
@@ -274,7 +320,7 @@ async def test_schedule_and_anonymise_records_carry_no_pii() -> None:
     reaper's system label, and no source address is written."""
     scheduled, reaped = _Db(), _Db(("disabled", _DUE_AT, None))
     await _schedule(scheduled)
-    assert await _store(reaped).anonymise(_UID)
+    assert await _store(reaped).anonymise(_UID) is not None
     for record in (*scheduled.records, *reaped.records):
         assert set(record["before_state"]) | set(record["after_state"] or {}) <= _STATE_KEYS
         assert "actor_ip" not in record and "object_label" not in record
@@ -287,16 +333,32 @@ async def test_schedule_and_anonymise_records_carry_no_pii() -> None:
 
 async def test_due_reads_one_bounded_batch_of_expired_purges() -> None:
     """UL4-T2: only a disabled user whose `purge_after` has passed and who is not anonymised yet,
-    oldest first, at most `limit`; ids come back as plain `uuid.UUID`s."""
+    oldest first, at most `limit`, from the start; ids come back as plain `uuid.UUID`s."""
     a, b = uuid.uuid4(), uuid.uuid4()
     db = _Db(due=(a, b))
-    assert await _store(db).due(m.MAX_ANONYMISE_BATCH) == (a, b)
-    assert db.params(m._DUE) == [{"now": _NOW, "limit": m.MAX_ANONYMISE_BATCH}]
+    assert await _store(db).due(m.MAX_ANONYMISE_BATCH) == (
+        purge.DuePurge(_DUE_AT, a),
+        purge.DuePurge(_DUE_AT, b),
+    )
+    first = {"now": _NOW, "limit": m.MAX_ANONYMISE_BATCH, "after_at": None, "after_id": None}
+    assert db.params(m._DUE) == [first]
     sql = " ".join(str(m._DUE).split())
     for clause in ("status = 'disabled'", "anonymised_at IS NULL", "purge_after <= :now"):
         assert clause in sql
     assert sql.endswith("ORDER BY purge_after, id LIMIT :limit")
-    assert all(type(i) is uuid.UUID for i in await _store(db).due(1))
+    assert all(type(d.user_id) is uuid.UUID for d in await _store(db).due(1))
+
+
+async def test_due_reads_on_after_the_last_user_of_the_previous_batch() -> None:
+    """The keyset: the next read starts strictly after the last user it was given, in the batch
+    order (`purge_after`, then the id), so a run never reads a user twice, whether it was
+    anonymised, skipped or failed."""
+    db, last = _Db(due=()), purge.DuePurge(_DUE_AT, uuid.uuid4())
+    assert await _store(db).due(3, after=last) == ()
+    after = {"now": _NOW, "limit": 3, "after_at": _DUE_AT, "after_id": str(last.user_id)}
+    assert db.params(m._DUE) == [after]
+    sql = " ".join(str(m._DUE).split())
+    assert "(CAST(:after_id AS uuid) IS NULL OR (purge_after, id) > (" in sql
 
 
 @pytest.mark.parametrize("limit", [0, -1, m.MAX_ANONYMISE_BATCH + 1])
@@ -306,33 +368,56 @@ async def test_due_refuses_an_unbounded_or_empty_batch(limit: int) -> None:
 
 
 async def test_anonymise_writes_the_surrogate_and_nulls_pii_with_users_anonymise_ahead() -> None:
-    """O6, R5: under the user-row lock, the re-check, the surrogate and the nulls, every session's
-    PII nulled, the deferred constraints, `users.anonymise`, then the commit."""
-    db = _Db(("disabled", _DUE_AT, None), sessions=3)
-    assert await _store(db).anonymise(_UID) is True
+    """O6, R5: under the user-row lock, the re-check, the surrogate, the nulls and the unusable
+    password, every live session revoked, every session's PII nulled, every MFA method and
+    recovery code deleted, the deferred constraints, `users.anonymise`, then the commit: one
+    transaction (orchestrator ruling, 2026-10-20)."""
+    live = sorted((uuid.uuid4(), uuid.uuid4()))
+    db = _Db(("disabled", _DUE_AT, None), sessions=3, live=live, mfa=2, codes=8)
+    done = await _store(db).anonymise(_UID)
+    assert done == purge.Anonymised(_UID, _NOW, tuple(live))
+    assert all(type(i) is uuid.UUID for i in done.revoked_session_ids)
     assert db.order() == [
         m._LOCK_TIMEOUT,
         m._LOCK_FOR_ANONYMISE,
         m._ANONYMISE,
+        m._REVOKE_SESSIONS,
         m._SCRUB_SESSIONS,
+        m._DROP_MFA,
+        m._DROP_RECOVERY,
         CONSTRAINTS_NOW,
         "AUDIT users.anonymise success",
         "COMMIT",
     ]
     surrogate = _reference(_UID)
-    assert db.params(m._ANONYMISE) == [
-        {
-            "id": str(_UID),
-            "username": surrogate,
-            "email": f"{surrogate}@deleted.invalid",
-            "now": _NOW,
-        }
-    ]
+    ((params),) = db.params(m._ANONYMISE)
+    unusable = params.pop("unusable")
+    assert params == {
+        "id": str(_UID),
+        "username": surrogate,
+        "email": f"{surrogate}@deleted.invalid",
+        "now": _NOW,
+    }
+    assert _UNUSABLE.fullmatch(unusable)
     sql = " ".join(str(m._ANONYMISE).split())
-    assert "display_name = NULL, last_login_ip = NULL, anonymised_at = :now" in sql
+    assert (
+        "display_name = NULL, last_login_ip = NULL, password_hash = :unusable, "
+        "anonymised_at = :now" in sql
+    )
+    ended = {"id": str(_UID), "now": _NOW, "reason": "user_disabled"}
+    assert db.params(m._REVOKE_SESSIONS) == [ended]
+    revoke = " ".join(str(m._REVOKE_SESSIONS).split())
+    assert "SET revoked_at = :now, revoked_reason = :reason" in revoke
+    assert "WHERE user_id = CAST(:id AS uuid) AND revoked_at IS NULL" in revoke  # the live ones
     scrub = " ".join(str(m._SCRUB_SESSIONS).split())
     assert "SET ip = NULL, user_agent = NULL, device_label = NULL, tailscale_node = NULL" in scrub
     assert "WHERE user_id = CAST(:id AS uuid)" in scrub  # every session of the user, live or not
+    dropped = (
+        (m._DROP_MFA, "DELETE FROM mfa_methods WHERE user_id = CAST(:id AS uuid)"),
+        (m._DROP_RECOVERY, "DELETE FROM recovery_codes WHERE user_id = CAST(:id AS uuid)"),
+    )
+    for stmt, sql in dropped:
+        assert sql in str(stmt) and db.params(stmt) == [{"id": str(_UID)}]
     (record,) = db.records
     assert record == {
         "action": "users.anonymise",
@@ -355,8 +440,16 @@ async def test_anonymise_writes_the_surrogate_and_nulls_pii_with_users_anonymise
             "purge_after": _DUE_AT.isoformat(),
             "anonymised_at": _NOW.isoformat(),
             "sessions_scrubbed": 3,
+            "credentials_revoked": True,
+            "sessions_revoked": 2,
+            "mfa_methods_deleted": 2,
+            "recovery_rows_deleted": 8,
         },
     }
+    # The writer's redaction keeps every key and value: none is secret-shaped, and none is a value
+    # of a credential (counts and a flag), so the record states the revocation as it happened.
+    assert redact(record["after_state"]) == record["after_state"]
+    assert unusable not in repr(db.records)
 
 
 @pytest.mark.parametrize(
@@ -373,9 +466,10 @@ async def test_anonymise_writes_the_surrogate_and_nulls_pii_with_users_anonymise
 async def test_reenable_racing_reaper_keeps_user(row: tuple[Any, ...] | None) -> None:
     """UL-F5, UL-AC13: the batch read is not trusted. Under the user-row lock the reaper re-reads
     the status and the dates; a user re-enabled (or whose purge was cancelled, is not due, or was
-    anonymised by another run) since the read is left as it is: no write, no record."""
-    db = _Db(row)
-    assert await _store(db).anonymise(_UID) is False
+    anonymised by another run) since the read is left as it is: no write, no credential revoked,
+    no record."""
+    db = _Db(row, live=(uuid.uuid4(),))
+    assert await _store(db).anonymise(_UID) is None
     assert db.order() == [m._LOCK_TIMEOUT, m._LOCK_FOR_ANONYMISE] and db.records == []
 
 

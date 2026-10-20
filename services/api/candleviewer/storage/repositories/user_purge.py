@@ -2,19 +2,25 @@
 
 `DELETE /users/{userId}?purge=true` disables the user (E42-T04) and then schedules the purge:
 `users.purge_after` is set `policy.USERS_PURGE_AFTER_DAYS` out, `users.delete` written ahead. The
-retention reaper (`storage/retention/users_purge_tasks.py`) anonymises each disabled user whose
-`purge_after` has passed, one transaction per user with `users.anonymise` written ahead, and stamps
-`users.anonymised_at`. A re-enable before then clears `purge_after` (R6). O6 fixes what changes:
+reaper (`storage/retention/users_purge_tasks.py`), which runs whenever its store is wired,
+anonymises each disabled user whose `purge_after` has passed, one transaction per user with
+`users.anonymise` written ahead, and stamps `users.anonymised_at`; while no reaper runs, nothing is
+scheduled (`PurgeUnavailableError`). A re-enable before then clears `purge_after` (R6). O6 fixes
+what changes:
 the username becomes `surrogate(user_id)`, the email `anonymised_email(user_id)`, and
 `display_name`, `last_login_ip` and every session's `ip`, `user_agent`, `device_label` and
-`tailscale_node` become NULL. Audit rows are never touched (C-5.7, C-12.8): each keeps the name it
-was written with, so the records this purge writes carry ids, status and times only.
+`tailscale_node` become NULL. The same transaction revokes every credential (orchestrator ruling,
+2026-10-20): the password hash becomes `unusable_password_hash()`, every MFA method and recovery
+code is deleted and every live session revoked, so the row can never sign in under the surrogate.
+Audit rows are never touched (C-5.7, C-12.8): each keeps the name it was written with, so the
+records this purge writes carry ids, status, times and counts only.
 `user_purge_sqlalchemy.py` implements the store.
 """
 
 from __future__ import annotations
 
 import hashlib
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,6 +31,9 @@ SURROGATE_PREFIX: Final = "deleted-user-"
 _SURROGATE_DOMAIN: Final = b"cv-user-surrogate:"
 #: RFC 2606 reserves `.invalid`: the address can never be delivered to.
 ANONYMISED_EMAIL_DOMAIN: Final = "deleted.invalid"
+#: The head of the repo's "no usable password" value (`InviteService` parks it on an invited user,
+#: the 0002 seed on the first owner): the `users_pwd_argon` CHECK admits it.
+_ARGON2ID_HEAD: Final = "$argon2id$v=19$m=65536,t=3,p=4$"
 
 
 def surrogate(user_id: uuid.UUID) -> str:
@@ -40,6 +49,13 @@ def surrogate(user_id: uuid.UUID) -> str:
 def anonymised_email(user_id: uuid.UUID) -> str:
     """O6: `<surrogate>@deleted.invalid`, unique per user as the surrogate is."""
     return f"{surrogate(user_id)}@{ANONYMISED_EMAIL_DOMAIN}"
+
+
+def unusable_password_hash() -> str:
+    """The repo's "no usable password" value, as `InviteService` stores it: an Argon2id head and a
+    random tail that is no Argon2id digest, so no password verifies against it (`Hasher.verify`
+    is False) and nothing about the old hash is kept."""
+    return _ARGON2ID_HEAD + secrets.token_hex(16)
 
 
 class PurgeAuditEmitter(Protocol):
@@ -64,6 +80,11 @@ class PurgeAuditUnavailableError(Exception):
     503 `audit_unavailable`)."""
 
 
+class PurgeUnavailableError(Exception):
+    """No purge reaper is running, so no purge is scheduled (HTTP 503 `purge_unavailable`): a
+    purge nothing would run is never accepted (UL4-D1); nothing changed."""
+
+
 @dataclass(frozen=True, slots=True)
 class PurgeSchedule:
     """The purge in force after `schedule`: `changed` is False when one was already scheduled (or
@@ -72,3 +93,23 @@ class PurgeSchedule:
     user_id: uuid.UUID
     purge_after: datetime
     changed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DuePurge:
+    """One user whose purge is due, in the reaper's order (`purge_after`, then the id); the last of
+    a batch is where the next read starts, so a run walks the backlog once, past any user it
+    skipped or failed."""
+
+    purge_after: datetime
+    user_id: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class Anonymised:
+    """One committed anonymisation: its instant, and the sessions its transaction revoked, which
+    the reaper then ends on B16 (`REVOKE`) as a disable's are."""
+
+    user_id: uuid.UUID
+    at: datetime
+    revoked_session_ids: tuple[uuid.UUID, ...] = ()

@@ -18,6 +18,7 @@ import jsonschema
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 from candleviewer.admin.errors import UserLifecycleError
 from candleviewer.api.contract_conformance import load_openapi_spec
@@ -32,6 +33,7 @@ from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as store
 from candleviewer.storage.repositories import user_purge_sqlalchemy as purge_module
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import LOCK_USER
 from candleviewer.storage.repositories.user_purge_sqlalchemy import SqlAlchemyUserPurgeStore
+from candleviewer.storage.retention.users_purge_tasks import UsersPurgeTask
 from tests.unit.admin.test_user_disable import _TARGET, _World
 from tests.unit.storage.test_user_lifecycle_sqlalchemy import _Rel
 
@@ -108,10 +110,25 @@ class _PurgeRel:
         yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
 
 
-def _purging(w: _World, *args: Any) -> tuple[SqlAlchemyUserPurgeStore, _PurgeRel]:
-    """The real purge store over `_PurgeRel(w.log, *args)`, writing its records to the world."""
+class _Door(UsersPurgeTask):
+    """The reaper's door (`UsersPurgeTask.schedule`) with no loop: `running` answers each read
+    from `running` in turn, its last answer standing, so a test can stop the reaper mid-call."""
+
+    def __init__(self, store: SqlAlchemyUserPurgeStore, running: tuple[bool, ...]) -> None:
+        super().__init__(store, sessions=cast(Any, None))
+        self.answers = list(running)
+
+    @property
+    def running(self) -> bool:
+        return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+
+
+def _purging(w: _World, *args: Any, running: tuple[bool, ...] = (True,)) -> tuple[_Door, _PurgeRel]:
+    """The real purge store over `_PurgeRel(w.log, *args)`, writing its records to the world,
+    behind the reaper's door."""
     rel = _PurgeRel(w.log, *args)
-    return SqlAlchemyUserPurgeStore(cast(Any, rel), audit=w, clock=lambda: _PURGE_NOW), rel
+    store = SqlAlchemyUserPurgeStore(cast(Any, rel), audit=w, clock=lambda: _PURGE_NOW)
+    return _Door(store, running), rel
 
 
 @pytest.fixture(scope="module")
@@ -526,15 +543,57 @@ def test_purge_twice_204_one_users_delete(spec: dict[str, Any]) -> None:
     assert w.log.count("purge:write") == 1
 
 
-def test_purge_unwired_is_501_before_anything_changes(spec: dict[str, Any]) -> None:
-    """The fake backend has no purge store: `?purge=true` fails closed before the disable, so no
-    half of the call happens; without `purge` the disable is served as before."""
+@pytest.mark.parametrize("wired", [False, True], ids=["no-reaper-wired", "reaper-stopped"])
+def test_purge_503_without_reaper(wired: bool, spec: dict[str, Any]) -> None:
+    """Ruling 2, UL4-D1: a purge nothing would run is never accepted. With no reaper wired (the
+    fake backend) or one not running, `?purge=true` answers `503 purge_unavailable` after the
+    guards and before the disable: no record, no purge, no half of the call. Without `purge` the
+    disable is served as before."""
     w = _World()
-    r = _client(w, _principal("owner", spec), user_purge=None).delete(_PATH.format(TARGET) + _PURGE)
-    assert (r.status_code, r.json()["code"]) == (501, "not_implemented")
+    door = _purging(w, running=(False,))[0] if wired else None
+    client = _client(w, _principal("owner", spec), user_purge=door)
+    r = client.delete(_PATH.format(TARGET) + _PURGE)
+    assert (r.status_code, r.json()["code"]) == (503, "purge_unavailable")
+    _conforms(spec, r)
+    assert r.json()["detail"] == "no purge reaper is running; nothing was changed"
+    assert r.headers["Retry-After"] == str(r.json()["retry_after_seconds"])
     assert w.log == ["step_up"] and _untouched(w)
-    plain = _client(w, _principal("owner", spec), user_purge=None).delete(_PATH.format(TARGET))
-    assert plain.status_code == 204
+    assert client.delete(_PATH.format(TARGET)).status_code == 204
+
+
+def test_a_reaper_that_stops_after_the_disable_leaves_the_user_disabled_unscheduled(
+    spec: dict[str, Any],
+) -> None:
+    """The two commits (22 deleteUser): the reaper stops (a shutdown) between the disable and the
+    schedule. The disable stands, no purge is scheduled and no `users.delete` written, and the
+    answer says so; a retry converges (the disable's no-op, then the schedule)."""
+    w = _World()
+    door, rel = _purging(w, running=(True, False))
+    r = _purge_delete(w, spec, door)
+    assert (r.status_code, r.json()["code"]) == (503, "purge_unavailable")
+    _conforms(spec, r)
+    assert r.json()["detail"].startswith("the user is disabled, but its purge was not scheduled")
+    assert w.rel.committed and w.of("users.disable") and not rel.committed
+    assert "purge:read" not in w.log and w.of("users.delete") == []
+
+
+def test_a_scheduled_purge_logs_one_line_with_the_request_id_and_no_pii(
+    spec: dict[str, Any],
+) -> None:
+    """Observability (#2650): the route's line names the target id, whether it changed anything
+    and the request id it is correlated by; never a name, an email or an address."""
+    w = _World()
+    door, _ = _purging(w)
+    with capture_logs() as logs:
+        r = _purge_delete(w, spec, door)
+    assert r.status_code == 204
+    (line,) = [e for e in logs if e["event"] == "user purge scheduled"]
+    assert (line["target_user_id"], line["changed"], line["log_level"]) == (
+        str(TARGET),
+        True,
+        "info",
+    )
+    assert "request_id" in line
 
 
 def test_a_purge_defect_is_a_500_that_names_no_id(spec: dict[str, Any]) -> None:
