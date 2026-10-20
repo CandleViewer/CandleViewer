@@ -18,9 +18,11 @@ from structlog.testing import capture_logs
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.oms import ExecutionRepository
 from candleviewer.oms.errors import (
     IllegalTransition,
     OrderBufferFull,
+    OrderHistoryRefused,
     OrderMachinesFull,
     OrderNotLoaded,
     OrderStepRefused,
@@ -36,7 +38,11 @@ from candleviewer.oms.order_machine import (
     CommandEvent,
     Legality,
     OrderAuditRecord,
+    Outcome,
+    Severity,
 )
+from candleviewer.oms.order_steps import OrderStepWriter
+from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import GatewayOverloadedError
 from candleviewer.statechart.persistence import DegradedLatchError
@@ -750,6 +756,8 @@ async def test_a_fill_whose_write_outcome_is_unknown_is_rebuilt_from_its_row(rig
     rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
     with pytest.raises(OrderStepUnknown, match="EXEC"):
         await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    rebuilt = {("partially_filled", "sl_pending"), ("partially_filled", "sl_present")}
+    assert rig.facade.state(order.id) in rebuilt  # before push() answered (codeB r2 Low)
     await rig.quiet()
     row = await rig.orders.get(ACCOUNT, order.id)
     assert row is not None and (row.state, row.cum_exec_qty) == ("partially_filled", Decimal("0.4"))
@@ -1196,3 +1204,536 @@ async def test_a_kill_that_fails_unexpectedly_is_reported_and_pages(
     assert rig.pager.calls == ["oms_kill_not_recorded"]
     row = await rig.orders.get(ACCOUNT, second.id)
     assert row is not None and row.state == "killed"
+
+
+# --- A resync resumes as a restart does (codeA r2 Medium, codeB r2 Medium) ---------------------
+
+
+async def _no_stop(_command: b01.Command) -> Mapping[str, Any]:
+    """The attach's read-back finds the position with no stop on it."""
+    return {"ok": True, "position": {"updated_time": 300, "stop_loss": None, "size": "0.6"}}
+
+
+async def test_a_resync_confirms_the_stop_from_a_fresh_exchange_read(rig: Rig) -> None:
+    """INV-B1-f, C-2.6, 24 Sec.8.8 rule 2: the exchange lost the stop (`SL_LOST`: `sl_missing`,
+    alerted, handed to B8), then a fill's write is in doubt. The rebuilt machine forgets the old
+    one's attach, as a restarted process does, so its first fill attaches and reads the position
+    back again: no stop, so the region is `sl_missing` again, B8 is asked again, and no publish
+    calls the order `protected`."""
+    order = await rig.submitted()
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
+    lost = {"updated_time": 200, "stop_loss": None, "size": "0.4"}
+    await rig.facade.push(ACCOUNT, order.id, "SL_LOST", lost)
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
+    rig.commands.on_attach = _no_stop
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    with pytest.raises(OrderStepUnknown):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.2"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
+    assert rig.commands.kinds() == ["place", "attach_stop", "attach_stop"]
+    assert rig.notices.kinds() == ["alert", "request_fallback_sl"] * 2
+    assert "protected" not in rig.publish.calls[-1][2]["tags"]
+
+
+async def test_a_resync_looks_up_the_place_the_old_machine_left_in_flight(rig: Rig) -> None:
+    """SR-E29-15, S1: the place is in flight when the order's KILL is written in doubt, with
+    nothing landed, so the machine is rebuilt in `submitting` and the old one's place is cut off
+    unanswered. Its attempt went with it: the rebuilt machine's place is one this process did not
+    begin, so it looks the id up before it sends, as after a restart; the KILL then reaches the
+    rebuilt machine, which cancels once (INV-B1-h)."""
+    order = order_of()
+    gate, rig.commands.on_place = gated({"ok": True, "exchange_order_id": "x1"})
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    rig.store.fail_next(TimeoutError(_CUT_OFF))
+    assert await rig.facade.kill("kill switch engaged") == ()
+    assert rig.commands.kinds() == ["place", "lookup", "place", "kill_cancel"]
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "killed"
+    gate.set()
+
+
+# --- A KILL reaches the machine a resync rebuilds (codeA r2 Medium, INV-B1-h) ------------------
+
+
+#: The pages of a step rolled back (`CvErrorHooks`) and of a KILL that did not commit.
+_ROLLED_BACK, _NOT_KILLED = "transition failed: order", "oms_kill_not_recorded"
+
+
+async def _resync_held(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch, order: NewOrder
+) -> tuple[asyncio.Event, asyncio.Task[None]]:
+    """A fill whose write is in doubt with nothing landed, its resync held at the re-read of the
+    row: the old machine is closed and the new one not yet built."""
+    gate, read = asyncio.Event(), rig.orders.get
+
+    async def held(account_id: UUID, order_id: UUID) -> Any:
+        await gate.wait()
+        return await read(account_id, order_id)
+
+    monkeypatch.setattr(rig.orders, "get", held)
+    rig.store.fail_next(TimeoutError(_CUT_OFF))
+    fill = fill_of(order, "e1", "0.4")
+    push = asyncio.create_task(rig.facade.push(ACCOUNT, order.id, "EXEC", fill))
+    for _ in range(1_000):
+        if order.id not in rig.facade._orders:
+            break
+        await asyncio.sleep(0)
+    assert order.id not in rig.facade._orders and not push.done()
+    return gate, push
+
+
+@pytest.mark.parametrize(
+    ("landed", "unkilled", "sent", "paged"),
+    [
+        (False, (), ["kill_cancel"], [_ROLLED_BACK, "oms_step_outcome_unknown"]),
+        (True, (UUID(int=1),), [], [_ROLLED_BACK, "oms_step_outcome_unknown", _NOT_KILLED]),
+    ],
+)
+async def test_an_in_doubt_kill_is_sent_to_the_rebuilt_machine_unless_its_row_landed(
+    rig: Rig, landed: bool, unkilled: tuple[UUID, ...], sent: list[str], paged: list[str]
+) -> None:
+    """INV-B1-h, 24 Sec.8.2 "An unknown outcome": a KILL whose write is in doubt rebuilds the
+    machine from the row. With nothing landed, the rebuilt machine is killed in turn, its cancel
+    sent once. A `killed` row that landed gets no machine and its cancel was never sent, so the
+    order is answered and paged (the residual: B18's cancel-all and reconciliation settle it)."""
+    order = await rig.submitted()
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=landed)
+    assert await rig.facade.kill("kill switch engaged") == unkilled
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "killed" and rig.facade.state(order.id) is None
+    assert rig.commands.kinds() == ["place", *sent]
+    assert rig.pager.calls == paged
+
+
+async def test_a_kill_during_a_resync_waits_for_the_rebuilt_machine(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.21, INV-B1-h: KILL arrives while a resync rebuilds the order's machine, the old one
+    closed and the new one not yet built. It waits for the resync and kills the rebuilt machine,
+    which sends its cancel; it never answers the order as killed while nothing recorded it."""
+    order = await rig.submitted()
+    gate, push = await _resync_held(rig, monkeypatch, order)
+    kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+    for _ in range(64):
+        await asyncio.sleep(0)
+    assert not kill.done()
+    gate.set()
+    with pytest.raises(OrderStepUnknown):
+        await push
+    assert await kill == ()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "killed"
+    assert rig.commands.kinds() == ["place", "kill_cancel"]
+
+
+async def test_a_kill_that_waited_out_a_resync_kills_the_rebuilt_machine(rig: Rig) -> None:
+    """KILL found the order's machine and waited on its lock while a resync replaced it: it
+    follows the order to the rebuilt machine and kills that, never counting the closed one."""
+    order = await rig.submitted()
+    o = rig.facade._orders[order.id]
+    async with o.lock:  # as a caller's settle holds it while it resyncs
+        kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+        await asyncio.sleep(0)
+        o.resync = True
+        await rig.facade._resync(o)
+    assert await kill == ()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "killed" and rig.facade.state(order.id) is None
+    assert rig.commands.kinds() == ["place", "kill_cancel"]
+
+
+async def test_a_kill_whose_order_a_resync_left_without_a_machine_reports_it(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resync a KILL waited out rebuilt no machine (the order's history did not hydrate), so
+    nothing recorded the KILL: the order is answered and paged, never counted as killed."""
+    order = await rig.submitted()
+    o = rig.facade._orders[order.id]
+
+    async def refused(*_args: Any) -> str:
+        raise OrderHistoryRefused("the order's events do not rebuild its row (OM-T03)")
+
+    monkeypatch.setattr(rig.facade, "_hydrate", refused)
+    async with o.lock:
+        kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+        await asyncio.sleep(0)
+        o.resync = True
+        await rig.facade._resync(o)
+    assert await kill == (order.id,)
+    assert rig.pager.calls == ["oms_step_outcome_unknown", "oms_kill_not_recorded"]
+    assert rig.commands.kinds() == ["place"]
+
+
+async def test_a_kill_while_a_first_row_is_in_doubt_kills_the_rebuilt_machine(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KILL waits on a new order whose first row is being written; the row commits but its answer
+    is lost, so the order is rebuilt from it under the same lock, and KILL kills the rebuilt
+    machine (never sent, so no cancel)."""
+    gate, create = asyncio.Event(), rig.store.create
+
+    async def held(order: NewOrder, first_event: Any) -> Any:
+        await gate.wait()
+        return await create(order, first_event)
+
+    monkeypatch.setattr(rig.store, "create", held)
+    start = asyncio.create_task(rig.start(order_of()))
+    for _ in range(1_000):
+        if UUID(int=1) in rig.facade._orders and rig.facade._orders[UUID(int=1)].busy:
+            break
+        await asyncio.sleep(0)
+    assert rig.facade._orders[UUID(int=1)].busy  # its first row's write is under way
+    kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+    for _ in range(64):
+        await asyncio.sleep(0)
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    gate.set()
+    with pytest.raises(OrderStepUnknown, match="VALIDATE"):
+        await start
+    assert await kill == ()
+    row = await rig.orders.get(ACCOUNT, UUID(int=1))
+    assert row is not None and row.state == "killed" and rig.commands.sent == []
+
+
+async def test_a_kill_reports_an_order_whose_machine_is_still_being_built(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A KILL that meets an order whose machine is still being built cannot record it there: the
+    order is answered and paged, never counted as killed (the synchronous kill switch still
+    refuses its sends, C-2.21)."""
+    gate = asyncio.Event()
+
+    async def held(*args: Any, **kwargs: Any) -> Any:
+        await gate.wait()
+        return await build(*args, **kwargs)
+
+    monkeypatch.setattr("candleviewer.oms.order_machine.build", held)
+    start = asyncio.create_task(rig.start(order_of()))
+    for _ in range(64):
+        await asyncio.sleep(0)
+    assert UUID(int=1) in rig.facade._orders and rig.facade.state(UUID(int=1)) is not None
+    assert await rig.facade.kill("kill switch engaged") == (UUID(int=1),)
+    assert rig.pager.calls == ["oms_kill_not_recorded"]
+    gate.set()
+    assert await start == "validated"
+
+
+# --- Callers that waited out a resync reach the rebuilt machine (codeB r2 Low) -----------------
+
+
+async def test_callers_that_waited_out_a_resync_reach_the_rebuilt_machine(rig: Rig) -> None:
+    """A push and a command queued on the order's lock while an unknown-outcome write rebuilt its
+    machine are taken by the rebuilt machine, never answered as if no machine held the order."""
+    order = await rig.submitted()
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    first = fill_of(order, "e1", "0.4")
+    pushed = asyncio.create_task(rig.facade.push(ACCOUNT, order.id, "EXEC", first))
+    second = fill_of(order, "e2", "0.2")
+    waited = asyncio.create_task(rig.facade.push(ACCOUNT, order.id, "EXEC", second))
+    cancel = asyncio.create_task(rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user"))
+    with pytest.raises(OrderStepUnknown):
+        await pushed
+    await waited  # taken: no OrderNotLoaded
+    assert await cancel == "cancel_pending"
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and (row.state, row.cum_exec_qty) == ("cancelled", Decimal("0.6"))
+
+
+async def test_a_push_during_a_resync_waits_for_the_rebuilt_machine(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A push that arrives while a resync rebuilds the order's machine, the old one closed and
+    the new one not yet built, waits for it and is taken by it."""
+    order = await rig.submitted()
+    gate, push = await _resync_held(rig, monkeypatch, order)
+    later = asyncio.create_task(
+        rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.2"))
+    )
+    for _ in range(64):
+        await asyncio.sleep(0)
+    assert not later.done()
+    gate.set()
+    with pytest.raises(OrderStepUnknown):
+        await push
+    await later  # taken: no OrderNotLoaded
+    await rig.quiet()
+    assert rig.context(order)["seen_exec_ids"] == ["e2"]
+
+
+async def test_a_hydration_during_a_resync_answers_the_rebuilt_machine(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A7: hydrating an order a resync is rebuilding waits for the rebuilt machine and answers
+    its state, never building a second machine for the order."""
+    order = await rig.submitted()
+    gate, push = await _resync_held(rig, monkeypatch, order)
+    hydrated = asyncio.create_task(rig.facade.hydrate(ACCOUNT, order.id, environment="demo"))
+    for _ in range(64):
+        await asyncio.sleep(0)
+    assert not hydrated.done()
+    gate.set()
+    with pytest.raises(OrderStepUnknown):
+        await push
+    assert await hydrated == "submitted"
+    assert rig.pager.calls == [_ROLLED_BACK, "oms_step_outcome_unknown"]
+
+
+async def test_a_second_hydration_racing_the_first_leaves_its_replay_alone(rig: Rig) -> None:
+    """L3, SR-E29-15: two hydrations of an order race after a restart. The second is refused
+    before it touches the binding's record of the first machine's replay, so the place the crash
+    cut off resumes once, after the replay, looking its id up first."""
+    order = order_of()
+    _gate, rig.commands.on_place = gated({"ok": True, "exchange_order_id": "x1"})
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    again = await rig.restart()
+    try:
+        both = await asyncio.gather(
+            again.facade.hydrate(ACCOUNT, order.id, environment="demo"),
+            again.facade.hydrate(ACCOUNT, order.id, environment="demo"),
+            return_exceptions=True,
+        )
+        await again.quiet()
+        assert both[0] == "submitting" and isinstance(both[1], IllegalTransition)
+        assert again.commands.kinds() == ["lookup", "place"]
+        assert again.facade.state(order.id) == ("submitted", "not_required")
+    finally:
+        await again.facade.stop()
+
+
+async def test_a_caller_follows_an_order_through_at_most_follows_machines(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.18: a caller follows the order through at most `FOLLOWS` machines, then is answered as
+    if none held it: here `FOLLOWS` is 1, so the machine one resync rebuilt is past it."""
+    monkeypatch.setattr("candleviewer.oms.order_machine.FOLLOWS", 1)
+    order = await rig.submitted()
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        cancel = asyncio.create_task(rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user"))
+        trigger = {"updated_time": 1}
+        push = asyncio.create_task(rig.facade.push(ACCOUNT, order.id, "TRIGGERED", trigger))
+        hydrated = asyncio.create_task(rig.facade.hydrate(ACCOUNT, order.id, environment="demo"))
+        kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+        await asyncio.sleep(0)
+        o.resync = True
+        await rig.facade._resync(o)
+    for waited in (cancel, push):
+        with pytest.raises(OrderNotLoaded):
+            await waited
+    with pytest.raises(IllegalTransition):  # a second machine for the order is refused (L3)
+        await hydrated
+    assert await kill == (order.id,)
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+
+
+# --- What a resync hands over, and what it leaves (codeB r2 Low) -------------------------------
+
+
+async def test_a_resync_hands_the_old_machines_work_to_the_rebuilt_one(rig: Rig) -> None:
+    """S5, S7: the rebuilt machine takes over what the old one had not done: its pending notice
+    reaches the notice port and its held fill applies; and its S5 watermark stays, so an `orders`
+    push older than the last one the order took is still ignored."""
+    order = await rig.submitted()
+    await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": 500})
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        o.notices.append({"seq": 90, "kind": "request_fallback_sl"})
+        o.held.append(((1, 0), "EXEC", fill_of(order, "e1", "0.4")))
+        o.resync = True
+        await rig.facade._resync(o)
+    await rig.quiet()
+    assert rig.notices.kinds() == ["request_fallback_sl"] and rig.facade._resyncing == {}
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    stale = {"updated_time": 400, "cum_exec_qty": "0.4"}
+    await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", stale)
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+
+
+async def test_a_refusal_the_old_machine_kept_is_answered_by_the_rebuilt_one(rig: Rig) -> None:
+    """OM-T04: a hostile fill's refusal the old machine kept for its answer passes to the rebuilt
+    machine, which quarantines the order."""
+    order = await rig.submitted()
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        o.denied["e9"] = "the execution is not a trade of this order's bound exchange order"
+        o.resync = True
+        await rig.facade._resync(o)
+    assert rig.facade.state(order.id) == ("quarantined", "not_required")
+
+
+async def test_a_reduce_only_exit_left_without_a_machine_hands_nothing_to_b8(rig: Rig) -> None:
+    """C-2.6 covers position-opening orders: the fill that ends a reduce-only exit commits while
+    its machine rolls it back, so no machine is rebuilt for the final row, and as the exit opens
+    no position, nothing is handed to B8."""
+    order = order_of(reduce_only=True, stop_loss=None, intent="flatten")
+    await rig.submitted(order)
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    with pytest.raises(OrderStepUnknown):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "filled" and rig.facade.state(order.id) is None
+    assert rig.notices.got == [] and rig.commands.kinds() == ["place"]
+
+
+# --- Each port await is bounded by PORT_TIMEOUT (codeB r2 Low, C-2.18) -------------------------
+
+
+async def _stalled(*_args: Any, **_kwargs: Any) -> Any:
+    await asyncio.Event().wait()
+
+
+def _answering(row: Any) -> Any:
+    """A read port that answers *row* at once, so a zero `PORT_TIMEOUT` passes it."""
+
+    async def answer(*_args: Any, **_kwargs: Any) -> Any:
+        return row
+
+    return answer
+
+
+async def test_a_hydration_gives_up_a_row_read_that_stalls(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("candleviewer.oms.order_machine.PORT_TIMEOUT", 0.0)
+    monkeypatch.setattr(rig.orders, "get", _stalled)
+    async with asyncio.timeout(10):  # a backstop only: a regression would hang here
+        with pytest.raises(TimeoutError):
+            await rig.facade.hydrate(ACCOUNT, UUID(int=9), environment="demo")
+
+
+async def test_a_hydration_gives_up_a_history_read_that_stalls(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order = await rig.submitted()
+    await rig.facade._close(rig.facade._orders[order.id], publish=False)
+    row = await rig.orders.get(ACCOUNT, order.id)
+    monkeypatch.setattr("candleviewer.oms.order_machine.PORT_TIMEOUT", 0.0)
+    monkeypatch.setattr(rig.orders, "get", _answering(row))
+    monkeypatch.setattr(rig.events, "list_for_order", _stalled)
+    async with asyncio.timeout(10):
+        with pytest.raises(TimeoutError):
+            await rig.facade.hydrate(ACCOUNT, order.id, environment="demo")
+
+
+async def test_a_command_for_an_unloaded_order_gives_up_a_row_read_that_stalls(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("candleviewer.oms.order_machine.PORT_TIMEOUT", 0.0)
+    monkeypatch.setattr(rig.orders, "get", _stalled)
+    async with asyncio.timeout(10):
+        with pytest.raises(TimeoutError):
+            await rig.facade.command(ACCOUNT, UUID(int=9), "CANCEL", actor="user")
+
+
+async def test_an_s6_record_that_stalls_is_given_up_never_the_refusal(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.9: a record that cannot be written in time raises; the push is not refused as recorded
+    (`ReconcileAnomaly` is raised only once its record is written)."""
+    order = await rig.submitted()
+    await rig.facade.push(ACCOUNT, order.id, "EXPIRE", {"updated_time": 5})
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    monkeypatch.setattr("candleviewer.oms.order_machine.PORT_TIMEOUT", 0.0)
+    monkeypatch.setattr(rig.orders, "get", _answering(row))
+    monkeypatch.setattr(rig.audit, "write", _stalled)
+    async with asyncio.timeout(10):
+        with pytest.raises(TimeoutError):
+            await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.1"))
+
+
+async def test_a_notice_route_that_stalls_pages_and_the_step_stands(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("candleviewer.oms.order_machine.PORT_TIMEOUT", 0.0)
+    monkeypatch.setattr(rig.notices, "notify", _stalled)
+    async with asyncio.timeout(10):
+        await _unknown(rig)  # its `order_unknown` alert is given up
+    assert "order notice lost: alert" in rig.pager.calls
+
+
+# --- A caller's event name reaches the log and the error only bounded (codeB r2 Low) -----------
+
+
+@pytest.mark.parametrize(
+    ("event", "shown"),
+    [("X" * 100_000, "X" * 64), ("TRIGGERED\n\x00", "TRIGGERED??"), (42, "int")],
+)
+async def test_an_unknown_event_name_is_logged_and_raised_only_bounded(
+    rig: Rig, event: Any, shown: str
+) -> None:
+    """C-12.6, C-2.18: an event name outside the method's set is an untyped caller's raw value;
+    the refusal logs and raises at most `MAX_TEXT` printable characters of it, or a non-text
+    value's type name."""
+    order = await rig.submitted()
+    with capture_logs() as logs, pytest.raises(IllegalTransition) as raised:
+        await rig.facade.push(ACCOUNT, order.id, event, {"updated_time": 1})
+    assert raised.value.attempted == shown and len(str(raised.value)) < 120
+    assert [e["attempted"] for e in logs if e["event"] == "oms_illegal_transition"] == [shown]
+
+
+# --- Every B1 record, in full (codeB r2 Low, C-2.9) --------------------------------------------
+
+#: Each B1 record as the audit writer must receive it: its action, outcome and severity, written
+#: out here rather than read from `B1_AUDITS`, so a record rewritten there fails this table.
+B1_RECORDS: dict[str, tuple[str, Outcome, Severity]] = {
+    "halted_by_kill": ("orders.cancel", "success", "warning"),
+    "kill_cancel_in_flight": ("orders.cancel", "success", "warning"),
+    "kill_protection_retained": ("orders.cancel", "success", "info"),
+    "kill_no_cancel_unsubmitted": ("orders.cancel", "denied", "info"),
+    "kill_no_cancel_unverified_duplicate": ("orders.cancel", "denied", "warning"),
+    "kill_ignored_terminal": ("orders.cancel", "denied", "info"),
+    "kill_ignored_unowned": ("orders.cancel", "denied", "warning"),
+    "kill_cancel_timeout": ("orders.cancel", "failure", "error"),
+    "kill_cancel_failed": ("orders.cancel", "failure", "error"),
+    "kill_cancel_lost": ("orders.cancel", "failure", "error"),
+    "guard_denied": ("oms.reconcile_anomaly", "denied", "error"),
+    "reconcile_anomaly": ("oms.reconcile_anomaly", "denied", "error"),
+}
+
+
+async def test_each_b1_record_is_written_in_full(rig: Rig) -> None:
+    """C-2.9: every record B1's hook names reaches the audit writer with the action, order,
+    account, outcome, severity, reason and detail this table gives it; a failed or timed-out
+    KILL cancel is never written as a success."""
+    order = await rig.submitted()
+    for name in B1_RECORDS:
+        await rig.facade._audited(name, {"order_id": str(order.id)})
+    detail: dict[str, str | None] = {"order_link_id": order.order_link_id, "state": "submitted"}
+    detail |= {"exec_id": None, "trigger": None}
+    assert set(B1_RECORDS) == set(B1_AUDITS)
+    assert rig.audit.records == [
+        OrderAuditRecord(action, order.id, ACCOUNT, outcome, severity, name, detail)
+        for name, (action, outcome, severity) in B1_RECORDS.items()
+    ]
+
+
+# --- A fill the row holds already is the row moving on (codeA r2 Low, S4, S7) -------------------
+
+
+async def test_a_fill_the_row_holds_already_rebuilds_the_machine(rig: Rig) -> None:
+    """S7: a fill's COMMIT landed after the machine was rebuilt, so the machine is behind its row.
+    The fill delivered again finds its execution stored: the row moved on under the machine, not
+    a double count, so the machine is rebuilt from the row, holds the fill once, and its stop is
+    attached."""
+    order = await rig.submitted()
+    late_commit = OrderStepWriter(rig.orders, ExecutionRepository(rig.fills), clock=lambda: T0)
+    totals = {"filled_qty": "0.4", "cum_exec_value": "25200", "avg_price": "63000"}
+    context = rig.context(order) | totals | {"fee_paid": "0"}
+    fill = fill_of(order, "e1", "0.4")
+    ids = (str(order.id), str(ACCOUNT), order.order_link_id)
+    await late_commit(b01.Step(*ids, "submitted", "partially_filled", "EXEC", fill, context))
+    with pytest.raises(OrderStepUnknown, match="StaleOrderState"):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill)
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    assert rig.context(order)["seen_exec_ids"] == ["e1"]
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.cum_exec_qty == Decimal("0.4")
+    assert rig.commands.kinds() == ["place", "attach_stop"]

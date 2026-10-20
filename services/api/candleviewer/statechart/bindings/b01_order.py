@@ -27,10 +27,12 @@ The effects go through what the OMS facade wires (`set_ports`, `set_audit_hook`,
 * Hydration (24 Sec.8.2 "Recovery"): the facade replays an order's recorded steps on a fresh
   machine between `begin_replay` and `end_replay`, as B16 replays its already-audited events. The
   replay is marked here, by order, not by a `replay` key in each payload: B1's closed schemas take
-  none, and no push could claim one. The persist port answers each replayed step's recorded `seq`
-  with nothing written, and the facade audits and notifies nothing for it; a service answers the
-  outcome the record holds, and one the record does not answer waits for the replay to end, so
-  nothing is sent again for a step the record holds (S8, SR-E29-15).
+  none, and no push could claim one. The order's attempts this process kept are forgotten first,
+  so a machine a resync rebuilt resumes as a restarted one does. The persist port answers each
+  replayed step's recorded `seq` with nothing written, and the facade audits and notifies nothing
+  for it; a service answers the outcome the record holds, and one the record does not answer
+  waits for the replay to end, so nothing is sent again for a step the record holds (S8,
+  SR-E29-15).
 
 KILL (owner decision #1778 item X, option a): root `lifecycle.on.KILL` lands in the final
 `lifecycle.killed`, whose entry marks the order `halted_by_kill`, audits (write-ahead, C-2.9),
@@ -136,7 +138,9 @@ class CommandPort(Protocol):
     ambiguous outcome (a timeout, a transport error, an HTTP 5xx, `UNKNOWN_STATE`,
     `TRANSPORT_ERROR`, `SERVICE_UNAVAILABLE`), so the order reaches `unknown` (S1). `lookup`
     answers the order found under the `order_link_id` in realtime and history (24 Sec.8.3 rule
-    3), or an empty mapping. `cancel` serves a KILL's cancel too (`kind` `kill_cancel`)."""
+    3), or an empty mapping. `cancel` serves a KILL's cancel too (`kind` `kill_cancel`). An
+    `attach_stop` is never answered from an earlier call's result: a rebuilt machine attaches
+    under the same key and must read the position back afresh (INV-B1-f)."""
 
     async def place(self, command: Command) -> Mapping[str, Any]: ...
 
@@ -639,9 +643,14 @@ _REPLAYS: dict[str, asyncio.Event] = {}
 def begin_replay(order_link_id: str, outcomes: Mapping[str, Mapping[str, Any] | str]) -> None:
     """Hydration starts: *outcomes* are the order's recorded service outcomes, keyed as `_command`
     keys an attempt (`<kind>:<event_seq>`), each the result mapping or the class name of what the
-    call raised. A replayed invoke answers its outcome with nothing sent; `persist_event` begins no
-    attempt meanwhile, so an invoke the record does not answer runs once the replay ends, as a
-    request this process did not begin: a `place` looks the id up before it sends (SR-E29-15)."""
+    call raised. The machine replayed is a new one, after a restart or a resync that closed the
+    one before it, so it holds only what the record holds: the order's attempts this process kept
+    are forgotten first, the attach's read-back and a request cut off unanswered included, and
+    its stop is attached and read back again (INV-B1-f). A replayed invoke answers its outcome
+    with nothing sent; `persist_event` begins no attempt meanwhile, so an invoke the record does
+    not answer runs once the replay ends, as a request this process did not begin: a `place`
+    looks the id up before it sends (SR-E29-15)."""
+    _forget_link(order_link_id)
     _REPLAYS[order_link_id] = asyncio.Event()
     for key, outcome in outcomes.items():
         attempt = _remember((order_link_id, key))
@@ -659,7 +668,10 @@ def end_replay(order_link_id: str) -> None:
 
 
 def _forget(context: Mapping[str, Any]) -> None:
-    link = _id(context.get("order_link_id")) or ""
+    _forget_link(_id(context.get("order_link_id")) or "")
+
+
+def _forget_link(link: str) -> None:
     for key in [key for key in _ATTEMPTS if key[0] == link]:
         del _ATTEMPTS[key]
 
@@ -688,9 +700,11 @@ async def _command(
     context: Mapping[str, Any], kind: CommandKind, terms: Mapping[str, Any] | None = None
 ) -> Mapping[str, Any]:
     """*kind* once per attempt: a re-entered invoke gets the recorded outcome, a recorded failure
-    fails again, and only a `place` this process did not begin looks the id up first. The
-    attempt's calls are bounded together by `CV_COMMAND_TIMEOUT`: a port that hangs fails the
-    attempt with `TimeoutError`, recorded as any failure, so the order reaches `unknown` (S1)."""
+    fails again, and only a `place` this process did not begin looks the id up first. An attach
+    is one attempt per machine: `begin_replay` forgets it, so a rebuilt machine reads the stop
+    back afresh. The attempt's calls are bounded together by `CV_COMMAND_TIMEOUT`: a port that
+    hangs fails the attempt with `TimeoutError`, recorded as any failure, so the order reaches
+    `unknown` (S1)."""
     port = _ports.commands
     if port is None:
         raise PortMissingError(f"no command port is wired for {kind}")

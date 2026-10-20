@@ -201,16 +201,33 @@ async def test_a_place_result_or_a_kill_is_recorded_as_it_ended(
 async def test_a_fill_commits_with_its_execution(
     writer: OrderStepWriter, db: InMemoryOrderStore
 ) -> None:
-    """S4, S8: the execution, the machine's totals, the state and the fill event, together; the
-    same execution again is refused, as the machine counted it (S4)."""
+    """S4, S8: the execution, the machine's totals, the state and the fill event, together."""
     await _submitted(writer)
     step = _step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED)
     assert await writer(step) == 3
     row = await db.get(ACCOUNT, ORDER_ID)
     assert row is not None and (row.cum_exec_qty, row.avg_price) == (Decimal("0.4"), Decimal(63000))
     assert (await _events(db))[-1][1:3] == ("partial_fill", "ws_private")
+
+
+async def test_an_exec_the_row_holds_already_finds_the_row_moved_on(
+    writer: OrderStepWriter, db: InMemoryOrderStore
+) -> None:
+    """codeA r2 Low (S4, S7): the machine counted as new an `EXEC` whose execution the row holds
+    (a COMMIT that landed after the machine was rebuilt), so the row is ahead of the machine:
+    `StaleOrderState`, which rebuilds the machine, never a refusal that leaves it behind. A
+    finding that carries a stored execution is still refused as counted twice, with nothing
+    written."""
+    await _submitted(writer)
+    await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    before = await _events(db)
+    with pytest.raises(port.StaleOrderState):
+        await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    found = {"exchange_order_id": "x1", "execution": EXECUTION}
+    finding = _step("partially_filled", "partially_filled", "RECON_FOUND_PARTIAL", found, **FILLED)
     with pytest.raises(ValueError, match="counted it twice"):
-        await writer(_step("partially_filled", "partially_filled", "EXEC", EXECUTION, **FILLED))
+        await writer(finding)
+    assert await _events(db) == before
 
 
 async def test_a_paper_fill_on_a_live_order_is_refused(writer: OrderStepWriter) -> None:

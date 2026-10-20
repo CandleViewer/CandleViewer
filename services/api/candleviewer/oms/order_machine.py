@@ -22,7 +22,8 @@ Statecharts record; this synchronous code enforces (C-2.21), before any send:
 * **S7, an unknown outcome.** A step whose write did not answer in time may still have committed,
   and a write that meets a row that moved on finds the machine behind its row: B1 rolls the step
   back either way, so the facade pages and rebuilds the machine from the order's events (`_resync`,
-  as `hydrate` does), where the row decides, and the caller gets `OrderStepUnknown`.
+  as `hydrate` does), where the row decides, and the caller gets `OrderStepUnknown`. A caller that
+  waited on the order meanwhile, a KILL included, follows it to the rebuilt machine.
 * **Recovery (A7).** After a restart, `hydrate` rebuilds an order from its `order_events`, checks
   the fold against its row (OM-T03) and replays the recorded steps on a fresh machine, writing,
   auditing, notifying and sending nothing for them (24 Sec.8.2 "Recovery", `oms.recovery`).
@@ -92,6 +93,7 @@ from .repository import OrderEventRepository, OrderRepository
 __all__ = [
     "B1_AUDITS",
     "COMMAND_EVENTS",
+    "FOLLOWS",
     "MAX_HELD",
     "MAX_HISTORY",
     "MAX_MACHINES",
@@ -135,6 +137,9 @@ REPLAY_STEP_TIMEOUT: Final = 5.0
 #: Seconds the facade waits on its audit, notice and read ports (C-2.18): an order's lock is held
 #: meanwhile, so a stalled sink must not hold the order, or a KILL, for longer.
 PORT_TIMEOUT: Final = 5.0
+#: Rebuilt machines a caller follows the order through (C-2.18): one that waited on an order's
+#: lock while resyncs replaced its machine takes the newest, or is answered as if none held it.
+FOLLOWS: Final = 4
 #: Await each send's macrostep, so a step B1 rolled back reaches the caller (S7). Safe: the facade
 #: sends from its own calls and tasks, never from a B1 action, so the CV-C51 self-receipt hang
 #: cannot arise (as `rules.lifecycle` and `auth.session_chart` do).
@@ -348,6 +353,14 @@ def _uuid(raw: object) -> UUID | None:
         return None
 
 
+def _shown(event: object) -> str:
+    """A caller's event name as a refusal logs and raises it (C-12.6, C-2.18): text is cut to
+    `MAX_TEXT` characters, each unprintable one shown as `?`; anything else by its type's name."""
+    if not isinstance(event, str):
+        return type(event).__name__
+    return "".join(c if c.isprintable() else "?" for c in event[: b01.MAX_TEXT])
+
+
 def _decimal_text(value: Decimal) -> str:
     """Canonical decimal text, as `b01_order` keeps money: fixed point, no trailing zeros."""
     out = format(value, "f")
@@ -431,6 +444,10 @@ class _Order:
     #: A step rolled back with its row perhaps ahead of the machine (`_BEHIND_ROW`): the next
     #: settle rebuilds the machine from the order's events (`_resync`).
     resync: bool = False
+    #: This machine was closed by a resync, which rebuilt the order on `successor` (None when it
+    #: left the order no machine): a caller that waited on this lock follows the order there.
+    resynced: bool = False
+    successor: _Order | None = None
 
     @property
     def key(self) -> str:
@@ -490,6 +507,9 @@ class OrderMachines:
         self._max = max_machines
         self._gateway = Gateway(pager=self._pager)
         self._orders: dict[UUID, _Order] = {}
+        #: Orders a resync is rebuilding, by the machine it closed, whose lock it holds: a caller
+        #: finds the order here between the old machine's close and the new one's build.
+        self._resyncing: dict[UUID, _Order] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         specs = {spec.name: spec for spec in CATALOGUE}
 
@@ -551,11 +571,20 @@ class OrderMachines:
         rule 2). A final order gets no machine (MUST-11: S6 reads its row). Answers the lifecycle
         state; `OrderNotLoaded` when the account holds no such order, and `OrderHistoryRefused`,
         logged and paged with nothing kept, when its history does not rebuild its row or replay
-        on B1."""
-        if (live := self._live(account_id, order_id)) is not None:
-            async with self._holding(live):  # a hydration under way ends first
+        on B1. An order whose machine lives is answered from it once a hydration or a resync
+        under way ends; one whose machine is still being built refuses this one (L3)."""
+        live = self._live(account_id, order_id)
+        for _ in range(FOLLOWS):
+            if live is None:
+                break
+            async with self._holding(live):  # a hydration or a resync under way ends first
                 if live.interp is not None:
                     return live.lifecycle
+            live = live.successor
+        return await self._hydrate(account_id, order_id, environment)
+
+    async def _hydrate(self, account_id: UUID, order_id: UUID, environment: str) -> str:
+        """`hydrate`'s rebuild, with no live machine for the order: the fold, then the replay."""
         row = await self._bounded(self._ports.orders.get(account_id, order_id))
         if row is None:
             raise OrderNotLoaded("no order of the account has this id")
@@ -589,11 +618,15 @@ class OrderMachines:
         `DegradedLatchError` on a latched machine; else sent, answering the lifecycle state once
         the step settled. `OrderStepRefused` when B1 rolled the step back (S7), and
         `OrderStepUnknown` when its write may have committed all the same: the machine is then
-        rebuilt from the order's events before this returns."""
+        rebuilt from the order's events before this returns, and the caller reads the order's
+        state again rather than resending. A command that waited while a resync rebuilt the
+        order's machine is taken by the rebuilt one."""
         payload = payload or {}
         self._vet(COMMAND_EVENTS, event, payload)
         o = self._live(account_id, order_id)
-        if o is not None:
+        for _ in range(FOLLOWS):
+            if o is None:
+                break
             async with self._holding(o):
                 if o.interp is not None:
                     self._admit(o, event, actor)
@@ -602,6 +635,7 @@ class OrderMachines:
                     finally:
                         await self._settle(o)
                     return o.lifecycle
+            o = o.successor  # a resync rebuilt the order while this command waited
         state = await self._stored(account_id, order_id)
         if state is not None and state in self.legality.finals:
             raise self._refuse(state, event)
@@ -616,10 +650,16 @@ class OrderMachines:
         `ReconcileAnomaly` for a push the order cannot take (S6), raised once its record is
         written; `OrderBufferFull` when it would wait in a full reorder buffer;
         `OrderStepRefused` when B1 rolled its step back (S7), and `OrderStepUnknown` when the
-        step's write may have committed all the same (the machine is rebuilt first)."""
+        step's write may have committed all the same: the machine is rebuilt first, and as the
+        facade keeps no copy of the push, its caller delivers it again (or leaves it to
+        reconciliation, 24 Sec.8.5 step 2), which changes nothing the first one did (S4, S5). A
+        push that waited while a resync rebuilt the order's machine is taken by the rebuilt
+        one."""
         self._vet(PUSH_EVENTS, event, payload)
         o = self._live(account_id, order_id)
-        if o is not None:
+        for _ in range(FOLLOWS):
+            if o is None:
+                break
             async with self._holding(o):
                 if o.interp is not None:
                     try:
@@ -629,17 +669,22 @@ class OrderMachines:
                     if anomaly:
                         raise ReconcileAnomaly(o.lifecycle, event)
                     return
+            o = o.successor  # a resync rebuilt the order while this push waited
         await self._unloaded(account_id, order_id, event, payload)
 
     async def kill(self, reason: str, *, account_id: UUID | None = None) -> tuple[UUID, ...]:
         """B18's kill switch, recorded on every live machine (of *account_id*, if given) once it
         is enforced synchronously (C-2.21): each order reaches `killed` and cancels at most once
         (INV-B1-h). The orders are killed concurrently, each under its own lock, so a slow order
-        delays no other. Answers the orders whose KILL did not commit, each logged and paged. A
-        reason B1's schema would refuse is cut to `MAX_TEXT`, or `kill` when empty, never refused:
-        a malformed reason must not stop a KILL."""
+        delays no other. An order whose machine a resync is rebuilding, or rebuilds while its KILL
+        waits (a KILL in doubt included), is killed on the rebuilt machine. Answers the orders
+        whose KILL did not commit, each logged and paged, an order a resync left with no machine
+        among them (24 Sec.8.2 "An unknown outcome"). A reason B1's schema would refuse is cut to
+        `MAX_TEXT`, or `kill` when empty, never refused: a malformed reason must not stop a
+        KILL."""
         reason = reason[: b01.MAX_TEXT] or "kill"
-        live = [o for o in self._orders.values() if account_id in (None, o.account_id)]
+        targets = {o.order_id: o for o in self._orders.values()} | self._resyncing
+        live = [o for o in targets.values() if account_id in (None, o.account_id)]
         done = await asyncio.gather(
             *(self._kill_one(o, reason) for o in live), return_exceptions=True
         )
@@ -652,18 +697,35 @@ class OrderMachines:
         return tuple(failed)
 
     async def _kill_one(self, o: _Order, reason: str) -> bool:
-        """One order's KILL, under its lock: False (paged) when it did not commit."""
-        async with self._holding(o):
-            if o.interp is None:
-                return True
-            try:
-                await self._kill(o, reason)
-            except (OrderStepRefused, OrderStepUnknown, GatewayError) as exc:
-                self._page("oms_kill_not_recorded", o, error=type(exc).__name__)
-                return False
-            finally:
-                await self._settle(o)
-            return True
+        """One order's KILL, under its lock, on the machine that holds the order: one a resync
+        closed (another caller's, or this KILL's own unknown outcome) leads to the machine it
+        rebuilt, which is killed in turn. True once a KILL commits, or when the machine was
+        evicted (final, MUST-11); False, paged, when it did not commit, when no machine holds the
+        order any more, or when its machine is still being built, so nothing recorded it."""
+        error = "no machine"
+        for _ in range(FOLLOWS):
+            async with self._holding(o):
+                if o.interp is not None:
+                    try:
+                        await self._kill(o, reason)
+                    except (OrderStepRefused, OrderStepUnknown, GatewayError) as exc:
+                        error = type(exc).__name__
+                    else:
+                        return True
+                    finally:
+                        await self._settle(o)
+                    if not o.resynced:
+                        break  # refused: the order is as it was
+                elif not o.resynced:
+                    if self._orders.get(o.order_id) is not o:
+                        return True  # evicted
+                    error = "the machine is being built"
+                    break
+            if o.successor is None:
+                break
+            o = o.successor
+        self._page("oms_kill_not_recorded", o, error=error)
+        return False
 
     async def idle(self) -> None:
         """Until no turn is pending (the composition root's shutdown, and tests). It waits on the
@@ -690,20 +752,21 @@ class OrderMachines:
     ) -> str:
         """Build the order's machine and send its first event. A machine whose first step was
         refused is dropped again, so a refused order leaves nothing behind (S7); one whose first
-        row may have committed all the same is rebuilt from it, if it did (`_resync`)."""
+        row may have committed all the same is rebuilt from it, if it did (`_resync`), under the
+        order's lock, as every resync is, so a caller that waited on it follows the order."""
         o = await self._open(order.id, order.exchange_account_id, environment, event)
         self._ports.steps.expect(order)
-        try:
-            async with self._holding(o):
+        async with self._holding(o):
+            try:
                 await self._send_order(o, event, payload)
                 await self._settle(o)
-                return o.lifecycle
-        except BaseException:
-            if o.resync:
-                await self._resync(o)
-            else:
-                await self._close(o, publish=False)
-            raise
+            except BaseException:
+                if o.resync:
+                    await self._resync(o)
+                else:
+                    await self._close(o, publish=False)
+                raise
+            return o.lifecycle
 
     async def _open(
         self,
@@ -776,14 +839,15 @@ class OrderMachines:
     ) -> str:
         """Hydration's replay, under the order's lock: each recorded step sent, or answered by
         the machine's own invoke, and committed before the next (`_persist` answers its `seq`);
-        then the machine must hold the order its events rebuild (`_recovered`)."""
+        then the machine must hold the order its events rebuild (`_recovered`). The binding's
+        replay starts only once `_open` built the machine: a second hydration of a live order is
+        refused first, and leaves that machine's attempts and replay alone (L3)."""
         link = row.order_link_id
+        o = await self._open(
+            row.id, row.exchange_account_id, environment, "hydrate", replaying=deque(plan)
+        )
         b01.begin_replay(link, recorded_outcomes(plan))
-        o: _Order | None = None
         try:
-            o = await self._open(
-                row.id, row.exchange_account_id, environment, "hydrate", replaying=deque(plan)
-            )
             async with self._holding(o):
                 for step in plan:
                     if step.answered:
@@ -807,8 +871,7 @@ class OrderMachines:
                 return o.lifecycle
         except BaseException:
             b01.end_replay(link)
-            if o is not None:
-                await self._close(o, publish=False)
+            await self._close(o, publish=False)
             raise
 
     async def _replayed(self, o: _Order, seq: int) -> None:
@@ -856,9 +919,10 @@ class OrderMachines:
             raise OrderHistoryRefused("the replayed machine is not the order its events rebuild")
 
     def _live(self, account_id: UUID, order_id: UUID) -> _Order | None:
-        """The order's live machine, if the account holds it: another account's order is not
-        found, as an unknown one is (no oracle, C-12.4)."""
-        o = self._orders.get(order_id)
+        """The order's machine, if the account holds it: while a resync rebuilds it, the machine
+        that resync closed, whose lock it holds, so a caller waits for the rebuilt one. Another
+        account's order is not found, as an unknown one is (no oracle, C-12.4)."""
+        o = self._resyncing.get(order_id) or self._orders.get(order_id)
         return o if o is not None and o.account_id == account_id else None
 
     async def _stored(self, account_id: UUID, order_id: UUID) -> str | None:
@@ -915,8 +979,11 @@ class OrderMachines:
     def _vet(self, events: frozenset[str], event: str, payload: Mapping[str, Any]) -> None:
         """C-2.21 at run time: an event outside the method's set, or a payload naming its own
         `type` (which would replace the event the gates checked), is refused and counted before
-        the order is even looked up, whatever the caller's static types said."""
-        if event not in events or "type" in payload:
+        the order is even looked up, whatever the caller's static types said. An unknown name is
+        an untyped caller's value, so the refusal logs and raises it only bounded (`_shown`)."""
+        if not isinstance(event, str) or event not in events:
+            raise self._refuse(MACHINE, _shown(event))
+        if "type" in payload:
             raise self._refuse(MACHINE, event)
 
     @contextlib.asynccontextmanager
@@ -1027,13 +1094,7 @@ class OrderMachines:
             await self._resync(o)
             return False
         if o.notices:
-            notice = o.notices[0]
-            try:
-                await self._act(o, notice)
-            except Exception as exc:
-                if notice.get("kind") == "first_fill":
-                    self._page("oms_first_fill_not_delivered", o, error=type(exc).__name__)
-                raise
+            await self._act(o, o.notices[0])
             o.notices.popleft()
         elif o.denied:
             exec_id, reason = next(iter(o.denied.items()))
@@ -1057,11 +1118,16 @@ class OrderMachines:
 
     async def _act(self, o: _Order, notice: dict[str, Any]) -> None:
         """One outbox notice: the first fill starts the stop (24 Sec.8.8 rule 2; the region takes a
-        repeat as a no-op); `terminal` needs no hand-off, as the step that ended the order is
-        published; anything else goes to the notice port."""
+        repeat as a no-op), and one that could not pages (C-2.6); `terminal` needs no hand-off, as
+        the step that ended the order is published; anything else goes to the notice port, which
+        never raises (`_notify`)."""
         kind = str(notice.get("kind"))
         if kind == "first_fill":
-            await self._send_order(o, "FIRST_FILL", {})
+            try:
+                await self._send_order(o, "FIRST_FILL", {})
+            except Exception as exc:
+                self._page("oms_first_fill_not_delivered", o, error=type(exc).__name__)
+                raise
         elif kind != "terminal":
             detail = {key: value for key, value in notice.items() if key not in ("seq", "kind")}
             link = o.view.get("order_link_id")
@@ -1110,30 +1176,39 @@ class OrderMachines:
     async def _resync(self, o: _Order) -> None:
         """A step rolled back while its row may have committed (a write that did not answer in
         time), or met a row that had moved on: the machine may be behind its row, which decides
-        (S7). The facade pages, closes the machine and hydrates the order from its events, as
-        after a restart (A7): an invoke the record does not answer resumes (a `place` looks its
-        id up first), and an order whose fills call for its stop is sent `FIRST_FILL` again. The
-        pushes, notices and refusals the old machine held pass to the new one, or, with none (a
-        final order, or a history `hydrate` refused), to `_orphaned`."""
-        o.resync = False
+        (S7). Under the order's lock, the facade pages, closes the machine and hydrates the order
+        from its events, as after a restart (A7): the old machine's command attempts go with it,
+        so an invoke the record does not answer resumes as one this process did not begin (a
+        `place` looks its id up first), and an order whose fills call for its stop is sent
+        `FIRST_FILL` again, its stop attached and read back afresh (INV-B1-f). Meanwhile a caller
+        finds the order by the closed machine (`_resyncing`) and waits on its lock; it then
+        follows the order to the rebuilt one (`successor`). The pushes, notices and refusals the
+        old machine held pass to the new one, or, with none (a final order, or a history the
+        rebuild refused), to `_orphaned`."""
+        o.resync, o.resynced = False, True
+        self._resyncing[o.order_id] = o
         link = o.view.get("order_link_id")
         self._page("oms_step_outcome_unknown", o, state=o.lifecycle)
-        await self._close(o, publish=False)
         try:
-            await self.hydrate(o.account_id, o.order_id, environment=o.environment)
-        except Exception as exc:  # a refused history is logged and paged by `hydrate` itself
-            logger().error("oms_resync_not_hydrated", order_link_id=link, error=type(exc).__name__)
-        n = self._orders.get(o.order_id)
-        if n is None:
-            await self._orphaned(o)
-            return
-        async with self._holding(n):
-            n.notices.extend(o.notices)
-            n.denied.update(o.denied)
-            n.held.extend(o.held)
-            n.held.sort(key=lambda item: item[0])
-            n.last_update_ms = max(n.last_update_ms, o.last_update_ms)
-            await self._settle(n)
+            await self._close(o, publish=False)
+            try:
+                await self._hydrate(o.account_id, o.order_id, o.environment)
+            except Exception as exc:  # a refused history is logged and paged by `_hydrate` itself
+                error = type(exc).__name__
+                logger().error("oms_resync_not_hydrated", order_link_id=link, error=error)
+            n = o.successor = self._orders.get(o.order_id)
+            if n is None:
+                await self._orphaned(o)
+                return
+            async with self._holding(n):
+                n.notices.extend(o.notices)
+                n.denied.update(o.denied)
+                n.held.extend(o.held)
+                n.held.sort(key=lambda item: item[0])
+                n.last_update_ms = max(n.last_update_ms, o.last_update_ms)
+                await self._settle(n)
+        finally:
+            self._resyncing.pop(o.order_id, None)  # a nested resync's entry went before it
 
     async def _orphaned(self, o: _Order) -> None:
         """What a resynced order left with no machine: each held push goes as an evicted order's

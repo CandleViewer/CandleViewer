@@ -41,7 +41,9 @@ class ReconcileAnomaly(OmsError):
 class OrderStepRefused(OmsError):
     """B1 rolled the step back (24 Sec.8.2 S7, S11): its write-ahead row was refused, with nothing
     written, or an action failed, so the order is as it was and nothing was sent. A write whose
-    outcome is not known is `OrderStepUnknown` instead. `failure` is the error's class."""
+    outcome is not known is `OrderStepUnknown` instead; one whose connection was lost mid-COMMIT
+    is refused all the same, and if it landed, the order's next write rebuilds the machine (24
+    Sec.8.2 "An unknown outcome", residual). `failure` is the error's class."""
 
     def __init__(self, event: str, failure: str) -> None:
         super().__init__(f"the order did not take {event}: {failure}")
@@ -52,9 +54,12 @@ class OrderStepRefused(OmsError):
 class OrderStepUnknown(OmsError):
     """B1 rolled the step back, but its row may be ahead of the machine (24 Sec.8.2 S7): the write
     did not answer in time, so a COMMIT in flight may still have landed (`StepOutcomeUnknown`), or
-    it met a row that had moved on (`StaleOrderState`). The facade has paged and rebuilt the
-    order's machine from its events, where the row decides; the caller reads the order's state
-    again rather than resending. `failure` is the error's class."""
+    it met a row that had moved on (`StaleOrderState`, a fill the row holds already included). The
+    facade has paged and rebuilt the order's machine from its events, where the row decides. A
+    command's caller reads the order's state again rather than resending. A push's caller delivers
+    the push again, or leaves it to reconciliation (24 Sec.8.5 step 2): the facade keeps no copy
+    of it, and a repeat changes nothing the first one did (S4, S5). `failure` is the error's
+    class."""
 
     def __init__(self, event: str, failure: str) -> None:
         super().__init__(f"the outcome of {event} is not known: {failure}")

@@ -667,6 +667,21 @@ def test_recorded_attempts_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     assert list(b01._ATTEMPTS) == [(LINK, "place:1"), (LINK, "place:2")]
 
 
+def test_a_replay_begins_with_none_of_the_orders_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """codeA and codeB r2 Medium (INV-B1-f, SR-E29-15): a replayed machine is a new one, so it
+    holds only the outcomes its record holds. The order's attempts this process kept, the attach's
+    read-back and a place cut off unanswered, are forgotten; another order's stay."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", type(b01._ATTEMPTS)())
+    monkeypatch.setattr(b01, "_REPLAYS", {})
+    b01._remember((LINK, "attach_stop:once")).result = {"ok": True, "position": READ}
+    b01._remember((LINK, "place:1"))
+    b01._remember(("cvl-other", "place:1"))
+    b01.begin_replay(LINK, {"cancel:4": {"ok": True}})
+    assert list(b01._ATTEMPTS) == [("cvl-other", "place:1"), (LINK, "cancel:4")]
+    b01.end_replay(LINK)
+    assert b01._REPLAYS == {}
+
+
 async def test_a_malformed_validated_order_stamps_nothing() -> None:
     """A1: behind `passes_all_gates` it cannot happen; called anyway, it logs and stamps nothing."""
     ctx = _ctx()
