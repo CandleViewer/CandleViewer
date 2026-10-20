@@ -174,7 +174,9 @@ control carries its own `aria-label`. Three lint rules bind this (`eslint.config
 - `candleviewer/icon-beside-text-hidden`: an icon beside visible text must stay `aria-hidden`. In
   a control, any other content counts as its text, a computed `{label}` included.
 
-The Storybook a11y gate runs `Foundations/Icons`; its fixture
+The Storybook a11y gate runs `Foundations/Icons`. Its `SizeScale` story measures every icon at each
+optical size in the browser: the token's extent, a 1.5px stroke, and geometry inside the live area,
+2 to 22 of the 24-unit box on both axes (the base set's own extent). Its fixture
 `.storybook/__fixtures__/IconOnlyButton.stories.tsx` fails axe's `button-name` on purpose.
 
 To add an icon:

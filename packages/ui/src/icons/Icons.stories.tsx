@@ -2,15 +2,7 @@ import type { JSX } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 import { ICON_COMPONENTS } from "./generated/components.js";
-import {
-  CloseIcon,
-  DownloadIcon,
-  ICON_SIZES,
-  ICONS,
-  SearchIcon,
-  WarningIcon,
-  type IconName,
-} from "./index.js";
+import { CloseIcon, DownloadIcon, ICON_SIZES, ICONS, WarningIcon, type IconName } from "./index.js";
 
 // Object.keys widens to string[]; ICONS' keys are exactly IconName, the type derived from them.
 const NAMES = Object.keys(ICONS) as IconName[];
@@ -24,6 +16,26 @@ const LIST = { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: "
 /** A computed style of `element`, read in the story's own browser. */
 const computed = (element: Element, property: string) =>
   getComputedStyle(element).getPropertyValue(property).trim();
+
+/**
+ * The grid's live area, in units of the 24-unit box: the base set's glyphs span 2 to 22 on both
+ * axes, and every icon, a custom one included, draws inside it (E05-T06 Gherkin "Custom icons match
+ * the grid"). getBBox measures geometry, not stroke. The slack is the base set's own: a rounded
+ * corner of Lucide's triangle-alert (`warning`) reaches 1.98, and 0.05 units is under 0.05px.
+ */
+const LIVE_AREA = { min: 2, max: 22 } as const;
+const SLACK = 0.05;
+
+/** An icon's geometry, both axes, from the browser's own layout: its lowest and highest edge. */
+function geometryEdges(svg: SVGSVGElement): { readonly min: number; readonly max: number } {
+  const edges: number[] = [];
+  for (const shape of svg.children) {
+    if (!(shape instanceof SVGGraphicsElement)) continue;
+    const { x, y, width, height } = shape.getBBox();
+    edges.push(x, y, x + width, y + height);
+  }
+  return { min: Math.min(...edges), max: Math.max(...edges) };
+}
 
 /**
  * The icon registry (E05-T06, 16-design-system-brief.md §5): every icon with its name and meaning,
@@ -65,31 +77,54 @@ export const FullSet: Story = {
   },
 };
 
-/** The optical sizes: each takes its `size.icon.*` token and keeps a 1.5px stroke. */
+/**
+ * The optical sizes: at each `size.icon.*` token every icon takes the token's extent, a 1.5px
+ * stroke and the grid's live area, so a new glyph, a custom one included, is checked as it joins.
+ */
 export const SizeScale: Story = {
   render: () => (
     <ul aria-label="Optical sizes" style={LIST}>
       {ICON_SIZES.map((size) => (
-        <li key={size} style={ROW}>
-          <SearchIcon size={size} />
+        <li key={size} style={{ ...ROW, flexWrap: "wrap" }}>
           <code>size.icon.{size}</code>
+          {NAMES.map((name) => {
+            const Glyph = ICON_COMPONENTS[name];
+            return <Glyph key={name} size={size} />;
+          })}
         </li>
       ))}
     </ul>
   ),
   play: async ({ canvasElement }) => {
+    const problems: string[] = [];
+    const base: number[] = [];
     for (const size of ICON_SIZES) {
-      const label = within(canvasElement).getByText(`size.icon.${size}`);
-      const svg = label.parentElement?.querySelector("svg");
-      if (!svg) throw new Error(`no icon beside size.icon.${size}`);
       const token = computed(document.documentElement, `--size-icon-${size}`);
       await expect(token, "token CSS missing: run `build:tokens` first").not.toBe("");
-      await expect(`${svg.getBoundingClientRect().width}px`).toBe(token);
-      for (const shape of svg.children) {
-        await expect(computed(shape, "vector-effect")).toBe("non-scaling-stroke");
-        await expect(Number.parseFloat(computed(shape, "stroke-width"))).toBe(1.5);
+      const row = within(canvasElement).getByText(`size.icon.${size}`).parentElement;
+      const icons = [...(row?.querySelectorAll("svg") ?? [])];
+      await expect(icons.map((svg) => svg.dataset["icon"])).toEqual(NAMES);
+      for (const [index, name] of NAMES.entries()) {
+        const svg = icons[index];
+        if (!svg) continue; // unreachable: the row holds every name, as just asserted
+        const icon = `${name} at ${size}`;
+        const extent = `${svg.getBoundingClientRect().width}px`;
+        if (extent !== token) problems.push(`${icon}: ${extent} wide, not ${token}`);
+        for (const shape of svg.children) {
+          const stroke = `${computed(shape, "stroke-width")} ${computed(shape, "vector-effect")}`;
+          if (stroke !== "1.5px non-scaling-stroke") problems.push(`${icon}: stroke ${stroke}`);
+        }
+        const { min, max } = geometryEdges(svg);
+        if (min < LIVE_AREA.min - SLACK || max > LIVE_AREA.max + SLACK) {
+          problems.push(`${icon}: geometry spans ${min} to ${max}, off the live area`);
+        }
+        if (ICONS[name].source.startsWith("lucide/")) base.push(min, max);
       }
     }
+    await expect(problems).toEqual([]);
+    // The live area is the base set's own: its glyphs reach both of its edges, within the slack.
+    await expect(Math.abs(Math.min(...base) - LIVE_AREA.min)).toBeLessThanOrEqual(SLACK);
+    await expect(Math.abs(Math.max(...base) - LIVE_AREA.max)).toBeLessThanOrEqual(SLACK);
   },
 };
 
