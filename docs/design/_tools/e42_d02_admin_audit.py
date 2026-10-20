@@ -243,6 +243,18 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "rejected-non-text",
     ),
     (
+        "focus ring on a strip item (warning fill: the 'Unlock now' item after expiry)",
+        "color.focus.ring",
+        "color.status.warning.subtle",
+        "non-text",
+    ),
+    (
+        "focus ring on a strip item (critical fill: tamper check failed)",
+        "color.focus.ring",
+        "color.status.danger.subtle",
+        "non-text",
+    ),
+    (
         "skip link / 'Exit view-as' button text",
         "color.text.on-action",
         "color.action.primary.default",
