@@ -2525,3 +2525,146 @@ machine_events = Table(
     UniqueConstraint("row_hash", name="machine_events_row_hash_key"),
     Index("ix_me_machine_seq", "machine_kind", "entity_id", "env", "seq"),
 )
+
+#: `risk_lockouts`, `risk_policy`, `kill_switch_state` (E39-T02, revision 0038_risk_state):
+#: Sec.3.11. `actual_value` carries the Sec.12 `PII:` comment byte-identical to the revision's.
+RISK_LOCKOUT_ACTUAL_VALUE_COMMENT = (
+    "PII: financial data of the account (a measured loss), as positions; "
+    "never sent to third parties"
+)
+risk_lockouts = Table(
+    "risk_lockouts",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("user_id", ForeignKey("users.id", ondelete="RESTRICT")),
+    Column("reason", Text, nullable=False),
+    Column("threshold", Numeric(38, 18)),
+    Column("actual_value", Numeric(38, 18), comment=RISK_LOCKOUT_ACTUAL_VALUE_COMMENT),
+    Column("since", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("until", TIMESTAMP(timezone=True)),
+    Column("released_at", TIMESTAMP(timezone=True)),
+    Column("released_by", ForeignKey("users.id", ondelete="RESTRICT")),
+    Column("release_reason", Text),
+    Column("actions_taken", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    CheckConstraint(
+        "reason IN ('daily_loss','consecutive_losses','max_positions','manual')", name="rl_reason"
+    ),
+    CheckConstraint("reason <> 'manual' OR until IS NULL", name="rl_manual"),
+    CheckConstraint("until IS NULL OR until > since", name="rl_until"),
+    CheckConstraint("released_at IS NULL OR released_at >= since", name="rl_released"),
+    CheckConstraint(
+        "(released_at IS NULL AND released_by IS NULL AND release_reason IS NULL) OR "
+        "(released_at IS NOT NULL AND released_by IS NOT NULL AND release_reason IS NOT NULL) "
+        "OR (released_at IS NOT NULL AND released_by IS NULL AND release_reason IS NULL AND "
+        "until IS NOT NULL AND released_at >= until)",
+        name="rl_release",
+    ),
+    CheckConstraint(
+        "release_reason IS NULL OR (char_length(release_reason) <= 280 AND "
+        "char_length(btrim(release_reason, E' \\t\\r\\n')) >= 3)",
+        name="rl_text",
+    ),
+    CheckConstraint(
+        "threshold <> 'NaN'::numeric AND actual_value <> 'NaN'::numeric", name="rl_numbers"
+    ),
+    CheckConstraint("jsonb_typeof(actions_taken) = 'object'", name="rl_actions"),
+    Index(
+        "ux_risk_lockout_active",
+        "exchange_account_id",
+        "user_id",
+        unique=True,
+        postgresql_where=text("released_at IS NULL"),
+        postgresql_nulls_not_distinct=True,
+    ),
+)
+risk_policy = Table(
+    "risk_policy",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("singleton", Boolean, nullable=False, server_default=text("true")),
+    Column("max_total_notional_usd", Numeric(38, 18), nullable=False),
+    Column("max_daily_loss_usd", Numeric(38, 18), nullable=False),
+    Column("max_drawdown_pct", Numeric(9, 6), nullable=False),
+    Column("max_open_positions", SmallInteger, nullable=False),
+    Column("max_leverage", Numeric(10, 2), nullable=False),
+    Column("max_orders_per_minute", SmallInteger, nullable=False),
+    Column("per_symbol_concentration_pct", Numeric(9, 6), nullable=False),
+    Column(
+        "override_extra_loss_max_usd", Numeric(38, 18), nullable=False, server_default=text("0")
+    ),
+    Column("breach_behaviour", JSONB, nullable=False),
+    Column("lockout_minutes_default", SmallInteger, nullable=False, server_default=text("60")),
+    Column("block_trading_when_degraded", Boolean, nullable=False, server_default=text("true")),
+    Column(
+        "day_boundary_utc_offset_minutes", SmallInteger, nullable=False, server_default=text("0")
+    ),
+    Column("updated_by", ForeignKey("users.id", ondelete="RESTRICT")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint("singleton", name="risk_policy_singleton_key"),
+    CheckConstraint("singleton", name="rp_singleton"),
+    CheckConstraint(
+        "max_total_notional_usd >= 0 AND max_daily_loss_usd >= 0 AND "
+        "override_extra_loss_max_usd >= 0 AND max_total_notional_usd <> 'NaN'::numeric AND "
+        "max_daily_loss_usd <> 'NaN'::numeric AND override_extra_loss_max_usd <> "
+        "'NaN'::numeric",
+        name="rp_money",
+    ),
+    CheckConstraint(
+        "max_drawdown_pct BETWEEN 0 AND 100 AND per_symbol_concentration_pct BETWEEN 0 AND 100",
+        name="rp_pct",
+    ),
+    CheckConstraint("max_open_positions BETWEEN 0 AND 100", name="rp_positions"),
+    CheckConstraint("max_leverage BETWEEN 1 AND 100", name="rp_leverage"),
+    CheckConstraint("max_orders_per_minute BETWEEN 1 AND 600", name="rp_orders"),
+    CheckConstraint("lockout_minutes_default BETWEEN 0 AND 1440", name="rp_lockout"),
+    CheckConstraint("day_boundary_utc_offset_minutes BETWEEN -720 AND 840", name="rp_day"),
+    CheckConstraint(
+        "jsonb_typeof(breach_behaviour) = 'object' AND breach_behaviour ?& "
+        "ARRAY['max_total_notional_usd','max_daily_loss_usd','max_drawdown_pct',"
+        "'max_open_positions', "
+        "'max_leverage','max_orders_per_minute','per_symbol_concentration_pct'] AND "
+        "breach_behaviour - "
+        "ARRAY['max_total_notional_usd','max_daily_loss_usd','max_drawdown_pct',"
+        "'max_open_positions', "
+        "'max_leverage','max_orders_per_minute','per_symbol_concentration_pct'] = '{}'::jsonb "
+        'AND NOT jsonb_path_exists(breach_behaviour, \'strict $.* ? (@.type() != "string" || (@ != '
+        '"warn" && @ != "block" && @ != "flatten"))\')',
+        name="rp_behaviour",
+    ),
+)
+kill_switch_state = Table(
+    "kill_switch_state",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("scope", Text, nullable=False),
+    Column("exchange_account_id", ForeignKey("exchange_accounts.id", ondelete="RESTRICT")),
+    Column("engaged", Boolean, nullable=False),
+    Column("engaged_at", TIMESTAMP(timezone=True)),
+    Column("engaged_by", ForeignKey("users.id", ondelete="RESTRICT")),
+    Column("reason", Text),
+    Column("options", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("scope IN ('global','accounts')", name="kss_scope"),
+    CheckConstraint("(scope = 'global') = (exchange_account_id IS NULL)", name="kss_target"),
+    CheckConstraint(
+        "NOT engaged OR (engaged_at IS NOT NULL AND reason IS NOT NULL)", name="kss_engaged"
+    ),
+    CheckConstraint(
+        "reason IS NULL OR (char_length(reason) <= 280 AND "
+        "char_length(btrim(reason, E' \\t\\r\\n')) >= 3)",
+        name="kss_reason",
+    ),
+    CheckConstraint("jsonb_typeof(options) = 'object'", name="kss_options"),
+    Index(
+        "ux_kill_switch_state_scope",
+        "scope",
+        "exchange_account_id",
+        unique=True,
+        postgresql_nulls_not_distinct=True,
+    ),
+)

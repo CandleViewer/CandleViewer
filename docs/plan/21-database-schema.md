@@ -38,6 +38,7 @@ Conventions used throughout:
    3.8 Workspaces, layouts, chart templates, drawings, presets, hotkeys
    3.9 Settings & feature flags
    3.10 Audit log (hash chain), system events, incidents, backups
+   3.11 Risk state: lockouts, policy, kill switch
 4. QuestDB — table definitions, partitioning, dedup, retention
 5. Parquet layout, compaction, DuckDB views
 6. Data lifecycle hot → cold, pinning
@@ -261,6 +262,9 @@ erDiagram
     exchange_accounts ||--o{ executions : books
     trade_groups ||--o{ journal_trades : produces
     rules ||--o{ trade_groups : may_originate
+    exchange_accounts ||--o{ risk_lockouts : locked_by
+    users ||--o{ risk_lockouts : scopes
+    exchange_accounts ||--o| kill_switch_state : frozen_by
 
     trade_groups {
         uuid id PK
@@ -309,6 +313,25 @@ erDiagram
         int position_idx
         numeric size
         numeric avg_price
+    }
+    risk_lockouts {
+        uuid id PK
+        uuid exchange_account_id FK
+        uuid user_id FK
+        text reason
+        timestamptz until
+        timestamptz released_at
+    }
+    kill_switch_state {
+        uuid id PK
+        text scope
+        uuid exchange_account_id FK
+        boolean engaged
+    }
+    risk_policy {
+        uuid id PK
+        boolean singleton UK
+        jsonb breach_behaviour
     }
 ```
 
@@ -2894,6 +2917,175 @@ CREATE INDEX ix_outbox_ready ON outbox (available_at) WHERE processed_at IS NULL
 
 Backoff schedule: `available_at = now() + least(2^attempts, 300) seconds`, dead-lettered after `max_attempts` with a `critical` system event.
 
+### 3.11 Risk state: lockouts, policy and the kill switch (E39)
+
+> Shipped as Alembic `0038_risk_state` (E39-T02 #882, on top of `0037_account_profiles`), DDL and seed below
+> verbatim. These tables hold the _state_ E39 produces; its _inputs_ stay where they are: the per-account caps on
+> `account_profiles` (§3.2.4) and the per-manager freeze and loss cap on `user_account_access` (§3.1.3). Bounds mirror
+> `22-api-openapi.yaml` `RiskCaps` and `SetKillSwitchRequest`, so the database refuses a value the API would accept
+> only through a bug. The domain objects and every `jsonb` key are in `24-internal-schemas.md` §8.11. Threat model:
+> `docs/security/threat-models/E39-risk-killswitch.md` (E39-X01).
+
+```sql
+CREATE TABLE risk_lockouts (
+  id                  uuid PRIMARY KEY,
+  exchange_account_id uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
+  user_id             uuid REFERENCES users(id) ON DELETE RESTRICT,  -- NULL: the whole account; set: one manager
+  reason              text NOT NULL,           -- RiskSummary.accounts[].lockout.reason
+  threshold           numeric(38,18),          -- the limit that was breached
+  actual_value        numeric(38,18),          -- the measured value that breached it
+  since               timestamptz NOT NULL DEFAULT now(),
+  until               timestamptz,             -- absolute end (B20 compute_until); NULL: never released by a clock
+  released_at         timestamptz,
+  released_by         uuid REFERENCES users(id) ON DELETE RESTRICT,  -- with release_reason: a person's release
+  release_reason      text,                    -- the override's reason, operator free text
+  actions_taken       jsonb NOT NULL DEFAULT '{}'::jsonb,  -- counts, 24 §8.11
+  CONSTRAINT rl_reason   CHECK (reason IN ('daily_loss','consecutive_losses','max_positions','manual')),
+  CONSTRAINT rl_manual   CHECK (reason <> 'manual' OR until IS NULL),
+  CONSTRAINT rl_until    CHECK (until IS NULL OR until > since),
+  CONSTRAINT rl_released CHECK (released_at IS NULL OR released_at >= since),
+  CONSTRAINT rl_release  CHECK ((released_at IS NULL AND released_by IS NULL AND release_reason IS NULL)
+                                OR (released_at IS NOT NULL AND released_by IS NOT NULL
+                                    AND release_reason IS NOT NULL)
+                                OR (released_at IS NOT NULL AND released_by IS NULL AND release_reason IS NULL
+                                    AND until IS NOT NULL AND released_at >= until)),
+  CONSTRAINT rl_text     CHECK (release_reason IS NULL OR (char_length(release_reason) <= 280
+                                                           AND char_length(btrim(release_reason, E' \t\r\n')) >= 3)),
+  CONSTRAINT rl_numbers  CHECK (threshold <> 'NaN'::numeric AND actual_value <> 'NaN'::numeric),
+  CONSTRAINT rl_actions  CHECK (jsonb_typeof(actions_taken) = 'object')
+);
+CREATE UNIQUE INDEX ux_risk_lockout_active ON risk_lockouts (exchange_account_id, user_id) NULLS NOT DISTINCT
+  WHERE released_at IS NULL;
+COMMENT ON COLUMN risk_lockouts.actual_value IS
+  'PII: financial data of the account (a measured loss), as positions; never sent to third parties';
+
+CREATE TABLE risk_policy (
+  id                              uuid PRIMARY KEY,
+  singleton                       boolean NOT NULL DEFAULT true UNIQUE,
+  max_total_notional_usd          numeric(38,18) NOT NULL,
+  max_daily_loss_usd              numeric(38,18) NOT NULL,
+  max_drawdown_pct                numeric(9,6) NOT NULL,
+  max_open_positions              smallint NOT NULL,
+  max_leverage                    numeric(10,2) NOT NULL,
+  max_orders_per_minute           smallint NOT NULL,
+  per_symbol_concentration_pct    numeric(9,6) NOT NULL,
+  override_extra_loss_max_usd     numeric(38,18) NOT NULL DEFAULT 0,  -- E39-X01 D-4: an override's largest allowance
+  breach_behaviour                jsonb NOT NULL,     -- one 'warn' | 'block' | 'flatten' per limit, 24 §8.11
+  lockout_minutes_default         smallint NOT NULL DEFAULT 60,
+  block_trading_when_degraded     boolean NOT NULL DEFAULT true,
+  day_boundary_utc_offset_minutes smallint NOT NULL DEFAULT 0,
+  updated_by                      uuid REFERENCES users(id) ON DELETE RESTRICT,  -- NULL: never owner-confirmed
+  updated_at                      timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT rp_singleton CHECK (singleton),
+  CONSTRAINT rp_money     CHECK (max_total_notional_usd >= 0 AND max_daily_loss_usd >= 0
+                                 AND override_extra_loss_max_usd >= 0
+                                 AND max_total_notional_usd <> 'NaN'::numeric
+                                 AND max_daily_loss_usd <> 'NaN'::numeric
+                                 AND override_extra_loss_max_usd <> 'NaN'::numeric),
+  CONSTRAINT rp_pct       CHECK (max_drawdown_pct BETWEEN 0 AND 100
+                                 AND per_symbol_concentration_pct BETWEEN 0 AND 100),
+  CONSTRAINT rp_positions CHECK (max_open_positions BETWEEN 0 AND 100),
+  CONSTRAINT rp_leverage  CHECK (max_leverage BETWEEN 1 AND 100),
+  CONSTRAINT rp_orders    CHECK (max_orders_per_minute BETWEEN 1 AND 600),
+  CONSTRAINT rp_lockout   CHECK (lockout_minutes_default BETWEEN 0 AND 1440),
+  CONSTRAINT rp_day       CHECK (day_boundary_utc_offset_minutes BETWEEN -720 AND 840),
+  CONSTRAINT rp_behaviour CHECK (jsonb_typeof(breach_behaviour) = 'object'
+                                 AND breach_behaviour ?& ARRAY['max_total_notional_usd','max_daily_loss_usd','max_drawdown_pct','max_open_positions',
+                                                 'max_leverage','max_orders_per_minute','per_symbol_concentration_pct']
+                                 AND breach_behaviour - ARRAY['max_total_notional_usd','max_daily_loss_usd','max_drawdown_pct','max_open_positions',
+                                                 'max_leverage','max_orders_per_minute','per_symbol_concentration_pct'] = '{}'::jsonb
+                                 AND NOT jsonb_path_exists(breach_behaviour,
+                                   'strict $.* ? (@.type() != "string" || (@ != "warn" && @ != "block" && @ != "flatten"))'))
+);
+
+CREATE TABLE kill_switch_state (
+  id                  uuid PRIMARY KEY,
+  scope               text NOT NULL,
+  exchange_account_id uuid REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
+  engaged             boolean NOT NULL,
+  engaged_at          timestamptz,
+  engaged_by          uuid REFERENCES users(id) ON DELETE RESTRICT,  -- NULL on an engaged row: automatic
+  reason              text,
+  options             jsonb NOT NULL DEFAULT '{}'::jsonb,  -- SetKillSwitchRequest options, 24 §8.11
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT kss_scope   CHECK (scope IN ('global','accounts')),
+  CONSTRAINT kss_target  CHECK ((scope = 'global') = (exchange_account_id IS NULL)),
+  CONSTRAINT kss_engaged CHECK (NOT engaged OR (engaged_at IS NOT NULL AND reason IS NOT NULL)),
+  CONSTRAINT kss_reason  CHECK (reason IS NULL OR (char_length(reason) <= 280
+                                                   AND char_length(btrim(reason, E' \t\r\n')) >= 3)),
+  CONSTRAINT kss_options CHECK (jsonb_typeof(options) = 'object')
+);
+CREATE UNIQUE INDEX ux_kill_switch_state_scope ON kill_switch_state (scope, exchange_account_id) NULLS NOT DISTINCT;
+```
+
+Seed, written by the same revision (§9.3 rule 5 allows seed rows): the policy singleton with every limit set, and the
+disengaged global switch row. The policy values are the interim defaults ruled on #2701 until the Owner sets SCR-134
+(E39-S05); `updated_by` stays NULL until a person saves the policy, so E39-S01 and SCR-134 can show that it is not yet
+owner-confirmed:
+
+```sql
+INSERT INTO risk_policy (id, max_total_notional_usd, max_daily_loss_usd, max_drawdown_pct, max_open_positions,
+                         max_leverage, max_orders_per_minute, per_symbol_concentration_pct, breach_behaviour)
+VALUES (gen_random_uuid(), 10000, 250, 5, 3, 5, 30, 50,
+        '{"max_total_notional_usd": "block", "max_daily_loss_usd": "block", "max_drawdown_pct": "block",
+          "max_open_positions": "block", "max_leverage": "block", "max_orders_per_minute": "block",
+          "per_symbol_concentration_pct": "block"}'::jsonb);
+INSERT INTO kill_switch_state (id, scope, engaged) VALUES (gen_random_uuid(), 'global', false);
+```
+
+- **One active lockout per account and manager.** `ux_risk_lockout_active` admits one unreleased row per
+  `(exchange_account_id, user_id)`, `NULL` user (the whole account) included, and it is also the hot path's lookup
+  (leading column, same predicate). An override releases the row (`released_at`, `released_by`, `release_reason`); it
+  never inserts a second row, so the index keeps meaning "locked". The override's grace window and allowance are
+  E39-S02's, in its own revision; their bound is here (next point).
+- **The override's bound.** `override_extra_loss_max_usd` is the most an override may extend an account's loss
+  budget (E39-X01 D-4, decided on #2701): the override's typed allowance lies within it, the lockout re-arms at that
+  bound or at the window's end, and `max_daily_loss_usd` never changes. The default 0 means an override extends
+  nothing until the Owner raises the bound; the allowance and grace columns of `risk_lockouts` are E39-S02's.
+- **`until` is absolute.** B20 computes it when the lockout opens (INV-B20-d), so a later change of
+  `day_boundary_utc_offset_minutes` never moves an open lockout; `NULL` means only an override or a release ends it
+  (INV-B20-e), and a `manual` lockout always has `NULL` (`rl_manual`). `rp_lockout` admits 0 because 22's `RiskCaps`
+  does, but 22 gives 0 no meaning, a lockout of 0 minutes is not representable as a time (`rl_until`), and E39-X01
+  RK-T06 lists 0 as a way to switch enforcement off. Until D-5 is decided (#2701), E39-S02 reads 0 as the restrictive
+  interim, a lockout only a person ends (`NULL`), never as no lockout; if the Owner adopts D-5's recommendation (0
+  refused server-side), a later revision may tighten `rp_lockout` to match.
+- **Three release shapes.** `rl_release` admits an active row (nothing set), a person's release (`released_at`,
+  `released_by` and `release_reason` together) and a clock release (`released_at` at or after a stored `until`, no
+  releaser), so an early or unattributed release cannot pass for an expiry. `released_at` is written when the release
+  happens, never scheduled ahead.
+- **One global row.** `ux_kill_switch_state_scope` and `kss_target` allow one `global` row and one row per account.
+  The seed's global row lets a reader tell "never engaged" from "no state", which E39-S03 reads as engaged.
+- **Deletes.** `ON DELETE RESTRICT` on every reference, actors included: an account, a manager or an actor with risk
+  history cannot be hard-deleted (an erased user is pseudonymised, §12), so a `NULL` actor always means "the system"
+  or "never owner-confirmed", never "deleted". `cv_app` holds no `DELETE` on the three tables (revoked by the
+  revision where the role exists, the 0024 idiom): a release updates its row, nothing deletes one.
+- **No triggers.** The services set `updated_at`; `cv_app` keeps `INSERT`, `SELECT` and `UPDATE` from the default
+  privileges in `infra/scripts/pg_bootstrap.sql`. A direct `UPDATE` is detected afterwards, not prevented: E39-S02 and
+  E39-S03 check these rows against the hash-chained audit trail (E39-X01 SR-E39-10, an accepted residual).
+- **Environments.** An account row binds its account's environment (`exchange_accounts.env`, C-2.11); the `global`
+  row spans every environment, the restrictive reading of E39-X01 D-3; the policy's limits apply per (environment,
+  paper) evaluation and are never summed across environments. If D-3 lands differently, an `env` column and an index
+  swap are additive. Account rows are not split by paper either: a lockout or an engagement covers the account's paper
+  orders too, the restrictive reading; if D-3 keys them by paper, an `is_paper` column and an index swap are additive
+  (E39-S02, E39-S03). The seed's global row is disengaged whatever the flag-class switch (`killswitch.order_entry`)
+  reads at upgrade time; until E39-S03 joins the two (E39-X01 G-7), a reader honours both.
+- **Bounds.** The policy's `max_open_positions` follows 22's `RiskCaps` (0..100; 0 refuses every opening order); the
+  per-account cap of §3.2.4 stays 1..50 (E39-X01 G-9). On every policy limit that admits 0, 0 is the most restrictive
+  value (no exposure, any loss or drawdown locks), never "no limit", and `max_leverage` and `max_orders_per_minute`
+  floor at 1; so an evaluator never tests a limit for truthiness, and `NOT NULL` means no limit can be removed.
+  `block_trading_when_degraded = false` stays admissible until E39-X01 D-5 is decided; the floors it sets are enforced
+  server-side under SR-E39-07 (E39-S01, E39-S05).
+- **Restrictive writes are never refused here.** E39-S02 and E39-S03 stamp `since` and `engaged_at` from the service
+  clock and give an automatic lockout or engagement a system reason, so `kss_engaged`, `kss_reason` and `rl_until`
+  never refuse a restrictive write (E39-X01 SR-E39-05). A person's reason reaches `rl_text` and `kss_reason` only
+  through E39-S02's `overrideRiskLockout` and E39-S03's `SetKillSwitchRequest`, whose `reason` 22 bounds at 3..280
+  characters with no non-blank rule; those tickets add one in their contract-first changes, so a blank or padded
+  reason is a `422` at the edge, never a CheckViolation here. Both CHECKs count characters after trimming spaces, tabs
+  and line breaks; the models also trim the rest of Unicode whitespace, the side that refuses more.
+- **A clean install is consistent.** The seed's rows (`updated_by` `NULL`, the global row never engaged) match an empty
+  audit trail, so the cross-check of E39-X01 SR-E39-10 reads a fresh database as consistent, not tampered.
+- **Retention.** Kept indefinitely (§7): they are part of the accountability trail alongside `audit_log`.
+
 ---
 
 ## 4. QuestDB — hot time-series tier
@@ -3496,6 +3688,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `incidents` (PG)                      | ∞ while open       | —                                      | 24 mo         | drop                         | Resolved rows only; from `last_seen_at`                                           |
 | `outbox` processed (PG)               | 7 d                | —                                      | 7 d           | drop                         | Dead-lettered rows kept 90 d                                                      |
 | `backups` (PG)                        | ∞                  | —                                      | ∞             | —                            | Metadata only                                                                     |
+| `risk_*`, `kill_switch_state` (PG)    | ∞                  | —                                      | ∞             | —                            | Part of the accountability trail (§3.11)                                          |
 
 Changing any retention value is a dangerous action: it requires the `recording:write` permission with step-up (04 §7.2.2 row 9), writes a `retention.change` audit entry with before/after, and the UI shows the computed volume delta before confirmation.
 
@@ -3661,6 +3854,7 @@ NAMING_CONVENTION = {
 | `0035_machine_persistence_json` | `machine_snapshots.snapshot`, `machine_drain_journal.payload`, `machine_events.payload` and `fault` become `json` (24 §17.6): sealed and digested values read back byte for byte; `trg_mdj_stamp_once` compares `payload` as text — **#3857**; the downgrade refuses while any holds a row |
 | `0036_users_purge`              | `users.purge_after`, `anonymised_at`, CHECK `users_purge_shape` (§3.1.1): the deferred PII purge's schedule and its mark (§12) — **E42-T10 #2650**; the downgrade refuses while a purge is pending                                                                                         |
 | `0037_account_profiles`         | `account_profiles`, `account_profile_revisions`, `sizing_mode`, `offset_unit`, the ladder, version, revision and bootstrap triggers and the backfill (§3.2.4, §3.2.5) — **E28-T01 #905 PR-1**; the downgrade refuses once a profile was written                                            |
+| `0038_risk_state`               | `risk_lockouts`, `risk_policy` (seeded singleton) and `kill_switch_state` (seeded global row) (§3.11); `DELETE` revoked from `cv_app` — **E39-T02 #882**; the downgrade refuses while risk state exists beyond the seed                                                                    |
 
 ---
 
@@ -3958,6 +4152,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
 | `exchange_accounts`                                    | `policy_disarm_code` and its times      | P0         | plaintext                                       | A fixed rule code and two times (0031), never text, an IP or a UID; Viewers read the same code in `account.disabled_by_policy`                  |
+| `risk_lockouts`                                        | `actual_value`                          | P1         | plaintext                                       | The account's measured loss or count (0038), as `positions`; never sent to third parties; `PII:` comment                                        |
 | `positions`, `orders`, `executions`, `wallet_balances` | monetary columns                        | P1         | plaintext                                       | Financial personal data; never sent to third parties                                                                                            |
 | `position_snapshots`                                   | monetary columns                        | P1         | plaintext                                       | Financial personal data (the history of `positions`); never sent to third parties                                                               |
 | `order_events`                                         | `payload`, `ret_code`, `ret_msg`        | P1         | jsonb / text, redacted before insert            | Can repeat money values: `redact_exchange_payload()` / `redact_exchange_text()` before insert (§3.3.5); append-only, kept on erase; not logged  |

@@ -181,6 +181,11 @@
       "path": "services/api/candleviewer/migrations/versions/0037_account_profiles.py",
       "sha256": "814b32f8d1ae7722992e0e9bec4b1ed296a5f503d4c000ce9826f9f13dae3737",
       "down_revision": "0036_users_purge"
+    },
+    "0038_risk_state": {
+      "path": "services/api/candleviewer/migrations/versions/0038_risk_state.py",
+      "sha256": "185d567e5146e8f8bca47d767a2444f2e2790849e0b5b54f010afdd5a89e2eb9",
+      "down_revision": "0037_account_profiles"
     }
   }
 }

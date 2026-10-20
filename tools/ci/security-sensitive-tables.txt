@@ -19,3 +19,6 @@ position_snapshots
 machine_snapshots
 machine_drain_journal
 machine_events
+risk_lockouts
+risk_policy
+kill_switch_state
