@@ -53,6 +53,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 
+import structlog
 from xstate_statemachine import Interpreter, PluginBase, XStateMachineError
 from xstate_statemachine.clock import Clock
 from xstate_statemachine.events import persist_event, restore_event
@@ -706,16 +707,23 @@ def split_sealed_drain(blob: dict[str, Any]) -> tuple[DrainSeal, dict[str, Any]]
 
 
 def _skipped_page(report: ReplayReport) -> str:
-    """One page for a restore of one key: the counts, why, and at most 20 `send_id`s."""
+    """One page for a restore of one key: the counts, why, and at most 20 `send_id`s, the missing
+    sealed ones first: each may be a lost event, so a flood of skipped rows never crowds them
+    out of the bounded list (CR-E50T62R2-05)."""
     why = Counter(reason for _, reason in report.skipped)
     tally = "; ".join(f"{n} {reason}" for reason, n in sorted(why.items()))
-    send_ids = [send_id for send_id, _ in report.skipped] + list(report.missing)
+    send_ids = [*report.missing, *(send_id for send_id, _ in report.skipped)]
     return (
-        f"drain journal: {len(report.skipped)} unreplayed row(s) skipped"
+        f"drain journal: {len(report.missing)} sealed row(s) missing, "
+        f"{len(report.skipped)} unreplayed row(s) skipped"
         + (f" ({tally})" if tally else "")
-        + f", {len(report.missing)} sealed row(s) missing; nothing of them replayed or stamped; "
-        f"send_ids {_send_ids_text(send_ids)}"
+        + f"; nothing of them replayed or stamped; send_ids {_send_ids_text(send_ids)}"
     )
+
+
+def _logger() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger("candleviewer.statechart.persistence")
 
 
 @dataclass(slots=True)
@@ -732,11 +740,43 @@ class Restorer:
     clock: Clock
     lane: Lane
 
+    async def _page(self, key: MachineKey, reason: str, message: str) -> None:
+        """A best-effort P1 page (CR-E50T62R2-02): a pager that raises never escapes `restore()`,
+        never masks the failure being paged and never orphans a started machine. It is logged
+        CRITICAL with the key, the page's fixed `reason` and the pager error's type, never the
+        pager's text or the message (which a refusal fills from library text). Cancellation
+        passes through."""
+        try:
+            await self.pager.page(key, "P1", message)
+        except Exception as exc:
+            _logger().critical(
+                "statechart_page_failed",
+                machine_kind=key.machine_kind,
+                entity_id=key.entity_id,
+                env=key.env,
+                reason=reason,
+                error=type(exc).__name__,
+            )
+
+    async def _stop(self, key: MachineKey, interp: Interpreter[Any]) -> None:
+        """Stop a machine this restore started; a `stop()` that raises is logged CRITICAL by its
+        type only and never replaces the failure that led here."""
+        try:
+            await interp.stop()
+        except Exception as exc:
+            _logger().critical(
+                "statechart_restore_stop_failed",
+                machine_kind=key.machine_kind,
+                entity_id=key.entity_id,
+                env=key.env,
+                error=type(exc).__name__,
+            )
+
     async def _refuse(
         self, key: MachineKey, envelope: SealedSnapshot, reason: str
     ) -> RestoreRefusedError:
         await self.audit.quarantine(key, envelope, reason)
-        await self.pager.page(key, "P1", f"snapshot refused: {reason}")
+        await self._page(key, "snapshot refused", f"snapshot refused: {reason}")
         return RestoreRefusedError(key, reason)
 
     async def _replay(
@@ -745,18 +785,19 @@ class Restorer:
         """The verified replay of a started machine. A replay that fails stops the machine, which
         would otherwise run with no owner, and leaves its rows unstamped for the next restore
         (F7, SR-E50T62-03): an error pages P1 by its type only and is raised again without its
-        chain; a cancellation stops the machine and passes through."""
+        chain; a cancellation stops the machine and passes through. A `stop()` or a page that
+        raises on the way is logged and never replaces the original failure (CR-E50T62R2-02)."""
         try:
             return await self.journal.replay_once(key, interp, drain)
         except asyncio.CancelledError:
-            await interp.stop()
+            await self._stop(key, interp)
             raise
         except Exception as exc:
             failure = exc
-        await interp.stop()
-        await self.pager.page(
+        await self._stop(key, interp)
+        await self._page(
             key,
-            "P1",
+            "drain journal replay failed",
             f"drain journal replay failed ({type(failure).__name__}): the restored machine is "
             "stopped and its rows stay unreplayed for the next restore",
         )
@@ -773,7 +814,7 @@ class Restorer:
             0, tuple((r.send_id, "no verified snapshot claims it") for r in rows)
         )
         if unclaimed.skipped:
-            await self.pager.page(key, "P1", _skipped_page(unclaimed))
+            await self._page(key, "drain journal rows unclaimed", _skipped_page(unclaimed))
         return len(rows)
 
     async def restore(self, key: MachineKey, envelope: SealedSnapshot) -> RestoreResult:
@@ -813,13 +854,13 @@ class Restorer:
             ) from exc
         report = await self._replay(key, interp, drain)
         if report.skipped or report.missing:
-            await self.pager.page(key, "P1", _skipped_page(report))
+            await self._page(key, "drain journal rows skipped or missing", _skipped_page(report))
 
         degraded = interp.chain_trips > 0  # CV-C63: read the count, not last_error
         if degraded:
             reason = f"chain_trips={interp.chain_trips}: {interp.last_chain_error}"
             self.latch.latch(key, reason)
-            await self.pager.page(key, "P1", f"restored degraded ({reason})")
+            await self._page(key, "restored degraded", f"restored degraded ({reason})")
         return RestoreResult(
             interpreter=interp, machine_hash=expected, replayed=report.replayed, degraded=degraded
         )

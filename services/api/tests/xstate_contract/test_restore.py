@@ -25,11 +25,12 @@ import dataclasses
 import hashlib
 import hmac
 import json
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 from xstate_statemachine import Event, Interpreter, PluginBase, SimulatedClock
 from xstate_statemachine.events import persist_event
 
@@ -59,6 +60,11 @@ from candleviewer.statechart.persistence import (
 )
 from candleviewer.statechart.registry import Registry
 from candleviewer.statechart.schema import canonical_json
+from candleviewer.storage.errors import (
+    JournalListTooLargeError,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+)
 from tests.xstate_contract.persist_fixtures import binding_persist  # noqa: F401
 from tests.xstate_contract.persist_fixtures.journals import (
     JOURNALS,
@@ -687,15 +693,37 @@ async def test_the_library_never_sees_the_sealed_cv_keys(
 
 
 class _StampFails(FakeJournalRows):
+    """A row store whose stamp (after the re-enqueue) or whose list (before it) raises."""
+
+    def __init__(self, error: Exception, at: str = "stamp") -> None:
+        super().__init__()
+        self.error, self.at = error, at
+
+    async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]:
+        if self.at == "list":
+            raise self.error
+        return await super().list_unreplayed(key)
+
     async def mark_replayed(self, key: MachineKey, send_ids: Sequence[str]) -> None:
-        raise ConnectionError("the stamp's connection was lost")
+        if self.at == "stamp":
+            raise self.error
+        await super().mark_replayed(key, send_ids)
+
+
+class _DownPager(FakePager):
+    """A pager whose transport is down: it records the attempt, then raises with a text that
+    must never reach a log."""
+
+    async def page(self, key: MachineKey, severity: str, message: str) -> None:
+        await super().page(key, severity, message)
+        raise ConnectionError("pager transport down, token=hunter2")
 
 
 class _Capturing:
     """A `DrainJournal` that keeps the interpreter its replay was handed."""
 
-    def __init__(self, inner: DrainJournal, hang: bool = False) -> None:
-        self.inner, self.hang = inner, hang
+    def __init__(self, inner: DrainJournal, hang: bool = False, stop_raises: bool = False) -> None:
+        self.inner, self.hang, self.stop_raises = inner, hang, stop_raises
         self.interp: Interpreter[Any] | None = None
         self.entered = asyncio.Event()
 
@@ -710,27 +738,51 @@ class _Capturing:
     ) -> ReplayReport:
         self.interp = interp
         self.entered.set()
+        if self.stop_raises:  # an instance attribute shadows the method; the test removes it
+
+            async def stop(**_: object) -> None:
+                raise RuntimeError("stop() failed")
+
+            interp.stop = stop  # type: ignore[method-assign]  # a raising stop, for this test
         if self.hang:
             await asyncio.Event().wait()
         return await self.inner.replay_once(key, interp, drain)
 
 
-async def test_a_replay_that_fails_mid_way_stops_the_machine_pages_and_leaves_the_rows(
-    registry: Registry,
+_REPLAY_FAILURES = [
+    ("stamp", ConnectionError("the stamp's connection was lost")),
+    ("stamp", StorageTierUnavailable("statechart journal.mark_replayed failed (sqlstate 08006)")),
+    ("stamp", StorageQueryFailed("40001")),
+    ("stamp", ValueError("a poison row")),
+    ("list", JournalListTooLargeError("refused, not truncated")),
+]
+
+
+@pytest.mark.parametrize(
+    ("at", "error"),
+    _REPLAY_FAILURES,
+    ids=["stamp-ConnectionError", "stamp-StorageTierUnavailable", "stamp-StorageQueryFailed",
+         "stamp-ValueError", "list-JournalListTooLargeError"],
+)  # fmt: skip
+async def test_a_replay_that_fails_stops_the_machine_pages_and_leaves_the_rows(
+    registry: Registry, at: str, error: Exception
 ) -> None:
-    """F7 / SR-E50T62-03: the rows were re-enqueued, then the stamp failed. The started machine is
-    stopped (never left without an owner), one P1 page names the error type, the error is raised
-    again without its chain, and the rows stay unstamped so the next restore re-delivers them."""
+    """F7 / SR-E50T62-03 for every error the real journal raises (CR-E50T62R2-01): the rows were
+    re-enqueued and then the stamp failed, or the list failed before any re-enqueue. The started
+    machine is stopped (never left without an owner), one P1 page names the error type only, the
+    same error is raised again without its chain, and the rows stay unstamped."""
     keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
-    rows = _StampFails()
+    rows = _StampFails(error, at)
     journal = _Capturing(RowStoreDrainJournal(rows))
     env = await _sealed(registry, keys, journal)
-    with pytest.raises(ConnectionError, match="stamp") as failed:
+    with pytest.raises(type(error)) as failed:
         await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+    assert failed.value is error
     assert failed.value.__cause__ is None and failed.value.__suppress_context__
     assert journal.interp is not None and journal.interp.status == "stopped"
     [(severity, text)] = pager.pages
-    assert severity == "P1" and "ConnectionError" in text and "lost" not in text
+    assert severity == "P1" and type(error).__name__ in text and str(error) not in text
+    rows.at = "nowhere"
     unreplayed = [e.send_id for e in await rows.list_unreplayed(KEY)]
     assert unreplayed == env.snapshot["cv_drained"]
 
@@ -754,3 +806,136 @@ async def test_a_start_without_a_snapshot_and_no_rows_pages_nothing(
     keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
     assert await _restorer(registry, keys, audit, pager, journal).page_unclaimed(KEY) == 0
     assert pager.pages == []
+
+
+# --- CR-E50T62R2-02: the Restorer's pages are best-effort; CR-E50T62R2-05: missing ids first ---
+
+
+def _page_failures(logs: Sequence[MutableMapping[str, Any]]) -> list[MutableMapping[str, Any]]:
+    return [e for e in logs if e["event"] == "statechart_page_failed"]
+
+
+def _failure_log(reason: str) -> dict[str, Any]:
+    return {
+        "event": "statechart_page_failed", "log_level": "critical",
+        "machine_kind": KEY.machine_kind, "entity_id": KEY.entity_id, "env": KEY.env,
+        "reason": reason, "error": "ConnectionError",
+    }  # fmt: skip
+
+
+async def test_a_raising_pager_after_a_clean_replay_leaves_the_machine_running_and_owned(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    """The replay succeeded and a planted row is to be paged, but the pager raises: the restore
+    still returns the running machine to its caller, never an orphan, and logs CRITICAL with the
+    key and the page's reason, never the pager's text or a payload."""
+    keys, audit, pager = FakeKeys(), FakeAudit(), _DownPager()
+    env = await _sealed(registry, keys, journal)
+    journal.plant(KEY, JournalEntry("f" * 32, "inbox", 9, "PING", _ping("planted")))
+    with capture_logs() as logs:
+        res = await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+    try:
+        assert res.interpreter.is_running and res.replayed == 1
+        assert [s for s, _ in pager.pages] == ["P1"]  # attempted once
+        assert _page_failures(logs) == [_failure_log("drain journal rows skipped or missing")]
+        assert "hunter2" not in repr(logs) and "planted" not in repr(logs)
+    finally:
+        await res.interpreter.stop()
+
+
+async def test_a_raising_pager_on_a_degraded_restore_still_returns_the_latched_machine(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    keys, audit, pager, latch = FakeKeys(), FakeAudit(), _DownPager(), ChainTripLatch()
+    env = await _sealed(registry, keys, journal, chain_trips=1)
+    with capture_logs() as logs:
+        res = await _restorer(registry, keys, audit, pager, journal, latch).restore(KEY, env)
+    try:
+        assert res.degraded and res.interpreter.is_running and latch.is_latched(KEY)
+        assert _page_failures(logs) == [_failure_log("restored degraded")]
+    finally:
+        await res.interpreter.stop()
+
+
+async def test_a_raising_pager_on_a_refused_restore_still_raises_the_refusal(
+    registry: Registry,
+) -> None:
+    keys, audit, pager = FakeKeys(), FakeAudit(), _DownPager()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    with capture_logs() as logs, pytest.raises(RestoreRefusedError, match="bad HMAC"):
+        await _restorer(registry, keys, audit, pager).restore(
+            KEY, _bad_hmac(env, keys, registry.get(_KIND))
+        )
+    assert [k for k, _ in audit.quarantined] == [KEY]
+    assert _page_failures(logs) == [_failure_log("snapshot refused")]
+
+
+async def test_a_raising_pager_during_a_failed_replay_still_raises_the_original_failure(
+    registry: Registry,
+) -> None:
+    keys, audit, pager = FakeKeys(), FakeAudit(), _DownPager()
+    failure = StorageTierUnavailable("statechart journal.mark_replayed failed (sqlstate 08006)")
+    journal = _Capturing(RowStoreDrainJournal(_StampFails(failure)))
+    env = await _sealed(registry, keys, journal)
+    with capture_logs() as logs, pytest.raises(StorageTierUnavailable) as raised:
+        await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+    assert raised.value is failure
+    assert journal.interp is not None and journal.interp.status == "stopped"
+    assert _page_failures(logs) == [_failure_log("drain journal replay failed")]
+
+
+async def test_a_raising_stop_during_a_failed_replay_still_raises_the_original_failure(
+    registry: Registry,
+) -> None:
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    failure = StorageQueryFailed("40001")
+    journal = _Capturing(RowStoreDrainJournal(_StampFails(failure)), stop_raises=True)
+    env = await _sealed(registry, keys, journal)
+    try:
+        with capture_logs() as logs, pytest.raises(StorageQueryFailed) as raised:
+            await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+        assert raised.value is failure
+        stops = [e for e in logs if e["event"] == "statechart_restore_stop_failed"]
+        assert stops == [
+            {"event": "statechart_restore_stop_failed", "log_level": "critical",
+             "machine_kind": KEY.machine_kind, "entity_id": KEY.entity_id, "env": KEY.env,
+             "error": "RuntimeError"}
+        ]  # fmt: skip
+        [(severity, text)] = pager.pages  # the page still goes out
+        assert severity == "P1" and "StorageQueryFailed" in text
+    finally:
+        assert journal.interp is not None
+        del journal.interp.stop  # the instance override; the real stop() ends the test cleanly
+        await journal.interp.stop()
+
+
+async def test_a_raising_pager_at_a_start_without_a_snapshot_still_counts_the_rows(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    keys, audit, pager = FakeKeys(), FakeAudit(), _DownPager()
+    journal.plant(KEY, JournalEntry("f" * 32, "inbox", 0, "PING", _ping("orphan")))
+    with capture_logs() as logs:
+        assert await _restorer(registry, keys, audit, pager, journal).page_unclaimed(KEY) == 1
+    assert _page_failures(logs) == [_failure_log("drain journal rows unclaimed")]
+
+
+async def test_a_restore_page_names_the_missing_sealed_ids_before_the_skipped_ones(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    """CR-E50T62R2-05: a sealed `send_id` with no row may be a lost event, so the bounded list
+    keeps it ahead of a flood of skipped rows."""
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    env = await _sealed(registry, keys, journal)
+    [sealed] = journal.rows(KEY)
+    journal.drop(KEY, sealed.send_id)
+    planted = [f"{i:032x}" for i in range(25)]
+    for i, sid in enumerate(planted):
+        journal.plant(KEY, JournalEntry(sid, "inbox", 10 + i, "PING", _ping(i)))
+    res = await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+    try:
+        [(_, text)] = pager.pages
+        ids = text.split("send_ids ", 1)[1]
+        assert ids.startswith(sealed.send_id) and text.endswith("+6 more")
+        assert [s in text for s in planted] == [True] * 19 + [False] * 6
+    finally:
+        await res.interpreter.stop()

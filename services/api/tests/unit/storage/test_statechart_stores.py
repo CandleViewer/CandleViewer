@@ -21,6 +21,7 @@ from structlog.testing import capture_logs
 from candleviewer.db.models import machine_events
 from candleviewer.storage.errors import (
     ChainTooLongError,
+    JournalListTooLargeError,
     SnapshotListTooLargeError,
     StorageError,
     StorageQueryFailed,
@@ -400,10 +401,27 @@ def test_the_reads_and_the_stamp_filter_on_the_machine_key_and_bind_it() -> None
             assert f".{column} = $" in sql
 
 
-def test_the_unreplayed_rows_come_in_replay_order() -> None:
-    sql = _sql(repo.list_unreplayed_statement("order", ENTITY, "demo"))
+def test_the_unreplayed_rows_come_in_replay_order_bounded_like_the_snapshot_list() -> None:
+    stmt = repo.list_unreplayed_statement("order", ENTITY, "demo")
+    sql = _sql(stmt)
     assert "machine_drain_journal.replayed_at IS NULL" in sql
-    assert sql.endswith("ORDER BY machine_drain_journal.ordinal")
+    assert "ORDER BY machine_drain_journal.ordinal LIMIT $" in sql
+    assert repo.LIST_MAX_ROWS + 1 in _params(stmt).values()
+
+
+def _journal_rows(n: int) -> list[dict[str, Any]]:
+    return [{**_fields(JOURNAL), "send_id": f"{i:032x}", "ordinal": i} for i in range(n)]
+
+
+async def test_the_unreplayed_rows_come_up_to_the_cap_and_are_refused_beyond_it() -> None:
+    """SR2-E50T62-01: a key flooded with rows is refused, not truncated and not held whole."""
+    full = _Rel(answer=lambda stmt, params: _journal_rows(repo.LIST_MAX_ROWS))
+    rows = await _store("journal", full).list_unreplayed("order", ENTITY, "demo")
+    assert len(rows) == repo.LIST_MAX_ROWS and rows[-1].ordinal == repo.LIST_MAX_ROWS - 1
+    over = _Rel(answer=lambda stmt, params: _journal_rows(repo.LIST_MAX_ROWS + 1))
+    with pytest.raises(JournalListTooLargeError, match="not truncated") as refused:
+        await _store("journal", over).list_unreplayed("order", ENTITY, "demo")
+    assert ENTITY not in str(refused.value) and _P1 not in str(refused.value)
 
 
 def test_the_stamp_is_set_once_on_the_named_rows() -> None:
@@ -439,6 +457,11 @@ def _snapshot_rows(n: int) -> list[dict[str, Any]]:
 
 async def test_the_list_returns_up_to_the_cap_and_refuses_beyond_it() -> None:
     assert repo.LIST_MAX_ROWS + 1 in _params(repo.list_snapshots_statement()).values()
+    sql = _sql(repo.list_snapshots_statement())  # CR-E50T62R2-06: a stable order for E42-T07
+    assert sql.endswith(
+        "ORDER BY machine_snapshots.machine_kind, machine_snapshots.entity_id,"
+        " machine_snapshots.env LIMIT $1::INTEGER"
+    )
     full = _Rel(answer=lambda stmt, params: _snapshot_rows(repo.LIST_MAX_ROWS))
     rows = await _store("snapshots", full).list_all()
     assert len(rows) == repo.LIST_MAX_ROWS and rows[0].state_ids == ("order.idle",)

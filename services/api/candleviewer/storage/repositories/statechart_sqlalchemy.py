@@ -14,8 +14,8 @@ or verify: the HMAC envelope is the trust boundary, and `persistence.Restorer` c
   of work, reads back each `send_id` it skipped: is that row stamped, and is its stored `payload`
   text the one this append binds (`JournalConflictRecord`; `persistence` decides which conflict
   is a retry, 24 Sec.17.6); `list_unreplayed` in `ordinal` order (one machine's drain, served by
-  `ix_mdj_pending`); `present`, which of some `send_id`s have a row; `mark_replayed` stamps each
-  named row once.
+  `ix_mdj_pending`), at most `LIST_MAX_ROWS` rows, else `JournalListTooLargeError`; `present`,
+  which of some `send_id`s have a row; `mark_replayed` stamps each named row once.
 - Events: `insert_batch` in the order given with `ON CONFLICT (row_hash) DO NOTHING`; `head`, the
   latest `row_hash` or the genesis; `read_chain`, a keyset page of `CHAIN_PAGE_ROWS` rows after a
   `seq`; `read_whole_chain`, every page up to `CHAIN_MAX_ROWS` rows, else `ChainTooLongError`.
@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from candleviewer.db.models import machine_drain_journal, machine_events, machine_snapshots
 from candleviewer.storage.errors import (
     ChainTooLongError,
+    JournalListTooLargeError,
     SnapshotListTooLargeError,
     StorageError,
     StorageQueryFailed,
@@ -59,7 +60,8 @@ _T = TypeVar("_T")
 
 #: Every call's bound (#3793): its statements' cap, and one second later the client deadline.
 STORE_TIMEOUT_S: Final = 2.0
-#: The most rows `list_all` returns; beyond it, `SnapshotListTooLargeError`.
+#: The most rows `list_all` returns, and the most unreplayed rows of one machine
+#: `list_unreplayed` returns; beyond it, `SnapshotListTooLargeError` or `JournalListTooLargeError`.
 LIST_MAX_ROWS: Final = 10_000
 #: One `read_chain` page; and the most rows `read_whole_chain` returns before `ChainTooLongError`.
 CHAIN_PAGE_ROWS: Final = 500
@@ -191,7 +193,8 @@ def journal_conflict_statement(
 
 def list_unreplayed_statement(machine_kind: str, entity_id: str, env: str) -> sa.Select[Any]:
     pending = sa.and_(_key(_MDJ, machine_kind, entity_id, env), _MDJ.replayed_at.is_(None))
-    return sa.select(*JOURNAL_COLUMNS).where(pending).order_by(_MDJ.ordinal)
+    stmt = sa.select(*JOURNAL_COLUMNS).where(pending).order_by(_MDJ.ordinal)
+    return stmt.limit(LIST_MAX_ROWS + 1)
 
 
 def present_statement(
@@ -352,10 +355,17 @@ class SqlAlchemyJournalStore(_Store):
     async def list_unreplayed(
         self, machine_kind: str, entity_id: str, env: str
     ) -> tuple[JournalRecord, ...]:
+        """One machine's unreplayed rows in `ordinal` order, at most `LIST_MAX_ROWS`; past that
+        the list is refused, not truncated: rows planted in bulk under a key fail its restore
+        loudly instead of being held in memory (SR2-E50T62-01)."""
         stmt = list_unreplayed_statement(machine_kind, entity_id, env)
-        return tuple(
-            JournalRecord(**row) for row in await self._run("journal.list_unreplayed", stmt)
-        )
+        rows = await self._run("journal.list_unreplayed", stmt)
+        if len(rows) > LIST_MAX_ROWS:
+            raise JournalListTooLargeError(
+                f"a machine holds more than {LIST_MAX_ROWS} unreplayed drain journal rows: "
+                "refused, not truncated"
+            )
+        return tuple(JournalRecord(**row) for row in rows)
 
     async def present(
         self, machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]

@@ -19,6 +19,7 @@ from candleviewer.storage.errors import (
     HotReplayReadTimeout,
     IlpRowError,
     InvalidSymbol,
+    JournalListTooLargeError,
     KcvEnrolmentNotAudited,
     MissingDesignatedTimestamp,
     RewrapAuditNotWired,
@@ -72,6 +73,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         ColdReplayReadTimeout: "COLD_REPLAY_READ_TIMEOUT",
         SnapshotListTooLargeError: "STORAGE_SNAPSHOT_LIST_TOO_LARGE",
         ChainTooLongError: "STORAGE_CHAIN_TOO_LONG",
+        JournalListTooLargeError: "STORAGE_JOURNAL_LIST_TOO_LARGE",
     }
     assert len(set(ERROR_CODES.values())) == len(ERROR_CODES)
 

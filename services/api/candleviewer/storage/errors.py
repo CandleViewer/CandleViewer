@@ -290,6 +290,13 @@ class ChainTooLongError(StorageError):
     code = "STORAGE_CHAIN_TOO_LONG"
 
 
+class JournalListTooLargeError(StorageError):
+    """One machine holds more than `LIST_MAX_ROWS` unreplayed `machine_drain_journal` rows: the
+    list is refused, not cut and not held whole (`statechart_sqlalchemy`, E50-T62)."""
+
+    code = "STORAGE_JOURNAL_LIST_TOO_LARGE"
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -323,4 +330,5 @@ ERROR_CODES: dict[type[StorageError], str] = {
     ColdReplayReadTimeout: ColdReplayReadTimeout.code,
     SnapshotListTooLargeError: SnapshotListTooLargeError.code,
     ChainTooLongError: ChainTooLongError.code,
+    JournalListTooLargeError: JournalListTooLargeError.code,
 }
