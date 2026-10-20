@@ -118,6 +118,15 @@ def test_a_16_2_row_marked_contract_only_has_no_code_yet() -> None:
     assert sp.contract_only_rows_that_landed() == []
 
 
+def test_a_row_left_contract_only_after_its_code_landed_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The last such row was the machines' terminal retention: #3966 built it, the probe fired."""
+    row = ("E17-T08 (#414)", sp._probe("machines", "RETENTION"))
+    monkeypatch.setitem(sp.CONTRACT_ONLY_ROWS, "Terminal machine retention", row)
+    assert sp.contract_only_rows_that_landed() == ["Terminal machine retention"]
+
+
 def test_every_limits_constant_has_a_row_or_a_reason() -> None:
     assert sp.limits_without_a_doc_row() == []
 
@@ -133,6 +142,48 @@ def test_a_changed_16_2_constant_fails_parity(monkeypatch: pytest.MonkeyPatch) -
     assert [(d.key, d.doc, d.runtime) for d in drifts] == [
         ("Max `bars.*` / connection", [16], [17])
     ]
+
+
+def test_a_changed_indicator_cap_fails_parity(monkeypatch: pytest.MonkeyPatch) -> None:
+    from candleviewer.orderflow.indicators import limits as caps
+
+    monkeypatch.setattr(caps, "INSTANCE_CAP_PER_USER", 9)
+    drifts = sp.table_drifts(sp.section_16_2(), sp.LIMIT_ROWS, "section 16.2")
+    assert [(d.key, d.doc, d.runtime) for d in drifts] == [
+        ("`indicators` server instances", [8, 8, 32, 128], [8, 9, 32, 128])
+    ]
+
+
+def test_a_marker_under_a_served_family_is_a_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    extra = f"\n- **`bars` (a test).**\n  - {sp.CONTRACT_ONLY_WORDS} A served family, marked.\n"
+    monkeypatch.setattr(_doc, "DOC", _doc.DOC + extra)
+    assert "bars" in sp.families_marked_contract_only()
+    drifts = [d for d in sp.contract_only_drifts(FAMILIES) if d.key == "bars"]
+    assert [(d.doc, d.runtime) for d in drifts] == [("contract only", "served=True")]
+
+
+def test_a_marker_under_no_family_is_a_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    extra = f"\n- **`nosuch` (a test).**\n  - {sp.CONTRACT_ONLY_WORDS} Not a family.\n"
+    monkeypatch.setattr(_doc, "DOC", _doc.DOC + extra)
+    drifts = [d for d in sp.contract_only_drifts(FAMILIES) if d.key == "nosuch"]
+    assert [(d.doc, d.runtime) for d in drifts] == [("a contract-only marker", "no such family")]
+
+
+@pytest.mark.parametrize(
+    "bullets",
+    [
+        "- **`book` depth is in the topic name, not the options**, a test.\n",  # names a family
+        "- **`footprint` (a test).**\n- **An explanatory bullet, a test.**\n",  # follows a family
+    ],
+)
+def test_a_marker_under_an_explanatory_bullet_is_not_attributed_to_a_family(
+    bullets: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    extra = f"\n{bullets}  - {sp.CONTRACT_ONLY_WORDS} Nested under a bullet that is no family's.\n"
+    monkeypatch.setattr(_doc, "DOC", _doc.DOC + extra)
+    assert not {"book", "footprint"} & sp.families_marked_contract_only()
+    drifts = sp.contract_only_drifts(FAMILIES)
+    assert [(d.doc, d.runtime) for d in drifts] == [("a contract-only marker", "no such family")]
 
 
 def test_3_6_json_bounds_and_sr_185_msgpack_bounds_are_the_codecs() -> None:

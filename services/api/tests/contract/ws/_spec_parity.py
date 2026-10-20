@@ -163,6 +163,19 @@ def _cap(family: str, option: str) -> Callable[[], float]:
     return lambda: FAMILIES[family].options[option].hi or 0
 
 
+def _items(family: str, option: str) -> Callable[[], float]:
+    from candleviewer.ws.topics import FAMILIES
+
+    return lambda: FAMILIES[family].options[option].max_items or 0
+
+
+def _instance_cap(name: str) -> Callable[[], float]:
+    """A cap of the indicator engine (`orderflow/indicators/limits.py`), which the gateway asks."""
+    return lambda: getattr(
+        importlib.import_module("candleviewer.orderflow.indicators.limits"), name
+    )
+
+
 def _unthrottled() -> float:
     from candleviewer.ws.topics import FAMILIES
 
@@ -177,6 +190,12 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Max topics / `unsub` frame": "limits.MAX_TOPICS_PER_SUB",
     "Max symbols / connection": "limits.MAX_SYMBOLS_PER_CONNECTION",
     "Max `bars.*` / connection": "limits.MAX_BARS_SUBSCRIPTIONS",
+    "`indicators` server instances": [
+        _items("indicators", "instances"),
+        _instance_cap("INSTANCE_CAP_PER_USER"),
+        _instance_cap("INSTANCE_CAP_PER_SYMBOL"),
+        _instance_cap("INSTANCE_CAP_PROCESS"),
+    ],
     "Max connections / user": "lifecycle.MAX_CONNECTIONS_PER_USER",
     "Connect rate / user / minute": "lifecycle.MAX_AUTHS_PER_USER_PER_MIN "
     "lifecycle.AUTH_RATE_WINDOW_S",
@@ -207,6 +226,7 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
         _cap("heatmap", "window_seconds"),
     ],
     "Machine registry entries": "limits.MACHINE_ENTRIES_MAX",
+    "Terminal machine retention": "limits.MACHINE_TERMINAL_RETENTION_S limits.MACHINE_TERMINAL_MAX",
 }
 
 
@@ -218,16 +238,9 @@ def _probe(module: str, word: str) -> Callable[[], bool]:
 
 #: 16.2 rows the contract states and no code enforces yet: the owning ticket, and a probe that is
 #: true once code for it exists (the row must then be mapped above, so this list cannot rot).
-CONTRACT_ONLY_ROWS: Final = {
-    "`indicators` server instances": (
-        "E13-T02 (#426), the indicators engine",
-        _probe("limits", "INDICATOR"),
-    ),
-    "Terminal machine retention": (
-        "E17-T08 (#414), the machines publisher",
-        _probe("machines", "RETENTION"),
-    ),
-}
+#: None is left: the last one, the machines' terminal retention, was built by #3966 (E17-T08 PR 2a),
+#: its probe fired and the row is mapped.
+CONTRACT_ONLY_ROWS: Final[dict[str, tuple[str, Callable[[], bool]]]] = {}
 #: 3.6 table rows that 16.2 does not repeat: the JSON bounds of SR-184.
 SECTION_3_6_ROWS: Final = {
     "Max inbound JSON nesting depth": "limits.MAX_JSON_DEPTH",
@@ -612,8 +625,29 @@ _SCOPE_TEXT: Final = {
     "granted accounts (bindings)": "GRANTED_ACCOUNTS",
     "own alerts only": "SELF",
 }
-#: A family the document marks contract only, with the words that mark it.
-CONTRACT_ONLY_MARKERS: Final = {"indicators": "**Status: contract only (C-6.1).**"}
+#: The words with which 6.1 marks a family contract only, in a bullet under the family's own.
+CONTRACT_ONLY_WORDS: Final = "**Status: contract only (C-6.1).**"
+
+
+#: A family's own bullet in 6.1: the name in code, then `**` or ` (` (`- **`name` (ticket).**`). A
+#: bullet that only mentions a family (`- **`book` depth is in the topic name**`) is not its bullet.
+_FAMILY_BULLET: Final = re.compile(r"- \*\*`(\w+)`(?:\*\*| \()")
+
+
+def families_marked_contract_only() -> set[str]:
+    """The families whose bullet in 6.1 carries the marker words: none once every family is served.
+    Read from the document, so a family going live changes the document and the registry, and
+    this module not at all. A marker under any other bullet is filed under that bullet's first
+    words, which name no family, so it is a drift and never a mark on the bullet before it."""
+    marked: set[str] = set()
+    owner = ""
+    for line in _doc.DOC.splitlines():
+        if line.startswith("- "):
+            head = _FAMILY_BULLET.match(line)
+            owner = head.group(1) if head else line[2:42]
+        elif line.startswith("  - ") and CONTRACT_ONLY_WORDS in line:
+            marked.add(owner or "(no bullet)")
+    return marked
 
 
 def doc_spelling(pattern: str) -> str:
@@ -724,13 +758,14 @@ def book_throttle_drifts() -> list[Drift]:
 def contract_only_drifts(families: Mapping[str, Any]) -> list[Drift]:
     """A family the registry refuses (`served=False`) is one the document marks contract only, and
     a family it marks so is refused."""
-    out = []
+    marked = families_marked_contract_only()
+    out = [
+        Drift("topics.served", name, "a contract-only marker", "no such family", "section 6")
+        for name in sorted(marked - set(families))
+    ]
     for name, fam in families.items():
-        marked = name in CONTRACT_ONLY_MARKERS
-        if marked and CONTRACT_ONLY_MARKERS[name] not in _doc.DOC:
-            out.append(Drift("topics.served", name, "a contract-only marker", _ABSENT, "section 6"))
-        if marked == fam.served:
-            doc = "contract only" if marked else "served"
+        if (name in marked) == fam.served:
+            doc = "contract only" if name in marked else "served"
             out.append(Drift("topics.served", name, doc, f"served={fam.served}", "section 6"))
     return out
 
