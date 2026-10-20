@@ -1888,7 +1888,7 @@ paths:
         while the user's open-position state is unavailable a disable must carry
         `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. Enabling never
         restores grants or sessions and cancels a pending purge; a user whose purge has run is
-        never enabled again (`409 conflict`). `mfa_required: false` is
+        never changed again, an enable included (`409 conflict`). `mfa_required: false` is
         refused (`400 validation_failed`, C-12.2). A stale `If-Match` is
         `412 version_conflict`. Audited write-ahead; when the audit record cannot be written
         nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a

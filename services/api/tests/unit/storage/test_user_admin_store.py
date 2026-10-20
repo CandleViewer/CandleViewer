@@ -4,7 +4,8 @@ tests/integration/admin/test_user_admin_pg.py).
 `_Db` keeps `users` and their roles and answers each statement the user stores send by its
 identity, applying their writes at the commit only; `SET CONSTRAINTS ALL IMMEDIATE` plays the
 deferred owner-floor trigger (`trg_owner_floor_fn`, 23514). It keeps each user's purge columns
-too (E42-T10 #2650): an enable refuses an anonymised user and cancels a pending purge (R6). The
+too (E42-T10 #2650): every change to an anonymised user is refused, and an enable cancels a
+pending purge (R6). The
 property test drives the three stores that take the owner lock (roles, user admin, lifecycle)
 through any sequence of role and status changes: at least one enabled owner always remains, and
 every refusal is the stores' own check under the lock, never the trigger behind it.
@@ -226,6 +227,7 @@ async def test_role_change_statement_order_lock_read_check_dml_constraints_read_
     change = await _update(db, _B, UserPatch(roles=frozenset({"manager"})), hook)
     assert db.ran == [
         *_LOCKED,
+        purge._ANONYMISED,  # E42-T10 (#2650): read before any write
         role_store.DROP_ROLES,
         role_store.GRANT_ROLES,
         f.CONSTRAINTS_NOW,
@@ -299,7 +301,8 @@ async def test_the_last_active_owner_is_not_demoted_and_nothing_is_written() -> 
     with pytest.raises(OwnerFloorError) as refused:
         await _update(db, _A, UserPatch(roles=frozenset({"manager"})), hook)
     assert refused.value.__context__ is None  # the locked count refused it, not the trigger
-    assert db.ran == _LOCKED and hook.calls == [] and db.users[_A]["roles"] == {"owner"}
+    assert db.ran == [*_LOCKED, purge._ANONYMISED] and hook.calls == []
+    assert db.users[_A]["roles"] == {"owner"}
 
 
 async def test_a_non_active_owner_is_demoted_while_one_other_owner_is_active() -> None:
@@ -413,18 +416,37 @@ async def test_enable_cancels_a_pending_purge_ahead_of_its_record() -> None:
     assert db.users[_B]["purge_after"] is None and db.users[_B]["status"] == "active"
 
 
-async def test_an_anonymised_user_is_refused_before_any_write() -> None:
-    """#2650 (the orchestrator's 2026-10-20 ruling, second line): once the purge has run, an enable
-    raises `PurgeUserAnonymisedError` under the lock, before any write or record; nothing
-    commits and the row keeps its purge columns."""
+@pytest.mark.parametrize(
+    "patch",
+    [
+        UserPatch(enable=True, display_name="back", set_display_name=True),
+        UserPatch(display_name="Jane Doe", set_display_name=True),
+        UserPatch(require_mfa=True),
+        UserPatch(roles=frozenset({"viewer"})),
+    ],
+    ids=["enable", "rename", "mfa", "roles"],
+)
+async def test_an_anonymised_user_is_refused_before_any_write(patch: UserPatch) -> None:
+    """#2650 (the orchestrator's 2026-10-20 ruling, second line; O6): once the purge has run,
+    every change raises `PurgeUserAnonymisedError` under the lock, before any write or record: an
+    enable, and a name, the MFA flag or a role, which would write new data onto the surrogate row
+    that no later run nulls. Nothing commits and the row keeps its purge columns."""
     db = _Db(a=("active", ("owner",)), b=("disabled", ("manager",)))
-    db.users[_B].update(purge_after=_T, anonymised_at=_DUE)
+    db.users[_B].update(purge_after=_T, anonymised_at=_DUE, mfa_required=False)
     kept, hook = copy.deepcopy(db.users), _Hook(db)
-    patch = UserPatch(enable=True, display_name="back", set_display_name=True)
     with pytest.raises(PurgeUserAnonymisedError):
         await _update(db, _B, patch, hook)
     assert db.ran == [*_LOCKED, purge._ANONYMISED] and hook.calls == []
     assert db.commits == 0 and db.users == kept
+
+
+async def test_a_patch_that_changes_nothing_on_an_anonymised_user_is_no_refusal() -> None:
+    """The refusal guards writes: a patch that changes nothing (the roles the row already holds)
+    takes the lock, reads, and returns the row unchanged, as it does for any user."""
+    db = _Db(a=("active", ("owner",)), b=("disabled", ("manager",)))
+    db.users[_B].update(purge_after=_T, anonymised_at=_DUE)
+    change = await _update(db, _B, UserPatch(roles=frozenset({"manager"})))
+    assert change is not None and not change.changed and db.ran == _LOCKED and db.commits == 0
 
 
 async def test_a_refused_enable_record_keeps_the_purge_pending() -> None:

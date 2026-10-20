@@ -76,9 +76,10 @@ class PurgeUserNotDisabledError(Exception):
 
 
 class PurgeUserAnonymisedError(Exception):
-    """The user's purge has run (`anonymised_at` set): an enable is refused (HTTP 409 `conflict`)
-    and nothing changes. The second line behind the credentials the anonymisation revoked
-    (orchestrator ruling, 2026-10-20): a surrogate row never becomes `active` again."""
+    """The user's purge has run (`anonymised_at` set): every change through E42-T09's `PATCH` is
+    refused (HTTP 409 `conflict`), an enable included, and nothing changes. The second line behind
+    the credentials the anonymisation revoked (orchestrator ruling, 2026-10-20): a surrogate row
+    never becomes `active` again, and nothing the purge nulled is written back (O6)."""
 
 
 class PurgeAuditUnavailableError(Exception):

@@ -7,8 +7,9 @@ returned beyond the stored Argon2id digest `LoginService` must verify.
 Lockout increment-and-lock is one atomic `UPDATE ... RETURNING`.
 
 `SqlAlchemyUserAdminStore` (E42-T09, #2649) is the `User` read model behind `getUser` and the
-locked update behind `updateUser`: never `password_hash`, and one transaction per change (R7). Its
-enable refuses an anonymised user and cancels a pending purge (E42-T10 #2650, #965 R6).
+locked update behind `updateUser`: never `password_hash`, and one transaction per change (R7). It
+refuses every change to an anonymised user, and its enable cancels a pending purge (E42-T10 #2650,
+#965 R6).
 """
 
 from __future__ import annotations
@@ -205,8 +206,9 @@ class SqlAlchemyUserAdminStore:
     not active holds no counted owner grant); fire the deferred owner-floor trigger; read the
     result; await the caller's write-ahead audit, bounded (C-2.9, #2510); commit. Any raise
     before the commit rolls it all back. A patch that changes nothing writes and audits nothing.
-    An enable (E42-T10 #2650) is refused before any write once the user's purge has run, and
-    otherwise cancels a pending purge with the status change, ahead of the audit (#965 R6)."""
+    Once the user's purge has run (E42-T10 #2650) every change is refused before any write, so
+    nothing the purge nulled is filled again (O6); an enable otherwise cancels a pending purge
+    with the status change, ahead of the audit (#965 R6)."""
 
     def __init__(
         self,
@@ -235,8 +237,8 @@ class SqlAlchemyUserAdminStore:
         audit: UserUpdateAudit,
     ) -> UserUpdate | None:
         """Apply `patch` (new grants record `actor`); `None` if the user does not exist. Raises
-        what `check`, the owner-floor check or `audit` raises, `PurgeUserAnonymisedError` for an
-        enable of an anonymised user, or `WriteAheadTimeout` when `audit` outlives its bound;
+        what `check`, the owner-floor check or `audit` raises, `PurgeUserAnonymisedError` for any
+        change to an anonymised user, or `WriteAheadTimeout` when `audit` outlives its bound;
         each rolls the transaction back, so nothing changes."""
         uid, counted = str(user_id), _NO_ROLES
         wanted = _NO_ROLES if patch.roles is None else patch.roles
@@ -254,9 +256,9 @@ class SqlAlchemyUserAdminStore:
                 columns = _columns(before, patch)
                 if not regrant and columns is None:
                     return UserUpdate(user_id, before, before)
-                enabling = columns is not None and columns["enable"]
-                if enabling and await anonymised(s, user_id):  # the purge ran: never again
+                if await anonymised(s, user_id):  # the purge ran: no change, ever (O6)
                     raise PurgeUserAnonymisedError(uid)
+                enabling = columns is not None and columns["enable"]
                 if regrant:
                     counted = counted_roles(str(row[0]), roles)
                     self._owner_floor(counted, wanted, owners)

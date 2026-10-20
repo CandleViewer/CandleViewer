@@ -517,7 +517,8 @@ the audit writer or the database refusing) is retried after 15 minutes, doubling
 socket close that fails is counted on that line too, and the session's B16 record is still written.
 To cancel a pending purge, re-enable the user before the date (`PATCH /users/{userId}` with
 `status: active`): its `users.enable` record names the cancelled date. Once the user is anonymised
-that call answers `409 conflict` and changes nothing.
+every `PATCH` of that user (a re-enable, a name, the MFA flag, a role) answers `409 conflict` and
+changes nothing, recorded as `rbac.denied` with reason `anonymised`.
 One transaction sets the status, revokes the sessions and grants and writes `users.disable` ahead;
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the

@@ -11,7 +11,8 @@ holds back no later user, the reaper's locked re-check (UL-F5), and a Manager's 
 `?purge=true` refused and audited with nothing changed. The re-enable runs E42-T09's own enable
 path (`SqlAlchemyUserAdminStore`, `PATCH` to `active`) with the route's write-ahead records: it
 cancels a pending purge (R6) ahead of `users.enable`, keeps it when that record is refused, and
-refuses an anonymised user with nothing changed.
+refuses every change to an anonymised user (an enable, a name, the MFA flag, a role) with nothing
+changed and the name written nowhere (O6).
 testcontainers: CI `integration` runs it.
 """
 
@@ -129,6 +130,13 @@ _ENABLED = sa.text(
     "SELECT before_state::text, after_state::text FROM audit_log "
     "WHERE action = 'users.enable' AND object_id = :id"
 )
+#: The whole `users` row and the user's role names, for "nothing changed" (O6, #2650).
+_WHOLE = sa.text("SELECT row_to_json(u)::text FROM users u WHERE id = CAST(:id AS uuid)")
+_ROLES = sa.text(
+    "SELECT r.name::text FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+    "WHERE ur.user_id = CAST(:id AS uuid) ORDER BY 1"
+)
+_NO_MFA_REQUIRED = sa.text("UPDATE users SET mfa_required = false WHERE id = CAST(:id AS uuid)")
 _PASSWORD_HASH = sa.text("UPDATE users SET password_hash = :hash WHERE id = CAST(:id AS uuid)")
 _MFA = sa.text(
     "INSERT INTO mfa_methods (id, user_id, kind, label, secret_enc, confirmed_at) "
@@ -515,22 +523,33 @@ async def test_poisoned_row_skipped(db: Any) -> None:
     assert str(poisoned) not in repr(logs) and name not in repr(logs)
 
 
-async def _enable(
-    rel: SqlAlchemyRelationalRepository, audit: Any, user: uuid.UUID, owner: uuid.UUID
+async def _update(
+    rel: SqlAlchemyRelationalRepository,
+    audit: Any,
+    user: uuid.UUID,
+    owner: uuid.UUID,
+    patch: UserPatch,
 ) -> UserUpdate | None:
-    """E42-T09's enable path (`PATCH` to `active`) on the real store, with the route's own
-    write-ahead records (`audit_user_update`) into `audit`: under the user-row lock it refuses an
-    anonymised user and cancels a pending purge (R6) ahead of `users.enable`."""
+    """E42-T09's update path (`PATCH /users/{userId}`) on the real store, with the route's own
+    write-ahead records (`audit_user_update`) into `audit`: under the user-row lock it refuses
+    every change to an anonymised user, and an enable cancels a pending purge (R6) ahead of
+    `users.enable`."""
     base = {"actor_label": str(owner), "actor_user_id": owner, "object_kind": "user"}
 
     async def write_ahead(change: UserUpdate) -> None:
         await audit_user_update(audit, change, {**base, "object_id": str(user)})
 
     store = SqlAlchemyUserAdminStore(rel, owner_floor=_floor, audit_timeout_s=_WAIT_S)
-    patch = UserPatch(enable=True)
     return await store.update_user(
         user, patch, actor=owner, check=lambda _: None, audit=write_ahead
     )
+
+
+async def _enable(
+    rel: SqlAlchemyRelationalRepository, audit: Any, user: uuid.UUID, owner: uuid.UUID
+) -> UserUpdate | None:
+    """E42-T09's enable path (`PATCH` to `active`) through `_update`."""
+    return await _update(rel, audit, user, owner, UserPatch(enable=True))
 
 
 async def test_reenable_cancels_purge(db: Any) -> None:
@@ -578,15 +597,54 @@ async def test_an_anonymised_user_is_never_enabled(db: Any) -> None:
     assert await _read(engine, _ENABLED, gone) == []
 
 
+@pytest.mark.parametrize(
+    "patch",
+    [
+        UserPatch(display_name="Jane Doe", set_display_name=True),
+        UserPatch(require_mfa=True),
+        UserPatch(roles=frozenset({"viewer"})),
+    ],
+    ids=["rename", "mfa", "roles"],
+)
+async def test_an_anonymised_user_is_never_changed(db: Any, patch: UserPatch) -> None:
+    """O6 (21 §12, `display_name` becomes NULL): once M's purge has run, E42-T09's update path
+    writes nothing to M's row, a name, the MFA flag or a role as much as an enable:
+    `PurgeUserAnonymisedError` under the lock, before any write. The whole row stays as the
+    reaper left it, M keeps its roles, and nothing is recorded."""
+    rel, engine = db
+    owner = await _user(engine, "owner")
+    gone = await _scheduled(engine, _T0 - _DAY)
+    await _exec(engine, _NO_MFA_REQUIRED, id=str(gone))  # so `require_mfa` would change it
+    assert await _purge(rel, _Audit(engine), _Clock()).anonymise(gone) is not None
+    kept, audit = await _read(engine, _WHOLE, gone), _Audit(engine)
+    with pytest.raises(PurgeUserAnonymisedError):
+        await _update(rel, audit, gone, owner, patch)
+    assert await _read(engine, _WHOLE, gone) == kept and audit.seen == []
+    row = json.loads(kept[0][0])
+    assert (row["display_name"], row["mfa_required"]) == (None, False)
+    assert await _read(engine, _ROLES, gone) == [("manager",)]
+
+
 async def _patch_active(
     rel: SqlAlchemyRelationalRepository, audit: Any, owner: uuid.UUID, user: uuid.UUID
 ) -> httpx.Response:
     """An elevated Owner's `PATCH /users/{userId}` to `active`, through E42-T09's route over the
     Postgres user admin store (`test_user_admin_pg._admin_app`), its records into `audit`."""
+    return await _patch_user(rel, audit, owner, user, {"status": "active"})
+
+
+async def _patch_user(
+    rel: SqlAlchemyRelationalRepository,
+    audit: Any,
+    owner: uuid.UUID,
+    user: uuid.UUID,
+    body: dict[str, Any],
+) -> httpx.Response:
+    """An elevated Owner's `PATCH /users/{userId}` with `body`, as `_patch_active`."""
     transport = httpx.ASGITransport(app=_admin_app(rel, audit))
     headers = {"x-actor": str(owner), "Authorization": f"Bearer {owner}"}
     async with httpx.AsyncClient(transport=transport, base_url="http://cv.test") as client:
-        return await client.patch(f"/users/{user}", json={"status": "active"}, headers=headers)
+        return await client.patch(f"/users/{user}", json=body, headers=headers)
 
 
 async def test_reenable_route_cancels_purge(db: Any) -> None:
@@ -620,6 +678,25 @@ async def test_route_refuses_to_enable_an_anonymised_user(db: Any) -> None:
     assert (r.status_code, r.json()["code"]) == (409, "conflict"), r.text
     assert [action for action, _ in audit.seen] == ["rbac.denied"]
     assert await _read(engine, _ROW, gone) == kept and await _read(engine, _ENABLED, gone) == []
+
+
+async def test_route_refuses_to_rename_an_anonymised_user(db: Any) -> None:
+    """O6 through the route: an Owner's `PATCH` of an anonymised user's name is 409 `conflict`
+    with one `rbac.denied` (`anonymised`) naming the field, and the name is written nowhere: the
+    row stays as the reaper left it, and no audit row about M holds it."""
+    rel, engine = db
+    owner = await _user(engine, "owner")
+    gone = await _scheduled(engine, _T0 - _DAY)
+    assert await _purge(rel, _Audit(engine), _Clock()).anonymise(gone) is not None
+    kept, audit = await _read(engine, _WHOLE, gone), _Audit(engine)
+    r = await _patch_user(rel, audit, owner, gone, {"display_name": "Jane Doe"})
+    assert (r.status_code, r.json()["code"]) == (409, "conflict"), r.text
+    assert [action for action, _ in audit.seen] == ["rbac.denied"]
+    assert await _read(engine, _WHOLE, gone) == kept
+    rows = [json.loads(text) for _, text in await _read(engine, _ABOUT, gone)]
+    assert rows and not any("Jane Doe" in json.dumps(row) for row in rows)
+    (denied,) = [row for row in rows if row["action"] == "rbac.denied"]
+    assert (denied["reason"], denied["after_state"]) == ("anonymised", {"fields": ["display_name"]})
 
 
 class _Refusing:

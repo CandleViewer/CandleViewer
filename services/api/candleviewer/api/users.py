@@ -44,9 +44,10 @@ A disable is `UserDisableService`'s whole cascade with `acknowledge_unknown_posi
 DELETE reads it, and changes nothing else; every other change is one transaction of the user admin
 store under the owner lock (R7), written ahead as `users.enable`, `users.update`, `roles.grant`
 and `roles.revoke`, its role push counted after the commit. An enable cancels a pending purge in
-that transaction, its `users.enable` naming the date (E42-T10 #2650, #965 R6), and is refused once
-the purge has run: 409 `conflict`, recorded as one `rbac.denied` (`anonymised`) as the owner
-floor's refusal is, nothing changed. `GET /users/{userId}/sessions` lists
+that transaction, its `users.enable` naming the date (E42-T10 #2650, #965 R6). Once the purge has
+run every change is refused (O6), an enable included: 409 `conflict`, recorded as one
+`rbac.denied` (`anonymised`, naming the fields sent, never a value) as the owner floor's refusal
+is, nothing changed. `GET /users/{userId}/sessions` lists
 the user's live sessions as `listMySessions` does (no token material);
 `DELETE /users/{userId}/sessions/{sessionId}` addresses only a live session of that user (404
 otherwise, IDOR), writes the acting Owner's `users.session_revoked`, then records B16 REVOKE, whose
@@ -141,8 +142,8 @@ _RESEND_ACKNOWLEDGED: Final = "resend with acknowledge_unknown_positions=true"
 #: The detail of every write-ahead refusal (C-2.9): the change rolled back.
 _NOT_AUDITED: Final = "the audit record could not be written; nothing changed"
 _LAST_OWNER: Final = "the last active owner cannot be demoted"
-#: E42-T10 (#2650): an enable refused because the user's purge has run (409 `conflict`).
-_ANONYMISED: Final = "the user's data was purged; an anonymised user is never enabled again"
+#: E42-T10 (#2650): a change refused because the user's purge has run (409 `conflict`).
+_ANONYMISED: Final = "the user's data was purged; an anonymised user is never changed again"
 #: The store's refusals, nothing changed (#2648 design (c).2); unknown and deleted alike.
 _REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
     aa.AccessSelfTargetError: (ErrorCode.FORBIDDEN, 403, "a caller's own grants cannot change"),
@@ -855,8 +856,9 @@ class UserAdminStore(Protocol):
     ) -> UserUpdate | None:
         """One transaction under the user-row and owner locks: `check` on the representation read
         under them, the change, the owner floor, then `audit` ahead of the commit. Raises what
-        `check`, the floor or `audit` raises, or `WriteAheadTimeout`, with nothing changed;
-        `None` if no such user."""
+        `check`, the floor or `audit` raises, `PurgeUserAnonymisedError` for any change to an
+        anonymised user (E42-T10 #2650), or `WriteAheadTimeout`, with nothing changed; `None` if
+        no such user."""
         ...
 
 
@@ -1229,7 +1231,7 @@ def make_user_admin_router(
             except (AuditError, RuntimeError):
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
             return _registered(ErrorCode.CONFLICT, 409, _LAST_OWNER)
-        except PurgeUserAnonymisedError:  # #2650: the purge ran, so never again; no change
+        except PurgeUserAnonymisedError:  # #2650: the purge ran, so no change, ever (O6)
             try:  # recorded as the owner floor's refusal is: an Owner's change a rule refused
                 await emitter.emit(
                     "rbac.denied",
@@ -1238,7 +1240,7 @@ def make_user_admin_router(
                     severity=Severity.WARNING,
                     reason="anonymised",
                     before_state={"status": shown["status"]},
-                    after_state={"status": "active"},
+                    after_state={"fields": sorted(body.model_fields_set)},  # names, no PII
                 )
             except (AuditError, RuntimeError):
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)

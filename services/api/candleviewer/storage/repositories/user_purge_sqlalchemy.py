@@ -139,9 +139,10 @@ def _due(row: Any, now: datetime) -> bool:
 
 
 async def anonymised(session: AsyncSession, user_id: uuid.UUID) -> bool:
-    """For E42-T09's enable path, in its own transaction under its user-row lock and before any
-    write: whether the user's purge has run (`anonymised_at` set). Such a user is never enabled
-    again (`PurgeUserAnonymisedError`, the second line behind its revoked credentials)."""
+    """For E42-T09's update path, in its own transaction under its user-row lock and before any
+    write: whether the user's purge has run (`anonymised_at` set). Such a user is never changed
+    again, an enable included (`PurgeUserAnonymisedError`, the second line behind its revoked
+    credentials; O6)."""
     row = (await session.execute(_ANONYMISED, {"id": str(user_id)})).first()
     return row is not None and bool(row[0])
 
