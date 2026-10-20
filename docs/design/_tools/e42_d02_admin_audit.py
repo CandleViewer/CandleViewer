@@ -12,11 +12,11 @@ Usage: python3 -I docs/design/_tools/e42_d02_admin_audit.py   (prints Markdown; 
 
 A PASS/FAIL verdict applies the role's bar (text 4.5:1, non-text 3:1, `hc-text` 7:1 per
 `05-accessibility-standard.md` §5 item 6; every gated row counts, the hc-text rows included); rows
-marked `decorative` carry no meaning (`16-design-system-brief.md` §6 rule 7), `exempt` rows are
-disabled controls (WCAG 1.4.3 / 1.4.11 exempt them; reported so the design does not rely on them)
-and `rejected-*` rows are pairs the spec considered and designed around — none of those three is
-gated. Candidate tokens that do not exist yet (design-system change requests for the E05 token
-owner, spec §11.4) are prefixed `CR:` and
+marked `decorative` carry no meaning (reinforcement only; a word or shape is the carrier),
+`exempt` rows are disabled controls (WCAG 1.4.3 / 1.4.11 exempt them; reported so the design does
+not rely on them) and `rejected-*` rows are pairs the spec considered and designed around — none of
+those three is gated. Candidate tokens that do not exist yet (design-system change requests for the
+E05 token owner, spec §11.4) are prefixed `CR:` and
 measured on the primitive they would alias, never on an invented hex.
 """
 
@@ -80,18 +80,45 @@ T = {n: resolve_theme(n) for n in THEMES}
 # Candidate aliases for the change requests (CR:).
 # Values are existing primitives or tokens per theme.
 CR = {
-    # CMP-087's catalogued `color.surface.admin-tint` does not exist in any token set:
-    # the admin header band.
+    # DS-1, adopted: CMP-087's catalogued `color.surface.admin-tint` exists in no token set; the
+    # admin band is
+    # neutral (the raised surface); its distinctness is carried by the label, the rule and the
+    # density.
     "CR:color.surface.admin-tint": {
+        "dark": "color.surface.raised",
+        "light": "color.surface.raised",
+        "high-contrast": "color.surface.raised",
+    },
+    # DS-2, adopted: the 4 px admin rule and the current nav entry's edge, on the tertiary text
+    # token.
+    "CR:color.border.admin": {
+        "dark": "color.text.tertiary",
+        "light": "color.text.tertiary",
+        "high-contrast": "color.text.tertiary",
+    },
+    # The purple alternative (r1-r3), measured and rejected: the rule is the exact hex of E11-D02's
+    # `color.replay.border` request and the light band fails the focus ring (2.48:1).
+    "CR:color.surface.admin-tint.purple": {
         "dark": "palette.purple.900",
         "light": "palette.purple.400",
         "high-contrast": "palette.purple.900",
     },
-    # The 4 px admin accent rule on the band and the active admin nav entry.
-    "CR:color.border.admin": {
+    "CR:color.border.admin.purple": {
         "dark": "palette.purple.400",
         "light": "palette.purple.600",
         "high-contrast": "palette.purple.400",
+    },
+    "CR:color.replay.border": {
+        "dark": "palette.purple.400",
+        "light": "palette.purple.600",
+        "high-contrast": "palette.purple.400",
+    },
+    # DS-6 candidate (a finding, not adopted): a red `danger.strong` that does not collapse into
+    # warning.strong.
+    "CR:color.status.danger.strong": {
+        "dark": "palette.red.400",
+        "light": "palette.light.red.500",
+        "high-contrast": "palette.red.400",
     },
     # CMP-095's catalogued `color.chip.dev` does not exist: the flag chip takes the info tone.
     "CR:color.chip.dev": {
@@ -139,7 +166,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ),
     ("tertiary text on tiles and cards", "color.text.tertiary", "color.surface.raised", "text"),
     (
-        "CR: admin header band — 'Admin' label and route title on the tint",
+        "CR: admin header band (DS-1 = surface.raised) — 'Admin' label and route title",
         "color.text.primary",
         "CR:color.surface.admin-tint",
         "text",
@@ -150,39 +177,58 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "CR:color.surface.admin-tint",
         "hc-text",
     ),
+    # the purple alternative of r1-r3 and the unmeasured neutral option, both rejected (O-A)
     (
-        (
-            "CR: admin header band — REJECTED pair (secondary text directly on the tint; "
-            "the badge is a raised pill instead)"
-        ),
+        "CR: purple band alternative — REJECTED (secondary text on the tint fails light)",
         "color.text.secondary",
-        "CR:color.surface.admin-tint",
+        "CR:color.surface.admin-tint.purple",
         "rejected-text",
     ),
     (
-        "CR: admin accent rule (4 px): the band's bottom edge against the page surface",
+        "CR: purple band alternative — REJECTED (focus ring on the light tint 2.48:1)",
+        "color.focus.ring",
+        "CR:color.surface.admin-tint.purple",
+        "rejected-non-text",
+    ),
+    (
+        (
+            "CR: purple accent alternative on the page — REJECTED (the exact hex "
+            "of E11-D02's replay border)"
+        ),
+        "CR:color.border.admin.purple",
+        "color.surface.app",
+        "rejected-non-text",
+    ),
+    (
+        "neutral rule — REJECTED pair (border.strong on the page; O-A's unmeasured option)",
+        "color.border.strong",
+        "color.surface.app",
+        "rejected-non-text",
+    ),
+    (
+        (
+            "CR: admin accent rule (DS-2 = text.tertiary, 4 px): the band's bottom "
+            "edge against the page"
+        ),
         "CR:color.border.admin",
         "color.surface.app",
         "non-text",
     ),
     (
-        (
-            "CR: admin accent rule against the band — REJECTED as a carrier "
-            "(the edge against the page is the carrier)"
-        ),
+        "CR: admin accent rule against the band fill",
         "CR:color.border.admin",
         "CR:color.surface.admin-tint",
-        "rejected-non-text",
+        "non-text",
     ),
     (
-        "unlock badge pill on the band (raised pill, secondary text)",
+        "unlock badge pill on the band (hover-fill pill, secondary text)",
         "color.text.secondary",
-        "color.surface.raised",
+        "color.surface.hover",
         "text",
     ),
     (
         "unlock badge pill fill against the band",
-        "color.surface.raised",
+        "color.surface.hover",
         "CR:color.surface.admin-tint",
         "decorative",
     ),
@@ -235,8 +281,8 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("focus ring on dialogs", "color.focus.ring", "color.surface.overlay", "non-text"),
     (
         (
-            "focus ring on the admin band — REPORTED pair "
-            "(fails light, so the band never holds a focusable control)"
+            "focus ring on the admin band — REPORTED pair (the band holds no "
+            "focusable control by D1; the neutral band passes)"
         ),
         "color.focus.ring",
         "CR:color.surface.admin-tint",
@@ -299,6 +345,32 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "color.status.danger.default",
         "color.surface.raised",
         "rejected-non-text",
+    ),
+    # DS-6 candidate: a red danger.strong that does not collapse into warning.strong (a finding,
+    # §11.4)
+    (
+        "CR: DS-6 candidate danger.strong (red.400 / light.red.500) — down-octagon glyph on tiles",
+        "CR:color.status.danger.strong",
+        "color.surface.raised",
+        "non-text",
+    ),
+    (
+        "CR: DS-6 candidate — destructive confirm border on danger.subtle",
+        "CR:color.status.danger.strong",
+        "color.status.danger.subtle",
+        "non-text",
+    ),
+    (
+        "CR: DS-6 candidate — glyph on the dialog surface",
+        "CR:color.status.danger.strong",
+        "color.surface.overlay",
+        "non-text",
+    ),
+    (
+        "CR: DS-6 candidate — as text on the dialog surface (information: not a text token)",
+        "CR:color.status.danger.strong",
+        "color.surface.overlay",
+        "rejected-text",
     ),
     (
         "tile 'stale since' — clock glyph (CMP-239 stale indicator)",
@@ -631,6 +703,27 @@ CVD_PAIRS: list[tuple[str, str, str]] = [
     ("CR: admin accent vs focus ring", "CR:color.border.admin", "color.focus.ring"),
     ("CR: admin accent vs primary action", "CR:color.border.admin", "color.action.primary.default"),
     ("CR: admin band vs page surface", "CR:color.surface.admin-tint", "color.surface.app"),
+    (
+        "CR: purple accent alternative vs E11-D02 replay border (the collision)",
+        "CR:color.border.admin.purple",
+        "CR:color.replay.border",
+    ),
+    (
+        "tile warning vs down — the `.default` steps",
+        "color.status.warning.default",
+        "color.status.danger.default",
+    ),
+    (
+        "CR: DS-6 candidate vs warning.strong",
+        "CR:color.status.danger.strong",
+        "color.status.warning.strong",
+    ),
+    (
+        "CR: DS-6 candidate vs env LIVE (the hue family 16 §2.1 reserves)",
+        "CR:color.status.danger.strong",
+        "color.env.live",
+    ),
+    ("CR: DS-6 candidate vs sell.default", "CR:color.status.danger.strong", "color.sell.default"),
     ("CR: admin band vs raised surface", "CR:color.surface.admin-tint", "color.surface.raised"),
     (
         "status chip Active (success.subtle) vs Trading locked (danger.subtle) fill",
@@ -726,6 +819,7 @@ def main() -> int:
         "color.action.primary.default",
         "CR:color.surface.admin-tint",
         "CR:color.border.admin",
+        "CR:color.status.danger.strong",
     ]:
         for t in THEMES:
             h = col(t, tok)
