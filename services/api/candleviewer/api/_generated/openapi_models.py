@@ -3997,7 +3997,7 @@ class LayoutPaneInput(BaseModel):
     indicator_preset_ids: Annotated[
         list[UUID] | None,
         Field(
-            description="Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until `indicator_presets` ships (E13-T03); then every id must name a preset the caller may use.",
+            description="Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until panes resolve preset references; the preset store alone (E13-T03) does not lift this. Then every id must name a preset the caller may use.",
             max_length=16,
         ),
     ] = None
@@ -4392,18 +4392,30 @@ class DrawingBatchResult(BaseModel):
     deleted: list[UUID]
 
 
-class IndicatorPresetInput(BaseModel):
-    name: Annotated[str, Field(max_length=80, min_length=1)]
-    indicator_code: Annotated[str, Field(max_length=40)]
-    params: dict[str, Any]
-    is_default: bool | None = False
+class IndicatorPresetStyle(RootModel[dict[str, Any]]):
+    root: Annotated[dict[str, Any], Field(max_length=0)]
 
 
-class IndicatorPreset(IndicatorPresetInput):
-    id: UUID | None = None
-    owner_user_id: UUID | None = None
-    created_at: AwareDatetime | None = None
-    updated_at: AwareDatetime | None = None
+class IndicatorPreset(BaseModel):
+    id: UUID
+    owner_user_id: Annotated[UUID | None, Field(description="The owner; `null` for a built-in.")]
+    indicator_code: Annotated[str, Field(pattern="^[a-z0-9_]{2,32}$")]
+    name: str
+    params: Annotated[
+        dict[str, Any],
+        Field(description="Every parameter of the indicator, as stored when the preset was saved."),
+    ]
+    style: IndicatorPresetStyle
+    pane_target: Literal["overlay", "subpane"]
+    is_builtin: Annotated[
+        bool,
+        Field(
+            description="Set by the server only: `true` for the seeded built-ins, which never change (`403`, rule `builtin_immutable`)."
+        ),
+    ]
+    is_favourite: bool
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
 
 
 class Appearance(BaseModel):
@@ -6284,6 +6296,53 @@ class LayoutGridTabset(BaseModel):
     ] = 0
 
 
+class IndicatorPresetInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        str,
+        Field(
+            description="At most 80 characters as sent, at least 1 after sanitising (above). Unique per owner and `indicator_code`, case-insensitive, among live presets (`409 conflict`, rule `name_taken`); a copy of a built-in may keep its name.",
+            max_length=80,
+            min_length=1,
+        ),
+    ]
+    indicator_code: Annotated[
+        str,
+        Field(
+            description="An indicator `id` from `listIndicators`. A value outside the pattern is rule `invalid_indicator_code`, and one that names no catalogue indicator is `unknown_indicator`; neither message echoes the value. Immutable once saved.",
+            max_length=32,
+            pattern="^[a-z0-9_]{2,32}$",
+        ),
+    ]
+    params: Annotated[
+        dict[str, Any],
+        Field(
+            description="The indicator's parameters, checked against its descriptor's `params_schema` (`listIndicators`) before anything is stored, and never clamped. Only the first parameter defect is reported: a key the descriptor does not declare (rule `additionalProperties` on `params`), else the first parameter, in the descriptor's order, that breaks one of its keywords (`type`, `enum`, `minimum`, `maximum` or `multipleOf` on `params.<name>`); the message names the bound, never the value. Stored complete and canonical: an omitted parameter is stored at its default, so changing a default later never alters a saved preset. At most 4 KiB, nesting depth 4 and 64 keys (rules `params_too_large`, `params_too_deep` and `params_too_many_keys`).\n",
+            max_length=64,
+        ),
+    ]
+    style: Annotated[
+        IndicatorPresetStyle | None,
+        Field(
+            description="Optional; omitted means no style overrides (stored and returned as `{}`)."
+        ),
+    ] = None
+    pane_target: Annotated[
+        Literal["overlay", "subpane"] | None,
+        Field(
+            description="Where the indicator draws: over the price pane, or in a sub-pane of its own."
+        ),
+    ] = "overlay"
+    is_favourite: Annotated[
+        bool | None,
+        Field(
+            description="Starred in the indicator picker. A built-in is starred by saving a copy of it (`createIndicatorPreset`), possible only once `listIndicators` lists the built-in's indicator."
+        ),
+    ] = False
+
+
 class Job(BaseModel):
     id: UUID | None = None
     kind: Annotated[
@@ -6710,7 +6769,12 @@ class WorkspaceBundle(BaseModel):
     layouts: list[LayoutInput]
     chart_templates: list[ChartTemplateInput] | None = None
     drawings: list[DrawingInput] | None = None
-    indicator_presets: list[IndicatorPresetInput] | None = None
+    indicator_presets: Annotated[
+        list[IndicatorPresetInput] | None,
+        Field(
+            description="Export holds only the caller's live presets, never a built-in or another user's: at most 500, the per-user cap of `createIndicatorPreset`, and never truncated to the import limits below. Import (E15-S07; no operation takes a bundle yet) never trusts them: every item is validated again as on `createIndicatorPreset`, so `is_builtin` and `owner_user_id` are never honoured (an item carrying either is refused), the importer owns what is imported, and the array is imported whole or not at all. The server refuses it whole beyond 200 items or 1 MiB of preset JSON (SR-E13-07's import limits; the 1 MiB counts this array, not the whole bundle), on any invalid item, or when it would take the importer past 500 live presets.\n"
+        ),
+    ] = None
 
 
 class Alert(AlertInput):

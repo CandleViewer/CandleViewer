@@ -2446,10 +2446,34 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List saved indicator presets */
+    /**
+     * List saved indicator presets
+     * @description The built-in presets and the caller's live presets, never another user's, whatever the
+     *     caller's role. Built-ins come first, then by `indicator_code`, case-insensitive `name` and
+     *     `id`; deleted presets are not listed. A user holds at most 500 live presets, so the list is
+     *     not paged. Any query parameter is refused with `422` (SR-026).
+     */
     get: operations["listIndicatorPresets"];
     put?: never;
-    /** Save an indicator preset */
+    /**
+     * Save an indicator preset
+     * @description Saves a preset owned by the caller; the server mints its `id`. Built-ins never change:
+     *     customising one saves a copy with this call, checked like any other save, so the copy is
+     *     refused (`422` rule `unknown_indicator`) while `listIndicators` does not list the
+     *     built-in's indicator. Nothing is stored on any refusal.
+     *
+     *     - `413 payload_too_large`: the body is over 16 KiB, refused before it is parsed.
+     *     - `422 validation_failed` (`IndicatorPresetInput` gives each field's rules): an unknown
+     *       property (`is_builtin`, `owner_user_id` and `id` included), `invalid_indicator_code`,
+     *       `unknown_indicator`, a `params` keyword (`type`, `enum`, `minimum`, `maximum` or
+     *       `multipleOf` on `params.<name>`, `additionalProperties` on `params`),
+     *       `params_too_large`, `params_too_deep`, `params_too_many_keys`, `style_not_allowed`,
+     *       the `name` rules and `invalid_unicode`. Any query parameter is refused (SR-026).
+     *     - `409 conflict`: rule `name_taken` (the caller has a live preset with this
+     *       `indicator_code` and name, case-insensitive) or `limit_reached` (500 live presets).
+     *     - `503`: `store_unavailable` when storage fails, `audit_unavailable` when the write-ahead
+     *       audit record cannot be written.
+     */
     post: operations["createIndicatorPreset"];
     delete?: never;
     options?: never;
@@ -2467,10 +2491,33 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Replace an indicator preset */
+    /**
+     * Replace an indicator preset
+     * @description Full replacement of one of the caller's presets (an omitted field takes its default). No
+     *     precondition: the last write wins. A preset that is missing, deleted or another user's
+     *     returns the same `404`. A built-in is `403 forbidden` with rule `builtin_immutable` (a
+     *     missing permission is the usual `403` with `required_permissions`). `indicator_code` is
+     *     immutable (`422` rule `immutable_field`), and a malformed `presetId` is `422` rule
+     *     `uuid_parsing`. `409`, `413`, the other `422` rules and `503` as on
+     *     `createIndicatorPreset`.
+     *
+     *     Evaluation order for `/indicator-presets*` (steps that do not apply are skipped): `401`;
+     *     `403` (permission, CSRF); `413`; `422` (path, query, body, none of which reads a stored
+     *     preset); `404` (missing, deleted or another user's, identical); `403` rule
+     *     `builtin_immutable`; `422` rule `immutable_field`; `409`; the write. `503` wherever
+     *     storage or the write-ahead audit record fails.
+     */
     put: operations["updateIndicatorPreset"];
     post?: never;
-    /** Delete an indicator preset */
+    /**
+     * Delete an indicator preset
+     * @description Soft delete, never a hard delete: the preset leaves the list and its name can be used
+     *     again, while the row is kept with `deleted_at` set. No precondition. A preset that is
+     *     missing, already deleted or another user's returns the same `404`; a built-in is `403`
+     *     rule `builtin_immutable`, as on `updateIndicatorPreset`. A malformed `presetId` is `422`
+     *     rule `uuid_parsing`, and any query parameter is refused (SR-026). `503` as on
+     *     `createIndicatorPreset`.
+     */
     delete: operations["deleteIndicatorPreset"];
     options?: never;
     head?: never;
@@ -6726,25 +6773,72 @@ export interface components {
       id: string;
       name: string;
     };
-    IndicatorPreset: components["schemas"]["IndicatorPresetInput"] & {
+    /** @description Response object. Readers must ignore unknown properties (C-6.3). A built-in has `is_builtin: true` and `owner_user_id: null`. */
+    IndicatorPreset: {
       /** Format: date-time */
-      created_at?: string;
+      created_at: string;
       /** Format: uuid */
-      id?: string;
-      /** Format: uuid */
-      owner_user_id?: string;
-      /** Format: date-time */
-      updated_at?: string;
-    };
-    IndicatorPresetInput: {
+      id: string;
       indicator_code: string;
-      /** @default false */
-      is_default: boolean;
+      /** @description Set by the server only: `true` for the seeded built-ins, which never change (`403`, rule `builtin_immutable`). */
+      readonly is_builtin: boolean;
+      is_favourite: boolean;
       name: string;
+      /**
+       * Format: uuid
+       * @description The owner; `null` for a built-in.
+       */
+      owner_user_id: string | null;
+      /** @enum {string} */
+      pane_target: "overlay" | "subpane";
+      /** @description Every parameter of the indicator, as stored when the preset was saved. */
       params: {
         [key: string]: unknown;
       };
+      style: components["schemas"]["IndicatorPresetStyle"];
+      /** Format: date-time */
+      updated_at: string;
     };
+    /**
+     * @description Writable preset fields, and the item of `WorkspaceBundle.indicator_presets`. `PUT` is a
+     *     full replacement: an omitted field takes its default. Only the server sets `id`,
+     *     `owner_user_id` (the caller), `is_builtin` (`false`), `created_at`, `updated_at` and
+     *     `deleted_at`: sent in a body, each is refused (`422`) like any other unknown property.
+     *     `name` is at most 80 characters as sent (rule `string_too_long`), then sanitised as
+     *     `WorkspaceInput.name` is; empty after sanitising is rule `string_too_short`, and a lone
+     *     surrogate is rule `invalid_unicode`.
+     */
+    IndicatorPresetInput: {
+      /** @description An indicator `id` from `listIndicators`. A value outside the pattern is rule `invalid_indicator_code`, and one that names no catalogue indicator is `unknown_indicator`; neither message echoes the value. Immutable once saved. */
+      indicator_code: string;
+      /**
+       * @description Starred in the indicator picker. A built-in is starred by saving a copy of it (`createIndicatorPreset`), possible only once `listIndicators` lists the built-in's indicator.
+       * @default false
+       */
+      is_favourite: boolean;
+      /** @description At most 80 characters as sent, at least 1 after sanitising (above). Unique per owner and `indicator_code`, case-insensitive, among live presets (`409 conflict`, rule `name_taken`); a copy of a built-in may keep its name. */
+      name: string;
+      /**
+       * @description Where the indicator draws: over the price pane, or in a sub-pane of its own.
+       * @default overlay
+       * @enum {string}
+       */
+      pane_target: "overlay" | "subpane";
+      /** @description The indicator's parameters, checked against its descriptor's `params_schema` (`listIndicators`) before anything is stored, and never clamped. Only the first parameter defect is reported: a key the descriptor does not declare (rule `additionalProperties` on `params`), else the first parameter, in the descriptor's order, that breaks one of its keywords (`type`, `enum`, `minimum`, `maximum` or `multipleOf` on `params.<name>`); the message names the bound, never the value. Stored complete and canonical: an omitted parameter is stored at its default, so changing a default later never alters a saved preset. At most 4 KiB, nesting depth 4 and 64 keys (rules `params_too_large`, `params_too_deep` and `params_too_many_keys`). */
+      params: {
+        [key: string]: unknown;
+      };
+      /** @description Optional; omitted means no style overrides (stored and returned as `{}`). */
+      style?: components["schemas"]["IndicatorPresetStyle"];
+    };
+    /**
+     * @description Style overrides by design-token name: a closed set of keys, each taking a closed set of
+     *     token values from the E13-D04 token list (SR-E13-08), so no colour, CSS, URL or free text
+     *     is stored or handed to a renderer. A key or value outside the set is `422` rule
+     *     `style_not_allowed`, never dropped. The set is empty until E13-D04 publishes it, so only
+     *     `{}` is accepted today; its keys are then added here, additively (C-6.3).
+     */
+    IndicatorPresetStyle: Record<string, never>;
     Instrument: {
       base_coin?: string;
       /** @constant */
@@ -7240,7 +7334,7 @@ export interface components {
        * @default null
        */
       chart_template_id: string | null;
-      /** @description Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until `indicator_presets` ships (E13-T03); then every id must name a preset the caller may use. */
+      /** @description Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until panes resolve preset references; the preset store alone (E13-T03) does not lift this. Then every id must name a preset the caller may use. */
       indicator_preset_ids?: string[];
       /**
        * @description Bar series of a market pane; `null` for panes without one.
@@ -9584,6 +9678,7 @@ export interface components {
       drawings?: components["schemas"]["DrawingInput"][];
       /** Format: date-time */
       exported_at?: string;
+      /** @description Export holds only the caller's live presets, never a built-in or another user's: at most 500, the per-user cap of `createIndicatorPreset`, and never truncated to the import limits below. Import (E15-S07; no operation takes a bundle yet) never trusts them: every item is validated again as on `createIndicatorPreset`, so `is_builtin` and `owner_user_id` are never honoured (an item carrying either is refused), the importer owns what is imported, and the array is imported whole or not at all. The server refuses it whole beyond 200 items or 1 MiB of preset JSON (SR-E13-07's import limits; the 1 MiB counts this array, not the whole bundle), on any invalid item, or when it would take the importer past 500 live presets. */
       indicator_presets?: components["schemas"]["IndicatorPresetInput"][];
       layouts: components["schemas"]["LayoutInput"][];
       schema_version: string;
@@ -13955,6 +14050,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -13992,6 +14088,9 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      413: components["responses"]["PayloadTooLarge"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -14031,6 +14130,9 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      413: components["responses"]["PayloadTooLarge"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -14064,6 +14166,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
