@@ -25,7 +25,15 @@ from candleviewer.domain.primitives import (
     Symbol,
     TsUs,
 )
-from candleviewer.exchange.base.errors import DuplicateClientIdError, OmsErrorCode, TransportError
+from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
+    AuthError,
+    ClockDriftError,
+    DuplicateClientIdError,
+    ExchangeError,
+    OmsErrorCode,
+    TransportError,
+)
 from candleviewer.exchange.base.models import (
     AccountRef,
     ExchangeCapabilities,
@@ -43,8 +51,10 @@ from candleviewer.oms.order_link_resolution import (
     Adopted,
     HistoryRetentionPolicy,
     PlacementPort,
+    PlaceOutcome,
     Sent,
     Unresolved,
+    adopt_or_resend,
     place_or_adopt,
 )
 
@@ -55,6 +65,7 @@ SYMBOL = "BTCUSDT"
 STOP_LOSS = Decimal("58000")
 DAY_US = 86_400_000_000
 T0: TsUs = 1_790_000_000_000_000
+RETENTION = HistoryRetentionPolicy(retention_days=7)
 
 
 CANDIDATE = OrderLinkIdParts.generate(
@@ -113,7 +124,8 @@ class _FakeExchange:
 
     An id it has seen is rejected with `DuplicateClientIdError`, even once the
     order has left `open` and `history`. `timeout_after_send` makes a create
-    land and then fail with `TransportError`, the ambiguous timeout.
+    land and then fail with `TransportError`, and `ambiguous_after_send` with the
+    REST client's `AmbiguousResultError` (#3866); `failing_lookup` names a lookup that fails.
     """
 
     def __init__(self) -> None:
@@ -124,6 +136,9 @@ class _FakeExchange:
         self.history: list[Order] = []
         self.reply: OrderAck | None = None
         self.timeout_after_send = False
+        self.ambiguous_after_send = False
+        self.failing_lookup: str | None = None
+        self.lookup_error: ExchangeError = TransportError("lookup timed out")
 
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         self.calls.append(("place_order", req.account.account_id, req.order_link_id))
@@ -136,12 +151,15 @@ class _FakeExchange:
         self.open.append(_order(req.order_link_id))
         if self.timeout_after_send:
             raise TransportError("timed out after send")
+        if self.ambiguous_after_send:
+            raise AmbiguousResultError("timed out after send", order_link_id=req.order_link_id)
         return _ack(ok=True)
 
     async def open_orders(
         self, account: AccountRef, symbol: Symbol | None = None
     ) -> Sequence[Order]:
         self.calls.append(("open_orders", account.account_id, symbol))
+        self._fail("open_orders")
         return list(self.open)
 
     async def order_history(
@@ -153,7 +171,12 @@ class _FakeExchange:
         end: TsUs | None = None,
     ) -> Sequence[Order]:
         self.calls.append(("order_history", account.account_id, order_link_id))
+        self._fail("order_history")
         return list(self.history)
+
+    def _fail(self, lookup: str) -> None:
+        if self.failing_lookup == lookup:
+            raise self.lookup_error
 
 
 def _placement_port(port: TradingPort) -> PlacementPort:
@@ -287,6 +310,8 @@ async def test_an_id_the_generator_cannot_produce_is_refused_before_any_call(
 
     with pytest.raises(InvalidOrderLinkId):
         await place_or_adopt(exchange, refused)
+    with pytest.raises(InvalidOrderLinkId):
+        await adopt_or_resend(exchange, refused, retention=RETENTION, created_at=T0, now=T0)
 
     assert exchange.calls == []
 
@@ -308,6 +333,94 @@ async def test_retry_reuses_the_id() -> None:
     assert len(exchange.open) == 1  # the exchange deduplicated: one order, not two
     assert outcome == Adopted(order=exchange.open[0], source="realtime")
     assert lookup.lookups == [LINK]  # the retry never allocated again
+
+
+async def _resolve(exchange: _FakeExchange, *, age_us: int = 0) -> PlaceOutcome:
+    return await adopt_or_resend(
+        exchange, _request(), retention=RETENTION, created_at=T0, now=T0 + age_us
+    )
+
+
+async def test_an_ambiguous_create_found_open_is_adopted_and_never_resent() -> None:
+    """#3866 scenario: The OMS resolves the ambiguity by lookup (SR-E29-15)."""
+    exchange = _FakeExchange()
+    exchange.ambiguous_after_send = True
+    with pytest.raises(AmbiguousResultError):  # it landed; its answer was lost
+        await place_or_adopt(exchange, _request())
+
+    outcome = await _resolve(exchange)
+
+    assert outcome == Adopted(order=exchange.open[0], source="realtime")
+    assert exchange.calls == [("place_order", ACCOUNT, LINK), ("open_orders", ACCOUNT, SYMBOL)]
+
+
+async def test_an_ambiguous_create_found_only_in_history_is_adopted() -> None:
+    exchange = _FakeExchange()
+    filled = _order(state="filled")
+    exchange.history += [_order(OTHER_LINK, state="filled"), filled]
+
+    outcome = await _resolve(exchange)
+
+    assert outcome == Adopted(order=filled, source="history")
+    assert [call[0] for call in exchange.calls] == ["open_orders", "order_history"]
+
+
+async def test_an_ambiguous_create_found_nowhere_is_resent_once_under_its_id() -> None:
+    exchange = _FakeExchange()
+
+    outcome = await _resolve(exchange)
+
+    assert outcome == Sent(_ack(ok=True))
+    assert [call[0] for call in exchange.calls] == ["open_orders", "order_history", "place_order"]
+    assert exchange.sent == [_request()]  # the same order_link_id and native stop (C-2.6)
+
+
+@pytest.mark.parametrize("failing", ["open_orders", "order_history"])
+async def test_a_failed_lookup_is_unresolved_and_resends_nothing(failing: str) -> None:
+    exchange = _FakeExchange()
+    exchange.failing_lookup = failing
+
+    outcome = await _resolve(exchange)
+
+    assert outcome == Unresolved(order_link_id=LINK, reason="lookup_failed")
+    assert exchange.sent == []
+
+
+@pytest.mark.parametrize("error", [AuthError("refused"), ClockDriftError("drift")], ids=str)
+async def test_a_key_or_clock_refusal_of_a_lookup_propagates_and_resends_nothing(
+    error: ExchangeError,
+) -> None:
+    """They gate trading (`exchange/base/errors.py`): the caller must see them, not `unknown`."""
+    exchange = _FakeExchange()
+    exchange.failing_lookup, exchange.lookup_error = "order_history", error
+
+    with pytest.raises(type(error)):
+        await _resolve(exchange)
+
+    assert exchange.sent == []
+
+
+async def test_an_id_older_than_history_is_unresolved_and_not_resent() -> None:
+    exchange = _FakeExchange()
+
+    outcome = await _resolve(exchange, age_us=6 * DAY_US + 1)  # rule 6: a miss proves nothing
+
+    assert outcome == Unresolved(order_link_id=LINK, reason="history_expired")
+    assert exchange.sent == []
+
+
+@pytest.mark.parametrize("answer", ["duplicate", "duplicate-in-ack", "ambiguous"])
+async def test_an_unconfirmed_resend_is_unresolved_and_never_repeated(answer: str) -> None:
+    exchange = _FakeExchange()
+    exchange.seen.update([LINK] if answer == "duplicate" else [])
+    if answer == "duplicate-in-ack":
+        exchange.reply = _ack(ok=False, error_code=OmsErrorCode.DUPLICATE_CLIENT_ID)
+    exchange.ambiguous_after_send = answer == "ambiguous"
+
+    outcome = await _resolve(exchange)
+
+    assert outcome == Unresolved(order_link_id=LINK, reason="resend_unconfirmed")
+    assert [call[0] for call in exchange.calls] == ["open_orders", "order_history", "place_order"]
 
 
 @pytest.mark.parametrize(("age_us", "expired"), [(6 * DAY_US, False), (6 * DAY_US + 1, True)])
