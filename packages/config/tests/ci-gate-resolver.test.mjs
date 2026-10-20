@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateLane, resolveGate } from "../../../scripts/ci_gate_resolver.mjs";
+import { evaluateLane, MERGE_GROUP_ONLY, resolveGate } from "../../../scripts/ci_gate_resolver.mjs";
 
 describe("evaluateLane", () => {
   /** @type {Array<["success"|"failure"|"cancelled"|"skipped", boolean, boolean, string|null]>} */
@@ -98,5 +98,67 @@ describe("resolveGate", () => {
       engine: { applicable: false, result: "skipped" },
     });
     expect(conclusion).toBe("success");
+  });
+});
+
+// #3881: the compose integration lane runs on the merge group and on merge trains only.
+describe("merge-group-only lanes", () => {
+  const skipped = { applicable: true, result: "skipped" };
+
+  it("is the integration lane and no other", () => {
+    expect([...MERGE_GROUP_ONLY]).toEqual(["integration"]);
+  });
+
+  it("reads a skipped integration lane on a pull_request as deferred, not as CI-GATE-002", () => {
+    expect(evaluateLane("integration", skipped, "pull_request")).toEqual({
+      ok: true,
+      code: null,
+      reason: null,
+      deferred: "runs on the merge group",
+    });
+    const { conclusion, failures, deferred } = resolveGate(
+      { integration: skipped },
+      "pull_request",
+    );
+    expect(conclusion).toBe("success");
+    expect(failures).toEqual([]);
+    expect(deferred).toEqual([{ lane: "integration", reason: "runs on the merge group" }]);
+  });
+
+  for (const event of ["merge_group", "workflow_dispatch", "push", ""]) {
+    it(`still requires it on ${event || "an unknown event"} (CI-GATE-002)`, () => {
+      const { conclusion, failures, deferred } = resolveGate({ integration: skipped }, event);
+      expect(conclusion).toBe("failure");
+      expect(failures.map((f) => f.code)).toEqual(["CI-GATE-002"]);
+      expect(deferred).toEqual([]);
+    });
+  }
+
+  it("fails closed when the event is not passed at all", () => {
+    expect(resolveGate({ integration: skipped }).conclusion).toBe("failure");
+  });
+
+  for (const result of ["failure", "cancelled"]) {
+    it(`still fails a pull_request run of it that ended ${result} (CI-GATE-001)`, () => {
+      const lane = { applicable: true, result };
+      const { failures } = resolveGate({ integration: lane }, "pull_request");
+      expect(failures.map((f) => f.code)).toEqual(["CI-GATE-001"]);
+    });
+  }
+
+  it("passes a pull_request run of it that succeeded, with nothing deferred", () => {
+    const lane = { applicable: true, result: "success" };
+    const { conclusion, deferred } = resolveGate({ integration: lane }, "pull_request");
+    expect(conclusion).toBe("success");
+    expect(deferred).toEqual([]);
+  });
+
+  it("keeps every other lane required on a pull_request", () => {
+    const { failures, deferred } = resolveGate(
+      { py: skipped, migrations: skipped },
+      "pull_request",
+    );
+    expect(failures.map((f) => f.code)).toEqual(["CI-GATE-002", "CI-GATE-002"]);
+    expect(deferred).toEqual([]);
   });
 });

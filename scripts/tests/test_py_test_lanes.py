@@ -31,8 +31,10 @@ from tools.ci.py_test_lanes import (  # noqa: E402 - the repo root must be impor
     check,
     collects,
     data_files,
+    estimate,
     fail_under,
     load_manifest,
+    log_durations,
     main,
     partition_problems,
     pytest_args,
@@ -144,18 +146,64 @@ def test_fail_under_is_the_addopts_floor() -> None:
 # --- the checker fails on the cases it exists for ----------------------------------------------
 
 
-def test_check_flags_a_file_two_lanes_would_run(
+def test_check_flags_a_path_two_lanes_list(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     api = _fake_api(tmp_path, ["tests/unit/bars/test_a.py", "tests/unit/test_b.py"])
-    manifest_path = _manifest(tmp_path, {"a": ["tests/unit/bars"], "b": ["tests/unit"]})
+    manifest_path = _manifest(tmp_path, {"a": ["tests/unit/bars"], "b": ["tests/unit/bars"]})
     problems = check(load_manifest(manifest_path), api)
-    assert (
-        "tests/unit/bars and tests/unit overlap: list a path once, never inside another" in problems
-    )
+    assert "tests/unit/bars is listed in a and b: list a path once" in problems
     assert "tests/unit/bars/test_a.py would run in 2 lanes (a, b)" in problems
     assert main(["--manifest", str(manifest_path), "--api-root", str(api), "check"]) == 1
     assert "would run in 2 lanes (a, b)" in capsys.readouterr().err
+
+
+def test_check_flags_a_path_inside_another_path_of_its_own_lane(tmp_path: Path) -> None:
+    api = _fake_api(tmp_path, ["tests/unit/bars/test_a.py", "tests/unit/test_b.py"])
+    manifest = load_manifest(_manifest(tmp_path, {"a": ["tests/unit", "tests/unit/bars"]}))
+    assert check(manifest, api) == [
+        "tests/unit and tests/unit/bars overlap inside lane a: list the outer path only"
+    ]
+
+
+def test_a_path_one_lane_lists_inside_another_lanes_path_is_carved_out_of_it(
+    tmp_path: Path,
+) -> None:
+    """#3881: a heavy directory is shared between shards; the outer lane keeps what nobody lists."""
+    files = ["tests/unit/bars/deep/test_a.py", "tests/unit/bars/test_b.py", "tests/unit/test_c.py"]
+    api = _fake_api(tmp_path, [*files, "tests/unit/newdir/test_d.py", "tests/other/test_e.py"])
+    lanes = {"a": ["tests/unit/bars/deep"], "b": ["tests/unit/bars"], "c": ["tests/unit"]}
+    manifest = load_manifest(_manifest(tmp_path, lanes))
+    assert check(manifest, api) == []
+    assert pytest_args(manifest, "a") == ["tests/unit/bars/deep"]
+    assert pytest_args(manifest, "b") == ["tests/unit/bars", "--ignore=tests/unit/bars/deep"]
+    assert pytest_args(manifest, "c") == [
+        "tests/unit",
+        "--ignore=tests/unit/bars/deep",
+        "--ignore=tests/unit/bars",
+    ]
+    lane_args = {lane: pytest_args(manifest, lane) for lane in manifest.names}
+    where = {
+        test_file: [lane for lane, args in lane_args.items() if collects(args, test_file)]
+        for test_file in suite_files(api)
+    }
+    assert where == {
+        "tests/other/test_e.py": ["rest"],
+        "tests/unit/bars/deep/test_a.py": ["a"],
+        "tests/unit/bars/test_b.py": ["b"],
+        "tests/unit/newdir/test_d.py": ["c"],  # a directory nobody lists runs in the outer lane
+        "tests/unit/test_c.py": ["c"],
+    }
+
+
+def test_numbered_shards_of_a_lane_count_from_one_without_gaps() -> None:
+    shards: dict[str, list[int]] = {}
+    for name in load_manifest().names:
+        if match := re.fullmatch(r"(.+)-(\d+)", name):
+            shards.setdefault(match[1], []).append(int(match[2]))
+    assert shards, "the heavy matrices are sharded (#3881)"
+    for family, numbers in shards.items():
+        assert sorted(numbers) == list(range(1, len(numbers) + 1)), family
 
 
 def test_check_flags_a_listed_path_that_is_gone(tmp_path: Path) -> None:
@@ -340,3 +388,42 @@ def test_combine_step_shows_the_annotation_when_a_lane_left_no_data(tmp_path: Pa
     combined = step()
     files = " ".join(f"lane-coverage/{DATA_FILE_TEMPLATE.format(lane=n)}" for n in [first, *others])
     assert (combined.returncode, combined.stdout) == (0, f"run coverage combine {files}\n")
+
+
+# --- the run times a rebalance starts from (#3881) ---------------------------------------------
+
+JOB_LOG = "\n".join(
+    [
+        "2026-10-20T04:25:01.1082448Z ##[endgroup]",
+        "2026-10-20T04:27:38.0000000Z collected 6 items",
+        "2026-10-20T04:27:38.0000001Z ",
+        "2026-10-20T04:27:40.0000000Z tests/unit/bars/test_a.py ..                 [ 33%]",
+        "2026-10-20T04:27:45.5000000Z tests/unit/ws/test_b.py .F                   [ 66%]",
+        "2026-10-20T04:27:49.5000000Z \x1b[32m.\x1b[0m.                              [ 83%]",
+        "2026-10-20T04:27:49.7500000Z tests/unit/bars/test_c.py s",
+        "2026-10-20T04:27:50.2500000Z ============ slowest 10 durations ============",
+    ]
+)
+
+
+def test_log_durations_times_each_file_from_the_progress_lines_of_a_job_log() -> None:
+    assert log_durations(JOB_LOG) == {
+        "tests/unit/bars/test_a.py": 2.0,  # since `collected N items`
+        "tests/unit/ws/test_b.py": 9.5,  # its line, then the line its dots wrapped onto
+        "tests/unit/bars/test_c.py": 0.25,
+    }
+    assert log_durations("no timestamps here\ntests/unit/test_a.py .") == {}
+
+
+def test_estimate_sums_each_lanes_files_and_the_cli_prints_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest_path = _manifest(tmp_path, {"a": ["tests/unit/bars"]})
+    seconds = log_durations(JOB_LOG)
+    assert estimate(load_manifest(manifest_path), seconds) == {"a": (2, 2.25), "rest": (1, 9.5)}
+    log = tmp_path / "lane.log"
+    log.write_text(JOB_LOG, encoding="utf-8")
+    assert main(["--manifest", str(manifest_path), "estimate", str(log)]) == 0
+    rows = [line.split() for line in capsys.readouterr().out.splitlines()]
+    assert rows == [["a", "2", "files", "2", "s"], ["rest", "1", "files", "10", "s"]]
+    assert main(["--manifest", str(manifest_path), "estimate", str(tmp_path / "absent.log")]) == 2

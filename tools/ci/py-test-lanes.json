@@ -1,14 +1,30 @@
 {
-  "_comment": "#2424 (ADR-0013 p90 <= 15 min): the services/api pytest lanes that .github/workflows/_job-py.yml runs in parallel. Paths are relative to services/api. Every lane runs the same marker expression, flags and --cov as the single job did, restricted to its paths; the rest lane runs tests/ minus every path listed below, so a new test directory always runs somewhere. Rebalance by moving paths between lanes, and keep the workflow's matrix in step: scripts/tests/test_py_test_lanes.py fails when a test file would run in no lane or in two, when a listed path no longer exists, or when the matrix and this file name different lanes.",
+  "_comment": "#2424, #3881 (ADR-0013: PR feedback p90 <= 15 min, and no PR job over 8 min): the services/api pytest lanes that .github/workflows/_job-py.yml runs in parallel. Paths are relative to services/api. Every lane runs the same marker expression, flags and --cov as the single job did, restricted to its paths. A heavy lane is sharded into lanes of their own (unit-heavy-1..3), and a directory can be shared: a path one lane lists inside another lane's path is carved out of it, so the outer lane keeps what no lane lists, a new subdirectory too. The rest lane runs tests/ minus every path listed below, so a new test directory always runs somewhere. Rebalance by moving paths between lanes (python tools/ci/py_test_lanes.py estimate LOG... sums each lane's run time from CI job logs) and keep the workflow's matrix in step: scripts/tests/test_py_test_lanes.py fails when a test file would run in no lane or in two, when a listed path no longer exists, or when the matrix and this file name different lanes.",
   "rest_lane": "rest",
   "lanes": {
-    "unit-heavy": ["tests/unit/bars", "tests/unit/orderflow", "tests/unit/ws", "tests/unit/api"],
-    "db-chaos": ["tests/integration", "tests/chaos"],
-    "contract-security": [
-      "tests/contract",
-      "tests/xstate_contract",
-      "tests/security",
-      "tests/rules"
+    "unit-heavy-1": ["tests/unit/api"],
+    "unit-heavy-2": ["tests/unit/bars"],
+    "unit-heavy-3": ["tests/unit/ws", "tests/unit/orderflow"],
+    "db-chaos-1": [
+      "tests/integration/storage",
+      "tests/integration/accounts",
+      "tests/integration/migrations"
+    ],
+    "db-chaos-2": ["tests/integration", "tests/chaos"],
+    "contract-security-1": ["tests/contract"],
+    "contract-security-2": ["tests/security", "tests/rules"],
+    "contract-security-3": [
+      "tests/contract/ws",
+      "tests/contract/rbac",
+      "tests/contract/drawings",
+      "tests/xstate_contract"
+    ],
+    "rest-heavy": [
+      "tests/qa",
+      "tests/unit/architecture",
+      "tests/unit/migrations",
+      "tests/unit/observability",
+      "tests/unit/book"
     ]
   }
 }

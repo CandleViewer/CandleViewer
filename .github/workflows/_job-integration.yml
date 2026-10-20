@@ -25,6 +25,12 @@ name: _job-integration
 # contract fixtures ... for features that do not exist yet"). The lane
 # exists and is wired here; it activates automatically as `unit/exchange`
 # and `oms` gain real logic under the existing `-m integration` marker.
+#
+# #3881: the `integration` job runs on the merge queue's merge group and on a merge train, never
+# on a pull request's own run: it is the slowest job of the gate (about 14 minutes), and the queue
+# runs it on every merge into `main` before `ci-required` lets the group through. The resolver
+# reads its `skipped` on a pull request as "runs on the merge group" (scripts/ci_gate_resolver.mjs);
+# change its `if:` and that rule together. `audit-query-plan` is unchanged: opt-in on a PR.
 
 on:
   workflow_call: {}
@@ -39,6 +45,8 @@ env:
 jobs:
   integration:
     name: integration
+    # Not on a pull request (#3881, see the header); the merge group and a merge train run it.
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
     steps:
