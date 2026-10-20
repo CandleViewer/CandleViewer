@@ -700,14 +700,15 @@ implemented but unproven.
 | SR-064 audit of every change, refusal and leg                   | E28-T02, E28-T04, E28-T05, E34-S02 | `test_every_literal_audit_action_emitted_is_registered` (exists in `services/api/tests/unit/audit/test_router_actions_registered.py`); owed: `test_fanout_writes_parent_and_child_per_leg`                         | PF-R01, PF-R02 |
 | SR-072 per-leg status                                           | E28-T05 (read projection), E34-S03 | owed: `test_partial_failure_records_every_leg_status`                                                                                                                                                              | PF-D05, PF-D07 |
 
-### 10.2 Issue requested by this model
+### 10.2 Contract change requested by this model
 
-- **P-1** (contract-first, `22-api-openapi.yaml`): one small PR before E28-T02, E28-T05 and E34-S01 mount their
-  routes (C-6.1), carrying SR-E28-03, SR-E28-05, SR-E28-17, SR-E28-22, SR-E28-31 and SR-E28-33: definition paths;
+- **P-1** (contract-first, `22-api-openapi.yaml`): the first step of E28-T02 (#906), not a new issue (orchestrator
+  ruling, 2026-10-20). It lands as that ticket's contract PR, one small PR, before E28-T02, E28-T05 and E34-S01 mount
+  any route (C-6.1), and carries SR-E28-03, SR-E28-05, SR-E28-17, SR-E28-22, SR-E28-31 and SR-E28-33: definition paths;
   "later narrows", with another account's `overrides.profile_id` answering 404; no public `rule_id`; at most 20 legs,
   unique accounts; one preview permission; `amendTradeGroup` refusing `stop_loss: null`, as `amendOrder` refuses a
-  cleared stop, plus a new never-widen rule for a moved stop; `risk_limit_breached` past a cap (D6). Not yet filed at
-  approval (2026-10-20); the approving PR lists it for filing.
+  cleared stop, plus a new never-widen rule for a moved stop; `risk_limit_breached` past a cap (D6). The ruling is
+  recorded on #906 and nothing is filed for P-1.
 
 ### 10.3 Requests posted at approval
 
@@ -720,7 +721,9 @@ SR-E28-01, SR-E28-07, SR-E28-08, SR-E28-10, SR-E28-16 and SR-E28-31 before E28-T
 hand over §7 (AC-01 to AC-33, with AC-11 to AC-33 beside E28-X03's ten) for their acknowledgement. The comments on #1027
 and #1183 carry the §11.3 notes, and #1183 also takes SR-E28-18, since E29-T02 (#846) is closed. Not posted: E29-T04
 (#913), whose E29 request already carries SR-E28-19 and SR-E28-27; the design and QA tickets of the §10 map (E28-D02,
-D03, D05, D06, D07, Q02, Q04 and Q05), whose obligations stay in §10; and P-1, which is not yet filed.
+D03, D05, D06, D07, Q02, Q04 and Q05), whose obligations stay in §10; and P-1, which needs no issue of its own: the
+orchestrator ruled on 2026-10-20 that it is the first step of E28-T02 (#906), as §10.2 says. The ruling of the same day
+on F-25 (§11.1) is recorded on #905.
 
 ## 11. Findings, residual risks, review and sign-off
 
@@ -759,7 +762,7 @@ require the control (frozen golden vectors, programme F1's fail-in-full rule); P
 | F-22 | The reduce-only exemption keys on labels                                                                                                                                                                                                                                                                                                                 | PF-E03                         | High     | no                | Backend lead      | E28-T04                                  | SR-E28-30                           |
 | F-23 | Wildcard semantics are unspecified                                                                                                                                                                                                                                                                                                                       | PF-T07                         | High     | no                | Backend lead      | E28-T04                                  | SR-E28-06                           |
 | F-24 | Clients may set `rule_id`                                                                                                                                                                                                                                                                                                                                | PF-S01                         | Medium   | no                | Architect         | P-1                                      | SR-E28-05                           |
-| F-25 | One deliverable, two owners: the preview (E28-T05, E34-S01), the `trade_groups` projection (E28-T05, E34-T01), persistence (E28-T01, E34-T01), cap enforcement (E28-T04, E39-S01)                                                                                                                                                                        | PF-T11, PF-D01                 | Medium   | yes (persistence) | Architect         | Before E28-T01 merges                    | E28-T01 (#905), orchestrator        |
+| F-25 | One deliverable, two owners; ruled 2026-10-20, one owner per boundary: persistence of profiles and trade groups, E28-T01 (E34-T01 consumes); the `trade_groups` projection, E28-T05; the preview, E34-S01 (E28-T05 supplies profile inputs only); cap enforcement at order time, E39-S01 (E28-T04 owns cap configuration and validates stored values)    | PF-T11, PF-D01                 | Medium   | yes (persistence) | Architect         | Before E28-T01 merges                    | ruled 2026-10-20 — see #905         |
 | F-26 | The override ADR is planned as ADR-0016, the statechart runtime ADR; twelve open ticket titles claim that number, while ADR-0035 is the highest on `main`                                                                                                                                                                                                | —                              | Low      | no                | Architect         | E28-K01                                  | E28-K01, #2623                      |
 | F-27 | A narrowed profile can be outrun by a cached older version at submit                                                                                                                                                                                                                                                                                     | PF-T15                         | High     | no                | Backend lead      | E28-T04                                  | SR-E28-15                           |
 | F-28 | Counter desynchronisation paths without a test (scenarios 6 to 8)                                                                                                                                                                                                                                                                                        | PF-E06                         | High     | no                | Backend lead      | E39-T01, E28-T04                         | SR-E28-29, E28-Q03                  |
@@ -807,4 +810,5 @@ programme §8.2, `audit/actions.py` and the tickets (F-21); (8) ADR numbering (F
 | 2026-10-15 | author (hpe-worker-1)                            | Revision 3 at `4c9ed26c` (docs only, merged as `016d157e`) applies the delta reviewers' last items; `git range-diff` shows revisions 1 and 2 equal; no review is recorded at that head                                                                                            |
 | 2026-10-20 | QA (sonnet, independent; #910)                   | FAIL on main `a7583e99` (record of 03:47Z): model still Draft; no E28 entry in the risk register, 04 §5.11 or §16.1; schema findings and abuse cases not posted on their tickets; no sign-off. Closed by this amendment except the Owner items, the P-1 filing and the Fable pass |
 | 2026-10-20 | amendment author (agent)                         | Approved on that basis: RSK-082 to RSK-086 and an RSK-060 refinement in `32-risk-register.md`; RR-22 and RR-23 in 04 §16.1; F-13 and PF-E05 brought to the control #2855 shipped; requests posted (§10.3)                                                                         |
+| 2026-10-20 | orchestrator (main-orchestrator, delegated)      | Two rulings, architect-level under the Owner's delegation: P-1 is the first step of E28-T02 (#906), not a new issue, so no P-1 filing is owed (§10.2); F-25 has one owner per module boundary (§11.1). Posted on #906 and #905                                                    |
 | 2026-10-20 | security-reviewer (Fable, independent; this PR)  | Pending: the pass covers the model as merged (`4c9ed26c`) and this amendment; its record is on the PR                                                                                                                                                                             |
