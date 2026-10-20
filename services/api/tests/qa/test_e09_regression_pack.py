@@ -18,7 +18,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
-from typing import Final
+from typing import Any, Final
 
 import pytest
 
@@ -49,6 +49,12 @@ _SPAN = re.compile(r"`([^`\n]+)`")
 _CITATION = re.compile(r"^(tests/\S+?\.py)(?::\d+)?(?:::(\w+)(?:\[.*\])?)?$")
 _CONTINUATION = re.compile(r"^::(\w+)(?:\[.*\])?$")
 _NODE_ID = re.compile(r"^tests/\S+\.py::\S")
+# A collect-only run imports every test module, so it costs what the tree costs: at most ~80 s for
+# the 36k-item tree on an idle CI runner (the py-perf job, `--no-cov`), more than 120 s on another
+# runner under merge-group load (run 39406730343), 228 to 289 s on a developer laptop. The bound
+# only stops a hung child; it is not a speed assertion, so it is generous (a py lane's job limit is
+# 30 min by default).
+COLLECT_TIMEOUT_S: Final = 900
 
 
 def _cited_tests(markdown: str) -> list[tuple[str, str | None]]:
@@ -130,27 +136,35 @@ def _collect(expression: str | None, *targets: str) -> frozenset[str]:
 
     `None` keeps the repo's default `-m` expression from `addopts`; exit code 5 means nothing was
     selected. The argv stays a literal list (ruff S603); the variable part travels in
-    PYTEST_ADDOPTS, which also drops any addopts the outer session was started with.
+    PYTEST_ADDOPTS, which also drops any addopts the outer session was started with. A child that
+    outlives COLLECT_TIMEOUT_S fails naming that selection: the argv is the same for all of them,
+    so the bare TimeoutExpired does not say which collection hung.
     """
     options = [] if expression is None else ["-m", expression]
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "--no-cov",
-            "-p",
-            "no:cacheprovider",
-        ],
-        cwd=API_ROOT,
-        env={**os.environ, "PYTEST_ADDOPTS": shlex.join([*options, *targets])},
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    addopts = shlex.join([*options, *targets])
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "--collect-only",
+                "-q",
+                "--no-cov",
+                "-p",
+                "no:cacheprovider",
+            ],
+            cwd=API_ROOT,
+            env={**os.environ, "PYTEST_ADDOPTS": addopts},
+            capture_output=True,
+            text=True,
+            timeout=COLLECT_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"pytest --collect-only {addopts!r} did not finish within {COLLECT_TIMEOUT_S} s"
+        ) from exc
     output = result.stdout + result.stderr
     assert result.returncode in (0, 5), "\n".join(output.splitlines()[-40:])
     return frozenset(line for line in result.stdout.splitlines() if _NODE_ID.match(line))
@@ -165,6 +179,38 @@ def selected_by_marker() -> frozenset[str]:
 @pytest.fixture(scope="module")
 def selected_by_default_lane() -> frozenset[str]:
     return _collect(None, *PACK_PATHS)
+
+
+def test_collect_waits_out_a_child_slower_than_the_former_120_s_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Merge-group run 39406730343: the one whole-tree collection outran 120 s, and the module
+    fixture's cached error failed the four tests that share it. A child that needs 200 s (a laptop
+    needs 230 to 290 s) must be waited for."""
+    node = "tests/unit/auth/test_a.py::test_one"
+    needed_s = 200
+
+    def child(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if kwargs["timeout"] < needed_s:
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return subprocess.CompletedProcess(argv, 0, stdout=f"{node}\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", child)
+
+    assert _collect(MARKER) == frozenset({node})
+
+
+def test_collect_failure_names_the_selection_when_the_child_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def child(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", child)
+
+    expected = f"'-m {MARKER} tests/unit/auth/' did not finish within {COLLECT_TIMEOUT_S} s"
+    with pytest.raises(AssertionError, match=re.escape(expected)):
+        _collect(MARKER, "tests/unit/auth/")
 
 
 def test_marker_is_registered_so_strict_markers_accepts_it(pytestconfig: pytest.Config) -> None:
