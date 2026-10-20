@@ -5121,3 +5121,5 @@ tracker).
 - **ingestion**: the REST client never re-sends an order create once it has left the process: a lost or unreadable answer is reported as an ambiguous result, and the OMS gains a re-send step that looks the order's id up first (#3866) (#3902)
 - **backend-platform**: the API boots on the real Postgres, QuestDB and Parquet storage tiers; a tier that cannot answer stops the boot with an error that names the tier and carries no connection string, and `/readyz` reports each tier (#3874) (#3915)
 - **backend-platform**: a WebSocket close that fails when a user is disabled is now counted, logged and ticketed like a failed session close, and the failed-close counter is served to Prometheus (#3635) (#3928)
+- **backend-platform**: the support bundle's secret scan and the log redaction agree on a quote that the log buffer escapes and on a value next to a truncation marker; the WebSocket audit record of a refused rebuild names its socket (#415) (#3946)
+- **backend-platform**: the redaction filter and the bundle scan agree on where a label starts and on the whitespace between a label and its value (#415) (#3946)
