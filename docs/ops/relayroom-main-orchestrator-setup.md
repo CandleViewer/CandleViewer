@@ -36,7 +36,7 @@ The three identifiers above are distinct: **agent** (server-registered part), **
 | `docs/ops/relayroom-check-skill.template.md`           | yes (new; was in `.claude/skills/`)   | Template of the manual `/candleviewer-relayroom-check` skill (read-oriented; stops on identity mismatch); installed per machine into the git-ignored `.claude/skills/candleviewer-relayroom-check/`                                                                                                         |
 | `.claude/relayroom/identity.local.json`                | **ignored**                           | Secret-free private binding descriptor                                                                                                                                                                                                                                                                      |
 | `.claude/relayroom/runs/8236a4ad-….json`               | **ignored**                           | This run's nonsecret record                                                                                                                                                                                                                                                                                 |
-| `.mcp.json`                                            | **ignored** (local copy)              | Copied from the MCP template; the doctor reads this live file (worker clients write their private MCP URL into it)                                                                                                                                                                                          |
+| `.mcp.json`                                            | **ignored** (local copy)              | Copied from the MCP template; the doctor reads this live file and requires it to keep the `${…}` placeholders (worker clients use their own private binding, never this template)                                                                                                                           |
 | `.claude/skills/candleviewer-relayroom-check/SKILL.md` | **ignored** (installed per machine)   | Local copy of the check skill, installed by the client tooling or by hand from the template (see Activation steps)                                                                                                                                                                                          |
 | `.claude/settings.local.json`                          | **ignored** (pre-existing, untracked) | Holds the three credential keys under `env` — **entered**; doctor → READY                                                                                                                                                                                                                                   |
 
@@ -92,11 +92,14 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
 2. `cp docs/ops/relayroom-mcp.template.json .mcp.json` (once; the root file is git-ignored and
    machine-local), then `python scripts/relayroom-enter-credentials.py` (masked input; nothing
    echoed).
+   Transition (checkouts that pulled this change over a `.mcp.json` from the tracked era): the pull
+   deletes an unmodified root copy and the skill file — re-run this step and the skill `cp`. If the
+   root copy had been edited by hand, git's rename detection moves that edit onto
+   `docs/ops/relayroom-mcp.template.json` (a tracked, public file): run
+   `cp docs/ops/relayroom-mcp.template.json .mcp.json && git checkout -- docs/ops/relayroom-mcp.template.json`
+   before anything is committed or pushed, and drop any local commit that already carries the edit.
+   The orchestrator's root copy stays placeholder-only (the doctor fails on a literal URL).
 3. `python scripts/relayroom-main-doctor.py` → must print `READY` (exit 0).
-   Transition note (2026-10-20): a checkout that hand-filled `.mcp.json` while the file was still
-   tracked shows it as modified/conflicted after pulling this change — resolve with
-   `git rm --cached .mcp.json` and never `git add` it; an indexed path bypasses `.gitignore` and
-   would re-track the connect-code URL.
 4. In the Code session: `/mcp` → reconnect `candleviewer-relayroom`.
 5. Tell Atlas "RelayRoom credentials entered"; Atlas then runs §8: `whoami` → `roster` → `inbox` →
    progress event → `[SETUP-CHECK]` thread to `human` with a nonce → you reply `ACK <nonce>` in the
