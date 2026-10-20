@@ -12,16 +12,20 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.csrf import route_path
 from candleviewer.api.deny_by_default import DECLARED_WS_ROUTES
 from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.settings import Environment, Settings
+from candleviewer.ws.gateway import WS_SERVER_BASE
 
 USER = uuid.uuid4()
 JSON = ["cv.v1.json"]
@@ -74,7 +78,18 @@ def test_both_paths_are_one_gateway(client: TestClient) -> None:
     assert DECLARED_WS_ROUTES == {"/ws", "/api/v1/ws"}
 
 
-@pytest.mark.parametrize("path", ["/api/v2/ws", "/api/v1/ws/x", "/api/ws"])
+@pytest.mark.parametrize(
+    "path", ["/api/v2/ws", "/api/v1/ws/x", "/api/ws", "/ws/", "/api/v1/ws/", "/API/V1/WS"]
+)
 def test_any_other_websocket_path_is_refused(client: TestClient, path: str) -> None:
     with pytest.raises(WebSocketDisconnect), client.websocket_connect(path, subprotocols=JSON):
         pass  # the upgrade is refused before `accept`
+
+
+def test_the_ws_server_base_is_the_rest_contracts_base() -> None:
+    """One spelling of `/api/v1`: the WS alias, the CSRF guard's prefix and the contract's base.
+
+    M23b forbids `ws` importing `api`, so the two constants are pinned here instead of shared."""
+    spec: Any = load_openapi_spec()
+    assert {urlsplit(server["url"]).path for server in spec["servers"]} == {WS_SERVER_BASE}
+    assert route_path(WS_SERVER_BASE + "/auth/session") == "/auth/session"

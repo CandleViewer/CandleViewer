@@ -382,6 +382,7 @@ from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import (
+    WS_PATH,
     Authenticate,
     AuthRefused,
     GatewayHub,
@@ -1010,20 +1011,20 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
         try:
             verdict = await ctx.auth.classify(record)
         except Exception as exc:
-            refusals.unclassified(exc, channel="ws", method="GET", path="/ws", record=record)
+            refusals.unclassified(exc, channel="ws", method="GET", path=WS_PATH, record=record)
             raise
         if verdict is SessionClass.FULL:
             return
         if verdict is SessionClass.ENROLMENT_ONLY:
 
             async def _audit(ip: str | None) -> None:
-                await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=ip)
+                await refusals.refused(record, channel="ws", method="GET", path=WS_PATH, ip=ip)
 
             raise AuthRefused("mfa_enrollment_required", audit=_audit)
         if verdict is SessionClass.USER_INACTIVE:  # disabled or gone since the lookup (#2911)
             ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
             raise AuthRefused("user_disabled", ids=ids)  # as a late registration is (#3413)
-        refusals.expired(record, channel="ws", method="GET", path="/ws")
+        refusals.expired(record, channel="ws", method="GET", path=WS_PATH)
         raise PermissionError("not a live enrolment-only session")
 
     return _authenticate

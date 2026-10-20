@@ -29,8 +29,9 @@ def _closes() -> float:
     return 0.0
 
 
+@pytest.mark.parametrize("path", ["/ws", "/api/v1/ws"])  # the external URL too (#3907)
 def test_ac_csrf_11_cross_site_socket_flood_is_refused_counted_and_audited_within_budget(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
     flood = REFUSAL_AUDITS_PER_WINDOW + 5
     codes: list[int] = []
@@ -39,7 +40,7 @@ def test_ac_csrf_11_cross_site_socket_flood_is_refused_counted_and_audited_withi
         for _ in range(flood):
             with pytest.raises(WebSocketDisconnect) as exc:
                 with stack.client.websocket_connect(
-                    "/ws", subprotocols=["cv.v1.json"], headers=CROSS_SITE
+                    path, subprotocols=["cv.v1.json"], headers=CROSS_SITE
                 ):
                     pass
             codes.append(int(exc.value.code))
