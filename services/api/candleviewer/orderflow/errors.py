@@ -44,3 +44,53 @@ class IndicatorStateError(IndicatorError):
 
 class IndicatorBoundaryError(IndicatorError, ValueError):
     """The C3 Decimal boundary was given a quantum it cannot apply."""
+
+
+class InstanceRefusedError(IndicatorError, ValueError):
+    """A requested server instance is refused before anything is held (23 §6.1): an unknown
+    indicator, a `client_worker` one, a parameter outside its descriptor, the same instance twice,
+    or a series it cannot read. `position` is its 0-based place in the request. The message names
+    the position and, for a declared parameter, its name and bound, never a value or a key the
+    server does not know (IR-24)."""
+
+    def __init__(self, position: int, message: str) -> None:
+        super().__init__(f"Instance {position}: {message}")
+        self.position = position
+
+
+class InstanceCapError(IndicatorError):
+    """SR-E13-03: one more server instance would pass a cap. `cap` is `user`, `symbol` or
+    `process` and `limit` its value; nothing names another user's instances."""
+
+    def __init__(self, cap: str, limit: int, message: str | None = None) -> None:
+        super().__init__(message or f"At most {limit} server indicator instances per {cap}.")
+        self.cap, self.limit = cap, limit
+
+
+class InstanceChurnError(InstanceCapError):
+    """IR-31 (SR-E13-03): the instances a user holds and those the user released that are still
+    in their grace would pass `limit` (`INSTANCE_CHURN_CAP_PER_USER`). `cap` is `user`; retryable
+    once a grace ends, which the message says."""
+
+    def __init__(self, limit: int, grace_s: int) -> None:
+        message = (
+            f"Server indicator instances you released in the last {grace_s} s still count; "
+            "retry once they expire."
+        )
+        super().__init__("user", limit, message)
+
+
+class HistoryIncompleteError(IndicatorError):
+    """A full recompute's read of stored bars is incomplete: a page withheld rows for integrity
+    (SR-E12-11), a bar of the generation cannot be folded (not closed, or no index or delta), or
+    the bars skip an index. The instance is primed from the series store alone."""
+
+
+class RecomputeRefusedError(IndicatorError):
+    """SR-E13-04: a first computation needs a read of stored bars the full-recompute executor
+    cannot start now (`cap` `recompute`), or a window longer than its bound (`window`). Refused,
+    never queued."""
+
+    def __init__(self, cap: str, message: str) -> None:
+        super().__init__(message)
+        self.cap = cap

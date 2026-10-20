@@ -1,8 +1,8 @@
 """Per-topic coalescing queue (E17-T03, `23-ws-protocol.md` §8.1-§8.2).
 
 One `CoalescingQueue` per (connection, topic) holds what the topic produced since its last
-emission. A family merged by its §8.2 rule keeps a merge buffer keyed by level, bar, cell, column
-or entity, so a merge is O(changes) and memory is O(state), not O(updates). `trades` and
+emission. A family merged by its §8.2 rule keeps a merge buffer keyed by level, bar, cell, column,
+entity or point, so a merge is O(changes) and memory is O(state), not O(updates). `trades` and
 `liquidations` keep an append list (§8.2 "append, never merge"). Every other throttled family,
 and a merged family whose subscriber set `coalesce: false`, queues whole frames; a merged family
 folds them into its merge at the frame bound rather than overflow. `never_throttled` families
@@ -279,6 +279,50 @@ class _BarsMerge(_Merge):
         super().reset()
         self.bars = BarCoalescer(max_pending=self.limit)
         self.sizes = {}
+
+
+class _IndicatorsMerge(_Merge):
+    """§8.2 `indicators`: per point `(key, generation, index)`, last write wins, so an `amended`
+    point replaces the one before it; an instance's other fields are its latest update's. Points
+    leave in `(generation, index)` order within each instance, the instances in first-seen order
+    (§14.10). Bounded by the points held, `limit`."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(limit, ("instances",))
+        self.heads: dict[str, dict[str, Any]] = {}  # key -> the instance without its points
+        self.points: dict[str, dict[tuple[int, int], Payload]] = {}
+        self.sizes: dict[tuple[str, int, int], int] = {}
+
+    def merge(self, body: Payload) -> bool:
+        changed = False
+        for instance in body.get("instances") or ():
+            key = str(instance["key"])
+            head = {k: v for k, v in instance.items() if k != "points"}
+            old = self.heads.get(key)
+            self.bytes += _size(head) - (0 if old is None else _size(old))
+            self.heads[key] = head
+            held = self.points.setdefault(key, {})
+            for point in instance.get("points") or ():
+                at = (int(point["generation"]), int(point["index"]))
+                if at not in held and len(self.sizes) >= self.limit:
+                    raise _BufferFullError
+                size = _size(point)
+                self.bytes += size - self.sizes.get((key, *at), 0)
+                self.sizes[(key, *at)] = size
+                held[at] = dict(point)
+            changed = True
+        return changed
+
+    def result(self) -> dict[str, Any]:
+        instances = [
+            {**head, "points": [self.points[key][at] for at in sorted(self.points[key])]}
+            for key, head in self.heads.items()
+        ]
+        return {**self.root, "instances": instances}
+
+    def reset(self) -> None:
+        super().reset()
+        self.heads, self.points, self.sizes = {}, {}, {}
 
 
 class _KeyedMerge(_Merge):
@@ -659,6 +703,7 @@ def _json(value: Any) -> Any:
 _RULES: Final[Mapping[str, Callable[[int, int], _Merge]]] = {
     "book": lambda keys, _: _BookMerge(keys),
     "bars": lambda keys, _: _BarsMerge(keys),
+    "indicators": lambda keys, _: _IndicatorsMerge(keys),
     "footprint": lambda keys, _: _FootprintMerge(keys),
     "heatmap": lambda keys, _: _HeatmapMerge(keys),
     "metrics": lambda keys, _: _KeyedMerge(keys, "series", _metric_key),

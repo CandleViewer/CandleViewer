@@ -1151,7 +1151,7 @@ def test_the_families_that_disclose_are_those_whose_schema_declares_coalesced() 
 
 def test_a_count_above_1_is_disclosed_with_the_flag_off_too() -> None:
     """§8.6's exception (#3268): the emitter is shared by both paths, so a producer's count above
-    1 on one of the five families is disclosed whatever the flag; a count of 1 leaves the frame
+    1 on one of the six families is disclosed whatever the flag; a count of 1 leaves the frame
     as it was."""
     conn, _ = _paced()
     hub = SequencingHub()

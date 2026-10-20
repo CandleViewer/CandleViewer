@@ -18,7 +18,7 @@ COUNT_PHRASES = {
     "atr": "None until n bars exist",
     "adx": "adx is None until 2n bars exist",
     "vwap": "None until a bar with volume closes in the current session",
-    "cvd": "None only before the first bar",
+    "cvd": "None before the first bar",
     "volume": "None only before the first bar",
     "delta": "None only before the first bar",
     "zigzag": "at least 2*depth+1 bars",

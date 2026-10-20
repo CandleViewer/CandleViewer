@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 from pathlib import Path
 from typing import Any
 
@@ -11,15 +12,20 @@ import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 
-from candleviewer.app import build_app_context, create_app
+from candleviewer.app import _repair_hooks, build_app_context, create_app
 from candleviewer.bars.heal_driver import HealDriver
 from candleviewer.bars.models import BarSpec
+from candleviewer.bars.reader import BarReader
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars_wiring import BarsRuntime, wire_bars
 from candleviewer.bus.models import Topic
 from candleviewer.main import _lifespan
+from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
 from candleviewer.settings import Environment, Settings
+from candleviewer.ws.bars_publish import BarsPublisher
 from tests.unit.bars._trades import SYM, trade, us
+from tests.unit.test_bars_hydration_wire import _app as _hydration_app
+from tests.unit.test_bars_hydration_wire import _wiring
 
 M1 = BarSpec(kind="time", interval_ms=60_000)
 T0 = us("10:00:00")
@@ -87,31 +93,50 @@ def test_the_repair_hook_is_the_publishers_history_repair_set_once_and_only_with
 ) -> None:
     """#2787 P4b: 23 §7.4's `history_repair` has one caller, the store's repair hook (a task that
     diffs `latest()` across an await can miss a repair or send extra snaps). `create_app` sets it
-    once, on the store the gateway serves, to the publisher on the emit path; flag off, no store
-    exists to hook."""
+    once, on the store the gateway serves, to the publisher on the emit path and then the
+    indicator engine there (E13-T02, #426), the sinks found by name; flag off, no store exists
+    to hook."""
     hooks: list[tuple[SeriesStore, Any]] = []
     monkeypatch.setattr(SeriesStore, "on_repair", lambda store, hook: hooks.append((store, hook)))
+    calls: list[Any] = []  # E13-T02: the hook's two repairs, in order
+    for name, owner in (("ws", BarsPublisher), ("indicators", IndicatorEngine)):
+        monkeypatch.setattr(owner, "history_repair", functools.partialmethod(_record, calls, name))
     services = create_app(_settings(tmp_path, enabled=enabled)).state.ws_registry.services
     if not enabled:
         assert (hooks, services.series) == ([], None)
         return
-    _store, publisher, _writer = services.bars._router._sinks
-    assert hooks == [(services.series, publisher.history_repair)]
+    ((store, hook),) = hooks
+    assert store is services.series
+    sinks = {sink.name: sink for sink in services.bars._router._sinks}  # by name, not position
+    hook("BTCUSDT", M1, 3)
+    assert calls == [
+        ("ws", sinks["ws"], "BTCUSDT", M1, 3),
+        ("indicators", sinks["indicators"], "BTCUSDT", M1, 3),
+    ]
+
+
+def _record(sink: Any, calls: list[Any], name: str, *args: Any) -> None:
+    """A recording `history_repair` bound to `sink`: which owner's it is, the sink, the call."""
+    calls.append((name, sink, *args))
 
 
 async def test_the_lifespan_runs_the_heal_driver_task_and_stops_it_before_the_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#2787 P4b: the driver's one task runs while the app serves and is gone after it; the
-    runtime stops it first, so no read is in flight when the set, writer and sink stop."""
+    runtime stops it first, so no read is in flight when the set, writer and sink stop. Then the
+    indicator engine's recomputes (E13-T02), still before the set (20 §4.2)."""
     ctx = build_app_context(_settings(tmp_path, enabled=False))
     app = FastAPI()
     app.state.app_context = ctx
-    runtime = wire_bars(ctx, now_us=lambda: T0, series=SeriesStore())
+    store = SeriesStore()
+    engine = IndicatorEngine(store)
+    runtime = wire_bars(ctx, now_us=lambda: T0, series=store, indicators=engine)
     app.state.bars_runtime = runtime
     order: list[str] = []
-    assert runtime.heal is not None
+    assert runtime.heal is not None and runtime.indicators is engine
     _trace_stop(monkeypatch, runtime.heal, "heal", order)
+    _trace_stop(monkeypatch, engine, "indicators", order)
     _trace_stop(monkeypatch, runtime.builder_set, "set", order)
 
     def names() -> set[str]:
@@ -119,7 +144,48 @@ async def test_the_lifespan_runs_the_heal_driver_task_and_stops_it_before_the_se
 
     async with _lifespan(app):
         assert "bars-heal-driver" in names()
-    assert "bars-heal-driver" not in names() and order[:2] == ["stop:heal", "stop:set"]
+    assert "bars-heal-driver" not in names()
+    assert order[:3] == ["stop:heal", "stop:indicators", "stop:set"]
+
+
+def test_the_repair_hooks_all_run_and_the_first_failure_is_raised_after_them() -> None:
+    """The store's one repair hook calls the bars publisher's, then the engine's (E13-T02): a hook
+    that raises does not stop the next, and its error is raised once all have run (the store
+    counts it, `bars_series_repair_failed_total{reason="hook"}`)."""
+    calls: list[str] = []
+
+    def failing(name: str) -> Any:
+        def hook(symbol: str, spec: BarSpec, min_history: int) -> None:
+            calls.append(name)
+            raise LookupError(name)
+
+        return hook
+
+    def ok(symbol: str, spec: BarSpec, min_history: int) -> None:
+        calls.append("ok")
+
+    with pytest.raises(LookupError, match="first"):
+        _repair_hooks(failing("first"), ok, failing("third"))(SYM, M1, 1)
+    assert calls == ["first", "ok", "third"]
+    calls.clear()
+    _repair_hooks(ok, ok)(SYM, M1, 1)
+    assert calls == ["ok", "ok"]
+
+
+def test_the_engine_reads_stored_bars_through_the_store_s_reader_never_rest_s(
+    tmp_path: Path,
+) -> None:
+    """D-G2 (#2787 D2-G2, ruling A; 20 §4.2): the indicator engine's priming reads join the store's
+    first reads on `bars_hydrate`, so a slow or cut one never queues REST `/market/bars` or the
+    klines tier on the sink's connection, nor counts toward its degraded signal."""
+    app = _hydration_app(tmp_path)
+    store, hydrate, rest = _wiring(app)
+    engine = app.state.ws_registry.services.indicators
+    assert isinstance(engine, IndicatorEngine) and isinstance(engine._history, StoredHistory)
+    reader = engine._history.reader
+    assert reader is getattr(store._tail, "__self__", None) and reader is not rest
+    assert isinstance(reader, BarReader) and reader._conn is hydrate
+    assert rest._conn is not hydrate
 
 
 async def test_lifespan_register_publish_shutdown_flushes_blobs_and_rows(

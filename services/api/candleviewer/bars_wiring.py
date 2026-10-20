@@ -11,8 +11,11 @@ Only the composition root sees the bus, the storage tier and the bars module tog
 * Shutdown order: **set first, then writer** - the set's final closes/blobs are submitted to the
   writer, which is then drained.
 * Emit path (E12-T06, #399): the WS series store (a swap's re-snapshot reads the new generation),
-  the WS publisher, then the writer. Neither WS sink awaits, so the store's generation reset and the
-  publisher's baseline check are atomic: an `await` in either is a protocol change (§7.4).
+  the WS publisher, the indicator engine (E13-T02, #426: it re-primes from the store, which holds
+  the close already), then the writer. No sink before the writer awaits, so the store's generation
+  reset, the publisher's baseline check and the engine's update are atomic: an `await` in any of
+  them is a protocol change (§7.4). The runtime stops the engine's recompute tasks after the heal
+  driver and before the set.
 * `GuardedRowSink` fails closed with `StorageTierUnavailable` when no QuestDB ILP sink is
   composed (fake storage backend). With `storage_backend="real"` the composition root passes a
   `QuestDbRowSink` (#2037) as `inner_sink`. Shutdown: set -> writer -> sink (ILP drain,
@@ -29,7 +32,7 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
@@ -63,6 +66,14 @@ READ_WINDOW_US: Final = 5 * 60 * 1_000_000
 MAX_WINDOW_ROWS: Final = 20_000
 MIN_WINDOW_US: Final = 1_000_000
 _FAR_FUTURE_US: Final = 2**62
+
+
+class Stoppable(Protocol):
+    async def stop(self) -> None: ...
+
+
+class IndicatorSink(BarSink, Stoppable, Protocol):
+    """The indicator engine (`orderflow.indicators.engine.IndicatorEngine`) as wired here."""
 
 
 def _permanent(exc: Exception) -> bool:
@@ -155,9 +166,11 @@ class BarsRuntime:
         *,
         reader_stop: Callable[[], Awaitable[None]] | None = None,
         heal: HealDriver | None = None,
+        indicators: Stoppable | None = None,
     ) -> None:
         self.precedence = precedence if precedence is not None else PrecedenceHealth()
         self.heal = heal
+        self.indicators = indicators
         self.builder_set = builder_set
         self.writer = writer
         self._sink_stop = sink_stop
@@ -189,11 +202,13 @@ class BarsRuntime:
         return False, ""
 
     async def stop(self) -> None:
-        """The heal driver first (no read in flight), then set before writer, so the set's final
-        closes reach the writer's drain; then the sink and the store's reader connection, each
-        bounded by its own stop (module docstring)."""
+        """The heal driver first (no read in flight), then the indicator engine's recomputes, then
+        set before writer, so the set's final closes reach the writer's drain; then the sink and
+        the store's reader connection, each bounded by its own stop (module docstring)."""
         if self.heal is not None:
             await self.heal.stop()
+        if self.indicators is not None:
+            await self.indicators.stop()
         await self.builder_set.stop()
         remaining = await self.writer.stop()
         if remaining:
@@ -223,11 +238,12 @@ def wire_bars(
     tick_size: Callable[[str], Decimal | None] = lambda _s: None,
     series: SeriesStore | None = None,
     publisher: BarSink | None = None,
+    indicators: IndicatorSink | None = None,
 ) -> BarsRuntime:
-    """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`
-    and `publisher` (the WS sinks) are emitted to before the writer (module docstring);
-    `reader_stop` closes the series store's own reader connection after `sink_stop`; the runtime
-    owns a heal driver over `series`."""
+    """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`,
+    `publisher` (the WS sinks) and `indicators` (the engine) are emitted to before the writer, in
+    that order (module docstring); `reader_stop` closes the series store's own reader connection
+    after `sink_stop`; the runtime owns a heal driver over `series` and stops `indicators`."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",
@@ -238,7 +254,9 @@ def wire_bars(
     builder_set = BarBuilderSet(
         ctx.bus.bus,
         ctx.settings.environment.value,
-        EmitRouter([*(s for s in (series, publisher) if s is not None), WriterSink(writer)]),
+        EmitRouter(
+            [*(s for s in (series, publisher, indicators) if s is not None), WriterSink(writer)]
+        ),
         StateStore(root),
         tape=StorageTape(ctx, now_us, tick_size),
         now_us=now_us,
@@ -247,5 +265,6 @@ def wire_bars(
     ctx.bars.attach(builder_set)
     heal = HealDriver(series) if series is not None else None
     return BarsRuntime(
-        builder_set, writer, root, sink_stop, sink_degraded, reader_stop=reader_stop, heal=heal
-    )
+        builder_set, writer, root, sink_stop, sink_degraded, reader_stop=reader_stop, heal=heal,
+        indicators=indicators,
+    )  # fmt: skip

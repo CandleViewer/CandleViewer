@@ -28,10 +28,13 @@ from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.book.snapshot_source import BookSnapshotSource
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.orderflow.indicators.engine import IndicatorEngine
 from candleviewer.settings import Environment, Settings
 from candleviewer.ws.bars_publish import _CAUSES, BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import GatewayHub
+from candleviewer.ws.indicators_publish import IndicatorsPublisher
+from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
 from candleviewer.ws.metrics import CV_WS_NAMES
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
@@ -128,7 +131,8 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     enabled: bool,
 ) -> None:
     """#2709-3: `bars_enabled` implies a `BarBuilderSet` lease service, `None` when off. #399 D2:
-    store, publisher, then writer on the emit path; the store behind the snapshots and the hold."""
+    store, publisher, then writer on the emit path; the store behind the snapshots and the hold.
+    The sinks are looked up by name, so a later sink does not move this test (#426)."""
     app = create_app(_settings().model_copy(update={"bars_enabled": enabled}))
     svc = app.state.ws_registry.services
     source = svc.snapshots._sources.get("bars")
@@ -136,7 +140,8 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
         assert (svc.bars, svc.series, source) == (None, None, None)
         return
     assert isinstance(svc.bars, BarBuilderSet) and isinstance(svc.series, SeriesStore)
-    store, publisher, writer = svc.bars._router._sinks
+    sinks = {sink.name: sink for sink in svc.bars._router._sinks}
+    store, publisher, writer = sinks["series_store"], sinks["ws"], sinks["questdb"]
     assert store is svc.series and isinstance(writer, WriterSink)
     assert isinstance(publisher, BarsPublisher) and publisher._hub is svc.sequencing
     assert publisher._swap == "generation_swap"
@@ -144,6 +149,31 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     assert (source._seed, source._scales) == (publisher.note_generation, publisher._scales)
     assert source._stale == svc.bars.quarantined  # D3: a quarantined builder is `stale`
     assert isinstance(svc.snapshots._sources["book"], BookSnapshotSource)  # #2196's, kept
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_bars_feature_wires_the_indicator_engine_fourth_with_its_publisher_and_source(
+    enabled: bool,
+) -> None:
+    """E13-T02 (#426): with `bars_enabled` the engine is the fourth sink (store, publisher,
+    engine, writer: it re-primes from the store, which holds each close first), the gateway's
+    instance service and the source of `indicators.*` snapshots; its listener publishes on the
+    gateway's hub. Off, none of it exists and `indicators.*` stays `unknown_topic`."""
+    app = create_app(_settings().model_copy(update={"bars_enabled": enabled}))
+    svc = app.state.ws_registry.services
+    source = svc.snapshots._sources.get("indicators")
+    if not enabled:
+        assert (svc.indicators, source, svc.bars_off) == (None, None, True)
+        return
+    names = [sink.name for sink in svc.bars._router._sinks]
+    assert names == ["series_store", "ws", "indicators", "questdb"]
+    engine = svc.bars._router._sinks[2]
+    assert isinstance(engine, IndicatorEngine) and svc.indicators is engine
+    assert engine._store is svc.series and app.state.bars_runtime.indicators is engine
+    assert isinstance(engine._listener, IndicatorsPublisher)
+    assert engine._listener._hub is svc.sequencing
+    assert isinstance(source, IndicatorsSnapshotSource) and source._engine is engine
+    assert source._stale == svc.bars.quarantined
 
 
 def test_bar_emit_sink_errors_bound_and_help_cover_every_reason_the_wired_sinks_mint() -> None:

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import typing
+from collections.abc import Sized
 from pathlib import Path
 
 import structlog
@@ -288,28 +289,43 @@ def test_account_health_and_key_age_series_are_bounded_by_their_closed_sets() ->
     assert specs["cv_account_dms_journal_failures_total"] == ("counter", (), 1, "E27")
 
 
-def test_indicator_metrics_are_planned_bounded_and_never_per_user() -> None:
-    """E13-T02 (#426 decision D8): declared ahead of the engine and the WS delivery that observe
-    them; `indicator_subscriptions` is bucketed by instances held, never labelled by user (IR-21,
-    SR-125's `DISALLOWED_LABEL_NAMES`)."""
+def test_indicator_metrics_are_live_bounded_and_never_per_user() -> None:
+    """E13-T02 (#426 decision D8): live and exported by the engine; `indicator_subscriptions` is
+    bucketed by instances held, never labelled by user (IR-21, SR-125's `DISALLOWED_LABEL_NAMES`).
+    Each series is bound at import to exactly its catalogue bound, and serves the catalogue help."""
+    from candleviewer.orderflow.indicators import metrics as indicator_metrics
+
     specs = {
-        s.name: (s.kind, s.labels, s.max_series, s.status, s.owner_epic)
+        s.name: (s.kind, s.labels, s.max_series, s.status, s.owner_epic, s.exported)
         for s in CATALOGUE
         if s.name.startswith("indicator_")
     }
     assert specs == {
-        "indicator_compute_seconds": ("histogram", ("indicator", "where"), 10, "planned", "E13"),
-        "indicator_cache_hits_total": ("counter", (), 1, "planned", "E13"),
-        "indicator_cache_misses_total": ("counter", (), 1, "planned", "E13"),
-        "indicator_recompute_total": ("counter", ("reason",), 3, "planned", "E13"),
-        "indicator_subscriptions": ("gauge", ("bucket",), 4, "planned", "E13"),
-        "indicator_cap_rejected_total": ("counter", ("cap",), 5, "planned", "E13"),
+        "indicator_compute_seconds": ("histogram", ("indicator", "where"), 10, "live", "E13", True),
+        "indicator_cache_hits_total": ("counter", (), 1, "live", "E13", True),
+        "indicator_cache_misses_total": ("counter", (), 1, "live", "E13", True),
+        "indicator_recompute_total": ("counter", ("reason",), 3, "live", "E13", True),
+        "indicator_subscriptions": ("gauge", ("bucket",), 4, "live", "E13", True),
+        "indicator_cap_rejected_total": ("counter", ("cap",), 5, "live", "E13", True),
     }
+    assert set(specs) == indicator_metrics.EXPORTED_NAMES
     compute = next(s for s in CATALOGUE if s.name == "indicator_compute_seconds")
     assert compute.buckets is not None and 0.02 in compute.buckets  # budget #6's p95 edge
     assert "user" in DISALLOWED_LABEL_NAMES
-    # They go live with the engine (#426's second PR): each must already pass the live-name rule.
     assert all(_UNIT_SUFFIX.search(n) or n in _SUFFIX_EXCEPTIONS for n in specs), specs
+    bound: dict[str, Sized] = {
+        "indicator_compute_seconds": indicator_metrics.COMPUTE,
+        "indicator_recompute_total": indicator_metrics.RECOMPUTES,
+        "indicator_subscriptions": indicator_metrics.SUBSCRIPTIONS,
+        "indicator_cap_rejected_total": indicator_metrics.CAP_REJECTED,
+    }
+    for name, children in bound.items():
+        assert len(children) == specs[name][2], name
+    for name in specs:
+        metric = getattr(indicator_metrics, name)
+        assert [m.documentation for m in metric.collect()] == [
+            next(s.help for s in CATALOGUE if s.name == name)
+        ], name
 
 
 def test_labels_exercised_contain_no_personal_data() -> None:
@@ -380,6 +396,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.net.metrics import NET_EXPORTED_NAMES
     from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
+    from candleviewer.orderflow.indicators.metrics import EXPORTED_NAMES as INDICATOR_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
     from candleviewer.replay.metrics import EXPORTED_NAMES as REPLAY_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
@@ -401,6 +418,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= INCIDENT_NAMES
     others |= LIFECYCLE_NAMES | LANE_NAMES
     others |= REPLAY_NAMES
+    others |= INDICATOR_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -498,6 +516,26 @@ def test_exported_replay_metrics_served_with_env() -> None:
         replay_events_read_total.labels(stream="trades", tier="parquet").inc(0)
         text = generate_latest(m.registry).decode()
         assert 'replay_events_read_total{env="demo",stream="trades",tier="parquet"}' in text
+        for name in EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+    finally:
+        collector.close()
+
+
+def test_exported_indicator_metrics_served_with_env_and_their_bound_children() -> None:
+    """E13-T02: the indicator engine's series are `live`, served via `export_indicator_metrics`,
+    each labelled child bound at import (a scrape shows every closed value at 0)."""
+    from candleviewer.orderflow.indicators.metrics import EXPORTED_NAMES, export_indicator_metrics
+
+    assert EXPORTED_NAMES <= {s.name for s in live_specs() if s.exported}
+    m = Metrics("demo")
+    register_r0(m)
+    collector = export_indicator_metrics(m.registry, env="demo")
+    try:
+        text = generate_latest(m.registry).decode()
+        assert 'indicator_cap_rejected_total{cap="window",env="demo"}' in text
+        assert 'indicator_subscriptions{bucket="2-4",env="demo"}' in text
+        assert 'indicator_recompute_total{env="demo",reason="amended"}' in text
         for name in EXPORTED_NAMES:
             assert f"# HELP {name} " in text, name
     finally:

@@ -6,11 +6,13 @@ a. the keys `ctl` takes, and which re-snapshot (§5.4); b. one default throttle 
 c. no topic takes `params` (§6.1); d. an account-scoped private topic needs `exchange_account_ids`
 (§6.2); e. `encoding_unsupported` means "no binary form" and nothing else (§5.1); f. one option
 map per family (§6.1); g. the subscribe-side metrics (§6.2); h. a family the contract lists before
-anything serves it, `indicators` (E13-T02, #426), is refused `unknown_topic` (§6.1).
+anything serves it is refused `unknown_topic` (§6.1), and `indicators`, served since E13-T02 (#426),
+refuses a `sub` as §6.1 records.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from typing import Any, Final
 
@@ -47,8 +49,11 @@ def _refusal(result: dict[str, Any]) -> tuple[Any, ...]:
 # options carry it (`None`: all), as §5.4 records; the keys whose change re-snapshots.
 _TOPICS: Final = (
     "book.BTCUSDT.50 trades.BTCUSDT bars.BTCUSDT.time.1 footprint.BTCUSDT.time.5 heatmap.BTCUSDT "
-    "profile.BTCUSDT.volume metrics.BTCUSDT ticker.BTCUSDT liquidations.BTCUSDT"
+    "profile.BTCUSDT.volume metrics.BTCUSDT ticker.BTCUSDT liquidations.BTCUSDT "
+    "indicators.BTCUSDT.time.1"
 ).split()
+#: The options a sample topic needs to be admitted (`indicators.*` requires `instances`, §6.1).
+_OPTS: Final = {"indicators.BTCUSDT.time.1": {"instances": [{"indicator": "ema"}]}}
 _CTL: Final[dict[str, tuple[Any, set[str] | None]]] = {
     "throttle_ms": (500, None),
     "coalesce": (False, None),
@@ -58,7 +63,7 @@ _CTL: Final[dict[str, tuple[Any, set[str] | None]]] = {
     "depth": (200, {"heatmap"}),
     "time_bucket_ms": (1000, {"heatmap"}),
     "metrics": (["cvd"], {"metrics"}),
-    "instances": ([{"indicator": "ema"}], {"indicators"}),
+    "instances": ([{"indicator": "sma"}], {"indicators"}),
 }
 _RESNAPSHOT: Final = {"price_grouping", "depth", "time_bucket_ms", "metrics", "instances"}
 _OTHER_KEYS: Final = dict(bar_type="range", param="10", encoding="binary", from_seq=1, from_ts_ms=1)
@@ -69,7 +74,7 @@ def test_a_ctl_takes_a_key_only_where_the_topic_has_that_option(key: str) -> Non
     value, families = _CTL[key]
     for ch in _TOPICS:
         conn = _owner()
-        assert _sub(conn, ch)[0]["ok"], ch
+        assert _sub(conn, {"ch": ch, "opts": _OPTS.get(ch, {})})[0]["ok"], ch
         sub = conn.find(ch)
         assert sub is not None
         sub.snapshot_pending = False  # so a re-snapshot shows as a flip back to pending
@@ -235,39 +240,81 @@ _EMA: Final = [{"indicator": "ema"}]
 _INDICATORS: Final = {"ch": "indicators.BTCUSDT.time.1", "opts": {"instances": _EMA}}
 
 
-def test_h_indicators_is_the_one_family_the_contract_lists_before_anything_serves_it() -> None:
-    assert [f.family for f in FAMILIES.values() if not f.served] == ["indicators"]
+def test_h_every_family_in_the_registry_is_served() -> None:
+    """E13-T02 (#426) serves `indicators`, the one family the contract listed first (§6.1)."""
+    assert [f.family for f in FAMILIES.values() if not f.served] == []
 
 
 @pytest.mark.parametrize("replay", [None, RS], ids=["live", "replay"])
-def test_h_an_indicators_topic_is_refused_unknown_topic_and_holds_nothing(
-    replay: str | None,
+def test_h_an_unserved_family_is_refused_unknown_topic_and_holds_nothing(
+    monkeypatch: pytest.MonkeyPatch, replay: str | None
 ) -> None:
-    """§6.1 status: refused after the checks a `sub` decides from the entry, live or replay, and
-    nothing is held: no subscription, no upstream reference."""
+    """§6.1 (C-6.1 contract first), for the next family listed before it is served: refused after
+    the checks a `sub` decides from the entry, live or replay, and nothing is held."""
+    unserved = dataclasses.replace(FAMILIES["ticker"], served=False)
+    monkeypatch.setitem(FAMILIES, "ticker", unserved)
     conn = _owner()
-    (result,) = _sub(conn, _INDICATORS, replay_session_id=replay)
+    (result,) = _sub(conn, "ticker.BTCUSDT", replay_session_id=replay)
     assert _refusal(result) == (False, "unknown_topic", None)
     assert result["error"]["message"] == "This topic is not available on this server."
     assert conn.by_id == {} and len(conn.services.upstream) == 0
 
 
+@pytest.mark.parametrize("replay", [None, RS], ids=["live", "replay"])
+def test_h_indicators_is_served_live_only_and_echoes_every_param_and_key(
+    replay: str | None,
+) -> None:
+    """§6.1: a replay `sub` is `unknown_topic` (live only, until E26) and holds nothing; a live one
+    echoes each instance with every param written out and its `key`, and `history` 500. With no
+    engine wired (these services) its instances are checked and nothing is held."""
+    conn = _owner()
+    (result,) = _sub(conn, _INDICATORS, replay_session_id=replay)
+    if replay is not None:
+        assert _refusal(result) == (False, "unknown_topic", None)
+        assert conn.by_id == {} and len(conn.services.upstream) == 0
+        return
+    assert result["ok"] is True
+    (echo,) = result["effective"]["instances"]
+    assert (echo["indicator"], echo["params"], len(echo["key"])) == ("ema", {"n": 21}, 64)
+    assert result["effective"]["history"] == 500
+
+
+def test_h_indicators_is_unknown_topic_while_the_bars_feature_is_off() -> None:
+    owner = PrincipalSnapshot(OWNER_ID, frozenset({"owner"}), frozenset(Permission))
+    conn = ConnectionAuthz(owner, _services(bars_off=True))
+    (result,) = _sub(conn, _INDICATORS)
+    assert _refusal(result) == (False, "unknown_topic", None) and conn.by_id == {}
+
+
 @pytest.mark.parametrize(
     ("opts", "code", "field"),
     [
-        ({}, "unknown_topic", None),  # `instances` is checked where the topic is served
+        ({}, "invalid_options", "instances"),
         ({"instances": []}, "invalid_options", "instances"),
         ({"instances": [{**_EMA[0], "compute": "server"}]}, "invalid_options", "instances"),
         ({"instances": _EMA, "compute": "server"}, "invalid_options", "opts"),
         ({"instances": _EMA, "history": 1001}, "invalid_options", "history"),
         ({"instances": _EMA, "encoding": "binary"}, "encoding_unsupported", "encoding"),
+        ({"instances": [{"indicator": "nope"}]}, "invalid_options", "instances"),
+        ({"instances": [{"indicator": "macd"}]}, "invalid_options", "instances"),  # client_worker
+        ({"instances": [{**_EMA[0], "params": {"n": 5001}}]}, "invalid_options", "instances"),
+        ({"instances": [{**_EMA[0], "params": {"n": 2.5}}]}, "invalid_options", "instances"),
+        ({"instances": [{**_EMA[0], "params": {"evil_key": 1}}]}, "invalid_options", "instances"),
+        (
+            {"instances": [*_EMA, {**_EMA[0], "params": {"n": 21.0}}]},
+            "invalid_options",
+            "instances",
+        ),
     ],
 )
-def test_h_the_checks_decided_from_the_entry_come_before_the_refusal(
+def test_h_indicators_refuses_a_sub_as_6_1_records(
     opts: dict[str, Any], code: str, field: str | None
 ) -> None:
-    (result,) = _sub(_owner(), {"ch": _INDICATORS["ch"], "opts": opts})
+    """Never clamped, and the message never carries a key the server does not know (IR-24)."""
+    conn = _owner()
+    (result,) = _sub(conn, {"ch": _INDICATORS["ch"], "opts": opts})
     assert _refusal(result) == (False, code, field)
+    assert "evil_key" not in result["error"]["message"] and conn.by_id == {}
 
 
 def test_h_a_principal_without_marketdata_read_is_forbidden_first() -> None:

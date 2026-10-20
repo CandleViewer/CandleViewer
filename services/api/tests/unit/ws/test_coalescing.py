@@ -29,7 +29,7 @@ Body = dict[str, Any]
 State = dict[str, Any]
 _LISTS = frozenset(
     {"bids", "asks", "bars", "trades", "liquidations", "dropped", "coalesced", "coalesced_count"}
-    | {"series", "tickers", "balances", "health", "positions", "removed", "columns"}
+    | {"series", "tickers", "balances", "health", "positions", "removed", "columns", "instances"}
 )
 
 # -- reference clients: every payload, coalesced or not, is applied the same way (§8.2) --------
@@ -75,6 +75,19 @@ def _apply_footprint(state: State, body: Mapping[str, Any]) -> None:
                     cur[field] = cur.get(field, 0) + value
                 else:
                     cur[field] = value
+
+
+def _apply_indicators(state: State, body: Mapping[str, Any]) -> None:
+    """§8.2 `indicators`: per point `(key, generation, index)`, last write wins (an amended point
+    replaces the one held); an instance's other fields are its latest update's."""
+    _root(state, body)
+    for instance in body["instances"]:
+        entry = state.setdefault("instances", {}).setdefault(
+            instance["key"], {"fields": {}, "points": {}}
+        )
+        entry["fields"].update((k, v) for k, v in instance.items() if k != "points")
+        for point in instance["points"]:
+            entry["points"][point["generation"], point["index"]] = point
 
 
 def _keyed(field: str, key: Callable[[Body], Any], *, newer: bool = False) -> Callable[..., None]:
@@ -164,6 +177,31 @@ _cell = st.builds(
     st.sampled_from(["1", "2.75", "0.00000003"]),
     st.integers(0, 3),
 )
+_point = st.builds(
+    lambda g, i, v, amended: {
+        "generation": g, "index": i, "t_ms": i, "v": [v], **({"amended": True} if amended else {})
+    },
+    st.integers(0, 1),
+    st.integers(0, 4),
+    st.sampled_from([None, "1.5", "2", "-0.25"]),
+    st.booleans(),
+)  # fmt: skip
+_instance = st.builds(
+    lambda key, version, points: {
+        "key": key, "indicator": "ema", "params": {"n": 3}, "outputs": ["ema"],
+        "build_version": version, "points": points,
+    },
+    st.sampled_from(["a" * 64, "b" * 64, "c" * 64]),
+    st.integers(1, 2),
+    st.lists(_point, max_size=4),
+)  # fmt: skip
+_indicators = st.builds(
+    lambda instances, stray: {
+        "symbol": "BTCUSDT", "bar_type": "time", "param": "1", "instances": instances, **stray
+    },
+    st.lists(_instance, min_size=1, max_size=3),  # the publisher never sends an empty `d`
+    _STRAY,
+)  # fmt: skip
 #: Every bar opens at one `t_ms`, as non-time bars may: only `(generation, index)` tells them apart.
 _footprint = st.builds(
     lambda g, i, poc, cells: {
@@ -278,6 +316,7 @@ FAMILIES: list[tuple[str, Any, Callable[..., None]]] = [
     ("book", st.lists(_book, max_size=25), _apply_book),
     ("bars", st.lists(_bars, max_size=25), _apply_bars),
     ("footprint", st.lists(_footprint, max_size=25), _apply_footprint),
+    ("indicators", st.lists(_indicators, max_size=25), _apply_indicators),
     ("heatmap", _heatmaps, _keyed("columns", lambda c: c["t_ms"])),
     (
         "metrics",
@@ -1294,6 +1333,35 @@ def test_coalescer_whole_frame_take_never_raises(family: str, body: dict[str, An
     queue = CoalescingQueue(family, coalesce=False)
     queue.offer(body)
     queue.take()  # refused or emitted, never an exception
+
+
+def test_coalescer_indicators_keys_points_by_instance_generation_and_index() -> None:
+    """§8.2 `indicators` (E13-T02): two closes and an amended close of the first in one window
+    leave as one `d` per instance, its points in `(generation, index)` order, the amended one in
+    place of the point it replaces; the instances leave in first-seen order."""
+    a, b = "a" * 64, "b" * 64
+
+    def instance(key: str, *points: tuple[int, str, bool]) -> Body:
+        pts = [
+            {"generation": 0, "index": i, "t_ms": i, "v": [v], **({"amended": True} if am else {})}
+            for i, v, am in points
+        ]
+        head = {"indicator": "ema", "params": {"n": 3}, "outputs": ["ema"], "build_version": 1}
+        return {"key": key, **head, "points": pts}
+
+    head = {"symbol": "BTCUSDT", "bar_type": "time", "param": "1"}
+    queue = CoalescingQueue("indicators")
+    assert queue.offer({**head, "instances": [instance(a, (7, "1", False)), instance(b)]})
+    assert queue.offer({**head, "instances": [instance(a, (8, "2", False))]})
+    assert queue.offer({**head, "instances": [instance(a, (7, "1.5", True))]})
+    [frame] = queue.take()
+    assert frame.coalesced_count == 3
+    assert [i["key"] for i in frame.body["instances"]] == [a, b]
+    points = frame.body["instances"][0]["points"]
+    assert [(p["index"], p["v"], p.get("amended")) for p in points] == [
+        (7, ["1.5"], True),
+        (8, ["2"], None),
+    ]
 
 
 def test_coalescer_footprint_keys_bars_by_generation_and_index_never_by_open_time() -> None:

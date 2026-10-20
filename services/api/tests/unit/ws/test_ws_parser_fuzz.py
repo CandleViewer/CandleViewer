@@ -49,6 +49,7 @@ from candleviewer.ws.limits import (
     MAX_PREAUTH_FRAME_BYTES,
 )
 from tests.unit.ws._fuzz import Input, Watch, drive, encode, save_failure
+from tests.unit.ws._option_fill import required_fill
 
 CORPORA = Path(__file__).resolve().parents[5] / "tests/fuzz/ws-frames"
 #: `parse_topic`'s outcome ("ok" or its refusal code) -> topic names.
@@ -503,9 +504,13 @@ def test_topics_json_has_an_ok_seed_for_every_registry_family_shape_and_kind() -
 
 
 def _refused(family: str, opts: dict[str, Any]) -> str | None:
-    """The option `validate_options` refuses `opts` for; None when it accepts them."""
+    """The option `validate_options` refuses `opts` for; None when it accepts them. A required
+    option an object of `opts` leaves out takes its `required_fill` value: only `opts` is judged."""
+    fam = topics.FAMILIES[family]
+    if isinstance(opts, dict):
+        opts = required_fill(fam) | opts
     try:
-        topics.validate_options(topics.FAMILIES[family], opts)
+        topics.validate_options(fam, opts)
     except topics.TopicError as exc:
         return exc.field if exc.code == "invalid_options" else exc.code
     return None
@@ -629,6 +634,15 @@ def test_the_options_bound_check_knows_every_option_kind_the_registry_declares()
             except KeyError:
                 lacking.append((name, key, opt.kind))
     assert lacking == []
+
+
+def test_an_option_the_registry_newly_requires_fails_the_fill_naming_it() -> None:
+    """`_refused` fills in each option a family requires (`required_fill`), for every family, since
+    `_PAST` names each. A registry change that makes one required with no value to fill fails
+    there naming the family and the option, in its own PR, never with a bare KeyError."""
+    metrics = replace(topics.FAMILIES["metrics"], required=frozenset({"bar_type"}))
+    with pytest.raises(AssertionError, match=r"^`metrics` now requires \['bar_type'\]: "):
+        required_fill(metrics)
 
 
 def test_the_options_oracle_accepts_the_instances_option_the_registry_accepts() -> None:

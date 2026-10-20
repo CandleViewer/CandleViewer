@@ -69,8 +69,10 @@ class VwapKernel(Kernel):
     sources = ("hlc3",)
     nullable_when = (
         "None until a bar with volume closes in the current session; each session, starting at "
-        "the bar spec's session anchor, begins without a value. band_sigma is also None while "
-        "sigma is 0 to within rounding (at most |vwap| * 2^-40)."
+        "the bar spec's session anchor, begins without a value. The server also serves None for "
+        "the rest of a session it could not fold from its start (an instance started or "
+        "restarted inside it). band_sigma is also None while sigma is 0 to within rounding (at "
+        "most |vwap| * 2^-40)."
     )
 
     def __init__(
@@ -81,10 +83,14 @@ class VwapKernel(Kernel):
         context: KernelContext | None = None,
     ) -> None:
         super().__init__(params, source=source, context=context)
-        choice_param(params, "anchor", ("session",))
-        self._anchor_us = self._context.session_anchor_utc_min * MINUTE_US
+        self._anchor_us = self.anchor_us(params, self._context)
         self._session: int | None = None
         self._w_sum = self._mean = self._s = 0.0
+
+    @classmethod
+    def anchor_us(cls, params: Mapping[str, ParamValue], context: KernelContext) -> int:
+        choice_param(params, "anchor", ("session",))
+        return context.session_anchor_utc_min * MINUTE_US
 
     @classmethod
     def warmup_bars(cls, params: Mapping[str, ParamValue]) -> int:
@@ -139,8 +145,9 @@ class CvdKernel(Kernel):
     param_names = ("anchor",)
     sources = (None,)
     nullable_when = (
-        "None only before the first bar; the sum restarts from 0 at each anchor (the session "
-        "start, or 00:00 UTC for utc_day)."
+        "None before the first bar; the sum restarts from 0 at each anchor (the session start, "
+        "or 00:00 UTC for utc_day). The server also serves None for the rest of a period it "
+        "could not fold from its start (an instance started or restarted inside it)."
     )
 
     def __init__(
@@ -151,11 +158,15 @@ class CvdKernel(Kernel):
         context: KernelContext | None = None,
     ) -> None:
         super().__init__(params, source=source, context=context)
-        anchor = choice_param(params, "anchor", ("session", "utc_day"))
-        minutes = self._context.session_anchor_utc_min if anchor == "session" else 0
-        self._anchor_us = minutes * MINUTE_US
+        self._anchor_us = self.anchor_us(params, self._context)
         self._period: int | None = None
         self._cvd = 0.0
+
+    @classmethod
+    def anchor_us(cls, params: Mapping[str, ParamValue], context: KernelContext) -> int:
+        anchor = choice_param(params, "anchor", ("session", "utc_day"))
+        minutes = context.session_anchor_utc_min if anchor == "session" else 0
+        return minutes * MINUTE_US
 
     @classmethod
     def warmup_bars(cls, params: Mapping[str, ParamValue]) -> int:

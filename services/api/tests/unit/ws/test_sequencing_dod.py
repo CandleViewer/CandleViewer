@@ -205,7 +205,9 @@ _SEG = {"symbol": _SYM, "depth": "50", "bar_type": "time", "param": "1", "profil
 
 def _entry(fam: str, shape: tuple[str, ...]) -> dict[str, Any]:
     ch = ".".join((fam, *(_SEG[s] for s in shape)))
-    opts = {"exchange_account_ids": [ACC]} if fam in _SCOPED else {}
+    opts: dict[str, Any] = {"exchange_account_ids": [ACC]} if fam in _SCOPED else {}
+    if "instances" in FAMILIES[fam].required:  # `indicators.*` names its instances (§6.1)
+        opts["instances"] = [{"indicator": "ema", "params": {"n": 2}}]
     return {"ch": ch, "opts": {**opts, "encoding": "structured"}}
 
 

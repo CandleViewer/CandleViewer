@@ -75,6 +75,10 @@ _SER = {"symbol": _S, "bar_type": "time", "param": "1"}
 _BAR = {"generation": 0, "index": 1, "t_ms": 1, "o": "1", "h": "2", "l": "1", "c": "2"}
 _FP_BAR = {"generation": 0, "index": 1, "t_ms": 1, "cells": []}
 _TRADE = {"ts_ms": 1, "price": "100.0", "size": "1", "side": "buy"}
+#: An `indicators.*` instance (§14.10): bar 0 in warmup (`null`), then bar 1.
+_PTS = [{"generation": 0, "index": i, "t_ms": i, "v": [v]} for i, v in enumerate((None, "1.5"))]
+_EMA = {"key": "ab" * 32, "indicator": "ema", "params": {"n": 2}, "outputs": ["ema"],
+        "build_version": 1, "points": _PTS}  # fmt: skip
 _ORD = {"id": _U, "exchange_account_id": _A, "symbol": _S, "state": "new", "updated_at_ms": 1}
 #: A B18 `kill_switch` state (§15.10): an unscoped kind, so no registry entry is needed to `sub`.
 _KS = {"machine_kind": "kill_switch", "degraded": False, "machine_hash": "0" * 64,
@@ -89,6 +93,10 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "trades": ({"symbol": _S, "trades": []}, {"symbol": _S, "trades": [_TRADE]}),
     "bars": ({**_SER, "bars": []}, {**_SER, "bars": [{**_BAR, "v": "3", "confirm": False}]}),
     "footprint": ({**_SER, "bars": []}, {**_SER, "bars": [_FP_BAR]}),
+    "indicators": (
+        {**_SER, "instances": [_EMA]},
+        {**_SER, "instances": [{**_EMA, "points": [{**_PTS[1], "v": ["2"], "amended": True}]}]},
+    ),
     "heatmap": (
         {"symbol": _S, "time_bucket_ms": 500, "columns": []},
         {

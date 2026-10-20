@@ -18,6 +18,7 @@ from hypothesis import strategies as st
 
 from candleviewer.ws.permissions import ConnectionAuthz, Subscription, handle_ctl
 from candleviewer.ws.topics import _CHECKS, FAMILIES, UNIVERSAL, Opt, TopicError, validate_options
+from tests.unit.ws._option_fill import required_fill
 from tests.unit.ws.test_subscriptions import A, _ctl, _mgr, _services, _sub
 
 #: Every option a family takes, its own and the universal ones (§5.1, §6.1), with the family.
@@ -167,12 +168,14 @@ def test_validate_options_any_json_value_is_a_valid_value_or_a_topic_error(
     option: tuple[str, str, Opt], value: Any
 ) -> None:
     family, name, _ = option
+    # A required option (`indicators`' `instances`, E13-T02) left out is refused for itself.
+    fill = required_fill(FAMILIES[family], omit=name)
     try:
-        out = validate_options(FAMILIES[family], {name: value})
+        out = validate_options(FAMILIES[family], {name: value, **fill})
     except TopicError as err:  # any other exception fails the test
         assert (err.code, err.field) == ("invalid_options", name)
     else:
-        assert set(out) == {name}
+        assert set(out) == {name, *fill}
 
 
 @settings(max_examples=400, deadline=None)
