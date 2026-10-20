@@ -46,12 +46,16 @@ class OrderStepRefused(OmsError):
     never got; if its row landed, the order's next write that meets the row rebuilds the machine,
     but a `RECON_MISS` self-loop's second row makes the next hydration refuse the history (it
     pages), and a `SEND`'s `submitting` row is sent by a restart's hydration (24 Sec.8.2 "An
-    unknown outcome", residuals). `failure` is the error's class."""
+    unknown outcome", residuals). `failure` is the error's class. `deterministic` says the step's
+    own data was refused (a `ValueError`, a `FillRefused` or a named constraint: hostile or
+    malformed, OM-T04), so the same event is refused on every delivery; it is False for a
+    failure that may pass later, such as a store that did not serve."""
 
-    def __init__(self, event: str, failure: str) -> None:
+    def __init__(self, event: str, failure: str, *, deterministic: bool = False) -> None:
         super().__init__(f"the order did not take {event}: {failure}")
         self.event = event
         self.failure = failure
+        self.deterministic = deterministic
 
 
 class OrderStepUnknown(OmsError):
@@ -117,7 +121,8 @@ class InvalidHistoryRetention(OmsError, ValueError):
 class ExecutionRefused(OmsError, ValueError):
     """An execution the order cannot absorb, hostile or malformed exchange data (OM-T04): a fill
     past `qty`, a qty or price of zero or less, a fee past `MAX_FEE_RATE` or against its rate, or a
-    total numeric(38,18) cannot hold. Never clamped; the message names the rule, never a value."""
+    value its column cannot hold (numeric(38,18), and numeric(18,10) for `fee_rate`). Never
+    clamped; the message names the rule, never a value."""
 
 
 class DuplicateOrderLinkId(OmsError):

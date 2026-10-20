@@ -129,6 +129,7 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # driver-free stores, the `WriteTimer` behind `oms_db_write_seconds{table}`, and
     # `DuplicateOrderLinkId`, which `OrderRepository.create` raises when `ux_orders_link` already
     # holds the id.
+    # E29-T03 (#847): the B1 order-machine facade, its ports, and its typed refusals.
     "M14": {
         "Validator",
         "ReadOnlyCheck",
@@ -140,6 +141,10 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "PositionSnapshotRepository",
         "WriteTimer",
         "DuplicateOrderLinkId",
+        "IllegalTransition",
+        "OrderMachinePorts",
+        "OrderMachines",
+        "ReconcileAnomaly",
     },
     # E27-T01 (#2495): the accounts facade and the domain types it returns, consumed by the
     # E27-S01 routes. No store, row type or SQL adapter is exported (SR-051 scoping stays in

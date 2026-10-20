@@ -9,15 +9,20 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from candleviewer.oms import ExecutionRepository, OrderRepository
 from candleviewer.oms import order_steps as steps
+from candleviewer.oms.execution import apply_fields
 from candleviewer.oms.fakes import InMemoryExecutionStore, InMemoryOrderStore
 from candleviewer.oms.order_steps import OrderStepWriter
+from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.bindings.b01_order import Step
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.repositories import orders as port
@@ -300,6 +305,63 @@ async def test_a_paper_fill_on_a_live_order_is_refused(writer: OrderStepWriter) 
     paper = EXECUTION | {"source": "paper"}
     with pytest.raises(port.FillRefused, match="paper_mismatch"):
         await writer(_step("submitted", "partially_filled", "EXEC", paper, **FILLED))
+
+
+def _plain(value: Decimal) -> str:
+    return format(value, "f")
+
+
+#: An execution's money and time over what B1's closed schema takes (`_DECIMAL`: numeric(38,18)'s
+#: 20 and 18 digits; `ts_exec` up to the last instant a `datetime` holds), with a qty and price
+#: an order of `_ROOM` absorbs, so the guards admit enough of them.
+_MONEY = st.from_regex(b01._DECIMAL, fullmatch=True)
+_ADMISSIBLE = st.fixed_dictionaries(
+    {
+        "qty": st.decimals(min_value=Decimal("0.001"), max_value=1000, places=3).map(_plain),
+        "price": st.decimals(min_value=Decimal("0.01"), max_value=10**5, places=2).map(_plain),
+        "fee": st.one_of(st.just("0"), _MONEY),
+        "fee_rate": st.one_of(st.sampled_from(("0.0002", "-0.0001")), _MONEY),
+        "closed_pnl": st.one_of(st.none(), _MONEY),
+        "ts_exec": st.integers(min_value=0, max_value=b01.MAX_EXCHANGE_US),
+    }
+)
+_ROOM = "1000000"
+
+
+@settings(max_examples=150, deadline=None, derandomize=True)
+@given(money=_ADMISSIBLE)
+async def test_every_fill_b1_admits_is_one_its_write_ahead_step_stores(
+    money: dict[str, Any],
+) -> None:
+    """OM-T04, C-2.19: B1's admission (its closed schema, then the EXEC guards over the OMS's
+    `apply_execution`) bounds every field `_fill` writes at least as tightly as the `executions`
+    row does (`NewExecution`: numeric(38,18), and numeric(18,10) for `fee_rate`). So the store
+    never refuses an admitted fill for its own data, which the machine would roll back on every
+    delivery."""
+    db = InMemoryOrderStore(clock=lambda: T0)
+    executions = ExecutionRepository(InMemoryExecutionStore(db))
+    writer = OrderStepWriter(OrderRepository(db), executions, clock=lambda: T0)
+    writer.expect(_order(qty=Decimal(_ROOM)))
+    await writer(_step(None, "validated", "VALIDATE", qty=_ROOM))
+    await writer(_step("validated", "submitting", "SEND", qty=_ROOM))
+    ack = {"ok": True, "exchange_order_id": "x1"}
+    await writer(_step("submitting", "submitted", "done.invoke.place", ack, qty=_ROOM))
+    payload = EXECUTION | money
+    context = CONTEXT | {"qty": _ROOM, "leaves_qty": _ROOM, "exchange_order_id": "x1"}
+    context["seen_exec_ids"] = []
+    event = SimpleNamespace(type="EXEC", payload=payload)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(b01, "_core", apply_fields)
+        closes = b01.exec_new_and_closes(context, event)
+        if not (closes or b01.exec_new_and_partial(context, event)):
+            return  # B1's deny arm refuses it, and the facade answers it (OM-T04)
+        await b01.apply_fill(None, context, event, None)
+    to = "filled" if closes else "partially_filled"
+    fill = Step(
+        order_id=str(ORDER_ID), account_id=str(ACCOUNT), order_link_id=LINK,
+        from_state="submitted", to_state=to, event="EXEC", payload=payload, context=context,
+    )  # fmt: skip
+    assert await writer(fill) == 3
 
 
 async def test_a_finding_applies_the_execution_it_carries(

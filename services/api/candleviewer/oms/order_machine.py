@@ -11,12 +11,15 @@ Statecharts record; this synchronous code enforces (C-2.21), before any send:
   one the order took, or one its state has no arm for while no request is in flight, is ignored.
   A push that outruns the order waits in a bounded reorder buffer, released in `(ts_exec, seq)`
   order: an `EXEC` before the bind (SR-E29-03) and an exchange end before its fills (INV-B1-k).
+  A release the store refuses for the push's own data leaves the buffer, a fill answered as a
+  hostile one; one a store failure refuses waits for a later turn, `MAX_RELEASES` times at most.
 * **S6.** A push for a final order raises `ReconcileAnomaly`, audited ahead as
   `oms.reconcile_anomaly` and counted, and changes nothing. A fill for a final or held machine is
   B1's to consume, which audits it and starts the stop (INV-B1-o); one for an evicted order hands
   the position to B8.
-* **S9, SR-E29-12.** A rule, an algo or a group never acts on an `untracked` order, and only a
-  user resolves a hold or adopts (D6). A chain-trip latched machine refuses order-path commands.
+* **S9, SR-E29-12.** A rule, an algo or a group never acts on an `untracked` order, only a user
+  resolves a hold or adopts (D6), and only the system reports what reconciliation found or a
+  transport fault. A chain-trip latched machine refuses order-path commands.
   `command` and `push` take only their own event names, and no payload names its own `type`, so
   no gate is skipped by an event it was not written for.
 * **S7, an unknown outcome.** A step whose write did not answer in time may still have committed,
@@ -70,6 +73,7 @@ from candleviewer.storage.repositories.orders import (
     NewOrder,
     OrderEventRow,
     OrderRow,
+    OrderStoreError,
     StaleOrderState,
 )
 
@@ -97,6 +101,7 @@ __all__ = [
     "MAX_HISTORY",
     "MAX_MACHINES",
     "MAX_PUSH_LEAD_MS",
+    "MAX_RELEASES",
     "PORT_TIMEOUT",
     "PUSH_EVENTS",
     "Actor",
@@ -126,6 +131,10 @@ MAX_MACHINES: Final = 4096
 #: Pushes one order's reorder buffer holds, and refusals it keeps (C-2.18); past it a push is
 #: refused (`OrderBufferFull`).
 MAX_HELD: Final = 256
+#: Releases of one held push that a store failure, or an outcome in doubt, refused (C-2.18): the
+#: last one drops it, paged, for reconciliation to apply again (24 Sec.8.5 step 2), so no push
+#: holds the order's turns, or a lost KILL's re-send (INV-B1-h), for longer.
+MAX_RELEASES: Final = 8
 #: Settle rounds per turn (C-2.18): each takes one notice, refusal, held push or KILL; the rest
 #: waits for a turn the facade schedules.
 SETTLE_ROUNDS: Final = 4 * MAX_HELD
@@ -166,12 +175,21 @@ PUSH_EVENTS: Final = frozenset(get_args(PushEvent))
 #: The failures of a rolled-back step whose row may be ahead of the machine (24 Sec.8.2 S7): the
 #: store did not answer in time, so a COMMIT in flight may still land, or the row had moved on.
 _BEHIND_ROW: Final = (b01.StepOutcomeUnknown, StaleOrderState)
+#: The failures of a rolled-back step that refused its own data (hostile or malformed, OM-T04):
+#: the same event is refused on every delivery (`OrderStepRefused.deterministic`).
+_DATA_REFUSALS: Final = (ValueError, TypeError, LookupError, ArithmeticError, OrderStoreError)
 Outcome = Literal["success", "failure", "denied"]
 Severity = Literal["info", "warning", "error", "critical"]
 #: Command sources that never act on an `untracked` order (S9, SR-E29-12).
 MANAGERS: Final = frozenset({"rule", "algo", "group"})
 #: Commands only a user sends: the operator's decision on a hold, and an adoption (D6, E45-S01).
 USER_ONLY: Final = frozenset({"OPERATOR_RESOLVED", "ADOPT"})
+#: Commands only the system sends: what reconciliation found (E29-T06, after its SR-E29-03 full
+#: match) and a transport fault, so no route, rule, algo or group ends or binds an order by them.
+SYSTEM_ONLY: Final = frozenset({
+    "RECON_FOUND_LIVE", "RECON_FOUND_PARTIAL", "RECON_FOUND_FILLED", "RECON_FOUND_CANCELLED",
+    "RECON_MISS", "MISMATCH", "TRANSPORT_FAULT",
+})  # fmt: skip
 #: Order-path commands a chain-trip latched machine refuses (CV-C63, 23 Sec.6.4 `degraded`).
 ORDER_PATH: Final = frozenset({"SEND", "CANCEL", "AMEND", "ADOPT"})
 #: Protection facts: the region takes them while the machine lives; B8 holds the position after.
@@ -405,6 +423,13 @@ def _outruns(push: Mapping[str, Any], filled: object) -> bool:
         return False
 
 
+def _exec_id(push: Mapping[str, Any]) -> str | None:
+    """A push's `exec_id` as B1 keeps one (text of 1 to `MAX_TEXT` characters), else None: a
+    record or a log holds ids, never a caller's value (C-12.6)."""
+    raw = push.get("exec_id")
+    return raw if isinstance(raw, str) and 0 < len(raw) <= b01.MAX_TEXT else None
+
+
 def _summary(view: Mapping[str, Any]) -> dict[str, Any]:
     """23 Sec.6.4's `context_summary` for `order`: `symbol`, `halted_by_kill`, `recon_misses`."""
     summary = {
@@ -413,6 +438,17 @@ def _summary(view: Mapping[str, Any]) -> dict[str, Any]:
         "recon_misses": _int(view.get("recon_misses")),
     }
     return {key: value for key, value in summary.items() if value is not None}
+
+
+@dataclass(frozen=True, slots=True)
+class _Held:
+    """A push in an order's reorder buffer: its `(ts_exec, seq)` key, and how many of its releases
+    a store failure, or an outcome in doubt, refused (`MAX_RELEASES`)."""
+
+    key: tuple[int, int]
+    event: str
+    push: dict[str, Any]
+    refused: int = 0
 
 
 @dataclass(eq=False, slots=True)
@@ -434,12 +470,13 @@ class _Order:
     #: The `seq` of the last outbox notice taken.
     cursor: int = -1
     notices: deque[dict[str, Any]] = field(default_factory=deque)
-    #: The reorder buffer: `((ts_exec, seq), event, payload)`.
-    held: list[tuple[tuple[int, int], str, dict[str, Any]]] = field(default_factory=list)
+    #: The reorder buffer, in `(ts_exec, seq)` order.
+    held: list[_Held] = field(default_factory=list)
     #: S5: the exchange time of the newest `orders`-topic push the order took (a push B1 refused
     #: was not taken), at most `MAX_PUSH_LEAD_MS` ahead of the clock when it was taken.
     last_update_ms: int = -1
-    #: `exec_id` -> why B1 refused that EXEC, for the facade's answer (`_answer`).
+    #: `exec_id` -> why B1 refused that EXEC, or the store its held release (`_release`), for the
+    #: facade's answer (`_answer`).
     denied: OrderedDict[str, str] = field(default_factory=OrderedDict)
     #: The step count a lost KILL was last sent again at.
     kill_sent_at: int = -1
@@ -664,8 +701,9 @@ class OrderMachines:
         `PUSH_EVENTS`, or a payload naming its own `type`, before anything is read. Then
         `ReconcileAnomaly` for a push the order cannot take (S6), raised once its record is
         written; `OrderBufferFull` when it would wait in a full reorder buffer;
-        `OrderStepRefused` when B1 rolled its step back (S7), and `OrderStepUnknown` when the
-        step's write may have committed all the same: the machine is rebuilt first, and as the
+        `OrderStepRefused` when B1 rolled its step back (S7), `deterministic` when the store
+        refused the push's own data, which a redelivery meets again, and `OrderStepUnknown` when
+        the step's write may have committed all the same: the machine is rebuilt first, and as the
         facade keeps no copy of the push, its caller delivers it again once, which changes
         nothing the first one did (S4, S5), and leaves it to reconciliation (24 Sec.8.5 step 2)
         if that is answered `OrderStepUnknown` too. A push that waited while a resync rebuilt the
@@ -961,31 +999,38 @@ class OrderMachines:
         """A push for an order with no machine here. A protection fact is B8's once the order's
         machine is gone; for a final order the push is an anomaly (S6), and a fill also hands the
         position to B8, as no machine can start its stop, unless the order is reduce-only: it
-        opens no position (C-2.6, as `b01_order.starts_protection` says)."""
+        opens no position (C-2.6, as `b01_order.starts_protection` says). The hand-off is a
+        protective notice, not an order action, so an S6 record that cannot be written (which
+        raises, paged) never loses it."""
         if event in _PROTECTION:
             return
         row = await self._bounded(self._ports.orders.get(account_id, order_id))
         state = "" if row is None else _row_state(row)
         if row is None or state not in self.legality.finals:
             raise OrderNotLoaded("no machine in this process holds the order")
-        await self._anomaly(order_id, account_id, state, event, payload)
-        if event == "EXEC" and not row.reduce_only:
-            notice = OrderNotice("request_fallback_sl", order_id, account_id, None, {})
-            await self._notify(notice)
+        try:
+            await self._anomaly(order_id, account_id, state, event, payload)
+        finally:
+            if event == "EXEC" and not row.reduce_only:
+                notice = OrderNotice("request_fallback_sl", order_id, account_id, None, {})
+                await self._notify(notice)
         raise ReconcileAnomaly(state, event)
 
     # --- Gates, sends and pushes (C-2.21, S5, S6, S9) -------------------------------------------
 
     def _admit(self, o: _Order, event: str, actor: Actor) -> None:
         """The synchronous gates of a command, before any send: the chain-trip latch (CV-C63), S9
-        and SR-E29-12, and legality."""
+        and SR-E29-12 (whose source may send it), and legality."""
         if event in ORDER_PATH:
             key = MachineKey(MACHINE, o.key, o.environment)
             if getattr(o.interp, "chain_trips", 0) and not self._latch.is_latched(key):
                 self._latch.latch(key, "chain_trips")
             self._latch.admit_command(key)
         unowned = o.lifecycle == "untracked" and actor in MANAGERS
-        if unowned or (event in USER_ONLY and actor != "user"):
+        misowned = (event in USER_ONLY and actor != "user") or (
+            event in SYSTEM_ONLY and actor != "system"
+        )
+        if unowned or misowned:
             raise self._refuse(o.lifecycle, event)
         try:
             self.legality.require(o.lifecycle, event)
@@ -1020,14 +1065,16 @@ class OrderMachines:
 
     async def _send_order(self, o: _Order, event: str, payload: Mapping[str, Any]) -> None:
         """Through the gateway, the only send path (E50-T15), as *event*: the payload cannot
-        rename it. A step B1 rolled back raises `OrderStepRefused`, or `OrderStepUnknown` when its
-        row may be ahead of the machine (`_BEHIND_ROW`, which also set `resync`); a deferred one
-        is no error (S10), and no receipt is a gate (CV-C06)."""
+        rename it. A step B1 rolled back raises `OrderStepRefused`, `deterministic` when it
+        refused its own data (`_DATA_REFUSALS`), or `OrderStepUnknown` when its row may be ahead
+        of the machine (`_BEHIND_ROW`, which also set `resync`); a deferred one is no error (S10),
+        and no receipt is a gate (CV-C06)."""
         receipt = await self._gateway.send(o.key, {**payload, "type": event}, wait=_AWAIT_STEP)
         if receipt_is_conclusive(receipt) and (error := receipt.error) is not None:
             if isinstance(error, _BEHIND_ROW):
                 raise OrderStepUnknown(event, type(error).__name__)
-            raise OrderStepRefused(event, type(error).__name__)
+            data = isinstance(error, _DATA_REFUSALS)
+            raise OrderStepRefused(event, type(error).__name__, deterministic=data)
 
     async def _take(self, o: _Order, event: str, push: dict[str, Any]) -> bool:
         """S5 and S6 for one push to a live machine; True when the push is an S6 anomaly."""
@@ -1075,38 +1122,38 @@ class OrderMachines:
             return {**push, "updated_time": lead}
         return push
 
-    def _hold(self, o: _Order, event: str, push: dict[str, Any]) -> None:
+    def _hold(self, o: _Order, event: str, push: dict[str, Any], refused: int = 0) -> None:
         if len(o.held) >= MAX_HELD:
             raise OrderBufferFull(f"the order holds {MAX_HELD} pushes")
         if event == "EXEC":
             key = (_int(push.get("ts_exec")), _int(push.get("seq")))
         else:
             key = (_int(push.get("updated_time")) * 1_000, 0)
-        o.held.append((key, event, push))
-        o.held.sort(key=lambda item: item[0])
+        o.held.append(_Held(key, event, push, refused))
+        o.held.sort(key=lambda held: held.key)
 
-    def _due(self, o: _Order) -> tuple[str, dict[str, Any]] | None:
+    def _due(self, o: _Order) -> _Held | None:
         """The first held push, in `(ts_exec, seq)` order, that the order can take now: a fill
         once the order is bound (or held, untracked or final), an end once it holds the fills it
         reports (or is final)."""
         final = o.lifecycle in self.legality.finals
         unowned = o.lifecycle in ("held", "untracked")
         bound = o.view.get("exchange_order_id") is not None
-        for index, (_key, event, push) in enumerate(o.held):
-            fill = event == "EXEC" and (bound or unowned)
-            end = event in _ENDS and not _outruns(push, o.view.get("filled_qty"))
+        for index, held in enumerate(o.held):
+            fill = held.event == "EXEC" and (bound or unowned)
+            end = held.event in _ENDS and not _outruns(held.push, o.view.get("filled_qty"))
             if final or fill or end:
                 del o.held[index]
-                return event, push
+                return held
         return None
 
     # --- Settling: the notices, refusals, held pushes and a lost KILL (CV-C25) -----------------
 
     async def _settle(self, o: _Order) -> None:
-        """After the order's steps, under its lock: act on their notices and refusals, release
-        the held pushes the order can take now, send a lost KILL again, then evict the machine if
-        the order is done. This is a turn's boundary: a failure stops the turn, logged, and the
-        next step brings another (C-2.18 bounds the rounds of one turn)."""
+        """After the order's steps, under its lock: act on their notices and refusals, send a lost
+        KILL again, release the held pushes the order can take now, then evict the machine if the
+        order is done. This is a turn's boundary: a failure stops the turn, logged, and the next
+        step brings another (C-2.18 bounds the rounds of one turn)."""
         for _ in range(SETTLE_ROUNDS):
             if o.interp is None:
                 return
@@ -1123,7 +1170,8 @@ class OrderMachines:
         """One round; False once nothing is left to do. A machine that may be behind its row is
         rebuilt first. A notice or a refusal leaves its queue only once acted on, so one that
         failed is tried again at the next turn; a first fill that could not start the stop pages
-        (C-2.6)."""
+        (C-2.6). A lost KILL is sent again before any held push is released, so no push holds it
+        back (INV-B1-h, C-2.21)."""
         if o.resync:
             await self._resync(o)
             return False
@@ -1134,21 +1182,40 @@ class OrderMachines:
             exec_id, reason = next(iter(o.denied.items()))
             await self._answer(o, exec_id, reason)
             o.denied.pop(exec_id, None)
-        elif (due := self._due(o)) is not None:
-            event, push = due
-            try:
-                await self._take(o, event, push)
-            except (OrderStepRefused, OrderStepUnknown):
-                self._hold(o, event, push)  # it waits for the next turn, as delivered
-                raise
         elif self._kill_lost(o):
             await self._resend_kill(o)
+        elif (held := self._due(o)) is not None:
+            await self._release(o, held)
         elif self._done(o):
             await self._close(o, publish=True)
             return False
         else:
             return False
         return True
+
+    async def _release(self, o: _Order, held: _Held) -> None:
+        """A held push the order can take now. A step the store refused for the push's own data
+        is refused on every release (`OrderStepRefused.deterministic`): the push leaves the
+        buffer, and a fill, logged at ERROR, is answered as a hostile one (`_answer`, OM-T04),
+        while an end pages. A store failure, or an outcome in doubt, keeps it for the next turn,
+        as delivered, and stops this one, `MAX_RELEASES` times at most: the last drops it, paged,
+        for reconciliation to apply again (24 Sec.8.5 step 2), so no push holds the order's
+        turns."""
+        try:
+            await self._take(o, held.event, held.push)
+        except (OrderStepRefused, OrderStepUnknown) as exc:
+            data = isinstance(exc, OrderStepRefused) and exc.deterministic
+            if data and held.event == "EXEC":
+                exec_id, link = _exec_id(held.push), o.view.get("order_link_id")
+                logger().error(
+                    "oms_held_fill_refused", order_link_id=link, exec_id=exec_id, error=exc.failure
+                )
+                self._deny(o, exec_id or "", f"the write-ahead step refused it ({exc.failure})")
+            elif data or held.refused + 1 >= MAX_RELEASES:
+                self._page("oms_held_push_dropped", o, trigger=held.event, error=exc.failure)
+            else:
+                self._hold(o, held.event, held.push, held.refused + 1)
+                raise
 
     async def _act(self, o: _Order, notice: dict[str, Any]) -> None:
         """One outbox notice: the first fill starts the stop (24 Sec.8.8 rule 2; the region takes a
@@ -1168,8 +1235,9 @@ class OrderMachines:
             await self._notify(OrderNotice(kind, o.order_id, o.account_id, link, detail))
 
     async def _answer(self, o: _Order, exec_id: str, reason: str) -> None:
-        """An EXEC B1 refused that is neither a repeat (S4) nor early (before the bind) is hostile
-        (OM-T04): the order is quarantined where its state lists `FAULT`, else it pages."""
+        """An EXEC B1 refused that is neither a repeat (S4) nor early (before the bind), or a held
+        one whose step the store refused for its data, is hostile (OM-T04): the order is
+        quarantined where its state lists `FAULT`, else it pages."""
         if reason in (b01.REPEAT, b01.UNBOUND):
             return
         if "FAULT" in self.legality.handled.get(o.lifecycle, frozenset()):
@@ -1238,7 +1306,7 @@ class OrderMachines:
                 n.notices.extend(o.notices)
                 n.denied.update(o.denied)
                 n.held.extend(o.held)
-                n.held.sort(key=lambda item: item[0])
+                n.held.sort(key=lambda held: held.key)
                 n.last_update_ms = max(n.last_update_ms, o.last_update_ms)
                 await self._settle(n)
         finally:
@@ -1251,15 +1319,15 @@ class OrderMachines:
         holds fills and the stop was not confirmed, the position goes to B8, as no machine can
         start the stop (C-2.6); a row that cannot be read pages."""
         link = o.view.get("order_link_id")
-        for _key, event, push in o.held:
+        for held in o.held:
             try:
-                await self._unloaded(o.account_id, o.order_id, event, push)
+                await self._unloaded(o.account_id, o.order_id, held.event, held.push)
             except ReconcileAnomaly:
                 continue  # recorded (S6)
             except Exception as exc:  # no final row, or no answer: reconciliation re-applies it
                 error = type(exc).__name__
                 logger().error(
-                    "oms_held_push_dropped", order_link_id=link, trigger=event, error=error
+                    "oms_held_push_dropped", order_link_id=link, trigger=held.event, error=error
                 )
         for notice in o.notices:
             kind = str(notice.get("kind"))
@@ -1400,9 +1468,7 @@ class OrderMachines:
         denied = context.get("denied")
         reason = str(denied.get("reason") or "") if isinstance(denied, Mapping) else ""
         if o is not None and name == "guard_denied" and isinstance(denied, Mapping):
-            o.denied[str(denied.get("exec_id") or "")] = reason
-            while len(o.denied) > MAX_HELD:
-                o.denied.popitem(last=False)
+            self._deny(o, str(denied.get("exec_id") or ""), reason)
         if name == "guard_denied" and reason in (b01.REPEAT, b01.UNBOUND):
             return
         if o is None or name not in B1_AUDITS:
@@ -1416,6 +1482,12 @@ class OrderMachines:
         if reason:
             detail["refusal"] = reason
         await self._record(o, name, detail)
+
+    def _deny(self, o: _Order, exec_id: str, reason: str) -> None:
+        """Keep why an EXEC was refused, for `_answer`: at most `MAX_HELD`, the oldest dropped."""
+        o.denied[exec_id] = reason
+        while len(o.denied) > MAX_HELD:
+            o.denied.popitem(last=False)
 
     async def _record(self, o: _Order, name: str, detail: Mapping[str, str | None]) -> None:
         """B1's record, written ahead (C-2.9); an S6 anomaly is alerted once it is written."""
@@ -1438,24 +1510,22 @@ class OrderMachines:
         push: Mapping[str, Any],
     ) -> None:
         """S6, the facade's own record: logged and written ahead of the refusal, then counted and
-        alerted; a record that cannot be written raises (C-2.9), counted and alerted all the same.
-        The push never met B1's closed schema, so its `exec_id` is kept only as B1 keeps one (text
-        of 1 to `MAX_TEXT` characters): the detail holds ids and state names, never a caller's
-        value (C-12.6)."""
-        exec_id = push.get("exec_id")
-        detail = {
-            "state": state,
-            "trigger": event,
-            "exec_id": (
-                exec_id if isinstance(exec_id, str) and 0 < len(exec_id) <= b01.MAX_TEXT else None
-            ),
-        }
+        alerted; a record that cannot be written raises (C-2.9), counted and alerted all the same,
+        and its loss pages. The push never met B1's closed schema, so its `exec_id` is kept only
+        as B1 keeps one (`_exec_id`): the detail holds ids and state names, never a caller's value
+        (C-12.6)."""
+        detail = {"state": state, "trigger": event, "exec_id": _exec_id(push)}
         logger().error("oms_reconcile_anomaly", **detail)
         record = OrderAuditRecord(
             ANOMALY, order_id, account_id, "denied", "error", POST_TERMINAL_PUSH, detail
         )
         try:
             await self._bounded(self._ports.audit.write(record))
+        except Exception as exc:  # C-2.9: no refusal is answered unrecorded, and the loss pages
+            error = type(exc).__name__
+            logger().critical("oms_audit_record_lost", record=POST_TERMINAL_PUSH, error=error)
+            self._raise_alert("page", "oms_audit_record_lost")
+            raise
         finally:
             self._alert_anomaly()
 

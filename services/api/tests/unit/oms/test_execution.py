@@ -59,6 +59,8 @@ def test_apply_execution_divides_once_rounding_half_even_to_18_places() -> None:
         (OrderFills(D("1")), _fill("1", "100", "-0.5", "0.0002")),  # a rebate at a positive rate
         (OrderFills(D("1")), _fill("1", "100", "0.5", "-0.0001")),  # a fee at a negative rate
         (OrderFills(D(MAX)), _fill(MAX, MAX)),  # cum_exec_value past numeric(38,18), not Inexact
+        (OrderFills(D("1")), _fill("1", "1", "0", "0.00000000001")),  # fee_rate: 11 places
+        (OrderFills(D("1")), _fill("1", "1", "0", "123456789")),  # fee_rate: 9 digits
         (OrderFills(D("1")), Fill(cast(Decimal, 1.0), D("1"), D("0"), D("0"))),  # a float
     ],
 )
@@ -70,6 +72,12 @@ def test_apply_execution_refuses_hostile_input(order: OrderFills, fill: Fill) ->
 @pytest.mark.parametrize("fee", ["1", "-1"])
 def test_apply_execution_takes_a_fee_or_rebate_of_exactly_max_fee_rate(fee: str) -> None:
     assert apply_execution(OrderFills(D("1")), _fill("1", "100", fee)).fee_paid == D(fee)
+
+
+@pytest.mark.parametrize("rate", ["99999999.9999999999", "-0.0000000001"])
+def test_apply_execution_takes_every_fee_rate_its_column_holds(rate: str) -> None:
+    """`executions.fee_rate` is numeric(18,10) (21 Sec.3.3.6): its extremes are admitted."""
+    assert apply_execution(OrderFills(D("1")), _fill("1", "100", "0", rate)).filled_qty == D(1)
 
 
 def _filled(order: OrderFills, fill: Fill) -> Decimal | None:
