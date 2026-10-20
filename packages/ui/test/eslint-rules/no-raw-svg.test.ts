@@ -32,6 +32,11 @@ tester.run("no-raw-svg", noRawSvg, {
       code: 'export const Shot = () => <img src="data:image/png;base64,AAAA" alt="" />;',
       filename: COMPONENT,
     },
+    {
+      code: 'document.createElementNS("http://www.w3.org/1999/xhtml", "div");',
+      filename: COMPONENT,
+    },
+    { code: "document.createElementNS(SVG_NS, tagName);", filename: COMPONENT },
   ],
   invalid: [
     {
@@ -47,6 +52,13 @@ tester.run("no-raw-svg", noRawSvg, {
     { code: 'createElement("svg", { viewBox: "0 0 24 24" });', filename: COMPONENT, errors: [raw] },
     { code: "React.createElement('svg');", filename: COMPONENT, errors: [raw] },
     { code: "jsx(`svg`, {});", filename: COMPONENT, errors: [raw] },
+    // The DOM's namespaced creator takes the tag second, as a qualified name.
+    {
+      code: 'document.createElementNS("http://www.w3.org/2000/svg", "svg");',
+      filename: COMPONENT,
+      errors: [raw],
+    },
+    { code: 'document.createElementNS(SVG_NS, "svg:svg");', filename: COMPONENT, errors: [raw] },
     // An SVG data URL brings a glyph past the registry as surely as a raw <svg> does.
     {
       code: 'export const Mark = () => <img src="data:image/svg+xml,%3Csvg%3E" alt="" />;',
