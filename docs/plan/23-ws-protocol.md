@@ -368,7 +368,7 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
 }
 ```
 
-**`welcome.limits` (normative).** Every value below is what a `welcome` advertises and what the gateway enforces; `runtime_spec_parity` (§16.5) compares them with the running gateway.
+**`welcome.limits` (normative).** Every value below is what a `welcome` advertises and what the gateway enforces; `runtime_spec_parity` (§16.5) compares them with the running gateway. `max_inbound_frame_bytes` is the cap in force, which `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower (§4.3).
 
 | Key                          | Value     | Unit                                             | Enforced as                                                                 |
 | ---------------------------- | --------- | ------------------------------------------------ | --------------------------------------------------------------------------- |

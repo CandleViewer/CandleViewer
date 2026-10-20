@@ -59,11 +59,6 @@ def test_advertised_limits_are_the_constants_that_enforce_them() -> None:
     assert not drifts, sp.render(drifts)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F-01: welcome advertises MAX_INBOUND_FRAME_BYTES, not the "
-    "CV_WS_MAX_INBOUND_FRAME_BYTES the gateway enforces (#572)",
-)
 def test_the_advertised_inbound_cap_is_the_one_the_gateway_enforces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -89,9 +84,17 @@ def test_max_subscriptions_300_without_a_doc_change_fails_parity(
 
 @pytest.mark.parametrize("key", sorted(sp.LIMIT_KEYS))
 def test_every_limit_change_fails_parity(key: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(lifecycle.LIMITS_BLOCK, key, lifecycle.LIMITS_BLOCK[key] + 1)
+    change = 1
+    if (
+        key == "max_inbound_frame_bytes"
+    ):  # advertised from the gateway's own cap, which a setting lowers
+        cap = functools.partial(make_ws_router, max_frame_bytes=limits.MAX_INBOUND_FRAME_BYTES - 1)
+        monkeypatch.setattr(_harness, "make_ws_router", cap)
+        change = -1
+    else:
+        monkeypatch.setitem(lifecycle.LIMITS_BLOCK, key, lifecycle.LIMITS_BLOCK[key] + 1)
     drifts = sp.limits_drifts(handshake_limits())
-    assert [(d.key, d.runtime - d.doc) for d in drifts] == [(key, 1)]
+    assert [(d.key, d.runtime - d.doc) for d in drifts] == [(key, change)]
 
 
 def test_a_limits_key_with_no_doc_row_fails_parity() -> None:

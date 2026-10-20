@@ -499,9 +499,12 @@ def welcome_payload(
     auth_timeout_s: float = AUTH_TIMEOUT_S,
     heartbeat_interval_s: float = HEARTBEAT_INTERVAL_S,
     heartbeat_timeout_s: float = HEARTBEAT_TIMEOUT_S,
+    max_inbound_frame_bytes: int = MAX_INBOUND_FRAME_BYTES,
 ) -> dict[str, Any]:
     """§4.2 body. `clock_skew_ms` = server time - client `clock_ms` (reported, never corrected);
-    omitted when the client sent no §13 `epochMs` clock (`client_epoch_ms`)."""
+    omitted when the client sent no §13 `epochMs` clock (`client_epoch_ms`). `limits` advertises
+    what the gateway enforces: the inbound cap is the gateway's own, which
+    `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower."""
     p: dict[str, Any] = {
         "protocol": "cv.v1",
         "encoding": encoding,
@@ -515,7 +518,7 @@ def welcome_payload(
             "interval_ms": int(heartbeat_interval_s * 1000),
             "timeout_ms": int(heartbeat_timeout_s * 1000),
         },
-        "limits": dict(LIMITS_BLOCK),
+        "limits": {**LIMITS_BLOCK, "max_inbound_frame_bytes": max_inbound_frame_bytes},
         "features": dict(features),
     }
     if (clock_ms := client_epoch_ms(client_clock_ms)) is not None:

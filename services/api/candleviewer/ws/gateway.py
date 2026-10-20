@@ -1660,6 +1660,7 @@ def make_ws_router(
                 client_clock_ms=clock_ms,
                 features=features,
                 auth_timeout_s=auth_timeout_s,
+                max_inbound_frame_bytes=max_frame_bytes,
             )
             conn.push(_reply("welcome", fid, ts=now_ms, p=welcome))
             conn.lifecycle.fire(ConnEvent.WELCOME_SENT)
