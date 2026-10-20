@@ -69,6 +69,9 @@ from candleviewer.observability import spawn
 # budget formatting log records instead of measuring.
 logging.getLogger("candleviewer.bus").setLevel(logging.ERROR)
 
+#: A live-pipeline env: a topic's env is live, demo, testnet or a replay session's (24 Sec.2.9).
+_ENV = "demo"
+
 TierName = Literal["200@100ms", "500@200ms"]
 
 TIERS: dict[TierName, tuple[int, int]] = {
@@ -255,11 +258,11 @@ async def _measure_one(
     bus = Bus()
     sub = bus.subscribe(
         f"book-apply-{symbol}-{tier}",
-        f"replay.md.{symbol}.book",
+        f"{_ENV}.md.{symbol}.book",
         QueuePolicy.NEVER_DROP,
         maxsize=8192,
     )
-    topic = Topic(env="replay", domain="md", symbol=symbol, detail="book")
+    topic = Topic(env=_ENV, domain="md", symbol=symbol, detail="book")
 
     book = BookState(symbol)
     apply_latencies_ms: list[float] = []
