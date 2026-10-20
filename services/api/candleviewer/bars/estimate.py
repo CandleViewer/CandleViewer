@@ -7,7 +7,8 @@ and `Fraction` arithmetic; every stored print has qty > 0, the #1898 print rejec
 
 - `tick:N` closes on exactly N prints: `ceil(prints / N)`.
 - `volume:V` closes at exactly V and splits the print that overshoots, so one print can close
-  several bars and the print count bounds nothing: `ceil(qty / V)`.
+  several bars (up to `MAX_BRICKS_PER_TRADE`, SR-E12-15) and the print count is no useful bound:
+  `ceil(qty / V)`.
 - `delta:D` closes once `|buy - sell| >= D` and never splits a print. A bar's `|delta|` is at most
   the qty traded in it, so `ceil(qty / D)` bounds the bars, and so does the print count. The
   window's net delta does not: a `+D` bar and a `-D` bar net to zero.

@@ -5111,3 +5111,4 @@ tracker).
 ### Security
 
 - **rule-engine**: the rules-engine freeze scope is keyed by owner and account (#415) (#3847)
+- **backend-platform**: one print closes at most 1 000 volume bars, as it does for renko bricks; a larger print is refused and its series quarantined (#2770) (#3867)
