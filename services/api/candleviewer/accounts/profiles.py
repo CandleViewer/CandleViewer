@@ -128,7 +128,7 @@ class AccountProfile(BaseModel):
         _check_sizing(self)
         if (self.tp_offset_value is None) != (self.tp_offset_unit is None):
             raise ValueError("tp_offset_value and tp_offset_unit are set together")
-        if _exact_sum(rung.qty_pct for rung in self.tp_ladder) > 1:
+        if exact_sum(rung.qty_pct for rung in self.tp_ladder) > 1:
             raise ValueError("the take-profit ladder takes more than the whole leg")
         if self.max_leverage_cap is not None and self.leverage > self.max_leverage_cap:
             raise ValueError("leverage is above max_leverage_cap")
@@ -185,7 +185,7 @@ def _shift(value: Decimal, places: int) -> Decimal:
     return Decimal((sign, digits, exponent + places))
 
 
-def _exact_sum(values: Iterable[Decimal]) -> Decimal:
+def exact_sum(values: Iterable[Decimal]) -> Decimal:
     """The sum with every digit kept: a rounded sum could pass `<= 1` when the exact one does not
     (the database sums the stored `numeric`s exactly)."""
     context = Context(prec=_EXACT_DIGITS, traps=[Inexact, InvalidOperation])
@@ -237,7 +237,7 @@ def _fraction(value: Decimal | None) -> Decimal | None:
     return None if value is None else _shift(value, -2)
 
 
-def _to_us(moment: datetime) -> TsUs:
+def to_us(moment: datetime) -> TsUs:
     """Exact epoch microseconds of an aware datetime (integer arithmetic, no float rounding)."""
     return (moment - _EPOCH) // _ONE_US
 
@@ -345,6 +345,6 @@ def profile_from_row(row: AccountProfileRow) -> AccountProfile:
             "reduce_only_default": v.reduce_only_default,
             "time_in_force_default": v.time_in_force_default,
             "slippage_tolerance_bps": v.slippage_tolerance_bps,
-            "updated_at": _to_us(row.updated_at),
+            "updated_at": to_us(row.updated_at),
         }
     )
