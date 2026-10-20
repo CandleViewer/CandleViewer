@@ -123,10 +123,18 @@ function xyzToLab([x, y, z]) {
   return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
 }
 
+/**
+ * CIE L*a*b* (D65) of an sRGB hex colour, as `[L, a, b]`; the same formula as
+ * `rgb_to_lab` in `packages/ui/tokens/tests/verify_tokens.py`.
+ */
+export function cieLab(hex) {
+  return xyzToLab(srgbToXyz(hex));
+}
+
 /** CIE76 deltaE perceptual distance between two sRGB hex colours. */
 export function deltaE76(hexA, hexB) {
-  const labA = xyzToLab(srgbToXyz(hexA));
-  const labB = xyzToLab(srgbToXyz(hexB));
+  const labA = cieLab(hexA);
+  const labB = cieLab(hexB);
   return Math.sqrt(labA.reduce((acc, v, i) => acc + (v - labB[i]) ** 2, 0));
 }
 

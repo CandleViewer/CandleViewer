@@ -1,0 +1,64 @@
+{
+  "$comment": [
+    "Label-on-fill contrast matrix (#3896): every filled CMP-001 Button role, the label token it binds, and the fill token of each interaction state that exists as a token.",
+    "Checked in every theme by packages/ui/test/contrast/label-on-fill.test.ts (the CI gate, unit-frontend; labels also in every chart colour mode) and by packages/ui/tokens/tests/verify_tokens.py (the token proof).",
+    "A label clears `label` (WCAG 2.2 SC 1.4.3) on every state fill. A role's states are pairwise at least `stateLightness` apart in CIE L*, and where `hue` is set each state is within `stateHue` degrees of LCh hue of the rest fill.",
+    "Where `boundary` is set, the rest fill clears `boundary` (SC 1.4.11) against every surface in `surfaces`. Hover and pressed fills are not held to it: SC 1.4.11 does not require a hover or pressed indicator to contrast with the rest state, and under a white label no three dark primary states 5 L* apart fit the band that clears both 4.5:1 and 3:1.",
+    "Disabled with reason: the reason tooltip text clears `label` on its surface, and the locked glyph (the label colour) clears `glyph` on the rest fill or, for ghost, on the surface. The dimmed label of an inactive control (`opacity.disabled`) is exempt under SC 1.4.3 and is not checked.",
+    "A state with no token (danger hover and active, buy and sell active, secondary active) is owner decision A2 of the E05-D02 component spec (#161, PR #3914); once its token lands it must be added here, and the gate fails on any `<role>.<stateSuffix>` token missing from this list."
+  ],
+  "thresholds": { "label": 4.5, "glyph": 3, "boundary": 3, "stateLightness": 5, "stateHue": 10 },
+  "surfaces": ["color.surface.app", "color.surface.raised", "color.surface.overlay"],
+  "stateSuffixes": ["hover", "active", "pressed"],
+  "roles": {
+    "primary": {
+      "label": "color.text.on-action",
+      "states": {
+        "default": "color.action.primary.default",
+        "hover": "color.action.primary.hover",
+        "active": "color.action.primary.active"
+      },
+      "boundary": true,
+      "hue": true
+    },
+    "secondary": {
+      "label": "color.text.primary",
+      "states": {
+        "default": "color.action.secondary.default",
+        "hover": "color.action.secondary.hover"
+      },
+      "boundary": false,
+      "hue": false
+    },
+    "danger": {
+      "label": "color.text.on-action",
+      "states": { "default": "color.status.danger.default" },
+      "boundary": true,
+      "hue": true
+    },
+    "buy": {
+      "label": "color.text.inverse",
+      "states": { "default": "color.buy.default", "hover": "color.buy.hover" },
+      "boundary": true,
+      "hue": true
+    },
+    "sell": {
+      "label": "color.text.inverse",
+      "states": { "default": "color.sell.default", "hover": "color.sell.hover" },
+      "boundary": true,
+      "hue": true
+    }
+  },
+  "disabledWithReason": {
+    "text": [
+      ["color.text.primary", "color.surface.overlay"],
+      ["color.text.secondary", "color.surface.overlay"]
+    ],
+    "glyph": [
+      ["color.text.secondary", "color.surface.app"],
+      ["color.text.secondary", "color.surface.canvas"],
+      ["color.text.secondary", "color.surface.raised"],
+      ["color.text.secondary", "color.surface.overlay"]
+    ]
+  }
+}

@@ -11,6 +11,10 @@ packages/ui/tokens/, the acceptance criteria from the ticket's Gherkin:
      differ from a naive lightness inversion of the dark value).
   4. `color.status.danger.default` and `color.sell.default` are visibly
      distinct hues (CIE76 dE) in every mode.
+  5. #3896: the label-on-fill matrix of `tools/contrast/label-on-fill.json`
+     (its `$comment` states the rules) holds in every mode. The CI gate for the
+     same registry is `packages/ui/test/contrast/label-on-fill.test.ts`, which
+     also checks the labels in every chart colour mode.
 
 Run: python packages/ui/tokens/tests/verify_tokens.py
 Exit code 0 = pass, 1 = fail (see stderr for details).
@@ -23,6 +27,7 @@ import sys
 from pathlib import Path
 
 TOKENS_DIR = Path(__file__).resolve().parent.parent
+LABEL_ON_FILL = TOKENS_DIR.parents[2] / "tools" / "contrast" / "label-on-fill.json"
 
 PRIMITIVES = "primitives.tokens.json"
 THEMES = {
@@ -134,6 +139,65 @@ DATA_CONFIDENCE_STATES = (
 )
 
 
+def t3(x: float) -> str:
+    """Truncated to three places, so a failing 2.9993 never prints as the 3 it misses."""
+    return f"{math.floor(x * 1000) / 1000:.3f}"
+
+
+def lab_hue(hex_: str) -> float:
+    _, a, b = rgb_to_lab(hex_to_rgb(hex_))
+    return math.degrees(math.atan2(b, a)) % 360
+
+
+def label_on_fill_failures(theme: str, tokens: dict) -> list[str]:
+    """#3896: the label-on-fill matrix of tools/contrast/label-on-fill.json for one theme."""
+    reg = json.loads(LABEL_ON_FILL.read_text(encoding="utf-8"))
+    t = reg["thresholds"]
+    out: list[str] = []
+
+    def hx(name: str) -> str:
+        value = tokens.get(name)
+        if not (isinstance(value, str) and len(value) == 7 and value.startswith("#")):
+            raise KeyError(f"[{theme}] label-on-fill: {name} is not an opaque hex colour")
+        return value
+
+    def pair(fg: str, bg: str, minimum: float, what: str) -> None:
+        cr = contrast_ratio(hx(fg), hx(bg))
+        if cr < minimum:
+            out.append(f"[{theme}] {what}: {fg} on {bg} {t3(cr)} < {minimum}")
+
+    for role, r in reg["roles"].items():
+        states = r["states"]
+        rest = states["default"]
+        for state, fill in states.items():
+            pair(r["label"], fill, t["label"], f"{role}.{state} label")
+        fills = list(states.values())
+        for i, a in enumerate(fills):
+            for b in fills[i + 1 :]:
+                d = abs(rgb_to_lab(hex_to_rgb(hx(a)))[0] - rgb_to_lab(hex_to_rgb(hx(b)))[0])
+                if d < t["stateLightness"]:
+                    out.append(f"[{theme}] {role}: {a} vs {b} dL* {t3(d)} < {t['stateLightness']}")
+        if r["hue"]:
+            for fill in fills:
+                gap = abs((lab_hue(hx(fill)) - lab_hue(hx(rest)) + 540) % 360 - 180)
+                if gap > t["stateHue"]:
+                    limit = t["stateHue"]
+                    out.append(f"[{theme}] {role}: {fill} hue {t3(gap)} deg from rest > {limit}")
+        if r["boundary"]:
+            for surface in reg["surfaces"]:
+                pair(rest, surface, t["boundary"], f"{role} rest boundary")
+        pair(r["label"], rest, t["glyph"], f"{role} locked glyph")
+        prefix = rest.removesuffix("default")
+        for suffix in reg["stateSuffixes"]:
+            if prefix + suffix in tokens and prefix + suffix not in fills:
+                out.append(f"[{theme}] {role}: {prefix + suffix} is not in {LABEL_ON_FILL.name}")
+    for fg, bg in reg["disabledWithReason"]["text"]:
+        pair(fg, bg, t["label"], "reason text")
+    for fg, bg in reg["disabledWithReason"]["glyph"]:
+        pair(fg, bg, t["glyph"], "locked glyph")
+    return out
+
+
 def main() -> int:
     failures: list[str] = []
     primitives = load(PRIMITIVES)
@@ -217,6 +281,10 @@ def main() -> int:
                 ind_cr = contrast_ratio(tokens[indicator_key], surf)
                 if ind_cr < 3.0:
                     failures.append(f"[{theme}] {indicator_key} vs surface contrast {ind_cr:.2f} < 3.0")
+
+    # 5. #3896: label-on-fill matrix (tools/contrast/label-on-fill.json), every theme.
+    for theme in THEMES:
+        failures.extend(label_on_fill_failures(theme, resolved_by_theme[theme]))
 
     if failures:
         for f in failures:
