@@ -58,15 +58,17 @@
           tabindex="-1"
           aria-label="BTCUSDT 1 minute chart, 60 bars visible, last close 64,210, delta +128"
         ></canvas>
+        <!-- D4 / §7.2 H6: the three-clause hint; the ? cheat-sheet (05 §3.4.9) carries the rest -->
         <p id="chart-hint" class="vh">
-          Arrow keys move the data cursor by bar and by price level. Home and End jump to the range
-          ends. Enter expands the focused bar. Alt+T opens the data table. Tab leaves the chart.
+          Arrow keys move the cursor. Alt+T opens the data table. Tab leaves the chart.
         </p>
         <!-- D4 / 05 §6.2: ONE pre-rendered polite status region, text swapped, never recreated -->
         <div id="chart-status" class="vh" role="status" aria-live="polite" aria-atomic="true"></div>
-        <!-- D4: hidden table, th scope=col, aria-rowcount / aria-rowindex, cursor row aria-current -->
+        <!-- D4: hidden table, th scope=col, cursor row aria-current. aria-rowcount is the FULL table
+             (4,320 loaded bars + the header row), aria-rowindex the absolute position (header = 1,
+             bar i = i + 2): WAI-ARIA 1.2 windowed-table semantics (review F-06), not the window size. -->
         <div class="vh">
-          <table id="mirror" aria-label="Visible bars" aria-rowcount="61" aria-colcount="7">
+          <table id="mirror" aria-label="Visible bars" aria-rowcount="4321" aria-colcount="7">
             <thead>
               <tr aria-rowindex="1">
                 <th scope="col">Time</th>
@@ -85,7 +87,10 @@
     </main>
     <script>
       // D1 default window: 60 rows centred on the cursor (row 30). Deterministic synthetic values.
+      // The window shows loaded bars FIRST..FIRST+59 of 4,320 (0-based), so aria-rowindex = FIRST + i + 2
+      // travels with the bar, not with the slot (F-06; the bench's recycle strategy does the same).
       const rows = document.getElementById("rows");
+      const FIRST = 2880;
       let s = 7;
       const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
       let o = 64000;
@@ -96,7 +101,7 @@
         const v = Math.round(rnd() * 500),
           d = Math.round(rnd() * 200 - 100);
         const tr = document.createElement("tr");
-        tr.setAttribute("aria-rowindex", String(i + 2));
+        tr.setAttribute("aria-rowindex", String(FIRST + i + 2));
         if (i === 30) tr.setAttribute("aria-current", "true");
         const time = `14:${String(i).padStart(2, "0")}`;
         // Time is the row header (05 §6.3 row-header pattern); sign is text, never colour-only (05 §4)
