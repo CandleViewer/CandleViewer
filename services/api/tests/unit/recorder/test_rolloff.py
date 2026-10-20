@@ -706,10 +706,13 @@ def _unlisted(stream: StreamKind) -> float:
     return float(recorder_rolloff_streams_unlisted_total.labels(stream=stream.value)._value.get())
 
 
-async def test_rolloff_counts_and_logs_once_a_stream_whose_aged_partitions_list_no_day() -> None:
+@pytest.mark.parametrize("aged", [1, 24], ids=["one-partition", "a-day-of-hours"])
+async def test_rolloff_counts_and_logs_once_a_stream_whose_aged_partitions_list_no_day(
+    aged: int,
+) -> None:
     """Deltas sat in QuestDB with no error at all: `closed_days` could not read hour names."""
     before = _unlisted(D)
-    hot = FakeHot({D: {}}, aged={D: 24})
+    hot = FakeHot({D: {}}, aged={D: aged})
     job = _job(hot, FakeArchiver(), FakeMarks(), config=RollOffConfig(streams=(D,)))
 
     with capture_logs() as logs:
@@ -721,7 +724,7 @@ async def test_rolloff_counts_and_logs_once_a_stream_whose_aged_partitions_list_
             "event": "rolloff_stream_unlisted",
             "log_level": "warning",
             "stream": D.value,
-            "partitions": 24,
+            "partitions": aged,
         }
     ]
     assert hot.aged_before == [NOW_US - 2 * US_PER_DAY]  # two days: whatever the partitioning
