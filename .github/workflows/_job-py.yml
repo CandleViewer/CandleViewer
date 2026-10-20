@@ -10,8 +10,8 @@ name: _job-py
 #     -> ruff check + ruff format --check -> mypy --strict -> rule IR schema
 #     drift -> alert rules, promtool, amtool -> Grafana dashboard lint
 #     -> import-linter architecture contract (its own `architecture` check)
-#   py-tests: one job per lane of tools/ci/py-test-lanes.json, all at once (ten since #3881: the
-#     four heavy matrices sharded so that no PR job runs past ~6 minutes):
+#   py-tests: one job per lane of tools/ci/py-test-lanes.json, all at once (sixteen since #3881:
+#     the four heavy matrices sharded so that no PR job runs past about 5 minutes):
 #     pytest -m "not exchange_smoke ..." --cov on the lane's paths
 #     (network-guarded, ADR-0012/SR-140) -> upload the lane's raw coverage data
 #   py (after both): coverage combine -> coverage.xml + term report -> the
@@ -138,9 +138,9 @@ jobs:
     name: py-tests (${{ matrix.lane }})
     runs-on: ubuntu-latest
     # The py-only variable (#2185, #2426), so tuning the shared CV_CI_TIMEOUT_MINUTES for other
-    # lanes cannot shrink it. A lane is about a tenth of the suite since #3881, against about a
-    # quarter with four lanes (13-16 min on a slow shared runner, #3751) and 24-30 min when one job
-    # ran it all (ADR-0013's Validation): the default stays a ceiling, not an expectation.
+    # lanes cannot shrink it. A lane is about a sixteenth of the suite since #3881, against about
+    # a quarter with four lanes (13-16 min on a slow shared runner, #3751) and 24-30 min when one
+    # job ran it all (ADR-0013's Validation): the default stays a ceiling, not an expectation.
     timeout-minutes: ${{ fromJSON(vars.CV_CI_PY_TIMEOUT_MINUTES || 30) }}
     strategy:
       # Every lane runs to the end, so one red lane never hides another lane's failures.
@@ -153,12 +153,18 @@ jobs:
           - unit-heavy-1
           - unit-heavy-2
           - unit-heavy-3
+          - unit-heavy-4
           - db-chaos-1
           - db-chaos-2
+          - db-chaos-3
+          - db-chaos-4
+          - db-chaos-5
           - contract-security-1
           - contract-security-2
           - contract-security-3
-          - rest-heavy
+          - rest-heavy-1
+          - rest-heavy-2
+          - rest-heavy-3
           - rest
     defaults:
       run:

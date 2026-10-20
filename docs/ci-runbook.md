@@ -39,9 +39,9 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 ├─ dependabot-alerts (always, #3558) → C-9.1 #11's Dependabot alert gate: the open alerts on
 │                                      `main`, judged on this tree         (CI-SEC-001/004/005)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
-├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in ten
+├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in sixteen
 │                                      parallel lanes (tools/ci/py-test-lanes.json, the heavy
-│                                      matrices sharded, #3881), coverage combined over all ten
+│                                      matrices sharded, #3881), coverage combined over all of them
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002); its
@@ -981,13 +981,16 @@ section in the same sprint — do not just work around it and move on.
   `services/api`) per lane; `_job-py.yml` runs one `py-tests` job per lane, and `py` combines every
   lane's raw coverage, so the 85% / 75% floors (C-9.4) are measured on the union, never per shard.
   The `rest` lane runs `tests` minus every listed path: a new test directory runs there until it is
-  listed. A heavy matrix is several lanes named `<family>-<k>` (`unit-heavy-1..3`, `db-chaos-1..2`,
-  `contract-security-1..3`; `rest-heavy` is the listed half of `rest`). A directory can be shared: a
-  path one lane lists inside another lane's path is carved out of it (`--ignore`), so
-  `contract-security-1` runs `tests/contract` minus what `contract-security-3` lists below it, a
+  listed. A heavy matrix is several lanes named `<family>-<k>` (`unit-heavy-1..4`, `db-chaos-1..5`,
+  `contract-security-1..3`; `rest-heavy-1..3` are the listed part of `rest`). A directory can be
+  shared: a path one lane lists inside another lane's path is carved out of it (`--ignore`), so
+  `contract-security-1` runs `tests/contract` minus what the other two list below it, a
   subdirectory added later included.
-- **Budget.** No PR job over 8 minutes (#3881), so a lane stays at about 6: its job is its summed run
-  time plus collection and start-up, which is large for import-heavy directories (`tests/contract`).
+- **Budget.** No PR job over 8 minutes (#3881), so a lane stays at about 5: its job is its summed run
+  time plus collection and start-up, which is large for import-heavy directories (`tests/contract`
+  takes about 2 minutes to collect under `--cov`). The Postgres- and QuestDB-backed files
+  (`db-chaos-*`) ran up to 3 times slower on one run than on another a few hours earlier, so cut
+  them from a run's numbers, not from the best one, and leave that room.
 - **To rebalance**, take the lane jobs' logs of a recent green `pr` run (job ids from
   `gh api repos/CandleViewer/CandleViewer/actions/runs/<run id>/jobs`, then
   `gh api --allow-escape-sequences repos/CandleViewer/CandleViewer/actions/jobs/<job id>/logs`) and

@@ -277,10 +277,10 @@ def _executed(workflow: str, on: set[str]) -> list[str]:
     # #2892 adds `security-review-label` to every run (4 / 17 / 17 / 36), #3558 the Dependabot
     # alert gate's `dependabot-alerts` (5 / 18 / 18 / 37), #3751 a fourth py-tests lane: the
     # 19-minute lane split in two (5 / 19 / 19 / 38). #269 adds the Storybook gate beside `a11y`
-    # on the e2e filter (5 / 19 / 19 / 39). #3881 shards the four py-tests lanes into ten (+6) and
-    # leaves `integration / integration` to the merge group, which a PR no longer runs (-1):
-    # 5 / 24 / 24 / 44.
-    [("docs", 5), ("py", 24), ("py,infra", 24), ("all", 44)],
+    # on the e2e filter (5 / 19 / 19 / 39). #3881 shards the four py-tests lanes into sixteen (+12)
+    # and leaves `integration / integration` to the merge group, which a PR no longer runs (-1):
+    # 5 / 30 / 30 / 50.
+    [("docs", 5), ("py", 30), ("py,infra", 30), ("all", 50)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
