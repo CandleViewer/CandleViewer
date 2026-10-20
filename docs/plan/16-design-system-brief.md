@@ -237,26 +237,26 @@ This brief is a _design-time enforcement mechanism_ for `05-accessibility-standa
 
 This section answers one operational question — _how does a token value get from a designer's hand into every rendered pixel, and back?_ — for a designer or engineer who has never done it. Every step names the file, the command (package scripts of `packages/ui`; repo-level task names live only in `AGENTS.md` §4) and the output to expect. Both directions pass through the same JSON files, the same gates and the same PR review, so there is exactly one source of truth whichever side starts a change.
 
-**Pipeline at a glance.** Both directions in one diagram; the Mermaid source is versioned with this text and renders on GitHub. For E05-D06 the orchestrator ruled that this diagram is the pipeline evidence a process runbook needs, in place of a Penpot board (`docs/design/README.md`'s page-and-PNG rule targets screen and component artefacts); step numbers are those of §11.2 and §11.3.
+**Pipeline at a glance.** Both directions in one diagram; step numbers are those of §11.2 and §11.3, and every node starts with the role code of §11.2 that owns the step (D designer, E engineer, R reviewers, O orchestrator / owner).
 
 ```mermaid
 flowchart LR
   subgraph A["Runbook A — design to code (§11.2)"]
     direction LR
-    A1["1–2 Designer edits a token in a Penpot set, dark theme active"] --> A2["3 Tokens tab: Tools, Export, multi-file · flatten-and-diff snippet"]
-    A2 --> A3["4–5 edit packages/ui/tokens/*.tokens.json · new colour: pairs.mjs or exemptions.json"]
-    A3 --> A4["6 build:tokens · contrast:gate (contrast:data-ink on A11Y-C007) · verify_tokens.py · vitest"]
-    A4 --> A5["7–8 tokens/CHANGELOG.md entry + version · conventional commit · gitleaks"]
-    A5 --> A6["9–10 PR with the contrast report · CI: build job, a11y lane, unit lane · security-review label is automatic"]
-    A6 --> A7["11 code-reviewer + security-reviewer · a11y role on pairs · design CODEOWNER · owner for a design PR"]
-    A7 --> A8["12 merge: In Test, then Done · main is the truth · the snippet prints nothing"]
+    A1["D · 1–2 Designer edits a token in a Penpot set, dark theme active"] --> A2["D · 3 Tokens tab: Tools, Export, multi-file · flatten-and-diff snippet"]
+    A2 --> A3["D/E · 4–5 edit packages/ui/tokens/*.tokens.json · new colour: pairs.mjs or exemptions.json"]
+    A3 --> A4["D/E · 6 build:tokens · contrast:gate (contrast:data-ink on A11Y-C007) · verify_tokens.py · vitest"]
+    A4 --> A5["D/E · 7–8 tokens/CHANGELOG.md entry + version · conventional commit · gitleaks"]
+    A5 --> A6["D/E · 9–10 PR with the contrast report · CI: build job, a11y lane, unit lane · security-review label is automatic"]
+    A6 --> A7["R · 11 code-reviewer + security-reviewer · a11y role on pairs · design CODEOWNER · owner for a design PR"]
+    A7 --> A8["O · 12 merge: In Test, then Done · main is the truth · the snippet prints nothing (shadow arrays with inset: false, font-family arrays and the absent motion.* are normalised)"]
   end
   subgraph B["Runbook B — code to design (§11.3)"]
     direction LR
-    B1["1 Engineer needs a token during implementation, e.g. a chart-engine uniform"] --> B2["2 name + tier · engine prefix · pair at 3:1 on surface.canvas · no new exemption"]
+    B1["E · 1 Engineer needs a token during implementation, e.g. a chart-engine uniform"] --> B2["E · 2 name + tier · engine prefix · pair at 3:1 on surface.canvas · no new exemption"]
     B2 --> A3
-    A8 --> B3["4 re-import into Penpot: plugin API addToken / token.value (additive), or Tools, Import with a complete folder"]
-    B3 --> B4["5 export again, the snippet prints nothing · checklist line: Penpot token sets = packages/ui/tokens at sha"]
+    A8 --> B3["D · 4 re-import into Penpot: plugin API addToken / token.value (additive), or Tools, Import with a complete folder"]
+    B3 --> B4["D · 5 export again, the snippet prints nothing · checklist line: Penpot token sets = packages/ui/tokens at sha"]
   end
 ```
 
@@ -383,18 +383,26 @@ Roles: **D** designer (or the design agent driving Penpot), **E** engineer (opti
 
 0. **Know where the shipped repo differs from the §11.1 wording** (E02-D01 was ratified before E05-D01/E05-T01 landed; the contract's intent stands, these are the names in the tree): the high-contrast overlay is `semantic-hc.tokens.json`, not `semantic-high-contrast.tokens.json`; `component.tokens.json` does not exist yet (no Tier-3 token has been needed; the first one creates it); `density-compact.tokens.json` / `density-comfortable.tokens.json` do not exist — density is alias indirection declared in `themes.json` (`size.control.height`, `size.row.height`, `space.row.height.*`, `space.inset.*`, `space.field.gap` carry both resolutions, §2.3); the Tier-1 isolation lint `tools/style-dictionary/lint-tier1-refs.*` was never shipped — the shipped guard is ESLint `candleviewer/no-raw-design-values` on `packages/ui/src/**`, so **a reviewer still checks by eye that no component or spec references `palette.*` or a scale step directly**. The Penpot DS file carries the matching sets `primitives`, `semantic-dark`, `semantic-light`, `semantic-hc` and the `theme/*` themes that layer them exactly as `themes.json` does (`docs/design/E05/E05-D01.md`, "What was built" and "Themes"); any further set the file holds (for example density sets, which E05-D01 chose not to create because density is alias indirection) has no repo counterpart and is ignored by this runbook.
 1. **Classify the change (D).** _Retune_ of an existing colour/size → edit the **Tier-1 primitive** in set `primitives`; never fork a semantic token to a literal. _New meaning_ for an existing value → add a **Tier-2 alias** in `semantic-dark` (`category.subcategory.variant.state`, lower-case, dot-delimited; when the path also has children the leaf is `.default`, §11.1); add a line in `semantic-light` / `semantic-hc` only if those themes need a different reference. _New primitive_ → it needs a design-review comment on the ticket saying why no existing step works (token sprawl is the failure mode §2 warns about). _Rename or removal_ → a breaking change (pre-1.0 a MINOR bump, step 7) and the consumer grep in §11 above; prefer adding the new name and deprecating the old one in `$description` for one release.
-2. **Edit in Penpot (D).** Tokens tab → the set → edit the value or create the token with the final name; keep `theme/dark` + `density/compact` active while checking (dark is canonical, §4). A value typed in the Penpot UI propagates to bound shapes immediately; one set from the plugin API only re-paints after a theme toggle (`docs/design/README.md` § gotchas). Check the swatch in all three themes (toggle `theme/light`, `theme/high-contrast`) and write down the token name(s) touched.
-3. **Export (D).** Tokens tab → Tools → **Export** → _multiple files_: one JSON per set (`primitives.json`, `semantic-dark.json`, `semantic-light.json`, `semantic-hc.json`, plus any set without a repo counterpart) and `$themes.json` / `$metadata.json`. Penpot writes a **nested** tree (`{"color": {"buy": {"default": {"$value": …}}}}`); the repo files are **flat** (§11 above); `$themes.json`, `$metadata.json` and extra sets have no repo counterpart (`themes.json` is maintained by hand). **Never paste a whole export over a token file**: the export also differs from the repo in representation, not only in nesting — Penpot writes one shadow (`elevation.0`–`elevation.5`) as a one-element array where the repo keeps the object, one font family (`font.family.ui`, `font.family.mono`) as a one-element array where the repo keeps the string, and it cannot hold the 7 `motion.*` tokens at all (`duration` and `cubicBezier` have no Penpot type). No converter is committed yet (§11.7); flatten, normalise and diff one exported set against its repo file with this stdlib snippet, saved anywhere outside the repo (`python3 -I flatdiff.py <exported-set.json> packages/ui/tokens/<set>.tokens.json` prints one line per token whose type or value really differs, and **nothing on a clean tree** — verified against all four repo sets in the E05-D06 dry-run):
+2. **Edit in Penpot (D).** Tokens tab → the set → edit the value or create the token with the final name; keep `theme/dark` active (plus the density theme if the file has one) while checking (dark is canonical, §4). A value typed in the Penpot UI propagates to bound shapes immediately; one set from the plugin API only re-paints after a theme toggle (`docs/design/README.md` § gotchas). Check the swatch in all three themes (toggle `theme/light`, `theme/high-contrast`) and write down the token name(s) touched.
+3. **Export (D).** Tokens tab → Tools → **Export** → _multiple files_: one JSON per set (`primitives.json`, `semantic-dark.json`, `semantic-light.json`, `semantic-hc.json`, plus any set without a repo counterpart) and `$themes.json` / `$metadata.json`. Penpot writes a **nested** tree (`{"color": {"buy": {"default": {"$value": …}}}}`); the repo files are **flat** (§11 above); `$themes.json`, `$metadata.json` and extra sets have no repo counterpart (`themes.json` is maintained by hand). **Never paste a whole export over a token file**: the export also differs from the repo in representation, not only in nesting — Penpot writes one shadow (`elevation.0`–`elevation.5`) as a one-element array whose object carries `"inset": false` (its exporter, `shadow-token->dtcg-token`, always writes the key) where the repo keeps the bare object, one font family (`font.family.ui`, `font.family.mono`) as a one-element array where the repo keeps the string, and it cannot hold the 7 `motion.*` tokens at all (`duration` and `cubicBezier` have no Penpot type). No converter is committed yet (§11.7); flatten, normalise and diff one exported set against its repo file with this stdlib snippet, saved anywhere outside the repo (`python3 -I flatdiff.py <exported-set.json> packages/ui/tokens/<set>.tokens.json` prints one line per token whose type or value really differs, and **nothing on a clean tree** — verified in the E05-D06 dry-run on exports of all four repo sets whose shape was derived from a reviewer's real Penpot export and from Penpot's exporter source (`shadow-token->dtcg-token`); a live re-run on a real export waits on a working plugin bridge):
 
    ```python
    import json, sys
 
    SKIP = {"duration", "cubicBezier"}  # motion.*: no Penpot token type, code-only (§11)
 
+   def drop_inset(d):
+       # Penpot's exporter writes "inset": false on every shadow (shadow-token->dtcg-token); the repo omits it
+       if isinstance(d, dict) and d.get("inset") is False:
+           return {k: x for k, x in d.items() if k != "inset"}
+       return d
+
    def norm(t, v):
        # Penpot exports one shadow and one font family as a one-element list; the repo keeps the element
        if t in ("shadow", "fontFamilies") and isinstance(v, list) and len(v) == 1:
-           return v[0]
+           v = v[0]
+       if t == "shadow":
+           v = [drop_inset(d) for d in v] if isinstance(v, list) else drop_inset(v)
        return v
 
    def flat(node, path=(), inherited=None):
@@ -432,7 +440,7 @@ Roles: **D** designer (or the design agent driving Penpot), **E** engineer (opti
 9. **Open the PR (D or E).** `.github/PULL_REQUEST_TEMPLATE.md` fully filled, `Closes #N`, labels from the ticket (`design`, `handoff`, `area/design-system`, `a11y` when a pair or exemption changed); CI adds `security-review` by itself because the token file names match C-10.2's `*token*` rule — expected, never removed. Evidence in the body: the first lines of `packages/ui/build/reports/contrast-matrix.md` (the pass/fail table per threshold class), the `git diff --stat` of `packages/ui/contrast/` if regenerated, the CHANGELOG entry, and — because a token change is a design artefact — the Penpot page link and a PNG of the changed swatch exported with `docs/design/_tools/penpot_export.py <shapeId> <out.png>` under `docs/design/<epic>/img/` (`docs/design/README.md` evidence rule) — `<shapeId>` is the board's id: a read-only `execute_code` on the ticket's page returns it (`penpot.currentPage.root.children.map((s) => ({ name: s.name, id: s.id }))`, pick the board by name), and a build script that creates the board returns it too. Status → In Review.
 10. **Read CI like this.** Red `build` or a11y step: the log names a `TOKENS-E00n`/`A11Y-C00n` code — the table in §11 above says which file to fix; the `contrast-matrix` artifact holds the full report. Red unit tests: a pinned value (step 6) or a real consumer. Red commitlint or `pr-metadata`: the scope, the header length or the `Closes #N` line. A red check is never answered by lowering a threshold, adding to `data-ink-baseline.json`, adding an exemption without the a11y reviewer, or a `.skip` (`AGENTS.md` §8).
 11. **Review and merge (R, O).** Two independent agent reviews (C-10.1): the `code-reviewer` and — because every token PR carries the automatic `security-review` label — the `security-reviewer`, whose pass is the C-10.2 security approval; at least one CODEOWNER of `packages/ui/tokens/`; any change to `pairs.mjs`/`exemptions.json`/`encodings.json` is read by the accessibility role (§13.3 item 3); a design PR merges only with the owner's approval (`docs/design/README.md` § Approval rule), a code PR by the orchestrator once green. Squash-merge moves the ticket to In Test; QA or the owner sets Done (C-10.4).
-12. **After merge.** Penpot already holds the value (design-first); confirm it still equals `main` by re-running the step-3 snippet against the merged file — it prints nothing (the snippet already normalises the known representation differences). Downstream picks the change up on their next build: the app via the token CSS/`tokens.ts`, the chart engine via `theme-uniforms.json` (a data swap, §11.1), Electron via `tokens.main.json`, Storybook on its next `build:tokens`.
+12. **After merge.** Penpot already holds the value (design-first); confirm it still equals `main` by re-running the step-3 snippet against the merged file — it prints nothing (the snippet already normalises the known representation differences: shadow one-element arrays with `inset: false`, font-family one-element arrays, the absent `motion.*`). Downstream picks the change up on their next build: the app via the token CSS/`tokens.ts`, the chart engine via `theme-uniforms.json` (a data swap, §11.1), Electron via `tokens.main.json`, Storybook on its next `build:tokens`.
 
 ### 11.3 Runbook B — code → design (an engineering-discovered token)
 
@@ -440,18 +448,18 @@ When an engineer finds during implementation that a token is missing — the can
 
 1. **Name and tier (E).** Follow §2 naming and §11.2 step 1: alias an existing primitive wherever possible (a new primitive needs the design reviewer's explicit OK in the PR); engine-only colours live under one of the `ENGINE_CATEGORY_PREFIXES` so `json/flat-rgba` exports them, and are declared in `pairs.mjs` against `color.surface.canvas` at 3:1 (`05-accessibility-standard.md` §5.4) — chart ink gets **no new exemption**: the legacy E05-T01 pair exemptions in `tools/contrast/exemptions.json` (34 pairs, 20 of them chart ink on `color.surface.canvas`, each marked "tracked as follow-up") are recorded debt, not precedent. Write a `$description` saying which layer/component consumes it.
 2. **Same PR path (E).** Steps 4–11 of §11.2 apply unchanged. The token may ride in the feature PR while the whole diff stays within C-4.8; otherwise, or when another lane will consume the same token, the token lands first in its own small `feat(design-system)` PR (interface-first, `01-sdlc-and-branching.md` §10) and the feature rebases on it. Label the PR `design` + `handoff` so it reaches the design board; CODEOWNERS adds `@CandleViewer/design` automatically for `packages/ui/tokens/`. The CHANGELOG entry says `(engineering, <ticket>)` under `### Added`.
-3. **Who reviews (R).** The design CODEOWNER checks name, tier and that no near-duplicate token exists (`15-component-catalogue.md` "Tokens used" fields; §12 consistency); the accessibility role checks the pair/threshold class; the chart-engine CODEOWNER checks an engine token's consumer. The owner's merge or `approved` comment is the CDO sign-off under the agent-delivery adaptations.
+3. **Who reviews (R).** The design CODEOWNER checks name, tier and that no near-duplicate token exists (the **Tokens** field of each `15-component-catalogue.md` entry; §12 consistency); the accessibility role checks the pair/threshold class; the chart-engine CODEOWNER checks an engine token's consumer. The owner's merge or `approved` comment is the CDO sign-off under the agent-delivery adaptations.
 4. **Re-import into Penpot (D, after merge).** The Penpot token sets are brought back to `main` so the next design ticket does not export a stale set. Two ways exist today; both are additive:
    - **Plugin API** (the path E05-D01 used to build and verify the sets — `docs/design/E05/E05-D01.md`, "Cascade verified live": a `token.value` set from the API re-paints bound shapes only after a theme toggle; use the shared-plugin convention of `docs/design/README.md` — file-id check, `await penpot.openPage(...)`, then synchronous work only): `penpot.library.local.tokens` is the file's `TokenCatalog`; find the set by name in `catalog.sets` (create a missing one with `catalog.addSet({ name })`); for each repo token of that set, `set.tokens.find(t => t.name === name)` → missing: `set.addToken({ type, name, value })`; present with a different value: assign `token.value`; then re-point `catalog.themes` with `theme.addSet(set)` only when `themes.json` changed, and toggle the active theme off and on so bound shapes re-paint. `motion.*` tokens are skipped (no Penpot type). Never remove a Penpot token from a script; removals are done by the designer in the UI after the breaking-version PR merged.
    - **Penpot UI**: Tokens tab → Tools → **Import** of a folder or ZIP in the multi-file layout (one nested JSON per set, `$themes.json`, `$metadata.json`). Import **replaces the whole token collection**, so it is only safe with a complete, freshly generated folder — which needs the flat→nested converter that is not committed yet (§11.7). Until it exists, prefer the plugin-API path for additions and the UI for single edits.
    - **Verification**: export again (§11.2 step 3) and run the snippet against every set — zero lines. The design ticket that consumes the token records `Penpot token sets = packages/ui/tokens at <merge sha>` in its handoff checklist (§11.4).
-5. **Ownership.** No backlog ticket owns a committed Penpot ⇄ JSON converter or sync script (checked in `docs/plan/backlog/all-tickets.json` on 2026-10-20: only E05-D01, E05-D06 and E05-X01 mention token export at all). Until one exists the re-import is a manual step on the first design ticket after the token merge, and `docs/design/README.md`'s rule that agents never touch the shared DS library without an explicit ticket applies: the re-import is done under that ticket, with the file switch announced in the lane thread.
+5. **Ownership.** No backlog ticket owns a committed Penpot ⇄ JSON converter or sync script (checked in `docs/plan/backlog/all-tickets.json` on 2026-10-20: no ticket names a Penpot ⇄ repo converter or sync script; E02-D01 chose DTCG to avoid a bespoke converter, and E05-D01, E05-X01 and E08-D04 mention exports only). Until one exists the re-import is a manual step on the first design ticket after the token merge, and `docs/design/README.md`'s rule that agents never touch the shared DS library without an explicit ticket applies: the re-import is done under that ticket, with the file switch announced in the lane thread.
 
 ### 11.4 Per-component handoff checklist (every CMP-\* design ticket; SCR-\* tickets per §13.3 item 8)
 
 **Scope.** Every `CMP-*` component ticket attaches it. An `SCR-*` screen ticket attaches it only for a component contract it introduces or changes (new variants, states, keyboard or accessible-name behaviour); a screen that only composes published components attaches the §12 checklist and the `05-accessibility-standard.md` §10 template and links the components' own checklists. §13.3 item 8 is the Definition-of-Done anchor and sets the effective date for designs already Done. **Where it lives.** The designer commits it as `docs/design/<epic>/<ticket>-handoff.md` next to the spec (precedent: `docs/design/E09/E09-D03-design-qa-checklist.md`) and pastes the same block as a comment on the component's design ticket when moving it to In Review; §13.3 item 7 then links it from the downstream engineering ticket, whose Definition of Ready requires it (`02-definition-of-ready-done.md` §3.1). **Who enforces it.** The design PR's `code-reviewer` returns `REQUEST_CHANGES` when the file is missing or a line is blank (as for a missing Penpot link or PNG, `docs/design/README.md`); QA or the owner moving the ticket to Done checks that every line is `[x]` or `N/A — <reason>` (§13.3 item 8; `02-definition-of-ready-done.md` §4.2); the engineering ticket's `design-qa` pass (`02` §3.2) compares the build against it. A blank line, or an N/A without a reason, keeps the ticket out of Done.
 
-Copy the block, replace the angle-bracket fields, keep every line:
+Copy the block, replace the angle-bracket fields and the example rows (CMP-001 Button; CMP-116 PnLBadge for the live-data row — they show the expected granularity), keep every line:
 
 ```markdown
 ## Handoff checklist — CMP-<nnn> <ComponentName> (<ticket key>, #<issue>)
@@ -465,8 +473,14 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [ ] **Variants × States matrix** — every Variant × State of the catalogue entry (15 §CMP-<nnn>) is a
       Penpot variant and a Storybook story; table 1 below
 - [ ] **Keyboard table** — key → action → where focus lands, per the WAI-ARIA APG pattern (05 §3; 15 §0.3
-      rule 4); table 2
+      rule 4), each key checked against the global map (05 §3.2) and the precedence rules (05 §3.3): no
+      view-local override of a global or navigation binding, no single unmodified key for a trading-critical
+      action, `Esc` / `Ctrl+K` untouched; table 2
 - [ ] **Accessible name / role table** — element → role → name source → states/properties (05 §11.6); table 3
+- [ ] **Live data** — for every field bound to a streaming value: politeness (polite / assertive / none),
+      cadence (default 1 update per 2 s per field, 05 §6.2), what is coalesced to the latest value; assertive
+      only for discrete events (fill, reject, auto-flatten, rule fire, disconnect); table 5; N/A for static
+      chrome
 - [ ] **Motion pair** — each animated property: motion-safe recipe and its motion-reduce variant (16 §7; 05 §7);
       table 4; "none animated" is a valid N/A reason
 - [ ] **Density notes** — compact and comfortable values (row/control height, padding tokens) and the smallest
@@ -485,33 +499,45 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States
 
-| Variant | State | Penpot variant | Story name | Notes |
-| ------- | ----- | -------------- | ---------- | ----- |
+| Variant | State | Penpot variant                                           | Story name  | Notes |
+| ------- | ----- | -------------------------------------------------------- | ----------- | ----- |
+| primary | hover | CMP-001 · Button / Variant=Primary, Size=Md, State=Hover | AllVariants | —     |
 
 ### Table 2 — Keyboard
 
-| Key | Action | Focus after | Notes |
-| --- | ------ | ----------- | ----- |
+| Key           | Action   | Focus after         | Global conflict?                                    | Notes |
+| ------------- | -------- | ------------------- | --------------------------------------------------- | ----- |
+| Enter / Space | activate | stays on the button | none (not in the 05 §3.2 map; not trading-critical) | —     |
 
 ### Table 3 — Accessible name / role
 
-| Element | Role | Accessible name (source) | States / properties |
-| ------- | ---- | ------------------------ | ------------------- |
+| Element    | Role            | Accessible name (source)     | States / properties                                                                                  |
+| ---------- | --------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `<button>` | button (native) | visible label (text content) | aria-busy while loading; aria-disabled + aria-describedby → reason tooltip when disabled-with-reason |
 
 ### Table 4 — Motion pair
 
-| Property | motion-safe | motion-reduce | Duration / easing tokens |
-| -------- | ----------- | ------------- | ------------------------ |
+| Property        | motion-safe                                           | motion-reduce                           | Duration / easing tokens                       |
+| --------------- | ----------------------------------------------------- | --------------------------------------- | ---------------------------------------------- |
+| loading spinner | rotate loop; label replaced, width locked (no reflow) | opacity-only pulse, no rotation (16 §7) | motion.duration.normal, motion.easing.standard |
+
+### Table 5 — Live data
+
+| Field                             | Politeness | Cadence   | Coalescing        | Notes                    |
+| --------------------------------- | ---------- | --------- | ----------------- | ------------------------ |
+| CMP-116 PnLBadge · unrealised PnL | polite     | 1 per 2 s | latest value only | never per tick (05 §6.2) |
 
 ### Density
 
-| Mode | Row / control height | Padding tokens | Smallest target |
-| ---- | -------------------- | -------------- | --------------- |
+| Mode    | Row / control height        | Padding tokens                                       | Smallest target |
+| ------- | --------------------------- | ---------------------------------------------------- | --------------- |
+| compact | 24 px (size.control.height) | space.inset.* as the entry's Tokens field names them | 24 × 24 px      |
 
 ### Essential exceptions
 
 | Exception | Compensating control | Reviewer | Date |
 | --------- | -------------------- | -------- | ---- |
+| none      | —                    | —        | —    |
 ```
 
 The four a11y lines (keyboard, name/role, motion pair, exceptions) are the mechanism that carries `05-accessibility-standard.md` into the engineering ticket; they are never N/A for an interactive component.
