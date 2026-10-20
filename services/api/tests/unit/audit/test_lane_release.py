@@ -1,7 +1,10 @@
 """ADR-0037 S2c (#3009): the offline release command and what the next boot makes of its note
 (`docs/plan/24-internal-schemas.md` §15.6 Release, scan rows 12 and 13). The sink is a real
 `AuditWriter` over the in-memory repository, the key a test vector read through S2b-1's loader
-from a file in `tmp_path`; a test waits for a condition, bounded by `WAIT_S`."""
+from a file in `tmp_path`. Every async test runs on a `VirtualTimeLoop` (`audit_waits`, #3709,
+#3816): the drain's polls and backoffs, the writer's budgets and `until()`'s bound are fake
+seconds, which pass only when nothing else can happen, so no wait depends on how fast the runner
+is."""
 
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ from typing import Any
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
+from audit_waits import TaskEnded, VirtualTimeLoop, virtual
 from structlog.testing import capture_logs
 
 from candleviewer import audit_lane_wiring
@@ -33,11 +37,14 @@ from candleviewer.audit.writer import AuditUnavailable, AuditWriter
 from candleviewer.observability import logging as observability_logging
 from candleviewer.settings import Settings
 
-KEY, LANE, WAIT_S = bytes(range(32)), uuid.UUID(int=7), 5.0
+#: WAIT_S is fake seconds: past every wait a test here makes, which takes a few fake milliseconds.
+KEY, LANE, WAIT_S = bytes(range(32)), uuid.UUID(int=7), 600.0
 KEYS, OTHER = lj.LaneKeys(KEY), lj.LaneKeys(bytes(range(32, 64)))  # OTHER: configured nowhere
 ROTATED = lj.LaneKeys(bytes(range(32, 64)), previous=KEY)  # a boot under OTHER's key, since lost
-FAST: dict[str, Any] = {"retry_s": (0.0, 0.0), "poll_s": 0.0, "new_lane": lambda: LANE}
+#: A fake millisecond: the drain parks between polls and retries instead of spinning.
+FAST: dict[str, Any] = {"retry_s": (0.001, 0.001), "poll_s": 0.001, "new_lane": lambda: LANE}
 WORDS = ("op" * 32, "INC-" + "7" * 60, "a planted frame no key verifies " + "x" * 248)  # the caps
+WORKERS = ("audit-writer", "audit-lane-drain")  # the flusher's and the drain's task names
 
 
 class Gate(AuditWriter):
@@ -79,10 +86,38 @@ async def boot(
     return lane, await lane.start()
 
 
+def workers() -> list[asyncio.Task[Any]]:
+    """The running flushers and drains, whose death `until()` watches."""
+    return [task for task in asyncio.all_tasks() if task.get_name() in WORKERS]
+
+
+def failed(task: asyncio.Task[Any]) -> bool:
+    return task.done() and not task.cancelled() and task.exception() is not None
+
+
 async def until(check: Callable[[], bool]) -> None:
-    async with asyncio.timeout(WAIT_S):
-        while not check():  # noqa: ASYNC110 - polls state the drain task moves; no event for it
-            await asyncio.sleep(0)
+    """Wait until `check()` holds, looking again at each point where nothing is ready. A flusher
+    or drain that dies meanwhile fails it at once, unless its death is what `check()` waits for.
+    A stall fails it after `WAIT_S` fake seconds, naming the flushers and drains that had died by
+    then, before the wait too, with the last one's error as the cause (as `test_lane_drain`'s)."""
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, VirtualTimeLoop), "an async test here runs on a VirtualTimeLoop"
+    try:
+        async with asyncio.timeout(WAIT_S):
+            while not check():
+                watched = workers()
+                await loop.idle(*watched)
+                died = [task for task in watched if failed(task)]
+                if died and not check():
+                    cause = died[0].exception()
+                    raise TaskEnded(f"{died[0].get_name()} ended before the condition") from cause
+    except TimeoutError:
+        dead = [task for task in loop.made if task.get_name() in WORKERS and failed(task)]
+        stalled = f"stalled: still false after {WAIT_S:g} fake seconds"
+        if dead:
+            names = ", ".join(task.get_name() for task in dead)
+            raise TaskEnded(f"{stalled}; had died: {names}") from dead[-1].exception()
+        raise AssertionError(stalled) from None
 
 
 def logout(writer: AuditWriter) -> AuditEmission:
@@ -164,6 +199,7 @@ async def released(audit: Path, settings: Settings, layout: str) -> SimpleNamesp
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
+@virtual
 async def test_release_copies_the_held_bytes_then_writes_the_note(
     audit: Path, settings: Settings, layout: str
 ) -> None:
@@ -177,6 +213,7 @@ async def test_release_copies_the_held_bytes_then_writes_the_note(
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
+@virtual
 async def test_release_next_boot_records_one_released_row_and_the_held_seq_values(
     audit: Path, settings: Settings, layout: str
 ) -> None:
@@ -197,6 +234,7 @@ async def test_release_next_boot_records_one_released_row_and_the_held_seq_value
     assert gap is None or [after(rows[1])[k] for k in GAP_ROW] == gap
 
 
+@virtual
 async def test_release_next_boot_counts_the_released_row_under_its_reason(
     audit: Path, settings: Settings
 ) -> None:
@@ -207,6 +245,7 @@ async def test_release_next_boot_counts_the_released_row_under_its_reason(
     assert r.lane.anomalies == dict.fromkeys(lj.ANOMALY_REASONS, 0) | {"released": 1, "seq_gap": 1}
 
 
+@virtual
 async def test_release_logs_the_hold_and_the_outcome_and_never_the_words(
     audit: Path, settings: Settings
 ) -> None:
@@ -222,6 +261,7 @@ async def test_release_logs_the_hold_and_the_outcome_and_never_the_words(
 
 
 @pytest.mark.parametrize("case", ["deleted", "removed_by_hand", "marker_fsync_fails"])
+@virtual
 async def test_release_note_is_deleted_once_the_marker_passes_its_end(
     audit: Path, settings: Settings, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
@@ -251,6 +291,7 @@ async def test_release_note_is_deleted_once_the_marker_passes_its_end(
     assert [r["reason"] for r in repo.rows if r["action"] == "audit.lane_anomaly"] == ["released"]
 
 
+@virtual
 async def test_release_during_a_rotation_verifies_with_both_keys_and_notes_under_the_new_one(
     audit: Path, settings: Settings
 ) -> None:
@@ -276,6 +317,7 @@ async def test_release_during_a_rotation_verifies_with_both_keys_and_notes_under
 
 
 @pytest.mark.parametrize("bad", ["bad_mac", "another_hold"])
+@virtual
 async def test_release_note_with_a_bad_mac_or_another_hold_is_ignored_and_logged(
     audit: Path, bad: str
 ) -> None:
@@ -301,6 +343,7 @@ async def test_release_note_with_a_bad_mac_or_another_hold_is_ignored_and_logged
 
 
 @pytest.mark.parametrize("holder", ["cv_api", "shared"])
+@virtual
 async def test_release_refuses_while_cv_api_runs(
     audit: Path, settings: Settings, holder: str
 ) -> None:
@@ -332,6 +375,7 @@ REFUSED = {
 
 
 @pytest.mark.parametrize("case", list(REFUSED))
+@virtual
 async def test_release_refuses_and_writes_nothing(
     audit: Path,
     settings: Settings,
