@@ -114,7 +114,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("chip / pill text: env badge, presets, price-helper chips, kbd hints", "color.text.primary", "color.surface.raised", "text"),
     ("chip secondary text: '(estimated)', kbd hint, non-binding limit", "color.text.secondary", "color.surface.raised", "text"),
     ("popover option text (TIF select, trigger-by select, account select)", "color.text.primary", "color.surface.overlay", "text"),
-    ("popover disabled-option reason ('PostOnly is unavailable for market orders')", "color.text.secondary", "color.surface.overlay", "text"),
+    ("popover disabled-option reason ('Market orders are always IOC on Bybit')", "color.text.secondary", "color.surface.overlay", "text"),
     ("selected preset / selected order-type tab text", "color.text.primary", "color.surface.selected", "text"),
     # --- the arm indicator, chips and banners ---------------------------------------------------------------------
     ("ARMED pill: 'ARMED 4:32 · Main · 0.250 BTC' and the hotkeys-paused line", "color.text.primary", "color.status.warning.subtle", "text"),
