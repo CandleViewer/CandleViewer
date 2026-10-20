@@ -68,10 +68,12 @@ rendered message through the same redaction as stdout. What that looks like:
   `Cookie` or `Set-Cookie` header's and pydantic's input to the line's end, and any other bare one
   to a space, comma or closing bracket, so a list or a dict is read only as far, and a quote that
   closes an enclosing string is taken as part of the value, to the line's end. A placeholder
-  (`***`, `null`, `<omitted>`, a marker) is no value only as the whole value. The last part of a
-  dotted name is no label: a WS machine topic such as `machines.session:<id>.state` stays
-  readable. A format string is left as it is, so `%` formatting works; the line it renders is
-  redacted.
+  (`***`, `null`, `<omitted>`, a marker) is no value only as the whole value, or right before a
+  `...[truncated:oversize]` marker. A dotted id is no label: a name after a `.`, then a `:` and
+  neither a space nor a quote, so a WS machine topic such as `machines.session:<id>.state` stays
+  readable. A dotted attribute and its value is a label: `self.password='…'`, `obj.api_secret=…`
+  and `cfg.token: …` show the key-name marker. A format string is left as it is, so `%` formatting
+  works; the line it renders is redacted.
 - **Tracebacks.** A traceback or a stack is rendered first and redacted after (#415), on stdout and
   in the support bundle's buffer (on one line there), where each value stands: a labelled value
   shows the key-name marker, a backup download path (to the end of its token) shows
@@ -81,9 +83,12 @@ rendered message through the same redaction as stdout. What that looks like:
   `[redacted:key-shape]: …`), as does a dotted name of three parts of 10 or more characters each
   (`websockets.exceptions.ConnectionClosedOK`). A text longer than 4096 characters and the marker
   keeps 4096: its start and its last lines (up to 3072), around a `...[truncated:oversize]` marker,
-  so the exception's own line stays. An exception logged as a value or an argument is turned into
-  its text first: with Python's own `__str__`, from its arguments redacted first (a mapping's keys
-  and bytes get their rules); any other gets the text rules only, the labels and the shapes.
+  so the exception's own line stays. A cut that lands inside a backup download token leaves the
+  path's marker only, which takes the cut's marker with it. Paths nested in one another, or a cut
+  right after a path's `/download/`, make the whole text the marker, as for a message line. An
+  exception logged as a value or an argument is turned into its text first: with Python's own
+  `__str__`, from its arguments redacted first (a mapping's keys and bytes get their rules); any
+  other gets the text rules only, the labels and the shapes.
   Passed for `%r`, it shows as its quoted text, not as `ValueError('…')`. A traceback that uvicorn
   logs as the text of a message, as in a failed start below, is still one marker when a shape
   matches in it (#2868).

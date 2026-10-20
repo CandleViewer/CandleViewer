@@ -446,15 +446,16 @@ async def test_a_swap_that_raises_evicts_the_socket_with_none_of_the_queued_fram
     assert (frames[1]["p"]["reason"], closed) == ("slow_consumer", 4429)
 
 
-@_ENCODINGS
+@_EACH
 @pytest.mark.parametrize("first", ["shutdown", "slow_consumer"])
-async def test_flag_off_eviction_of_a_closing_socket_seals_it_and_counts_no_second_close(
-    encoding: str, first: str, monkeypatch: pytest.MonkeyPatch
+async def test_eviction_of_a_closing_socket_seals_it_and_counts_no_second_close(
+    flag: bool, encoding: str, first: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A close is under way, its `bye` queued behind B's frames, when a swap that raises evicts
-    the socket. That close stays the connection's one close: counted once, logged once as `ws
-    close`, its `bye` sent next (sealed). The eviction logs `ws eviction sealed`, not a close."""
-    rig, sock = _rig(False, monkeypatch), _Wire(encoding)
+    """A close is under way, its `bye` queued behind B's frames (with the flag on, behind what that
+    close kept of the priority lane), when a swap that raises evicts the socket. That close stays
+    the connection's one close, whatever the flag: counted once, logged once as `ws close`, its
+    `bye` sent next (sealed). The eviction logs `ws eviction sealed`, not a close."""
+    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
     seen = ("shutdown", "slow_consumer")
     before = {reason: _closes(reason) for reason in seen}
     async with _connected(rig, sock) as conn:
@@ -466,6 +467,9 @@ async def test_flag_off_eviction_of_a_closing_socket_seals_it_and_counts_no_seco
             await rig.registry.grants_changed(USER)
         frames = await _drained(sock, conn)
         closed = sock.closed_with
+    # what the first close left queued: all of it with the flag off; with it on, the priority
+    # lane for a close that flushes it, nothing for a `slow_consumer` close (§8.4)
+    left = [q for q in queued if not flag or (first == "shutdown" and q[1] in PRIORITY_FAMILIES)]
     assert _sent(frames) == [("d", "system"), ("bye", None)]
     assert (frames[1]["p"]["reason"], closed) == (first, frames[1]["p"]["code"])
     assert {r: _closes(r) - before[r] for r in seen} == {r: int(r == first) for r in seen}
@@ -473,4 +477,4 @@ async def test_flag_off_eviction_of_a_closing_socket_seals_it_and_counts_no_seco
         ("ws close", first)
     ]
     (line,) = [e for e in logs if e["event"] == "ws eviction sealed"]
-    assert (line["log_level"], line["dropped"]) == ("info", len(queued))
+    assert (line["log_level"], line["dropped"]) == ("info", len(left))

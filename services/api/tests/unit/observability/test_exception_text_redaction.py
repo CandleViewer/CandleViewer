@@ -9,10 +9,11 @@ The redaction key list names the token, header and signature forms the services 
 header line of each is redacted by name, and so is a value labelled with a key name in message or
 exception text (`token = …`), so such a line passes the support bundle's scan. A long text keeps
 its start and its last lines, and a second pass changes nothing. A placeholder is no value only as
-the whole value, the last part of a dotted name is no label, a format string is left to format,
-and the buffer writes each record on one line, so a label and its value on two lines are refused.
-A backup download path (E42-T05 BK-11) in a traceback or a stack shows its marker where it stood,
-as the whole of a message line that holds one does.
+the whole value or right before the cut's marker, a dotted id (`machines.session:<id>`) is no label
+where a dotted attribute and its value is one, a format string is left to format, and the buffer
+writes each record on one line, so a label and its value on two lines are refused. Each backup
+download path (E42-T05 BK-11) in a traceback or a stack shows its marker where it stood, as the
+whole of a message line that holds one does.
 
 Values are assembled at runtime, so no secret-shaped literal sits in the repo.
 """
@@ -459,7 +460,10 @@ def test_each_key_name_ends_with_a_letter() -> None:
     ("text", "shown"),
     [
         *[(text, text) for text in ("token=***", "token=null, x=1", "password='***'")],
-        *[(f"token={mark}", f"token={mark}") for mark in (redaction._TRUNCATED, _KEY_MARK)],
+        *[
+            (f"token={mark}", f"token={mark}")  # the last: a cut right after a marker
+            for mark in (redaction._TRUNCATED, _KEY_MARK, _KEY_MARK + redaction._TRUNCATED)
+        ],
         *[
             (f"password={value}{_PASSWORD}", f"password={_KEY_MARK}")
             for value in ("***", "null-", "<omitted>", "[redacted")
@@ -473,13 +477,39 @@ def test_a_placeholder_is_no_value_only_as_the_whole_value(text: str, shown: str
     assert ("labelled-secret" in set(scan_text(text))) is (shown != text)  # the scan reads alike
 
 
-@pytest.mark.parametrize(
-    "text", [f"ch='machines.session:{uuid.UUID(int=1)}.state'", "    self.token = mint(32)"]
-)
-def test_the_last_part_of_a_dotted_name_is_no_label_to_the_redaction_or_the_scan(text: str) -> None:
+_TOPIC = f"machines.session:{uuid.UUID(int=1)}.state"
+
+
+@pytest.mark.parametrize("text", [f"ch='{_TOPIC}'", json.dumps({"ch": _TOPIC})])
+def test_a_dotted_id_is_no_label_to_the_redaction_or_the_scan(text: str) -> None:
+    # a name after a `.`, then a `:` and neither a space nor a quote: a WS machine topic
     assert redact_text(text) == text
     assert redaction._redact_runs(text) == text
     assert list(scan_text(text)) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        (f"self.password='{_PASSWORD}'", f"self.password='{_KEY_MARK}'"),
+        ("obj.api_secret=abcd1234", f"obj.api_secret={_KEY_MARK}"),
+        ("cfg.token: shortone", f"cfg.token: {_KEY_MARK}"),
+        ("cfg.token:'shortone'", f"cfg.token:'{_KEY_MARK}'"),
+        ("    self.token = mint(32)", f"    self.token = {_KEY_MARK}"),  # a frame line
+    ],
+)
+def test_a_dotted_attribute_and_its_value_are_masked_by_name_and_flagged_by_the_scan(
+    text: str, shown: str
+) -> None:
+    assert redact_text(text) == shown
+    assert redaction._redact_runs(text) == shown
+    assert "labelled-secret" in set(scan_text(text))
+    assert list(scan_text(shown)) == []
+
+
+def test_the_scan_reads_an_escaped_line_break_after_a_dotted_label_as_a_space() -> None:
+    # as the buffer writes a label that ends its line and the value on the next line
+    assert "labelled-secret" in set(scan_text("cfg.token:\\nshortone"))
 
 
 def test_the_filter_leaves_a_format_string_of_a_value_shape_so_that_it_formats() -> None:
@@ -652,10 +682,14 @@ _LABEL_HEAVY = st.builds(
 @given(_LABEL_HEAVY)
 @example("p" * 8 + " " + "123456 " * 185 + 'session: "<omitted> ok\n' + "123456 " * 300)
 @example("x " * 2030 + "y" * 11 + " token=ab " + "z " * 300)
+@example(" " + "123456 " * 185 + "token=ab " + "123456 " * 397)
+@example("x" * 13 + " " + "123456 " * 184 + "Authorization: Bearer ab " + "123456 " * 397)
+@example("x" * 18 + " " + "123456 " * 184 + "Cookie: v\n" + "123456 " * 397)
 def test_a_label_heavy_text_stays_within_the_cap_and_a_second_pass_changes_nothing(
     text: str,
 ) -> None:
-    # the examples: a cut inside a placeholder, and the second cut inside a key-name marker
+    # the examples: a cut inside a placeholder, the second cut inside a key-name marker, and a cut
+    # right after one (after a label, a header with its scheme, a cookie header to its line's end)
     for redact in _REDACTIONS.values():
         out = redact(text)
 
@@ -965,6 +999,42 @@ def test_paths_nested_in_one_another_make_the_whole_traceback_text_the_marker() 
     assert redact_text(text) == _DL_MARK
 
 
+def test_two_download_paths_in_one_text_each_show_the_marker_where_they_stood() -> None:
+    first, second = _DOWNLOAD_PATHS["token-43"], _DOWNLOAD_PATHS["empty-id"]
+
+    assert redaction._redact_runs(f"a {first} b {second} c") == f"a {_DL_MARK} b {_DL_MARK} c"
+
+
+def _fail_for(first: str, second: str) -> None:
+    try:
+        _fail(first)
+    except ValueError as exc:
+        raise RuntimeError(f"op failed for {second}") from exc
+
+
+@pytest.mark.parametrize("path", ["structlog", "stdlib"])
+def test_a_chained_traceback_with_a_path_in_each_exception_keeps_its_frames(path: str) -> None:
+    def emit() -> None:
+        try:
+            _fail_for(_DOWNLOAD_PATHS["token-43"], _DOWNLOAD_PATHS["token-22"])
+        except RuntimeError:
+            if path == "structlog":
+                structlog.get_logger("t.app").exception("op_failed")
+            else:
+                logging.getLogger("t.lib").error("op failed", exc_info=True)
+
+    lines, ring = _capture(emit)
+
+    assert _PART not in _logged(lines, ring) and _BACKUP_ID not in _logged(lines, ring)
+    [line], [entry] = lines, ring
+    text = line["exception"]
+    assert text.startswith("Traceback (most recent call last):\n") and _FAIL_FRAME in text
+    assert f"ValueError: bad value {_DL_MARK}\n\n{_CHAINS['cause']}\n\nTraceback" in text
+    assert ", in _fail_for\n" in text and text.endswith(f"RuntimeError: op failed for {_DL_MARK}")
+    field = "'exception': {!r}" if path == "structlog" else " exception={!r}"
+    assert field.format(text) in entry
+
+
 def test_a_cut_right_after_a_path_download_segment_makes_the_whole_text_the_marker() -> None:
     # stated: the run pass's markers move the cut to the `/download/` of a path with no token
     text = "123456 " * 185 + "/admin/backups/a/download/ " + "123456 " * 10
@@ -977,7 +1047,7 @@ def test_a_download_path_that_the_cut_ends_shows_its_marker_where_it_stood() -> 
     head = "x" * (redaction._MAX_SCAN_LEN - len(prefix) - 11) + " "  # the cap falls 10 into TOKEN
     out = redaction._redact_runs(head + prefix + TOKEN + " tail" * 10)
 
-    assert out == head + _DL_MARK  # the path and the cut's marker after it
+    assert out == head + _DL_MARK  # the path's marker, which took the cut's marker with it
     assert redaction._redact_runs(out) == out
 
 
@@ -988,16 +1058,23 @@ _PATH_PIECES = (
     *("token=", "password: ", '"', "'", " ", "\n", "123456", redaction._TRUNCATED, _DL_MARK),
 )
 _PATH_HEAVY = st.builds(
-    lambda pad, before, pieces: "x" * pad + " " + "123456 " * before + pieces,
+    lambda pad, before, pieces: "keep " + "x" * pad + " " + "123456 " * before + pieces,
     st.integers(0, 21),
     st.integers(0, 600),
     st.lists(st.sampled_from(_PATH_PIECES), max_size=40).map("".join),
 )
 
 
+def _nested(text: str) -> bool:
+    """Paths nested in one another: a path is left once the labels and each path are replaced."""
+    text = redaction._LABELLED_VALUE.sub(redaction._label_marker, text)
+    return redaction._DOWNLOAD_PATH.search(redaction._DOWNLOAD_PATH.sub(_DL_MARK, text)) is not None
+
+
 @settings(max_examples=300, deadline=None)
 @given(_PATH_HEAVY)
 @example(f"x /admin/backups/a{_DOWNLOAD_PATHS['empty-id']}/download/{TOKEN}")
+@example(f"keep {_DOWNLOAD_PATHS['token-43']} 123456 {_DOWNLOAD_PATHS['empty-id']}")
 def test_no_download_path_is_left_and_a_second_pass_changes_nothing(text: str) -> None:
     for redact in _REDACTIONS.values():
         out = redact(text)
@@ -1005,3 +1082,6 @@ def test_no_download_path_is_left_and_a_second_pass_changes_nothing(text: str) -
         assert re.search(redaction._DOWNLOAD_PATH_RE, out) is None
         assert len(out) <= _CAP
         assert redact(out) == out
+    if not _nested(text) and 4 * len(text) <= redaction._MAX_SCAN_LEN:  # no marker is 4 times
+        # the text it replaces, so nothing is cut: a traceback keeps the text around its paths
+        assert redaction._redact_runs(text).startswith("keep ")

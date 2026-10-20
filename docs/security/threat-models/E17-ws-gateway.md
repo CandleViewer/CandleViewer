@@ -567,7 +567,7 @@ The registry's eviction of a connection whose `permission_change` or `revoked` s
 send timeout above) is also a `slow_consumer` close: it carries no step 3 trigger (when its own flush expires it
 carries `trigger` `flush_deadline` and `flush_abandoned: true`), and with the flag on, like every `slow_consumer`
 close, it clears both lanes before the `bye`, so nothing queued under the old scope follows an identity change
-(flag off, as built: the `bye` follows the frames already queued, `23-ws-protocol.md` §8.4). A non-droppable frame
+(flag off: sealed, the `bye` sent next; #415, `23-ws-protocol.md` §9.5). A non-droppable frame
 (`orders`, `executions`, control, `system`) that cannot be encoded, or whose emission raises, closes the connection
 `internal_error`: it fails closed and never drops silently, because a client that missed an order transition or a
 `revoked` would act on a false state. That close is audited (`ws.connection.closed`, reason `internal_error`,

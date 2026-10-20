@@ -71,16 +71,20 @@ _REDACT_KEY_FORMS: Final[frozenset[str]] = frozenset(k.replace("-", "_") for k i
 _KEY_NAME_MARKER: Final[str] = "[redacted:key-name]"
 #: `_REDACT_KEY_FORMS` as a pattern, each name with `-` and `_` alike; the bundle scan's too.
 _KEY_NAMES: Final = "|".join(sorted(re.escape(k).replace("_", "[-_]") for k in _REDACT_KEY_FORMS))
-#: A name after a `.` is the last part of a dotted name, not a label: a WS machine topic such as
-#: `machines.session:<id>.state` stays readable (#415). The bundle scan's too.
-_NOT_DOTTED: Final = r"(?<!\.)"
+#: A name after a `.` is part of a dotted id, not a label, when a `:` follows it at once and then a
+#: character other than a space or a quote: a WS machine topic such as `machines.session:<id>.state`
+#: stays readable (#415). A dotted attribute and its value is a label (`self.password='…'`,
+#: `obj.api_secret=…`, `cfg.token: …`), and an escaped line break (`\n`, as the bundle's buffer
+#: writes one) reads as a space. The bundle scan's too.
+_NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr])[^\s"'])"""
 #: A labelled value that holds nothing to redact: a marker, the end of a cut text or a placeholder,
 #: as the whole value, so `password=***x` holds a value (#415). What follows it ends a value: a
-#: space, a quote, a comma, a closing bracket, the end, or a `\`, as the bundle's buffer writes a
-#: line break or a quote (`\n`, `\'`). The bundle scan reads the same as no value.
+#: space, a quote, a comma, a closing bracket, the end, a `\`, as the bundle's buffer writes a line
+#: break or a quote (`\n`, `\'`), or the end of a cut text, which a cut right after a marker leaves
+#: there. The bundle scan reads the same as no value.
 _NO_VALUE: Final = (
     r"(?!(?:\[redacted:[a-z-]+\]|\.\.\.\[truncated:oversize\]|<omitted>|\*\*\*|null|none)"
-    r"""(?=[\s"',}\]\\]|\Z))"""
+    r"""(?=[\s"',}\]\\]|\.\.\.\[truncated:oversize\]|\Z))"""
 )
 #: The first letters of the key names: most words fail this check before any name is tried.
 _KEY_FIRST: Final = "".join(sorted({k[0] for k in _REDACT_KEY_FORMS}))

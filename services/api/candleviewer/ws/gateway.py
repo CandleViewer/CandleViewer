@@ -869,13 +869,12 @@ class _Connection:
     async def evict(self) -> None:
         """Registry hook: sending a `permission_change` or `revoked` stalled or failed, or the
         swap or the settle around them raised, so the connection closes `slow_consumer` with
-        nothing still queued ahead of its `bye` (#415, §9.5): sealed with the flag off; with it
-        on, the step 3 `bye`, which clears both lanes (`retry_after_ms` 3 000 and the generic
-        message, `23-ws-protocol.md` §8.4). With the flag off, a close already under way stays the
-        connection's one close (§8.6): it is sealed, and counted and logged as no second close."""
-        if self.pipeline is not None:
-            self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
-        elif self.closing and not self.sealed:
+        nothing still queued ahead of its `bye` (#415, §9.5), whatever the flag: sealed with the
+        flag off; with it on, the step 3 `bye`, which clears both lanes (`retry_after_ms` 3 000 and
+        the generic message, `23-ws-protocol.md` §8.4). A close already under way stays the
+        connection's one close (§8.6): it is sealed (with the flag on, the priority lane goes too),
+        and counted and logged as no second close."""
+        if self.closing and not self.sealed:
             dropped = self._seal()
             _log().info(
                 "ws eviction sealed",
@@ -884,6 +883,8 @@ class _Connection:
                 user_id=str(self.user_id) if self.user_id else None,
                 session_id=self.session_id,
             )
+        elif self.pipeline is not None:
+            self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
         else:
             self.close_with("slow_consumer", seal=True)
 
