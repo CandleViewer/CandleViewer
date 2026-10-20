@@ -4520,7 +4520,7 @@ export interface paths {
      *     mutations require (SR-043); whether one-click and hotkey entry use the same token is
      *     E30-S04's (#1088). Arming needs a fresh step-up while a live account is within the caller's
      *     reach: for the Owner whenever one exists, for a Manager through a trade grant (SR-025).
-     *     Without one it answers `403 step_up_required` with `action_class: live_enablement`, which
+     *     Without one it answers `403 step_up_required` with the class `live_enablement`, which
      *     is no-grace and single-use, so a client that holds only the session and the CSRF token
      *     cannot arm itself (OM-S01, N2). A token records whether it was issued under that step-up;
      *     one issued without it never satisfies a live mutation, so the caller arms again, with

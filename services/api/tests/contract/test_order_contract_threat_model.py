@@ -327,9 +327,7 @@ def test_arming_for_live_needs_a_fresh_step_up() -> None:
     """N2: a client holding only the session and the CSRF token cannot arm itself (SR-025)."""
     text = _words(_OPS["armOneClickTrading"]["description"])
     assert "Arming needs a fresh step-up while a live account is within the caller's reach" in text
-    assert (
-        "Without one it answers `403 step_up_required` with `action_class: live_enablement`" in text
-    )
+    assert "Without one it answers `403 step_up_required` with the class `live_enablement`" in text
     assert "`one_click`" not in text  # no request field of that name exists
     # The Owner holds no grants, so "within reach" names both principals (R2-M1).
     assert "for the Owner whenever one exists, for a Manager through a trade grant" in text
