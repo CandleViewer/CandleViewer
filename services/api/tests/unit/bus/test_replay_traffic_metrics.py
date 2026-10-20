@@ -4,14 +4,19 @@
 `bus_subscriber_lag{subscriber}` and `ingest_queue_full_total{class}` name no env, and a replay
 lane reuses its live twin's subscriber name (`bars.{symbol}`). Counted, a slow replay consumer,
 which is replay's designed backpressure, would fire the live `IngestionNeverDropQueueFull` alert
-and overwrite the live lane's lag gauge. The replay clock's own `replay_*` series measure it."""
+and overwrite the live lane's lag gauge. The replay clock's own `replay_*` series measure it.
+
+The same state, a lane held at depth while its publisher waits, would also log the "bus subscriber
+lagging" warning on every delivery: at replay's 100x, a warning per event in the live logs."""
 
 from __future__ import annotations
 
 import asyncio
 import uuid
 
-from candleviewer.bus.bus import Bus
+from structlog.testing import capture_logs
+
+from candleviewer.bus.bus import DEFAULT_LAG_WARN_THRESHOLD, Bus
 from candleviewer.bus.metrics import (
     bus_delivered_total,
     bus_published_total,
@@ -64,3 +69,28 @@ async def test_live_traffic_still_counts_in_every_series() -> None:
     published, delivered, _, full = series()
     await publish_two_through_a_full_queue("live")
     assert series() == (published + 2, delivered + 2, 1, full + 1)
+
+
+async def lag_warnings(env: str) -> list[tuple[str, str, int]]:
+    """The "bus subscriber lagging" warnings (subscriber, topic, depth) logged while a default
+    `NEVER_DROP` lane, whose threshold is 512, takes 513 trades nobody reads: the state a replay
+    consumer is held in while its publisher waits."""
+    bus = Bus()
+    bus.subscribe(LANE, f"{env}.md.BTCUSDT.trade", QueuePolicy.NEVER_DROP)
+    with capture_logs() as logs:
+        for i in range(DEFAULT_LAG_WARN_THRESHOLD + 1):
+            await bus.publish(trade_topic(env), i)
+    return [
+        (e["subscriber"], e["topic"], e["queue_depth"])
+        for e in logs
+        if e["event"] == "bus subscriber lagging"
+    ]
+
+
+async def test_a_replay_subscriber_at_depth_logs_no_lag_warning() -> None:
+    assert await lag_warnings(REPLAY) == []
+
+
+async def test_a_live_subscriber_at_depth_still_logs_the_lag_warning() -> None:
+    key = trade_topic("live").key
+    assert await lag_warnings("live") == [(LANE, key, 512), (LANE, key, 513)]

@@ -12,9 +12,10 @@ queue gives deterministic per-topic, per-subscriber ordering.
 
 Replay traffic (E26-T03, 24 §2.9): a replay session's topics (`is_replay_env`)
 move none of `bus_published_total`, `bus_delivered_total`, `bus_subscriber_lag`
-or `ingest_queue_full_total`. Their labels name no env and a replay lane reuses
-its live twin's subscriber name, so replay's designed backpressure would fire the
-live ingest alert and overwrite live lag gauges; the replay clock's own
+or `ingest_queue_full_total`, and log no "bus subscriber lagging" warning. Their
+labels name no env and a replay lane reuses its live twin's subscriber name, so
+replay's designed backpressure would fire the live ingest alert, overwrite live
+lag gauges and log a warning per event into the live logs; the replay clock's own
 `replay_*` series measure it.
 """
 
@@ -196,7 +197,9 @@ class Bus:
         if counted:
             bus_delivered_total.labels(subscriber=sub.name).inc()
             bus_subscriber_lag.labels(subscriber=sub.name).set(depth)
-        if depth >= sub.lag_warn_threshold:
+        # A replay lane sits at depth by design (its publisher waits), so at 100x this would be
+        # a warning per event, named for its live twin, in the live logs.
+        if counted and depth >= sub.lag_warn_threshold:
             _log().warning(
                 "bus subscriber lagging",
                 subscriber=sub.name,
