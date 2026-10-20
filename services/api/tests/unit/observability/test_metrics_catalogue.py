@@ -575,16 +575,22 @@ def test_exported_audit_query_metrics_served_with_env_and_closed_labels() -> Non
 
 def test_user_lifecycle_caps_and_help_cover_the_writers_closed_sets() -> None:
     """E42-T04 (#965 R7): the label values are closed sets fixed by their writers: the cascade's
-    steps (`admin/user_disable.py`, its closing record too) and the grants push
-    (`admin/account_access.py`, #2648: `pushed`, `timeout`, `failed`). Each cap is the size of its
-    sets and each help names every value, for the dashboard and alert authors who read it."""
+    steps (`admin/user_disable.py`, its closing record too), the grants push
+    (`admin/account_access.py`, #2648: `pushed`, `timeout`, `failed`) and the role push of a
+    committed role change (`api/users.py`, E42-T09 #2649: `ok`, `failed`). Each cap is the size
+    of its sets and each help names every value, for the dashboard and alert authors who read it."""
     from candleviewer.admin import account_access, user_disable
     from candleviewer.admin import lifecycle_metrics as lm
+    from candleviewer.api import users
 
     push = lm.STEP_OUTCOMES[account_access.PUSH_STEP]
     assert push == ("pushed", "timeout", "failed")
     assert typing.get_args(typing.get_type_hints(account_access._pushed)["outcome"]) == push
-    cascade = [step for step in lm.STEP_OUTCOMES if step != account_access.PUSH_STEP]
+    roles = lm.STEP_OUTCOMES[users.ROLES_PUSH_STEP]
+    assert roles == ("ok", "failed")
+    assert typing.get_args(typing.get_type_hints(users._roles_pushed)["outcome"]) == roles
+    pushes = (account_access.PUSH_STEP, users.ROLES_PUSH_STEP)
+    cascade = [step for step in lm.STEP_OUTCOMES if step not in pushes]
     assert cascade == [*user_disable.STEPS, "closing_record"]
     specs = {s.name: s for s in CATALOGUE}
     for name, sets in (

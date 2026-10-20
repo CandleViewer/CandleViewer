@@ -435,7 +435,13 @@ class LifecycleStore:
     """The S3 disable store's seam: it finds no user, so an authorised disable is a 404."""
 
     async def disable(
-        self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: Any
+        self,
+        user_id: uuid.UUID,
+        *,
+        actor: uuid.UUID,
+        now: datetime,
+        audit: Any,
+        check: Any = None,  # E42-T09: a PATCH's `If-Match`, judged under the lock
     ) -> UserStatusChange | None:
         return None
 

@@ -113,6 +113,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # restored, R6), and changed the display name or the MFA flag; both written ahead.
         "users.enable",
         "users.update",
+        # E42-T09 (#2649, C-2.9, SR-055): an Owner revoked one of a user's sessions
+        # (`revokeUserSession`): the Owner's own record, written ahead of B16's
+        # `auth.session_revoked`, which names the session's own user.
+        "users.session_revoked",
         # E42-T08 (#2648, #965 R5): a user's account-access grant set replaced, written ahead
         # of the commit with the live grants before and after (`account_access_sqlalchemy.py`).
         "users.access_change",

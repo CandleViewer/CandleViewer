@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
+from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total, user_lifecycle_total
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.users import (
     ADMIN_REVOKE_REASON,
@@ -44,6 +45,8 @@ from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.repositories import identity_sqlalchemy
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import LOCK_USER
 from candleviewer.storage.repositories.user_lifecycle import (
     UserPatch,
     UserPrecondition,
@@ -83,6 +86,14 @@ def _user(uid: uuid.UUID, roles: tuple[str, ...], status: str = "active") -> dic
         "updated_at": "2026-10-01T00:00:00+00:00",
         "password_hash": "$argon2id$never-returned",  # a column the read model must not leak
     }
+
+
+def _pushes(outcome: str) -> float:  # the role push's `cv_user_lifecycle_steps_total`, a delta
+    return float(user_lifecycle_steps_total.labels(step="roles_push", outcome=outcome)._value.get())
+
+
+def _calls(result: str) -> float:  # `cv_user_lifecycle_total` of the disable, read as a delta
+    return float(user_lifecycle_total.labels(action="disable", result=result)._value.get())
 
 
 class _Log(list[str]):
@@ -335,7 +346,8 @@ def test_no_password_hash(b16_audit: RecordingAuditSink, spec: Any) -> None:
 
 
 def test_etag_tracks_roles(b16_audit: RecordingAuditSink, spec: Any) -> None:
-    """R4 (UL3-T1): a role change, and no other field, makes an earlier tag stale."""
+    """R4 (UL3-T1): the tag versions the whole representation, so a role change, a field that is
+    no column of `users`, makes an earlier tag stale; an unchanged user keeps its tag."""
     env = _Env(b16_audit, _principal("owner", spec), _user(M, ("viewer",)))
     first = env.client.get(_PATH.format(M)).headers["etag"]
     assert env.client.get(_PATH.format(M)).headers["etag"] == first  # stable while unchanged
@@ -586,6 +598,38 @@ def test_a_body_too_large_or_a_bad_acknowledgement_is_400(
     assert env.log == []
 
 
+@pytest.mark.parametrize(
+    "query",
+    ["?purge=true", f"?userId={_ANY_SESSION}", "?acknowledge_unknown_positions=true&x=1"],
+    ids=["purge", "target_user", "extra_key"],
+)
+def test_patch_undeclared_query_key_is_422(
+    b16_audit: RecordingAuditSink, spec: Any, query: str
+) -> None:
+    """SR-026, as `DELETE /users/{userId}` refuses one (S7): a key `updateUser` does not declare
+    is 422 `validation_failed`, decided on the names alone once RBAC passed, before any value,
+    the body, the step-up or a lookup, and nothing changes. (`updateUser` declares no 422 yet:
+    the contract wording is the E42-T04 contract lane's, #2710.)"""
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)))
+    r = env.client.patch(_PATH.format(M) + query, json={"display_name": "x"})
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    assert [e["rule"] for e in r.json()["errors"]] == ["undeclared_parameter"]
+    assert env.log == [] and env.store.users[M]["display_name"] is None
+    viewer = _Env(b16_audit, _principal("viewer", spec), _user(M, ("manager",)))
+    refused = viewer.client.patch(_PATH.format(M) + query, json={"display_name": "x"})
+    assert (refused.status_code, refused.json()["code"]) == (403, "forbidden")  # RBAC first
+
+
+def test_a_display_name_with_a_nul_is_400(b16_audit: RecordingAuditSink, spec: Any) -> None:
+    """Postgres `text` cannot hold U+0000: 400 `validation_failed` before any lookup, never a data
+    error at the store (a 500)."""
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)))
+    r = env.patch(M, {"display_name": "M\u0000"})
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert (r.status_code, r.json()["code"]) == (400, "validation_failed")
+    assert "display_name" in r.json()["detail"] and env.log == []
+
+
 def test_an_empty_patch_changes_nothing_and_takes_no_lock(
     b16_audit: RecordingAuditSink, spec: Any
 ) -> None:
@@ -641,6 +685,7 @@ def test_role_change_records_grant_and_revoke_ahead_and_pushes_after(
     b16_audit: RecordingAuditSink, spec: Any
 ) -> None:
     env = _Env(b16_audit, _principal("owner", spec), _user(M, ("viewer",)))
+    pushed = _pushes("ok")
     r = env.patch(M, {"roles": ["manager"]})
     assert r.status_code == 200 and r.json()["roles"] == ["manager"]
     assert env.log[-4:] == ["lock", "roles.grant", "roles.revoke", "commit"]
@@ -652,19 +697,24 @@ def test_role_change_records_grant_and_revoke_ahead_and_pushes_after(
             {"roles": ["manager"]},
         )
     assert env.pushed == [M]  # live sockets re-evaluated after the commit (23 section 9.5)
+    assert _pushes("ok") == pushed + 1  # R7: one count per post-commit step, its outcome
 
 
 def test_a_failed_role_push_after_the_commit_is_logged_never_rolled_back(
     b16_audit: RecordingAuditSink, spec: Any
 ) -> None:
+    """R7: counted (`roles_push`, `failed`: the `UserLifecycleStepFailed` ticket) and logged at
+    error, never rolled back and never a 500."""
     env = _Env(b16_audit, _principal("owner", spec), _user(M, ("viewer",)))
     env.push_error = RuntimeError("socket registry down")
+    failed = _pushes("failed")
     with capture_logs() as logs:
         r = env.patch(M, {"roles": ["manager"]})
     assert r.status_code == 200 and env.store.users[M]["roles"] == ["manager"]
     assert env.pushed == [M] and env.log[-1] == "commit"  # the push ran after the commit
     (line,) = [e for e in logs if e["event"] == "users.update.step"]
     assert (line["log_level"], line["step"], line["outcome"]) == ("error", "roles_push", "failed")
+    assert _pushes("failed") == failed + 1
 
 
 def test_last_owner_demotion_is_409_with_one_owner_floor_denial(
@@ -836,6 +886,59 @@ def test_a_disable_without_the_service_is_501(b16_audit: RecordingAuditSink, spe
     assert (r.status_code, r.json()["code"]) == (501, "not_implemented")
 
 
+def _read_under_the_lock(user: Mapping[str, Any]) -> SimpleNamespace:
+    """`user` as the disable store's `identity_sqlalchemy.read_user` reads its row under the lock
+    (no `password_hash`; timestamps as the driver returns them)."""
+    row = {key: value for key, value in user.items() if key != "password_hash"}
+    for key in ("last_login_at", "created_at", "updated_at"):
+        row[key] = None if row[key] is None else datetime.fromisoformat(row[key])
+    return SimpleNamespace(_mapping=row)
+
+
+def test_a_role_change_before_the_disable_lock_is_412(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """UL3-T1 (the #2649 review): a PATCH to `disabled` checks its `If-Match`
+    again inside the disable's own transaction, on the user read under its lock. A role change
+    committed after the route's read and before that lock is 412 `version_conflict`: the
+    transaction rolls back with nothing written or recorded, no step runs, and the refusal is
+    counted as `version_conflict`, never as an `error`."""
+    env, w = _disable_env(b16_audit, spec, positions=0, orders=0)
+    tag = env.client.get(_PATH.format(M)).headers["etag"]  # read while M is a manager
+    changed = _read_under_the_lock(_user(M, ("viewer",)))  # another owner's change, committed
+    w.rel.rows[identity_sqlalchemy._USER_SQL] = [changed]
+    stale, errors = _calls("version_conflict"), _calls("error")
+    r = env.patch(M, {"status": "disabled"}, headers={"If-Match": tag})
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert (r.status_code, r.json()["code"]) == (412, "version_conflict")
+    assert w.rel.order() == [LOCK_USER, identity_sqlalchemy._USER_SQL]  # nothing written
+    assert not w.rel.committed and w.calls == [] and w.post_commit() == []
+    assert (_calls("version_conflict"), _calls("error")) == (stale + 1, errors)
+
+
+def test_an_unchanged_user_under_the_disable_lock_is_disabled(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """The tag still names the version read under the lock: the cascade runs as without one."""
+    env, w = _disable_env(b16_audit, spec, positions=0, orders=0)
+    tag = env.client.get(_PATH.format(M)).headers["etag"]
+    w.rel.rows[identity_sqlalchemy._USER_SQL] = [_read_under_the_lock(_user(M, ("manager",)))]
+    r = env.patch(M, {"status": "disabled"}, headers={"If-Match": tag})
+    assert r.status_code == 200 and r.json()["status"] == "disabled" and w.rel.committed
+    assert w.rel.order()[:2] == [LOCK_USER, identity_sqlalchemy._USER_SQL]
+    assert len(w.of("users.disable")) == 1
+
+
+def test_a_disable_without_if_match_reads_nothing_more_under_the_lock(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """No `If-Match`, no precondition: the cascade's transaction is the DELETE's, statement for
+    statement."""
+    env, w = _disable_env(b16_audit, spec, positions=0, orders=0)
+    assert env.patch(M, {"status": "disabled"}).status_code == 200
+    assert identity_sqlalchemy._USER_SQL not in w.rel.order() and w.rel.committed
+
+
 # -- S12: the admin view of a user's sessions ----------------------------------------------------
 
 
@@ -896,12 +999,87 @@ def test_revoked_audit_ahead(b16_audit: RecordingAuditSink, spec: Any) -> None:
 
 def test_socket_4401_within_5s(b16_audit: RecordingAuditSink, spec: Any) -> None:
     """23 section 9.5: the revoked session's socket gets `bye session_revoked` and closes 4401
-    before the DELETE returns (0 s on the fake clock, which never moves); the others stay."""
+    inside the DELETE itself, before its 204, so within 5 s on any clock (the fake one never
+    moves); the other sockets stay open."""
     env, first, second, foreign = _with_sessions(b16_audit, spec)
+    assert env.closed == {}
     assert env.client.delete(f"/users/{M}/sessions/{first.id}").status_code == 204
     assert env.closed == {str(first.id): ("session_revoked", CLOSE_TOKEN_EXPIRED)}
     assert {str(second.id), str(foreign.id)}.isdisjoint(env.closed)  # their sockets stay open
-    assert env.sessions.now() - _T0 <= timedelta(seconds=5)
+
+
+def _b16_into(env: _Env, b16: RecordingAuditSink) -> None:
+    """B16's records join `env.log`, so their order against the route's records shows."""
+    emit = b16.emit
+
+    async def logged(action: str, **kwargs: Any) -> None:
+        env.log.append(f"b16:{action}")
+        await emit(action, **kwargs)
+
+    b16.emit = logged  # type: ignore[method-assign]  # the sink, observed
+
+
+def test_revoke_is_recorded_ahead_by_the_owner_then_by_b16(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """C-2.9, SR-055 (the #2649 review): the revoke's own record names the acting
+    Owner: `users.session_revoked`, with the Owner's id, roles and elevated session, the revoked
+    session and its user, and the reason. It is written ahead of B16 REVOKE, whose one
+    `auth.session_revoked` (named by the session's own user) is written ahead of the row."""
+    env, first, _, _ = _with_sessions(b16_audit, spec)
+    _b16_into(env, b16_audit)
+    r = env.client.delete(f"/users/{M}/sessions/{first.id}")
+    assert r.status_code == 204
+    revoke = f"row_revoke:{ADMIN_REVOKE_REASON}:1"
+    ahead = ("users.session_revoked", "b16:auth.session_revoked", revoke)
+    assert [e for e in env.log if e in ahead] == list(ahead)
+    (record,) = env.emitter.of("users.session_revoked")
+    assert (record["actor_user_id"], record["actor_label"]) == (CALLER, str(CALLER))
+    assert record["session_id"] == _SESSION  # the Owner's elevated session, not the revoked one
+    assert (record["object_kind"], record["object_id"]) == ("session", str(first.id))
+    assert record["reason"] == ADMIN_REVOKE_REASON and "request_id" in record
+    assert record["before_state"] == {"user_id": str(M), "revoked_reason": None}
+    assert record["after_state"] == {
+        "user_id": str(M),
+        "revoked_reason": ADMIN_REVOKE_REASON,
+        "actor_roles": ["owner"],
+    }
+
+
+def test_revoke_with_the_owner_record_refused_is_503_and_nothing_changes(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """AC8: the Owner's record cannot be written, so 503 `audit_unavailable`: B16 records
+    nothing, and the session stays live with its socket open."""
+    env, first, _, _ = _with_sessions(b16_audit, spec, fail_audit=True)
+    r = env.client.delete(f"/users/{M}/sessions/{first.id}")
+    _conforms(spec, "/users/{userId}/sessions/{sessionId}", "delete", r)
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert b16_audit.calls == [] and env.closed == {}
+    assert env.rows.sessions[str(first.id)].revoked_at is None
+    assert not [e for e in env.log if e.startswith("row_revoke")]
+
+
+def test_a_session_that_ends_before_its_row_is_revoked_is_404(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """The conditional row update revoked nothing: the session ended (here its own logout) after
+    it was found live. The answer is the contract's 404 for an ended session, never a 204;
+    nothing is published or closed, and nothing is written beyond the two records ahead."""
+    env, first, _, _ = _with_sessions(b16_audit, spec)
+    revoke = env.rows.revoke
+
+    async def ended_first(session_id: str, *, reason: str, now: datetime) -> Any:
+        await FakeSessionRepository.revoke(env.rows, session_id, reason="logout", now=now)
+        return await revoke(session_id, reason=reason, now=now)
+
+    env.rows.revoke = ended_first  # type: ignore[method-assign]  # the logout, landed in between
+    r = env.client.delete(f"/users/{M}/sessions/{first.id}")
+    _conforms(spec, "/users/{userId}/sessions/{sessionId}", "delete", r)
+    assert (r.status_code, r.json()["code"]) == (404, "not_found")
+    assert env.rows.sessions[str(first.id)].revoked_reason == "logout" and env.closed == {}
+    assert [c["action"] for c in env.emitter.calls] == ["users.session_revoked"]
+    assert b16_audit.actions() == ["auth.session_revoked"]
 
 
 def test_other_users_session_404(b16_audit: RecordingAuditSink, spec: Any) -> None:
@@ -922,7 +1100,8 @@ def test_other_users_session_404(b16_audit: RecordingAuditSink, spec: Any) -> No
 
 def test_audit_down_503(b16_audit: RecordingAuditSink, spec: Any) -> None:
     """AC8: B16 cannot write `auth.session_revoked`, so 503 `audit_unavailable` and the session
-    stays live, its socket open."""
+    stays live, its socket open. The Owner's record, written first, stands (the trail
+    over-reports, never under-reports)."""
     env, first, _, _ = _with_sessions(b16_audit, spec)
 
     async def refuse(action: str, **kwargs: Any) -> None:
@@ -934,6 +1113,7 @@ def test_audit_down_503(b16_audit: RecordingAuditSink, spec: Any) -> None:
     assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
     assert env.rows.sessions[str(first.id)].revoked_at is None and env.closed == {}
     assert not [e for e in env.log if e.startswith("row_revoke")]
+    assert [c["action"] for c in env.emitter.calls] == ["users.session_revoked"]
 
 
 def test_revoke_without_step_up_is_challenged(b16_audit: RecordingAuditSink, spec: Any) -> None:

@@ -3406,13 +3406,14 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("action", "result"),
         "User lifecycle calls by action and result, refusals and failures included. action: "
         "disable; result: disabled, noop, forbidden, self_target, not_found, positions_unknown, "
-        "last_owner, audit_unavailable or error.",
+        "version_conflict (a PATCH's stale If-Match, E42-T09), last_owner, audit_unavailable or "
+        "error.",
         "UserDisableFailed (result error in 15m, ticket: a store failure, not a refusal; a commit "
         "may have landed with no step run). Refusals raise none: forbidden and self_target are "
-        "audited; last_owner (UL1-D1), not_found and positions_unknown are not",
+        "audited; last_owner (UL1-D1), not_found, positions_unknown and version_conflict are not",
         _L,
         "E42",
-        max_series=9,  # the closed sets: one action, nine results
+        max_series=10,  # the closed sets: one action, ten results
         exported=True,
     ),
     _s(
@@ -3424,12 +3425,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "failed: socket_close, session_sweep, b16_revoke (or skipped: no session), scope_refresh, "
         "rule_disarm, invite_revoke (or skipped: not invited). The closing record of a change "
         "that did not commit (closing_record), one attempt: ok or failed. The grants push "
-        "(grants_push, #2648): pushed, timeout or failed.",
-        "UserLifecycleStepFailed (a cascade step or closing record failed in 15m, ticket); "
-        "UserGrantsPushFailed (a grants push failed or timed out in 15m, ticket)",
+        "(grants_push, #2648): pushed, timeout or failed. The role push of a committed role "
+        "change (roles_push, E42-T09 #2649): ok or failed.",
+        "UserLifecycleStepFailed (a cascade step, closing record or role push failed in 15m, "
+        "ticket); UserGrantsPushFailed (a grants push failed or timed out in 15m, ticket)",
         _L,
         "E42",
-        max_series=19,  # ok and failed for seven steps, skipped for two, the push's three
+        max_series=21,  # ok and failed for eight steps, skipped for two, the grants push's three
         exported=True,
     ),
     # --- Latency budget (E04-T06, US-OBS-002) -------------------------------

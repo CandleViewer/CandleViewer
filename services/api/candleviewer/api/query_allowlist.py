@@ -5,8 +5,9 @@ parameters its contract operation declares (22-api-openapi.yaml). A target user 
 spelling, or any other undeclared key, is refused with a 422 `validation_failed` Problem, never
 silently ignored (FastAPI drops undeclared query parameters by default). Callers check it after
 authentication and the route's permission check, and before any data read or state change.
-`DELETE /users/{userId}` (E42-T04 S7, #965), an owner route that names its target in the path,
-refuses an undeclared key the same way (`self_service=False`): a target-user key is just one more.
+`DELETE /users/{userId}` (E42-T04 S7, #965) and `PATCH /users/{userId}` (E42-T09, #2649), owner
+routes that name their target in the path, refuse an undeclared key the same way
+(`self_service=False`): a target-user key is just one more.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ def _echoed(name: str) -> str:
 def undeclared_query_refusal(
     request: Request, declared: frozenset[str], *, self_service: bool = True
 ) -> JSONResponse | None:
-    """422 for an undeclared query key on a self-service route or `DELETE /users/{userId}` (SR-026).
+    """422 for an undeclared query key on a self-service route or an owner `/users/{userId}` route.
 
     Decided on the parameter names alone, so the answer is identical for any value (no existence
     oracle). It echoes at most `_MAX_ECHOED_PARAMS` redacted, bounded names and never a value.

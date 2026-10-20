@@ -60,6 +60,13 @@ class LifecycleAuditUnavailableError(UserLifecycleError):  # 503: nothing change
     code = "audit_unavailable"
 
 
+class UserVersionConflictError(UserLifecycleError):  # 412: a stale `If-Match` (E42-T09, #2649)
+    """A `PATCH /users/{userId}` to `disabled` whose `If-Match` no longer names the user read
+    under the disable's lock: the transaction rolled back before any write."""
+
+    code = "version_conflict"
+
+
 class OpsNotWired(AdminError):
     """The ops read model has no provider yet (E42-T05): 501 `not_implemented`, nothing read."""
 

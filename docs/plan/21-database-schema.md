@@ -534,7 +534,7 @@ Only `risk.unfreeze_manager` lowers a freeze.
 | `last_seen_at`       | timestamptz | no   | `now()` | Idle timeout 15 min default (per-session `idle_timeout_s`, 5–60 min, §3.1 `0007`) |
 | `expires_at`         | timestamptz | no   | —       | Absolute 12 h                                                                  |
 | `revoked_at`         | timestamptz | yes  | NULL    |                                                                                |
-| `revoked_reason`     | text        | yes  | NULL    | logout / rotated / password_change / admin_revoke / mfa_reset / rotation_reuse / break_glass / user_disabled |
+| `revoked_reason`     | text        | yes  | NULL    | logout / rotated / password_change / admin / mfa_reset / rotation_reuse / break_glass / user_disabled |
 | `ip`                 | inet        | yes  | NULL    | **PII**                                                                        |
 | `user_agent`         | text        | yes  | NULL    | **PII**                                                                        |
 | `device_label`       | text        | yes  | NULL    | User-named device                                                              |

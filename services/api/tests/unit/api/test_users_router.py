@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.api.users import make_users_router
 from candleviewer.audit.writer import AuditUnavailable
@@ -519,7 +520,7 @@ def test_put_roles_conflict_and_audit_down_carry_registered_codes() -> None:
 def test_put_roles_demotes_a_non_active_owner_while_one_other_owner_is_active(status: str) -> None:
     """hcl-worker-1's note on #2649: the route's pre-check counts a target's owner grant only while
     the target is active, as the store's locked check does (`counted_roles`)."""
-    store, em, n = _Store({"owner"}, 1, status=status), _Emitter(), _Notifier()
+    em, n = _Emitter(), _Notifier()
 
     class _Counted(_Store):  # the store's own floor, on the roles it counts
         async def apply_roles(
@@ -533,7 +534,53 @@ def test_put_roles_demotes_a_non_active_owner_while_one_other_owner_is_active(st
     r = _client(counted, _admin(), em, n).put(f"/users/{TARGET}/roles", json={"roles": ["viewer"]})
     assert r.status_code == 200 and counted.roles == {"viewer"}
     assert [c["action"] for c in em.calls] == ["roles.grant", "roles.revoke"]
-    del store
+
+
+def _pushes(outcome: str) -> float:  # the role push's `cv_user_lifecycle_steps_total`, a delta
+    labels = {"step": "roles_push", "outcome": outcome}
+    return REGISTRY.get_sample_value("cv_user_lifecycle_steps_total", labels) or 0.0
+
+
+def test_put_roles_last_owner_refusal_that_cannot_be_audited_is_503() -> None:
+    """AC8: the owner-floor refusal is audited (`rbac.denied`); with the audit writer down it is
+    503 `audit_unavailable`, never a 500, and nothing changes."""
+    store, n = _Store({"owner"}, 1), _Notifier()
+    r = _client(store, _admin(), _Emitter(fail=True), n).put(
+        f"/users/{TARGET}/roles", json={"roles": ["viewer"]}
+    )
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert store.roles == {"owner"} and n.users == []
+
+
+def test_put_roles_push_after_the_commit_is_counted() -> None:
+    """R7: one count per post-commit push, by outcome (`roles_push`, `ok`)."""
+    store, n, pushed = _Store({"viewer"}, 2), _Notifier(), _pushes("ok")
+    r = _client(store, _admin(), _Emitter(), n).put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+    )
+    assert r.status_code == 200 and n.users == [TARGET] and _pushes("ok") == pushed + 1
+
+
+def test_put_roles_push_failure_after_the_commit_is_200_logged_and_counted() -> None:
+    """R7: the change is committed before the live sockets are re-evaluated, so a failed push is
+    counted (`roles_push`, `failed`) and logged at error, never rolled back and never a 500."""
+
+    class _Down(_Notifier):
+        async def roles_changed(self, user_id: uuid.UUID) -> None:
+            self.users.append(user_id)
+            raise RuntimeError("socket registry down")
+
+    store, n, failed = _Store({"viewer"}, 2), _Down(), _pushes("failed")
+    with capture_logs() as logs:
+        r = _client(store, _admin(), _Emitter(), n).put(
+            f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+        )
+    assert r.status_code == 200 and r.json()["roles"] == ["manager"]
+    assert store.roles == {"manager"} and n.users == [TARGET]
+    assert _pushes("failed") == failed + 1
+    (line,) = [e for e in logs if e["event"] == "users.update.step"]
+    assert (line["log_level"], line["step"], line["outcome"]) == ("error", "roles_push", "failed")
+    assert line["error"] == "RuntimeError" and line["target_user_id"] == str(TARGET)
 
 
 def test_put_roles_still_refuses_the_last_active_owner_at_the_endpoint() -> None:

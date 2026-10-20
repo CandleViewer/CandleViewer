@@ -3,8 +3,9 @@
 `create_app()` on the real backend over the SQL-edge fakes of `test_disable_user_e2e.py` (the
 same rows, rule engine, B16 charts and WS gateway): a `PATCH` to `disabled` runs the whole
 disable cascade exactly as the DELETE does, and an Owner's revoke of one of M's sessions writes
-one `auth.session_revoked` through B16 before the row changes and closes that session's socket
-4401 before the call returns (0 s on the test clock), leaving M's other session alone.
+the Owner's `users.session_revoked`, then one `auth.session_revoked` through B16, before the row
+changes, and closes that session's socket 4401 before the call returns (0 s on the test clock),
+leaving M's other session alone.
 Postgres: `tests/integration/admin/test_user_admin_pg.py`.
 """
 
@@ -72,8 +73,9 @@ def _still_open(ws: Any) -> bool:
 
 
 def test_the_owner_revokes_one_of_ms_sessions() -> None:
-    """S12: M has two sessions, a socket on each. The Owner revokes one: one `auth.session_revoked`
-    for it, written before its row is revoked (R5, through B16 REVOKE); its socket gets
+    """S12: M has two sessions, a socket on each. The Owner revokes one: one `users.session_revoked`
+    naming the Owner, then one `auth.session_revoked` for it, both written before its row is
+    revoked (R5, the second through B16 REVOKE); its socket gets
     `bye session_revoked` and closes 4401 before the DELETE returns, with the test clock still at
     the instant of the call (well within 5 s); its next REST call is 401. M's other session, its
     socket included, is untouched, and no answer carries token material."""
@@ -126,6 +128,11 @@ def test_the_owner_revokes_one_of_ms_sessions() -> None:
     (record,) = [r for r in records if r["action"] == "auth.session_revoked"]
     assert (record["session_id"], record["reason"]) == (str(ended.session_id), "admin")
     assert ahead == [1]  # written before the row was revoked
+    (owner,) = [r for r in records if r["action"] == "users.session_revoked"]
+    assert str(owner["actor_user_id"]) == str(_OWNER) and owner["reason"] == "admin"
+    assert (owner["object_kind"], owner["object_id"]) == ("session", str(ended.session_id))
+    assert owner["after_state"]["user_id"] == str(_M)
+    assert records.index(owner) < records.index(record)  # the Owner's record, ahead of B16's
     for minted in (kept, ended):  # no token material in any answer
         for secret in (minted.access_token, minted.refresh_token):
             assert secret not in listed.text and secret not in gone.text

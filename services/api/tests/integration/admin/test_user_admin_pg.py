@@ -6,8 +6,9 @@ connection holds every owner grant until both calls queue on it, then exactly on
 other is 409 `conflict` (refused by the count it read under the lock, not by the trigger), and one
 enabled owner remains. AC6: a demotion racing a disable, ten rounds, keeps an enabled owner and the
 loser writes no change record. R6: a re-enable restores no session and no grant. The PATCH disable
-runs the whole cascade (SR-029) and, while positions are unknown, needs the acknowledgement (AC7).
-Needs Docker (testcontainers); not run locally. CI `integration` runs it.
+runs the whole cascade (SR-029) and, while positions are unknown, needs the acknowledgement (AC7);
+its `If-Match` is judged under the disable's own lock, so a role change committed before that lock
+refuses it. Needs Docker (testcontainers); not run locally. CI `integration` runs it.
 """
 
 from __future__ import annotations
@@ -32,7 +33,13 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.api.users import make_user_admin_router, make_users_router
+from candleviewer.admin.errors import UserVersionConflictError
+from candleviewer.api.users import (
+    make_user_admin_router,
+    make_users_router,
+    representation,
+    user_etag,
+)
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.owner_floor import OwnerFloorError
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -41,13 +48,18 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from candleviewer.storage.repositories.user_lifecycle import UserPatch
-from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    DROP_ROLES,
+    GRANT_ROLES,
+    SqlAlchemyUserRoleStore,
+)
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
 from tests.integration.admin.test_user_disable_route_pg import _M as _ROUTE_M
 from tests.integration.admin.test_user_disable_route_pg import _OWNER as _ROUTE_OWNER
 from tests.integration.admin.test_user_disable_route_pg import _kept, _Parked, _seed
 from tests.integration.admin.test_user_lifecycle_pg import (
     _HOLD,
+    _HOLD_USER,
     _ONLY_OWNERS,
     _WAIT_S,
     _active_owners,
@@ -297,6 +309,45 @@ async def test_a_stale_precondition_and_a_refused_record_change_nothing(db: Any)
             audit=_Hook(error=RuntimeError("audit down")),
         )
     assert await _snapshot(engine, viewer) == before and await _roles(engine, viewer) == ["viewer"]
+
+
+async def test_a_role_change_committed_before_the_disable_lock_refuses_it(db: Any) -> None:
+    """UL3-T1 (the #2649 review): a PATCH to `disabled` carries its `If-Match` into
+    the disable's own transaction. Another owner's role change holds M's row and the disable
+    queues behind it; once that change commits, the disable reads the changed user under its own
+    lock and its precondition refuses (412 at the route): nothing is disabled, revoked or
+    recorded, and the role change stands."""
+    rel, engine = db
+    owner, manager = await _user(engine, "owner"), await _user(engine, "manager")
+    session = await _session(engine, manager)
+    admin = SqlAlchemyUserAdminStore(rel, owner_floor=_floor, audit_timeout_s=_WAIT_S)
+    read = await admin.get_user(manager)
+    assert read is not None
+    tag = user_etag(representation(read))  # the version the PATCH names
+    hook, seen = _Hook(), list[list[str]]()
+
+    def unchanged(locked: Any) -> None:
+        seen.append(list(locked["roles"]))
+        if user_etag(representation(locked)) != tag:
+            raise UserVersionConflictError(str(manager))
+
+    to_viewer = {"id": str(manager), "roles": ["viewer"]}
+    async with engine.connect() as probe:
+        async with engine.begin() as holder:  # the role change, holding M's row until it commits
+            await holder.execute(_HOLD_USER, {"id": str(manager)})
+            await holder.execute(DROP_ROLES, to_viewer)
+            await holder.execute(GRANT_ROLES, to_viewer | {"by": str(owner)})
+            disable = asyncio.create_task(
+                _store(rel).disable(manager, actor=owner, now=_NOW, audit=hook, check=unchanged)
+            )
+            await _until_blocked(probe, 1)
+        with pytest.raises(UserVersionConflictError):
+            async with asyncio.timeout(_WAIT_S):
+                await disable
+    assert seen == [["viewer"]] and hook.calls == []
+    status, sessions, _ = await _snapshot(engine, manager)
+    assert status[0] == "active" and sessions[session][0] is None
+    assert await _roles(engine, manager) == ["viewer"]
 
 
 def test_patch_disable_runs_disable_cascade(pg_dsn: str) -> None:

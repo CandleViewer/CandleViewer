@@ -38,6 +38,7 @@ from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.context import bind_context
 from candleviewer.rules.manager import RuleError
 from candleviewer.rules.scope_state import SnapshotScopeState
+from candleviewer.storage.repositories import identity_sqlalchemy
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW, LOCK_USER
 from candleviewer.storage.repositories.user_lifecycle import UserSelfTargetError, UserStatusChange
 from candleviewer.user_cascade_wiring import ScopeRefreshAdapter
@@ -784,6 +785,11 @@ def _store_error() -> _World:  # the store raises at its deferred check: no refu
     return _World(_Rel(raise_at=CONSTRAINTS_NOW, sqlstate="40001"))
 
 
+def _stale() -> _World:  # E42-T09: a PATCH's `If-Match` refused under the store's lock
+    stale = errors.UserVersionConflictError("m")
+    return _World(store=SimpleNamespace(disable=AsyncMock(side_effect=stale)))
+
+
 #: (result, world, actor, error): one call per result of the closed set, in its order.
 _RESULTS: list[tuple[str, Callable[[], _World], PrincipalSnapshot, Any]] = [
     ("disabled", _World, _OWNER, None),
@@ -792,6 +798,7 @@ _RESULTS: list[tuple[str, Callable[[], _World], PrincipalSnapshot, Any]] = [
     ("self_target", _store_self_target, _OWNER, errors.LifecycleForbiddenError),
     ("not_found", lambda: _World(_Rel(status=None)), _OWNER, errors.UserNotFoundError),
     ("positions_unknown", lambda: _World(positions=None), _OWNER, errors.PositionsUnknownError),
+    ("version_conflict", _stale, _OWNER, errors.UserVersionConflictError),
     ("last_owner", lambda: _World(_Rel(roles=("owner",), owners=1)), _OWNER, errors.LastOwnerError),
     ("audit_unavailable", _audit_down, _OWNER, _AUDIT_DOWN),
     ("error", _store_error, _OWNER, IntegrityError),
@@ -896,3 +903,51 @@ async def test_closing_record_is_counted_and_a_failed_one_alerts(
     assert moved == {o: float(o == outcome) for o in before}
     (line,) = [e for e in logs if e.get("step") == "closing_record"]
     assert (line["outcome"], line["log_level"]) == (outcome, "info" if outcome == "ok" else "error")
+
+
+# --- E42-T09 (#2649): a PATCH's `If-Match`, judged under the store's lock -------------------
+
+
+def _readable(rel: _Rel) -> _Rel:
+    """The user as `identity_sqlalchemy.read_user` reads it under the lock: M, a manager."""
+    row = {
+        "id": str(_TARGET),
+        "username": "m",
+        "email": "m@example.invalid",
+        "display_name": None,
+        "roles": ["manager"],
+        "status": "active",
+        "mfa_enabled": True,
+        "mfa_required": True,
+        "last_login_at": None,
+        "created_at": None,
+        "updated_at": None,
+    }
+    rel.rows[identity_sqlalchemy._USER_SQL] = [SimpleNamespace(_mapping=row)]
+    return rel
+
+
+async def test_a_refused_precondition_rolls_back_unrecorded_and_is_counted() -> None:
+    """E42-T09 (#2649, UL3-T1): the precondition reaches the store, which judges it on the
+    user read under the user-row lock before any write. Refused, nothing is written, recorded or
+    run after it, and the call counts once, as `version_conflict` (a refusal, never `error`)."""
+    w, seen = _World(_readable(_Rel())), list[list[str]]()
+
+    def stale(locked: Any) -> None:
+        seen.append(list(locked["roles"]))
+        raise errors.UserVersionConflictError(str(_TARGET))
+
+    before = {r: _calls(r) for r in ACTION_RESULTS["disable"]}
+    with pytest.raises(errors.UserVersionConflictError):
+        await w.disable(precondition=stale)
+    assert seen == [["manager"]] and not w.rel.committed
+    assert w.rel.order() == [LOCK_USER, identity_sqlalchemy._USER_SQL]
+    assert w.calls == [] and w.post_commit() == []
+    moved = {r: _calls(r) - n for r, n in before.items() if _calls(r) != n}
+    assert moved == {"version_conflict": 1}
+
+
+async def test_a_precondition_that_holds_lets_the_disable_run() -> None:
+    w = _World(_readable(_Rel()))
+    assert await w.disable(precondition=lambda locked: None) == DisableResult(changed=True)
+    assert w.rel.committed and len(w.of("users.disable")) == 1

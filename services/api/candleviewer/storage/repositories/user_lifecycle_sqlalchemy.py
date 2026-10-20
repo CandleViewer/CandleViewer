@@ -3,7 +3,8 @@
 M10: the owner floor (M18) and the audit record (M19) are injected, and the owner-floor lock is
 the role store's (`owner_floor_sqlalchemy.py`), so a disable and a demotion of the last two
 owners queue on it (#965 AC6). `disable` (R7) refuses a self-target before any statement, then:
-lock the user row; a user already disabled is a no-op (AC5); lock the owner grants and refuse
+lock the user row; judge a caller's precondition (E42-T09: a PATCH's `If-Match`) on the user read
+under that lock; a user already disabled is a no-op (AC5); lock the owner grants and refuse
 the last active owner; set `disabled`; revoke every live session; soft-revoke every live grant
 (never a DELETE: the freeze columns, the cap and `granted_by` are never written, O4); run the
 deferred constraints (23514 maps onto the floor refusal); await the caller's audit hook, bounded
@@ -25,6 +26,7 @@ from datetime import datetime
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from candleviewer.storage.repositories.identity_sqlalchemy import read_user
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     CONSTRAINTS_NOW,
     LOCK_USER,
@@ -41,6 +43,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
     REVOKED_REASON,
     GrantLevel,
     LifecycleAuditHook,
+    UserPrecondition,
     UserSelfTargetError,
     UserStatusChange,
 )
@@ -99,11 +102,14 @@ class SqlAlchemyUserLifecycleStore:
         actor: uuid.UUID,
         now: datetime,
         audit: LifecycleAuditHook,
+        check: UserPrecondition | None = None,
     ) -> UserStatusChange | None:
         """Disable the user; sessions are revoked at `now`. `None` if the user does not exist.
+        `check` (E42-T09) gets the `User` read right after the user-row lock, before anything is
+        written, a repeat included.
 
-        Raises `UserSelfTargetError`, what the owner-floor check raises for the last active
-        owner, what `audit` raises, or `WriteAheadTimeout` when `audit` outlives
+        Raises `UserSelfTargetError`, what `check` raises, what the owner-floor check raises for
+        the last active owner, what `audit` raises, or `WriteAheadTimeout` when `audit` outlives
         `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
         driver or commit `TimeoutError` is raised as is: the outcome is unknown. If the commit
         landed, the revoked ids are lost with the exception; `read_back_disable` finds them
@@ -117,6 +123,10 @@ class SqlAlchemyUserLifecycleStore:
                 s = uow.session
                 if (row := (await s.execute(LOCK_USER, {"id": uid})).first()) is None:
                     return None
+                if check is not None:  # what a change committed before this lock left
+                    if (current := await read_user(s, uid)) is None:
+                        return None
+                    check(current)
                 before, roles = str(row[0]), await effective_roles(s, uid) or _NO_ROLES
                 if before == "disabled":
                     return UserStatusChange(user_id, before, before, roles)
