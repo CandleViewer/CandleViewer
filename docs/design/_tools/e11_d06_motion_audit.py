@@ -18,7 +18,8 @@ A PASS/FAIL verdict applies the role's bar (text 4.5:1, non-text 3:1, text in hi
 skeleton's two tones) and are reported, never gated. The one token that does not exist yet
 (`CR:color.replay.border`, E11-D02 CR-4) is measured on the primitive it would alias, never on an
 invented hex. The `dim85:` prefix is the stale-state 15 % dim: data-ink multiplied by 0.85, the
-same formula as `e11_d02_chassis_audit.py`, so the two specs quote one number.
+same formula as E11-D02's chassis audit (PR #3921, `e11_d02_chassis_audit.py` once merged), so the
+two specs quote one number.
 """
 
 from __future__ import annotations
@@ -369,7 +370,9 @@ def numbers() -> dict[str, object]:
             ),
         }
     out["kinematics"] = kin
-    out["hard_fling_first_frame_px_60"] = round(V0_SET["hard"] * (1000 / 60), 0)
+    k1 = 1.0 - math.exp(-(1000 / 60) / TAU_MS)  # the exact model's first 60 fps frame (D1)
+    out["hard_fling_first_frame_px_60"] = round(V0_SET["hard"] * TAU_MS * k1, 0)
+    out["hard_fling_first_frame_px_60_linear"] = round(V0_SET["hard"] * (1000 / 60), 0)
     contrast: dict[str, dict[str, float]] = {}
     for row, fg, bg, _role in ROWS:
         contrast[row] = {th: round(ratio(col(th, fg), col(th, bg)), 2) for th in THEMES}
@@ -412,10 +415,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     print(
         "\nReading: with the exact exponential the rest position is x∞ at every frame rate; the "
-        "terminating frame stops short of it by less than v_term x dt (≤ 0.67 px at 30 fps), and "
-        "the spec's termination rule applies that remainder in the terminating frame, so the rest "
-        "position is identical. The naive multiplier lands at twice the distance at 30 fps and "
-        "under half at 144 fps.\n"
+        "terminating frame stops short of it by the analytic remainder v x tau, which lies "
+        "between v_term x e^(-dt/tau) x tau and v_term x tau (1.8-2.4 px here), and D2 applies "
+        "that remainder in the terminating frame, so the rest position is identical. The naive "
+        "multiplier lands at twice the distance at 30 fps and under half at 144 fps.\n"
     )
     print("## 2. The cut rule, worked\n")
     ce = cast(dict[str, Any], n["cut_examples"])
@@ -449,12 +452,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     print(
         f"\nFor scale: the hardest momentum fling ({V0_SET['hard']} px/ms) moves "
-        f"{n['hard_fling_first_frame_px_60']:.0f} px in its first 60 fps frame.\n"
+        f"{n['hard_fling_first_frame_px_60']:.0f} px in its first 60 fps frame with the exact "
+        f"model (the linear bound v0 x dt would be "
+        f"{n['hard_fling_first_frame_px_60_linear']:.0f} px).\n"
     )
     print("## 4. Flash rate (WCAG 2.3.1, ≤ 3/s)\n")
     print(
         f"- Skeleton shimmer period {SHIMMER_PERIOD_MS} ms = {n['shimmer_hz']} Hz (a `slow` 400 ms "
-        f"period would be {n['shimmer_hz_if_slow_token']} Hz, too close to the 3/s threshold; D16)."
+        f"period would be {n['shimmer_hz_if_slow_token']} Hz, which also conforms: WCAG 2.3.1 and "
+        f"A11Y-G005 gate on a luminance step of 0.1 or more at 3/s or more, and this sweep is "
+        f"0.01; the 1,200 ms period is a margin choice, D16)."
     )
     print(
         "- Countdown: a 1 Hz text swap in one colour (0 luminance flashes); the warn flip is one "
