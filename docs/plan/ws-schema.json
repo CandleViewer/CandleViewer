@@ -3329,7 +3329,8 @@
             "shutdown_notice",
             "degraded_data",
             "clock_drift",
-            "notice"
+            "notice",
+            "account_notice"
           ]
         },
         "severity": {
@@ -3449,6 +3450,13 @@
         },
         "reason": {
           "type": "string"
+        },
+        "exchange_account_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
+          }
         },
         "closing_in_ms": {
           "type": "integer"

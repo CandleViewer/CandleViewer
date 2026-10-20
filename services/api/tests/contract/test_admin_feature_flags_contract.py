@@ -254,8 +254,8 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "existing schema; no schema change.",
         "| All topics except `orders`, `executions` and `system` flag frames. |",
         "| `system` | `feature_flags`: per flag key, last-write-wins, a key is never dropped. "
-        "`notice`, `kill_switch`, `shutdown_notice`: **never coalesced**. | A flag delta carries "
-        "only changed keys; notices are events. |",
+        "`notice`, `kill_switch`, `shutdown_notice`, `account_notice`: **never coalesced**. | A "
+        "flag delta carries only changed keys; notices are events. |",
         # 15.9 per role (SR-188): the snapshot's `health` frame and a flag frame are cut alike.
         "`degraded_topics`, `kill_switch` and `feature_flags` (each as below) |",
         "| `feature_flags` | `feature_flags` with only the keys whose registry `visibility` admits "
