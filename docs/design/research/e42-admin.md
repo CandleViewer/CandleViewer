@@ -1,7 +1,7 @@
 # E42-D01 — UX research: how the owner supervises, delegates and investigates in the admin area
 
 - **Ticket:** E42-D01 (issue #830) · **Status:** Draft, rev 7 of 2026-10-20 (refreshed by hcl-worker-2
-  against `main` at `4fe0ced3` for the merged view-as contract #3164, the E42 threat model, the merged
+  against `main` at `f05d24e8` for the merged view-as contract #3164, the E42 threat model, the merged
   #2392 and #2658, the closed #965 and the `post-ga` label on #2763 and #2764, with the reviews of the
   refresh applied; rev 5 of 2026-10-16 applied the cross-lane review and three docs delta reviews
   and folded in the coordinator's recommendations of 2026-10-16, #2701 comment 6207580985), every
