@@ -44,6 +44,7 @@ __all__ = [
     "PlacementPort",
     "Sent",
     "Unresolved",
+    "UnresolvedReason",
     "adopt_or_resend",
     "place_or_adopt",
 ]
@@ -91,7 +92,14 @@ class Sent:
 
 @dataclass(frozen=True, slots=True)
 class Adopted:
-    """A duplicate-id rejection, resolved to the exchange's order for that id."""
+    """The exchange's order under the id, after a duplicate-id rejection (`place_or_adopt`)
+    or an ambiguous create (`adopt_or_resend`).
+
+    It is found on the id alone (in the account; open orders also by symbol), so it is not
+    yet proven ours. Before binding it to the row the caller checks every SR-E29-03 field
+    (account, symbol, side, quantity, order type, price or trigger, reduce-only, attached
+    stop), as B1's `is_duplicate_link_id_full_match` does; a mismatch is a squatted id
+    (OM-S05) that goes to `held` (`is_link_id_mismatch`) and is never bound."""
 
     order: Order
     source: Literal["realtime", "history"]
@@ -106,7 +114,9 @@ type UnresolvedReason = Literal[
 class Unresolved:
     """No lookup settled the id: the caller moves the order to `unknown`, and only
     reconciliation resolves it (§8.2 S1). `not_found` is a duplicate-id rejection
-    neither lookup found; the others end `adopt_or_resend`, which sends nothing more."""
+    neither lookup found; the others end `adopt_or_resend`, which sends nothing more. A
+    `resend_unconfirmed` re-send met by a duplicate means the exchange holds an order under
+    the id: reconciliation (E29-T06) binds it, after the full match of `Adopted`."""
 
     order_link_id: OrderLinkId
     reason: UnresolvedReason = "not_found"
@@ -170,8 +180,11 @@ async def adopt_or_resend(
     row, say), never from B1 `unknown` (INV-B1-e). The caller runs the synchronous gates
     (kill switch, live-enablement gate, risk caps) just before calling it, and never
     calls it for a `killed` or terminal row (C-2.21). It lets one driver resolve a row
-    at a time, because two drivers could both miss and both re-send. It audits as for
-    `place_or_adopt`: the re-send intent ahead, its outcome after (C-2.9).
+    at a time, because two drivers could both miss and both re-send. It binds an `Adopted`
+    order only on the SR-E29-03 full match (see `Adopted`), and audits as for
+    `place_or_adopt`: the re-send intent ahead, its outcome after (C-2.9). One call is one
+    attempt: a caller allowed several (a close retried with a lookup between, 24 §9.5.1)
+    calls it once per attempt.
     """
     _require_our_id(request)
     link = request.order_link_id
