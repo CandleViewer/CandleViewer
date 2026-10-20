@@ -104,7 +104,7 @@ MARKET_FAMILIES: Final = (
     FundingEvent,
 )
 # Every class E08 hands to `Bus.publish`; since #3876 (drift D1) each carries the C6 envelope. The
-# census finds them in the code and checks what it finds; this set only fails an empty find.
+# census checks every class it finds and must find exactly these, so a new one is listed here.
 E08_BUS_PAYLOADS: Final = frozenset(
     {TradeEvent, BookSnapshot, BookDelta, TickerEvent}  # 24 §2.1-2.3, parsed by the adapter
     | {BookStatus, GapEvent, FeedHealthEvent}  # E08's control events (drift D1)
