@@ -6,7 +6,12 @@ from `themes.json`), measures every foreground/background pair the pattern spec
 (`docs/design/E09/E09-D09.md`) binds, simulates the three deficiencies with the projection of
 `docs/research/_tools/cvd_simulate.py`, and reads the role -> permission lists out of the
 `x-permissions` block of `docs/plan/22-api-openapi.yaml`, so the vocabulary's "owner-only" chooser
-(spec section 3) is checked against the canonical registry rather than against memory. The contrast
+(spec section 3) is checked against the canonical registry rather than against memory. The role
+lists of `22` are known stale for `recording:write` (the ruling of 2026-10-20 18:30Z: Owner +
+step-up only; `24` section 15.2 is right) and right for `killswitch:write` (the E39 ruling of
+2026-10-20 D-1: engage open to any holder, a scoped Manager included; release Owner-only with
+step-up; `24` section 15.2's manager "no" is the stale row, spec C-6); section E prints both
+beside the file's own numbers rather than silently correcting the file. The contrast
 formula is `contrast_ratio()` from `docs/design/_tools/contrast_check.py` (imported, not
 re-implemented), so the numbers agree with E11-D02's, E30-D01's and E09-D03's.
 
@@ -147,6 +152,19 @@ enabled primary fill vs T2 fill | act | raised
 SCR-154 link vs body text | link | t2
 """)
 SIM_TOKENS = ["t3", "t2", "focus", "warnG", "act"]
+# The role lists of `22` are the chooser's data; two rows are not what the file says today.
+RULED_OWNER_ONLY = {
+    "recording:write": (
+        "ruling 2026-10-20 18:30Z, Owner + step-up only (e16-recorder.md R-E1); 22 x-permissions, "
+        "04 7.2.1, 21 10.1 and rbac_seed.json pending amendment"
+    ),
+}
+DISPUTED_SETTLED = {
+    "killswitch:write": (
+        "E39 ruling 2026-10-20 D-1 (#2701): engage open to any holder incl. a scoped Manager; "
+        "release Owner-only + step-up; 22 is right, 24 15.2 manager no is the stale row (spec C-6)"
+    ),
+}
 
 
 def role_permissions() -> tuple[dict[str, set[str]], set[str]]:
@@ -232,13 +250,20 @@ def main() -> int:
     roles, vocab = role_permissions()
     non_owner = set().union(*(v for k, v in roles.items() if k != "owner"))
     owner_only = sorted(vocab - non_owner)
+    effective = sorted(set(owner_only) | set(RULED_OWNER_ONLY))
     print("\n## E. Permission matrix read from 22-api-openapi.yaml (the owner-only chooser)\n")
     print(f"- permission codes in `x-rbac` blocks: {len(vocab)}")
     for role in sorted(roles):
         star = " (`*`)" if "*" in roles[role] else ""
         print(f"- `{role}`: {len(roles[role])} entries{star}")
     listed = ", ".join(f"`{p}`" for p in owner_only)
-    print(f"- owner-only (held by no non-owner role): {len(owner_only)}: {listed}")
+    print(f"- owner-only per `22` x-permissions as written: {len(owner_only)}: {listed}")
+    for code, note in RULED_OWNER_ONLY.items():
+        print(f"- ruled owner-only in addition (applied over the file): `{code}` — {note}")
+    listed = ", ".join(f"`{p}`" for p in effective)
+    print(f"- effective owner-only today: {len(effective)}: {listed}")
+    for code, note in DISPUTED_SETTLED.items():
+        print(f"- ruled NOT owner-only (`22` stands; `24` 15.2 to be amended): `{code}` — {note}")
     print(f"\nFAIL count (gated rows only): {failed}")
     return 1 if failed else 0
 
