@@ -171,5 +171,5 @@ def test_a_refused_audit_write_is_the_declared_503_and_nothing_persists(env: Env
 
     env.audit.emit = refuse  # type: ignore[method-assign]  # fault injection
     r = env.c.post("/alerts", json=PRICE_CROSS)
-    assert r.status_code == 503 and r.json()["code"] == "service_unavailable"
+    assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
     assert env.repo.rows == {}

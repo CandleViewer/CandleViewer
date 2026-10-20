@@ -583,7 +583,7 @@ def test_a_refused_audit_write_is_the_declared_503_and_changes_nothing(
     with capture_logs() as logs:
         r = env.c.post(f"/alerts/deliveries/{d.id}/ack")
     assert r.status_code == 503 and r.headers["content-type"] == "application/problem+json"
-    assert r.json()["code"] == "service_unavailable"
+    assert r.json()["code"] == "audit_unavailable"
     assert env.store.rows[d.id] == d and env.changes == []
     assert [(e["event"], e["error"]) for e in logs] == [
         ("alerts_audit_unavailable", type(refusal).__name__)

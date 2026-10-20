@@ -174,7 +174,7 @@ def make_notifications_router(
     ) -> Response:
         store = store_provider()
         if store is None:
-            raise Problem(503, "service_unavailable", "Unavailable", "notifications unavailable")
+            raise Problem(503, "store_unavailable", "Unavailable", "notifications unavailable")
         wants_rules = "rules:read" in actor.perms and (not kind or "rule" in kind)
         rule_ids = await readable_rules(actor) if wants_rules else frozenset()
         scope = notification_scope(actor, kind or (), rule_ids)

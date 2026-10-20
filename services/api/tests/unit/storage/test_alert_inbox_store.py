@@ -248,7 +248,7 @@ async def test_a_bad_cursor_raises_before_any_read() -> None:
 
 def test_the_repository_refuses_an_unknown_environment() -> None:
     with pytest.raises(ValueError, match="unknown exchange environment"):
-        SqlAlchemyNotificationRepository(_Rel(), env="prod")  # type: ignore[arg-type]
+        SqlAlchemyNotificationRepository(_Rel(), env="prod")  # type: ignore[arg-type]  # structural fake
 
 
 async def test_the_union_applies_each_sources_own_filter() -> None:

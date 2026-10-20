@@ -203,7 +203,8 @@ class DenialBudget:
         """The record `admit` let through was not written: give its slot back and hold its count
         again, this denial's own included, for the caller's next record. A cancellation that
         lands after the writer began its append (which it then still completes) makes the next
-        record over-report by one: an over-count, chosen over a denial lost."""
+        record over-report by the count this one carried, plus this denial: an over-count, chosen
+        over a denial lost."""
         entry = self._callers.get(user_id)
         if entry is None:  # evicted meanwhile: the count goes to the log, not nowhere
             _log().warning("alert_denied_audit_held_evicted", user_id=user_id, held=carried + 1)
@@ -292,7 +293,7 @@ def make_alert_deliveries_router(
     def store() -> AlertDeliveryStore:
         s = store_provider()
         if s is None:
-            raise Problem(503, "service_unavailable", "Unavailable", "alerts store unavailable")
+            raise Problem(503, "store_unavailable", "Unavailable", "alerts store unavailable")
         return s
 
     async def changed(ids: Sequence[int]) -> None:

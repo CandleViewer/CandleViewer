@@ -7,7 +7,8 @@ Covers what a fake unit of work cannot:
   at all without `orders:read`; `system_events` the Owner's alone (04 §7.2.2 row 34b);
 - the process's exchange environment on every account-bound row (C-2.11);
 - one total order across sources when timestamps tie, keyset paging without gaps or repeats;
-- the inbox's conditional updates: idempotent ack, a bounded ack-all that returns its ids and
+- the inbox's list (one user's rows, keyset pages across a tied `queued_at`, the window and
+  filters) and its conditional updates: idempotent ack, a bounded ack-all that returns its ids and
   touches nothing else, the desktop transitions for the owner only, failure + one notice.
 
 Needs docker (testcontainers); in CI it runs in the merge-group integration lane.
@@ -251,7 +252,7 @@ async def test_the_inbox_list_is_the_callers_own_paged_and_filtered(
 ) -> None:
     """`GET /alerts/deliveries`' statement on Postgres: one user's rows only, keyset pages
     without gaps or repeats across an equal `queued_at`, `from` inclusive, `to` exclusive."""
-    user, at = world["user_a"], _TS + timedelta(days=30)  # a window of its own
+    user, at = world["user_a"], _TS - timedelta(days=30)  # before every other row, and now()
     end = at + timedelta(hours=1)
     with _mig._conn(pg_dsn) as c:
         tied = [_delivery(c, world["alert_a"], user, queued_at=at) for _ in range(3)]

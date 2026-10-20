@@ -10,11 +10,14 @@ pinned in `tests/integration/storage/test_notifications_union_pg.py`.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
 
+from candleviewer.api import alert_deliveries
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from tests.alerts._deliveries_env import ALERT_B, Env
@@ -139,3 +142,18 @@ def test_list_notifications_503() -> None:
     env.store_up = False
     r = env.c.get("/notifications")
     _check("/notifications", "get", r.status_code, r.json())
+
+
+#: The modules whose `Problem(<status>, "<code>", ...)` these operations answer with.
+_ROUTERS = ("alert_deliveries.py", "notifications.py", "alerts_http.py")
+_PROBLEM = re.compile(r'Problem\(\s*\d{3},\s*"([a-z_]+)"')
+
+
+def test_every_problem_code_the_routes_answer_is_catalogued() -> None:
+    """22's `x-error-codes` is the closed catalogue of `code` (no service emits one outside it):
+    a refused write-ahead record is `audit_unavailable`, a store down `store_unavailable`."""
+    here = Path(alert_deliveries.__file__).parent
+    codes = {c for name in _ROUTERS for c in _PROBLEM.findall((here / name).read_text("utf-8"))}
+    catalogue = {entry["code"] for entry in _SPEC["x-error-codes"]}
+    assert {"audit_unavailable", "store_unavailable", "unauthenticated"} <= codes
+    assert codes <= catalogue, codes - catalogue

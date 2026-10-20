@@ -3,9 +3,13 @@
 
 * `Problem`: an RFC 9457 refusal (`application/problem+json`) raised from a dependency or a
   handler; `Refused` carries a ready response (the shared SR-026 query refusal) as is.
-* `ProblemRoute`: the route class that renders both, and an audit store that refuses a
-  write-ahead record (`AuditUnavailable`, `AuditWriterStopped`) as the operations' declared 503,
-  as `api/drawings.py` does: the request fails closed (C-2.9), nothing having changed.
+* `ProblemRoute`: the route class that renders both, and answers a refused write-ahead audit
+  record (`AuditUnavailable`, `AuditWriterStopped`) with the operations' declared 503,
+  `audit_unavailable`, as `api/drawings.py` does: the request fails closed (C-2.9), nothing
+  having changed.
+
+Every code here and in the two routers is one of 22's `x-error-codes` (pinned by
+`tests/contract/test_alert_inbox_contract.py`).
 * `caller()`: the one caller dependency, so the authorization order is written once:
   no resolver wired → 501 (fail closed); no verified session → 401; the operation's permission
   missing → 403 with `required_permissions`; then SR-026 - any query key the operation does not
@@ -88,8 +92,9 @@ class ProblemRoute(APIRoute):
                 return r.response
             except (AuditUnavailable, AuditWriterStopped) as exc:  # fails closed: logged apart
                 _log().error("alerts_audit_unavailable", error=type(exc).__name__)
-                return Problem(503, "service_unavailable", "Unavailable",
-                               "The audit store is unavailable.").response()  # fmt: skip
+                return Problem(503, "audit_unavailable", "Audit unavailable",
+                               "The audit record could not be written; nothing was done.",
+                               ).response()  # fmt: skip
 
         return handler
 
@@ -112,7 +117,7 @@ def caller(
         got = resolver(request)
         actor: Actor | None = await got if inspect.isawaitable(got) else got
         if actor is None:
-            raise Problem(401, "unauthorized", "Unauthorized", "no verified session")
+            raise Problem(401, "unauthenticated", "Unauthenticated", "no verified session")
         if permission is not None and permission not in actor.perms:
             raise Problem(403, "forbidden", "Forbidden", f"requires {permission}",
                           required_permissions=[permission])  # fmt: skip

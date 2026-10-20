@@ -71,7 +71,7 @@ def test_every_route_is_503_without_a_store(
 ) -> None:
     env.store_up = False
     r = env.c.request(method, path.format(id=1), json=body)
-    assert r.status_code == 503 and r.json()["code"] == "service_unavailable"
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
 
 
 @pytest.mark.parametrize("key", ["user_id", "userId", "owner", "channel"])
