@@ -157,7 +157,8 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   (`vector-effect: non-scaling-stroke`) and the optical `size`: `sm`, `md` or `lg` reads
   `--size-icon-sm|md|lg`, and no size reads the semantic `--size-icon`. An icon is decorative
   (`aria-hidden`) unless named with a non-blank `aria-label` or `aria-labelledby`, which makes it
-  `role="img"`.
+  `role="img"`. Both resolve after the forwarded props, so a wrapper's `undefined` cannot undo
+  them: an unnamed icon is always hidden.
 
 Use an icon by importing the component an element draws: `import { CloseIcon } from
 "@candleviewer/ui"`. Each icon is its own module, so a bundle carries only the icons it imports

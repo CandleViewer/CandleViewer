@@ -94,6 +94,35 @@ describe("the icon components (src/icons/generated/)", () => {
     },
   );
 
+  // A wrapper that forwards an optional prop passes `undefined` when its caller gave none.
+  it.each([{ "aria-hidden": undefined }, { "aria-hidden": false }, { "aria-hidden": "false" }])(
+    "keeps an unnamed icon hidden whatever a wrapper forwards (%o)",
+    (forwarded) => {
+      expect(svgOf("warning", forwarded).getAttribute("aria-hidden")).toBe("true");
+    },
+  );
+
+  it.each([
+    { "aria-label": "Warning", role: undefined },
+    { "aria-labelledby": "warning-text", role: undefined },
+    { "aria-label": "Warning", "aria-hidden": undefined },
+  ])("keeps a named icon an image whatever a wrapper forwards (%o)", (forwarded) => {
+    const svg = svgOf("warning", forwarded);
+    expect([svg.getAttribute("aria-hidden"), svg.getAttribute("role")]).toEqual([null, "img"]);
+  });
+
+  it("leaves a named icon's explicit role and aria-hidden to its caller", () => {
+    const svg = svgOf("warning", {
+      "aria-label": "Warning",
+      "aria-hidden": true,
+      role: "graphics-symbol",
+    });
+    expect([svg.getAttribute("aria-hidden"), svg.getAttribute("role")]).toEqual([
+      "true",
+      "graphics-symbol",
+    ]);
+  });
+
   it("keeps the grid whatever untyped props a caller passes", () => {
     const svg = svgOf("close", {
       fill: "#ff0000",

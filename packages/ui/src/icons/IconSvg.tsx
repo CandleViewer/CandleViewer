@@ -24,7 +24,7 @@ type GridAttribute =
 
 /** What every icon component takes: the SVG attributes the grid leaves open, and a size. */
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, GridAttribute> {
-  /** Optical size, `size.icon.sm|md|lg`; omitted, the semantic `size.icon` (md in compact). */
+  /** Optical size, `size.icon.sm|md|lg`; omitted, the semantic `size.icon` (an alias of md). */
   readonly size?: IconSize;
 }
 
@@ -51,16 +51,18 @@ const isName = (value: string | undefined): boolean => value !== undefined && va
  * optical size, `currentColor` so the icon takes its context's semantic colour, and a 1.5px stroke
  * at every size (each shape's `vectorEffect="non-scaling-stroke"` keeps it from scaling with the
  * box). An icon is decorative (`aria-hidden`) unless it is named with a non-blank `aria-label` or
- * `aria-labelledby`, which makes it `role="img"` (brief §5, CMP-019).
+ * `aria-labelledby`, which makes it `role="img"` (brief §5, CMP-019). Both resolve after the
+ * forwarded props, so a wrapper's `undefined` cannot undo them: an unnamed icon is always hidden,
+ * and a named one is an image unless its caller sets `role` or `aria-hidden` itself.
  */
 export function IconSvg({ icon, size, style, children, ...rest }: IconSvgProps): JSX.Element {
   const named = isName(rest["aria-label"]) || isName(rest["aria-labelledby"]);
   const extent = EXTENT[size ?? "default"];
   return (
     <svg
-      aria-hidden={named ? undefined : true}
-      role={named ? "img" : undefined}
       {...rest}
+      aria-hidden={named ? rest["aria-hidden"] : true}
+      role={named ? (rest.role ?? "img") : rest.role}
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
       fill="none"
