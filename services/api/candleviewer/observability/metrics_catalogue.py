@@ -973,8 +973,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "closes",
         (),
         "Live closes that skipped indexes past a held WS series' newest bar, or from index 0 when"
-        " a clean read found no row in its window (re-read next).",
-        "sustained = bar writer lagging the live builders",
+        " it held none after a clean read of its generation whose window the bar opened in"
+        " (read again).",
+        "sustained = bar writer lagging the live builders (a close a read finds held is logged"
+        " as bars_series_gap, not counted)",
         _L,
         "E12",
         exported=True,
@@ -1024,7 +1026,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         " tail) or gapped (a live close skipped past their newest bar); each is read again when"
         " due.",
         "sustained above 0 = held series served without their stored history (bar storage slow"
-        " or down, or a hole the writer never lands)",
+        " or down, a hole the writer never lands, or a row that stays malformed in a series'"
+        " window: see the bars_series_rows_skipped log)",
         _L,
         "E12",
         exported=True,

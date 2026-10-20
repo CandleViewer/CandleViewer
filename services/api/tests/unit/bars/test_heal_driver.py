@@ -344,30 +344,37 @@ def test_the_driver_bound_outlasts_the_production_reader_unwinding_a_cut_read() 
 
 
 def missing(tail: Tail, miss: str) -> Tail:
-    """Every read from now on misses: it fails, or withholds a row (SR-E12-11)."""
+    """Every read from now on misses: it fails, withholds a row (SR-E12-11) or skips one (#3614)."""
     if miss == "failed":
         tail.error = OSError("questdb down")
     else:
-        tail.error, tail.tail = None, BarTail(rows(*range(10)), dropped=1)
+        skip = int(miss == "skipped")
+        tail.error, tail.tail = None, BarTail(rows(*range(10)), skipped=skip, dropped=1 - skip)
     return tail
 
 
 MISSES = pytest.mark.parametrize("miss", ["failed", "degraded"])
 
 
-@MISSES
+@pytest.mark.parametrize("miss", ["failed", "degraded", "skipped"])
 async def test_reads_that_keep_missing_back_off_up_to_160_s(miss: str) -> None:
     """5, 10, 20, 40, 80, then 160 s, where it stays: each miss after the first doubles the
-    interval, for the driver's `refresh` as for `ensure`."""
+    interval, for the driver's `refresh` as for `ensure`. A read that keeps skipping a malformed
+    row (#3614: never `hydrated`) backs off the same way, never re-read at the floor. Its log
+    differs: a failed or degraded streak logs its first read only, a skipping read each time."""
     clock, tail = Clock(), missing(Tail(now=True), miss)
     store = SeriesStore(tail, clock=clock)
-    _held = await store.ensure(SYM, SPEC)
-    for k, wait in enumerate((1, 2, 4, 8, 16, 32, 32)):
-        clock.t += wait * RETRY_AFTER_S - 0.5
-        assert store.due(clock.t) == [] and not await store.refresh(SYM, H)
-        clock.t += 0.5
-        assert store.due(clock.t) == [(SYM, H)] and not await store.refresh(SYM, H)
-        assert tail.calls == k + 2
+    with capture_logs() as logs:
+        _held = await store.ensure(SYM, SPEC)
+        for k, wait in enumerate((1, 2, 4, 8, 16, 32, 32)):
+            clock.t += wait * RETRY_AFTER_S - 0.5
+            assert store.due(clock.t) == [] and not await store.refresh(SYM, H)
+            clock.t += 0.5
+            assert store.due(clock.t) == [(SYM, H)] and not await store.refresh(SYM, H)
+            assert tail.calls == k + 2
+    event = "bars_series_rows_skipped" if miss == "skipped" else f"bars_series_hydrate_{miss}"
+    logged = [e["event"] for e in logs if e["event"] == event]
+    assert logged == [event] * (tail.calls if miss == "skipped" else 1)
     assert MAX_GAP_BACKOFF * RETRY_AFTER_S == 160
 
 
@@ -397,15 +404,29 @@ async def test_a_miss_streak_logs_its_first_read_only_and_a_clean_read_ends_it(m
 
 @pytest.mark.parametrize(
     ("miss", "live", "wait"),
-    [("failed", "swap", 4), ("failed", "gap", 4), ("degraded", "swap", 4), ("degraded", "gap", 1)],
-    ids=["failed-swap", "failed-gap", "degraded-swap", "degraded-gap"],
+    [
+        ("failed", "swap", 4),
+        ("failed", "gap", 4),
+        ("degraded", "swap", 4),
+        ("degraded", "gap", 1),
+        ("skipped", "swap", 4),
+        ("skipped", "gap", 1),
+    ],
+    ids=[
+        "failed-swap",
+        "failed-gap",
+        "degraded-swap",
+        "degraded-gap",
+        "skipped-swap",
+        "skipped-gap",
+    ],
 )
-async def test_a_gap_seen_live_ends_a_streak_of_degraded_reads_only(
+async def test_a_gap_seen_live_ends_a_streak_of_degraded_and_skipping_reads_only(
     miss: str, live: str, wait: int
 ) -> None:
     """Three misses ask for 20 s. A live swap keeps it, and so does a gap seen live after failed
-    reads (storage has not answered); after degraded reads, which complete, it ends the streak, so
-    the new hole is read 5 s later (H2's interval)."""
+    reads (storage has not answered); after degraded or skipping reads (#3614), which complete, it
+    ends the streak, so the new hole is read 5 s later (H2's interval)."""
     clock, tail = Clock(), missing(Tail(now=True), miss)
     store = SeriesStore(tail, clock=clock)
     _held = await store.ensure(SYM, SPEC)

@@ -104,8 +104,8 @@ bars_series_hydrate_failed_total = Counter(
 )
 bars_series_gaps_total = Counter(
     "bars_series_gaps_total",
-    "Live closes that skipped indexes past a held WS series' newest bar, or from index 0 when a"
-    " clean read found no row in its window (re-read next).",
+    "Live closes that skipped indexes past a held WS series' newest bar, or from index 0 when it"
+    " held none after a clean read of its generation whose window the bar opened in (read again).",
 )
 bars_series_resets_total = Counter(
     "bars_series_resets_total",
