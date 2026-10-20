@@ -12,14 +12,10 @@ once per checkout, which is why `SET` (not `SET LOCAL`) is used there; the
 per-transaction `SET LOCAL` additionally applied in `unit_of_work()` is the
 one that actually resets at each transaction boundary as intended.
 
-Not wired into `StorageService.start()` — that construction site also owns
-the QuestDB and cold-tier clients (E07-T03/T04, still unimplemented), and
-`storage_backend="real"` is documented (ticket "Out of scope" is implicit
-here: E07-T02's own scope is the relational tier only) to raise
-`StorageTierUnavailable` until every tier has a real client. This module is
-constructed directly by callers that only need the relational tier today
-(the `0002_rbac_seed` re-seed job, forthcoming E09 auth-service code) via
-`SqlAlchemyRelationalRepository(dsn)`.
+On `storage_backend="real"`, `StorageService.start()` builds one for the storage
+module (`storage.real_tiers`, #3874). Callers that need only the relational tier
+also construct their own via `SqlAlchemyRelationalRepository(dsn, suffix)` (the
+`0002_rbac_seed` re-seed job, the auth, admin and accounts wiring in `app.py`).
 """
 
 from __future__ import annotations

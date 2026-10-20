@@ -2,8 +2,9 @@
 
 `docs/plan/21-database-schema.md` Sec.9.1: "QuestDB DDL lives in
 `backend/db/questdb/NNNN_*.sql`, applied by a small idempotent runner keyed
-on a `_cv_migrations` table inside QuestDB." Run at boot by
-`StorageService.start()` — never by a request handler.
+on a `_cv_migrations` table inside QuestDB." Not run at API boot, and never by a
+request handler: applying it becomes an explicit deploy step next to `alembic
+upgrade head` (#3897; 20-architecture.md §6.2).
 
 Also performs the column-drift guard: compares the live `tables()`/
 `table_columns()` listing against the parsed DDL files and raises

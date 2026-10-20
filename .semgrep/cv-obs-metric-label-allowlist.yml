@@ -61,8 +61,8 @@ rules:
       #   {tape, parquet, kline}; a refusal needs a lower rank, so only kline -> tape|parquet;
       #   max_series=2.
       # wire (#2787 D2-G2, questdb_pgwire_*): a `LazyPgWire`'s name, a required argument from the
-      #   closed `WireName` set {bars, bars_hydrate, budget, replay, retention, rolloff}
-      #   (`observability/pgwire_metrics.py`); max_series=6, or 18 with `reason`.
+      #   closed `WireName` set {bars, bars_hydrate, budget, replay, retention, rolloff, storage}
+      #   (`observability/pgwire_metrics.py`; `storage` is #3874's); max_series=7, or 21 with `reason`.
       # table, also (E29-T01, #845): the five tables the OMS repositories write {orders, order_events,
       #   executions, positions, position_snapshots}, a `Literal` in code; max_series=5.
       # reason (E42-T03, #837 Q5, cv_order_entry_refusals_total): the closed order-entry

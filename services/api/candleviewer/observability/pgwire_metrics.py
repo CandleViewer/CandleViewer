@@ -1,7 +1,7 @@
 """The QuestDB PG-wire series of `LazyPgWire` (#2787 D2-G2), defined in `observability` so both
 `storage` (the wire) and `bars.metrics` (which re-exports them onto the scraped registry) may import
 them, as `kline_boundary_metrics`. Every wire has a name from the closed `WireName` set, so `wire`
-takes at most 6 values, and 18 series with `reason`."""
+takes at most 7 values, and 21 series with `reason`."""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ from candleviewer.observability.metrics import Counter, Histogram
 
 #: Each `LazyPgWire` of the process: the bars sink's (the bars writer's probes, REST bars and the
 #: klines tape tier), the WS series store's first reads (D2-G2), the disk budget's, the replay
-#: read path's (E26-T02, `replay_wiring`), retention's and the roll-off's.
-WireName = Literal["bars", "bars_hydrate", "budget", "replay", "retention", "rolloff"]
+#: read path's (E26-T02, `replay_wiring`), retention's, the roll-off's and the storage module's
+#: (`StorageService` on the real backend: its market-data reads and cold-export source, #3874).
+WireName = Literal["bars", "bars_hydrate", "budget", "replay", "retention", "rolloff", "storage"]
 #: Why a connection was discarded after its query raised: the caller was cancelled during the
 #: query (`cancelled`: its own deadline, as the store's or REST's 2 s, or a cancelled subscribe),
 #: the wire's `query_timeout_s` fired (`query_timeout`), or anything else (`error`).

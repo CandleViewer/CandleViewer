@@ -31,6 +31,7 @@ from candleviewer.observability.metrics import (
 )
 from candleviewer.observability.models import HealthReport, HealthStatus
 from candleviewer.settings import Settings
+from candleviewer.storage.health import StorageHealthReport, TierState
 
 
 class ReadOnlyGateLike(Protocol):
@@ -66,6 +67,7 @@ def make_health_router(
     ingestion_health: Callable[[], HealthReport] | None = None,
     secrets_health: Callable[[], HealthReport] | None = None,
     accounts_health: Callable[[], HealthReport] | None = None,
+    storage_health: Callable[[], StorageHealthReport] | None = None,
 ) -> APIRouter:
     """Bind the health/metrics routes to a concrete `Settings` instance.
 
@@ -116,6 +118,15 @@ def make_health_router(
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK
                 checks.append(ReadyCheck(name="accounts", ok=ok, detail=rep.detail))
+        if storage_health is not None:  # #3874: one check per real tier, its latest probe
+            checks.extend(
+                ReadyCheck(
+                    name=f"storage_{t.tier}",
+                    ok=t.state is TierState.OK,
+                    detail="" if t.state is TierState.OK else t.state.value,
+                )
+                for t in storage_health().tiers
+            )
         degraded = any(not c.ok for c in checks)
         return ReadinessResponse(
             status="degraded" if degraded else "ok",
