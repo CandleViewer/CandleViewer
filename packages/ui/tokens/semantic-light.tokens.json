@@ -24,7 +24,7 @@
   "color.action.secondary.hover": { "$type": "color", "$value": "{palette.light.neutral.300}" },
   "color.action.selected": { "$type": "color", "$value": "{palette.light.blue.700}" },
   "color.buy.default": { "$type": "color", "$value": "{palette.light.green.500}" },
-  "color.buy.hover": { "$type": "color", "$value": "{palette.light.green.600}" },
+  "color.buy.hover": { "$type": "color", "$value": "{palette.light.green.700}" },
   "color.buy.subtle": { "$type": "color", "$value": "{palette.light.green.900}" },
   "color.buy.hc": { "$type": "color", "$value": "{palette.green.700}" },
   "color.sell.default": { "$type": "color", "$value": "{palette.light.red.500}" },

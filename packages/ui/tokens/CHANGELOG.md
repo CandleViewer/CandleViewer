@@ -41,7 +41,10 @@ change should be shippable and reviewable without touching component code").
   reason text keeps 4.5:1 and a ghost's locked glyph 3:1. `color.focus.ring` clears 3:1 on every
   surface tier, and in high contrast it is at least 20 CIE76 ΔE from the primary and selected
   fills. `verify_tokens.py` also keeps `color.status.danger.default` 8 ΔE from
-  `color.status.danger.strong`, `.warning.default` and `.warning.strong` in every theme.
+  `color.sell.hover`, `color.status.danger.strong`, `.warning.default` and `.warning.strong` in
+  every theme. Both gates hold the registry's thresholds at or past their floors (4.5:1 label,
+  3:1 glyph and boundary, 5 L\* state step, 10 degree hue, 20 ΔE ring), so a data-only edit of the
+  registry cannot loosen them, and a matrix token that does not resolve fails by name.
 
   Not checked, by design: hover and pressed fills against the surfaces, because WCAG 2.2
   SC 1.4.11 does not ask a hover or pressed indicator to contrast with the rest state, and no three
@@ -61,14 +64,28 @@ change should be shippable and reviewable without touching component code").
   | dark          | `color.action.primary.active` | `palette.blue.600` `#1F55BF`        | `palette.blue.700` `#173F8F`        | 6.75 → 9.79   | 10.12 from hover  |
   | dark          | `color.buy.hover`             | `palette.green.400` `#4FC86F`       | `palette.green.300` `#6BD48A`       | 9.05 → 10.51  | 4.51 → 9.51       |
   | light         | `color.status.danger.default` | `palette.light.amber.500` `#B87F0A` | `palette.light.red.800` `#7A1E22`   | 3.45 → 10.31  | (one state)       |
-  | light         | `color.buy.hover`             | `palette.light.green.300` `#1E9448` | `palette.light.green.600` `#136B30` | 3.90 → 6.62   | 5.57, now darker  |
+  | light         | `color.buy.hover`             | `palette.light.green.300` `#1E9448` | `palette.light.green.700` `#0E5A27` | 3.90 → 8.37   | 11.90, now darker |
   | light         | `color.sell.hover`            | `palette.light.red.300` `#B8353A`   | `palette.light.red.350` `#962C30`   | 5.82 → 7.78   | 3.08 → 10.91      |
   | high contrast | `color.action.primary.active` | `palette.blue.600` `#1F55BF`        | `palette.blue.450` `#3676EB`        | 2.87 → 4.56   | 5.22 from hover   |
   | high contrast | `color.status.danger.default` | `palette.red.600` `#C93A3F`         | `palette.red.550` `#D8474B`         | 3.83 → 4.54   | (one state)       |
 
   The light danger rest fill now clears 3:1 on every surface (overlay 2.76 → 8.24, raised
   2.999 → 8.95). High contrast now sets `color.action.primary.hover` (`palette.blue.400`) and
-  `color.buy.hover` (`palette.green.400`) itself, so dark's new values leave it unchanged.
+  `color.buy.hover` (`palette.green.400`) itself, so dark's new values leave it unchanged. Light
+  buy hover is `palette.light.green.700`, two steps below rest, not the nearer `.600`: its step is
+  14.03 ΔE (6.07 with `.600`), and under deuteranopia the hovered buy fill sits 24.91 ΔE from the
+  resting sell fill and 9.55 from the hovered one (18.98 and 5.00 with `.600`).
+
+  Thin margins, held by both gates (any later nudge fails them): high-contrast buy rest to hover
+  5.0017 L\*, high-contrast danger label 4.54:1 and pressed primary label 4.56:1 (hue 9.13
+  degrees from rest). High-contrast `color.status.danger.default` (`palette.red.550`) is 5.14 ΔE
+  from `color.env.live` (`palette.red.500`; 8.49 with main's `palette.red.600`); the LIVE accent
+  always carries its text label. Lighter reds that clear the near-black label better
+  (`palette.red.400`, `.500`) are `color.sell.hover` and `color.env.live` themselves.
+
+- Cascade: `color.data-confidence.disconnected.indicator` aliases `color.status.danger.default`,
+  so it follows it (#3896): light `#B87F0A` → `#7A1E22` (no longer the amber of `reconnecting`),
+  high contrast `#C93A3F` → `#D8474B`. The E08-D04 data-confidence contrast checks pass.
 
 - Light `color.status.danger.default` is a dark red, as dark's `palette.red.600` is: it was
   `color.status.warning.default`'s colour, and an amber that clears the white label would have been

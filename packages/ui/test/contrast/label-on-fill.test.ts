@@ -264,7 +264,8 @@ describe("label-on-fill contrast matrix (#3896)", () => {
 
   it("keeps the registry at or past its floors, so a data-only edit cannot loosen the gate", () => {
     // WCAG 2.2 SC 1.4.3 (label) and SC 1.4.11 (glyph, boundary), the ticket's 5 L* state step
-    // and hue identity, and the high-contrast ring's 20 dE76 (verify_tokens.py holds the same).
+    // and hue identity, and the high-contrast ring's 20 dE76 (verify_tokens.py holds the same
+    // thresholds).
     expect(T.label).toBeGreaterThanOrEqual(4.5);
     expect(T.glyph).toBeGreaterThanOrEqual(3);
     expect(T.boundary).toBeGreaterThanOrEqual(3);
