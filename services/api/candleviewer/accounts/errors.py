@@ -43,3 +43,8 @@ class AccountRuleError(AccountsError):
 
 class AccountVersionConflictError(AccountsError):
     """If-Match token is stale; problem code `precondition_failed`."""
+
+
+class ProfileUnavailableError(AccountsError):
+    """The effective profile could not be read: the store failed or timed out, or writes kept
+    overtaking the read. The order path fails closed on it (SR-E28-24), never using a default."""

@@ -87,6 +87,9 @@ rules:
       # bucket, also (E13-T02, indicator_subscriptions): users by server instances held {1, 2-4,
       #   5-7, 8}; max_series=4. reason, also (indicator_recompute_total): {amended,
       #   param_change, backfill}; max_series=3.
+      # state, also (E28-T01, #905, cv_profile_rows): {trading_enabled, trading_disabled}, never
+      #   an account; max_series=2. result, also (cv_profile_cache_lookups_total): {hit, miss},
+      #   bound in `accounts/profile_cache.py`; max_series=2.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|cap|cause|class|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|indicator|kind|method|operation|outcome|permission|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|step|stream|symbol|table|tier|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"
