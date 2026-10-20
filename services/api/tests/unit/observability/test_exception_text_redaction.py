@@ -456,6 +456,10 @@ def test_each_key_name_ends_with_a_letter() -> None:
     assert all(name[-1].isalpha() for name in redaction._REDACT_KEY_FORMS)
 
 
+#: Of no value shape and long enough for the scan (6 characters or more): only its label masks it.
+_LABELLED_ONLY = "".join(("hun", "ter2x"))
+
+
 @pytest.mark.parametrize(
     ("text", "shown"),
     [
@@ -510,6 +514,22 @@ def test_a_dotted_attribute_and_its_value_are_masked_by_name_and_flagged_by_the_
 def test_the_scan_reads_an_escaped_line_break_after_a_dotted_label_as_a_space() -> None:
     # as the buffer writes a label that ends its line and the value on the next line
     assert "labelled-secret" in set(scan_text("cfg.token:\\nshortone"))
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        (f"token=\\'{_LABELLED_ONLY}\\'", f"token={_KEY_MARK}"),
+        (f'token=\\"{_LABELLED_ONLY}\\"', f"token={_KEY_MARK}"),
+        (f"cfg.token:\\'{_LABELLED_ONLY}\\'", f"cfg.token:{_KEY_MARK}"),  # a label, not an id
+    ],
+)
+def test_the_scan_reads_an_escaped_quote_after_a_label_as_a_quote(text: str, shown: str) -> None:
+    # as the buffer writes a quote it escapes: the scan flags the value, which the filter masks
+    assert "labelled-secret" in set(scan_text(text))
+    assert redact_text(text) == shown
+    assert redaction._redact_runs(text) == shown
+    assert list(scan_text(shown)) == []
 
 
 def test_the_filter_leaves_a_format_string_of_a_value_shape_so_that_it_formats() -> None:
@@ -662,10 +682,12 @@ def test_a_second_pass_changes_nothing_and_the_text_stays_within_the_cap(
 
 
 #: Key names (one as the last part of a dotted name), separators, quotes, placeholders, digits,
-#: spaces and line breaks; six digits are a TOTP shape, whose marker is longer: a pass grows a text.
+#: spaces and line breaks, and the quote and line break as the bundle's buffer writes them (`\'`,
+#: `\"`, `\n`); six digits are a TOTP shape, whose marker is longer: a pass grows a text.
 _PIECES = (
     *("token", "password", "Cookie", "input_value", "machines.session", "x"),
     *("=", ": ", " = ", '"', "'", ",", "}", "]", "123456", " ", "\n"),
+    *("\\'", '\\"', "\\n"),
     *(_KEY_MARK, redaction._TRUNCATED, "<omitted>", "***", "null", "None"),
 )
 #: Text of those pieces, where the run of TOTP shapes before them moves them across the cut.

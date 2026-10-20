@@ -75,9 +75,9 @@ _KEY_NAMES: Final = "|".join(sorted(re.escape(k).replace("_", "[-_]") for k in _
 #: A name after a `.` is part of a dotted id, not a label, when a `:` follows it at once and then a
 #: character other than a space or a quote: a WS machine topic such as `machines.session:<id>.state`
 #: stays readable (#415). A dotted attribute and its value is a label (`self.password='…'`,
-#: `obj.api_secret=…`, `cfg.token: …`), and an escaped line break (`\n`, as the bundle's buffer
-#: writes one) reads as a space. The bundle scan's too.
-_NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr])[^\s"'])"""
+#: `obj.api_secret=…`, `cfg.token: …`), and an escaped line break or quote (`\n`, `\'`, as the
+#: bundle's buffer writes them) reads as a space or a quote. The bundle scan's too.
+_NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr"'])[^\s"'])"""
 #: A labelled value that holds nothing to redact: a marker, the end of a cut text or a placeholder,
 #: as the whole value, so `password=***x` holds a value (#415). What follows it ends a value: a
 #: space, a quote, a comma, a closing bracket, the end, a `\`, as the bundle's buffer writes a line

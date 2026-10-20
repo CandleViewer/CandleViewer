@@ -26,9 +26,10 @@ class Finding:
 #: the redaction writes for a value (a marker, the end of a cut text) or a placeholder is fine.
 #: The log buffer writes a line break as `\n` (#415): a label after one, or with one before its
 #: value, is read as on one line, so a label and its value on two lines are found. The space after
-#: the separator is possessive: an escaped `\t` given back would read as a value.
+#: the separator is possessive: an escaped `\t` given back would read as a value. A quote that the
+#: buffer escapes (`\'`, `\"`) before a value reads as a quote, as the filter reads it (#415).
 _LABELLED = re.compile(rf"""(?ix)["']?(?:\b|(?<=\\[tnr])){_NOT_DOTTED}(?:{_KEY_NAMES})["']?
-    \s*[:=](?:\s|\\[tnr])*+["']?{_NO_VALUE}[^\s"',}}\]]{{6,}}""")
+    \s*[:=](?:\s|\\[tnr])*+(?:\\?["'])?{_NO_VALUE}[^\s"',}}\]]{{6,}}""")
 _RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ("private-key-block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("aws-access-key-id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
