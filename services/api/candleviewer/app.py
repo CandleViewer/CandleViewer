@@ -125,6 +125,8 @@ from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.idle_lock import IdleLockMiddleware
+from candleviewer.api.indicator_presets import make_indicator_presets_router
+from candleviewer.api.indicator_presets_service import IndicatorPresetMetrics
 from candleviewer.api.indicators import make_indicators_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
@@ -332,6 +334,9 @@ from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyC
 from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.incidents_sqlalchemy import SqlAlchemyIncidents
+from candleviewer.storage.repositories.indicator_presets_sqlalchemy import (
+    SqlAlchemyIndicatorPresetRepository,
+)
 from candleviewer.storage.repositories.instruments_sqlalchemy import (
     SqlAlchemyInstrumentsRepository,
 )
@@ -2238,8 +2243,10 @@ def create_app(
         make_trades_router(lambda: ctx.ingestion.trades, principal_resolver=audit_resolver)
     )
     # E13-T02: the indicator catalogue (static, code-defined); same resolver/fail-closed rules.
+    # E13-T03: the same catalogue validates `/indicator-presets` writes (mounted below).
+    indicator_catalogue = default_catalogue()
     app.include_router(
-        make_indicators_router(default_catalogue(), principal_resolver=audit_resolver)
+        make_indicators_router(indicator_catalogue, principal_resolver=audit_resolver)
     )
     # E35-T03: rule vocabulary + IR schema (fail-closed 501 without a resolver).
     rule_telemetry = _RuleCompileTelemetry(metrics_facade)
@@ -2424,6 +2431,35 @@ def create_app(
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
             metrics=app.state.workspaces_metrics,
+        )
+    )
+    # E13-T03: owner-scoped /indicator-presets with the built-ins (`scope: self`, as /drawings),
+    # every write checked against the catalogue `/indicators` serves. Postgres on the real backend
+    # only: the fake backend answers 503 without any I/O.
+    app.state.indicator_presets_repository = (
+        SqlAlchemyIndicatorPresetRepository(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "indicator-presets")
+        )
+        if resolved.storage_backend == "real"
+        else None
+    )
+    app.state.indicator_presets_metrics = IndicatorPresetMetrics(
+        presets=metrics_facade.gauge(
+            "indicator_presets_total", "Live indicator presets of all owners by builtin.",
+            ("builtin",), max_series=2,
+        ),
+        denied=metrics_facade.counter(
+            "indicator_preset_denied_total", "Indicator-preset writes refused for their target.",
+            ("reason",), max_series=2,
+        ),
+    )  # fmt: skip
+    app.include_router(
+        make_indicator_presets_router(
+            lambda: app.state.indicator_presets_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+            indicator_catalogue,
+            metrics=app.state.indicator_presets_metrics,
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).

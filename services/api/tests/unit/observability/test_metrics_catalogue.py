@@ -298,7 +298,7 @@ def test_indicator_metrics_are_live_bounded_and_never_per_user() -> None:
     specs = {
         s.name: (s.kind, s.labels, s.max_series, s.status, s.owner_epic, s.exported)
         for s in CATALOGUE
-        if s.name.startswith("indicator_")
+        if s.name.startswith("indicator_") and not s.name.startswith("indicator_preset")
     }
     assert specs == {
         "indicator_compute_seconds": ("histogram", ("indicator", "where"), 10, "live", "E13", True),
@@ -677,3 +677,18 @@ def test_user_lifecycle_binding_leaves_no_loop_names_in_the_module() -> None:
 
     loop_names = {"_action", "_results", "_result", "_step", "_outcomes", "_outcome"}
     assert not loop_names & vars(lm).keys()
+
+
+def test_indicator_preset_metrics_are_bounded_and_never_per_user() -> None:
+    """E13-T03: `create_app()` registers them for the presets router (`planned` here, as the
+    drawings and workspaces series are): live presets by `builtin` and refused writes by
+    `reason`, two closed values each, never a user or a preset id."""
+    specs = {
+        s.name: (s.kind, s.labels, s.max_series, s.status, s.owner_epic)
+        for s in CATALOGUE
+        if s.name.startswith("indicator_preset")
+    }
+    assert specs == {
+        "indicator_presets_total": ("gauge", ("builtin",), 2, "planned", "E13"),
+        "indicator_preset_denied_total": ("counter", ("reason",), 2, "planned", "E13"),
+    }

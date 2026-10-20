@@ -227,6 +227,8 @@
 ["indicator_cache_misses_total", "counter", [], "live", "E13"]
 ["indicator_cap_rejected_total", "counter", ["cap"], "live", "E13"]
 ["indicator_compute_seconds", "histogram", ["indicator", "where"], "live", "E13"]
+["indicator_preset_denied_total", "counter", ["reason"], "planned", "E13"]
+["indicator_presets_total", "gauge", ["builtin"], "planned", "E13"]
 ["indicator_recompute_total", "counter", ["reason"], "live", "E13"]
 ["indicator_subscriptions", "gauge", ["bucket"], "live", "E13"]
 ["ingest_queue_depth", "gauge", ["stage"], "live", "E04"]

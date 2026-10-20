@@ -9,8 +9,13 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+
+from candleviewer.api.indicator_presets import make_indicator_presets_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.db.builtin_indicator_presets import BUILTIN_PRESETS
+from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.storage.repositories.indicator_presets import (
     MAX_IMPORT_PRESETS,
     MAX_LIVE_PRESETS,
@@ -83,6 +88,13 @@ class FakePresetRepo:
             and r.name.lower() == name.lower() and r.id != exclude
             for r in self._live()
         )  # fmt: skip
+
+    def seed(self, owner: uuid.UUID, name: str = "Seeded", code: str = "atr") -> str:
+        """A live preset of `owner` stored directly (a viewer cannot write one)."""
+        preset_id = str(uuid.uuid4())
+        fields = PresetFields(code, name, {"n": 14}, {}, "subpane", False)
+        self._insert(str(owner), preset_id, fields)
+        return preset_id
 
     def own_live(self, owner: str) -> list[PresetRow]:
         return [r for r in self._live() if r.owner_user_id == owner and not r.is_builtin]
@@ -228,3 +240,43 @@ def new_ids() -> Any:
     """Deterministic ids for the service's `new_id`: 0193...0001, 0193...0002, ..."""
     counter = iter(range(1, 1_000_000))
     return lambda: uuid.UUID(int=(0x0193 << 112) | next(counter))
+
+
+class Env:
+    """Router-only app over a `FakePresetRepo`; `user` is the caller (None = no session)."""
+
+    def __init__(self, *, wired: bool = True) -> None:
+        self.repo, self.audit, self.metrics = FakePresetRepo(), Audit(), Metrics()
+        self.user: uuid.UUID | None = USER_A
+        self.repo_up = True
+        self.grants: set[str] | None = None  # replaces PERMS[user] ("*", unknown codes, ...)
+        self.owner = False  # the owner flag the session resolver derives
+        env = self
+
+        class _Resolver:  # async, like the session-backed `SessionAuditPrincipalResolver`
+            async def resolve(self, _request: Request) -> AuditPrincipal | None:
+                if env.user is None:
+                    return None
+                perms = frozenset(PERMS[env.user] if env.grants is None else env.grants)
+                return AuditPrincipal(env.user, "u", perms, session_id=SID, ip="10.0.0.9",
+                                      is_owner=env.owner)  # fmt: skip
+
+        app = FastAPI()
+        app.include_router(make_indicator_presets_router(
+            lambda: self.repo if self.repo_up else None, _Resolver() if wired else None,
+            self.audit, default_catalogue(), metrics=self.metrics, new_id=new_ids(),
+        ))  # fmt: skip
+        self.c = TestClient(app)
+
+    def create(self, **over: Any) -> dict[str, Any]:
+        r = self.c.post("/indicator-presets", json=body(**over))
+        assert r.status_code == 201, r.text
+        return dict(r.json())
+
+    def listed(self) -> list[dict[str, Any]]:
+        r = self.c.get("/indicator-presets")
+        assert r.status_code == 200, r.text
+        return list(r.json()["items"])
+
+    def mine(self) -> list[dict[str, Any]]:
+        return [item for item in self.listed() if not item["is_builtin"]]

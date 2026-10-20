@@ -93,6 +93,15 @@
           "type": "integer"
         }
       },
+      "PresetId": {
+        "in": "path",
+        "name": "presetId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
       "SymbolQuery": {
         "in": "query",
         "name": "symbol",
@@ -1063,6 +1072,75 @@
           "anchored_vwap"
         ],
         "type": "string"
+      },
+      "IndicatorPreset": {
+        "description": "Response object. Readers must ignore unknown properties (C-6.3). A built-in has `is_builtin: true` and `owner_user_id: null`.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "indicator_code": {
+            "pattern": "^[a-z0-9_]{2,32}$",
+            "type": "string"
+          },
+          "is_builtin": {
+            "description": "Set by the server only: `true` for the seeded built-ins, which never change (`403`, rule `builtin_immutable`).",
+            "readOnly": true,
+            "type": "boolean"
+          },
+          "is_favourite": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_user_id": {
+            "description": "The owner; `null` for a built-in.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pane_target": {
+            "enum": [
+              "overlay",
+              "subpane"
+            ],
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "description": "Every parameter of the indicator, as stored when the preset was saved.",
+            "type": "object"
+          },
+          "style": {
+            "$ref": "#/components/schemas/IndicatorPresetStyle"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_user_id",
+          "indicator_code",
+          "name",
+          "params",
+          "style",
+          "pane_target",
+          "is_builtin",
+          "is_favourite",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
       },
       "IndicatorPresetInput": {
         "additionalProperties": false,
@@ -3373,6 +3451,47 @@
     },
     "/indicator-presets": {
       "get": {
+        "description": "The built-in presets and the caller's live presets, never another user's, whatever the\ncaller's role. Built-ins come first, then by `indicator_code`, case-insensitive `name` and\n`id`; deleted presets are not listed. A user holds at most 500 live presets, so the list is\nnot paged. Any query parameter is refused with `422` (SR-026).\n",
+        "operationId": "listIndicatorPresets",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/IndicatorPreset"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Presets."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List saved indicator presets",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:read"
@@ -3381,6 +3500,74 @@
         }
       },
       "post": {
+        "description": "Saves a preset owned by the caller; the server mints its `id`. Built-ins never change:\ncustomising one saves a copy with this call, checked like any other save, so the copy is\nrefused (`422` rule `unknown_indicator`) while `listIndicators` does not list the\nbuilt-in's indicator. Nothing is stored on any refusal.\n\n- `413 payload_too_large`: the body is over 16 KiB, refused before it is parsed.\n- `422 validation_failed` (`IndicatorPresetInput` gives each field's rules): an unknown\n  property (`is_builtin`, `owner_user_id` and `id` included), `invalid_indicator_code`,\n  `unknown_indicator`, a `params` keyword (`type`, `enum`, `minimum`, `maximum` or\n  `multipleOf` on `params.<name>`, `additionalProperties` on `params`),\n  `params_too_large`, `params_too_deep`, `params_too_many_keys`, `style_not_allowed`,\n  the `name` rules and `invalid_unicode`. Any query parameter is refused (SR-026).\n- `409 conflict`: rule `name_taken` (the caller has a live preset with this\n  `indicator_code` and name, case-insensitive) or `limit_reached` (500 live presets).\n- `503`: `store_unavailable` when storage fails, `audit_unavailable` when the write-ahead\n  audit record cannot be written.\n",
+        "operationId": "createIndicatorPreset",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "atr14": {
+                  "value": {
+                    "indicator_code": "atr",
+                    "is_favourite": false,
+                    "name": "ATR 14",
+                    "pane_target": "subpane",
+                    "params": {
+                      "n": 14
+                    },
+                    "style": {}
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/IndicatorPresetInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndicatorPreset"
+                }
+              }
+            },
+            "description": "Created."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Save an indicator preset",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"
@@ -3391,6 +3578,37 @@
     },
     "/indicator-presets/{presetId}": {
       "delete": {
+        "description": "Soft delete, never a hard delete: the preset leaves the list and its name can be used\nagain, while the row is kept with `deleted_at` set. No precondition. A preset that is\nmissing, already deleted or another user's returns the same `404`; a built-in is `403`\nrule `builtin_immutable`, as on `updateIndicatorPreset`. A malformed `presetId` is `422`\nrule `uuid_parsing`, and any query parameter is refused (SR-026). `503` as on\n`createIndicatorPreset`.\n",
+        "operationId": "deleteIndicatorPreset",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Delete an indicator preset",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"
@@ -3398,7 +3616,66 @@
           "scope": "self"
         }
       },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/PresetId"
+        }
+      ],
       "put": {
+        "description": "Full replacement of one of the caller's presets (an omitted field takes its default). No\nprecondition: the last write wins. A preset that is missing, deleted or another user's\nreturns the same `404`. A built-in is `403 forbidden` with rule `builtin_immutable` (a\nmissing permission is the usual `403` with `required_permissions`). `indicator_code` is\nimmutable (`422` rule `immutable_field`), and a malformed `presetId` is `422` rule\n`uuid_parsing`. `409`, `413`, the other `422` rules and `503` as on\n`createIndicatorPreset`.\n\nEvaluation order for `/indicator-presets*` (steps that do not apply are skipped): `401`;\n`403` (permission, CSRF); `413`; `422` (path, query, body, none of which reads a stored\npreset); `404` (missing, deleted or another user's, identical); `403` rule\n`builtin_immutable`; `422` rule `immutable_field`; `409`; the write. `503` wherever\nstorage or the write-ahead audit record fails.\n",
+        "operationId": "updateIndicatorPreset",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IndicatorPresetInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndicatorPreset"
+                }
+              }
+            },
+            "description": "Replaced."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Replace an indicator preset",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:write"
