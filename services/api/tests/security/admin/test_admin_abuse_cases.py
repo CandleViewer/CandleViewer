@@ -25,7 +25,6 @@ Waiting on other tickets (recorded in the catalogue, never skipped):
 - AC-ADM-33: a principal resolver for `PUT /admin/log-level`.
 - AC-ADM-34's summary: E43-S02.
 - AC-ADM-35's engage-to-frame: #956.
-- UL-AC10, UL-AC11, UL-AC16: E42-T09 (#2649).
 - UL-AC12, UL-AC13: E42-T10 (#2650).
 - UL-AC15's unbind: E42-T08 (#2648).
 """

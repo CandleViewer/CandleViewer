@@ -49,8 +49,9 @@ day it is fixed and a harness error never passes as one (D11):
 - `#2836` (SR-E42-09): own guards that count no denial or carry no `code`, and
   `GET /admin/support-bundle/{job_id}`, which refuses with no record at all.
 - AD-F24 (e42-admin.md §13.1): a 401 whose `code` is not the registry's `unauthenticated`. The
-  model owns it on `#2304` for the step-up router and `#2649` for `api/users.py`; the invites
-  router's 401, which carries no `code` at all, has no issue (finding X03-F6 in the catalogue).
+  model owns it on `#2304` for the step-up router (`api/users.py`'s half was met by #2649); the
+  invites router's 401, which carries no `code` at all, has no issue (finding X03-F6 in the
+  catalogue).
 
 The abuse cases that wait on other tickets are listed in `test_admin_abuse_cases.py`.
 """
@@ -109,6 +110,11 @@ OWN_GUARD: dict[str, OwnGuard] = {
     "DELETE /users/{userId}": _ENFORCE,
     "GET /users/{userId}/mfa/reset-preview": _ENFORCE,
     "POST /users/{userId}/mfa/reset": _ENFORCE,
+    # E42-T09 (#2649, #3873): `make_user_admin_router` authorises each through `enforce` too.
+    "GET /users/{userId}": _ENFORCE,
+    "PATCH /users/{userId}": _ENFORCE,
+    "GET /users/{userId}/sessions": _ENFORCE,
+    "DELETE /users/{userId}/sessions/{sessionId}": _ENFORCE,
     "POST /admin/keys/kek-rewrap": OwnGuard(
         "rbac.denied", True, "#2266 D2: `enforce`, its body validated before RBAC"
     ),
@@ -497,8 +503,8 @@ UNAUTHENTICATED_CODE_GAPS: dict[str, str] = {
     ),
     "GET /users/invites": (
         f"{_AD_F24}: no `code` (`make_invites_router`'s `_owner`); no issue tracks it: AD-F24's "
-        "owners name `api/users.py` (#2649) and `api/step_up.py` (#2304), so the catalogue "
-        "records it as X03-F6 under the filing freeze"
+        "owners name `api/users.py` (#2649, met) and `api/step_up.py` (#2304), so the "
+        "catalogue records it as X03-F6 under the filing freeze"
     ),
     "GET /users/{userId}/mfa/reset-preview": (
         f"{_AD_F24}: `unauthorized` (`make_step_up_router`'s `_session`), #2304"

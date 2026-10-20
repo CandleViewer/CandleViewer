@@ -32,7 +32,7 @@
 ## Rules the RBAC cells hold
 
 The cells (`test_cells_none.py`, `test_cells_stale.py`, `test_cells_fresh.py`) cover each executed
-admin and users route of the route matrix (36 at the time of writing), and `rewrapKek` in the none
+admin and users route of the route matrix (40 at the time of writing), and `rewrapKek` in the none
 and stale states (rule 8). For each signed-in actor in each elevation state, they assert the
 status, the problem `code`, the audit record and the denial count. Elevation is real session
 state, decided by the production `StepUpService`:
@@ -65,7 +65,7 @@ registries of `api/step_up.py` (path-gated before RBAC, handler-gated after it),
    record cell, and a guard whose permission is edited away from the contract's fails the
    permission check. Each restores what it changed. A PR that mounts an admin or users route must
    put it on `admin_router` or give it an `OWN_GUARD` row, and a `GATE_REQUESTS` row if its gate
-   needs a body; the in-flight #2649, #3084, #3085 and #3319 will meet this.
+   needs a body; the in-flight #3084, #3085 and #3319 will meet this, as #2649's four routes did.
 6. A handler that answers `501` before its gate in the app as wired today is listed, with its
    reason, in `BEFORE_GATE` (`_cells.py`): `deleteBackup` answers `501` until the backup engine
    passes an artefact remover (#3319). Its allowed caller must get exactly that `501`; a challenge
@@ -134,7 +134,7 @@ Test paths are under `services/api/`; `::name` continues the path before it.
 | AC-ADM-25 | COVERED, WAITING | The restore guard: `tests/unit/admin/test_restore_guard.py::test_a_backup_whose_digest_differs_from_its_bound_record_is_not_usable`; verify, digest first, since E42-T05 BK-9 (#966): `tests/unit/admin/test_backup_verify.py::test_digest_mismatch_fails_the_job_with_checksum_mismatch_and_marks_the_row_failed`, `::test_mismatch_never_calls_the_verifier`. Through the routes it waits: `verifyBackup` answers `501` until the backup engine wires a verifier (#3319), and `restoreBackup` is not mounted (E42-T05, #966) |
 | AC-ADM-26 | COVERED | `tests/unit/admin/test_download_links.py::test_consume_is_single_use_under_concurrency`, `::test_expiry_is_five_minutes_on_the_server_clock`. The route and the service's steps, since E42-T05 BK-11 (#966): `tests/unit/api/test_admin_backup_download_router.py::test_a_link_serves_the_artefact_once_as_an_attachment_then_is_410`, `::test_a_bearer_is_optional_but_one_sent_must_resolve_and_names_its_user`; `tests/unit/admin/test_backup_fetch.py::test_a_spent_link_is_410_and_link_reused_once_within_its_hour_then_404`, `::test_the_oldest_spent_link_once_more_than_1024_ended_is_404_and_no_link_reused`, `::test_a_link_issued_before_a_restart_is_404_with_its_issued_record_alone`, `::test_the_events_that_end_the_grant_end_the_link_after_its_spend`, `::test_a_rotation_or_an_event_before_the_issue_does_not_end_the_link`, `::test_two_concurrent_fetches_serve_once`; the token in no log line: `tests/unit/observability/test_backup_token_never_logged.py::test_access_log_line_never_carries_the_token` |
 | AC-ADM-27 | NEW, PIN | `tests/security/admin/test_admin_abuse_cases.py::test_ac_adm_27_a_spent_invite_link_answers_as_an_unknown_one`; the pin `::test_ac_adm_27_create_user_refuses_mfa_not_required` (AD-F10, #3086) |
-| AC-ADM-28 | NEW | `tests/integration/admin/test_admin_abuse_pg.py::test_ac_adm_28_mutual_demotions_leave_one_winner_and_an_owner_every_round`: ten raced rounds, each loser 409 with one `rbac.denied` (`owner_floor`) and no change record (owed by E42-T09 in the model; `setUserRoles` is served, so it runs now) |
+| AC-ADM-28 | NEW | `tests/integration/admin/test_admin_abuse_pg.py::test_ac_adm_28_mutual_demotions_leave_one_winner_and_an_owner_every_round`: ten raced rounds, each loser 409 with one `rbac.denied` (`owner_floor`) and no change record (owed by E42-T09 in the model, whose store-level case has shipped too: `tests/integration/admin/test_user_admin_pg.py::test_ten_parallel_demotions_one_wins`, #2649) |
 | AC-ADM-29 | COVERED | `tests/security/auth/test_role_revoked_mid_step_up.py::test_role_revoked_between_step_up_challenge_and_completion_refuses_the_retry`, `::test_role_revoked_while_the_action_awaits_authorisation_is_refused` |
 | AC-ADM-30 | COVERED, WAITING | Today's behaviour is pinned by `tests/unit/admin/test_admin_http.py::test_a_missing_or_stale_step_up_never_refuses_the_route`; it flips with decision D8 (E42-T06, #1085) |
 | AC-ADM-31 | WAITING | SR-E42-06, #3196 |
@@ -150,20 +150,20 @@ Test paths are under `services/api/`; `::name` continues the path before it.
 | --- | --- | --- |
 | UL-AC01 | COVERED | `tests/security/auth/test_disable_user_e2e.py::test_rest_401_ws_4403_within_5s`; `tests/security/auth/test_disable_user_drill.py::test_disable_user_drill_terminates_sessions_sockets_and_pending_actions` |
 | UL-AC02 | COVERED | `tests/unit/test_user_cascade_wiring.py::test_disarms_owner_user_id_rules`, `::test_scope_refresh_failure_fails_closed`; `tests/integration/storage/test_rule_perms_status_pg.py::test_disabled_user_no_rule_perms` |
-| UL-AC03 | COVERED, NEW, WAITING | The store: `tests/integration/admin/test_user_lifecycle_pg.py::test_concurrent_demote_and_disable_keep_owner`; one disable: `tests/unit/api/test_users_delete.py::test_last_owner_409`; the route race of a disable against a demotion: `tests/integration/admin/test_admin_abuse_pg.py::test_ul_ac03_a_disable_racing_a_demotion_leaves_one_winner_and_an_owner_every_round` (ten raced rounds; the loser 409 with no change record, a losing demotion one `rbac.denied` `owner_floor`; in-process the disable reaches the lock first in nearly every round (195 of 200 in a replay), so the losing-disable half (no `rbac.denied`, UL-F13) is held on every run by the store test and `test_last_owner_409`, and by this test only in the rounds the demotion wins); of two demotions: `::test_ac_adm_28_mutual_demotions_leave_one_winner_and_an_owner_every_round`. The `PATCH` variant waits on E42-T09 (#2649) |
+| UL-AC03 | COVERED, NEW | The store: `tests/integration/admin/test_user_lifecycle_pg.py::test_concurrent_demote_and_disable_keep_owner`; one disable: `tests/unit/api/test_users_delete.py::test_last_owner_409`; the route race of a disable against a demotion: `tests/integration/admin/test_admin_abuse_pg.py::test_ul_ac03_a_disable_racing_a_demotion_leaves_one_winner_and_an_owner_every_round` (ten raced rounds; the loser 409 with no change record, a losing demotion one `rbac.denied` `owner_floor`; in-process the disable reaches the lock first in nearly every round (195 of 200 in a replay), so the losing-disable half (no `rbac.denied`, UL-F13) is held on every run by the store test and `test_last_owner_409`, and by this test only in the rounds the demotion wins); of two demotions: `::test_ac_adm_28_mutual_demotions_leave_one_winner_and_an_owner_every_round`. The `PATCH` variant, since E42-T09 (#2649): `tests/integration/admin/test_user_admin_pg.py::test_patch_disable_vs_demote_keeps_owner` |
 | UL-AC04 | COVERED | `tests/unit/api/test_users_delete.py::test_positions_unknown_409` |
 | UL-AC05 | COVERED | `tests/unit/api/test_users_delete.py::test_audit_down_503`; `tests/unit/api/test_users_router.py::test_put_roles_audit_unavailable_rolls_back_with_503`; `tests/unit/api/test_users_account_access_put.py::test_stepup_and_audit_503` |
 | UL-AC06 | COVERED, SUITE | `tests/unit/api/test_users_delete.py::test_forbidden_manager_viewer_audited`; `tests/unit/api/test_users_account_access_put.py::test_forbidden_manager_viewer_audited`; the cells of every lifecycle route |
 | UL-AC07 | COVERED | `tests/integration/storage/test_account_access_store_pg.py::test_keeps_freeze_and_cap` |
 | UL-AC08 | COVERED | `tests/unit/api/test_users_account_access_put.py::test_put_replaces_the_grants_and_pushes_after_the_commit`; `tests/contract/rbac/test_scope_and_ws.py::test_in_flight_subscription_gets_revoked_when_the_grant_is_withdrawn` |
 | UL-AC09 | COVERED | `tests/unit/api/test_users_account_access_put.py::test_unknown_account_404` |
-| UL-AC10 | WAITING | `PATCH /users/{userId}` is not mounted: E42-T09 (#2649) |
-| UL-AC11 | WAITING | The admin session routes are not mounted: E42-T09 (#2649) |
+| UL-AC10 | COVERED | Since E42-T09 (#2649): `tests/unit/api/test_user_admin_routes.py::test_mfa_required_false_400`, `::test_invited_or_locked_400`, `::test_an_invited_or_locked_user_is_not_enabled` (each 400, nothing written) |
+| UL-AC11 | COVERED | Since E42-T09 (#2649): `tests/unit/api/test_user_admin_routes.py::test_no_token_material`, `::test_other_users_session_404`; on the deployed app, `tests/security/auth/test_user_admin_e2e.py::test_other_users_session_404_on_both_paths` |
 | UL-AC12 | WAITING | The purge reaper: E42-T10 (#2650) |
-| UL-AC13 | WAITING | Re-enable (E42-T09, #2649) and the reaper (E42-T10, #2650) |
+| UL-AC13 | WAITING | Re-enable has shipped (E42-T09, #2649); the reaper it races waits on E42-T10 (#2650) |
 | UL-AC14 | NEW | `tests/integration/admin/test_admin_abuse_pg.py::test_ul_ac14_a_disabled_invitee_cannot_complete_the_old_invite`: on the deployed app, the old link's validate, redeem and confirm each answer 404 after the disable, the user stays `disabled`, and the disable wrote `users.invite_revoked`; the cascade step: `tests/unit/admin/test_user_disable.py::test_invited_revokes_invite` |
 | UL-AC15 | COVERED, WAITING | `tests/unit/admin/test_user_disable.py::test_open_orders_left_and_counted`. The unbind waits on E42-T08 (#2648) |
-| UL-AC16 | WAITING | Re-enable and `users.enable`: E42-T09 (#2649) |
+| UL-AC16 | COVERED, SUITE | Without the step-up: the cells of `PATCH /users/{userId}`, Owner none and stale (the path guard challenges any body), and `tests/unit/api/test_user_admin_routes.py::test_patch_without_step_up_is_challenged_and_changes_nothing`; with it, since E42-T09 (#2649): `::test_enable_audited_ahead` (one `users.enable`, written ahead, before and after), `::test_enable_no_regrant` (no grant or session comes back) |
 
 ## Findings
 
@@ -179,8 +179,8 @@ the model's matrix (`e42-admin.md` §1.4).
 | X03-F3 | A `403 step_up_required` is audited (`auth.step_up_required`, by B16) but counted by no metric (`auth/metrics.py` counts grants and wrong codes only) | R (detection) | L x L, Low | A: decision D6 on #1026 (a challenge is not a denial); the cells assert its record |
 | X03-F4 | Semgrep 1.181.0 matches no `async def` pattern in a file that uses PEP 695 generics, and reports a clean parse; every existing rule also carries a `def` alternative, so none was found blind on `main` | — (tooling) | Low | Recorded (D10). The PR-2 rules use `def` patterns, each with a `def f[T]` fixture |
 | X03-F5 | `PUT /admin/log-level` is mounted with no principal resolver, so it answers 501 to everyone (`create_app` mounts the log-level router under a comment naming E09-S03, which shipped); its refusals carry no `code` | D (availability) | L x L, Low | Recorded for the orchestrator: no open ticket owns the wiring |
-| AD-F24 | 401 `code` `unauthorized`, not the registry's `unauthenticated` (the `_session` helper of `make_step_up_router`) | contract | M x L, Low | M: #2304 (the model's routing; `api/users.py` is #2649's). Pinned: `test_no_session_refusal_carries_the_registry_code` |
-| X03-F6 | `GET /users/invites` answers a caller with no session 401 with no problem `code` at all (the `_owner` check of `make_invites_router`). AD-F24's owners name `api/users.py` (#2649) and `api/step_up.py` (#2304), not the invites router, so no issue tracks it | contract | M x L, Low | Recorded under the filing freeze; the nearest finding is AD-F24 (`e42-admin.md` §13.1). Pinned: `test_no_session_refusal_carries_the_registry_code` |
+| AD-F24 | 401 `code` `unauthorized`, not the registry's `unauthenticated` (the `_session` helper of `make_step_up_router`) | contract | M x L, Low | M: #2304 (the model's routing; `api/users.py`'s half was met by #2649). Pinned: `test_no_session_refusal_carries_the_registry_code` |
+| X03-F6 | `GET /users/invites` answers a caller with no session 401 with no problem `code` at all (the `_owner` check of `make_invites_router`). AD-F24's owners name `api/users.py` (#2649, met) and `api/step_up.py` (#2304), not the invites router, so no issue tracks it | contract | M x L, Low | Recorded under the filing freeze; the nearest finding is AD-F24 (`e42-admin.md` §13.1). Pinned: `test_no_session_refusal_carries_the_registry_code` |
 | AD-F10 | `POST /users` accepts `mfa_required: false` (the default of `InviteCreateRequest.mfa_required`; C-12.2) | S | L x H, Medium | M: #3086. Pinned: `test_ac_adm_27_create_user_refuses_mfa_not_required` |
 
 No Critical or High finding: none needs a remediation ticket before the epic closes.
