@@ -3,7 +3,8 @@
 24 §8.6 "Order creates", under any endpoint class. Bodies are the corpus 503
 (`rest/error_503.json`), the `retCode` envelope the REST tests already use and the unreadable
 bodies of `test_contract_errors.py`, plus bodies no venue sends (JSON null, a non-integer
-`retCode`, a corrupt gzip); failures are httpx's own errors from a `MockTransport`.
+`retCode`, a corrupt gzip, a body over the cap, an array nested 100 000 deep); failures are
+httpx's own errors from a `MockTransport`.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import httpx
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import (
@@ -24,9 +26,9 @@ from candleviewer.exchange.base.errors import (
     UnknownStateError,
 )
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
-from candleviewer.exchange.bybit.metrics import bybit_rate_limited_total
+from candleviewer.exchange.bybit.metrics import bybit_rate_limited_total, bybit_rest_requests_total
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
-from candleviewer.exchange.bybit.rest import BybitRestClient
+from candleviewer.exchange.bybit.rest import BybitRestClient, RestBodyTooLarge
 from candleviewer.exchange.bybit.signer import BybitSigner
 from tests._corpus import http_status, rest
 from tests._signing import CREDENTIAL_ID, fake_capability
@@ -35,6 +37,8 @@ Outcome = Callable[[httpx.Request], httpx.Response]
 Sent = list[httpx.Request]
 CREATE = "/v5/order/create"
 ERR_503 = "rest/error_503.json"
+OVERSIZED = b" " * (2 * 1024 * 1024 + 1)  # over every endpoint class's body cap
+DEEP = b"[" * 100_000 + b"]" * 100_000  # valid JSON, past the parser's recursion limit
 
 
 def _raise(error: type[Exception]) -> Outcome:
@@ -64,6 +68,8 @@ LEFT: dict[str, Outcome] = {
     "undecodable": lambda _: httpx.Response(
         200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"not gzip")
     ),
+    "oversized": lambda _: httpx.Response(200, content=OVERSIZED),
+    "deep-nesting": lambda _: httpx.Response(200, content=DEEP),
     "no-retcode": lambda _: httpx.Response(200, json={"result": {}}),
     "json-null": lambda _: httpx.Response(200, content=b"null"),
     "json-number": lambda _: httpx.Response(200, content=b"123"),
@@ -139,6 +145,22 @@ async def test_a_create_that_left_is_ambiguous_and_sent_once(
     assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [1, 0]
 
 
+async def test_an_oversized_create_answer_keeps_the_caps_count_and_warning() -> None:
+    """SR-E12-09's metric and log stay; the request is not counted a second time."""
+    counters = [
+        bybit_rest_requests_total.labels(endpoint=CREATE, result=r) for r in ("oversized", "error")
+    ]
+    before = [counter._value.get() for counter in counters]  # test-only read, as elsewhere
+
+    with capture_logs() as logs:
+        error, _ = await _post([LEFT["oversized"]])
+
+    assert isinstance(error, AmbiguousResultError) and type(error.__cause__) is RestBodyTooLarge
+    assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [1, 0]
+    warnings = [log["event"] for log in logs if log["log_level"] == "warning"]
+    assert warnings == ["bybit_rest_body_too_large", "bybit_rest_create_ambiguous"]
+
+
 @pytest.mark.parametrize("code", [10016, 10019])
 async def test_a_create_10016_or_10019_is_counted_as_raised_never_as_a_rate_limit(
     code: int,
@@ -206,7 +228,7 @@ async def test_a_create_answered_with_an_open_outcome_code_is_never_retryable(co
 
 
 @pytest.mark.parametrize("path", ["/v5/order/amend", "/v5/order/cancel"])
-@pytest.mark.parametrize("outcome", ["undecodable", "json-null", "retcode-text"])
+@pytest.mark.parametrize("outcome", ["undecodable", "json-null", "retcode-text", "oversized"])
 async def test_amend_and_cancel_skip_the_create_only_answer_checks(path: str, outcome: str) -> None:
     sent: Sent = []
     async with _client([LEFT[outcome]], sent, []) as client:

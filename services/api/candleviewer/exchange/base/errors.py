@@ -190,12 +190,11 @@ class AmbiguousResultError(TransportError):
     (`oms.order_link_resolution.adopt_or_resend`). `order_link_id` is the create's id,
     `None` for a batch.
 
-    For E29-T04, this is not the only error that leaves a create unknown: an oversized
-    answer (`RestBodyTooLarge`), a venue `UNKNOWN_STATE` code (`retryable` false for a
-    create), and the caller's own `asyncio.timeout` (a bare `TimeoutError`, which
-    `translate_exchange_error` turns into a retryable `UnknownStateError`) or cancellation
-    do too. Map them to `unknown` as well, and never resend a create because an error
-    says `retryable`."""
+    For E29-T04, this is not the only error that leaves a create unknown: a venue
+    `UNKNOWN_STATE` code (`retryable` false for a create), and the caller's own
+    `asyncio.timeout` (a bare `TimeoutError`, which `translate_exchange_error` turns into a
+    retryable `UnknownStateError`) or cancellation do too. Map them to `unknown` as well, and
+    never resend a create because an error says `retryable`."""
 
     def __init__(self, message: str, *, order_link_id: str | None = None, **kwargs: object) -> None:
         kwargs["retryable"] = False

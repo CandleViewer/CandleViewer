@@ -115,7 +115,8 @@ class RestBodyTooLarge(ExchangeError):
     """The response body exceeded the per-endpoint-class byte cap (SR-E12-09).
 
     Never retryable: a hostile/broken upstream will not shrink on resend. The
-    message carries sizes only, never any payload bytes."""
+    message carries sizes only, never any payload bytes. An order create's oversized
+    answer is the cause of an `AmbiguousResultError` instead (24 §8.6 "Order creates")."""
 
 
 async def _read_capped(response: httpx.Response, cap: int) -> bytes | None:
@@ -423,9 +424,12 @@ class BybitRestClient:
                     endpoint_class=str(endpoint_class),
                     cap_bytes=_MAX_BODY_BYTES[endpoint_class],
                 )
-                raise RestBodyTooLarge(
+                too_large = RestBodyTooLarge(
                     f"{path} response body exceeds {_MAX_BODY_BYTES[endpoint_class]} bytes"
                 )
+                if creates:  # an answer came and was left unread: the create left
+                    raise _ambiguous(path, body, "an oversized body") from too_large
+                raise too_large
 
             self._observe_rate_headers(response, endpoint_class)
 
@@ -446,6 +450,10 @@ class BybitRestClient:
 
             try:
                 data = json.loads(raw)
+            except RecursionError as exc:  # nested past the parser's limit: unread, like non-JSON
+                if not creates:
+                    raise
+                raise _answer_ambiguous(path, body, "a body nested too deep") from exc
             except ValueError as exc:
                 if creates:  # cut mid-body, or not the venue's answer: the create left
                     raise _answer_ambiguous(path, body, "a non-JSON body") from exc
