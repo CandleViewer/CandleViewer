@@ -15,9 +15,9 @@ perf test is: GC disabled around the timed loops, fastest-of-N rounds, and:
   per bar except ZigZag's pivot test and the checkpoint snapshots, which read the window).
 
 These time the engine's update alone, with no listener: the WS fan-out after it is not in them.
-Priming is timed apart: the longest stretch an admission, a re-prime on the emit path or a full
-recompute's read and fold holds the event loop without letting another task run stays under
-C-2.17's 50 ms, a sparse time series' fillers included.
+Priming is timed apart: the longest stretch an admission, a re-prime on the emit path, an amended
+close or a full recompute's read and fold holds the event loop without letting another task run
+stays under C-2.17's 50 ms, a sparse time series' fillers included.
 
 E13-Q03 owns the CI regression gate. The p95 measured on the dev laptop is in the PR body."""
 
@@ -293,6 +293,49 @@ async def test_a_re_prime_on_the_emit_path_never_holds_the_loop_past_c_2_17() ->
     for r in requested:
         batch = engine.snapshot(SYM, r.key, 1_000)
         assert batch is not None and [p.index for p in batch.points] == [999]
+
+
+def _close_s1(b: Bar, *, amended: bool = False) -> BarEmission:
+    return BarEmission(S1, 0, (BarUpdate.model_construct(kind="close", bar=b, amended=amended),))
+
+
+async def test_an_amended_close_on_a_sparse_series_never_holds_the_loop_past_c_2_17() -> None:
+    """C-2.17 (security review of the WS delivery, round 4): eight ZigZag instances (depth
+    4 993..5 000) on the sparse series. The store holds its first 16 closes (priming on all 1 000
+    would fold eight million ZigZag updates and change nothing here: an amendment's cost is the
+    ring's), then eight more bars close, the newest seven after a checkpoint: the worst offset.
+    Re-closing it with another close (`amended=True`) would replay eight filled gaps, about 8 000
+    kernel updates per instance (78-92 ms here before the bound), past `MAX_AMEND_UPDATES`, so the
+    series re-primes through its bounded path instead. Neither the amended emit nor any stretch of
+    the re-prime's recompute holds the loop 50 ms, and every instance ends with the amended bar."""
+    store = SeriesStore(_tails({SYM: SPARSE[:16]}))
+    hold = await store.ensure(SYM, S1)
+    engine = IndicatorEngine(store)
+    deep = [{"indicator": "zigzag", "params": {"depth": d}} for d in range(4_993, 5_001)]
+    requested = resolve_instances(deep, S1)
+    engine.admit(SYM, S1, requested, "c1", None, history=500)
+    await asyncio.gather(*list(engine._tasks))
+    for b in SPARSE[16:24]:
+        await store.emit(_close_s1(b))
+        await engine.emit(_close_s1(b))
+    for r in requested:  # white box: the newest bar is the seventh after its checkpoint
+        ring = list(engine._instances[(SYM, r.key)].ring)
+        assert [e.checkpoint is not None for e in ring[-8:]] == [True] + [False] * 7
+    late = _close_s1(SPARSE[23].model_copy(update={"close": SPARSE[23].close + 1}), amended=True)
+    try:
+        async with _LoopProbe() as probe:
+            await store.emit(late)
+            started = time.perf_counter()
+            await engine.emit(late)
+            emitted = time.perf_counter() - started
+            await asyncio.gather(*list(engine._tasks))
+    finally:
+        hold.release()
+    assert emitted < 0.050, f"the amended emit held the loop {emitted * 1e3:.1f} ms"
+    assert probe.longest() < 0.050, f"the loop was held {probe.longest() * 1e3:.1f} ms"
+    for r in requested:
+        batch = engine.snapshot(SYM, r.key, 1_000)
+        assert batch is not None and [p.index for p in batch.points] == list(range(24))
 
 
 async def test_a_session_read_of_sparse_bars_is_folded_in_short_chunks() -> None:

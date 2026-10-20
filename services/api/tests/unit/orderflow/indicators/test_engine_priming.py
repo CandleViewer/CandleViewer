@@ -538,6 +538,146 @@ async def test_a_read_is_folded_in_chunks_and_closes_meanwhile_are_folded_before
     assert _reprs([p.values for p in batch.points]) == expected[-1_000:]
 
 
+class _Replays:
+    """A spy on `_replay`: per call, the closes it folded, the kernel updates they took (the
+    instance's densified bar count before and after) and the loop turns `tick` counted by then.
+    `folded` is set once the first chunk is folded."""
+
+    def __init__(self, engine: IndicatorEngine, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[tuple[int | None, int, int]] = []
+        self.turns = 0
+        self.folded = asyncio.Event()
+        real = engine._replay
+
+        def replay(inst: Any, gen: int | None, held: Any) -> int | None:
+            before = inst.folded
+            done = real(inst, gen, held)
+            self.calls.append((done, inst.folded - before, self.turns))
+            self.folded.set()
+            return done
+
+        monkeypatch.setattr(engine, "_replay", replay)
+
+    async def tick(self, engine: IndicatorEngine) -> None:
+        """Count the loop's turns while the engine's recompute runs."""
+        while engine._tasks:
+            self.turns += 1
+            await asyncio.sleep(0)
+
+
+def _after_gap(k: int) -> Bar:
+    """Bar 3 000 + `k` of the deep series, opening 1 000 slots after the one before it: it folds
+    999 fillers and itself, a chunk on its own."""
+    return wave(3_000 + k, slot=2_999 + 1_000 * (k + 1))
+
+
+async def test_closes_held_back_past_a_chunk_are_folded_a_chunk_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.17 (security review of the WS delivery, round 4): ten closes land while the read's fold
+    runs, each after 999 empty slots, so folding them takes 10 000 kernel updates, more than
+    `MAX_SYNC_PRIME_UPDATES`. They are folded as the read's bars are, `PRIME_CHUNK_UPDATES` at a
+    time (one bar's fillers are never split), and the loop runs between chunks. The read's bars
+    are kept: the instance ends as a from-scratch fold of the densified series."""
+    deep, store, engine, r, folding, _hold = await _deep(monkeypatch)
+    replays = _Replays(engine, monkeypatch)
+    sparse = [_after_gap(k) for k in range(10)]
+
+    async def land() -> None:
+        await folding.begun(engine, r)
+        for b in sparse:
+            await close(store, engine, b, generation=GEN)
+
+    await asyncio.gather(land(), _done(engine), replays.tick(engine))
+    # Each chunk stops once it reaches PRIME_CHUNK_UPDATES: here one bar and its 999 fillers.
+    assert [(done, updates) for done, updates, _ in replays.calls] == [(1, 1_000)] * 10
+    turns = [turn for _, _, turn in replays.calls]
+    assert turns == sorted(set(turns))  # the loop turned between every two chunks
+    dense = BarSeries(M1, [*deep.bars[500:], *sparse]).densify()
+    rows = _fold(r, [bar_input(b) for b in dense])
+    expected = [row for row, b in zip(rows, dense, strict=True) if not b.synthetic]
+    batch = engine.snapshot(SYM, r.key, 1_000)
+    assert batch is not None and [p.index for p in batch.points] == list(range(2_010, 3_010))
+    assert _reprs([p.values for p in batch.points]) == expected[-1_000:]
+
+
+async def test_an_instance_expired_between_held_chunks_folds_no_more_of_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An instance released and past its grace while the loop runs between two chunks of its held
+    closes is removed by the sweep: no further chunk is folded and it never becomes ready."""
+    now = [0]
+    _deep_bars, store, engine, r, folding, _hold = await _deep(monkeypatch, now_us=lambda: now[0])
+    replays = _Replays(engine, monkeypatch)
+    inst = engine._instances[(SYM, r.key)]
+
+    async def expire() -> None:
+        await folding.begun(engine, r)
+        for k in range(3):  # three chunks
+            await close(store, engine, _after_gap(k), generation=GEN)
+        await replays.folded.wait()  # the first chunk is folded; the loop runs before the next
+        engine.release(SYM, [r.key], "c1")
+        now[0] = 30_000_000  # past its grace: the sweep below removes it
+        engine.release(SYM, [], "nobody")
+
+    await asyncio.gather(expire(), _done(engine), replays.tick(engine))
+    assert [done for done, _, _ in replays.calls] == [1] and not inst.ready
+    assert instances(engine) == 0 and engine._busy == 0
+
+
+async def test_an_amended_close_held_back_is_folded_in_a_chunk_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.17: an amended close's replay restores a checkpoint, which no count of kernel updates
+    covers, so a held one is folded alone: the new bars before it, then it, then the bars after."""
+    deep, store, engine, r, folding, _hold = await _deep(monkeypatch)
+    replays = _Replays(engine, monkeypatch)
+    late = wave(3_001).model_copy(update={"close": wave(3_001).close + 9})
+
+    async def land() -> None:
+        await folding.begun(engine, r)
+        for b in (wave(3_000), wave(3_001)):
+            await close(store, engine, b, generation=GEN)
+        await close(store, engine, late, generation=GEN, amended=True)
+        for b in (wave(3_002), wave(3_003)):
+            await close(store, engine, b, generation=GEN)
+
+    await asyncio.gather(land(), _done(engine), replays.tick(engine))
+    assert [done for done, _, _ in replays.calls] == [2, 1, 2]
+    turns = [turn for _, _, turn in replays.calls]
+    assert turns == sorted(set(turns))
+    series = [*deep.bars[500:], wave(3_000), late, wave(3_002), wave(3_003)]
+    batch = engine.snapshot(SYM, r.key, 1_000)
+    assert batch is not None and [p.index for p in batch.points] == list(range(2_004, 3_004))
+    assert (
+        _reprs([p.values for p in batch.points])
+        == _fold(r, [bar_input(b) for b in series])[-1_000:]
+    )
+
+
+async def test_a_store_repair_between_held_chunks_primes_from_the_store_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A store repair while the loop runs between two chunks of the held closes folds no further
+    chunk: the instance primes from the store's bars at once, the read's bars left out."""
+    _deep_bars, store, engine, r, folding, _hold = await _deep(monkeypatch)
+    replays = _Replays(engine, monkeypatch)
+
+    async def repair() -> None:
+        await folding.begun(engine, r)
+        for k in range(3):  # three chunks
+            await close(store, engine, _after_gap(k), generation=GEN)
+        await replays.folded.wait()
+        engine.history_repair(SYM, M1, 1)
+
+    await asyncio.gather(repair(), _done(engine), replays.tick(engine))
+    assert [done for done, _, _ in replays.calls] == [1]
+    batch = engine.snapshot(SYM, r.key, 1_000)
+    assert batch is not None and [p.index for p in batch.points] == list(range(2_003, 3_003))
+    # SMA(1 500) on the store's bars alone has no value before the fillers after bar 2 999.
+    assert {p.values for p in batch.points[:997]} == {(None,)}
+
+
 async def test_a_generation_change_during_the_fold_primes_from_the_store_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -103,5 +103,10 @@ MAX_POINTS: Final = 1_000
 CHECKPOINT_EVERY: Final = 8
 #: More empty slots than this in one time-series gap restart the kernel instead of being filled.
 MAX_FILL_SLOTS: Final = 1_000
+#: C-2.17: the most kernel updates (a time series' fillers included) an amended close may replay
+#: in one instance, from the checkpoint before it to the newest bar: one filled gap and a
+#: checkpoint spacing of bars, about what a close costs. On a sparse series a checkpoint can lie
+#: several filled gaps back; a replay that needs more re-primes the series instead (`engine`).
+MAX_AMEND_UPDATES: Final = MAX_FILL_SLOTS + CHECKPOINT_EVERY
 #: A read of an instance more than this many closes behind its series is `stale`.
 STALE_AFTER_BARS: Final = 2

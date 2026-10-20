@@ -10,9 +10,15 @@ from typing import Any
 import pytest
 
 from candleviewer.bars.models import BarSpec
+from candleviewer.bars.series import BarSeries
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, Point, Requested
 from candleviewer.orderflow.indicators.kernels import compute
+from candleviewer.orderflow.indicators.limits import (
+    CHECKPOINT_EVERY,
+    MAX_AMEND_UPDATES,
+    MAX_FILL_SLOTS,
+)
 from candleviewer.orderflow.indicators.metrics import RECOMPUTES
 from candleviewer.orderflow.indicators.types import KernelContext, bar_input
 from tests.unit.orderflow.indicators._engine import (
@@ -54,6 +60,18 @@ def _from_scratch(store: SeriesStore, spec: BarSpec, r: Requested) -> list[tuple
 
 def _values(points: tuple[Point, ...]) -> list[tuple[str, ...]]:
     return [tuple(repr(v) for v in p.values) for p in points]
+
+
+def _densified(store: SeriesStore, spec: BarSpec, r: Requested) -> list[tuple[str, ...]]:
+    """`_from_scratch` of the densified series (its fillers folded too), at its real bars."""
+    latest = store.latest(SYM, spec.spec_hash, 1001)
+    assert latest is not None
+    dense = BarSeries(spec, list(latest.closed)).densify()
+    inputs = [bar_input(b) for b in dense]
+    rows = compute(r.definition.id, inputs, r.params, source=r.kernel.sources[0])
+    return [
+        tuple(repr(v) for v in row) for row, b in zip(rows, dense, strict=True) if not b.synthetic
+    ]
 
 
 @pytest.mark.parametrize("instance", EVERY, ids=[i["indicator"] for i in EVERY])
@@ -173,4 +191,62 @@ async def test_a_replay_across_a_gap_past_the_fill_bound_restarts_as_the_live_fo
     changed = [p.index for p, q in zip(after.points, before.points, strict=True) if p != q]
     assert changed == [9]  # after the restart, bars 10 and 11 fold as before
     assert after.points[10].values == (None,)  # the restart's warmup, as live
+    hold.release()
+
+
+async def test_a_replay_re_takes_each_checkpoint_after_the_amended_bar() -> None:
+    """A replay refreshes the checkpoints after the amended bar: their state and the real bar
+    before them, which the next replay regenerates fillers from (and its bound reads). Bar 16
+    opens after three empty slots, so a second amendment, replaying from the checkpoint before
+    bar 16, folds fillers flat at bar 15's corrected close, and EMA(3) carries it on."""
+    store = SeriesStore()
+    hold = await store.ensure(SYM, S1)
+    engine = IndicatorEngine(store)
+    (r,) = admit(engine, [{"indicator": "ema", "params": {"n": 3}}], spec=S1)
+    slots = [*range(16), 19, 20, 21, 22]  # checkpoints before bars 0, 8 and 16
+    for k, slot in enumerate(slots):
+        await close(store, engine, wave(k, spec=S1, slot=slot), spec=S1)
+    for index in (15, 17):
+        b = wave(index, spec=S1, slot=slots[index])
+        await close(
+            store, engine, b.model_copy(update={"close": b.close + 5}), spec=S1, amended=True
+        )
+    after = engine.snapshot(SYM, r.key, 500)
+    assert after is not None and _values(after.points) == _densified(store, S1, r)
+    hold.release()
+
+
+@pytest.mark.parametrize("over", [0, 1], ids=["at-the-bound", "past-it"])
+async def test_a_replay_past_max_amend_updates_re_primes_the_series_instead(over: int) -> None:
+    """C-2.17 (security review of the WS delivery, round 4): an amended close replays the bars from
+    its checkpoint on, their fillers included, only within `MAX_AMEND_UPDATES` kernel updates. Bar 8
+    is a checkpoint after 1 000 empty slots and bars 9..15 follow it, so amending bar 15 replays
+    bar 8's fillers and eight bars: 1 008 updates, published as amended points. One more empty
+    slot, before bar 12, makes it 1 009: the series re-primes and re-snapshots instead
+    (`backfill`). Either way the instance ends as a from-scratch fold of the corrected series."""
+    assert MAX_FILL_SLOTS + CHECKPOINT_EVERY == MAX_AMEND_UPDATES  # the replay this test builds
+    store, listener = SeriesStore(), Listener()
+    hold = await store.ensure(SYM, S1)
+    engine = IndicatorEngine(store)
+    engine.listen(listener)
+    (r,) = admit(engine, [{"indicator": "sma", "params": {"n": 4}}], spec=S1)
+    after_gap = 7 + MAX_FILL_SLOTS + 1  # bar 8: every empty slot before it is a filler
+    slots = [*range(8), *(after_gap + k + (over if k >= 4 else 0) for k in range(8))]
+    for i, slot in enumerate(slots):
+        await close(store, engine, bar(i, 100.0 + i % 3, spec=S1, slot=slot), spec=S1)
+    listener.events.clear()
+    amended_runs, backfills = counter(RECOMPUTES["amended"]), counter(RECOMPUTES["backfill"])
+    late = bar(15, 90.0, spec=S1, slot=slots[15])
+    await close(store, engine, late, spec=S1, amended=True)
+    if over:
+        assert listener.events == [("resnapshot", "history_repair")]
+    else:
+        ((kind, batches),) = listener.events
+        assert kind == "points" and [(p.index, p.amended) for p in batches[r.key].points] == [
+            (15, True)
+        ]
+    assert counter(RECOMPUTES["amended"]) - amended_runs == 1 - over
+    assert counter(RECOMPUTES["backfill"]) - backfills == over
+    after = engine.snapshot(SYM, r.key, 500)
+    assert after is not None and _values(after.points) == _densified(store, S1, r)
     hold.release()
