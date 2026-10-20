@@ -379,24 +379,24 @@ def test_a_frame_line_that_labels_a_value_shows_the_marker_and_passes_the_bundle
 
 
 #: Short and of no value shape: only its label can hide it.
-_PASSWORD = "".join(("hun", "ter2"))
+_SHORT_VALUE = "".join(("hun", "ter2"))
 
 
 def _labelled_event() -> None:
-    structlog.get_logger("t.app").warning(f"login failed password={_PASSWORD}")
+    structlog.get_logger("t.app").warning(f"login failed password={_SHORT_VALUE}")
 
 
 def _labelled_argument() -> None:  # the format string keeps its placeholder
-    logging.getLogger("t.lib").warning("login failed password=%s", _PASSWORD)
+    logging.getLogger("t.lib").warning("login failed password=%s", _SHORT_VALUE)
 
 
 def _labelled_exception_value() -> None:
-    structlog.get_logger("t.app").error("op_failed", error=ValueError(f"password={_PASSWORD}"))
+    structlog.get_logger("t.app").error("op_failed", error=ValueError(f"password={_SHORT_VALUE}"))
 
 
 def _labelled_traceback() -> None:
     try:
-        raise ValueError(f"login failed password={_PASSWORD}")
+        raise ValueError(f"login failed password={_SHORT_VALUE}")
     except ValueError:
         logging.getLogger("t.lib").error("op failed", exc_info=True)
 
@@ -411,7 +411,7 @@ def test_a_value_labelled_with_a_key_name_is_redacted_on_stdout_and_in_the_buffe
 ) -> None:
     lines, ring = _capture(emit)
 
-    assert _PASSWORD not in _logged(lines, ring)
+    assert _SHORT_VALUE not in _logged(lines, ring)
     [line], [entry] = lines, ring
     assert "password=[redacted:key-name]" in json.dumps(line)
     assert "password=[redacted:key-name]" in entry
@@ -465,10 +465,10 @@ def test_each_key_name_ends_with_a_letter() -> None:
             for mark in (redaction._TRUNCATED, _KEY_MARK, _KEY_MARK + redaction._TRUNCATED)
         ],
         *[
-            (f"password={value}{_PASSWORD}", f"password={_KEY_MARK}")
+            (f"password={value}{_SHORT_VALUE}", f"password={_KEY_MARK}")
             for value in ("***", "null-", "<omitted>", "[redacted")
         ],
-        (f"password='***{_PASSWORD}'", f"password='{_KEY_MARK}'"),
+        (f"password='***{_SHORT_VALUE}'", f"password='{_KEY_MARK}'"),
     ],
 )
 def test_a_placeholder_is_no_value_only_as_the_whole_value(text: str, shown: str) -> None:
@@ -491,7 +491,7 @@ def test_a_dotted_id_is_no_label_to_the_redaction_or_the_scan(text: str) -> None
 @pytest.mark.parametrize(
     ("text", "shown"),
     [
-        (f"self.password='{_PASSWORD}'", f"self.password='{_KEY_MARK}'"),
+        (f"self.password='{_SHORT_VALUE}'", f"self.password='{_KEY_MARK}'"),
         ("obj.api_secret=abcd1234", f"obj.api_secret={_KEY_MARK}"),
         ("cfg.token: shortone", f"cfg.token: {_KEY_MARK}"),
         ("cfg.token:'shortone'", f"cfg.token:'{_KEY_MARK}'"),
@@ -544,7 +544,7 @@ def _log_raised(text: str) -> Callable[[], None]:
 
 
 @pytest.mark.parametrize(
-    "text", [f"token =\t{_PASSWORD}", f"token=\n{TOKEN}"], ids=["tab", "line-break"]
+    "text", [f"token =\t{_SHORT_VALUE}", f"token=\n{TOKEN}"], ids=["tab", "line-break"]
 )
 def test_a_marker_after_a_label_and_an_escaped_space_passes_the_bundle_scan(text: str) -> None:
     _, [entry] = _capture(_log_raised(text))
@@ -554,12 +554,12 @@ def test_a_marker_after_a_label_and_an_escaped_space_passes_the_bundle_scan(text
 
 
 def _two_line_message() -> None:
-    logging.getLogger("t.lib").warning("password:\n%s", _PASSWORD)
+    logging.getLogger("t.lib").warning("password:\n%s", _SHORT_VALUE)
 
 
 @pytest.mark.parametrize(
     "emit",
-    [_two_line_message, _log_raised(f"config:\ntoken=\n{_PASSWORD}")],
+    [_two_line_message, _log_raised(f"config:\ntoken=\n{_SHORT_VALUE}")],
     ids=["message", "traceback"],
 )
 def test_a_label_and_its_value_on_two_lines_are_one_buffer_line_that_refuses_the_bundle(
@@ -581,11 +581,11 @@ class _Login(pydantic.BaseModel):
 
 def test_the_input_that_pydantic_writes_in_a_validation_error_is_redacted_by_its_label() -> None:
     with pytest.raises(pydantic.ValidationError) as caught:
-        _Login.model_validate({"password": _PASSWORD})  # too short, and no user
+        _Login.model_validate({"password": _SHORT_VALUE})  # too short, and no user
     texts = (redaction._redact_runs(str(caught.value)), redact_text(str(caught.value)))
 
     for out in (*texts, redaction.redact_structure({"error": caught.value})["error"]):
-        assert _PASSWORD not in out
+        assert _SHORT_VALUE not in out
         assert f"input_value='{_KEY_MARK}', input_type=str]" in out  # quoted: to its quote
         assert f"[type=missing, input_value={_KEY_MARK}\n" in out  # a mapping: to the line's end
     assert redaction.redact_structure({"input_value": "ab"}) == {"input_value": _KEY_MARK}
