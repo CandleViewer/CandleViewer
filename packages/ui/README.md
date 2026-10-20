@@ -134,6 +134,55 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   service). Publishing the static build to the Tailscale-only internal host is not yet scheduled:
   it is the E05 threat model's accepted A4 residual (E05-X01, #215; its §5 and §6).
 
+## Icons (E05-T06)
+
+`src/icons/` is the icon registry of [`16-design-system-brief.md` §5](../../docs/plan/16-design-system-brief.md):
+
+- `registry.ts`: each icon's canonical name (the `IconName` union), group, glyph source and
+  one-sentence meaning, sorted by name. It is the code twin of the Penpot icon page; the two compare
+  by diff.
+- `source/<origin>/<name>.svg`: the vetted glyphs. `lucide/` holds glyphs vendored verbatim from
+  `lucide-static` (ISC: `source/lucide/LICENSE`; version and owner in the vendored-code register,
+  [`35-dependency-freeze-policy.md` §7](../../docs/plan/35-dependency-freeze-policy.md)), each
+  renamed to its registry name. `custom/` receives the trading glyphs that E05-D02 draws.
+- `generated/`: one component per icon (`CloseIcon`), plus `index.ts` and `components.ts`
+  (`ICON_COMPONENTS`, every icon by name, for CMP-019 Icon and Storybook only: it bundles the whole
+  set). `node scripts/build-icons.mjs` writes them (`--check` reports drift); never edit them, as
+  `test/icons/generator.test.ts` compares them byte for byte with their sources. The generator reads
+  a source as data, never markup: it accepts only a 24x24 outline root and plain geometry (path,
+  circle, ellipse, line, polyline, polygon, rect), and fails on anything else, naming the file.
+- `IconSvg.tsx`: the grid each icon draws in, which no prop can change: the 24-unit `viewBox`,
+  `currentColor` (an icon takes its context's semantic colour), a 1.5px stroke at every size
+  (`vector-effect: non-scaling-stroke`) and the optical `size`: `sm`, `md` or `lg` reads
+  `--size-icon-sm|md|lg`, and no size reads the semantic `--size-icon`. An icon is decorative
+  (`aria-hidden`) unless named with `aria-label` or `aria-labelledby`, which makes it `role="img"`.
+
+Use an icon by importing the component an element draws: `import { CloseIcon } from
+"@candleviewer/ui"`. Each icon is its own module, so a bundle carries only the icons it imports
+(`test/icons/tree-shaking.test.ts`). An icon beside visible text stays decorative; an icon-only
+control carries its own `aria-label`. Three lint rules bind this (`eslint.config.mjs`):
+
+- `candleviewer/no-raw-svg`: a raw `<svg>` outside `src/icons/` fails, naming the file.
+- `candleviewer/icon-only-control-label`: a control whose only content is icons needs an
+  `aria-label` (or `aria-labelledby`; for IconButton, its `label`).
+- `candleviewer/icon-beside-text-hidden`: an icon beside visible text must stay `aria-hidden`.
+
+The Storybook a11y gate runs `Foundations/Icons`; its fixture
+`.storybook/__fixtures__/IconOnlyButton.stories.tsx` fails axe's `button-name` on purpose.
+
+To add an icon:
+
+1. Put its SVG at `src/icons/source/<origin>/<name>.svg`, with a kebab-case name. A Lucide glyph is
+   copied verbatim from the vendored `lucide-static` version; a custom glyph comes from its design
+   ticket's Penpot export on the same grid (`viewBox="0 0 24 24"`, `fill="none"`,
+   `stroke="currentColor"`, plain geometry).
+2. Add its entry to `registry.ts`, in name order: `category`, `source` (`lucide/<glyph>` or
+   `custom/<ticket>`) and a one-sentence `description`.
+3. In `packages/ui`, run `node scripts/build-icons.mjs`, then `test`: it writes the new icon's
+   snapshots, which are reviewed and committed with it.
+4. Update the Penpot icon page and the list in `16-design-system-brief.md` §5. A new `lucide-static`
+   version also updates the vendored-code register.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/ui build` — runs `build:tokens` (Style
