@@ -49,29 +49,30 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: primary interactive trigger for all actions.
 - **Props**: `variant: "primary"|"secondary"|"ghost"|"danger"|"buy"|"sell"` (default `secondary`) · `size: "sm"|"md"|"lg"` (default `md`) · `iconLeft?/iconRight?: IconName` · `loading?: boolean` · `disabled?: boolean` · `disabledReason?: string` (the visible reason per `14-screens-catalogue.md` §0.5.5, rendered inline or echoed by a focus+hover CMP-016 tooltip; `docs/design/E09/E09-D09.md` §2.2) · `fullWidth?: boolean` · `onClick`.
-- **Variants**: primary, secondary, ghost, danger (destructive, requires confirm wrapper), buy (green, used only in trading contexts), sell (red).
-- **States**: default, hover, focus-visible, active/pressed, disabled, disabled-with-reason, loading (spinner replaces label, width locked to prevent reflow).
+- **Variants**: primary, secondary, ghost, danger (destructive, requires confirm wrapper), buy (green, used only in trading contexts; the label always contains the word "Buy"), sell (red; the label always contains the word "Sell").
+- **States**: default, hover, focus-visible, active (pointer or key held; Penpot `State=active`), disabled, disabled-with-reason (CMP-079: disabled look + `locked` glyph + reason tooltip), loading (spinner replaces label, width locked to prevent reflow; buy/sell keep the label visible with the spinner before it, so the side is never colour-only; activation suppressed while busy).
 - **A11y**: role `button` (native `<button>`), `aria-disabled` + `aria-describedby` pointing at the always-rendered reason text when disabled-with-reason (never the `disabled` attribute for an RBAC deny, so the control stays focusable and the reason reachable; a CMP-016 tooltip may echo it on hover and focus but is never the only copy), `aria-busy` when loading. Keyboard: `Enter`/`Space` activates; focus ring 2px offset.
-- **Tokens**: `color.action.*`, `color.buy`, `color.sell`, `radius.sm`, `space.button.*`, `elevation.0`.
-- **Storybook**: Default, AllVariants, AllSizes, Loading, DisabledWithReason, IconOnly, BuySellPair.
+- **Tokens**: `color.action.primary.default`, `color.action.primary.hover`, `color.action.primary.active`, `color.action.secondary.default`, `color.action.secondary.hover`, `color.surface.hover`, `color.surface.selected`, `color.status.danger.default`, `color.buy.default`, `color.buy.hover`, `color.sell.default`, `color.sell.hover`, `color.text.primary`, `color.text.secondary`, `color.text.on-action`, `color.text.inverse`, `color.focus.ring`, `radius.control`, `size.control.height`, `size.icon`, `space.button.paddingX`, `space.inset.xs`, `space.inset.sm`, `space.inset.lg`, `type.ui.label`, `type.ui.body-strong`, `type.ui.heading-sm`, `elevation.chrome`, `opacity.disabled` (disabled states), `border.focus` (focus-ring width).
+- **Storybook**: Default, AllVariants, AllSizes, Loading, DisabledWithReason, BuySellPair (icon-only actions use CMP-002 IconButton; a Button always shows its label).
 - **Tests**: unit (variant/state matrix), visual regression (all variants × dark/light), axe, keyboard activation, RBAC-disabled-reason interaction test (reason text in the DOM at mount and referenced by `aria-describedby`; control stays focusable; activation does nothing; a tooltip echo, if present, is not the only copy).
 
 ### CMP-002 IconButton
 
 - **Tier**: Atom · **Purpose**: icon-only affordance (toolbar actions, panel close, row actions).
-- **Props**: `icon: IconName` · `label: string` (mandatory, becomes `aria-label`) · `variant`/`size` as CMP-001 · `pressed?: boolean` (toggle mode) · `disabled?/disabledReason?`.
-- **States**: default, hover, focus-visible, pressed (aria-pressed true), disabled.
-- **A11y**: `aria-label` required (lint-enforced, build fails without it), `aria-pressed` for toggle mode, min hit-target 24×24px compact / 44×44px comfortable (`05-accessibility-standard.md` §3.4.7 essential-exception documented for compact toolbars with adjacent spacing compensation).
-- **Tokens**: `color.action.*`, `radius.sm`, `size.icon.*`.
+- **Props**: `icon: IconName` · `label: string` (mandatory, becomes `aria-label`) · `variant: "primary"|"secondary"|"ghost"|"danger"` (default `secondary`; danger requires the CMP-044 confirm wrapper, as CMP-001; no buy/sell, since an icon-only control cannot carry the Buy/Sell word) · `size: "sm"|"md"|"lg"` (default `md`; scales the nested CMP-019 Icon, the box stays `size.control.height` square) · `pressed?: boolean` (toggle mode, secondary and ghost only) · `disabled?/disabledReason?`.
+- **States**: default, hover, focus-visible, disabled, disabled-with-reason; toggle mode adds pressed (aria-pressed true), drawn as `Pressed=true` with each state (`color.action.primary.default` fill, `color.text.on-action` icon).
+- **A11y**: `aria-label` required (lint-enforced, build fails without it), `aria-pressed` for toggle mode (the name does not change with the state), min hit-target 24×24px compact / 32×32px comfortable (`size.control.height`, square; meets WCAG 2.5.8 with no essential exception).
+- **Tokens**: `color.action.primary.default`, `color.action.primary.hover`, `color.action.secondary.default`, `color.action.secondary.hover`, `color.surface.hover`, `color.status.danger.default`, `color.text.primary`, `color.text.secondary`, `color.text.on-action`, `color.focus.ring`, `radius.control`, `size.control.height`, `size.icon` (sm/lg via CMP-019 Icon sizes), `space.inset.xs`, `opacity.disabled`, `border.focus`.
 - **Storybook**: Default, Toggle, AllSizes, DisabledWithReason.
 - **Tests**: unit, visual, axe (label presence lint + runtime check), keyboard toggle.
 
 ### CMP-003 SegmentedControl
 
 - **Tier**: Atom · **Purpose**: exclusive choice among 2–6 options (e.g. chart type, density mode, order type Market/Limit/Conditional).
-- **Props**: `options: {value,label,icon?}[]` · `value` · `onChange` · `size` · `fullWidth?`.
+- **Props**: `options: {value,label,icon?}[]` (2–6; `label` is the visible text, or the `aria-label` when the control is icon-only) · `value` · `onChange` · `size: "sm"|"md"` (default `md`) · `fullWidth?` · `disabled?/disabledReason?`.
+- **States**: default, focus-visible, disabled (radiogroup and every radio `aria-disabled`, all `tabindex="-1"`), disabled-with-reason (CMP-079; the checked radio stays focusable and carries the reason via `aria-describedby`); each option is unselected or selected (`aria-checked`; selected = `color.action.primary.default` fill with `color.text.on-action` text).
 - **A11y**: `role="radiogroup"` container, each option `role="radio"` + `aria-checked`; arrow-key roving tabindex navigation, `Home`/`End` jump to first/last.
-- **Tokens**: `color.surface.raised`, `color.action.selected`, `radius.md`.
+- **Tokens**: `color.surface.raised`, `color.action.primary.default`, `color.text.secondary`, `color.text.on-action`, `color.focus.ring`, `radius.control`, `size.control.height`, `size.icon`, `space.button.paddingX`, `space.inset.xs`, `space.inset.sm`, `type.ui.label`, `type.ui.body`, `type.ui.body-strong`, `opacity.disabled`, `border.focus`.
 - **Storybook**: Default, IconOnly, ManyOptions, Disabled.
 - **Tests**: unit, visual, axe, keyboard roving-tabindex interaction test.
 
@@ -79,26 +80,29 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: binary on/off (1-click trading arm, feature flags, dark/light).
 - **Props**: `checked` · `onChange` · `label` · `labelPosition: "left"|"right"|"hidden"` · `size` · `disabled?/disabledReason?` · `critical?: boolean` (renders with stronger visual weight + confirm-wrapper requirement, e.g. 1-click arm).
+- **States**: default, focus-visible, disabled, disabled-with-reason (CMP-079: `aria-disabled` + `aria-describedby`, decorative `locked` icon, CMP-016 reason tooltip); `checked` false/true is shown by knob position and track colour; `critical` adds a `warning` icon and a `type.ui.body-strong` label, and its armed (checked) track is `color.status.warning.strong`.
 - **A11y**: native `role="switch"` `aria-checked`. `Enter`/`Space` toggles.
-- **Tokens**: `color.action.on/off`, `motion.toggle`.
+- **Tokens**: `color.action.primary.default` (on track), `color.text.tertiary` (off track), `color.text.on-action` (knob), `color.status.warning.strong` + `color.text.inverse` (critical: armed track and knob; `warning` icon), `radius.badge`, `size.icon` (knob, travel), `space.inset.xs` (track padding), `space.field.gap`, `size.control.height`, `type.ui.body` (`type.ui.body-strong` when critical), `color.text.primary`, `color.text.secondary` (`locked` icon), `color.focus.ring`; motion: knob slide + track colour fade over `motion.duration.fast` / `motion.easing.standard`, motion-reduce = instant (no semantic motion token yet).
 - **Storybook**: Default, Critical (1-click-arm look), WithLabel, Disabled.
 - **Tests**: unit, visual, axe, keyboard toggle, critical-variant confirm-wrapper composition test.
 
 ### CMP-005 Checkbox
 
 - **Tier**: Atom · **Purpose**: multi-select, agree/confirm gates.
-- **Props**: `checked` · `indeterminate?` · `onChange` · `label` · `disabled?`.
+- **Props**: `checked` · `indeterminate?` · `onChange` · `label` · `disabled?/disabledReason?`.
+- **States**: default, focus-visible, disabled, disabled-with-reason (CMP-079: `aria-disabled` + `aria-describedby`, stays focusable, the value cannot change; decorative `locked` icon; CMP-016 reason tooltip); `checked` false / true (`check` glyph) / indeterminate (`minus` glyph, `aria-checked="mixed"`); the glyph, not the colour, carries the state.
 - **A11y**: native `<input type=checkbox>` semantics, `aria-checked="mixed"` for indeterminate.
-- **Tokens**: `color.action.selected`, `radius.xs`.
+- **Tokens**: `color.action.primary.default` (checked/indeterminate box fill and outline), `color.text.on-action` (`check` / `minus` glyph), `color.surface.raised` + `color.text.tertiary` 1 px outline (unchecked box, ≥3:1 on every surface), `radius.control`, `size.icon` (box, glyph, `locked` icon), `size.control.height` (row and hit target), `space.field.gap`, `type.ui.body`, `color.text.primary`, `color.text.secondary` (`locked` icon), `color.focus.ring`.
 - **Storybook**: Default, Indeterminate, Disabled.
 - **Tests**: unit, visual, axe, keyboard.
 
 ### CMP-006 RadioGroup
 
 - **Tier**: Atom · **Purpose**: exclusive choice, vertical list form (position side in some forms, sizing-rule type).
-- **Props**: `options[]` · `value` · `onChange` · `orientation: "vertical"|"horizontal"`.
+- **Props**: `options: {value,label,disabled?,disabledReason?}[]` · `value` · `onChange` · `orientation: "vertical"|"horizontal"` (default `"vertical"`) · `disabled?/disabledReason?` · `aria-label?/aria-labelledby?` (one is required: the group's accessible name).
+- **States**: default, focus-visible (ring on the checked radio, which holds the roving tab stop), disabled (whole group, out of the tab order), disabled-with-reason (whole group, CMP-079: `aria-disabled` + `aria-describedby`, the checked radio keeps the tab stop, decorative `locked` icon, CMP-016 reason tooltip); an option with `disabledReason` is dimmed with its own `locked` icon and reason, reachable by the arrows but never checked.
 - **A11y**: `role="radiogroup"`, roving tabindex, arrow-key navigation.
-- **Tokens**: `color.action.selected`, `space.control.gap`.
+- **Tokens**: `color.action.primary.default` (selected ring), `color.text.on-action` (selected dot), `color.surface.raised` + `color.text.tertiary` 1 px outline (unselected ring, ≥3:1), `radius.badge`, `size.icon` (ring, `locked` icon), `space.inset.xs` (dot inset), `size.control.height` (option row and hit target), `space.field.gap` (ring to label), `space.stack.sm` (vertical option gap) / `space.inset.lg` (horizontal option gap), `type.ui.body`, `color.text.primary`, `color.text.secondary` (`locked` icon), `color.focus.ring`.
 - **Storybook**: Default, Horizontal, Disabled.
 - **Tests**: unit, visual, axe, keyboard.
 
@@ -133,9 +137,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-010 Slider
 
 - **Tier**: Atom · **Purpose**: base range slider; underlies LeverageSlider (CMP-104).
-- **Props**: `value` · `min/max/step` · `onChange` · `marks?: number[]` · `disabled?`.
+- **Props**: `value` · `min/max/step` · `onChange` · `marks?: number[]` · `disabled?/disabledReason?` · `aria-label?/aria-labelledby?` (one is required: the slider's accessible name).
+- **States**: default, focus-visible (ring on the thumb), disabled (out of the tab order), disabled-with-reason (CMP-079: `aria-disabled` + `aria-describedby`, the thumb stays focusable and no key or pointer changes the value, decorative `locked` icon after the slider, CMP-016 reason tooltip); with `marks`, numeric labels sit under the rail at each mark value.
 - **A11y**: `role="slider"`, `aria-valuenow/min/max/text`, arrow keys ±step, `PageUp/Down` ±10×step, `Home/End`.
-- **Tokens**: `color.action.*`, `color.track`, `radius.pill`.
+- **Tokens**: `color.action.primary.default` (filled track and thumb), `color.text.tertiary` (unfilled track, ≥3:1), `radius.badge`, `size.icon` (thumb, mark slots, `locked` icon), `space.inset.xs` (track thickness, as the vertical padding of an empty track segment), `size.control.height` (rail, pointer target and lock slot), `space.stack.xs`, `space.field.gap` (gap before the `locked` icon), `type.num.sm` + `color.text.secondary` (mark labels and `locked` icon), `color.focus.ring`.
 - **Storybook**: Default, WithMarks, Disabled.
 - **Tests**: unit, visual, axe, keyboard.
 
@@ -170,9 +175,9 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-014 Spinner / Loader
 
 - **Tier**: Atom · **Purpose**: indeterminate loading indicator.
-- **Props**: `size` · `label?: string` (for standalone use, else decorative inside a labelled parent).
-- **A11y**: `role="status"` + `aria-live="polite"` when standalone; `aria-hidden` when nested inside an already-announced busy control (e.g. CMP-001 loading state) to avoid double announcement.
-- **Tokens**: `color.action.primary`, `motion.spin` (motion-reduce: pulsing opacity instead of rotation).
+- **Props**: `size: "sm"|"md"` (default `md`; sm = `size.icon` for nested and inline use, md = `size.control.height` standalone) · `label?: string` (for standalone use, else decorative inside a labelled parent).
+- **A11y**: `role="status"` + `aria-live="polite"` when standalone; `aria-hidden` when nested inside an already-announced busy control (e.g. CMP-001 loading state) to avoid double announcement. `label` selects the mode. With `label`, the spinner is standalone: a `role="status"` region containing `label` as a visually hidden text node (live regions announce content, not `aria-label`), mounted before the text is inserted. Without `label`, it is nested: `aria-hidden`, allowed only inside a host with `aria-busy` or its own `role="status"` (lint/test-enforced), so an unlabelled standalone spinner cannot ship.
+- **Tokens**: arc `color.action.primary.default` (a host on a filled surface overrides it with its label token, e.g. CMP-001 primary → `color.text.on-action`; not used on `color.surface.selected`); `size.icon` (sm) / `size.control.height` (md); motion-safe: one turn per 800 ms, linear, stopping after 5 s (pending the loop-cap open question); motion-reduce: opacity pulse 1 ↔ 0.7 every 1.6 s instead of rotation, also capped at 5 s. (Replaces `color.action.primary` and `motion.spin`, which are not shipped.)
 - **Storybook**: Default, AllSizes, Standalone(labelled), Nested(hidden).
 - **Tests**: unit, visual, axe, reduced-motion snapshot.
 
@@ -217,8 +222,8 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tier**: Atom · **Purpose**: single glyph from the icon set (`16-design-system-brief.md` §5).
 - **Props**: `name: IconName` · `size` · `decorative?: boolean` (default true → `aria-hidden`; false requires `label`).
 - **A11y**: `aria-hidden="true"` by default; when `decorative=false`, renders `role="img"` + `aria-label`.
-- **Tokens**: `color.icon.*`, `size.icon.*`.
-- **Storybook**: FullSet (all icons grid), SizeScale.
+- **Tokens**: stroke = `currentColor` from the context's text token (`color.text.*`; on a filled action, the host label's token) or the tone's `color.status.*.strong` token (Penpot masters bind `color.text.primary`); 1.5 px stroke at every size, no fill; size `size.icon` by default, or `size.icon.sm` / `size.icon.md` / `size.icon.lg` (12/16/20 px as shipped) via `size`.
+- **Storybook**: FullSet (every registry icon; Penpot components `icon/{name}`, 47 base glyphs), SizeScale (sm / md / lg).
 - **Tests**: unit (icon registry completeness), visual, axe (decorative-vs-labelled lint).
 
 ### CMP-020 Typography primitives (Text, Heading, NumericText, MonoText)
@@ -326,9 +331,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-031 ColorSwatch / ThemeChip
 
 - **Tier**: Atom · **Purpose**: pick/display a colour token (drawing tool colour, account colour, heatmap ramp preview).
-- **Props**: `color` · `selected?` · `onSelect?`.
+- **Props**: `color` · `selected?` · `onSelect?` · `disabled?/disabledReason?`.
+- **States**: default, focus-visible, disabled, disabled-with-reason (CMP-079: `aria-disabled` + `aria-describedby`, stays in the roving order but cannot be selected; a decorative `locked` glyph fills the empty glyph slot of an unselected swatch, a selected swatch keeps its `check`; CMP-016 reason tooltip); `selected` shows the `check` glyph (never colour alone).
 - **A11y**: `role="radio"` inside a `radiogroup` swatch picker; `aria-label` names the colour (not just hex).
-- **Tokens**: full colour palette (`16-design-system-brief.md` §2).
+- **Tokens**: swatch fill = the colour token being displayed (Penpot master: `color.drawing.default`); selected `check` and unselected `locked` glyphs in `color.text.inverse` or `color.text.on-action`, whichever is ≥3:1 on that swatch; `radius.control`, `size.control.height` (swatch = 24×24 compact hit target), `size.icon` (glyph), `space.inset.xs` (picker gap), `color.focus.ring`.
 - **Storybook**: Picker, StaticSwatch.
 - **Tests**: unit, visual, axe.
 
@@ -401,7 +407,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tier**: Atom (utility) · **Purpose**: shared CSS/JS utility applying the standard focus-visible ring so every custom-drawn (canvas-adjacent) focusable surrogate element gets an identical ring — used by chart-engine DOM-mirror nodes (CMP-180+).
 - **Props**: n/a (mixin/class).
 - **A11y**: guarantees ≥3:1 contrast ring, 2px offset, `:focus-visible` only (not `:focus`) to avoid mouse-click ring flash.
-- **Tokens**: `color.focus.ring`.
+- **Tokens**: `color.focus.ring` (colour) · `border.focus` (2 px width) · 2 px `outline-offset`; the ring follows the element's corner radius (CSS outline).
 - **Storybook**: RingOnButton, RingOnCustomSurrogate.
 - **Tests**: contrast-ratio automated check, visual.
 - **On canvas-adjacent surrogates (`docs/design/E11/E11-D05.md` §9.1):** on a DOM-mirror surrogate aligned over canvas content (`05-accessibility-standard.md` §6.1; E06-D03; E11-D02 §7) the ring is **2 px `color.focus.ring` at 2 px offset with a 1 px pane-colour halo** (`color.surface.canvas`) between ring and content, so it stays visible over data ink of any luminance; the keyboard cursor column is E06-D03 D10's double ring (core ≥2 px plus halos), drawn on the canvas in `color.chart.focus.ring` with a `color.chart.pane.bg.default` halo (= `color.focus.ring` / `color.surface.canvas` — the engine-prefix aliases of `docs/design/E11/E11-D05.md` §4.1b, because the engine never reads CSS), and the chart draws **one** CMP-039 ring at the chart boundary, never two; measured on the canvas 7.05 / 6.30 / 18.32 and on raised chrome 6.66 / 5.86 / 17.30 (dark / light / high-contrast — the high-contrast ring is `palette.white` since #3896); in high-contrast the ring is ≥20 CIE76 ΔE from the primary and selected fills (`16` §2.1). Storybook adds RingOnCanvasData (the ring over candles in three themes; PROPOSED).
