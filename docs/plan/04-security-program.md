@@ -1477,6 +1477,20 @@ where the tool is installed, reducing every report through the same
 semgrep wheel, no docker) is reported `SKIPPED` with a reason, never
 silently treated as a clean scan.
 
+E42-X03 (#1026) builds items 1 and 10 for the admin surface. `cv-admin-route-guarded` (item 1)
+fails an `/admin` route, decorated or registered by call, that is not on
+`admin_router(Permission.<member>, ...)`; the routes with a guard of their own are excepted in the
+rule by exact method and path, each with its reason (SR-E42-09). `cv-admin-mutation-audited`
+(item 10) fails a public method of an admin class (instance, static or class method) that
+declares neither `@audited("<action>")` nor `@audit_exempt("<reason>")`
+(`services/api/candleviewer/admin/audited.py`), naming the method; the declaration changes
+nothing at run time, and the record stays write-ahead where the change is made. Two more rules
+come with them: `cv-admin-no-flag-lookup` (SR-E42-07; it names every catalogue key, and
+`audit.lane_journal_first` reaches `audit/` only as the callable injected into
+`AuditService.use_lane_flag` until #3009) and the taint rule `cv-admin-no-secret-log` (SR-122).
+Their fixtures are trees, `.semgrep/tests/<rule-id>/<repo path>`, staged at those paths, each with
+a file that uses PEP 695 generics (Semgrep parses such a file another way).
+
 **Justified in-source suppressions (CI-SEC-006).** Semgrep reports `# nosemgrep` results in SARIF with
 `suppressions: [{"kind": "inSource"}]`. `tools/ci/security_gate.py` skips such a result only if the
 comment (the `justification` field, else the finding line, or the line above only when it is comment-only
