@@ -39,6 +39,18 @@ def test_parse_ddl_file_orderbook_deltas_partitioned_by_hour() -> None:
     assert deltas.partition_by == "HOUR"
 
 
+def test_0006_folds_the_replay_columns_into_both_book_tables() -> None:
+    """E26-T03: the drift guard expects `prev_update_id` and `ts_match` on `orderbook_deltas`
+    and `ts_match` on `orderbook_snapshots`, after the 0001 columns; no DEDUP key changes."""
+    tables = {t.name: t for t in parse_ddl_dir(DDL_DIR)}
+    deltas, snapshots = tables["orderbook_deltas"], tables["orderbook_snapshots"]
+    assert deltas.columns[-3:] == ("epoch_id", "prev_update_id", "ts_match")
+    assert snapshots.columns[-2:] == ("checksum", "ts_match")
+    assert deltas.dedup_keys == ("ts", "symbol", "depth", "side", "price", "update_id")
+    assert snapshots.dedup_keys == ("ts", "symbol", "depth", "epoch_id")
+    assert "ts_match" not in (*deltas.symbol_columns, *snapshots.symbol_columns)
+
+
 def test_parse_ddl_file_engine_metrics_has_no_dedup_keys() -> None:
     tables = parse_ddl_file(DDL_DIR / "0002_footprint_cells.sql")
     metrics = next(t for t in tables if t.name == "engine_metrics")

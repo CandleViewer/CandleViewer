@@ -258,7 +258,7 @@ async def test_second_pass_waits_for_the_newest_migration_record_to_be_applied()
     already exists"). It must wait for the apply job, read every record and apply nothing."""
     clock, executor = _FakeClock(), _LaggingMigrationsExecutor()
     first = await run_migrations(executor, DDL_DIR, sleep=clock.sleep)
-    assert len(first) == 5 and first[-1] == "0005_liquidations_batch_index.sql"
+    assert len(first) == 6 and first[-1] == "0006_orderbook_replay_columns.sql"
     # Precondition: the fake really lags. Read right now, the newest record is not there yet:
     # the stale read the old second pass acted on.
     stale = await executor.fetch("SELECT filename FROM _cv_migrations")
