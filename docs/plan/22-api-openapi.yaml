@@ -598,6 +598,10 @@ x-error-codes:
     status: 503
     title: Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)
     retryable: true
+  - code: purge_unavailable
+    status: 503
+    title: No purge reaper is running, so no purge is scheduled; nothing would anonymise the user
+    retryable: true
   - code: backup_engine_invalid
     status: 503
     title: The backup engine plans a run that is not encrypted under a key alias; refused, fail closed, until its configuration is fixed
@@ -1932,13 +1936,20 @@ paths:
         `auth.session_revoked` per session; when the audit record cannot be written nothing
         changes (`503 audit_unavailable`). Disabling a disabled user is a no-op `204` with no
         new audit record. A call refused for a forbidden role or a self-target is audited too.
-        Passing `?purge=true` additionally anonymises PII after the 90-day retention window:
-        once the disable has committed, the purge is scheduled 90 days out, audited write-ahead
-        as `users.delete`; a repeat keeps the first date and writes no new record. When that
-        record cannot be written the user stays disabled with no purge scheduled
-        (`503 audit_unavailable`), and a retry schedules it. While the deployment runs no purge
-        reaper (retention disabled) `purge=true` answers `501 not_implemented`, and nothing
-        changes.
+        Passing `?purge=true` additionally anonymises PII after the 90-day retention window, and
+        is accepted only while a purge reaper runs: otherwise it answers
+        `503 purge_unavailable`, writes no record and changes nothing. The disable commits first;
+        then the purge is scheduled 90 days out, audited write-ahead as `users.delete`, and a
+        repeat keeps the first date and writes no new record. These are two commits: when the
+        `users.delete` record cannot be written (`503 audit_unavailable`), or the reaper stops in
+        between (`503 purge_unavailable`), the user stays disabled with no purge scheduled, as
+        the `detail` says, and a retry converges (the disable is then a no-op and the purge is
+        scheduled). Once the date has passed, the reaper anonymises the user in one transaction
+        audited write-ahead as `users.anonymise`: the username and email become a surrogate
+        derived from the user id alone, the display name, the last login IP and every session's
+        client details are erased, and every credential is revoked (the password, MFA methods,
+        recovery codes and live sessions). Audit rows are never changed. A re-enable before then
+        cancels the purge.
         A query parameter this operation does not declare is refused with
         `422 validation_failed`, never ignored, and nothing is read or changed.
         Without a live `users` step-up an authenticated caller first gets `403 step_up_required`,
@@ -1959,8 +1970,29 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
-        "501": { $ref: "#/components/responses/NotImplemented" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "503":
+          description: >
+            A dependency is unavailable. This keeps every meaning of `ServiceUnavailable` (such as
+            `store_unavailable` and `audit_unavailable`), whose examples apply unchanged. With
+            `purge=true` it can also be `code: purge_unavailable`: no purge reaper is running, so
+            no purge is scheduled.
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                purgeUnavailable:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/purge_unavailable",
+                      title: "No purge reaper is running, so no purge is scheduled; nothing would anonymise the user",
+                      status: 503,
+                      detail: "no purge reaper is running; nothing was changed",
+                      instance: "urn:cv:req:0193f2bb-5032",
+                      code: purge_unavailable,
+                      retry_after_seconds: 5,
+                    }
 
   /users/{userId}/roles:
     parameters: [{ $ref: "#/components/parameters/UserId" }]
