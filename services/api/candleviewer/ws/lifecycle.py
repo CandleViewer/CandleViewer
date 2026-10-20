@@ -34,8 +34,11 @@ from typing import Any, Final
 from candleviewer.ws.limits import (
     AUTH_TIMEOUT_S,
     MAX_INBOUND_FRAME_BYTES,
+    MAX_OUTBOUND_FRAME_BYTES,
     MAX_SUBSCRIPTIONS,
+    MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
+    MIN_THROTTLE_MS,
 )
 
 SUBPROTOCOL_JSON: Final = "cv.v1.json"
@@ -74,10 +77,12 @@ MAX_EPOCH_MS: Final = 2**53 - 1
 LIMITS_BLOCK: Final[dict[str, int]] = {
     "max_subscriptions": MAX_SUBSCRIPTIONS,
     "max_topics_per_request": MAX_TOPICS_PER_SUB,
+    # The contract default. `welcome_payload` replaces it with the cap the gateway enforces, which
+    # `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower and never raise (23 section 4.3).
     "max_inbound_frame_bytes": MAX_INBOUND_FRAME_BYTES,
-    "max_outbound_frame_bytes": 4 * 1024 * 1024,
-    "min_throttle_ms": 50,
-    "max_symbols_per_connection": 40,
+    "max_outbound_frame_bytes": MAX_OUTBOUND_FRAME_BYTES,
+    "min_throttle_ms": MIN_THROTTLE_MS,
+    "max_symbols_per_connection": MAX_SYMBOLS_PER_CONNECTION,
 }
 #: §4.2 `welcome.features` every build serves. `coalescing` is not one of them: it mirrors
 #: `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2), so `welcome_features` adds it per

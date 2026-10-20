@@ -93,8 +93,8 @@ LIMIT_KEYS: Final = {
     "max_subscriptions": ("Max subscriptions / connection", "limits.MAX_SUBSCRIPTIONS"),
     "max_topics_per_request": ("Max topics / `sub` frame", "limits.MAX_TOPICS_PER_SUB"),
     "max_inbound_frame_bytes": ("Max inbound frame", "limits.MAX_INBOUND_FRAME_BYTES"),
-    "max_outbound_frame_bytes": ("Max outbound frame", "sequencing.MAX_OUTBOUND_FRAME_BYTES"),
-    "min_throttle_ms": ("Min throttle", "topics.MIN_THROTTLE_MS"),
+    "max_outbound_frame_bytes": ("Max outbound frame", "limits.MAX_OUTBOUND_FRAME_BYTES"),
+    "min_throttle_ms": ("Min throttle", "limits.MIN_THROTTLE_MS"),
     "max_symbols_per_connection": ("Max symbols / connection", "limits.MAX_SYMBOLS_PER_CONNECTION"),
 }
 
@@ -189,11 +189,11 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     "Inbound frames / connection": "limits.WS_INBOUND_FRAME_BURST limits.WS_INBOUND_FRAMES_PER_S",
     "Max `pong` after `auth_ok`": "limits.MAX_PONG_BYTES",
     "Max envelope `id`": "limits.ENVELOPE_ID_MAX_LEN",
-    "Max outbound frame": "sequencing.MAX_OUTBOUND_FRAME_BYTES",
+    "Max outbound frame": "limits.MAX_OUTBOUND_FRAME_BYTES",
     "Max `bars` frame span (kind 4)": "bars_wire.MAX_TS_SPAN_MS",
     "Outbound queue budget": "outbound.QUEUE_BYTES outbound.QUEUE_FRAMES",
     "`bars.*` share of that budget": "limits.BARS_SHARE_PCT",
-    "Min throttle": ["topics.MIN_THROTTLE_MS", _unthrottled],
+    "Min throttle": ["limits.MIN_THROTTLE_MS", _unthrottled],
     "Client inbound rate": "lifecycle.RATE_PER_SECOND lifecycle.RATE_PER_MINUTE "
     "lifecycle.PONG_BUDGET_PER_S lifecycle.PONG_BUDGET_BURST",
     "Rebuild budget (§7.5)": "limits.REBUILD_MAX_PER_TOPIC limits.REBUILD_MAX_PER_CONNECTION "

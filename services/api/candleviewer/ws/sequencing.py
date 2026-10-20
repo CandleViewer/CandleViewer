@@ -52,6 +52,9 @@ from candleviewer.ws.binary import (
     encode_b64,
 )
 from candleviewer.ws.errors import build_ws_error
+
+# Re-exported: `pipeline`, `bars_publish` and the tests read the outbound cap from here.
+from candleviewer.ws.limits import MAX_OUTBOUND_FRAME_BYTES as MAX_OUTBOUND_FRAME_BYTES
 from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK, cv_ws_malformed_updates_total
 from candleviewer.ws.rebuild_budget import topic_key
 from candleviewer.ws.topics import (
@@ -116,7 +119,6 @@ CLIENT_RESYNC_REASONS: Final = frozenset(
     {"sequence_gap", "decode_error", "state_corrupt", "client_restart", "manual"}
 )
 
-MAX_OUTBOUND_FRAME_BYTES: Final = 4 * 1024 * 1024  # §3.6
 #: §3.1 `sp`: 8 bytes from the OS CSPRNG as 16 lowercase hex characters, never all zeros.
 SPAN_ID_BYTES: Final = 8
 _ZERO_SPAN: Final = "0" * (2 * SPAN_ID_BYTES)

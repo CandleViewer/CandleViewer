@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 import itertools
 
 import pytest
 
 from candleviewer.settings import Settings
+from candleviewer.ws import lifecycle
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
     FEATURES,
@@ -190,6 +193,22 @@ def test_welcome_payload_full_limits_and_clock_skew() -> None:
     }
     assert p["heartbeat"] == {"interval_ms": 15000, "timeout_ms": 45000}
     assert p["auth_timeout_ms"] == 10000 and p["auth_required"] is True
+
+
+def test_every_limit_welcome_advertises_is_the_constant_that_enforces_it() -> None:
+    """#572: `LIMITS_BLOCK` states no number of its own. A literal beside the constant that
+    enforces it can drift from it in one PR and pass this file's literal table in the same one."""
+    source = ast.parse(inspect.getsource(lifecycle))
+    block = next(
+        n.value
+        for n in ast.walk(source)
+        if isinstance(n, ast.AnnAssign)
+        and getattr(n.target, "id", "") == "LIMITS_BLOCK"
+        and isinstance(n.value, ast.Dict)
+    )
+    literals = [k.value for k, v in zip(block.keys, block.values, strict=True)
+                if isinstance(k, ast.Constant) and not isinstance(v, ast.Name)]  # fmt: skip
+    assert literals == []
 
 
 @pytest.mark.parametrize("clock", [None, "1", True, 1.5])
