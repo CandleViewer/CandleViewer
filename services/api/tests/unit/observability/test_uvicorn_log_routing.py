@@ -416,22 +416,20 @@ def test_websocket_denial_response_lines_name_the_path_and_not_the_query(level: 
     assert upgrades == ['"WebSocket /ws" 404', '"WebSocket /other" 404']
 
 
-def test_a_websocket_frame_line_reaches_the_buffer_redacted_as_on_stdout() -> None:
-    """websockets logs a frame at DEBUG as `< %s` with the frame itself (`protocol.py`), so its text
-    is rendered after the filters ran. The buffer redacts the rendered line as stdout's chain
-    does (#415): here an auth frame whose elided preview ends with 20 characters of its token."""
+def test_a_websocket_frame_line_reaches_the_buffer_as_opcode_and_length_as_on_stdout() -> None:
+    """websockets logs a frame at DEBUG as `< %s` with the frame itself (`protocol.py`). The frame
+    line filter (#415, E17-R-09) swaps the frame for its opcode and length ahead of both sinks, so
+    stdout and the buffer get the same line and no text of the frame: here an auth frame whose
+    elided preview would end with 20 characters of its token."""
     auth = {"t": "auth", "id": "c-2", "p": {"access_token": VALUE}}
     frame = Frame(Opcode.TEXT, json.dumps(auth, separators=(",", ":")).encode())
     got = _replay_boot(
         lambda: logging.getLogger("uvicorn.error").debug("< %s", frame), level="debug", ring=True
     )
 
-    shown = str(frame)
-    assert VALUE[-20:] in shown  # the preview shows 20 characters of the token
+    assert VALUE[-20:] in str(frame)  # the preview shows 20 characters of the token
     assert VALUE[-20:] not in "\n".join((got.out, *got.ring))
-    start = shown.index('"access_token":"') + len('"access_token":"')
-    end = shown.index('"', start)
-    line = f"< {shown[:start]}<redacted>{shown[end:]}"  # the label stays; its value is a marker
+    line = f"< TEXT [{len(frame.data)} bytes]"
     assert got.events() == [("debug", line)]
     assert got.ring_lines() == [f"DEBUG uvicorn.error {line}"]
 

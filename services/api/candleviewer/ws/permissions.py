@@ -69,7 +69,12 @@ from candleviewer.ws.limits import (
     MAX_TOPICS_PER_SUB,
     SUB_ID_MAX_LEN,
 )
-from candleviewer.ws.metrics import count_audit_failure, cv_ws_subscribe_denied_unaudited_total
+from candleviewer.ws.metrics import (
+    count_audit_failure,
+    cv_ws_subscribe_denied_unaudited_total,
+    cv_ws_subscribe_granted_unaudited_total,
+    cv_ws_subscribe_narrowed_total,
+)
 from candleviewer.ws.rebuild_budget import RebuildBudget, UserRebuilds, topic_key
 from candleviewer.ws.rebuild_budget import Scope as BudgetScope
 from candleviewer.ws.revocation import (
@@ -399,6 +404,9 @@ class ConnectionAuthz:
     ) -> None:
         self.principal = principal
         self.version = version  # SR-189: the applied snapshot's; 0 = not from the registry
+        #: The session the socket is authenticated on (`do_auth` sets it at each accepted `auth`):
+        #: the revocation and denial rows carry it in their `session_id` column (#415, E17-R-16).
+        self.session_id: str | None = None
         self.services = services if services is not None else SubscriptionServices()
         self.connection_id = connection_id or f"c-{uuid.uuid4().hex[:12]}"
         self.by_id: dict[str, Subscription] = {}
@@ -414,6 +422,9 @@ class ConnectionAuthz:
         #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
         #: after that `admit`, for the audit row only; it never reaches the client.
         self.refusal_reason: str | None = None
+        #: §6.2: how many requested accounts the last `admit` narrowed away, silently. `handle_sub`
+        #: reads it right after that `admit`, for its count and record only (#415, E17-R-15).
+        self.narrowed = 0
         #: E17-T03 (flag on, the outbound pipeline): called once per operation, before its reply
         #: or `revoked` is queued, with every subscription whose queued frames and throttle
         #: window it made stale (§8.4 Lanes, §9.5). While it is set, a narrowing re-pends what it
@@ -432,6 +443,10 @@ class ConnectionAuthz:
             maxlen=DENIAL_AUDITS_PER_WINDOW
         )
         self._denial_skip_logged: float | None = None
+        #: #415 (E17-R-14): the same budget, kept apart, for its `ws.subscribe.granted` records.
+        self._grant_audits: collections.deque[float] = collections.deque(
+            maxlen=DENIAL_AUDITS_PER_WINDOW
+        )
         #: SR-193: the limit that refused the last `admit` for the rebuild budget (its log line).
         self.refusal_scope: BudgetScope | None = None
 
@@ -502,7 +517,15 @@ class ConnectionAuthz:
         `lifecycle.ConnectRateLimiter`). O(1): with the deque full, its oldest stamp decides. A
         record refused here leaves no stamp, so a connection past its budget cannot lengthen
         its own wait."""
-        now, stamps = self.services.clock(), self._denial_audits
+        return self._take(self._denial_audits)
+
+    def take_grant_audit(self) -> bool:
+        """`take_denial_audit`'s rule for `ws.subscribe.granted` records, on a budget of their own
+        of the same size and window (#415, E17-R-14)."""
+        return self._take(self._grant_audits)
+
+    def _take(self, stamps: collections.deque[float]) -> bool:
+        now = self.services.clock()
         if len(stamps) >= DENIAL_AUDITS_PER_WINDOW and now - stamps[0] < DENIAL_AUDIT_WINDOW_S:
             return False
         stamps.append(now)
@@ -533,6 +556,7 @@ class ConnectionAuthz:
         `machines` entity leaves its internal §6.4 reason in `refusal_reason`."""
         ch = entry.get("ch") if isinstance(entry, dict) else entry
         self.refusal_reason = self.refusal_scope = None
+        self.narrowed = 0
         try:
             return self._admit(entry, ch, snapshot, replay_session_id)
         except TopicError as exc:
@@ -630,6 +654,7 @@ class ConnectionAuthz:
         if not allowed:
             # One message for "absent", "not yours" and "does not exist": no account probing.
             raise TopicError("account_scope_denied", "None of the requested accounts are in scope.")
+        self.narrowed = len(set(requested) - allowed)  # E17-R-15: silent in the reply only
         return allowed
 
     def _authorise_entity(self, ch: str, kind: str) -> EntityScope:
@@ -1358,7 +1383,8 @@ class ConnectionRegistry:
 
     async def audit_revoked(self, authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> None:
         """The `ws.subscription.revoked` rows of `revoked` frames made outside a change, a resync
-        loop's (§7.5; SR-187, #2174), through the same bounded writer as a fan-out's."""
+        loop's (§7.5; SR-187, #2174) and an in-place re-`auth`'s, once its `auth_ok` and frames are
+        queued (#415, E17-R-13), through the same bounded writer as a fan-out's."""
         await self._write_rows(_revocation_rows(authz, frames))
 
     async def grants_changed(self, user_id: uuid.UUID) -> None:
@@ -1512,6 +1538,7 @@ async def handle_sub(
             ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by shape
             result, sub = authz.admit(entry, snapshot=snapshot, replay_session_id=replay)
             why = authz.refusal_reason  # a refused entity's internal reason; read before any await
+            narrowed = authz.narrowed  # E17-R-15: accounts narrowed away; read before any await
             if authz.refusal_scope is not None:
                 spent.append((ch, authz.refusal_scope))
             if sub is not None:
@@ -1530,6 +1557,9 @@ async def handle_sub(
                 code = result["error"]["code"]
                 if _audited(ch, code):
                     denials.append(_denial(ch, code, why))
+            elif result["ok"] and narrowed:  # §6.2: silent in the reply, counted and recorded
+                cv_ws_subscribe_narrowed_total.inc(narrowed)
+                denials.append(_denial(ch, "account_scope_denied", "narrowed"))
     finally:  # a raise or a cancellation mid-loop still records the refusals before it (C-2.9)
         await _audit_denials(authz, denials)
     _refuse_ended(authz, admitted, results, rs)  # #2896: no await from here to the reply
@@ -1690,12 +1720,17 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
     never one per entry (SR-192, #2292), written in `handle_sub`'s `finally`, so a frame that
     raises or is cancelled part way still records those before the fault. Its `object_id` and
     `reason` are the first one's, so a frame with one writes the row that refusal writes alone.
-    With more, `after_state` holds the `count` of them all, every code among them (`codes`,
-    sorted) and the `[object_id, reason]` of the first `MAX_DENIALS_LISTED` in request order
-    (`refusals`). An internal reason goes only in `reason` and `after_state`, which the non-Owner
-    projection drops (SR-067), so no other field varies with it (the non-Owner projection is
-    being narrowed by E42-T02 F9). Best effort, bounded at `FANOUT_AUDIT_TIMEOUT_S`: a record
-    not confirmed is logged and counted, and so is a cancellation, which still propagates.
+    It names the socket: its session in the `session_id` column, as the close row's; its
+    `connection_id` in `after_state` (#415, E17-R-16), since the row's `object_id` is the topic.
+    With more than one refusal, `after_state` also
+    holds the `count` of them all, every code among them (`codes`, sorted) and the
+    `[object_id, reason]` of the first `MAX_DENIALS_LISTED` in request order (`refusals`). An
+    entry narrowed to fewer accounts than it named is one, with code `account_scope_denied` and
+    reason `narrowed` (§6.2, E17-R-15). An internal reason goes only in `reason` and
+    `after_state`, which the non-Owner projection drops (SR-067), so no other field varies with it
+    (the non-Owner projection is being narrowed by E42-T02 F9). Best effort, bounded at
+    `FANOUT_AUDIT_TIMEOUT_S`: a record not confirmed is logged and counted, and so is a
+    cancellation, which still propagates.
 
     #3185 (§4.3): within the connection's budget only (`ConnectionAuthz.take_denial_audit`),
     checked before the emit. A record past it reaches no writer and the frame waits for none:
@@ -1708,25 +1743,24 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
         _kept_back(authz)
         return
     object_id, _, reason = denials[0]
-    detail: dict[str, Any] = {}
+    after: dict[str, Any] = {"connection_id": authz.connection_id}
     if len(denials) > 1:
-        detail["after_state"] = {
-            "count": len(denials),
-            "codes": sorted({c for _, c, _ in denials}),
-            "refusals": [[o, r] for o, _, r in denials[:MAX_DENIALS_LISTED]],
-        }
+        after["count"] = len(denials)
+        after["codes"] = sorted({c for _, c, _ in denials})
+        after["refusals"] = [[o, r] for o, _, r in denials[:MAX_DENIALS_LISTED]]
     try:
         await _emit_bounded(
             audit,
             "ws.subscribe.denied",
             actor_label="ws",
             actor_user_id=authz.principal.user_id,
+            session_id=authz.session_id,
             object_kind="ws_topic",
             object_id=object_id,
             outcome=AuditOutcome.DENIED,
             severity=Severity.WARNING,
             reason=reason,
-            **detail,
+            after_state=after,
         )
     except Exception:
         count_audit_failure()  # SR-E17-04: `timeout` (it may still land) or `error`
@@ -1789,9 +1823,11 @@ _MACHINE_REVOKED: Final = {"permission_revoked": "role", "account_scope_changed"
 
 
 def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> list[_AuditRow]:
-    """`ws.subscription.revoked`: one row per `revoked` frame, in frame order (WS-R02). A
-    `machines` row names the full `ch` and its internal §6.4 reason, in `reason` only (SR-067),
-    as a refusal's row does."""
+    """`ws.subscription.revoked`: one row per `revoked` frame, in frame order (WS-R02), naming the
+    socket: its session in the `session_id` column, as the close row's; its `connection_id` in
+    `after_state` (#415, E17-R-16), since the row's `object_id` is the topic. A `machines` row
+    names the full `ch` and its internal §6.4 reason, in `reason` only (SR-067), as a refusal's
+    row does."""
     audit = authz.services.audit
     if audit is None:
         return []
@@ -1808,6 +1844,7 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
                 {
                     "actor_label": "ws",
                     "actor_user_id": authz.principal.user_id,
+                    "session_id": authz.session_id,
                     "object_kind": "ws_topic",
                     "object_id": ch if machines else ch[:40],
                     "reason": _MACHINE_REVOKED.get(reason, reason) if machines else reason,
@@ -1815,11 +1852,21 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
                         "removed_accounts": f["p"].get("removed_accounts", []),
                         "sub_id": f["p"]["sub_id"],
                         **({"rs": f["rs"]} if "rs" in f else {}),
+                        "connection_id": authz.connection_id,
                     },
                 },
             )
         )
     return rows
+
+
+def _confidential(sub: Subscription) -> bool:
+    """#415 (E17-R-14, WS-R01): a subscription `ws.subscribe.granted` records: one of a private
+    family, but not of a `machines` kind that no account or user scopes (§6.4: `book`,
+    `recording`, `kill_switch`, `live_gate`), whose state every holder of its permission reads."""
+    kind = sub.topic.entity_kind
+    unscoped = kind is not None and MACHINE_KINDS[kind].scope is Scope.NONE
+    return sub.topic.family.private and not unscoped
 
 
 async def _audit_grants(authz: ConnectionAuthz, subs: list[Subscription]) -> None:
@@ -1828,10 +1875,17 @@ async def _audit_grants(authz: ConnectionAuthz, subs: list[Subscription]) -> Non
     `object_id` is the connection, and `after_state` holds their `count` and the `ch` and account
     ids of the first `MAX_GRANTS_LISTED` in request order (`subscriptions`). Written once the
     `sub_ok` is queued, best effort (threat model WS-R04) and bounded at `FANOUT_AUDIT_TIMEOUT_S`:
-    a row not confirmed is logged and counted, and so is a cancellation, which still propagates."""
+    a row not confirmed is logged and counted, and so is a cancellation, which still propagates.
+
+    #415 (E17-R-14): only the subscriptions `_confidential` names, and within the connection's own
+    budget (`take_grant_audit`, the size and window of the denial records'); a record past it is
+    counted in `cv_ws_subscribe_granted_unaudited_total`, not written."""
     audit = authz.services.audit
-    private = [s for s in subs if s.topic.family.private]
+    private = [s for s in subs if _confidential(s)]
     if audit is None or not private:
+        return
+    if not authz.take_grant_audit():
+        cv_ws_subscribe_granted_unaudited_total.inc()
         return
     listed = [[s.ch, sorted(str(a) for a in s.accounts)] for s in private[:MAX_GRANTS_LISTED]]
     try:

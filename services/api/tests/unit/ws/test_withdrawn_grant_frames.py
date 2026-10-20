@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Mapping
 from typing import Any, NamedTuple
 
 import pytest
@@ -26,6 +27,7 @@ from candleviewer.ws.outbound import PRIORITY_FAMILIES, QUEUE_FRAMES
 from candleviewer.ws.permissions import ConnectionAuthz, Subscription
 from candleviewer.ws.sequencing import SnapshotBody
 from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, USER
+from tests.unit.ws.test_lifecycle_socket import SESSION
 from tests.unit.ws.test_pipeline_invalidation import _RS, _STRUCTURED, _connected, _held
 from tests.unit.ws.test_pipeline_outbound import (
     _BOOK,
@@ -319,6 +321,47 @@ def _settled(rig: _Rig, monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
     return done
 
 
+def _queued_at_next_row(
+    rig: _Rig, conn: _Connection, monkeypatch: pytest.MonkeyPatch
+) -> list[Sent]:
+    """#415 (E17-R-13): what `conn` queued from now on, as (`t`, `ch`) whatever the flag, as it
+    stood when the audit sink's next emit began: one entry once that emit has run. Data frames are
+    left out: with the flag off, a purge queues the ones it keeps again."""
+    queued: Sent = []
+    at_row: list[Sent] = []
+
+    def note(item: Any) -> None:
+        frame = item[1] if isinstance(item, tuple) else item  # a stamped one is `(received, f)`
+        if isinstance(frame, Mapping) and frame["t"] != "d":
+            queued.append((frame["t"], frame.get("ch")))
+
+    if (pipe := conn.pipeline) is not None:
+        push = pipe.push
+
+        def pushed(frame: Mapping[str, Any], received: float | None = None) -> None:
+            note(frame)
+            push(frame, received)
+
+        monkeypatch.setattr(pipe, "push", pushed)
+    else:
+        put = conn.outbound.put_nowait
+
+        def put_nowait(item: Any) -> None:
+            note(item)
+            put(item)
+
+        monkeypatch.setattr(conn.outbound, "put_nowait", put_nowait)
+    emit = rig.audit.emit
+
+    async def emitted(action: str, **kw: Any) -> None:
+        if not at_row:
+            at_row.append(list(queued))
+        await emit(action, **kw)
+
+    monkeypatch.setattr(rig.audit, "emit", emitted)
+    return at_row
+
+
 @_EACH
 @pytest.mark.parametrize("path", ["grant_change", "reauth"])
 async def test_narrowing_to_a_drops_the_topics_queued_frames_and_snaps_a_after_revoked(
@@ -339,10 +382,12 @@ async def test_narrowing_to_a_drops_the_topics_queued_frames_and_snaps_a_after_r
         queued = _publish(rig, [*both, (_BOOK, None)] * 2)
         before = _overflow("withdrawn")
         rig.grants = _grants(ACC_A)
+        at_row: list[Sent] = []
         if path == "grant_change":
             await rig.registry.grants_changed(USER)
         else:
             settled = _settled(rig, monkeypatch)
+            at_row = _queued_at_next_row(rig, conn, monkeypatch)
             sock.feed({"t": "auth", "id": "a2", "p": {"access_token": "tok"}})
             await settled.wait()
         frames = await _drained(sock, conn)
@@ -354,11 +399,66 @@ async def test_narrowing_to_a_drops_the_topics_queued_frames_and_snaps_a_after_r
     assert [(p["removed_accounts"], p["resubscribe_allowed"]) for p in revoked] == [
         ([str(ACC_B)], True)
     ] * 2
+    # #415 (E17-R-13, WS-R02): one `ws.subscription.revoked` row per frame on either path, the
+    # in-place re-`auth`'s too, written once its `auth_ok`, `revoked` frames and snaps are queued
+    rows = [r for r in rig.audit.records if r["action"] == "ws.subscription.revoked"]
+    assert [r["after_state"]["sub_id"] for r in rows] == [p["sub_id"] for p in revoked]
+    assert at_row == ([] if path == "grant_change" else [changed])
     snaps = [f for f in frames if f["t"] == "snap"]  # `s` 6, after the dropped 2 to 5
     reset = [(f["meta"]["reason"], f["s"], f["meta"]["previous_seq"]) for f in snaps]
     assert reset == [("reconfigure", 6, 5)] * 2
     assert [len(_rows([f], ACC_A)) for f in snaps] == [1, 1] and _rows(frames, ACC_B) == []
     assert _overflow("withdrawn") - before == 8
+
+
+#: What a rotated refresh token names: a second session of the same user. And an account the user
+#: holds no grant on.
+_ROTATED = "6f1d0000-0000-4000-8000-000000000415"
+_STRANGER = uuid.UUID(int=0xC)
+
+
+def _refusal(fid: str) -> dict[str, Any]:
+    """A `sub` of `orders` on an account the user holds no grant on: refused, and recorded."""
+    entry = {"ch": "orders", "opts": {"exchange_account_ids": [str(_STRANGER)]}}
+    return {"t": "sub", "id": fid, "p": {"topics": [entry]}}
+
+
+async def _until_reply(sock: _Wire, fid: str) -> list[dict[str, Any]]:
+    """The frames the socket sends up to the reply to `fid`, which is the last."""
+    frames: list[dict[str, Any]] = []
+    while not frames or frames[-1].get("id") != fid:
+        frames += await sock.next()
+    return frames
+
+
+@_EACH
+async def test_a_reauth_onto_another_session_names_it_in_the_rows_that_follow(
+    flag: bool, encoding: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#415 (E17-R-16): the gateway sets the session on the connection at each accepted `auth`, an
+    in-place re-`auth` onto another session too. `orders` and `positions` held on A and B, one
+    refusal recorded, then a re-`auth` with a second token, which names a second session and
+    narrows both topics to A: its two `ws.subscription.revoked` rows and the `ws.subscribe.denied`
+    row of the refusal after it name the second session; the refusal before it named the first."""
+    rig, sock = _rig(flag, monkeypatch), _Wire(encoding)
+    rig.sessions["tok2"] = _ROTATED
+    async with _connected(rig, sock):
+        for family in _OF_B:
+            await rig.sub(sock, family, exchange_account_ids=[str(ACC_A), str(ACC_B)])
+        sock.feed(_refusal("d1"))
+        await _until_reply(sock, "d1")
+        rig.grants = _grants(ACC_A)
+        sock.feed({"t": "auth", "id": "a2", "p": {"access_token": "tok2"}})
+        sock.feed(_refusal("d2"))  # read once the re-`auth` is done, its rows written
+        await _until_reply(sock, "d2")
+    audited = ("ws.subscribe.denied", "ws.subscription.revoked")
+    rows = [(r["action"], r["session_id"]) for r in rig.audit.records if r["action"] in audited]
+    assert rows == [
+        ("ws.subscribe.denied", SESSION),
+        ("ws.subscription.revoked", _ROTATED),
+        ("ws.subscription.revoked", _ROTATED),
+        ("ws.subscribe.denied", _ROTATED),
+    ]
 
 
 @_ENCODINGS

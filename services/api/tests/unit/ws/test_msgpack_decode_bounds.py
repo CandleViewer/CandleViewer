@@ -11,8 +11,9 @@ import time
 import traceback
 import tracemalloc
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import FrameType
 from typing import Any, Final
 
 import msgpack
@@ -85,11 +86,24 @@ def test_msgpack_depth_counts_maps_and_arrays_together() -> None:
         decode_client_frame(_pack({"p": _arrays(MAX_MSGPACK_DEPTH)}))
 
 
-def test_msgpack_ext_types_are_refused_by_the_unpacker_itself() -> None:
+@pytest.mark.parametrize(
+    "ext", [msgpack.ExtType(1, b"x"), msgpack.Timestamp(1, 0)], ids=["ext-type-1", "timestamp"]
+)
+def test_msgpack_ext_types_are_refused_by_the_unpacker_itself(ext: Any) -> None:
+    """E17-R-06: an ext that carries data, a timestamp (ext -1) included, is refused at its header
+    (`max_ext_len=0`): the cause is the unpacker's own refusal."""
+    with pytest.raises(MsgpackFrameError, match=r"^undecodable frame: ValueError$") as exc:
+        decode_client_frame(_pack(ext))
+    assert "max_ext_len" in str(exc.value.__cause__)
+
+
+def test_msgpack_empty_ext_types_are_refused_too() -> None:
+    """An empty ext has no data for the header check: one of another type reaches `_refuse_ext`,
+    and an empty timestamp is malformed in the unpacker."""
     with pytest.raises(MsgpackFrameError, match="ext type 1"):
-        decode_client_frame(_pack(msgpack.ExtType(1, b"x")))
-    with pytest.raises(MsgpackFrameError, match="Timestamp"):  # ext -1, decoded by msgpack
-        decode_client_frame(_pack(msgpack.Timestamp(1, 0)))
+        decode_client_frame(b"\xc7\x00\x01")  # ext 8: length 0, type 1
+    with pytest.raises(MsgpackFrameError, match=r"^undecodable frame: ValueError$"):
+        decode_client_frame(b"\xc7\x00\xff")  # ext 8: length 0, type -1
 
 
 def test_msgpack_frame_over_the_inbound_cap_is_refused_before_decoding() -> None:
@@ -467,11 +481,47 @@ def test_msgpack_frames_of_new_keys_stay_bounded_through_an_interned_table_resiz
     assert max(peaks) - min(peaks) >= floor // 2, "no interned-table resize was reached"
 
 
+def _timestamps_built(run: Callable[[], object]) -> int:
+    """How many `msgpack.Timestamp` objects `run()` builds. The C unpacker builds each through the
+    class's Python `__init__`, which a profile hook sees as a call."""
+    init, built = msgpack.Timestamp.__init__.__code__, 0
+
+    def count(frame: FrameType, event: str, arg: object) -> None:
+        nonlocal built
+        if event == "call" and frame.f_code is init:
+            built += 1
+
+    previous = sys.getprofile()
+    sys.setprofile(count)
+    try:
+        run()
+    finally:
+        sys.setprofile(previous)
+    return built
+
+
+def test_msgpack_profile_hook_counts_each_timestamp_the_unpacker_builds() -> None:
+    """The counter sees the unpacker's builds: three for an array of three timestamps."""
+    data = _pack([msgpack.Timestamp(1, 0)] * 3)
+    assert _timestamps_built(lambda: msgpack.unpackb(data, raw=False)) == 3
+
+
+@pytest.mark.parametrize("name", ["open-levels-of-timestamps", "open-map-levels-of-timestamps"])
+def test_msgpack_frame_of_timestamps_is_refused_before_one_is_built(name: str) -> None:
+    """E17-R-06: refused at the first ext header, so not one `Timestamp` is built however many the
+    frame holds. Deterministic: the perf node below is the wall-clock view of the same frames."""
+
+    def refused() -> None:
+        with pytest.raises(MsgpackFrameError):
+            decode_client_frame(HOSTILE[name])
+
+    assert _timestamps_built(refused) == 0
+
+
 @pytest.mark.perf
 @pytest.mark.parametrize("data", HOSTILE.values(), ids=HOSTILE.keys())
 def test_msgpack_hostile_at_cap_frame_blocks_the_loop_far_below_c_2_17(data: bytes) -> None:
-    """C-2.17: no more than 50 ms on the event loop. The worst of these, timestamps in open map
-    levels, takes about 10 ms."""
+    """C-2.17: no more than 50 ms on the event loop."""
     started = time.perf_counter()
     with pytest.raises(MsgpackFrameError):
         decode_client_frame(data)

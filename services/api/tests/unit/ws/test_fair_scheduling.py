@@ -250,7 +250,8 @@ async def test_each_cap_refusal_keeps_its_code_message_field_metric_and_audit_ro
     held: list[str], entries: list[Any], message: str
 ) -> None:
     """A public and a private topic past a cap: `subscription_limit` with the cap's message and no
-    `field`, one count per family, and one `ws.subscribe.denied` row, the private topic's."""
+    `field`, one count per family, and one `ws.subscribe.denied` row, the private topic's, which
+    names its socket (#415, E17-R-16)."""
     audit = _Audit()
     authz = _authz(audit)
     await _hold(authz, held)
@@ -267,11 +268,13 @@ async def test_each_cap_refusal_keeps_its_code_message_field_metric_and_audit_ro
             "action": "ws.subscribe.denied",
             "actor_label": "ws",
             "actor_user_id": USER,
+            "session_id": None,
             "object_kind": "ws_topic",
             "object_id": "orders",
             "outcome": AuditOutcome.DENIED,
             "severity": Severity.WARNING,
             "reason": "subscription_limit",
+            "after_state": {"connection_id": authz.connection_id},
         }
     ]
     assert len(authz.by_id) == len(held)  # nothing subscribed past the cap

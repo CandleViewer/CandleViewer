@@ -775,8 +775,11 @@ def test_registry_grants_changed_pushes_revoked_and_audits() -> None:
     async def send(f: dict[str, Any]) -> None:
         sent.append(f)
 
+    conn_id: list[str] = []
+
     async def scenario() -> None:
         conn = ConnectionAuthz(snaps[MGR_ID], reg.services)
+        conn_id.append(conn.connection_id)
         reg.register(conn, send)
         await handle_sub(conn, {"p": {"topics": [{"ch": "positions", "opts": _acc(A, B)}]}}, send)
         snaps[MGR_ID] = _mgr(A)
@@ -786,7 +789,12 @@ def test_registry_grants_changed_pushes_revoked_and_audits() -> None:
     assert [f["t"] for f in sent] == ["sub_ok", "permission_change", "revoked"]
     actions = [r["action"] for r in audit.records]  # the sub's grant record first (SR-186)
     assert actions == ["ws.subscribe.granted", "ws.subscription.revoked"]
-    assert audit.records[1]["after_state"] == {"removed_accounts": [str(B)], "sub_id": "s_01"}
+    named = {"connection_id": conn_id[0]}  # #415 (E17-R-16): the socket's connection
+    assert audit.records[1]["after_state"] == {
+        "removed_accounts": [str(B)],
+        "sub_id": "s_01",
+        **named,
+    }
 
 
 def test_registry_kill_switch_reevaluates_every_user() -> None:
@@ -978,6 +986,7 @@ def test_denials_are_audited_and_audit_failure_is_not_fatal() -> None:
     ]
     assert (action, reason) == ("ws.subscribe.denied", "account_scope_denied")
     assert detail == {
+        "connection_id": conn.connection_id,  # #415 (E17-R-16): the socket
         "count": 2,
         "codes": ["account_scope_denied", "invalid_options"],
         "refusals": [["positions", "account_scope_denied"], ["orders", "invalid_options"]],

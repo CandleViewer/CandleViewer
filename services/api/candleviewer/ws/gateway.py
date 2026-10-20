@@ -153,6 +153,8 @@ from candleviewer.ws.lifecycle import (
     RefusalLog,
     RefusalLogLimiter,
     Watchdog,
+    clamp_ms,
+    client_epoch_ms,
     header_values,
     negotiate_subprotocol,
     origin_refusal,
@@ -1504,6 +1506,7 @@ def make_ws_router(
                 revocation_hub.unregister(conn.session_id, conn.closer)
             conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
+        conn.authz.session_id = session_id  # E17-R-16: its audit rows name the session
         if not reauth:
             svc = registry.services
             conn.emitter = TopicEmitter(
@@ -1543,6 +1546,8 @@ def make_ws_router(
         for f in revoked:
             conn.push(f)
         await registry.settle(conn.authz, conn.evict)  # §9.5: a narrowing's snaps follow
+        if revoked:  # E17-R-13 (WS-R02): their rows, once the frames are queued, as a change's
+            await registry.audit_revoked(conn.authz, revoked)
         structlog.contextvars.bind_contextvars(user_id=str(user_id), session_id=session_id)
         _log().info(
             "ws authenticated",
@@ -1559,9 +1564,9 @@ def make_ws_router(
         now_ms = conn.wall_ms()
         p: dict[str, Any] = {"server_ms": now_ms}
         body = frame.get("p")
-        client_ms = body.get("client_ms") if isinstance(body, dict) else None
-        if isinstance(client_ms, int) and not isinstance(client_ms, bool):
-            p["rtt_hint_ms"] = max(0, now_ms - client_ms)
+        client_ms = client_epoch_ms(body.get("client_ms")) if isinstance(body, dict) else None
+        if client_ms is not None:  # E17-R-10: any other value is ignored, as if absent
+            p["rtt_hint_ms"] = clamp_ms(max(0, now_ms - client_ms))
         conn.push(_reply("pong", frame.get("id"), ts=now_ms, p=p))
 
     def pending(authz: ConnectionAuthz) -> set[str]:
@@ -1621,10 +1626,10 @@ def make_ws_router(
                 return
             conn.lifecycle.fire(ConnEvent.HELLO)
             body = frame.get("p")
-            clock_ms = body.get("clock_ms") if isinstance(body, dict) else None
+            clock_ms = client_epoch_ms(body.get("clock_ms")) if isinstance(body, dict) else None
             now_ms = conn.wall_ms()
-            if isinstance(clock_ms, int) and not isinstance(clock_ms, bool):
-                cv_ws_clock_skew_ms.observe(abs(now_ms - clock_ms))
+            if clock_ms is not None:  # E17-R-10: any other value is ignored, as if absent
+                cv_ws_clock_skew_ms.observe(abs(clamp_ms(now_ms - clock_ms)))
             welcome = welcome_payload(
                 encoding=conn.encoding.removeprefix("cv.v1."),
                 server_version=server_version,

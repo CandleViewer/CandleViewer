@@ -30,6 +30,7 @@ from candleviewer.storage.repositories import account_access as aa
 from candleviewer.storage.repositories.account_access_sqlalchemy import SqlAlchemyAccountAccessStore
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
+from candleviewer.ws.lifecycle import ConnectRateLimiter
 from candleviewer.ws.limits import MACHINE_ENTRIES_MAX
 from tests.contract.rbac import rbac_harness as rbac
 from tests.csrf_helpers import csrf_headers
@@ -90,9 +91,6 @@ def deployed() -> Iterator[SimpleNamespace]:
         auth_recovery_hmac_key_hex=SecretStr("22" * 32),
         auth_csrf_key_hex=SecretStr("33" * 32),
         allowed_origins=rbac.WS_ORIGIN,
-        # One app serves every parametrised socket below, so one actor connects far more than 20
-        # times a minute. The per-user connect rate (#2558) is not under test here.
-        ws_max_auths_per_user_per_min=600,
     )
     with pytest.MonkeyPatch.context() as mp:
         for name in ("user", "session_info"):
@@ -102,6 +100,10 @@ def deployed() -> Iterator[SimpleNamespace]:
             SqlAlchemyAccountAccessStore, "replace_grants", _delegate(grants, "replace_grants")
         )
         app = appmod.create_app(real)  # nothing injected: the deployed composition
+        # One app serves every parametrised socket below, so one actor connects far more than 20
+        # times a minute. The per-user connect rate (#2558) is not under test here; settings cap
+        # it at 20 (#415), so the hub's limiter is widened on the built app.
+        app.state.ws_hub.connect_rate = ConnectRateLimiter(600)
         ctx = app.state.app_context
         ctx.audit._writer = rbac._AuditSink()  # `ws.subscribe.denied` is audited
         ctx.auth._sessions, ctx.auth._step_up = rbac._Sessions(), rbac._StepUp()

@@ -277,6 +277,15 @@ def corpus_seeds() -> list[tuple[str, str, bytes]]:
         ("heatmap-rows-exact", "ok", _h(HEATMAP_COLUMN, 1) + hm + bytes(32)),
         ("heatmap-rows-minus-1-byte", "malformed", _h(HEATMAP_COLUMN, 1) + hm + bytes(31)),
         ("heatmap-rows-plus-1-byte", "ok", _h(HEATMAP_COLUMN, 1) + hm + bytes(33)),
+        # #415 (E17-R-21): a heatmap frame is one column; any other header `record_count` is
+        # malformed, however well its body fits.
+        ("heatmap-record-count-0", "malformed", _h(HEATMAP_COLUMN, 0) + hm + bytes(32)),
+        ("heatmap-record-count-2", "malformed", _h(HEATMAP_COLUMN, 2) + hm + bytes(32)),
+        (
+            "heatmap-record-count-max-u32",
+            "malformed",
+            _h(HEATMAP_COLUMN, _U32_MAX) + hm + bytes(32),
+        ),
         (
             "footprint-cell-count-body-plus-1",
             "malformed",
@@ -291,9 +300,8 @@ def corpus_seeds() -> list[tuple[str, str, bytes]]:
             + _FP_GROUP.pack(0, 1, 1, 9, 0)
             + cell,
         ),
-        # Pinned ACCEPT behaviour: section 3.4 does not yet say whether non-zero reserved
-        # header bytes, unknown flag bits or non-zero record pad bytes must be rejected.
-        # Decision tracked in #2042; flip these to "malformed" if it says reject.
+        # Pinned ACCEPT behaviour (section 3.4): the header's reserved bytes and `flags` bits 4-7,
+        # and the record pad bytes, are 0 on send and ignored on receive (#415, E17-R-21).
         (
             "reserved-header-bytes-nonzero",
             "ok",

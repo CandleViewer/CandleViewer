@@ -22,6 +22,7 @@ from typing import Any, Final, Literal
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, PrincipalSnapshot, decide
+from candleviewer.ws.lifecycle import MAX_EPOCH_MS
 
 # Each pattern below is applied with `fullmatch`. Python's `$` also matches before a final newline,
 # so `match` took `"BTCUSDT\n"`. §13's patterns (`symbol`, `decimal`, `topic`) are ECMA-262
@@ -191,7 +192,7 @@ UNIVERSAL: Final[Mapping[str, Opt]] = {
     "encoding": Opt("enum", choices=frozenset({"binary", "structured"})),
     "coalesce": Opt("bool"),
     "from_seq": Opt("int", 0),
-    "from_ts_ms": Opt("int", 0),
+    "from_ts_ms": Opt("int", 0, MAX_EPOCH_MS),  # §13 `epochMs`, as `hello.clock_ms` (#415)
 }
 _ACCOUNTS: Final = Opt("uuids", min_items=1, max_items=25)
 _SYMBOLS: Final = Opt("symbols", min_items=1, max_items=40)

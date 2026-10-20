@@ -51,12 +51,13 @@ _ERR = {
     "close": False,
 }
 _GRANTED = ("ws.subscribe.granted", ALICE, None, Severity.INFO)  # each `orders` sub's (`_scope`)
+#: ... after the record of its narrowing, B taken away (§6.2; #415, E17-R-15)
+_NARROWED = ("ws.subscribe.denied", ALICE, "narrowed", Severity.WARNING)
 #: What either check leaves: the client's frames, the audit rows, the metric deltas, the log.
 _REFUSED = (
     [("err", "a1", _ERR, [str(ACC_A)]), ("err", "a2", _ERR, [str(ACC_A)]), ("auth_failed", 4401)],
     [
-        _GRANTED,
-        _GRANTED,
+        *(_NARROWED, _GRANTED) * 2,
         ("auth.login_failed", ALICE, "ws_auth_failed", Severity.WARNING),
         ("ws.connection.closed", ALICE, "auth_failed", Severity.WARNING),
     ],

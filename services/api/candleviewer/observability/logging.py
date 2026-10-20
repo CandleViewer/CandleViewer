@@ -25,6 +25,8 @@ entrypoints). Wires:
 - An `UpgradeLineFilter` on the `uvicorn.error` logger, ahead of every handler: the log lines of a
   WebSocket upgrade show the path of its request target only, and a header line shows a marker
   for the value of a header named as a secret. `reset_logging()` removes it.
+- A `FrameLineFilter` beside it (`observability/frame_lines.py`, #415): a WebSocket frame line
+  shows the frame's opcode and length only. `reset_logging()` removes it too.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from typing import Any, Final
 import structlog
 from structlog.types import EventDict, Processor
 
+from candleviewer.observability.frame_lines import FRAME_LINE_FILTER
 from candleviewer.observability.redaction import (
     _KEY_NAME_MARKER,
     _is_redact_key,
@@ -326,6 +329,7 @@ def configure_logging(
     root.handlers = [queue_handler]
     root.setLevel(getattr(logging, level_name.upper()))
     logging.getLogger(_UPGRADE_LOGGER).addFilter(_UPGRADE_FILTER)  # the one instance, once
+    logging.getLogger(_UPGRADE_LOGGER).addFilter(FRAME_LINE_FILTER)  # likewise (#415)
 
     # `env` is bound onto every subsequent structlog call via contextvars so
     # every log line carries it without every call site passing it manually.
@@ -335,7 +339,7 @@ def configure_logging(
 
 def reset_logging() -> None:
     """Undo `configure_logging()`: stop the listener, drop its root handler and the upgrade-line
-    filter, reset structlog.
+    and frame-line filters, reset structlog.
 
     Test-isolation helper (C-13.7); safe to call when nothing was configured.
     """
@@ -347,5 +351,6 @@ def reset_logging() -> None:
     root.handlers = [h for h in root.handlers if not isinstance(h, _RawQueueHandler)]
     root.setLevel(logging.WARNING)
     logging.getLogger(_UPGRADE_LOGGER).removeFilter(_UPGRADE_FILTER)
+    logging.getLogger(_UPGRADE_LOGGER).removeFilter(FRAME_LINE_FILTER)
     structlog.reset_defaults()
     structlog.contextvars.clear_contextvars()

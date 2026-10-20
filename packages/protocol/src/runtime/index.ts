@@ -563,6 +563,10 @@ export function decodeHeatmapColumn(buf: ArrayBufferView): DecodedHeatmapColumn 
       "unsupported_body_kind",
     );
   }
+  if (header.recordCount !== 1) {
+    // E17-R-21: a heatmap frame is one column, and its header counts it (§3.4).
+    throw new BinaryFrameError(`heatmap column record_count=${header.recordCount}, expected 1`);
+  }
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   if (COMMON_HEADER_BYTES + HEATMAP_COLUMN_PREFIX_BYTES > view.byteLength) {
     throw new BinaryFrameError("heatmap column body shorter than its fixed prefix");

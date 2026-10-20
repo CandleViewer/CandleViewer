@@ -323,6 +323,20 @@ cv_ws_subscribe_denied_unaudited_total = Counter(
     "cv_ws_subscribe_denied_unaudited_total",
     "ws.subscribe.denied records not written: their connection's budget for the window was spent.",
 )
+#: #415 (E17-R-14): one per `ws.subscribe.granted` record a connection's own budget kept from the
+#: writer, of the same size and window as the denial records' (#3185). Deliberate, as that one is.
+#: Unlabelled: its one series exists from import.
+cv_ws_subscribe_granted_unaudited_total = Counter(
+    "cv_ws_subscribe_granted_unaudited_total",
+    "ws.subscribe.granted records not written: their connection's budget for the window was spent.",
+)
+#: #415 (E17-R-15, §6.2): one per account id a `sub` entry named that its scope narrowing took
+#: away. The reply stays silent; the frame's `ws.subscribe.denied` record lists the entry.
+#: Unlabelled.
+cv_ws_subscribe_narrowed_total = Counter(
+    "cv_ws_subscribe_narrowed_total",
+    "Account ids a WS sub named that the scope narrowing took away (silent in the reply).",
+)
 
 
 def count_audit_failure(rows: int = 1, reason: AuditFailureReason | None = None) -> None:
@@ -402,6 +416,8 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_connect_rate_limited_total",
         "cv_ws_audit_failures_total",
         "cv_ws_subscribe_denied_unaudited_total",
+        "cv_ws_subscribe_granted_unaudited_total",
+        "cv_ws_subscribe_narrowed_total",
         "cv_ws_clock_skew_ms",
         "cv_ws_system_frames_withheld_total",
         "cv_ws_subscribe_total",

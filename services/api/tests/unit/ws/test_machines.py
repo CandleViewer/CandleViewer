@@ -270,7 +270,7 @@ def test_a_published_payload_is_copied_whole() -> None:
 def test_a_payload_that_cannot_be_copied_leaves_no_entry() -> None:
     registry, order = MachineStateRegistry(), MachineEntity("order", OID, ON_A)
     with pytest.raises(TypeError):  # a generator has no deep copy: a publisher bug
-        registry.publish(order, {**_payload(), "feed": (n for n in ())})
+        registry.publish(order, {**_payload(), "feed": (n for n in range(0))})
     assert len(registry) == 0 and registry.scope(order.ch) is None
 
 
@@ -543,8 +543,29 @@ def test_a_refusal_audits_the_full_ch_and_its_internal_reason(
     if scope is not None:
         registry.publish(order, _payload())
     asyncio.run(handle_sub(conn.authz, {"t": "sub", "p": {"topics": [order.ch]}}, _drop))
-    user = conn.authz.principal.user_id
-    assert audit.rows == [{**_DENIED, "actor_user_id": user, "object_id": order.ch, "reason": why}]
+    user, authz = conn.authz.principal.user_id, conn.authz
+    socket = {"connection_id": authz.connection_id}  # E17-R-16, its session in the column
+    row = {"actor_user_id": user, "object_id": order.ch, "reason": why, "after_state": socket}
+    assert audit.rows == [{**_DENIED, **row, "session_id": authz.session_id}]
+
+
+def test_a_grant_record_names_a_kind_an_account_scopes_and_not_an_unscoped_one() -> None:
+    """#415 (E17-R-14, WS-R01): `ws.subscribe.granted` records an `order` (scoped to accounts),
+    never the `kill_switch`, whose state every holder of its permission reads alike."""
+    conn, registry, _ = _world()
+    conn.authz.services.audit = audit = _Audit()
+    order = MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    replies: list[dict[str, Any]] = []
+
+    async def send(frame: dict[str, Any]) -> None:
+        replies.append(frame)
+
+    for ch in ("machines.kill_switch.state", order.ch):
+        asyncio.run(handle_sub(conn.authz, {"t": "sub", "p": {"topics": [ch]}}, send))
+    assert [r["p"]["results"][0]["ok"] for r in replies] == [True, True]  # both subscribed
+    granted = [r["after_state"] for r in audit.rows if r["action"] == "ws.subscribe.granted"]
+    assert granted == [{"count": 1, "subscriptions": [[order.ch, []]]}]
 
 
 def test_a_refusal_that_is_not_an_authorisation_one_audits_its_error_code() -> None:

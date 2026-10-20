@@ -210,12 +210,14 @@ class _Rig:
         #: What `resolve` reads, so a test can change the principal mid-connection (§9.5).
         self.perms: frozenset[Permission] = _PERMS
         self.grants: tuple[AccountGrant, ...] = (AccountGrant(ACC_A, True, False, False),)
+        #: The session a token names (a rotated one, #415); any other token names `SESSION`.
+        self.sessions: dict[str, str] = {}
 
         async def resolve(uid: Any) -> PrincipalSnapshot:
             return PrincipalSnapshot(uid, frozenset({"manager"}), self.perms, self.grants)
 
         async def authenticate(token: str) -> tuple[str, Any, datetime]:
-            return SESSION, USER, self.expires_at
+            return self.sessions.get(token, SESSION), USER, self.expires_at
 
         services = SubscriptionServices(
             upstream=UpstreamRefs(), snapshots=self.source, sequencing=self.sequencing

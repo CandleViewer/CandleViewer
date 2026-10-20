@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,22 +24,29 @@ import candleviewer.ws.gateway as gateway
 import tests.unit.ws.test_lifecycle_socket as ls
 from candleviewer.api.csrf import RefusalAuditTracker
 from candleviewer.audit.actions import validate_action
-from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.models import AuditEmission, AuditOutcome, Severity
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws import permissions
 from candleviewer.ws.lifecycle import OriginRefusal
 from candleviewer.ws.limits import REBUILD_MAX_PER_TOPIC
-from candleviewer.ws.metrics import AUDIT_FAILURE_REASONS, count_audit_failure
+from candleviewer.ws.metrics import (
+    AUDIT_FAILURE_REASONS,
+    count_audit_failure,
+    cv_ws_subscribe_granted_unaudited_total,
+    cv_ws_subscribe_narrowed_total,
+)
 from candleviewer.ws.metrics import cv_ws_audit_failures_total as failures_total
 from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import ConnectionAuthz, SubscriptionServices, handle_sub
+from candleviewer.ws.topics import parse_topic
 from tests.unit.ws.test_gateway_teardown import _UVICORN_CANCEL, _cancel, _Rig, _Socket
 from tests.unit.ws.test_origin_refusal_audit import SLOW_S, _FailingAudit, _StalledAudit
 
 GRANTED, DENIED, REVOKED = "ws.subscribe.granted", "ws.subscribe.denied", "ws.subscription.revoked"
 MGR = uuid.UUID(int=0x2174)
-A, B, C = (uuid.UUID(int=n) for n in (0xA, 0xB, 0xC))  # C is never granted
+A, B, C, D = (uuid.UUID(int=n) for n in (0xA, 0xB, 0xC, 0xD))  # C and D are never granted
 PERMS = frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ, Permission.POSITIONS_READ})
 GRANTS = tuple(AccountGrant(a, True, False, False) for a in (A, B))
 
@@ -170,6 +178,109 @@ async def test_the_granted_row_lists_the_first_max_grants_listed_and_counts_them
     assert row["after_state"] == {"count": 2, "subscriptions": [["positions", [str(B)]]]}
 
 
+def _counted(metric: Any) -> Callable[[], float]:
+    """An unlabelled counter, counted from now: call the result for the change since."""
+
+    def value() -> float:
+        (family,) = metric.collect()
+        return float(next(s.value for s in family.samples if s.name.endswith("_total")))
+
+    start = value()
+    return lambda: value() - start
+
+
+async def test_grant_records_past_the_connections_own_budget_are_counted_not_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#415 (E17-R-14): grant records draw on a budget per connection of the denial records' size
+    and window (2 here), apart from theirs: past it a record is counted, not written, and the reply
+    is unchanged; a denial record is still written."""
+    monkeypatch.setattr(permissions, "DENIAL_AUDITS_PER_WINDOW", 2)
+    authz, sent, sink = _connection()
+    kept_back = _counted(cv_ws_subscribe_granted_unaudited_total)
+    for family in ("positions", "orders", "trade_groups"):
+        await _sub(authz, sent, _acc(family, A))
+    await _sub(authz, sent, _acc("positions", C))  # C is never granted: a denial
+    assert [r["action"] for r in sink.rows] == [GRANTED, GRANTED, DENIED]
+    assert (kept_back(), len(authz.by_id), [f["t"] for f in sent]) == (1, 3, ["sub_ok"] * 4)
+
+
+_OID = "0a000000-0000-4000-8000-000000000001"
+
+
+@pytest.mark.parametrize(
+    ("ch", "recorded"),
+    [
+        *[("positions", True), ("alerts", True), ("recorder", True)],
+        *[(f"machines.order:{_OID}.state", True), (f"machines.session:{_OID}.state", True)],
+        *[("machines.book:BTCUSDT.state", False), ("machines.kill_switch.state", False)],
+        *[("machines.recording:BTCUSDT.state", False), ("book.BTCUSDT.50", False)],
+    ],
+)
+def test_a_grant_record_covers_what_an_account_or_a_user_scopes_and_the_recorder(
+    ch: str, recorded: bool
+) -> None:
+    """#415 (E17-R-14, WS-R01): a private family's subscription, but no `machines` kind that no
+    account or user scopes, and no public topic."""
+    sub = permissions.Subscription("s_01", parse_topic(ch), {}, {})
+    assert permissions._confidential(sub) is recorded
+
+
+async def test_each_account_a_narrowing_takes_away_is_counted_and_its_entry_recorded() -> None:
+    """#415 (E17-R-15, §6.2): the reply stays silent (`ok`, effective A and B), the two accounts
+    taken away count one each, and the frame's denial record lists the entry as `narrowed`."""
+    authz, sent, sink = _connection()
+    narrowed = _counted(cv_ws_subscribe_narrowed_total)
+    await _sub(authz, sent, _acc("positions", C, A, D, B))
+    (result,) = sent[-1]["p"]["results"]
+    assert (result["ok"], result["effective"]["exchange_account_ids"]) == (True, [str(A), str(B)])
+    assert (narrowed(), [r["action"] for r in sink.rows]) == (2, [DENIED, GRANTED])
+    assert (sink.rows[0]["object_id"], sink.rows[0]["reason"]) == ("positions", "narrowed")
+
+
+class _Built:
+    """The production writer's `build` as the sink (its checks, its redaction, its typed columns)
+    with no WAL: an `AuditWriter` made without `__init__`, on a fixed clock, so nothing is written.
+    Each emit keeps what it was given beside what `build` made of it."""
+
+    def __init__(self) -> None:
+        self.writer = AuditWriter.__new__(AuditWriter)
+        self.writer._clock = lambda: datetime(2026, 10, 19, tzinfo=UTC)
+        self.rows: list[tuple[dict[str, Any], AuditEmission]] = []
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        self.rows.append((kw, self.writer.build(action, **kw)))
+
+
+async def test_through_the_real_writer_the_rows_keep_their_session_and_after_state() -> None:
+    """#415 (E17-R-16): `AuditWriter.build` redacts a `session_id` key in a state (a session id is
+    a token to it), so the denied and revoked rows put the socket's session in their `session_id`
+    column, as the close row does, and their `after_state` leaves the writer as written: the
+    denial of one refusal, that of two (`count`, `codes` and `refusals` too) and the revocation."""
+    sink, sent = _Built(), list[dict[str, Any]]()
+    principal = PrincipalSnapshot(MGR, frozenset({"manager"}), PERMS, GRANTS)
+    authz = ConnectionAuthz(principal, SubscriptionServices(audit=sink))
+    authz.session_id = ls.SESSION
+
+    async def resolve(_user: uuid.UUID) -> PrincipalSnapshot:  # B withdrawn
+        return PrincipalSnapshot(MGR, frozenset({"manager"}), PERMS, GRANTS[:1])
+
+    async def send(frame: dict[str, Any]) -> None:
+        sent.append(frame)
+
+    registry = permissions.ConnectionRegistry(resolve, lambda: 1, authz.services)
+    registry.register(authz, send)
+    await _sub(authz, sent, _acc("positions", A, B), _acc("orders", C))  # C is never granted
+    await _sub(authz, sent, _acc("orders", C), _acc("wallet", C))  # two refusals, none granted
+    await registry.grants_changed(MGR)
+    assert [row.action for _, row in sink.rows] == [DENIED, GRANTED, DENIED, REVOKED]
+    for kw, row in [built for built in sink.rows if built[1].action != GRANTED]:
+        assert (row.session_id, row.after_state) == (uuid.UUID(ls.SESSION), kw["after_state"])
+        assert kw["after_state"]["connection_id"] == authz.connection_id
+    two = sink.rows[2][0]["after_state"]  # and the loop was not vacuous: this frame had two
+    assert set(two) == {"connection_id", "count", "codes", "refusals"} and two["count"] == 2
+
+
 def test_the_contract_and_the_threat_model_state_how_many_grants_are_listed() -> None:
     """§5.2 and WS-R01 give the bound in prose: a change to the constant must change both."""
     n, docs = permissions.MAX_GRANTS_LISTED, Path(__file__).resolve().parents[5] / "docs"
@@ -238,10 +349,12 @@ def _rows(world: ls._World, action: str) -> list[dict[str, Any]]:
 def test_a_resync_rate_limited_revocation_writes_its_revoked_row(
     world: ls._World, rs: str | None
 ) -> None:
-    """The row names the subscription (§7.5, #3218): its `sub_id`, and `rs` on replay."""
+    """The row names the subscription (§7.5, #3218): its `sub_id`, and `rs` on replay; and the
+    socket (#415, E17-R-16): the `connection_id` of its `welcome`, and its session in the
+    `session_id` column."""
     ch, named = "book.BTCUSDT.50", {"rs": rs} if rs else {}
     with world.client.websocket_connect("/ws", subprotocols=ls.JSON) as ws:
-        ls._hello(ws)
+        socket = {"connection_id": ls._hello(ws)["p"]["connection_id"]}
         ls._auth(ws)
         ws.send_json({"t": "sub", "id": "s", "p": {"topics": [ch], "replay_session_id": rs}})
         assert ls._recv_type(ws, "sub_ok")["p"]["results"][0]["ok"] is True
@@ -253,8 +366,9 @@ def test_a_resync_rate_limited_revocation_writes_its_revoked_row(
         ls._settle(world, lambda: bool(_rows(world, REVOKED)))
     (row,) = _rows(world, REVOKED)  # the close row follows once the socket is gone
     assert (row["object_id"], row["reason"]) == (ch, "resync_rate_limited")
-    named_by = {"removed_accounts": [], "sub_id": "s_01", **named}
+    named_by = {"removed_accounts": [], "sub_id": "s_01", **named, **socket}
     assert (row["actor_user_id"], row["after_state"]) == (ls.USER, named_by)
+    assert row["session_id"] == ls.SESSION
 
 
 def test_the_third_failed_auth_row_names_the_source_address_and_the_request(

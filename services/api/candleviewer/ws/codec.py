@@ -8,8 +8,9 @@ decoder checks the cap again first. The other limits hold *while* msgpack's C un
 - no array may claim more than `MAX_MSGPACK_ARRAY_LEN` entries and no map more than
   `MAX_MSGPACK_MAP_LEN`, so a header never reserves room for more (msgpack pre-sizes a
   container to the length its header claims);
-- ext types are refused on sight, except the timestamp (type -1), which msgpack decodes itself
-  and the check below refuses once the decode completes;
+- ext types are refused at their header: no ext may carry data (`max_ext_len=0`), so the unpacker
+  builds none, the timestamp (type -1) included; an empty ext of another type reaches
+  `_refuse_ext`, and an empty timestamp is malformed (#415, E17-R-06);
 - a value budget, `MAX_MSGPACK_VALUES` (`MAX_PREAUTH_MSGPACK_VALUES` until `auth_ok`), charges
   every completed container: the container, its elements, and each map key and value (before
   duplicate keys collapse). The decode ends once the budget is spent, so the decoded value, and
@@ -136,6 +137,7 @@ def decode_client_frame(raw: bytes, *, max_values: int = MAX_MSGPACK_VALUES) -> 
             raw=False,
             strict_map_key=True,
             ext_hook=_refuse_ext,
+            max_ext_len=0,  # E17-R-06: an ext with data is refused at its header, never built
             max_array_len=MAX_MSGPACK_ARRAY_LEN,
             max_map_len=MAX_MSGPACK_MAP_LEN,
             list_hook=budget.array,
