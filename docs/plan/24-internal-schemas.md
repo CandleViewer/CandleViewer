@@ -464,8 +464,9 @@ as §2.10's events do; a later shape change bumps it per §17.1. The envelope fi
 them), so no older payload needs a default to be read. `event_id` is a UUID7 stamped with
 `ts_event`'s millisecond. `GapEvent.ts_event` is `end_us` (the first live print after the window)
 and its `ts_ingest` that batch's receipt time. `BookStatus` and `FeedHealthEvent` are local
-observations with no exchange time: `ts_event` = `ts_ingest` = the producer's injected clock at the
-edge (for `BookStatus`, its `ts_us`).
+observations with no exchange record, so §1.4's rule against a synthesized `ts_event` (written for
+exchange records) does not apply: `ts_event` = `ts_ingest` = the producer's injected clock at the
+edge (for `BookStatus`, its `ts_us`), and their feed latency reads 0.
 
 **Replay namespace (E26-T03).** A replay session's re-emitted events use the same grammar with `env` =
 `replay-{session_id}`, the replay session's UUID in lower-case canonical form (`replay-` then 8-4-4-4-12
