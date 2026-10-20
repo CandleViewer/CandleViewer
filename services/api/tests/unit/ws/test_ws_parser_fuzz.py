@@ -31,6 +31,7 @@ import re
 import string
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Any, Final, cast
@@ -143,18 +144,23 @@ def _edit(text: str, edits: list[tuple[str, int, int]], pieces: tuple[str, ...])
     return text
 
 
-def _list(opt: topics.Opt, n: int) -> list[str]:
+def _list(opt: topics.Opt, n: int) -> list[Any]:
+    """`n` items of the kind `opt` holds, each one the registry takes: a list of them is refused for
+    its size alone."""
+    if opt.kind == "instances":
+        return [{"indicator": f"i{i}", "params": {"n": i}} for i in range(n)]
     item = {"uuids": "a1000000-0000-4000-8000-{:012x}", "symbols": "S{}USDT"}.get(opt.kind, "{}")
     return [item.format(i) for i in range(n)]
 
 
 def _past(opt: topics.Opt) -> list[Any]:
     """Values just past a cap the registry declares for `opt`: a list one over its largest size or
-    one under its smallest (the empty list, when that is one), an item over 64 characters, or a
-    number past its range."""
+    one under its smallest (the empty list, when that is one), of items it takes; a list of one
+    item no list kind takes (a string of 65 characters, an instance named with 33); or a number
+    past its range."""
     if opt.max_items is not None:
         under = [_list(opt, opt.min_items - 1)] if opt.min_items > 0 else []
-        return [_list(opt, opt.max_items + 1), *under, ["x" * 65]]
+        return [_list(opt, opt.max_items + 1), *under, ["x" * 65], [{"indicator": "a" * 33}]]
     return [b + d for b, d in ((opt.lo, -1), (opt.hi, 1)) if b is not None]
 
 
@@ -295,7 +301,8 @@ def _param_value(v: Any) -> bool:
 
 def _instance(v: Any) -> bool:
     """§13 `common.schema.json#/$defs/indicatorInstance`: an object with an `indicator`, a string of
-    `[a-z][a-z0-9_]{0,31}`, and `params`, at most 16 of them, and no other member."""
+    `[a-z][a-z0-9_]{0,31}`, and `params`, at most 16 of them, each named by a string, and no other
+    member."""
     if not isinstance(v, dict) or not set(v) <= _INSTANCE_KEYS:
         return False
     name, params = v.get("indicator"), v.get("params", {})
@@ -304,7 +311,7 @@ def _instance(v: Any) -> bool:
         and _INDICATOR.fullmatch(name) is not None
         and isinstance(params, dict)
         and len(params) <= _INSTANCE_PARAMS
-        and all(_param_value(p) for p in params.values())
+        and all(isinstance(k, str) and _param_value(x) for k, x in params.items())
     )
 
 
@@ -504,11 +511,16 @@ def _refused(family: str, opts: dict[str, Any]) -> str | None:
     return None
 
 
+def _taken_past_a_cap() -> list[tuple[str, dict[str, Any]]]:
+    """The values of `_PAST` that the registry does not refuse for their one option."""
+    return [(f, o) for f, o in _PAST if _refused(f, o) != next(iter(o))]
+
+
 def test_each_value_just_past_a_declared_cap_is_refused_alone_naming_its_option() -> None:
     """`_PAST` is what the options target draws one time in three: one option of one family just
     past a cap the registry declares for it, which must be refused for that option. Each list
     option with a minimum is probed with fewer items than that."""
-    assert [(f, o) for f, o in _PAST if _refused(f, o) != next(iter(o))] == []
+    assert _taken_past_a_cap() == []
     probed = [(f, k, len(v)) for f, o in _PAST for k, v in o.items() if isinstance(v, list)]
     wanted = [
         (name, key, opt.min_items)
@@ -518,6 +530,19 @@ def test_each_value_just_past_a_declared_cap_is_refused_alone_naming_its_option(
     ]
     assert wanted
     assert [w for w in wanted if not any(w[:2] == p[:2] and p[2] < w[2] for p in probed)] == []
+
+
+def test_the_cap_probe_finds_a_registry_that_takes_800_instances_where_it_declares_8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_PAST` is built when the suite loads, from the caps the registry declares then. A registry
+    that took 800 `instances` (changed in memory here) would take the probe's 9: they are real
+    instances, which the registry refuses for their count alone, where a list of strings is refused
+    for its shape at any count."""
+    assert _taken_past_a_cap() == []
+    options = topics.FAMILIES["indicators"].options
+    monkeypatch.setitem(options, "instances", replace(options["instances"], max_items=800))
+    assert [(f, len(o["instances"])) for f, o in _taken_past_a_cap()] == [("indicators", 9)]
 
 
 @pytest.mark.parametrize(
@@ -551,7 +576,7 @@ _BAD_INSTANCES: Final[list[Any]] = [
         {"indicator": name}
         for name in ("", "Rsi", "rsI", "_rsi", "1rsi", "r.si", "rsi\n", "a" * 33)
     ),
-    *({"indicator": "rsi", "params": p} for p in (None, [14], {**_PARAMS_16, "q": 1})),
+    *({"indicator": "rsi", "params": p} for p in (None, [14], {**_PARAMS_16, "q": 1}, {1: 14})),
     *({"indicator": "rsi", "params": {"n": n}} for n in (None, [14], {"a": 1}, "x" * 65)),
     *({"indicator": "rsi", "params": {"n": n}} for n in (float("nan"), float("inf"))),
 ]
