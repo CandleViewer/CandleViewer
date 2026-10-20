@@ -25,7 +25,9 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   floor. A refused blob never raises. A blob with no watermark has no replay point, so bars
   emitted after it could not be reproduced: it cold-starts the series too (quietly) and only
   sets the generation floor. A blob whose replay meets a print the builder refuses (SR-E12-15's
-  per-print cap) is refused too (`replay_refused`, #2762), else it could never be caught up.
+  per-print cap) or raises on is refused too (`replay_refused`, #2762), else it could never be
+  caught up. Its log line names the class of the builder's error (`error_type`), so a cap refusal
+  can be told from a builder defect.
 - **Generation (#2662).** A fresh builder restarts `index` at 0, so a cold start begins a new
   generation (epoch): `max(now_ms, floor + 1)`. `now_ms` is the set's injected UTC wall clock
   (`now_us // 1000`). `floor` is the highest generation known for the series: the one a blob
@@ -125,8 +127,8 @@ BuilderFactory = Callable[[BarSpec, str], BarBuilder]
 
 
 class _ReplayRefused(Exception):
-    """A restored series' builder refused a replayed print (SR-E12-15's per-print cap): its blob
-    cannot be caught up, so the series is built again cold (#2762)."""
+    """A restored series' builder refused a replayed print (SR-E12-15's per-print cap) or raised
+    on it: its blob cannot be caught up, so the series is built again cold (#2762)."""
 
 
 def _log() -> structlog.stdlib.BoundLogger:
@@ -388,10 +390,10 @@ class BarBuilderSet:
         string), or the per-user cap is meaningless. `None` is reserved for system consumers
         (recorder, rules) and skips only the per-user cap.
 
-        Returns once the series exists (#2762): a registrant that finds it still being built waits
-        for that build and raises what it raised; if the builder's registrant is cancelled, one
-        still waiting builds it. A registration that raises or is cancelled gives back its own
-        lease only, never another consumer's.
+        Returns once its series is built, or quarantined (#2762). A registrant that finds it still
+        being built waits for that build and raises what it raised; if the builder's registrant is
+        cancelled, one still waiting builds it. The lease is taken first; a registration that
+        raises or is cancelled gives back its own lease only, never another consumer's.
 
         Raises `SpecCapExceeded` (nothing changed), `BarSpecError` for an unbuildable kind, or
         `BarServiceStopping` once `stop()` has begun (a transient refusal).
@@ -433,9 +435,10 @@ class BarBuilderSet:
                 if all(e.spec.spec_hash != key[1] for e in lane.entries):
                     try:
                         entry = await self._build(spec, symbol, builder, lane)
-                    except _ReplayRefused:  # its blob cannot catch up: refused, built cold
+                    except _ReplayRefused as refusal:  # its blob cannot catch up: built cold
                         builder = self._factory(spec, symbol)
-                        entry = await self._build(spec, symbol, builder, lane, refused=True)
+                        by = type(refusal.__cause__).__name__  # the builder's own error
+                        entry = await self._build(spec, symbol, builder, lane, refused_by=by)
                     lane.entries = (*lane.entries, entry)
         except Exception as exc:
             outcome.set_result(exc)  # every registrant waiting on it raises it too
@@ -479,20 +482,22 @@ class BarBuilderSet:
 
     # -- restore / replay ------------------------------------------------------------------
     async def _build(
-        self, spec: BarSpec, symbol: str, builder: BarBuilder, lane: _Lane, *, refused: bool = False
+        self, spec: BarSpec, symbol: str, builder: BarBuilder, lane: _Lane, *, refused_by: str = ""
     ) -> _Entry:
         """Restore or cold-start a series. Runs under `lane.lock`, so no live trade is applied
         meanwhile. A restored series replays the tape after its watermark, then the lane's
         recent ring: trades the lane already applied that the async tape writer may not have
         landed yet. Both are deduped by the advancing watermark, so the series is exactly
         caught up to `lane.mark` before it joins (BI-5). The replay holds the lane lock; moving
-        it to a staged entry outside the lock is a follow-up. A replayed print the builder
-        refuses raises `_ReplayRefused`; the series is then built again with `refused`, which
-        reads no blob and cold-starts, its discard counted as `replay_refused` (#2762)."""
+        it to a staged entry outside the lock is a follow-up. A replayed print that the builder
+        refuses, or raises on, ends the restore with `_ReplayRefused`; the series is then built
+        again with `refused_by`, the class of the builder's error, which reads no blob and
+        cold-starts, its discard counted as `replay_refused` (#2762) and logged with that class.
+        An error of the tape itself still raises, and the blob stays."""
         t0 = time.perf_counter()
         h = spec.spec_hash
         key = (symbol, h)
-        if not refused:
+        if not refused_by:
             stored, reason = await self._store.load(symbol, h)
         else:  # the generation still rises above the blob's: `_remember` noted it on the restore
             stored, reason = None, "replay_refused"
@@ -514,7 +519,7 @@ class BarBuilderSet:
         if reason not in _QUIET_REASONS:
             # Not deleted: the cold start's floor record overwrites it below, and if that write
             # fails the refused blob stays on disk and keeps supplying its floor.
-            self._discarded(symbol, h, reason)
+            self._discarded(symbol, h, reason, refused_by)
         now = self._now()
         if stored is not None:
             generation = stored.generation  # a restored series keeps its epoch
@@ -575,11 +580,13 @@ class BarBuilderSet:
         bar_builder_cold_start_seconds.observe(time.perf_counter() - t0)
         return entry
 
-    def _discarded(self, symbol: str, spec_hash: str, reason: str) -> None:
-        """A blob (or a floor read from one) that could not be used: counted, logged, flagged."""
+    def _discarded(self, symbol: str, spec_hash: str, reason: str, error_type: str = "") -> None:
+        """A blob (or a floor read from one) that could not be used: counted, logged, flagged.
+        `error_type` is the class of the builder's error behind a `replay_refused`."""
         bars_blob_discarded_total.labels(reason=reason).inc()
+        cause = {"error_type": error_type} if error_type else {}
         _log().warning(
-            "bars_state_blob_discarded", symbol=symbol, spec_hash=spec_hash, reason=reason
+            "bars_state_blob_discarded", symbol=symbol, spec_hash=spec_hash, reason=reason, **cause
         )
         self._reasons.add(STATE_COLD_STARTED)
 
@@ -595,7 +602,7 @@ class BarBuilderSet:
         if not skip.covers(t.ts_event, t.trade_id):
             try:
                 ups = entry.builder.on_trade(t)
-            except BarsError as exc:  # a print it refuses (SR-E12-15): this restore cannot stand
+            except Exception as exc:  # refused (SR-E12-15) or failed, as on the live path
                 raise _ReplayRefused from exc
             await self._emit(entry, ups)
             skip.advance(t.ts_event, t.trade_id)

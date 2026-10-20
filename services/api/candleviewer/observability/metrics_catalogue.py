@@ -868,7 +868,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "blobs",
         ("reason",),
         "State blobs discarded on restore (corrupt, too_large, version, wrong_series, ...).",
-        "any = cold start; investigate disk",
+        "any = cold start; investigate disk (replay_refused: see the log's error_type)",
         _L,
         "E12",
         max_series=10,
