@@ -1,13 +1,18 @@
 # ADR-0038 — Desktop shell to backend: the backend address, the `app://` allowed origin, CORS and the CSRF token path (#3519)
 
-- Status: **proposed**. Decision deadline: before S0 (the C-12.9 amendment) or S1 (the contract slice)
-  merges, whichever is first; owner decisions D1 to D7 (below) are due by then
-  (`docs/plan/27-adrs/README.md:5`). Nothing here is binding yet, and this PR changes no product code, no
-  CONSTITUTION rule and no accepted ADR.
+- Status: **accepted (interim)** (2026-10-20): binding now, with the ratification still due named here
+  (`docs/plan/27-adrs/README.md:5`). The orchestrator took owner decisions D1 to D6 on #2701 (the decisions:
+  comment 6290430849) under the owner's delegation (comment 6284192190), and Amendment 2 records them. D1 and
+  D3 to D6 bind now. D2 is decided but not in force: it changes C-12.9, so it takes effect only when the S0
+  amendment (#3947, PR #3949) merges with the owner's explicit approval, and until then C-12.9 as written
+  governs and nothing here relaxes it. D7 is not decided: it waits for S2's follow-up measurement, with no
+  permission prompt by default until then. The ratification still due is S0's merge and D7's dated amendment,
+  and the owner may revoke any delegated decision on #2701.
 - Date: 2026-10-18
-- Deciders: Owner (`@basiltt`); the Security engineer through the `security-review` label on #3519 (C-10.2).
-  D2 amends C-12.9, so it also needs the C-16.1 approvers (S0). To consult before S6b: the owner of #2712
-  (SPA access-token client), on the shared backend-origin rule (decision 3e).
+- Deciders: Owner (`@basiltt`) through main-orchestrator (the delegation on #2701, Amendment 2); the Security
+  engineer through the `security-review` label on #3519 (C-10.2). D2 amends C-12.9, so it also needs the
+  C-16.1 approvers (S0). To consult before S6b: the owner of #2712 (SPA access-token client), on the shared
+  backend-origin rule (decision 3e).
 - Numbering note: 0031 is reserved by E45-K01 (`ADR-0031-resilience-and-chaos`, not on `main`) and 0037 is
   the last on `main`. The E42 admin model says the E42-T06 ADR takes the next free number when it is
   written (`docs/security/threat-models/e42-admin.md:61-64`), so this record takes 0038 and that one the
@@ -162,7 +167,7 @@ shell's session (2d), so `SameSite` has no other site to hold back for the deskt
 credentialed request through the most privileged process, and D would hand renderer script a
 credential that outlives the page.
 
-## Decision outcome (proposed): option A
+## Decision outcome: option A (status and decisions in Amendment 2)
 
 ### 1. The backend address: how the page learns it and how it is validated
 
@@ -761,6 +766,24 @@ A requirement S2 found, outside A1 to A11:
   origin.
 - Proposed owner: S5, which owns the resolved endpoint, the CSP built from it and the hardening gate's
   rules. S6a's web side changes only if the approach S5 takes edits `index.html`.
+
+## Amendment 2 (2026-10-20, #3519: owner decisions D1 to D6; D7 deferred)
+
+The orchestrator took these on #2701 (the decisions: comment 6290430849) under the owner's delegation (comment
+6284192190); the owner may revoke any of them with `revoke` there. Section 7 keeps the questions and
+recommendations as written. Each row is the decisions comment's answer; what it adds is cross-references (sections, the
+slice table, issue and PR numbers) and, in D3, the conditions of BC-S3 and of section 7's recommendation and the
+scope of Amendment 1's measurement. S1 (#3712) merged after the decisions were taken and before this record.
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **Loopback only** for packaged builds. A tailnet `https` host would be a later amendment to this record, if ever needed.                                                                                                                                                                                                                                                                                                      |
+| D2  | **Yes**: `SameSite=None` for exactly `app://candleviewer`'s two cookies (4b). It amends C-12.9 under C-16.1 as slice S0 (#3947, PR #3949), which merges only with the owner's explicit approval on that PR; S4 waits for it (slice table).                                                                                                                                                                                    |
+| D3  | **No TLS on loopback.** S2's probe (#3721, recorded in Amendment 1 by #3720) found `Secure` cookies and loopback requests work over plain `http://127.0.0.1` (Linux CI runner only), so TLS is not required for them. The residual (BC-S3) is accepted under SR-049 on a single-user machine, the sign-in credentials and the forwarding case included, and revisited with D1; it is RR-27 in `04-security-program.md` §16.1. |
+| D4  | **Yes**: the dev compose default lists `app://candleviewer`; a production operator lists it explicitly.                                                                                                                                                                                                                                                                                                                       |
+| D5  | **No**: packaged builds do not accept `localhost` (1b).                                                                                                                                                                                                                                                                                                                                                                       |
+| D6  | **Accepted**: S9b (the packaged-launch proof) runs nightly and on dispatch, and S9a runs on every PR (section 6).                                                                                                                                                                                                                                                                                                             |
+| D7  | **Deferred, not decided**: decide after S2's follow-up measurement; no permission prompt by default until then. Revisit if S9b (the packaged-launch proof) shows a local-network permission dialog. The decisions comment names S9a as the observer, but S9a is the backend half and cannot see a dialog (section 6), so the coordinator ruled S9b.                                                                           |
 
 ## Follow-ups (not this ticket's scope)
 
