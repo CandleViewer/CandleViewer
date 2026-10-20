@@ -18,13 +18,19 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import tools.ci.check_semgrep_rule_tests as checker
 from tools.ci.check_semgrep_rule_tests import (
     FIXTURES_DIR,
     REPO_ROOT,
+    RULES_DIR,
     TESTS_DIR,
     _staged_relpath,
+    check_tree,
     expected_lines,
     find_fixture,
+    find_fixture_tree,
+    tree_files,
+    tree_lines,
 )
 
 
@@ -138,3 +144,149 @@ def test_bare_create_task_rule_excludes_only_tests_and_the_module_that_implement
         "**/conftest.py",
         "**/observability/context.py",
     ]
+
+
+# E42-X03 (AC-ADM-14): a fixture tree, `.semgrep/tests/<id>/`, staged at its repo paths.
+_RULE = "cv-example"
+
+
+def _tree(root: Path, files: dict[str, str]) -> Path:
+    tree = root / _RULE
+    for rel, text in files.items():
+        path = tree / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return tree
+
+
+def test_tree_files_keep_their_repo_paths_and_skip_bytecode(tmp_path: Path) -> None:
+    tree = _tree(
+        tmp_path,
+        {
+            "services/api/candleviewer/auth/a.py": "x = 1  # ok: cv-example\n",
+            "services/api/candleviewer/oms/b.py": "y = 2  # ruleid: cv-example\n",
+            "services/api/candleviewer/oms/__pycache__/b.cpython-312.pyc": "",
+        },
+    )
+    staged = [str(rel) for _, rel in tree_files(tree)]
+    assert staged == [
+        "services/api/candleviewer/auth/a.py",
+        "services/api/candleviewer/oms/b.py",
+    ]
+    assert all(not Path(rel).is_absolute() and ".." not in Path(rel).parts for rel in staged)
+
+
+def test_tree_files_refuse_a_symlink(tmp_path: Path) -> None:
+    tree = _tree(tmp_path, {"services/api/candleviewer/auth/a.py": "x = 1  # ok: cv-example\n"})
+    (tree / "services/api/candleviewer/auth/link.py").symlink_to(tmp_path / "elsewhere.py")
+    with pytest.raises(ValueError, match="symlink"):
+        tree_files(tree)
+
+
+def test_find_fixture_tree_finds_the_rules_directory_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(checker, "TESTS_DIR", tmp_path)
+    assert find_fixture_tree(_RULE) is None
+    (tmp_path / f"{_RULE}.py").write_text("", encoding="utf-8")
+    assert find_fixture_tree(_RULE) is None  # a single-file fixture is not a tree
+    (tmp_path / _RULE).mkdir()
+    assert find_fixture_tree(_RULE) == tmp_path / _RULE
+
+
+def test_tree_lines_scans_every_file_at_its_repo_path_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = _tree(
+        tmp_path,
+        {
+            "services/api/candleviewer/auth/a.py": "a()  # ruleid: cv-example\n",
+            "services/api/candleviewer/admin/flags/b.py": "a()  # ok: cv-example\n",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def fake_scan(rule_yaml: Path, targets: list[str], cwd: str) -> list[dict[str, object]]:
+        calls.append(list(targets))
+        for target in targets:  # each file is staged, unchanged, at its repo path under cwd
+            assert (Path(cwd) / target).read_text(encoding="utf-8") == (tree / target).read_text(
+                encoding="utf-8"
+            )
+        return [{"path": "services/api/candleviewer/auth/a.py", "start": {"line": 1}}]
+
+    monkeypatch.setattr(checker, "_scan", fake_scan)
+    found = tree_lines(tmp_path / "rule.yml", tree_files(tree))
+    assert len(calls) == 1
+    assert found == {
+        "services/api/candleviewer/admin/flags/b.py": set(),
+        "services/api/candleviewer/auth/a.py": {1},
+    }
+
+
+def _check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    files: dict[str, str],
+    fired: dict[str, set[int]],
+) -> list[str]:
+    tree = _tree(tmp_path, files)
+
+    def fake_lines(rule_yaml: Path, staged: object) -> dict[str, set[int]]:
+        return {rel: set() for rel in files} | fired
+
+    monkeypatch.setattr(checker, "tree_lines", fake_lines)
+    return check_tree(tmp_path / "rule.yml", _RULE, tree)
+
+
+_AUTH, _FLAGS = "services/api/candleviewer/auth/a.py", "services/api/candleviewer/admin/flags/b.py"
+_FILES = {
+    _AUTH: "a()  # ruleid: cv-example\nb()  # ok: cv-example\n",
+    _FLAGS: "a()  # ok: cv-example\n",
+}
+
+
+def test_check_tree_passes_when_every_file_fires_where_marked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _check(tmp_path, monkeypatch, _FILES, {_AUTH: {1}}) == []
+
+
+def test_check_tree_names_the_file_of_a_missed_line_and_of_a_false_positive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failures = _check(tmp_path, monkeypatch, _FILES, {_AUTH: set(), _FLAGS: {1}})
+    assert failures == [
+        f"cv-example: {_FLAGS}: fired on 'ok' lines [1]",
+        f"cv-example: {_AUTH}: expected to fire but did not on [1]",
+    ]
+
+
+def test_check_tree_refuses_a_finding_outside_the_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stray = "services/api/candleviewer/oms/c.py"
+    failures = _check(tmp_path, monkeypatch, _FILES, {_AUTH: {1}, stray: {3}})
+    assert failures == [f"cv-example: fired on {stray}, which the tree does not hold"]
+
+
+def test_check_tree_needs_a_ruleid_line_and_a_marker_in_every_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    negative_only = {_FLAGS: "a()  # ok: cv-example\n"}
+    (only,) = _check(tmp_path / "one", monkeypatch, negative_only, {})
+    assert "has no '# ruleid: cv-example' lines" in only
+    unmarked = _FILES | {"services/api/candleviewer/risk/c.py": "c()\n"}
+    failures = _check(tmp_path / "two", monkeypatch, unmarked, {_AUTH: {1}})
+    assert failures == [
+        "cv-example: services/api/candleviewer/risk/c.py has no '# ruleid:' or '# ok:' line, "
+        "so it tests nothing"
+    ]
+
+
+def test_every_fixture_tree_belongs_to_a_rule_that_has_no_other_fixture() -> None:
+    trees = sorted(p for p in TESTS_DIR.glob("cv-*") if p.is_dir())
+    assert trees, "the admin rules (E42-X03) keep their fixtures as trees"
+    for tree in trees:
+        assert (RULES_DIR / f"{tree.name}.yml").is_file(), f"{tree.name}: no rule of that id"
+        assert not find_fixture(tree.name).exists(), f"{tree.name}: a tree and a single fixture"
+        assert tree_files(tree), f"{tree.name}: an empty fixture tree tests nothing"

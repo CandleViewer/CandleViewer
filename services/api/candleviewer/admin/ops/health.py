@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.errors import OpsNotWired, OpsUnavailable
 from candleviewer.observability.health_probes import HealthSnapshot
 
@@ -46,6 +47,7 @@ class AdminHealthService:
         self._source, self._build = source, (version, git_sha, environment)
         self._monotonic, self._started = monotonic, monotonic()
 
+    @audit_exempt("read")
     def report(self) -> HealthReading:
         if self._source is None:
             raise OpsNotWired("health: no registry wired")

@@ -34,6 +34,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.flags.catalogue import MAINTENANCE_KEEP_RECORDER, MAINTENANCE_MODE
 from candleviewer.admin.flags.metrics import maintenance_mode_gauge
 from candleviewer.admin.flags.resolver import StoredFlag
@@ -68,13 +69,16 @@ class MaintenanceGate:
         maintenance_mode_gauge.set(1)
 
     @property
+    @audit_exempt("read")
     def engaged(self) -> bool:
         return self._engaged
 
+    @audit_exempt("caller_audits")
     def set(self, engaged: bool) -> None:
         self._engaged = engaged
         maintenance_mode_gauge.set(1 if engaged else 0)
 
+    @audit_exempt("read")
     def refusal(self, account_id: UUID | None = None) -> OrderEntryRefusal | None:
         """The `OrderEntryCheck` adapter: `reason="maintenance"` while engaged, whichever flag
         engaged it (maintenance mode, the order kill switch, or an unknown state)."""
@@ -126,6 +130,7 @@ class MaintenanceController:
     def _apply(self) -> None:
         self.gate.set(any(value is not False for value in self._values.values()))
 
+    @audit_exempt("caller_audits")
     async def gate_hook(self, key: str, before: StoredFlag | None, after: StoredFlag) -> None:
         if key in self._values:  # no await: applied before the write returns
             self._generation += 1
@@ -134,11 +139,13 @@ class MaintenanceController:
             if key == MAINTENANCE_MODE:  # the write announces its own transition
                 self._announced = after.value is True
 
+    @audit_exempt("caller_audits")
     async def effects_hook(self, key: str, before: StoredFlag | None, after: StoredFlag) -> None:
         if key == MAINTENANCE_MODE:
             async with self._lock:
                 await self._effects(after.value is True)
 
+    @audited("maintenance.enabled", "maintenance.disabled")
     async def refresh(self) -> None:
         async with self._lock:
             generation = self._generation
@@ -207,6 +214,7 @@ class MaintenanceController:
                 await self._recorder.pause("maintenance.enabled")
             self._recorder_paused = True
 
+    @audited("maintenance.enabled", "maintenance.disabled")
     async def run(self) -> None:
         """Re-read both flags every `REFRESH_S` until cancelled (a supervised task)."""
         while True:

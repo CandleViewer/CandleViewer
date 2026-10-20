@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from typing import Final, Literal
 from uuid import UUID, uuid4
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.errors import AdminError
 from candleviewer.admin.overview.fanout import utc_now
 
@@ -58,6 +59,7 @@ class DownloadLink:
     spent_at: datetime | None = None
     reuse: Reuse = "unrecorded"
 
+    @audit_exempt("read")
     def ended(self, now: datetime) -> bool:
         return self.spent_at is not None or now >= self.expires_at
 
@@ -102,6 +104,7 @@ class DownloadLinks:
         #: By link id, in issue order: the token's SHA-256 and the link.
         self._held: dict[UUID, tuple[bytes, DownloadLink]] = {}
 
+    @audit_exempt("caller_audits")
     def issue(
         self, *, user_id: UUID, session_id: UUID, backup_id: UUID
     ) -> tuple[str, DownloadLink]:
@@ -117,15 +120,18 @@ class DownloadLinks:
         self._held[link.link_id] = (_digest(token), link)
         return token, link
 
+    @audit_exempt("caller_audits")
     def discard(self, link_id: UUID) -> None:
         """Forget a link whose `issued` record could not be written: its token was never sent."""
         self._held.pop(link_id, None)
 
+    @audit_exempt("caller_audits")
     def consume(self, token: str, *, backup_id: UUID, user_id: UUID | None) -> Consumed:
         """`lookup`, then `spend` the live link it finds."""
         found = self.lookup(token, backup_id=backup_id, user_id=user_id)
         return self.spend(found.link.link_id) if isinstance(found, LinkLive) else found
 
+    @audit_exempt("read")
     def lookup(self, token: str, *, backup_id: UUID, user_id: UUID | None) -> Found:
         """The link `token` names for `backup_id`, spending nothing; `user_id` is the bearer's
         user, or None without a bearer (the token alone then names its user)."""
@@ -141,6 +147,7 @@ class DownloadLinks:
             return LinkUnknown()
         return LinkGone(found) if found.ended(now) else LinkLive(found)
 
+    @audit_exempt("caller_audits")
     def spend(self, link_id: UUID) -> Consumed:
         """Spend the live link `link_id` once (`LinkSpent`); else what is held of it now."""
         now, held = self._now(), self._held.get(link_id)
@@ -153,6 +160,7 @@ class DownloadLinks:
         self._held[link_id] = (digest, spent)
         return LinkSpent(spent)
 
+    @audit_exempt("caller_audits")
     def claim_reuse(self, link_id: UUID) -> bool:
         """Whether this presentation of the spent link writes its `link_reused` record: once,
         until `settle_reuse`; a link never spent, or forgotten, has none."""
@@ -162,6 +170,7 @@ class DownloadLinks:
         self._held[link_id] = (held[0], replace(held[1], reuse="writing"))
         return True
 
+    @audit_exempt("caller_audits")
     def settle_reuse(self, link_id: UUID, *, written: bool) -> None:
         """The claimed record written (its place taken), or not (left to the next)."""
         held = self._held.get(link_id)

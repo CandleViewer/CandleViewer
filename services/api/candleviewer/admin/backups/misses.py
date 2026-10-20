@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.backups.limits import MISSES_PER_MINUTE
 
 SOURCES_TRACKED: Final = 1024
@@ -45,6 +46,7 @@ class SourceMisses:
         self._clock, self._per_minute, self._tracked = clock, per_minute, tracked
         self._sources: OrderedDict[str, _Source] = OrderedDict()
 
+    @audit_exempt("caller_audits")
     def miss(self, source: str) -> int | None:
         """Count one miss from `source`: None within its minute's budget (`404`), else the whole
         seconds until the minute has room (`429`)."""
@@ -58,6 +60,7 @@ class SourceMisses:
         stamps.append(now)
         return math.ceil(stamps[0] + _MINUTE_S - now) if full else None
 
+    @audit_exempt("caller_audits")
     def claim_record(self, source: str) -> bool:
         """Whether this refusal writes `source`'s one record of the minute: once, until settled."""
         state = self._sources.get(source)
@@ -68,6 +71,7 @@ class SourceMisses:
         state.writing = True
         return True
 
+    @audit_exempt("caller_audits")
     def settle_record(self, source: str, *, written: bool) -> None:
         state = self._sources.get(source)
         if state is not None:

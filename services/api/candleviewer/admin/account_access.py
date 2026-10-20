@@ -22,6 +22,7 @@ from typing import Any, Final, Literal, Protocol
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
 from candleviewer.auth.step_up import PositionStateProvider
 from candleviewer.observability.context import current_request_id, spawn
@@ -109,6 +110,7 @@ class AccountAccessService:
         self._drain_timeout_s = drain_timeout_s
         self._pushes: set[asyncio.Task[None]] = set()  # tracked: see `drain`
 
+    @audited("users.access_change", "users.access_change_failed")
     async def replace(
         self,
         user_id: uuid.UUID,
@@ -164,6 +166,7 @@ class AccountAccessService:
         else:
             _pushed(user_id, "pushed")
 
+    @audit_exempt("lifecycle")
     async def drain(self) -> int:
         """Shutdown: wait up to `drain_timeout_s` for the pushes in flight; the WS registry's
         bounds end each, but a hung one must not hold the shutdown (C-2.18). Returns how many are

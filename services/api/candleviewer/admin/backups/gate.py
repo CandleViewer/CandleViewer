@@ -32,6 +32,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Final, Literal
 from uuid import UUID
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.backups.limits import ADMIT_WAIT_S, JOB_DEADLINE_S
 from candleviewer.admin.backups.ports import JobDone, JobKind, JobRunner, JobWork, Progress
 from candleviewer.admin.errors import AdminError, OpsUnavailable
@@ -70,19 +71,24 @@ class BackupJobGate:
         #: Keyed by a token per job, so a job's settle never takes a later job's entry.
         self._running: dict[object, tuple[JobKind, UUID]] = {}
 
+    @audit_exempt("read")
     def active(self) -> list[tuple[JobKind, UUID]]:
         return list(self._running.values())
 
+    @audit_exempt("caller_audits")
     def admit(self, kind: JobKind, backup_id: UUID) -> AbstractAsyncContextManager[JobAdmission]:
         return self._held(JobAdmission(self, kind, backup_id))
 
+    @audit_exempt("caller_audits")
     def admit_delete(self, backup_id: UUID) -> AbstractAsyncContextManager[Admission]:
         return self._held(Admission(self, "delete", backup_id))
 
+    @audit_exempt("caller_audits")
     def admit_link(self, backup_id: UUID) -> AbstractAsyncContextManager[Admission]:
         return self._held(Admission(self, "link", backup_id))
 
     @asynccontextmanager
+    @audit_exempt("caller_audits")
     async def serialized(self, wait_s: float | None = None) -> AsyncIterator[None]:
         """The lock alone, for a write no admission may interleave with (SR-BK3-01: a
         verification's outcome against a delete's count and mark): no check and no entry, and
@@ -121,6 +127,7 @@ class Admission:
     def __init__(self, gate: BackupJobGate, kind: JobKind | _NoJob, on: UUID) -> None:
         self._gate, self._kind, self._on, self.open = gate, kind, on, True
 
+    @audit_exempt("read")
     def check(self) -> None:
         if not self.open:
             raise RuntimeError("the admission lock was released")
@@ -132,6 +139,7 @@ class Admission:
 class JobAdmission(Admission):
     _kind: JobKind
 
+    @audit_exempt("caller_audits")
     def submit(self, runner: JobRunner, job_id: UUID, work: JobWork, on_done: JobDone) -> None:
         self.check()
         deadline = self._gate._deadlines_s[self._kind]  # first: a kind with none registers nothing

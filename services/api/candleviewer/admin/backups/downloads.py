@@ -34,6 +34,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.backups.artefact_port import ArtefactReader, OpenArtefact
 from candleviewer.admin.backups.catalogue import BackupCatalogue
 from candleviewer.admin.backups.gate import BackupJobGate
@@ -251,6 +252,7 @@ class BackupDownloads:
         self._fetch, self._fetch_budget_s = fetch, fetch_budget_s
         self._misses = SourceMisses() if misses is None else misses
 
+    @audit_exempt("wiring")
     def with_fetch(self, fetch: FetchPorts) -> BackupDownloads:
         """This service with the fetch's ports: the links, catalogue, artefacts, budgets and the
         per-source misses shared, so an injected one (its clock) carries through."""
@@ -260,6 +262,7 @@ class BackupDownloads:
             fetch=fetch, fetch_budget_s=self._fetch_budget_s, misses=self._misses,
         )  # fmt: skip
 
+    @audited("backup.downloaded")
     async def issue(
         self, backup_id: UUID, who: AuditPrincipal, challenge_id: UUID, write_ahead: WriteAhead
     ) -> tuple[str, DownloadLink]:
@@ -278,6 +281,7 @@ class BackupDownloads:
                 await self._record(write_ahead, failed)
             raise
 
+    @audited("backup.downloaded")
     async def audit_issue(self, who: AuditPrincipal, record: LinkRecord) -> None:
         """`backup.downloaded` at `stage: issued`, severity `error`: the spent grant's
         `challenge_id`, then the link (`link_id`, expiry) or the refusal (`reason`)."""
@@ -293,6 +297,7 @@ class BackupDownloads:
             reason=record.reason, after_state=state, request_id=who.request_id,
         )  # fmt: skip
 
+    @audited("backup.downloaded")
     async def fetch(self, ask: Fetch, write_ahead: ServeWriteAhead) -> Fetched:
         """`downloadBackup` for `ask`, in the contract's order (the module docstring)."""
         ports = self._fetch
@@ -315,6 +320,7 @@ class BackupDownloads:
         ports.hourly.record_start(user)  # every spend counts, a refused fetch's too
         return await self._serve(ports, ask, spent.link, write_ahead)
 
+    @audited("backup.downloaded")
     async def audit_serve(self, record: ServeRecord) -> None:
         """`backup.downloaded` at `stage: served`, severity `error`: the `link_id`, and `bearer`
         `matched` (the issuing user's bearer came: its session and name) or `absent`; with no

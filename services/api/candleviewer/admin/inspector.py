@@ -18,6 +18,7 @@ from functools import cached_property
 from typing import Any, Final, Protocol
 from uuid import UUID
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.overview.fanout import Degraded, SliceFanOut, SliceResult, SourceUnavailable
 from candleviewer.admin.overview.slices import AdminSlice
 from candleviewer.settings import Environment
@@ -73,6 +74,7 @@ class Machine:
     deferred_depth: int | None
 
     @property
+    @audit_exempt("read")
     def position(self) -> Position:
         return (self.row.machine_kind, self.key or "", self.row.environment)
 
@@ -135,10 +137,12 @@ class StatechartInspector:
         self._store, self._keys, self._registry = store, keys, registry
 
     @cached_property
+    @audit_exempt("read")
     def registry(self) -> Registry:
         """The given registry, else one loaded on first use (validating 20 charts takes ~0.1 s)."""
         return self._registry or Registry()
 
+    @audit_exempt("read")
     def export(self, kind: str) -> dict[str, Any]:
         """`StatechartExport` of a registered chart; `MachineNotFoundError` for any other kind."""
         chart = self.registry.get(kind)
@@ -148,6 +152,7 @@ class StatechartInspector:
             "stately": export_stately(chart),
         }
 
+    @audit_exempt("read")
     async def listing(
         self,
         visible: Visible,

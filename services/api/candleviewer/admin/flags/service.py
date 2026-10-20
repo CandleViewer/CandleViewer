@@ -28,6 +28,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.flags.metrics import flag_evaluations_total, unreadable_overrides_total
 from candleviewer.admin.flags.registry import FlagRegistry, FlagSpec, FlagValue, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag, override_matches, resolve
@@ -65,10 +66,12 @@ class ResolvedFlag:
     stored: StoredFlag | None
 
     @property
+    @audit_exempt("read")
     def unreadable(self) -> bool:
         """This flag's stored row is unreadable (D1b): it alone fails closed and stays writable."""
         return self.stored is not None and not value_matches(self.spec, self.stored.value)
 
+    @audit_exempt("read")
     def members(self) -> dict[str, object]:
         """The `FeatureFlag` members the API sends. A store outage omits `default_value`,
         `overrides`, `updated_at` and `updated_by` (D1a); an unreadable row omits
@@ -117,6 +120,7 @@ class FlagService:
         self._generation = 0
         self._inflight: asyncio.Task[None] | None = None
 
+    @audit_exempt("lifecycle")
     async def start(self) -> None:
         """Log the registry and give every flag a stored row; the registry itself was already
         validated when it was built, so an unsafe definition never gets this far. `ensure` is
@@ -129,12 +133,14 @@ class FlagService:
         except Exception as exc:  # incl. TimeoutError; CancelledError still propagates
             logger().warning("feature_flag_rows_not_ensured", error=type(exc).__name__)
 
+    @audit_exempt("read")
     def invalidate(self) -> None:
         """Drop the snapshot; the next read reloads, and an in-flight load is not installed."""
         self._generation += 1
         self._snapshot = None
         self._loaded_at = float("-inf")
 
+    @audit_exempt("read")
     async def stored(self, spec: FlagSpec) -> StoredFlag | None:
         """The stored row for `spec`, or `None` while the store cannot be read (fail closed)."""
         return _row(await self._rows(KILLSWITCH_TTL_S if spec.is_killswitch else TTL_S), spec)
@@ -173,6 +179,7 @@ class FlagService:
         if generation == self._generation:
             self._snapshot, self._loaded_at = snapshot, started
 
+    @audit_exempt("read")
     async def value(
         self, key: str, *, user_id: UUID | None = None, roles: frozenset[str] = frozenset()
     ) -> FlagValue:
@@ -182,6 +189,7 @@ class FlagService:
         spec = self.registry[key]
         return self.resolved(spec, await self.stored(spec), user_id, roles).value
 
+    @audit_exempt("read")
     async def visible(self, user_id: UUID, roles: frozenset[str]) -> FlagList:
         """Every flag the caller may see (`FlagSpec.visible_to` its roles), resolved for the
         caller from one snapshot no older than the kill-switch bound."""
@@ -193,6 +201,7 @@ class FlagService:
         ]
         return FlagList(Resolution.FAIL_CLOSED if rows is None else Resolution.STORED, tuple(items))
 
+    @audit_exempt("read")
     def resolved(
         self, spec: FlagSpec, row: StoredFlag | None, user_id: UUID | None, roles: frozenset[str]
     ) -> ResolvedFlag:

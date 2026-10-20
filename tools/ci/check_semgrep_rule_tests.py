@@ -11,6 +11,12 @@ fixture contract using `semgrep scan --json`, which reports accurate,
 directly-checkable line numbers, and is what CI/`make security` should call
 instead of `semgrep --test`.
 
+A rule's fixture is one file, or a tree (E42-X03, AC-ADM-14): `.semgrep/tests/<id>/` holds files
+at the repo paths they stand for, such as `<id>/services/api/candleviewer/auth/x.py`. A tree is
+staged at those paths and scanned once, so a path-scoped rule meets its fixtures where its
+`paths` look, one package at a time, and a tree can hold a file with PEP 695 generics beside one
+without: Semgrep parses such a file another way, so each needs its own (#3549).
+
 Usage: python tools/ci/check_semgrep_rule_tests.py
 Exits non-zero (and prints a diagnostic) if any fixture's expected lines
 do not match what the rule actually fires on.
@@ -24,7 +30,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from collections.abc import Sequence
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RULES_DIR = REPO_ROOT / ".semgrep"
@@ -82,43 +90,116 @@ def find_fixture(rule_id: str) -> Path:
     return TESTS_DIR / f"{rule_id}.py"
 
 
+def find_fixture_tree(rule_id: str) -> Path | None:
+    """`.semgrep/tests/<rule_id>/` when the rule's fixture is a tree, else None."""
+    candidate = TESTS_DIR / rule_id
+    return candidate if candidate.is_dir() else None
+
+
+def tree_files(tree: Path) -> list[tuple[Path, PurePosixPath]]:
+    """Each file of `tree` with the repo path it stands for: its path under `tree`, relative and
+    never climbing out (a symlink is refused: it could stage a file from anywhere)."""
+    files: list[tuple[Path, PurePosixPath]] = []
+    for path in sorted(tree.rglob("*")):
+        if path.is_symlink():
+            raise ValueError(f"{path}: a fixture tree holds no symlink")
+        if path.is_dir() or "__pycache__" in path.parts:
+            continue
+        if not path.is_file():
+            raise ValueError(f"{path}: a fixture tree holds regular files only")
+        files.append((path, PurePosixPath(path.relative_to(tree).as_posix())))
+    return files
+
+
+def _scan(rule_yaml: Path, targets: Sequence[str], cwd: str) -> list[dict[str, Any]]:
+    """The rule's results on `targets` (paths relative to `cwd`).
+
+    `--no-git-ignore`: the temp tree is not a git checkout, and a fixture name that happens to
+    match a global gitignore pattern must still be scanned."""
+    proc = subprocess.run(
+        [
+            "semgrep",
+            "scan",
+            "--config",
+            str(rule_yaml.resolve()),
+            "--json",
+            "--quiet",
+            "--no-git-ignore",
+            *targets,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        cwd=cwd,
+    )
+    if proc.returncode not in (0, 1):
+        raise RuntimeError(
+            f"semgrep scan failed (exit {proc.returncode}) on {', '.join(targets)}:\n"
+            f"{proc.stdout}\n{proc.stderr}"
+        )
+    data = json.loads(proc.stdout or "{}")
+    results: list[dict[str, Any]] = data.get("results", [])
+    return results
+
+
 def actual_lines(rule_yaml: Path, fixture: Path) -> set[int]:
     # Fixtures live under .semgrepignore'd paths (.semgrep/tests/, .semgrep-fixtures/) so the
     # product scan never reports their intentional violations. Semgrep's ignore handling varies by
     # version (1.99, CI's pin before #3549, ignored the file even with --include), so the checker
     # copies the fixture into a temp tree with no .semgrepignore and scans that copy; line
     # numbers are unchanged.
-    # `--no-git-ignore`: the temp tree is not a git checkout, and a fixture name that happens to
-    # match a global gitignore pattern must still be scanned.
     with tempfile.TemporaryDirectory(prefix="cv-semgrep-fixture-") as tmp:
         staged = Path(tmp) / _staged_relpath(fixture)
         staged.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(fixture, staged)
-        proc = subprocess.run(
-            [
-                "semgrep",
-                "scan",
-                "--config",
-                str(rule_yaml.resolve()),
-                "--json",
-                "--quiet",
-                "--no-git-ignore",
-                str(staged),
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            cwd=tmp,
-        )
-    if proc.returncode not in (0, 1):
-        raise RuntimeError(
-            f"semgrep scan failed (exit {proc.returncode}) on {fixture}:\n"
-            f"{proc.stdout}\n{proc.stderr}"
-        )
-    data = json.loads(proc.stdout or "{}")
-    return {r["start"]["line"] for r in data.get("results", [])}
+        results = _scan(rule_yaml, [str(staged)], tmp)
+    return {r["start"]["line"] for r in results}
+
+
+def tree_lines(rule_yaml: Path, files: Sequence[tuple[Path, PurePosixPath]]) -> dict[str, set[int]]:
+    """The lines the rule fires on in each file of a tree, staged at its repo path in one temp
+    tree and scanned once; keyed by that path."""
+    found: dict[str, set[int]] = {str(rel): set() for _, rel in files}
+    with tempfile.TemporaryDirectory(prefix="cv-semgrep-fixture-") as tmp:
+        for source, rel in files:
+            staged = Path(tmp, *rel.parts)
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, staged)
+        results = _scan(rule_yaml, [str(rel) for _, rel in files], tmp)
+    for result in results:
+        path = PurePosixPath(str(result["path"])).as_posix()
+        found.setdefault(path, set()).add(result["start"]["line"])
+    return found
+
+
+def check_tree(rule_yaml: Path, rule_id: str, tree: Path) -> list[str]:
+    """`rule_id`'s failures on its fixture tree: no `ruleid` line anywhere, a file with neither
+    marker (it tests nothing), a line missed, a false positive, or a finding outside the tree."""
+    files = tree_files(tree)
+    expected = {str(rel): expected_lines(source, rule_id) for source, rel in files}
+    if not any(fire for fire, _ in expected.values()):
+        return [
+            f"{rule_id}: fixture tree has no '# ruleid: {rule_id}' lines -- "
+            "a rule that never fires on its own fixture is untested"
+        ]
+    failures = [
+        f"{rule_id}: {path} has no '# ruleid:' or '# ok:' line, so it tests nothing"
+        for path, (fire, clean) in sorted(expected.items())
+        if not fire and not clean
+    ]
+    actual = tree_lines(rule_yaml, files)
+    for path, lines in sorted(actual.items()):
+        if path not in expected:
+            failures.append(f"{rule_id}: fired on {path}, which the tree does not hold")
+            continue
+        must_fire, must_not_fire = expected[path]
+        if missed := must_fire - lines:
+            failures.append(f"{rule_id}: {path}: expected to fire but did not on {sorted(missed)}")
+        if incorrect := lines & must_not_fire:
+            failures.append(f"{rule_id}: {path}: fired on 'ok' lines {sorted(incorrect)}")
+    return failures
 
 
 def main() -> int:
@@ -129,12 +210,19 @@ def main() -> int:
         return 1
     for rule_yaml in rule_yamls:
         rule_id = rule_yaml.stem
+        tree = find_fixture_tree(rule_id)
+        if tree is not None:
+            found = check_tree(rule_yaml, rule_id, tree)
+            failures += found
+            if not found:
+                print(f"OK   {rule_id}: fixture tree {tree.relative_to(REPO_ROOT)}")
+            continue
         fixture = find_fixture(rule_id)
         if not fixture.exists():
             wanted = " or ".join(
                 f"{d.relative_to(REPO_ROOT)}/{rule_id}{s}" for d, s in FIXTURE_LOCATIONS
             )
-            failures.append(f"{rule_id}: missing fixture ({wanted})")
+            failures.append(f"{rule_id}: missing fixture ({wanted}, or a tree {rule_id}/)")
             continue
         must_fire, must_not_fire = expected_lines(fixture, rule_id)
         if not must_fire:

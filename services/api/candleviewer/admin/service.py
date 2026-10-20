@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.errors import KekRewrapError
 from candleviewer.admin.models import KekRewrapResult
 from candleviewer.observability.health import HealthReport, HealthStatus
@@ -28,19 +29,31 @@ class AdminService:
         #: E27-T02 / C-3.2: M2 metadata only (verify KEK, counts-only re-wrap).
         self.secrets = secrets
 
+    @audit_exempt("lifecycle")
     async def start(self, ctx: AppContext) -> None:
         """Start the module. No-op until the owning epic implements it."""
         self._started = True
 
+    @audit_exempt("lifecycle")
     async def stop(self, grace_s: float) -> None:
         """Stop the module within `grace_s` seconds. No-op scaffold."""
         self._started = False
 
+    @audit_exempt("read")
     def health(self) -> HealthReport:
         """Report module health. Scaffold modules report `ok` when constructed."""
         status = HealthStatus.OK if self._started else HealthStatus.STOPPED
         return HealthReport(module="", status=status, detail="scaffold module — no real logic yet")
 
+    @audited(
+        "security.kek_rotation_refused",
+        "security.kek_rotation_started",
+        "security.kek_rotation_resumed",
+        "security.kek_rotation_failed",
+        "security.kek_rotation_incomplete",
+        "security.kek_rotated",
+        "security.credential_rewrapped",
+    )
     async def rewrap_kek(
         self, environment: str, to_version: int, actor_user_id: str
     ) -> KekRewrapResult:

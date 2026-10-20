@@ -41,6 +41,7 @@ from uuid import UUID, uuid4
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.backups import limits, ports
 from candleviewer.admin.backups.gate import BackupConflict, BackupJobGate, JobAdmission
 from candleviewer.admin.backups.metrics import RestoreResult, count_restore
@@ -89,6 +90,7 @@ class RestoreRefused:
     open_positions: int | None = None
 
     @property
+    @audit_exempt("read")
     def detail(self) -> str | None:
         if self.rule == "open_positions_unacknowledged":
             return f"{self.open_positions} positions are open; acknowledge them to restore."
@@ -152,6 +154,7 @@ class RestoreGuard:
         self._jobs, self._audit, self._rows, self._evidence = jobs, audit, rows, evidence
         self._maintenance, self._positions, self._new_id = maintenance, positions, new_id
 
+    @audited("backup.restore")
     async def admit(
         self, request: RestoreRequest, principal: AuditPrincipal, spent: Spent
     ) -> RestoreAccepted | RestoreRefused:
