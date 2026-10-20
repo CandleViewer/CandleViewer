@@ -9,16 +9,23 @@ from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 
 import pytest
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.bars.kline_rows import KLINE_SOURCE, ORDERFLOW_NULL_COLUMNS
-from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TAIL, MAX_TIME_WINDOW_US
+from candleviewer.bars.limits import (
+    MAX_NON_TIME_WINDOW_US,
+    MAX_TAIL,
+    MAX_TAIL_SCAN_ROWS,
+    MAX_TIME_WINDOW_US,
+)
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.reader import (
     BarReader,
     BarTail,
     build_tail_bound_query,
     build_tail_query,
+    build_tail_scan_bound_query,
     row_key,
     tail_window_us,
 )
@@ -95,6 +102,16 @@ def _kline_row(i: int) -> dict[str, object]:
     return _row(i, {"source": KLINE_SOURCE, "index": None, **dict.fromkeys(ORDERFLOW_NULL_COLUMNS)})
 
 
+def _stamps(*ts: int) -> list[dict[str, object]]:
+    """The rows a `SELECT ts` statement returns, newest first as given."""
+    return [{"ts": ts_param(t)} for t in ts]
+
+
+def _is_scan_bound(sql: str) -> bool:
+    """The table-row bound's statement (D2-M4): `ts` of the table, no series named."""
+    return sql.startswith("SELECT ts FROM bars_") and " symbol = " not in sql
+
+
 class _Conn:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self.rows = rows
@@ -102,7 +119,7 @@ class _Conn:
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         self.calls.append((sql, params))
-        return self.rows
+        return [] if _is_scan_bound(sql) else self.rows  # a table of fewer than K rows
 
 
 class _Steps(_Conn):
@@ -117,12 +134,32 @@ class _Steps(_Conn):
         return self.answers[len(self.calls) - 1]
 
 
+class _Fails(_Steps):
+    """`_Steps` whose `at`-th statement (1-based) raises `error` instead of answering."""
+
+    def __init__(self, error: Exception, at: int, *answers: list[dict[str, object]]) -> None:
+        super().__init__(*answers)
+        self.error, self.at = error, at
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        if len(self.calls) + 1 == self.at:
+            self.calls.append((sql, params))
+            raise self.error
+        return await super().fetch(sql, *params)
+
+
 def _select(
     rows: list[dict[str, object]], sql: str, binds: tuple[object, ...]
 ) -> list[dict[str, object]]:
     """A tail statement over `rows` as QuestDB answers it: the series' keyed rows from its `ts`
     bind on, newest first by the key it orders by (`ts`, or `ts, generation, index`), at most its
-    `LIMIT`; the bound's statement returns the `ts` column only."""
+    `LIMIT`; a bound's statement returns the `ts` column only (the table-row bound's, of every
+    row)."""
+    if _is_scan_bound(sql):  # the k-th newest `ts` of the whole table from its bind on
+        lo, hi = (int(n) for n in sql.rsplit(" LIMIT ", 1)[1].split(", "))
+        stamps = (ts_us_from_row(r["ts"]) for r in rows)
+        ts = sorted((t for t in stamps if t >= ts_us_from_row(binds[0])), reverse=True)
+        return [{"ts": ts_param(t)} for t in ts[lo:hi]]
     symbol, param, since = binds
     start = ts_us_from_row(since)
     hits = [r for r in rows if (r["symbol"], r["bar_param"]) == (symbol, param)]
@@ -136,16 +173,27 @@ def _select(
 
 class _Table(_Conn):
     """A table of stored `rows`: each statement is answered by `_select`, and `landing` is written
-    right after the first one, as a bar's row lands between the two statements of a read."""
+    right after the `after`-th one, as a bar's row lands between two statements of a read. `scans`
+    is the rows each statement visits: its bound's `k` rows, else those from its `ts` bind on."""
 
-    def __init__(self, rows: list[dict[str, object]], landing: dict[str, object]) -> None:
+    def __init__(
+        self,
+        rows: list[dict[str, object]],
+        landing: dict[str, object] | None = None,
+        after: int = 2,
+    ) -> None:
         super().__init__(rows)
-        self.landing, self.answers = landing, list[list[dict[str, object]]]()
+        self.landing, self.after = landing, after
+        self.answers, self.scans = list[list[dict[str, object]]](), list[int]()
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         self.calls.append((sql, params))
+        start = ts_us_from_row(params[-1])  # every statement's `ts` bind is its last
+        seen = sum(ts_us_from_row(r["ts"]) >= start for r in self.rows)
+        hi = int(sql.rsplit(" LIMIT ", 1)[1].split(", ")[-1]) if _is_scan_bound(sql) else seen
+        self.scans.append(min(seen, hi))
         self.answers.append(_select(self.rows, sql, params))
-        if len(self.calls) == 1:
+        if self.landing is not None and len(self.calls) == self.after:
             self.rows.append(self.landing)
         return self.answers[-1]
 
@@ -206,6 +254,47 @@ def test_tail_query_refuses_a_window_beyond_the_sr_e12_02_cap(
     build(kind, SYM, "x", 1, NOW - cap, now_us=NOW)  # exactly the cap: accepted
     with pytest.raises(ValueError, match="SR-E12-02"):
         build(kind, SYM, "x", 1, NOW - cap - 1, now_us=NOW)
+
+
+def test_the_table_row_bound_takes_the_kth_newest_ts_of_the_whole_table_from_the_window() -> None:
+    """D2-M4 (#2787): `ts` only and no series named, so it counts the kind's table rows, the rows
+    every later statement filters; QuestDB's `LIMIT m, n` is rows m+1..n, so `k-1, k` is the k-th
+    newest, which 8.1.1 plans as `Limit lo hi` over a backward scan that stops there. The default is
+    `MAX_TAIL_SCAN_ROWS`, 500 000 (`bars/limits.py`: a change is a reviewed diff)."""
+    sql, params = build_tail_scan_bound_query("renko", T0, now_us=T0, rows=500_000)
+    assert sql == "SELECT ts FROM bars_renko WHERE ts >= $1 ORDER BY ts DESC LIMIT 499999, 500000"
+    assert params == (ts_param(T0),)
+    assert build_tail_scan_bound_query("tick", T0, now_us=T0, rows=1)[0].endswith("LIMIT 0, 1")
+    default, _ = build_tail_scan_bound_query("tick", T0, now_us=T0)
+    assert default.endswith("LIMIT 499999, 500000")
+
+
+@pytest.mark.parametrize(
+    ("kind", "rows", "match"), [("time", 5, "kind"), ("ohlc", 5, "kind"), ("tick", 0, "rows")]
+)
+def test_the_table_row_bound_refuses_a_time_or_unknown_kind_and_no_rows(
+    kind: str, rows: int, match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        build_tail_scan_bound_query(kind, T0, now_us=T0, rows=rows)
+
+
+def test_the_table_row_bound_refuses_a_window_beyond_the_sr_e12_02_cap() -> None:
+    build_tail_scan_bound_query("tick", NOW - MAX_NON_TIME_WINDOW_US, now_us=NOW)  # at the cap
+    with pytest.raises(ValueError, match="SR-E12-02"):
+        build_tail_scan_bound_query("tick", NOW - MAX_NON_TIME_WINDOW_US - 1, now_us=NOW)
+
+
+async def test_the_table_row_bound_cannot_be_raised_past_its_pin() -> None:
+    """D2-M4: a larger `rows`, the reader's `tail_scan_rows` included, is read as
+    `MAX_TAIL_SCAN_ROWS`, so no caller turns the bound into a no-op."""
+    pinned = build_tail_scan_bound_query("tick", T0, now_us=T0)
+    for rows in (MAX_TAIL_SCAN_ROWS + 1, 10**12):
+        assert build_tail_scan_bound_query("tick", T0, now_us=T0, rows=rows) == pinned
+    conn = _Conn([])
+    reader = BarReader(conn, _sched, now_us=lambda: NOW, tail_scan_rows=10**12)
+    await reader.read_tail(SYM, RSPEC, 3)
+    assert conn.calls[0] == build_tail_scan_bound_query("renko", RSINCE, now_us=NOW)
 
 
 def test_the_bound_query_takes_the_newest_ts_on_one_key_with_the_tail_query_s_where() -> None:
@@ -283,31 +372,47 @@ async def test_read_tail_measures_back_from_the_wall_clock_by_default(
     assert conn.calls[0][1][2] == ts_param(NOW - 8 * MIN)
 
 
+K5 = T0 + 5 * MIN  # a table-row bound inside the window
+
+
 @NON_TIME
 @pytest.mark.parametrize(
-    ("newest", "start"),
+    ("kth", "newest", "scan", "start"),
     [
-        ([], None),
-        ([T0 + 9 * MIN, T0 + 8 * MIN], RSINCE),
-        ([T0 + 9 * MIN, T0 + 8 * MIN, T0 + 7 * MIN], T0 + 7 * MIN),
-        ([T0 + 9 * MIN, T0 + 7 * MIN, T0 + 7 * MIN], T0 + 7 * MIN),
-        ([T0 + 9 * MIN, T0 + 8 * MIN, RSINCE - MIN], RSINCE),
+        ([], [], RSINCE, None),
+        ([], [T0 + 9 * MIN, T0 + 8 * MIN], RSINCE, RSINCE),
+        ([], [T0 + 9 * MIN, T0 + 8 * MIN, T0 + 7 * MIN], RSINCE, T0 + 7 * MIN),
+        ([], [T0 + 9 * MIN, T0 + 7 * MIN, T0 + 7 * MIN], RSINCE, T0 + 7 * MIN),
+        ([], [T0 + 9 * MIN, T0 + 8 * MIN, RSINCE - MIN], RSINCE, RSINCE),
+        ([K5], [], K5, None),
+        ([K5], [T0 + 9 * MIN, T0 + 8 * MIN], K5, K5),
+        ([K5], [T0 + 9 * MIN, T0 + 8 * MIN, T0 + 7 * MIN], K5, T0 + 7 * MIN),
+        ([RSINCE], [T0 + 9 * MIN], RSINCE, RSINCE),
+        ([RSINCE - MIN], [T0 + 9 * MIN], RSINCE, RSINCE),
     ],
-    ids=["empty", "fewer-than-the-limit", "the-limit", "tied-at-the-bound", "below-the-window"],
-)
-async def test_a_non_time_read_starts_at_its_nth_newest_ts_else_at_its_window_start(
-    kind: str, newest: list[int], start: int | None
+    ids=["table-below-k-empty", "table-below-k-fewer", "table-below-k-the-limit",
+         "table-below-k-tied-at-the-bound", "table-below-k-below-the-window", "bounded-empty",
+         "bounded-fewer-than-the-limit", "bounded-the-limit", "bound-at-the-window-start",
+         "bound-below-the-window"],
+)  # fmt: skip
+async def test_a_non_time_read_starts_at_the_later_of_its_window_start_and_its_table_bound(
+    kind: str, kth: list[int], newest: list[int], scan: int, start: int | None
 ) -> None:
-    """The bound's statement first, then the tail from the oldest `ts` it returned when it
-    returned the limit (a tie included: `>=` keeps the rest of it; never before the window start),
-    else from the window start, the one-statement read. An empty window ends the read there: the
-    empty tail, no second scan. `since_us` stays the window start in every case."""
+    """D2-M4, then D2-M2 from there: the table's k-th newest `ts` first; the series' nth-newest
+    `ts` from the later of it and the window start (a bound at or below the window start moves
+    nothing); the tail from the oldest `ts` it returned when it returned the limit, else from
+    where it started. Nothing from there on ends the read: the empty tail, no second scan.
+    `since_us` is where the read started, and `bounded` says the table bound moved it."""
     spec, param = FLOORS[kind], bar_param_for(FLOORS[kind])
-    conn = _Steps([{"ts": ts_param(ts)} for ts in newest], [])
+    conn = _Steps(_stamps(*kth), _stamps(*newest), [])
     tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, spec, 3)
     second = [] if start is None else [build_tail_query(kind, SYM, param, 3, start, now_us=NOW)]
-    assert conn.calls == [build_tail_bound_query(kind, SYM, param, 3, RSINCE, now_us=NOW), *second]
-    assert tail == BarTail([], since_us=RSINCE)
+    assert conn.calls == [
+        build_tail_scan_bound_query(kind, RSINCE, now_us=NOW),
+        build_tail_bound_query(kind, SYM, param, 3, scan, now_us=NOW),
+        *second,
+    ]
+    assert tail == BarTail([], since_us=scan, bounded=scan > RSINCE)
 
 
 @NON_TIME
@@ -320,9 +425,9 @@ async def test_a_non_time_read_folds_its_second_statement_s_rows_as_the_one_stat
     tampered = _brick(2, 7, spec)
     tampered["close"] = 99.0  # edited after its checksum: dropped
     rows = [_brick(3, 7, spec), tampered, _brick(1, 6, spec, closed=False), _brick(0, 5, spec)]
-    conn = _Steps([{"ts": ts_param(T0 + m * MIN)} for m in (7, 7, 6, 5)], rows)
+    conn = _Steps([], [{"ts": ts_param(T0 + m * MIN)} for m in (7, 7, 6, 5)], rows)
     tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, spec, 4)
-    assert conn.calls[1][1][2] == ts_param(T0 + 5 * MIN)
+    assert conn.calls[2][1][2] == ts_param(T0 + 5 * MIN)
     assert [(gen, b.index, b.open_time) for gen, b in tail.bars] == [
         (1, 0, T0 + 5 * MIN), (1, 3, T0 + 7 * MIN)
     ]  # fmt: skip
@@ -337,14 +442,107 @@ async def test_a_non_time_read_folds_its_second_statement_s_rows_as_the_one_stat
 async def test_a_row_written_between_the_two_statements_is_read_as_the_one_statement_would(
     held: Sequence[int], landed: int, indexes: list[int]
 ) -> None:
-    """The second statement runs after a row lands: it reads that row when it lies at or above the
+    """The tail statement runs after a row lands: it reads that row when it lies at or above the
     bound and, with fewer than the limit returned (no bound), wherever it lies in the window. Its
     rows are those of the one statement over the table as it then is."""
     conn = _Table([_brick(m, m) for m in held], _brick(landed, landed))
     tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, RSPEC, 3)
     one = _select(conn.rows, *build_tail_query("renko", SYM, "renko:2", 3, RSINCE, now_us=NOW))
-    assert conn.answers[1] == one
+    assert conn.answers[2] == one
     assert [b.index for _, b in tail.bars] == indexes
+
+
+def _busy_table() -> list[dict[str, object]]:
+    """`renko:2` rows at minutes 10..19, and a sparse `renko:3` at 4 and 13 (tied with one)."""
+    sparse = BarSpec(kind="renko", range_ticks=3)
+    busy = [_brick(m - 10, m) for m in range(10, 20)]
+    return [*busy, _brick(0, 4, sparse), _brick(1, 13, sparse)]
+
+
+async def _read_k(
+    rows: list[dict[str, object]], spec: BarSpec, k: int, limit: int = 3
+) -> tuple[BarTail, _Table]:
+    table = _Table(rows)
+    reader = BarReader(table, _sched, now_us=lambda: NOW, tail_scan_rows=k)
+    return await reader.read_tail(SYM, spec, limit), table
+
+
+async def test_a_sparse_series_gets_only_its_rows_among_the_newest_k_and_a_dense_one_all() -> None:
+    """D2-M4: k = 7 of the 12 rows: the 7th newest is minute 13, which the sparse series' second
+    row shares with a busy one, so the bound `>=` keeps both (a tie is read). Its first row
+    (minute 4) is below the bound and is not returned; the busy series' newest 3 all lie above
+    it, as without a bound. No statement visits more than k rows and the rows tied with the last."""
+    sparse = BarSpec(kind="renko", range_ticks=3)
+    tail, table = await _read_k(_busy_table(), sparse, k=7)
+    assert ([b.index for _, b in tail.bars], tail.fetched) == ([1], 1)
+    assert (tail.since_us, tail.bounded) == (T0 + 13 * MIN, True)
+    assert table.scans == [7, 8, 8]  # the bound's k rows, then the 8 at or after minute 13, twice
+    dense, _ = await _read_k(_busy_table(), RSPEC, k=7)
+    whole, _ = await _read_k(_busy_table(), RSPEC, k=MAX_TAIL_SCAN_ROWS)
+    assert [b.index for _, b in dense.bars] == [b.index for _, b in whole.bars] == [7, 8, 9]
+    assert (whole.since_us, whole.bounded) == (RSINCE, False)  # 12 rows: fewer than k
+
+
+async def test_a_series_with_no_row_from_the_bound_on_reads_empty_after_two_statements() -> None:
+    """Its rows are all below the bound: nothing is returned, `bounded` says rows may lie below
+    `since_us`, and there is no tail statement (two statements, not three)."""
+    sparse = BarSpec(kind="renko", range_ticks=3)
+    rows = [row for row in _busy_table() if row["bar_param"] != "renko:3" or row["index"] == 0]
+    tail, table = await _read_k(rows, sparse, k=5)
+    assert (tail.bars, tail.fetched, tail.since_us, tail.bounded) == ([], 0, T0 + 15 * MIN, True)
+    assert len(table.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("landed", "at", "indexes"), [(10, 20, [8, 9, 10]), (2, 12, [8, 9])],
+    ids=["above-the-bound", "below-the-bound"],
+)  # fmt: skip
+async def test_a_row_written_after_the_table_bound_is_read_only_at_or_above_it(
+    landed: int, at: int, indexes: list[int]
+) -> None:
+    """D2-M4: the bound is taken once, at the first statement (k = 2 of 3 rows: minute 18). A row
+    that lands after it and lies at or above it is read; one below it is not, though it lies in the
+    window (it reaches the store live, as for the one-statement read)."""
+    rows = [_brick(m - 10, m) for m in (10, 18, 19)]
+    table = _Table(rows, _brick(landed, at), after=1)
+    reader = BarReader(table, _sched, now_us=lambda: NOW, tail_scan_rows=2)
+    tail = await reader.read_tail(SYM, RSPEC, 3)
+    assert ([b.index for _, b in tail.bars], tail.since_us) == (indexes, T0 + 18 * MIN)
+
+
+def _bounded_reads() -> float:
+    return float(REGISTRY.get_sample_value("bars_tail_scan_bounded_total") or 0.0)
+
+
+async def test_the_bound_counts_the_reads_it_started_later_than_their_window_only() -> None:
+    before = _bounded_reads()
+    await _read_k(_busy_table(), RSPEC, k=7)  # moved, a tail read: counted
+    sparse = BarSpec(kind="renko", range_ticks=3)
+    await _read_k(_busy_table(), sparse, k=5)  # moved past all its rows, an empty read: counted
+    await _read_k(_busy_table(), RSPEC, k=MAX_TAIL_SCAN_ROWS)  # 12 rows, fewer than k: not
+    at_start = BarReader(_Steps(_stamps(RSINCE), []), _sched, now_us=lambda: NOW)
+    await at_start.read_tail(SYM, RSPEC, 3)  # the bound is the window start: moved nothing, not
+    time_reader = BarReader(_Conn([_row(0)]), _sched, now_us=lambda: NOW)
+    await time_reader.read_tail(SYM, SPEC, 2)  # a time read: never bounded
+    assert _bounded_reads() == before + 2
+
+
+@pytest.mark.parametrize("error_type", [OSError, TimeoutError], ids=["os-error", "timeout"])
+@pytest.mark.parametrize("at", [1, 2, 3], ids=["the-table-bound", "the-series-bound", "the-tail"])
+async def test_a_failed_statement_fails_the_read_with_no_fallback_and_no_count(
+    at: int, error_type: type[Exception]
+) -> None:
+    """D2-M4: the table-row bound is the read's first statement, and when it fails or times out so
+    does the read (the store counts it and reads again): the statements that scan from the window
+    start never run in its place. A read that fails after the bound moved it is not counted:
+    the counter says how many reads the bound shaped, and the retry counts once."""
+    newest = _stamps(T0 + 9 * MIN, T0 + 8 * MIN, T0 + 7 * MIN)  # the limit: a tail follows
+    conn = _Fails(error_type("questdb down"), at, _stamps(K5), newest, [])
+    before = _bounded_reads()
+    with pytest.raises(error_type):
+        await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, RSPEC, 3)
+    assert len(conn.calls) == at and _is_scan_bound(conn.calls[0][0])
+    assert _bounded_reads() == before
 
 
 async def test_a_time_read_stays_one_statement_from_its_window_start() -> None:

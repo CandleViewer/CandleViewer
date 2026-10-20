@@ -11,7 +11,10 @@ each series (`ensure`) and registers it with the bar set (`register`): no per-us
   rows take their values from the closed golden bars (`packages/fixtures/golden/bars`, built by the
   production builders from the recorded capture, C-13.5), encoded by the production row mapping
   (`bar_row`; the read verifies each checksum), in `GENERATION` and ending before the feed starts.
-  It keeps no row: a read builds its rows and drops them, as a fetch's records go.
+  It keeps no row: a read builds its rows and drops them, as a fetch's records go. A kind's table
+  holds `per_series` rows for each of `SPECS`' series of the kind (6 000 at most for a non-time
+  kind: 6 series of 1 000 rows), far fewer than `MAX_TAIL_SCAN_ROWS`, so the table-row bound (D2-M4)
+  finds no row and every read starts at its window start, as before that bound.
 - **Restart at the cap:** each builder restores from a state blob that resumes it at bar
   `bars_per_series` of `GENERATION` (`_resumed`), the steady state after a restart: the store holds
   the stored tail and folds each live close onto it, the oldest bar dropped past the cap.
@@ -110,22 +113,38 @@ async def _no_rebuild(symbol: str, spec_hash: str, from_us: int, to_us: int) -> 
 
 class _Table:
     """The `bars_*` rows of one lane's series: `per_series` each, the newest a step before the
-    stored tail's end. `fetch` answers `read_tail`'s two statements (module docstring)."""
+    stored tail's end. `fetch` answers `read_tail`'s three statements (module docstring)."""
 
     def __init__(self, templates: list[dict[str, object]], symbol: str, per_series: int) -> None:
         self._templates, self._symbol, self._n = templates, symbol, per_series
         self._specs = {bar_param_for(s): s for s in SPECS}
 
-    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
-        """The series' rows from the `ts` bind on, newest first, at most the `LIMIT`; the bound's
-        statement takes their `ts` only."""
-        param, since = str(params[1]), ts_us_from_row(params[2])
-        spec, limit = self._specs[param], int(sql.rsplit(" LIMIT ", 1)[1])
+    def _stamps(self, spec: BarSpec) -> range:
+        """The `ts` of the series' rows, oldest first: the newest a step before the tail's end."""
         step = _step_us(spec)
         end = HISTORY_END_US // step * step
+        return range(end - self._n * step, end, step)
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        """The series' rows from the `ts` bind on, newest first, at most the `LIMIT`; the series
+        bound's statement takes their `ts` only. The table-row bound's (one bind, D2-M4) is the
+        `ts` of the kind's rows at or after the bind, of any series, newest first, from the
+        `LIMIT`'s offset to its end (`LIMIT k - 1, k`: the k-th newest), or none."""
+        if len(params) == 1:
+            kind = sql.split(" FROM bars_", 1)[1].split(" ", 1)[0]
+            lo, hi = (int(n) for n in sql.rsplit(" LIMIT ", 1)[1].split(", "))
+            since0 = ts_us_from_row(params[0])
+            stamps = sorted(
+                (t for s in SPECS if s.kind == kind for t in self._stamps(s) if t >= since0),
+                reverse=True,
+            )
+            return [{"ts": t} for t in stamps[lo:hi]]
+        param, since = str(params[1]), ts_us_from_row(params[2])
+        spec, limit = self._specs[param], int(sql.rsplit(" LIMIT ", 1)[1])
+        step, stamps_of_series = _step_us(spec), self._stamps(spec)
         out: list[dict[str, object]] = []
         for i in range(self._n - 1, max(-1, self._n - 1 - limit), -1):
-            ts = end - (self._n - i) * step
+            ts = stamps_of_series[i]
             if ts < since:
                 break
             if sql.startswith("SELECT ts "):

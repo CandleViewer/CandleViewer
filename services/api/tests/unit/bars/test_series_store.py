@@ -1018,6 +1018,48 @@ async def test_empty_re_reads_keep_a_gap_until_a_window_starts_after_its_bar_ope
     assert (tail.calls, seen, view(store)) == (2, [True, False, False, False], ([20], 21))
 
 
+@pytest.mark.parametrize("during", [False, True], ids=["after-the-read", "during-it"])
+async def test_a_bounded_empty_read_judges_no_junction_and_nothing_reads_it_again(
+    during: bool,
+) -> None:
+    """D2-M4: a read the table-row bound started later than its window says only that no row of
+    the series lies from its start on; bars below may exist. So bar 20's close, which opened
+    inside it, is no gap, whether it closes after the read or during it (the fold then judges it
+    by this read's bound, #3660 rule (1)); after an unbounded read it is one (D2-H1a, above). The
+    series ends `hydrated` and not `gapped`: the heal driver's `due` never lists it, and neither
+    `refresh` nor `ensure` reads it again. The store does not look at the kind: a time spec.
+    `bounded` is that read's alone: a live close that then skips 21 and 22 past held bar 20 is a
+    gap all the same, and the re-read, not bounded, judges bar 20 against its own start: (0, 19)."""
+    clock, tail = Clock(), Tail()
+    tail.tail = BarTail([], since_us=T0, bounded=True)
+    store = SeriesStore(tail, clock=clock)
+    reading = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    before = counted("bars_series_gaps_total")
+    with capture_logs() as logs:
+        if not during:
+            tail.gate.set()
+            await reading
+        await emit(store, up("open", 20))
+        await emit(store, up("close", 20), up("open", 21))
+        tail.gate.set()
+        hold = await reading
+    assert (view(store), store.hydrated(SYM, H), store.gapped(SYM, H)) == (([20], 21), True, False)
+    assert events(logs, "bars_series_gap") == [] and counted("bars_series_gaps_total") == before
+    clock.t += 1_000 * RETRY_AFTER_S
+    assert store.due(clock.t) == [] and not await store.refresh(SYM, H)
+    (await store.ensure(SYM, SPEC)).release()
+    assert tail.calls == 1
+    await emit(store, up("close", 23))
+    assert store.gapped(SYM, H) and store.due(clock.t) == [(SYM, H)]
+    tail.tail = BarTail([], since_us=T0)
+    with capture_logs() as logs:
+        await store.refresh(SYM, H)
+    gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
+    assert (tail.calls, gaps, store.gapped(SYM, H)) == (2, [(0, 19)], True)
+    hold.release()
+
+
 async def test_index_0_is_next_after_an_empty_read_so_closes_0_and_1_are_no_gap_and_3_is() -> None:
     """D2-H1a's boundary: on a series read clean and empty, a first close at 0 skips nothing."""
     store = SeriesStore(Tail(now=True))

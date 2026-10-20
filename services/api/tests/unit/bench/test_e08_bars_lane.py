@@ -15,16 +15,25 @@ from structlog.testing import capture_logs
 
 from bench.ingestion import HARNESS_VERSION, gate
 from bench.ingestion import budgets as b
-from bench.ingestion.bars_lane import GENERATION, SPECS, BarsFixture, BarsLane
+from bench.ingestion.bars_lane import (
+    GENERATION,
+    HISTORY_END_US,
+    NON_TIME_STEP_US,
+    SPECS,
+    BarsFixture,
+    BarsLane,
+    _Table,
+    _templates,
+)
 from bench.ingestion.budgets import Verdict
 from bench.ingestion.config import load
 from bench.ingestion.engine import T0_MS, LaneConfig, ScriptedSampler, run_lanes
 from bench.ingestion.runner import _lane_cfg, run_soak
 from candleviewer.bars.activity_builders import TickBarBuilder
 from candleviewer.bars.leases import CAP_PER_SYMBOL
-from candleviewer.bars.limits import MAX_TAIL
+from candleviewer.bars.limits import MAX_TAIL, MAX_TAIL_SCAN_ROWS
 from candleviewer.bars.models import BarSpec, BarUpdate
-from candleviewer.bars.reader import tail_window_us
+from candleviewer.bars.reader import build_tail_scan_bound_query, tail_window_us
 from candleviewer.bars.series_store import MAX_HISTORY, Hold, SeriesStore
 from candleviewer.bars.state_store import StateStore, StoredState
 from candleviewer.bus.bus import Bus
@@ -67,6 +76,31 @@ def test_soak_bars_runs_the_per_symbol_spec_cap_at_the_store_cap_and_soak_steady
     assert len({s.spec_hash for s in SPECS}) == len(SPECS) == CAP_PER_SYMBOL
     times = [s for s in SPECS if s.kind == "time"]  # a tail read can hold 1 000 bars of each
     assert all(tail_window_us(s, MAX_TAIL) >= MAX_TAIL * int(s.param_value) * 1000 for s in times)
+
+
+async def test_the_lane_table_answers_the_table_row_bound_as_its_kind_table_would() -> None:
+    """D2-M4's first statement names no series: the `ts` of the kind's k-th newest row at or after
+    the bind, of any series, or none when fewer, as at the pin (6 000 rows of a kind at most)."""
+    table, step = _Table(_templates(), "BTCUSDT", 3), NON_TIME_STEP_US
+    end = HISTORY_END_US // step * step  # each series has three rows, on the same three stamps
+
+    async def bound(kind: str, since: int, rows: int | None = None) -> list[dict[str, object]]:
+        kw = {} if rows is None else {"rows": rows}
+        sql, binds = build_tail_scan_bound_query(kind, since, now_us=end, **kw)
+        return await table.fetch(sql, *binds)
+
+    hour, two = end - 3_600_000_000, end - 2 * step
+    for kind in ("tick", "volume", "range", "delta"):
+        n = sum(s.kind == kind for s in SPECS)  # the kind's series: one row each per stamp
+        assert await bound(kind, hour, 1) == [{"ts": end - step}], kind
+        assert await bound(kind, hour, n + 1) == [{"ts": two}], kind
+        assert await bound(kind, hour, 3 * n) == [{"ts": end - 3 * step}], kind
+        assert await bound(kind, hour, 3 * n + 1) == [], kind
+        assert await bound(kind, hour) == [], kind  # the pin: no lane table holds that many rows
+        assert await bound(kind, two, 2 * n) == [{"ts": two}], kind  # rows tied at the bind count
+        assert await bound(kind, two + 1, n + 1) == [], kind  # rows before the bind do not
+    kinds = {s.kind for s in SPECS} - {"time"}
+    assert max(sum(s.kind == k for s in SPECS) for k in kinds) * MAX_HISTORY < MAX_TAIL_SCAN_ROWS
 
 
 async def test_a_lane_hydrates_each_series_with_the_stored_tail_through_the_tail_read(

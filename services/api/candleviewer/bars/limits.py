@@ -28,6 +28,20 @@ MAX_WINDOW_BARS: Final = 250_000
 #: non-time kind. A series the store keeps also keeps the bars closed since its read, up to this
 #: many, so a snapshot of it can hold more than its window holds (`21-database-schema.md` §9.5).
 MAX_TAIL: Final = 1_000
+#: The most rows of its kind's table a non-time WS tail read looks at (`BarReader.read_tail`,
+#: #2787 D2-M4; `23-ws-protocol.md` §6.1). `symbol` has no index, so each statement of the read
+#: filters every row of the table from where it starts: the read starts at the later of its
+#: window start and the `ts` of the table's `MAX_TAIL_SCAN_ROWS`-th newest row in the window,
+#: and a sparse series gets only its bars among those rows. 500 000 is about `MAX_TAIL` bars for
+#: each of the 512 series a server builds at most (512 000). Not configurable, and the query
+#: builder takes no larger value. Tuning on the target host: a sparse series' cold first read
+#: should hold the connection at most 50 ms, this note's own target: half of G3's 100 ms mark for a
+#: warm first read (`observability/pgwire_metrics.py`), and the value should not fall far below
+#: `MAX_TAIL` times the series the host serves at once. The D2-M4 bench (`D2M4_TAIL_READS=`)
+#: prints warm medians at k = 50 000 on tables of the size `D2M2_DENSE_ROWS` sets: a cold read at
+#: a candidate value needs the bench's `K` set to it and its first read timed, which it does not
+#: do yet. A change is a reviewed diff, and 23 §6.1 carries the value (500 000 as built).
+MAX_TAIL_SCAN_ROWS: Final = 500_000
 #: The most WS series tail reads that run at once, process-wide (C-2.18; `bars.series_store`, #2787
 #: D2-G1). Every `SeriesStore` on the event loop shares them, and a read that cannot take a slot
 #: within `QUERY_TIMEOUT_S` fails like any timed-out read and is read again by a later `ensure`,
@@ -64,6 +78,7 @@ __all__ = [
     "MAX_NON_TIME_WINDOW_US",
     "MAX_REVERSAL_BRICKS",
     "MAX_TAIL",
+    "MAX_TAIL_SCAN_ROWS",
     "MAX_TIME_WINDOW_US",
     "MAX_WINDOW_BARS",
     "QTY_PARAM_MAX",

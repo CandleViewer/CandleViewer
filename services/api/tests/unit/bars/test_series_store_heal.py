@@ -304,6 +304,27 @@ async def test_a_read_at_its_row_limit_counts_the_older_held_bars_as_slid_off_no
     assert view(store)[0][0] == oldest and not store.gapped(SYM, H)
 
 
+@pytest.mark.parametrize("bounded", [True, False], ids=["the-bound", "the-window"])
+async def test_a_held_bar_below_a_bounded_re_reads_start_is_not_lost(bounded: bool) -> None:
+    """D2-M4, the §7.4 edge rule: a first read withheld a row (not `hydrated`) with 400..402 held,
+    then bar 403 closed. The re-read starts at the table-row bound, which has passed 400 and 401:
+    rows 402..404, `since_us` at bar 402's open. Bars 400 and 401 opened before that start, so no
+    read could hold them: not lost, and the read repairs the series. Judged against the window
+    start instead, they count as lost, and no repair would ever go out for the series."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(400, 401, 402), dropped=1, since_us=T0, fetched=3)
+    store = SeriesStore(tail, clock=clock)
+    _held = await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 403))
+    hook = Hook(store)
+    since_us = T0 + 402 * STEP if bounded else T0
+    tail.tail = BarTail(rows(402, 403, 404), since_us=since_us, fetched=3, bounded=bounded)
+    clock.t += RETRY_AFTER_S
+    assert await store.refresh(SYM, H) is bounded
+    assert (hook.calls, view(store)) == ([(SYM, SPEC, 1)] * bounded, ([402, 403, 404], None))
+
+
 async def test_a_failed_refresh_returns_false_and_takes_the_store_failure_path() -> None:
     clock = Clock()
     store, tail, _held = await gapped(clock)
@@ -659,18 +680,23 @@ async def test_a_read_that_skips_a_row_leaves_the_series_incomplete_until_one_sk
     assert hook.calls == [(SYM, SPEC, 7)]
 
 
-@pytest.mark.parametrize(("shift", "gap"), [(20, True), (-10, False)], ids=["inside", "before"])
+@pytest.mark.parametrize(
+    ("shift", "bounded", "gap"),
+    [(20, False, True), (-10, False, False), (20, True, False)],
+    ids=["inside", "before", "bounded"],
+)
 async def test_a_restart_emptying_a_series_read_with_rows_is_judged_by_that_reads_window(
-    shift: int, gap: bool
+    shift: int, bounded: bool, gap: bool
 ) -> None:
     """#3660 (b), which rule (1) keeps: rows 0..10 read clean, then a restarted run's bar 5 opens
     (a reset) and closes. It opened inside that read's window (`since_us`, kept for a read that
     found rows too), so the close counts one gap, (0, 4), and the one read it brings ends where it
     started: harmless, one count, one warning, one read, measured to the end of that read.
-    Opened before the window: none of them."""
+    Opened before the window: none of them. Nor after a read the table-row bound started (D2-M4,
+    `bounded`): bars below its start may exist, so no gap and no second read."""
     clock = Clock()
     tail = Tail(now=True)
-    tail.tail = BarTail(rows(*range(11)), since_us=T0)
+    tail.tail = BarTail(rows(*range(11)), since_us=T0, bounded=bounded)
     store = SeriesStore(tail, clock=clock)
     _held = await store.ensure(SYM, SPEC)
     before = counted("bars_series_gaps_total")
