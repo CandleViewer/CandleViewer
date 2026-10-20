@@ -420,9 +420,12 @@ index alone, removing nothing.
   Reproduce: `build:tokens`, then `storybook:test` in `packages/ui` (its README). Fix the
   component, not the gate.
 - **CI-A11Y-003** (the gate self-test): run on `packages/ui/.storybook/__fixtures__/` alone
-  (`CV_STORYBOOK_A11Y_FIXTURES=1`), the gate did not fail the 2:1-contrast button naming
-  `color-contrast` and `#a11y-gate-fixture`, so it cannot be trusted. Check `parameters.a11y` in
-  `.storybook/preview.ts` and the fixture.
+  (`CV_STORYBOOK_A11Y_FIXTURES=1`), the gate did not fail every fixture story naming its rule and
+  element: the 2:1-contrast button (`color-contrast`, `#a11y-gate-fixture`) and the icon-only
+  button without an aria-label (`button-name`, `#icon-only-gate-fixture`). So it cannot be
+  trusted. The log's `a11y gate self-test:` lines name the story. Check `parameters.a11y` in
+  `.storybook/preview.ts` and the fixture; for the icon fixture, also that `IconSvg` keeps an
+  unnamed icon `aria-hidden`.
 - **CI-A11Y-004** (Storybook job over its 600 s budget): the job summary records the measured time.
   Look for a slow step (install, browser download, build); a story count that has outgrown the
   budget needs sharding (`vitest --shard`), not a higher number.
