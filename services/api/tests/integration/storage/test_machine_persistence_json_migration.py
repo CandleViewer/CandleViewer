@@ -287,10 +287,11 @@ def test_a_populated_database_refuses_the_downgrade(pg: PostgresContainer, name:
     )
     with _conn(dsn) as c:
         before = _one(c, stored.as_string(c), entity)
+        head = _one(c, "SELECT version_num FROM alembic_version")  # not always this revision
         refused = _alembic(dsn, "downgrade", _prev())
         assert refused.returncode != 0
         assert f"machine_persistence_json downgrade refused: {name} holds rows;" in refused.stderr
         assert "1e+16" in before and "1e+16" not in refused.stderr
-        assert _one(c, "SELECT version_num FROM alembic_version") == _REV
+        assert _one(c, "SELECT version_num FROM alembic_version") == head
         assert _types(c) == [(table, column, "json") for table, column in _COLUMNS]
         assert _one(c, stored.as_string(c), entity) == before

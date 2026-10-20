@@ -26,9 +26,11 @@ it alone decides an elevated caller.
 
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
-lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key is 422, S7;
-`purge=true` is E42-T10's: 400 until it serves it), then the change. `user_disable=None` fails
-closed with 501. In the deployed app the path-gated `DANGEROUS_ROUTES` guard
+lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key is 422, S7),
+then the change; with `purge=true` the purge's schedule follows it (E42-T10, `_schedule_purge`).
+`user_disable=None` fails closed with 501; while no purge reaper runs (none wired, or stopped),
+`purge=true` fails closed with 503 `purge_unavailable`, before anything changes. In the deployed
+app the path-gated `DANGEROUS_ROUTES` guard
 (`make_read_only_guard`) answers an un-elevated caller first, so this order is the second line: it
 alone decides an elevated caller.
 
@@ -41,7 +43,11 @@ are 400), a self-target of `roles` or `status` (an audited 403, SR-055), the ste
 A disable is `UserDisableService`'s whole cascade with `acknowledge_unknown_positions` as the
 DELETE reads it, and changes nothing else; every other change is one transaction of the user admin
 store under the owner lock (R7), written ahead as `users.enable`, `users.update`, `roles.grant`
-and `roles.revoke`, its role push counted after the commit. `GET /users/{userId}/sessions` lists
+and `roles.revoke`, its role push counted after the commit. An enable cancels a pending purge in
+that transaction, its `users.enable` naming the date (E42-T10 #2650, #965 R6). Once the purge has
+run every change is refused (O6), an enable included: 409 `conflict`, recorded as one
+`rbac.denied` (`anonymised`, naming the fields sent, never a value) as the owner floor's refusal
+is, nothing changed. `GET /users/{userId}/sessions` lists
 the user's live sessions as `listMySessions` does (no token material);
 `DELETE /users/{userId}/sessions/{sessionId}` addresses only a live session of that user (404
 otherwise, IDOR), writes the acting Owner's `users.session_revoked`, then records B16 REVOKE, whose
@@ -108,6 +114,14 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserUpdate,
     UserUpdateAudit,
 )
+from candleviewer.storage.repositories.user_purge import (
+    PurgeAuditUnavailableError,
+    PurgeSchedule,
+    PurgeUnavailableError,
+    PurgeUserAnonymisedError,
+    PurgeUserNotDisabledError,
+    PurgeUserNotFoundError,
+)
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 _SYSTEM_ROLES = frozenset({"owner", "manager", "viewer"})
@@ -128,6 +142,8 @@ _RESEND_ACKNOWLEDGED: Final = "resend with acknowledge_unknown_positions=true"
 #: The detail of every write-ahead refusal (C-2.9): the change rolled back.
 _NOT_AUDITED: Final = "the audit record could not be written; nothing changed"
 _LAST_OWNER: Final = "the last active owner cannot be demoted"
+#: E42-T10 (#2650): a change refused because the user's purge has run (409 `conflict`).
+_ANONYMISED: Final = "the user's data was purged; an anonymised user is never changed again"
 #: The store's refusals, nothing changed (#2648 design (c).2); unknown and deleted alike.
 _REFUSED: dict[type[Exception], tuple[ErrorCode, int, str]] = {
     aa.AccessSelfTargetError: (ErrorCode.FORBIDDEN, 403, "a caller's own grants cannot change"),
@@ -222,6 +238,24 @@ class UserDisable(Protocol):
         acknowledge_unknown_positions: bool = False,
         precondition: UserPrecondition | None = None,
     ) -> DisableResult: ...
+
+
+class UserPurge(Protocol):
+    """`UsersPurgeTask` (E42-T10 S14): `running` while its reaper runs; `schedule` puts a disabled
+    user's purge 90 days out on the injected clock, `users.delete` written ahead, a repeat keeping
+    the first date, and refuses with `PurgeUnavailableError` once the reaper has stopped."""
+
+    @property
+    def running(self) -> bool: ...
+
+    async def schedule(
+        self,
+        user_id: uuid.UUID,
+        *,
+        actor_user_id: uuid.UUID,
+        request_id: uuid.UUID | None = None,
+        session_id: uuid.UUID | None = None,
+    ) -> PurgeSchedule: ...
 
 
 class PermissionChangeNotifier(Protocol):
@@ -440,6 +474,47 @@ async def _push_roles(notifier: PermissionChangeNotifier, user_id: uuid.UUID) ->
         _roles_pushed(user_id, "ok")
 
 
+async def _schedule_purge(
+    purge: UserPurge, user_id: uuid.UUID, actor: uuid.UUID, session: uuid.UUID
+) -> Response:
+    """E42-T10 S14, once the disable has committed: the purge, `users.delete` ahead (R5), naming
+    the session that stepped up. The disable is its own audited change and stays if this step is
+    refused, as the refusal says; a retry is the disable's no-op (AC5), then this step."""
+    rid = current_request_id()  # bound by `CorrelationMiddleware`: a UUID if present
+    unscheduled = "the user is disabled, but its purge was not scheduled: "
+    try:
+        scheduled = await purge.schedule(
+            user_id,
+            actor_user_id=actor,
+            request_id=uuid.UUID(rid) if rid else None,
+            session_id=session,
+        )
+    except PurgeUserNotFoundError:
+        return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+    except PurgeUserNotDisabledError:  # a re-enable won the race: nothing scheduled
+        return _registered(ErrorCode.CONFLICT, 409, "the user is no longer disabled; no purge")
+    except PurgeAuditUnavailableError:
+        detail = unscheduled + "the audit record could not be written; retry"
+        return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+    except PurgeUnavailableError:  # the reaper stopped after the check (a shutdown)
+        detail = unscheduled + "no purge reaper is running; retry"
+        return _registered(ErrorCode.PURGE_UNAVAILABLE, 503, detail)
+    except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
+        if not is_storage_outage(exc):
+            raise
+        _log().error(
+            "user purge store unavailable", error=type(exc).__name__, target_user_id=str(user_id)
+        )
+        return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+    _log().info(
+        "user purge scheduled",
+        target_user_id=str(user_id),
+        changed=scheduled.changed,
+        request_id=rid,
+    )
+    return Response(status_code=204)
+
+
 def make_users_router(
     store: UserRoleStore | None,
     emitter: _Emitter,
@@ -450,6 +525,7 @@ def make_users_router(
     account_access: AccountAccessStore | None = None,
     access_service: AccountAccessService | None = None,
     user_disable: UserDisable | None = None,
+    user_purge: UserPurge | None = None,
 ) -> APIRouter:
     """`emitter` and `notifier` are mandatory: a role change without an
     audit record (C-2.9) or without a live-socket re-evaluation is refused
@@ -717,11 +793,12 @@ def make_users_router(
             return refusal
         acknowledged = _flag(request, "acknowledge_unknown_positions")
         purge = _flag(request, "purge")
-        if acknowledged is None or purge is None or purge:  # purge=true is E42-T10's (S14)
-            detail = "purge is not available yet"
-            if not purge:
-                detail = "acknowledge_unknown_positions and purge are each true or false"
+        if acknowledged is None or purge is None:
+            detail = "acknowledge_unknown_positions and purge are each true or false"
             return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
+        if purge and (user_purge is None or not user_purge.running):  # E42-T10, UL4-D1
+            detail = "no purge reaper is running; nothing was changed"
+            return _registered(ErrorCode.PURGE_UNAVAILABLE, 503, detail)
         try:
             await user_disable.disable(
                 user_id, actor=principal, acknowledge_unknown_positions=acknowledged
@@ -737,6 +814,8 @@ def make_users_router(
                 target_user_id=str(user_id),
             )
             return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        if purge and user_purge is not None:  # E42-T10 S14: then the purge, 90 days out
+            return await _schedule_purge(user_purge, user_id, principal.user_id, gate)
         return Response(status_code=204)
 
     return router
@@ -777,8 +856,9 @@ class UserAdminStore(Protocol):
     ) -> UserUpdate | None:
         """One transaction under the user-row and owner locks: `check` on the representation read
         under them, the change, the owner floor, then `audit` ahead of the commit. Raises what
-        `check`, the floor or `audit` raises, or `WriteAheadTimeout`, with nothing changed;
-        `None` if no such user."""
+        `check`, the floor or `audit` raises, `PurgeUserAnonymisedError` for any change to an
+        anonymised user (E42-T10 #2650), or `WriteAheadTimeout`, with nothing changed; `None` if
+        no such user."""
         ...
 
 
@@ -931,18 +1011,22 @@ async def _audit_owner_revoke(
 
 async def audit_user_update(emitter: _Emitter, change: UserUpdate, base: Mapping[str, Any]) -> None:
     """The records of one PATCH, ahead of its commit: `users.enable` (R5: status and roles only,
-    nothing restored, R6), `users.update` for the name and the MFA flag (the field names only, so
-    no PII is copied, O6), and `roles.grant` / `roles.revoke` with the sets before and after."""
+    nothing restored, R6, plus the `purge_after` of a pending purge it cancelled, E42-T10 #2650),
+    `users.update` for the name and the MFA flag (the field names only, so no PII is copied, O6),
+    and `roles.grant` / `roles.revoke` with the sets before and after."""
     before, after = change.before, change.after
     held, kept = sorted(before["roles"]), sorted(after["roles"])
     if before["status"] != after["status"]:
+        cancelled = change.purge_cancelled  # a date, never PII
+        was = {} if cancelled is None else {"purge_after": cancelled.isoformat()}
+        now = {} if cancelled is None else {"purge_after": None}
         await emitter.emit(
             "users.enable",
             **base,
             outcome=AuditOutcome.SUCCESS,
             severity=Severity.WARNING,
-            before_state={"status": before["status"], "roles": held},
-            after_state={"status": after["status"], "roles": kept},
+            before_state={"status": before["status"], "roles": held, **was},
+            after_state={"status": after["status"], "roles": kept, **now},
         )
     if named := [f for f in ("display_name", "mfa_required") if before[f] != after[f]]:
         mfa = "mfa_required" in named
@@ -1147,6 +1231,20 @@ def make_user_admin_router(
             except (AuditError, RuntimeError):
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
             return _registered(ErrorCode.CONFLICT, 409, _LAST_OWNER)
+        except PurgeUserAnonymisedError:  # #2650: the purge ran, so no change, ever (O6)
+            try:  # recorded as the owner floor's refusal is: an Owner's change a rule refused
+                await emitter.emit(
+                    "rbac.denied",
+                    **base,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="anonymised",
+                    before_state={"status": shown["status"]},
+                    after_state={"fields": sorted(body.model_fields_set)},  # names, no PII
+                )
+            except (AuditError, RuntimeError):
+                return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
+            return _registered(ErrorCode.CONFLICT, 409, _ANONYMISED)
         except _Stale:
             return _registered(ErrorCode.VERSION_CONFLICT, 412, _STALE)
         except _StatusRefused as exc:

@@ -122,6 +122,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "users.access_change",
         # Closes a write-ahead `users.access_change` whose commit failed or was cancelled.
         "users.access_change_failed",
+        # E42-T10 (#2650, #965 R5): a disabled user's purge scheduled by `?purge=true`, and the
+        # reaper's anonymisation of one user (O6), each written ahead of its commit by
+        # `user_purge_sqlalchemy.py`; ids, status and times only.
+        "users.delete",
+        "users.anonymise",
         "roles.grant",
         "roles.revoke",
         "accounts.create",

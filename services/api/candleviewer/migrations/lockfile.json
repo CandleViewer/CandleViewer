@@ -171,6 +171,11 @@
       "path": "services/api/candleviewer/migrations/versions/0035_machine_persistence_json.py",
       "sha256": "e769a8432f3a103e8140e6fe965253d32d415cec9aab90b1cbe2143107724122",
       "down_revision": "0034_order_vocabulary"
+    },
+    "0036_users_purge": {
+      "path": "services/api/candleviewer/migrations/versions/0036_users_purge.py",
+      "sha256": "527e63f2cafaea62eba263addee0deb74a40abd1b048905a9aba6cfe595767cf",
+      "down_revision": "0035_machine_persistence_json"
     }
   }
 }

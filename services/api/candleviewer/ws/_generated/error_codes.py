@@ -64,6 +64,7 @@ class ErrorCode(StrEnum):
     EXCHANGE_UNAVAILABLE = "exchange_unavailable"
     STORE_UNAVAILABLE = "store_unavailable"
     AUDIT_UNAVAILABLE = "audit_unavailable"
+    PURGE_UNAVAILABLE = "purge_unavailable"
     BACKUP_ENGINE_INVALID = "backup_engine_invalid"
     DEGRADED_DATA = "degraded_data"
     AUTH_UNAVAILABLE = "auth_unavailable"
@@ -155,6 +156,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.EXCHANGE_UNAVAILABLE: ErrorMeta(("rest", "ws",), "any", True, None, None, "Exchange connectivity lost (WS down and REST failing)"),
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
     ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),
+    ErrorCode.PURGE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "No purge reaper is running, so no purge is scheduled; nothing would anonymise the user"),
     ErrorCode.BACKUP_ENGINE_INVALID: ErrorMeta(("rest",), None, False, None, None, "The backup engine plans a run that is not encrypted under a key alias; refused, fail closed, until its configuration is fixed"),
     ErrorCode.DEGRADED_DATA: ErrorMeta(("rest", "ws",), "any", True, None, None, "Local store is behind the exchange beyond the freshness SLO"),
     ErrorCode.AUTH_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Second factor temporarily unavailable"),

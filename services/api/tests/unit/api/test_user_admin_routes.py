@@ -53,6 +53,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserUpdate,
     UserUpdateAudit,
 )
+from candleviewer.storage.repositories.user_purge import PurgeUserAnonymisedError
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
 from tests.conftest import RecordingAuditSink
 from tests.unit.admin.test_user_disable import _TARGET, _World
@@ -62,6 +63,7 @@ from tests.unit.storage.test_user_lifecycle_sqlalchemy import _Rel
 CALLER, OTHER_OWNER, MISSING = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 M = _TARGET  # manager M, the target of the disable world
 _T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+_PURGE_AT = _T0 + timedelta(days=90)  # M's pending purge (E42-T10 #2650), not passed yet
 _SESSION = uuid.uuid4()  # the caller's own session
 _PATH = "/users/{}"
 _ROLES = ("owner", "manager", "viewer")
@@ -119,12 +121,17 @@ class _Emitter:
 class _Store:
     """`UserAdminStore` in memory, with the SQL store's rules: under its "lock" it hands the
     representation to `check`, refuses the owner floor on the roles it counts (an active
-    target's), awaits `audit` ahead of the commit, and changes nothing when any of them raises."""
+    target's), awaits `audit` ahead of the commit, and changes nothing when any of them raises.
+    Every change to an anonymised user is refused, and an enable cancels a pending purge in its
+    "transaction" (E42-T10 #2650): `purges` holds each pending `purge_after`, `anonymised` the
+    purged users."""
 
     def __init__(self, log: _Log, *users: dict[str, Any]) -> None:
         self.log, self.users = log, {uuid.UUID(u["id"]): u for u in users}
         self.read_error: Exception | None = None
         self.update_error: Exception | None = None
+        self.purges: dict[uuid.UUID, datetime] = {}
+        self.anonymised: set[uuid.UUID] = set()
 
     async def get_user(self, user_id: uuid.UUID) -> dict[str, Any] | None:
         self.log.append("read")
@@ -152,25 +159,33 @@ class _Store:
             return None
         before = copy.deepcopy(found)
         check(before)
-        after = copy.deepcopy(before)
-        if patch.roles is not None and frozenset(patch.roles) != frozenset(before["roles"]):
-            counted = frozenset(before["roles"]) if before["status"] == "active" else frozenset()
-            assert_owner_floor(
-                current_roles=counted, new_roles=patch.roles, active_owner_count=self._owners()
-            )
-            after["roles"] = sorted(patch.roles)
+        enabling = patch.enable and before["status"] == "disabled"
+        after, roles = copy.deepcopy(before), patch.roles
+        regrant = roles is not None and frozenset(roles) != frozenset(before["roles"])
+        if roles is not None and regrant:
+            after["roles"] = sorted(roles)
         if patch.set_display_name:
             after["display_name"] = patch.display_name
         if patch.require_mfa:
             after["mfa_required"] = True
-        if patch.enable and before["status"] == "disabled":
+        if enabling:
             after["status"] = "active"
         if after == before:
             return UserUpdate(user_id, before, before)
+        if user_id in self.anonymised:  # the purge ran: no change, ever (#2650)
+            raise PurgeUserAnonymisedError(str(user_id))
+        if roles is not None and regrant:
+            counted = frozenset(before["roles"]) if before["status"] == "active" else frozenset()
+            assert_owner_floor(
+                current_roles=counted, new_roles=roles, active_owner_count=self._owners()
+            )
         after["updated_at"] = "2026-10-19T12:00:00+00:00"
-        change = UserUpdate(user_id, before, after)
+        cancelled = self.purges.get(user_id) if enabling else None
+        change = UserUpdate(user_id, before, after, cancelled)
         await audit(change)
-        self.users[user_id] = after  # the commit
+        self.users[user_id] = after  # the commit, the cancel with it
+        if cancelled is not None:
+            del self.purges[user_id]
         self.log.append("commit")
         return change
 
@@ -800,6 +815,114 @@ def test_enable_audit_down_503(b16_audit: RecordingAuditSink, spec: Any) -> None
     r = env.patch(M, {"status": "active"})
     assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
     assert env.store.users[M]["status"] == "disabled"
+
+
+def test_reenable_cancels_a_pending_purge(b16_audit: RecordingAuditSink, spec: Any) -> None:
+    """E42-T10 (#2650) "Re-enabling cancels a pending purge" (#965 R6, UL4-E1): M was deleted with
+    purge and `purge_after` has not passed; an owner re-enables M. The purge is cleared with the
+    status, and `users.enable`, written ahead, states the cancelled date (no PII). The reaper's
+    side, on Postgres: `test_user_purge_pg.py::test_reenable_cancels_purge`."""
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",), status="disabled"))
+    env.store.purges[M] = _PURGE_AT
+    r = env.patch(M, {"status": "active"})
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert r.status_code == 200 and r.json()["status"] == "active"
+    assert env.store.purges == {} and env.log[-3:] == ["lock", "users.enable", "commit"]
+    (record,) = env.emitter.of("users.enable")
+    assert record["before_state"] == {
+        "status": "disabled",
+        "roles": ["manager"],
+        "purge_after": _PURGE_AT.isoformat(),
+    }
+    assert record["after_state"] == {"status": "active", "roles": ["manager"], "purge_after": None}
+
+
+def test_an_anonymised_user_is_not_enabled(b16_audit: RecordingAuditSink, spec: Any) -> None:
+    """#2650 (the orchestrator's 2026-10-20 ruling, second line): M's purge has run, so the
+    re-enable is 409 `conflict` and nothing changes. Like the owner floor's refusal it is recorded
+    as one `rbac.denied` (`anonymised`) naming the fields sent, never a value (O6), and no
+    `users.enable` is written."""
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",), status="disabled"))
+    env.store.anonymised.add(M)
+    kept = copy.deepcopy(env.store.users)
+    r = env.patch(M, {"status": "active", "display_name": "back again"})
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert (r.status_code, r.json()["code"]) == (409, "conflict")
+    (denied,) = env.emitter.calls
+    assert (denied["action"], denied["reason"], denied["object_id"]) == (
+        "rbac.denied",
+        "anonymised",
+        str(M),
+    )
+    assert (denied["before_state"], denied["after_state"]) == (
+        {"status": "disabled"},
+        {"fields": ["display_name", "status"]},
+    )
+    assert env.store.users == kept and "commit" not in env.log
+
+
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        ({"display_name": "Jane Doe"}, "display_name"),
+        ({"mfa_required": True}, "mfa_required"),
+        ({"roles": ["viewer"]}, "roles"),
+    ],
+    ids=["rename", "mfa", "roles"],
+)
+def test_an_anonymised_user_is_never_changed(
+    b16_audit: RecordingAuditSink, spec: Any, body: dict[str, Any], field: str
+) -> None:
+    """#2650, O6 (21 §12, `display_name` becomes NULL): once M's purge has run no `PATCH` writes
+    to M's row, a name, the MFA flag or a role as much as an enable; nothing the reaper nulls is
+    ever filled again. 409 `conflict`, one `rbac.denied` (`anonymised`) naming the field and
+    never the value sent, and no other record or role push."""
+    m_row = _user(M, ("manager",), status="disabled") | {"mfa_required": False}
+    env = _Env(b16_audit, _principal("owner", spec), m_row)
+    env.store.anonymised.add(M)
+    kept = copy.deepcopy(env.store.users)
+    r = env.patch(M, body)
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert (r.status_code, r.json()["code"]) == (409, "conflict")
+    (denied,) = env.emitter.calls
+    assert (denied["action"], denied["reason"]) == ("rbac.denied", "anonymised")
+    assert denied["after_state"] == {"fields": [field]} and "Jane Doe" not in repr(denied)
+    assert env.store.users == kept and "commit" not in env.log and env.pushed == []
+
+
+def test_an_anonymised_user_refusal_unrecorded_is_503(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """As for the owner floor: a refusal that cannot be recorded is 503 `audit_unavailable`."""
+    env = _Env(
+        b16_audit,
+        _principal("owner", spec),
+        _user(M, ("manager",), status="disabled"),
+        fail_audit=True,
+    )
+    env.store.anonymised.add(M)
+    r = env.patch(M, {"status": "active"})
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert env.store.users[M]["status"] == "disabled"
+
+
+def test_enable_audit_down_keeps_the_purge_pending(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """#2650: with the audit writer down the re-enable is 503 `audit_unavailable` and rolls back
+    whole: M stays disabled and the purge stays pending (the SQL store:
+    `test_a_refused_enable_record_keeps_the_purge_pending`; Postgres:
+    `test_reenable_with_audit_down_keeps_the_purge`)."""
+    env = _Env(
+        b16_audit,
+        _principal("owner", spec),
+        _user(M, ("manager",), status="disabled"),
+        fail_audit=True,
+    )
+    env.store.purges[M] = _PURGE_AT
+    r = env.patch(M, {"status": "active"})
+    assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
+    assert env.store.users[M]["status"] == "disabled" and env.store.purges == {M: _PURGE_AT}
 
 
 def test_a_status_the_lock_reads_as_locked_is_not_enabled(

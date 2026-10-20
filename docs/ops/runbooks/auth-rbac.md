@@ -503,8 +503,35 @@ are S4a's rows.
 `DELETE /users/{userId}` (`api/users.py`, E42-T04 #965) disables a user: Owner only, never your own
 account, after a step-up for action class `users` (§2). No position or order source is deployed
 yet, so it answers `409 positions_unknown` until it carries `acknowledge_unknown_positions=true`.
-Any other query parameter answers `422 validation_failed`, and `purge=true` answers `400` until
-E42-T10 serves it; neither changes anything.
+Any other query parameter answers `422 validation_failed` and changes nothing. `purge=true`
+(E42-T10) then schedules the user's anonymisation 90 days out, `users.delete` written ahead; while
+no purge reaper runs it answers `503 purge_unavailable` and changes nothing. The reaper runs on
+every deployment with a store, whatever `CV_RETENTION_ENABLED` says, and the lifespan starts it. A
+`503 audit_unavailable` or `503 purge_unavailable` whose `detail` says the user is disabled means
+the disable committed but no purge is scheduled: repeat the call. Once the date has passed the
+reaper anonymises the user and revokes every credential (password, MFA methods, recovery codes,
+live sessions) in one transaction, `users.anonymise` written ahead. Its log line
+`users_anonymised` counts each batch, and a row it passed over is counted by its error class at
+error level; nothing alerts on an overdue purge yet (UL-F6). A run that a failure ended (the read,
+the audit writer or the database refusing) is retried after 15 minutes, doubling up to a day. A
+socket close that fails is counted on that line too, and the session's B16 record is still written.
+To cancel a pending purge, re-enable the user before the date (`PATCH /users/{userId}` with
+`status: active`): its `users.enable` record names the cancelled date. Once the user is anonymised
+every `PATCH` of that user that would change it (a re-enable, a name, the MFA flag, a role)
+answers `409 conflict` and changes nothing, recorded as `rbac.denied` with reason `anonymised`. To find an overdue purge, list
+the disabled users whose date has passed and whom the reaper has not anonymised (`psql` runs inside
+the `postgres` container, in a read-only session):
+
+```bash
+docker compose -f infra/compose/docker-compose.yml --profile core exec -T \
+  -e PGOPTIONS='-c default_transaction_read_only=on' postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT id, purge_after FROM users
+WHERE status = 'disabled' AND anonymised_at IS NULL AND purge_after <= now()
+ORDER BY purge_after;
+SQL
+```
+
 One transaction sets the status, revokes the sessions and grants and writes `users.disable` ahead;
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the

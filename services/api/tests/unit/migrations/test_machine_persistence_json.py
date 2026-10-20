@@ -117,7 +117,7 @@ def _in_order(sql: str, steps: list[str]) -> bool:
 
 
 def test_revision_chains_onto_its_parent_as_its_only_child() -> None:
-    """The parent lives in `down_revision` alone (0034 until E42-T10's 0035 lands), so a re-parent
+    """The parent lives in `down_revision` alone (0034; E42-T10's 0036 is its child), so a re-parent
     is a one-line change; nothing else branches off it (`test_single_head.py` is tip-agnostic)."""
     parent = _parent(_REV)
     assert re.fullmatch(r"\d{4}_\w+", parent) and parent < _REV

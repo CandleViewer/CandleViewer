@@ -161,10 +161,14 @@ users = Table(
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("deleted_at", TIMESTAMP(timezone=True)),
+    # E42-T10 (`0036_users_purge`): the deferred PII purge's schedule and its mark (#965 O6).
+    Column("purge_after", TIMESTAMP(timezone=True)),
+    Column("anonymised_at", TIMESTAMP(timezone=True)),
     CheckConstraint("position('@' in email) > 1", name="users_email_fmt"),
     CheckConstraint("char_length(username) BETWEEN 3 AND 32", name="users_uname_len"),
     CheckConstraint("password_hash LIKE '$argon2id$%'", name="users_pwd_argon"),
     CheckConstraint("failed_login_count >= 0", name="users_fail_nonneg"),
+    CheckConstraint("anonymised_at IS NULL OR purge_after IS NOT NULL", name="users_purge_shape"),
     Index("ux_users_email", "email", unique=True, postgresql_where=text("deleted_at IS NULL")),
     Index(
         "ux_users_username", "username", unique=True, postgresql_where=text("deleted_at IS NULL")
