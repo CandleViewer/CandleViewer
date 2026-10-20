@@ -926,7 +926,7 @@ def _persistence() -> tuple[_Sealed, dict[str, Any]]:
     reg, sealed, journal = Registry(), _Sealed(), InMemoryDrainJournal()
     persist = Persister(
         repo=sealed, journal=journal, audit=sealed, seal=hmac_sealer(sealed, reg.get("replay")),
-        machine_hash_of=reg.hash,
+        machine_hash_of=reg.hash, pager=sealed,
     )  # fmt: skip
     restore = Restorer(
         registry=reg, keys=sealed, journal=journal, audit=sealed, pager=sealed,

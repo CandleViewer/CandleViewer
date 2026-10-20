@@ -276,6 +276,20 @@ class ColdReplayReadTimeout(StorageTierUnavailable):
     code = "COLD_REPLAY_READ_TIMEOUT"
 
 
+class SnapshotListTooLargeError(StorageError):
+    """`machine_snapshots` holds more than `LIST_MAX_ROWS` rows: the list is refused, not cut
+    (`statechart_sqlalchemy`, E50-T62)."""
+
+    code = "STORAGE_SNAPSHOT_LIST_TOO_LARGE"
+
+
+class ChainTooLongError(StorageError):
+    """A machine's `machine_events` chain is longer than `CHAIN_MAX_ROWS`: refused, not cut
+    (`statechart_sqlalchemy`, E50-T62)."""
+
+    code = "STORAGE_CHAIN_TOO_LONG"
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -307,4 +321,6 @@ ERROR_CODES: dict[type[StorageError], str] = {
     KcvEnrolmentNotAudited: KcvEnrolmentNotAudited.code,
     ColdReplayReadError: ColdReplayReadError.code,
     ColdReplayReadTimeout: ColdReplayReadTimeout.code,
+    SnapshotListTooLargeError: SnapshotListTooLargeError.code,
+    ChainTooLongError: ChainTooLongError.code,
 }

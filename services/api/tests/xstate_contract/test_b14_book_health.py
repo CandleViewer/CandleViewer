@@ -136,6 +136,7 @@ async def test_b14_snapshot_round_trip_at_resync_quiescence_and_refusals() -> No
         audit=audit,
         seal=hmac_sealer(keys, registry.get("book")),
         machine_hash_of=registry.hash,
+        pager=Pager(),
     ).persist(r.interpreter, key=key)
     env = repo.rows[key]
 

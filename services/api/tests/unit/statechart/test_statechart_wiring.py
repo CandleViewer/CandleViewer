@@ -1,8 +1,9 @@
 """`candleviewer.statechart_wiring` adapters and `persistence.RowStoreDrainJournal` (E50-T62 #3793):
-the statechart DTOs to and from the store records, the #3082 key assertion (nothing reaches the
-database), and the replay wrapper's order and stamping. Postgres:
-`tests/integration/storage/test_statechart_stores_pg.py`; the journal contract cases run both
-journals in `tests/xstate_contract/test_persistence.py`."""
+the statechart DTOs to and from the store records, the #3082 key assertion and the blob and
+`occurred_at` refusals (nothing reaches the database), the append's conflicts, and the replay
+wrapper's order and stamping. Postgres: `tests/integration/storage/test_statechart_stores_pg.py`;
+the journal contract cases run both journals in `tests/xstate_contract/test_persistence.py` and
+`test_restore.py`."""
 
 from __future__ import annotations
 
@@ -17,11 +18,15 @@ import pytest
 from candleviewer.statechart import persistence
 from candleviewer.statechart.persistence import (
     SEAL_LAYOUT_V,
+    DrainSeal,
+    JournalConflict,
     JournalEntry,
     MachineKey,
+    ReplayReport,
     RowStoreDrainJournal,
     Seal,
     SealedSnapshot,
+    stable_send_id,
 )
 from candleviewer.statechart.plugins.audit import GENESIS_HASH, MachineEventRow, row_digest
 from candleviewer.statechart_wiring import (
@@ -34,6 +39,7 @@ from candleviewer.statechart_wiring import (
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.statechart_sqlalchemy import (
     EventRecord,
+    JournalConflictRecord,
     JournalRecord,
     SnapshotRecord,
     SqlAlchemySnapshotStore,
@@ -124,6 +130,32 @@ async def test_a_snapshot_without_a_32_byte_hmac_seal_is_refused_before_any_stat
     assert database.opened == 0
 
 
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"state_ids": "order.pending"},
+        {"state_ids": ["order.pending", 7]},
+        {"chain_trips": -1},
+        {"chain_trips": True},
+        {"chain_trips": 1.0},
+    ],
+    ids=["state_ids not a list", "state_ids holds a non-str", "chain_trips -1",
+         "chain_trips a bool", "chain_trips a float"],
+)  # fmt: skip
+async def test_blob_metadata_that_is_not_ids_or_a_count_is_refused_before_any_statement(
+    metadata: dict[str, Any],
+) -> None:
+    """The unsealed `state_ids` and `chain_trips` columns are copied from the blob, so a blob whose
+    values could not fill them is refused before a transaction opens (F4 / SR-E50T62-05)."""
+    database = _NoDatabase()
+    store = SqlAlchemySnapshotStore(cast(SqlAlchemyRelationalRepository, database))
+    with pytest.raises(ValueError, match="snapshot write refused: the blob's"):
+        await SnapshotAdapter(store).write_snapshot(
+            KEY, replace(ENVELOPE, snapshot={**BLOB, **metadata})
+        )
+    assert database.opened == 0
+
+
 async def test_the_write_maps_the_envelope_onto_the_row() -> None:
     """Key columns from the key; `state_ids` and `chain_trips` copied from the blob;
     `cv_schema_version` is `SEAL_LAYOUT_V`; the tag as its 32 raw bytes; `updated_at` from the
@@ -179,15 +211,17 @@ def test_envelope_of_takes_the_key_from_the_columns_never_from_the_blob() -> Non
 
 
 class FakeJournal:
-    def __init__(self) -> None:
+    def __init__(self, conflicts: Sequence[JournalConflictRecord] = ()) -> None:
         self.calls: list[tuple[Any, ...]] = []
         self.rows: list[JournalRecord] = []
+        self.conflicts = tuple(conflicts)
 
     async def append(
         self, machine_kind: str, entity_id: str, env: str, records: Sequence[JournalRecord]
-    ) -> None:
+    ) -> tuple[JournalConflictRecord, ...]:
         self.calls.append(("append", machine_kind, entity_id, env))
         self.rows.extend(records)
+        return self.conflicts
 
     async def list_unreplayed(
         self, machine_kind: str, entity_id: str, env: str
@@ -195,39 +229,66 @@ class FakeJournal:
         self.calls.append(("list", machine_kind, entity_id, env))
         return tuple(self.rows)
 
+    async def present(
+        self, machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]
+    ) -> frozenset[str]:
+        self.calls.append(("present", machine_kind, entity_id, env, tuple(send_ids)))
+        return frozenset(send_ids) & {r.send_id for r in self.rows}
+
     async def mark_replayed(
         self, machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]
     ) -> None:
         self.calls.append(("mark", machine_kind, entity_id, env, tuple(send_ids)))
 
 
+EPOCH = "e0" * 16
+_RECORDS = [
+    {"kind": "event", "type": "PING", "lane": "priority", "payload": {"n": "p0"}},
+    {"kind": "event", "type": "PING", "payload": {"n": "i1"}},
+]
 ENTRIES = [
-    JournalEntry(send_id="a" * 32, lane="priority", ordinal=0, event_type="PING",
-                 record={"type": "PING", "payload": {"n": "p0"}}),
-    JournalEntry(send_id="b" * 32, lane="inbox", ordinal=1, event_type="PING",
-                 record={"type": "PING", "payload": {"n": "i1"}},
-                 receipt_error="InterpreterStoppedError"),
+    JournalEntry(send_id=stable_send_id(KEY, EPOCH, 1, 0, _RECORDS[0]), lane="priority",
+                 ordinal=0, event_type="PING", record=_RECORDS[0]),
+    JournalEntry(send_id=stable_send_id(KEY, EPOCH, 1, 1, _RECORDS[1]), lane="inbox", ordinal=1,
+                 event_type="PING", record=_RECORDS[1], receipt_error="InterpreterStoppedError"),
 ]  # fmt: skip
+DRAIN = DrainSeal(EPOCH, 1, tuple(sorted(e.send_id for e in ENTRIES)))
 
 
 async def test_the_journal_rows_round_trip_through_the_store_records() -> None:
     store = FakeJournal()
     adapter = JournalRowsAdapter(store)
-    await adapter.append(KEY, ENTRIES)
+    assert await adapter.append(KEY, ENTRIES) == ()
     assert store.rows == [
-        JournalRecord(send_id="a" * 32, lane="priority", ordinal=0, event_type="PING",
-                      payload={"type": "PING", "payload": {"n": "p0"}}),
-        JournalRecord(send_id="b" * 32, lane="inbox", ordinal=1, event_type="PING",
-                      payload={"type": "PING", "payload": {"n": "i1"}},
-                      receipt_error="InterpreterStoppedError"),
-    ]  # fmt: skip
+        JournalRecord(e.send_id, e.lane, e.ordinal, e.event_type, e.record, e.receipt_error)
+        for e in ENTRIES
+    ]
+    assert store.rows[1].payload == _RECORDS[1] and store.rows[1].receipt_error is not None
     assert list(await adapter.list_unreplayed(KEY)) == ENTRIES
+    assert await adapter.present(KEY, [ENTRIES[0].send_id, "f" * 32]) == {ENTRIES[0].send_id}
+    asked = ("present", "order", KEY.entity_id, "demo", (ENTRIES[0].send_id, "f" * 32))
+    assert store.calls[-1:] == [asked]
     await adapter.mark_replayed(KEY, ["a" * 32])
     assert store.calls[-1] == ("mark", "order", KEY.entity_id, "demo", ("a" * 32,))
     calls = len(store.calls)
-    await adapter.append(KEY, [])
+    assert await adapter.append(KEY, []) == ()
     await adapter.mark_replayed(KEY, [])
-    assert len(store.calls) == calls  # nothing to write, nothing asked of the store
+    assert await adapter.present(KEY, []) == frozenset()
+    assert len(store.calls) == calls  # nothing to write or ask, nothing asked of the store
+
+
+async def test_the_append_hands_back_the_stores_conflicts_as_the_ports() -> None:
+    """The store says, per send_id it skipped, whether the row is stamped and whether its payload
+    text is the entry's; the adapter hands that back for `Persister` to classify (24 §17.6)."""
+    store = FakeJournal(
+        [JournalConflictRecord("a" * 32, True, True), JournalConflictRecord("b" * 32, False, False)]
+    )
+    conflicts = await JournalRowsAdapter(store).append(KEY, ENTRIES)
+    assert conflicts == (
+        JournalConflict("a" * 32, stamped=True, same_payload=True),
+        JournalConflict("b" * 32, stamped=False, same_payload=False),
+    )
+    assert not any(c.is_retry for c in conflicts)
 
 
 async def test_a_journal_row_off_the_two_lanes_is_refused() -> None:
@@ -245,12 +306,17 @@ class FakeRows:
     def __init__(self, log: list[Any], rows: list[JournalEntry]) -> None:
         self.log, self.rows, self.stamped = log, rows, set[str]()
 
-    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None:
+    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> list[Any]:
         self.rows.extend(entries)
+        return []
 
     async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]:
         self.log.append("list")
         return [e for e in reversed(self.rows) if e.send_id not in self.stamped]
+
+    async def present(self, key: MachineKey, send_ids: Sequence[str]) -> frozenset[str]:
+        self.log.append(("present", list(send_ids)))
+        return frozenset(send_ids) & {e.send_id for e in self.rows}
 
     async def mark_replayed(self, key: MachineKey, send_ids: Sequence[str]) -> None:
         self.log.append(("mark", list(send_ids)))
@@ -275,21 +341,22 @@ def _restore(record: dict[str, Any]) -> str:
 async def test_replay_enqueues_in_ordinal_order_then_stamps_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CV-C65': rows in `ordinal` order, priority lane first, each re-enqueued once on its lane;
-    then one stamp of every send_id; a second replay finds nothing and stamps nothing."""
+    """CV-C65': rows in `ordinal` order, priority lane first, each re-enqueued once on the lane its
+    verified record names; then one stamp of every send_id; a second replay finds nothing to
+    replay, asks which sealed rows exist, and stamps nothing."""
     monkeypatch.setattr(persistence, "restore_event", _restore)
     log: list[Any] = []
     journal = RowStoreDrainJournal(FakeRows(log, list(ENTRIES)))
     interp = cast(Any, FakeInterp(log))
-    assert await journal.replay_once(KEY, interp) == 2
+    assert await journal.replay_once(KEY, interp, DRAIN) == ReplayReport(2, (), ())
     assert log == [
         "list",
         ("enqueue", "p0", True),
         ("enqueue", "i1", False),
-        ("mark", ["a" * 32, "b" * 32]),
+        ("mark", [ENTRIES[0].send_id, ENTRIES[1].send_id]),
     ]
-    assert await journal.replay_once(KEY, interp) == 0
-    assert log[-1] == "list"
+    assert await journal.replay_once(KEY, interp, DRAIN) == ReplayReport(0, (), ())
+    assert log[-2:] == ["list", ("present", list(DRAIN.drained))]
 
 
 async def test_a_crash_before_the_stamp_redelivers_rather_than_loses(
@@ -301,8 +368,17 @@ async def test_a_crash_before_the_stamp_redelivers_rather_than_loses(
     log: list[Any] = []
     rows = FakeRows(log, list(ENTRIES))
     with pytest.raises(RuntimeError, match="crash"):
-        await RowStoreDrainJournal(rows).replay_once(KEY, cast(Any, FakeInterp(log, fail_at=2)))
+        await RowStoreDrainJournal(rows).replay_once(
+            KEY, cast(Any, FakeInterp(log, fail_at=2)), DRAIN
+        )
     assert rows.stamped == set() and not any(isinstance(e, tuple) and e[0] == "mark" for e in log)
+
+
+async def test_the_journal_lists_unreplayed_rows_through_its_store() -> None:
+    log: list[Any] = []
+    journal = RowStoreDrainJournal(FakeRows(log, list(ENTRIES)))
+    assert [e.ordinal for e in await journal.list_unreplayed(KEY)] == [1, 0]  # the store's order
+    assert await journal.append(KEY, []) == []
 
 
 def _chain(n: int) -> list[MachineEventRow]:
@@ -362,8 +438,8 @@ async def test_machine_event_rows_come_back_byte_for_byte() -> None:
 
 @pytest.mark.parametrize(
     "occurred_at",
-    ["2026-10-19T14:00:00+02:00", "2026-10-19T12:00:00", "2026-10-19T12:00:00Z"],
-    ids=["another offset", "naive", "Z suffix"],
+    ["2026-10-19T14:00:00+02:00", "2026-10-19T12:00:00", "2026-10-19T12:00:00Z", "yesterday"],
+    ids=["another offset", "naive", "Z suffix", "not ISO-8601"],
 )
 async def test_an_occurred_at_that_would_not_come_back_unchanged_is_refused(
     occurred_at: str,
@@ -375,3 +451,29 @@ async def test_an_occurred_at_that_would_not_come_back_unchanged_is_refused(
     with pytest.raises(ValueError, match="occurred_at"):
         await EventsAdapter(store).insert_batch([row])
     assert store.records == []
+
+
+async def test_a_bad_row_after_a_good_one_refuses_the_whole_batch_before_the_store() -> None:
+    """Every row is checked before the store sees the batch, so nothing of it is stored."""
+    store = FakeEvents()
+    good, bad = _chain(2)
+    with pytest.raises(ValueError, match="occurred_at"):
+        await EventsAdapter(store).insert_batch([good, replace(bad, occurred_at="yesterday")])
+    assert store.records == []
+
+
+class CountingEvents(FakeEvents):
+    def __init__(self) -> None:
+        super().__init__()
+        self.batches: list[int] = []
+
+    async def insert_batch(self, records: Sequence[EventRecord]) -> None:
+        self.batches.append(len(records))
+        await super().insert_batch(records)
+
+
+async def test_an_empty_event_batch_asks_nothing_of_the_store() -> None:
+    store = CountingEvents()
+    await EventsAdapter(store).insert_batch([])
+    await EventsAdapter(store).insert_batch(_chain(1))
+    assert store.batches == [1]  # the empty batch never reached the store

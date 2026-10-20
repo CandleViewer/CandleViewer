@@ -553,6 +553,7 @@ async def test_migration_pre_2204_snapshot_is_refused_loudly_never_silently_rest
         audit=audit,
         seal=hmac_sealer(keys, old),
         machine_hash_of=old_reg.hash,
+        pager=pager,
     ).persist(res.interpreter, key=key)
     env = repo.rows[key]
     assert env.machine_hash == OLD_HASHES[machine]

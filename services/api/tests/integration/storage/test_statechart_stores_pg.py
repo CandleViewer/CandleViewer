@@ -1,17 +1,21 @@
 """Integration: the statechart row stores and adapters on real Postgres 16 (E50-T62 #3793).
 
 The database is set up like production (`pg_bootstrap.sql`'s roles, the migrations as `cv_owner`)
-and the stores run as `cv_app`, so they meet `0033_machine_persistence`'s grants. One test per
-Gherkin scenario of the ticket: a machine built by `factory.build`, persisted by `Persister` and
-restored by a new `Restorer` over the same rows, with values that must survive jsonb; the drain
-journal replayed exactly once and stamped; the #3082 key assertion writing nothing; a tampered row
-refused by the `Restorer`, never repaired; the inspector's list; the event chain read back byte for
-byte; and a store that cannot reach Postgres failing within its bound. `testcontainers` in CI.
+and the stores run as `cv_app`, so they meet `0033_machine_persistence`'s grants and the `json`
+columns of `machine_persistence_json` (#3857). One test per Gherkin scenario of the ticket: a
+machine built by `factory.build`, persisted by `Persister` and restored by a new `Restorer` over the
+same rows, with values that must come back as written; the drain journal replayed exactly once and
+stamped; the #3082 key assertion writing nothing; a tampered row refused by the `Restorer`, never
+repaired; the inspector's list; the event chain, a fault row included, read back byte for byte;
+and a store that cannot reach Postgres failing within its bound. Round 2 (24 §17.6, layout 3):
+the append's conflict report from the real rows, and a restore that skips and pages a planted, a
+stale, a rewritten or a missing row while it replays the sealed ones. `testcontainers` in CI.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -36,6 +40,8 @@ from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.persistence import (
     ChainTripLatch,
+    JournalConflict,
+    JournalEntry,
     MachineKey,
     Persister,
     Restorer,
@@ -44,6 +50,8 @@ from candleviewer.statechart.persistence import (
     SealedSnapshot,
     hmac_sealer,
     open_sealed,
+    split_sealed_drain,
+    stable_send_id,
 )
 from candleviewer.statechart.plugins.audit import (
     GENESIS_HASH,
@@ -69,7 +77,9 @@ from candleviewer.storage.repositories.statechart_sqlalchemy import (
     SqlAlchemyJournalStore,
     SqlAlchemySnapshotStore,
 )
-from tests.xstate_contract.persist_fixtures import binding_persist  # noqa: F401
+from tests.xstate_contract.persist_fixtures import (
+    binding_persist,  # noqa: F401 -- registers the persist_min bindings (#3793)
+)
 
 pytestmark = pytest.mark.integration
 
@@ -78,9 +88,11 @@ _BOOTSTRAP = _ROOT.parents[1] / "infra" / "scripts" / "pg_bootstrap.sql"
 _REGISTRY = Registry(machines_dir=_ROOT / "tests" / "xstate_contract" / "persist_fixtures")
 _KIND = "persist_min"
 _CHART = _REGISTRY.get(_KIND)
-#: Integers, floats, unicode, nested lists and nulls: what must survive the jsonb round trip.
-_PROBE = {"i": 7, "big": 2**63, "f": 0.1, "g": -2.25, "u": "é✓😀", "nested": [[1, [2.5, None]], []],
-          "nul": None}  # fmt: skip
+#: Integers, floats (1e16 and -0.0 too: jsonb re-rendered them, #3857), unicode, nested lists
+#: and nulls: what must come back from the `json` columns as written.
+_PROBE = {"i": 7, "big": 2**63, "f": 0.1, "g": -2.25, "e16": 1e16, "negz": -0.0, "u": "é✓😀",
+          "nested": [[1, [2.5, None]], []], "nul": None}  # fmt: skip
+EPOCH = "e0" * 16
 #: Scenario 7's DSN password: a value that must never reach an error message.
 _UNREACHABLE_PW = "scenario7-not-a-secret"
 
@@ -96,11 +108,12 @@ class FixedKeys:
 
 
 class Doubles:
-    """In-memory `PersistAudit`, `RestoreAudit` and `Pager`."""
+    """In-memory `PersistAudit`, `RestoreAudit` and `Pager` (`pages`: severities; `texts`)."""
 
     def __init__(self) -> None:
         self.quarantined: list[tuple[MachineKey, str]] = []
         self.pages: list[str] = []
+        self.texts: list[str] = []
 
     async def drain_error(self, key: MachineKey, error: str) -> None: ...
 
@@ -111,6 +124,7 @@ class Doubles:
 
     async def page(self, key: MachineKey, severity: str, message: str) -> None:
         self.pages.append(severity)
+        self.texts.append(message)
 
 
 def _login(dsn: str, role: str) -> str:
@@ -156,14 +170,18 @@ class Stores:
     events: EventsAdapter
     doubles: Doubles
 
-    def persister(self) -> Persister:
-        return Persister(
+    def persister(self, epoch: str | None = None) -> Persister:
+        persister = Persister(
             repo=self.snapshots,
             journal=RowStoreDrainJournal(self.journal),
             audit=self.doubles,
             seal=hmac_sealer(FixedKeys(), _CHART),
             machine_hash_of=_REGISTRY.hash,
+            pager=self.doubles,
         )
+        if epoch is None:
+            return persister
+        return replace(persister, epoch_source=lambda: epoch)  # the test-only seam, seeded
 
     def restorer(self, seen: list[MachineKey]) -> Restorer:
         def plugins(key: MachineKey) -> Sequence[Any]:
@@ -196,7 +214,9 @@ def _key(env: str = "demo") -> MachineKey:
     return MachineKey(_KIND, str(uuid.uuid4()), env)
 
 
-async def _persist(stores: Stores, key: MachineKey, *, drain: bool = False) -> None:
+async def _persist(
+    stores: Stores, key: MachineKey, *, drain: bool = False, epoch: str | None = None
+) -> None:
     """Build through `factory.build`, then persist at quiescence. With `drain`, two inbox events
     and one priority event are queued first: `send` enqueues before it returns, and nothing is
     awaited before the drain, so the machine has not consumed them."""
@@ -207,7 +227,7 @@ async def _persist(stores: Stores, key: MachineKey, *, drain: bool = False) -> N
         interp.send("PING", n="inbox-1")
         interp.send("PING", n="inbox-2")
         interp.send("PING", priority=True, n="prio-1")
-    await stores.persister().persist(interp, key=key)
+    await stores.persister(epoch).persist(interp, key=key)
 
 
 def _row(dsn: str, key: MachineKey) -> list[tuple[Any, ...]]:
@@ -260,9 +280,11 @@ async def test_the_drain_journal_replays_exactly_once_after_restore(
         assert restored.replayed == 3
         await asyncio.wait_for(restored.interpreter.send("PING", wait=True, n="after"), 5)
         assert restored.interpreter.context["seen"] == ["prio-1", "inbox-1", "inbox-2", "after"]
-        assert (
-            await RowStoreDrainJournal(stores.journal).replay_once(key, restored.interpreter) == 0
+        drain, _ = split_sealed_drain(envelope.snapshot)
+        again = await RowStoreDrainJournal(stores.journal).replay_once(
+            key, restored.interpreter, drain
         )
+        assert again.replayed == 0 and not again.skipped and not again.missing
     finally:
         await restored.interpreter.stop()
     journal = (
@@ -270,8 +292,11 @@ async def test_the_drain_journal_replays_exactly_once_after_restore(
         "WHERE machine_kind = %s AND entity_id = %s AND env = %s"
     )
     assert _sql(pg_dsn, journal, key.machine_kind, key.entity_id, key.env) == [(3, 3, 3)]
-    await stores.journal.append(key, pending)
+    # The same rows again, now stamped: three conflicts, none of them a retry (24 §17.6).
+    conflicts = await stores.journal.append(key, pending)
+    assert conflicts == tuple(JournalConflict(e.send_id, True, True) for e in pending)
     assert _sql(pg_dsn, journal, key.machine_kind, key.entity_id, key.env) == [(3, 3, 3)]
+    assert stores.doubles.pages == []
 
 
 _EVERY_ROW = (
@@ -307,8 +332,8 @@ async def test_the_snapshot_store_refuses_an_envelope_sealed_for_another_key(
 
 
 _TAMPER = {
-    "snapshot bytes": "UPDATE machine_snapshots SET snapshot = jsonb_set(snapshot, "
-    "'{context,seen}', '[\"forged\"]') WHERE entity_id = %s",
+    "snapshot bytes": "UPDATE machine_snapshots SET snapshot = jsonb_set(snapshot::jsonb, "
+    "'{context,seen}', '[\"forged\"]')::json WHERE entity_id = %s",
     "tag": "UPDATE machine_snapshots SET hmac_tag = decode(repeat('00', 32), 'hex') "
     "WHERE entity_id = %s",
     "env column": "UPDATE machine_snapshots SET env = 'testnet' WHERE entity_id = %s",
@@ -356,16 +381,19 @@ async def test_the_inspector_list_is_served_by_the_same_store(stores: Stores) ->
 
 
 def _chain(entity: str, n: int) -> list[MachineEventRow]:
+    """`n` commit rows, then one fault row (F6): `fault` is `None` and a dict in one batch."""
     rows: list[MachineEventRow] = []
     prev = GENESIS_HASH
-    for i in range(n):
+    for i in range(n + 1):
         at = datetime(2026, 10, 19, 12, 0, i, 123456, tzinfo=UTC).isoformat()
+        fault = {"kind": "ActionError", "failed": ["record"], "e16": 1e16} if i == n else None
         row = MachineEventRow(
             machine_kind=_KIND, entity_id=entity, env="demo", event_type="PING",
             payload={"i": i, "f": 0.25 * i + 0.1, "u": "é✓😀", "nested": [[i, [1.5, None]], []],
-                     "nul": None},
+                     "nul": None, "negz": -0.0},
             from_states=["persist_min.idle"], to_states=["persist_min.idle"],
-            actions_run=["record"], fault=None, occurred_at=at, phase="commit", prev_hash=prev,
+            actions_run=["record"], fault=fault, occurred_at=at,
+            phase="fault" if fault else "commit", prev_hash=prev,
         )  # fmt: skip
         row = replace(row, row_hash=row_digest(row))
         rows.append(row)
@@ -373,16 +401,21 @@ def _chain(entity: str, n: int) -> list[MachineEventRow]:
     return rows
 
 
-async def test_the_events_store_returns_what_it_stored_byte_for_byte(stores: Stores) -> None:
-    """Scenario 6: inserted twice, each row once, in order; `verify_chain`; the head."""
+async def test_the_events_store_returns_what_it_stored_byte_for_byte(
+    stores: Stores, pg_dsn: str
+) -> None:
+    """Scenario 6: inserted twice, each row once, in order; `verify_chain` over five commit rows
+    and a fault row; the head. No fault is SQL NULL and the fault row's dict is stored (F6)."""
     key = _key()
     rows = _chain(key.entity_id, 5)
     await stores.events.insert_batch(rows)
     await stores.events.insert_batch(rows)
     back = await stores.events.chain(key)
-    assert back == rows and verify_chain(back)
+    assert back == rows and verify_chain(back) and back[-1].fault == rows[-1].fault
     assert await stores.events.head(key) == rows[-1].row_hash
     assert await stores.events.head(_key()) == GENESIS_HASH
+    phases = "SELECT phase, fault IS NULL FROM machine_events WHERE entity_id = %s ORDER BY seq"
+    assert _sql(pg_dsn, phases, key.entity_id) == [("commit", True)] * 5 + [("fault", False)]
 
 
 def _calls() -> dict[str, Callable[[SqlAlchemyRelationalRepository], Awaitable[object]]]:
@@ -396,6 +429,7 @@ def _calls() -> dict[str, Callable[[SqlAlchemyRelationalRepository], Awaitable[o
         "snapshots.list_all": lambda r: SqlAlchemySnapshotStore(r).list_all(),
         "journal.append": lambda r: SqlAlchemyJournalStore(r).append(*key, [journal]),
         "journal.list_unreplayed": lambda r: SqlAlchemyJournalStore(r).list_unreplayed(*key),
+        "journal.present": lambda r: SqlAlchemyJournalStore(r).present(*key, ["b"]),
         "journal.mark_replayed": lambda r: SqlAlchemyJournalStore(r).mark_replayed(*key, ["b"]),
         "events.insert_batch": lambda r: SqlAlchemyEventStore(r).insert_batch([event]),
         "events.head": lambda r: SqlAlchemyEventStore(r).head(*key),
@@ -456,3 +490,141 @@ async def test_a_store_that_cannot_reach_postgres_fails_within_its_bound(
         text = str(exc)
         assert re.search(r"\(sqlstate (?:[0-9A-Z]{5}|unknown)\)$", text), text
         assert "SELECT" not in text and "INSERT" not in text and _UNREACHABLE_PW not in text
+
+
+# --- Round 2 (24 §17.6, SEAL_LAYOUT_V = 3): conflicts and the restore checks on real rows ---
+
+_PLANT = (
+    "INSERT INTO machine_drain_journal (machine_kind, entity_id, env, send_id, lane, ordinal, "
+    "event_type, payload, replayed_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::json, %s)"
+)
+
+
+def _plant(dsn: str, key: MachineKey, entry: JournalEntry, text: str, stamped: bool) -> None:
+    """cv_app's own INSERT, around the persister: `trg_mdj_stamp_once` guards updates only, so
+    the row may arrive stamped already."""
+    _sql(
+        _login(dsn, "cv_app"), _PLANT, key.machine_kind, key.entity_id, key.env, entry.send_id,
+        entry.lane, entry.ordinal, entry.event_type, text, datetime.now(UTC) if stamped else None,
+    )  # fmt: skip
+
+
+def _stamps(dsn: str, key: MachineKey) -> dict[str, bool]:
+    rows = _sql(
+        dsn,
+        "SELECT send_id, replayed_at IS NOT NULL FROM machine_drain_journal "
+        "WHERE machine_kind = %s AND entity_id = %s AND env = %s",
+        key.machine_kind, key.entity_id, key.env,
+    )  # fmt: skip
+    return {send_id: stamped for send_id, stamped in rows}
+
+
+async def test_the_append_reports_conflicts_by_the_stored_stamp_and_payload_text(
+    stores: Stores, pg_dsn: str
+) -> None:
+    """The stored `payload` text against this append's own bind: the same record is the same
+    text; the same value planted in another spelling is not; a row may be planted stamped."""
+    key = _key()
+    record = {"kind": "event", "type": "PING", "payload": {"n": "x", "e16": 1e16, "negz": -0.0}}
+    entry = JournalEntry("a" * 32, "inbox", 0, "PING", record)
+    assert await stores.journal.append(key, [entry]) == ()
+    assert await stores.journal.append(key, [entry]) == (JournalConflict("a" * 32, False, True),)
+    compact = json.dumps(record, separators=(",", ":"))
+    _plant(pg_dsn, key, replace(entry, send_id="b" * 32), compact, stamped=False)
+    _plant(pg_dsn, key, replace(entry, send_id="c" * 32), json.dumps(record), stamped=True)
+    both = [replace(entry, send_id="b" * 32), replace(entry, send_id="c" * 32)]
+    assert await stores.journal.append(key, both) == (
+        JournalConflict("b" * 32, stamped=False, same_payload=False),
+        JournalConflict("c" * 32, stamped=True, same_payload=True),
+    )
+    assert _stamps(pg_dsn, key) == {"a" * 32: False, "b" * 32: False, "c" * 32: True}
+
+
+async def test_a_row_planted_stamped_under_the_next_send_id_is_paged_by_the_persist(
+    stores: Stores, pg_dsn: str
+) -> None:
+    """With the epoch seeded (the test-only seam), the next persist's send_ids are predictable,
+    as an attacker reading the blob could predict a restored life's: a row cv_app planted stamped
+    under one is a persist fault, paged P1 with the send_id; the snapshot is still written."""
+    probe = _key()
+    await _persist(stores, probe, drain=True, epoch=EPOCH)
+    first = min(await stores.journal.list_unreplayed(probe), key=lambda e: e.ordinal)
+    key = _key()
+    sid = stable_send_id(key, EPOCH, 1, 0, first.record)
+    planted = replace(first, send_id=sid)
+    _plant(pg_dsn, key, planted, json.dumps(first.record), stamped=True)
+    await _persist(stores, key, drain=True, epoch=EPOCH)
+    assert stores.doubles.pages == ["P1"] and sid in stores.doubles.texts[0]
+    envelope = await stores.snapshots.load(key)
+    assert envelope is not None and sid in envelope.snapshot["cv_drained"]
+
+
+def _owner_rewrites_lane(dsn: str, key: MachineKey, entry: JournalEntry) -> None:
+    """The table owner deletes a sealed row (cv_app holds no DELETE) and cv_app inserts it again:
+    the same send_id and payload, the lane column flipped."""
+    _sql(dsn, "DELETE FROM machine_drain_journal WHERE send_id = %s", entry.send_id)
+    flipped = replace(entry, lane="priority" if entry.lane == "inbox" else "inbox")
+    _plant(dsn, key, flipped, json.dumps(entry.record), stamped=False)
+
+
+@pytest.mark.parametrize("defect", ["planted", "lane rewritten", "deleted"])
+async def test_a_restore_replays_the_sealed_rows_and_pages_the_others_once(
+    stores: Stores, pg_dsn: str, defect: str
+) -> None:
+    key = _key()
+    await _persist(stores, key, drain=True)
+    envelope = await stores.snapshots.load(key)
+    assert envelope is not None
+    drain, _ = split_sealed_drain(envelope.snapshot)
+    rows = sorted(await stores.journal.list_unreplayed(key), key=lambda e: e.ordinal)
+    inbox = rows[1]
+    if defect == "planted":  # self-consistent: it recomputes, but the seal never named it
+        named = stable_send_id(key, drain.epoch, drain.generation, 9, inbox.record)
+        _plant(pg_dsn, key, replace(inbox, send_id=named, ordinal=9), json.dumps(inbox.record),
+               stamped=False)  # fmt: skip
+        replayed, why = 3, "1 not in the sealed drained set"
+    elif defect == "lane rewritten":
+        _owner_rewrites_lane(pg_dsn, key, inbox)
+        named, replayed, why = inbox.send_id, 2, "1 lane column disagrees with the record"
+    else:
+        _sql(pg_dsn, "DELETE FROM machine_drain_journal WHERE send_id = %s", inbox.send_id)
+        named, replayed, why = inbox.send_id, 2, "1 sealed row(s) missing"
+    restored = await stores.restorer([]).restore(key, envelope)
+    try:
+        assert restored.replayed == replayed
+        assert stores.doubles.pages == ["P1"] and named in stores.doubles.texts[0]
+        assert why in stores.doubles.texts[0]
+    finally:
+        await restored.interpreter.stop()
+    if defect != "deleted":
+        assert _stamps(pg_dsn, key)[named] is False  # skipped, never stamped
+
+
+class _FailingWrite:
+    async def write_snapshot(self, key: MachineKey, envelope: SealedSnapshot) -> None:
+        raise ConnectionError("simulated crash before the snapshot write")
+
+
+async def test_rows_of_a_persist_whose_snapshot_write_failed_are_skipped_at_restore(
+    stores: Stores, pg_dsn: str
+) -> None:
+    key = _key()
+    built = await build(_KIND, clock=default_clock(), lane="platform", registry=_REGISTRY)
+    interp = built.interpreter
+    interp.send("PING", n="lost")
+    with pytest.raises(ConnectionError):
+        await replace(stores.persister(), repo=_FailingWrite()).persist(interp, key=key)
+    [stale] = await stores.journal.list_unreplayed(key)
+    interp.send("PING", n="kept")
+    await stores.persister().persist(interp, key=key)
+    envelope = await stores.snapshots.load(key)
+    assert envelope is not None and envelope.snapshot["cv_generation"] == 2
+    restored = await stores.restorer([]).restore(key, envelope)
+    try:
+        assert restored.replayed == 1
+        await asyncio.wait_for(restored.interpreter.send("PING", wait=True, n="end"), 5)
+        assert restored.interpreter.context["seen"] == ["kept", "end"]
+        assert stores.doubles.pages == ["P1"] and stale.send_id in stores.doubles.texts[0]
+    finally:
+        await restored.interpreter.stop()
+    assert _stamps(pg_dsn, key)[stale.send_id] is False

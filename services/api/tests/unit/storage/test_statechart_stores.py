@@ -1,6 +1,7 @@
 """`statechart_sqlalchemy` stores with a fake unit of work (E50-T62 #3793): the statements they
-build, the cap and the client deadline on every call, the bounds, and failures that carry the
-SQLSTATE only. Postgres: `tests/integration/storage/test_statechart_stores_pg.py`."""
+build, the cap and the client deadline on every call, the bounds, the journal append's conflict
+report, and failures that carry and log the SQLSTATE only. Postgres:
+`tests/integration/storage/test_statechart_stores_pg.py`."""
 
 from __future__ import annotations
 
@@ -15,8 +16,16 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.engine import Dialect, make_url
+from structlog.testing import capture_logs
 
-from candleviewer.storage.errors import StorageError, StorageQueryFailed, StorageTierUnavailable
+from candleviewer.db.models import machine_events
+from candleviewer.storage.errors import (
+    ChainTooLongError,
+    SnapshotListTooLargeError,
+    StorageError,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+)
 from candleviewer.storage.repositories import statechart_sqlalchemy as repo
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 
@@ -47,6 +56,9 @@ CALLS: dict[str, tuple[str, _Call, bool]] = {
     "journal.list_unreplayed": (
         "journal", lambda s: s.list_unreplayed("order", ENTITY, "demo"), False
     ),
+    "journal.present": (
+        "journal", lambda s: s.present("order", ENTITY, "demo", ["b" * 32]), False
+    ),
     "journal.mark_replayed": (
         "journal", lambda s: s.mark_replayed("order", ENTITY, "demo", ["b" * 32]), True
     ),
@@ -56,13 +68,20 @@ CALLS: dict[str, tuple[str, _Call, bool]] = {
 }  # fmt: skip
 
 
+def _inserted_all(stmt: Any, params: Any) -> list[dict[str, Any]]:
+    """The default answer: a journal append inserts every row (RETURNING each `send_id`)."""
+    if isinstance(stmt, sa.Insert) and stmt.table.name == "machine_drain_journal":
+        return [{"send_id": row["send_id"]} for row in params]
+    return []
+
+
 class _Rel:
     """`events`: each unit of work's statements in order (the cap first) and its commit;
     `answer(stmt, params)` gives the rows of every other statement."""
 
     def __init__(
         self,
-        answer: Callable[[Any, Any], list[dict[str, Any]]] = lambda stmt, params: [],
+        answer: Callable[[Any, Any], list[dict[str, Any]]] = _inserted_all,
         error: BaseException | None = None,
         hang: bool = False,
     ) -> None:
@@ -195,6 +214,23 @@ async def test_a_failure_carries_the_sqlstate_only_never_chained(
     assert refused.value.__cause__ is None and refused.value.__context__ is None
 
 
+@pytest.mark.parametrize(
+    ("error", "outage"), [(_dbapi("23514"), False), (_dbapi("08006"), True)], ids=["bug", "outage"]
+)
+async def test_a_failure_logs_the_call_the_outage_the_error_type_and_the_sqlstate_only(
+    error: BaseException, outage: bool
+) -> None:
+    """The ticket's security notes: the stores log ids and outcomes only (C-12.6)."""
+    with capture_logs() as logs, pytest.raises(StorageError):
+        await _store("journal", _Rel(error=error)).append("order", ENTITY, "demo", [JOURNAL])
+    state = error.orig.sqlstate  # type: ignore[attr-defined]  # _Orig carries it
+    assert logs == [
+        {"event": "statechart_store_failed", "log_level": "error", "op": "journal.append",
+         "outage": outage, "error": "DBAPIError", "sqlstate": state}
+    ]  # fmt: skip
+    assert _P1 not in repr(logs)
+
+
 async def test_cancellation_passes_through_unchanged() -> None:
     task = asyncio.ensure_future(_store("events", _Rel(hang=True)).head("order", ENTITY, "demo"))
     await asyncio.sleep(0)
@@ -215,10 +251,78 @@ def test_the_snapshot_upsert_binds_every_value_and_updates_on_the_machine_key() 
     assert ["order.idle"] in params.values() and {"n": _P1} in params.values()
 
 
-def test_the_journal_append_does_nothing_on_a_known_send_id() -> None:
+def test_the_journal_append_does_nothing_on_a_known_send_id_and_returns_what_it_inserted() -> None:
     sql = _sql(repo.append_journal_statement())
     assert sql.startswith("INSERT INTO machine_drain_journal")
-    assert sql.endswith("ON CONFLICT (machine_kind, entity_id, env, send_id) DO NOTHING")
+    assert sql.endswith(
+        "ON CONFLICT (machine_kind, entity_id, env, send_id) DO NOTHING"
+        " RETURNING machine_drain_journal.send_id"
+    )
+
+
+def test_a_skipped_row_is_read_for_its_stamp_and_its_payload_text_against_this_record() -> None:
+    """The entry's payload binds through the column's own JSON type, as the insert binds it, so
+    the two texts are equal exactly when this append would have written the stored text."""
+    stmt = repo.journal_conflict_statement("order", ENTITY, "demo", JOURNAL)
+    sql, params = _sql(stmt), _params(stmt)
+    assert sql.startswith("SELECT machine_drain_journal.replayed_at IS NOT NULL AS stamped, ")
+    assert (
+        "CAST(machine_drain_journal.payload AS TEXT) = CAST($1::JSON AS TEXT) AS same_payload"
+        in sql
+    )
+    assert ".send_id = $" in sql and _P1 not in sql
+    assert JOURNAL.payload in params.values() and JOURNAL.send_id in params.values()
+
+
+async def test_the_append_reports_each_skipped_send_id_and_commits() -> None:
+    """One unit of work: the insert, then one read per `send_id` it skipped, then the commit; a
+    skipped row the read cannot see is reported as neither stamped nor the same payload."""
+    second = repo.JournalRecord(
+        send_id="d" * 32, lane="inbox", ordinal=1, event_type="PING", payload={"n": 2}
+    )
+    third = repo.JournalRecord(
+        send_id="e" * 32, lane="inbox", ordinal=2, event_type="PING", payload={"n": 3}
+    )
+
+    def answer(stmt: Any, params: Any) -> list[dict[str, Any]]:
+        if isinstance(stmt, sa.Insert):
+            return [{"send_id": "b" * 32}]
+        named = _params(stmt)
+        if "d" * 32 in named.values():
+            return [{"stamped": True, "same_payload": False}]
+        return []
+
+    rel = _Rel(answer=answer)
+    conflicts = await _store("journal", rel).append(
+        "order", ENTITY, "demo", [JOURNAL, second, third]
+    )
+    assert conflicts == (
+        repo.JournalConflictRecord("d" * 32, stamped=True, same_payload=False),
+        repo.JournalConflictRecord("e" * 32, stamped=False, same_payload=False),
+    )
+    assert rel.events[0][0] == "cap" and rel.events[-1] == "commit" and len(rel.events) == 5
+
+
+async def test_an_append_that_inserts_every_row_reports_no_conflict() -> None:
+    rel = _Rel()
+    assert await _store("journal", rel).append("order", ENTITY, "demo", [JOURNAL]) == ()
+    assert len(rel.events) == 3
+
+
+def test_presence_is_read_by_send_id_on_the_machine_key() -> None:
+    stmt = repo.present_statement("order", ENTITY, "demo", ["b" * 32])
+    sql = _sql(stmt)
+    assert sql.startswith("SELECT machine_drain_journal.send_id FROM machine_drain_journal")
+    assert "machine_drain_journal.send_id IN (__[POSTCOMPILE_send_id_1])" in sql
+
+
+async def test_presence_returns_the_send_ids_that_have_a_row() -> None:
+    rel = _Rel(answer=lambda stmt, params: [{"send_id": "b" * 32}])
+    present = await _store("journal", rel).present("order", ENTITY, "demo", ["b" * 32, "f" * 32])
+    assert present == frozenset({"b" * 32})
+    empty = _Rel()
+    assert await _store("journal", empty).present("order", ENTITY, "demo", []) == frozenset()
+    assert empty.events == []
 
 
 def test_the_event_insert_does_nothing_on_a_known_row_hash() -> None:
@@ -246,6 +350,20 @@ async def test_the_batch_writes_bind_each_row_in_the_order_given() -> None:
     assert rows[0]["from_states"] == ["a"] and "seq" not in rows[0]
 
 
+async def test_no_fault_binds_none_which_the_column_stores_as_sql_null() -> None:
+    """`machine_events.fault` is `JSON(none_as_null=True)` (#3857): `None` binds SQL NULL, as the
+    `me_fault_phase` CHECK wants, and a fault row binds its dict, in one batch."""
+    fault_type = machine_events.c.fault.type
+    assert isinstance(fault_type, sa.JSON) and fault_type.none_as_null is True
+    rel = _Rel()
+    fault = repo.EventRecord(
+        **{**_fields(EVENT), "phase": "fault", "fault": {"failed": ["x"]}, "row_hash": "f" * 64}
+    )
+    await _store("events", rel).insert_batch([EVENT, fault])
+    rows = rel.events[1][1]
+    assert [r["fault"] for r in rows] == [None, {"failed": ["x"]}]
+
+
 def _fields(record: Any) -> dict[str, Any]:
     return {name: getattr(record, name) for name in record.__dataclass_fields__}
 
@@ -265,15 +383,19 @@ async def test_an_empty_write_opens_no_unit_of_work(kind: str, call: _Call) -> N
     assert rel.events == []
 
 
-def test_the_reads_filter_on_the_machine_key_and_bind_it() -> None:
+def test_the_reads_and_the_stamp_filter_on_the_machine_key_and_bind_it() -> None:
     for stmt in (
         repo.get_snapshot_statement("order", ENTITY, "demo"),
         repo.list_unreplayed_statement("order", ENTITY, "demo"),
+        repo.present_statement("order", ENTITY, "demo", ["b" * 32]),
+        repo.journal_conflict_statement("order", ENTITY, "demo", JOURNAL),
+        repo.mark_replayed_statement("order", ENTITY, "demo", ["b" * 32]),
         repo.head_statement("order", ENTITY, "demo"),
         repo.read_chain_statement("order", ENTITY, "demo", 0),
     ):
         sql, params = _sql(stmt), _params(stmt)
-        assert ENTITY not in sql and {"order", ENTITY, "demo"} <= set(params.values())
+        bound = {value for value in params.values() if isinstance(value, str)}
+        assert ENTITY not in sql and {"order", ENTITY, "demo"} <= bound
         for column in ("machine_kind", "entity_id", "env"):
             assert f".{column} = $" in sql
 
@@ -300,8 +422,9 @@ def test_the_chain_reads_are_keyset_pages_in_seq_order() -> None:
     head = _sql(repo.head_statement("order", ENTITY, "demo"))
     assert (
         head.startswith("SELECT machine_events.row_hash")
-        and "ORDER BY machine_events.seq DESC" in head
+        and "ORDER BY machine_events.seq DESC LIMIT $" in head
     )
+    assert 1 in _params(repo.head_statement("order", ENTITY, "demo")).values()
 
 
 async def test_the_head_of_an_empty_chain_is_the_genesis_hash() -> None:
@@ -320,7 +443,7 @@ async def test_the_list_returns_up_to_the_cap_and_refuses_beyond_it() -> None:
     rows = await _store("snapshots", full).list_all()
     assert len(rows) == repo.LIST_MAX_ROWS and rows[0].state_ids == ("order.idle",)
     over = _Rel(answer=lambda stmt, params: _snapshot_rows(repo.LIST_MAX_ROWS + 1))
-    with pytest.raises(repo.SnapshotListTooLargeError, match="not truncated"):
+    with pytest.raises(SnapshotListTooLargeError, match="not truncated"):
         await _store("snapshots", over).list_all()
 
 
@@ -345,7 +468,7 @@ async def test_the_whole_chain_is_read_page_by_page_up_to_the_cap() -> None:
     whole = await _store("events", exact).read_whole_chain("o", "e", "demo")
     assert len(whole) == repo.CHAIN_MAX_ROWS
     over = _Rel(answer=_chain(repo.CHAIN_MAX_ROWS + 1))
-    with pytest.raises(repo.ChainTooLongError, match="not truncated"):
+    with pytest.raises(ChainTooLongError, match="not truncated"):
         await _store("events", over).read_whole_chain("o", "e", "demo")
 
 

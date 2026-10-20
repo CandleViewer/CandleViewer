@@ -1,7 +1,8 @@
 """Postgres row stores of the statechart persistence tables (E50-T62 #3793), built, not wired.
 
 SQLAlchemy Core over `db.models.machine_snapshots`, `machine_drain_journal` and `machine_events`
-(`0033_machine_persistence`, 24-internal-schemas.md Sec.17.6), typed with primitives and this
+(`0033_machine_persistence`, with the `json` payload columns of `machine_persistence_json`, #3857;
+24-internal-schemas.md Sec.17.6), typed with primitives and this
 module's frozen records: M10 imports neither `statechart` nor `audit` (C-3.4), and
 `candleviewer.statechart_wiring` maps the statechart's DTOs onto the records, as the composition
 root does for `SqlAlchemyAuditRepository`. Every value is a bound parameter. The stores never seal
@@ -9,9 +10,12 @@ or verify: the HMAC envelope is the trust boundary, and `persistence.Restorer` c
 
 - Snapshots: `upsert` on the machine key; `get`; `list_all`, at most `LIST_MAX_ROWS` rows, else
   `SnapshotListTooLargeError` (a larger fleet is a finding, never a truncated list).
-- Journal: `append` with `ON CONFLICT DO NOTHING` on the primary key, so a retried append is a
-  no-op; `list_unreplayed` in `ordinal` order (one machine's drain, served by `ix_mdj_pending`);
-  `mark_replayed` stamps each named row once.
+- Journal: `append` inserts with `ON CONFLICT DO NOTHING` on the primary key and, in the same unit
+  of work, reads back each `send_id` it skipped: is that row stamped, and is its stored `payload`
+  text the one this append binds (`JournalConflictRecord`; `persistence` decides which conflict
+  is a retry, 24 Sec.17.6); `list_unreplayed` in `ordinal` order (one machine's drain, served by
+  `ix_mdj_pending`); `present`, which of some `send_id`s have a row; `mark_replayed` stamps each
+  named row once.
 - Events: `insert_batch` in the order given with `ON CONFLICT (row_hash) DO NOTHING`; `head`, the
   latest `row_hash` or the genesis; `read_chain`, a keyset page of `CHAIN_PAGE_ROWS` rows after a
   `seq`; `read_whole_chain`, every page up to `CHAIN_MAX_ROWS` rows, else `ChainTooLongError`.
@@ -30,19 +34,28 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, fields
 from datetime import datetime
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 import sqlalchemy as sa
 import structlog
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from candleviewer.db.models import machine_drain_journal, machine_events, machine_snapshots
-from candleviewer.storage.errors import StorageError, StorageQueryFailed, StorageTierUnavailable
+from candleviewer.storage.errors import (
+    ChainTooLongError,
+    SnapshotListTooLargeError,
+    StorageError,
+    StorageQueryFailed,
+    StorageTierUnavailable,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+
+_T = TypeVar("_T")
 
 #: Every call's bound (#3793): its statements' cap, and one second later the client deadline.
 STORE_TIMEOUT_S: Final = 2.0
@@ -60,18 +73,6 @@ _SQLSTATE: Final = re.compile(r"[0-9A-Z]{5}")
 #: SQLSTATE classes of a statement the server refused: data, constraint, syntax/access, internal.
 _BUG_CLASSES: Final = frozenset({"22", "23", "42", "XX"})
 _MS, _MDJ, _ME = machine_snapshots.c, machine_drain_journal.c, machine_events.c
-
-
-class SnapshotListTooLargeError(StorageError):
-    """`machine_snapshots` holds more than `LIST_MAX_ROWS` rows: the list is refused, not cut."""
-
-    code = "STORAGE_SNAPSHOT_LIST_TOO_LARGE"
-
-
-class ChainTooLongError(StorageError):
-    """A machine's `machine_events` chain is longer than `CHAIN_MAX_ROWS`: refused, not cut."""
-
-    code = "STORAGE_CHAIN_TOO_LONG"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +103,16 @@ class JournalRecord:
     event_type: str
     payload: dict[str, Any]
     receipt_error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class JournalConflictRecord:
+    """A `send_id` an append skipped because it had a row: is that row stamped, and is its stored
+    `payload` text the one this append bound for it."""
+
+    send_id: str
+    stamped: bool
+    same_payload: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,13 +168,37 @@ def list_snapshots_statement() -> sa.Select[Any]:
 
 
 def append_journal_statement() -> sa.Insert:
+    """Inserts the rows whose `send_id` is new and returns each one it inserted."""
     primary_key = ("machine_kind", "entity_id", "env", "send_id")
-    return pg_insert(machine_drain_journal).on_conflict_do_nothing(index_elements=primary_key)
+    stmt = pg_insert(machine_drain_journal).on_conflict_do_nothing(index_elements=primary_key)
+    return stmt.returning(_MDJ.send_id)
+
+
+def journal_conflict_statement(
+    machine_kind: str, entity_id: str, env: str, record: JournalRecord
+) -> sa.Select[bool, bool]:
+    """The row an append skipped for `record`: is it stamped, and is its stored text the one this
+    append bound? `record.payload` binds through the column's own JSON type, as the insert binds
+    it, and `json` keeps its input text, so the texts are equal exactly when the insert would
+    have written the stored one."""
+    mine = sa.cast(sa.bindparam("payload", record.payload, type_=_MDJ.payload.type), sa.Text)
+    same = sa.cast(_MDJ.payload, sa.Text) == mine
+    named = (_key(_MDJ, machine_kind, entity_id, env), _MDJ.send_id == record.send_id)
+    return sa.select(
+        _MDJ.replayed_at.is_not(None).label("stamped"), same.label("same_payload")
+    ).where(*named)
 
 
 def list_unreplayed_statement(machine_kind: str, entity_id: str, env: str) -> sa.Select[Any]:
     pending = sa.and_(_key(_MDJ, machine_kind, entity_id, env), _MDJ.replayed_at.is_(None))
     return sa.select(*JOURNAL_COLUMNS).where(pending).order_by(_MDJ.ordinal)
+
+
+def present_statement(
+    machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]
+) -> sa.Select[Any]:
+    named = (_key(_MDJ, machine_kind, entity_id, env), _MDJ.send_id.in_(list(send_ids)))
+    return sa.select(_MDJ.send_id).where(*named)
 
 
 def mark_replayed_statement(
@@ -215,22 +250,33 @@ class _Store:
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._rel = relational
 
-    async def _run(
-        self, op: str, stmt: sa.Executable, rows: Sequence[dict[str, Any]] | None = None
-    ) -> list[dict[str, Any]]:
-        """One statement (`rows`: executed once per row) in its own capped unit of work, under the
-        client deadline, committed unless it is a read; the rows it returns."""
+    async def _unit(
+        self, op: str, work: Callable[[AsyncSession], Awaitable[_T]], *, commit: bool
+    ) -> _T:
+        """`work` in its own capped unit of work, under the client deadline, committed if asked."""
         try:
             async with _client_deadline(), self._rel.unit_of_work() as uow:
                 await uow.session.execute(_TIMEOUT, {"timeout": _TIMEOUT_MS})
-                result = await uow.session.execute(stmt, rows)
-                if isinstance(stmt, sa.Select):
-                    return [dict(row) for row in result.mappings()]
-                await uow.commit()
-                return []
+                result = await work(uow.session)
+                if commit:
+                    await uow.commit()
+                return result
         except (OSError, sa_exc.SQLAlchemyError) as exc:  # the deadline's TimeoutError: an OSError
             failure = _failure(op, exc)
         raise failure  # outside the `except`: no cause and no context, so no driver text
+
+    async def _run(
+        self, op: str, stmt: sa.Executable, rows: Sequence[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
+        """One statement (`rows`: executed once per row), committed unless it is a read; the
+        rows a read returns."""
+        read = isinstance(stmt, sa.Select)
+
+        async def one(session: AsyncSession) -> list[dict[str, Any]]:
+            result = await session.execute(stmt, rows)
+            return [dict(row) for row in result.mappings()] if read else []
+
+        return await self._unit(op, one, commit=not read)
 
 
 def _snapshot(row: dict[str, Any]) -> SnapshotRecord:
@@ -243,11 +289,11 @@ def _event(row: dict[str, Any]) -> EventRecord:
 
 
 def _event_values(record: EventRecord) -> dict[str, Any]:
-    """`seq` is the database's; no `fault` is SQL NULL (the `me_fault_phase` CHECK), not JSON
-    `null`, which the JSONB type would bind for `None`."""
+    """`seq` is the database's. No `fault` is `None`, which `machine_events.fault`
+    (`JSON(none_as_null=True)`, #3857) binds as SQL NULL, as the `me_fault_phase` CHECK wants."""
     values = _values(record)
     del values["seq"]
-    return values | ({"fault": sa.null()} if record.fault is None else {})
+    return values
 
 
 class SqlAlchemySnapshotStore(_Store):
@@ -275,11 +321,33 @@ class SqlAlchemyJournalStore(_Store):
 
     async def append(
         self, machine_kind: str, entity_id: str, env: str, records: Sequence[JournalRecord]
-    ) -> None:
-        if records:
-            key = {"machine_kind": machine_kind, "entity_id": entity_id, "env": env}
-            rows = [key | _values(record) for record in records]
-            await self._run("journal.append", append_journal_statement(), rows)
+    ) -> tuple[JournalConflictRecord, ...]:
+        """Insert the new rows, then, in the same unit of work, read back each `send_id` the
+        insert skipped (a row it inserted earlier in this batch included); `()` if none."""
+        if not records:
+            return ()
+        key = {"machine_kind": machine_kind, "entity_id": entity_id, "env": env}
+        rows = [key | _values(record) for record in records]
+
+        async def work(session: AsyncSession) -> tuple[JournalConflictRecord, ...]:
+            result = await session.execute(append_journal_statement(), rows)
+            inserted = [str(row["send_id"]) for row in result.mappings()]
+            conflicts: list[JournalConflictRecord] = []
+            for record in records:
+                if record.send_id in inserted:
+                    inserted.remove(record.send_id)  # each insert accounts for one record
+                    continue
+                stmt = journal_conflict_statement(machine_kind, entity_id, env, record)
+                found = list((await session.execute(stmt)).mappings())
+                stamped, same = (
+                    (bool(found[0]["stamped"]), bool(found[0]["same_payload"]))
+                    if found
+                    else (False, False)  # a row the read cannot see is never a retry
+                )
+                conflicts.append(JournalConflictRecord(record.send_id, stamped, same))
+            return tuple(conflicts)
+
+        return await self._unit("journal.append", work, commit=True)
 
     async def list_unreplayed(
         self, machine_kind: str, entity_id: str, env: str
@@ -288,6 +356,15 @@ class SqlAlchemyJournalStore(_Store):
         return tuple(
             JournalRecord(**row) for row in await self._run("journal.list_unreplayed", stmt)
         )
+
+    async def present(
+        self, machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]
+    ) -> frozenset[str]:
+        """Which of `send_ids` have a row of the machine, stamped or not."""
+        if not send_ids:
+            return frozenset()
+        stmt = present_statement(machine_kind, entity_id, env, send_ids)
+        return frozenset(str(row["send_id"]) for row in await self._run("journal.present", stmt))
 
     async def mark_replayed(
         self, machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]

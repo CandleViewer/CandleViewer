@@ -51,6 +51,7 @@ async def _lingering_snapshot(clock: FakeClock) -> tuple[SealedSnapshot, InMemor
         audit=Audit(),
         seal=hmac_sealer(Keys(), _REG.get("recording")),
         machine_hash_of=_REG.hash,
+        pager=Pager(),
     ).persist(p._charts["ETHUSDT"], key=KEY)
     await p.stop()
     return repo.rows[KEY], journal

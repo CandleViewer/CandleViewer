@@ -13,13 +13,22 @@ Owns the shutdown path of every catalogue machine
 
 `drain_pending()` is called only here (CV-LINT-DRAIN).
 
+The drain is sealed (24 §17.6, `SEAL_LAYOUT_V = 3`, E50-T62): before any journal row is written,
+the persist fixes its life's `cv_epoch` (minted on the first persist of an interpreter that was
+not restored, from the OS CSPRNG), its `cv_generation` (the restored or last one plus 1) and
+`cv_drained` (the sorted `send_id`s it journals, each hashed over that epoch and generation too);
+the blob it seals carries all three. An append conflict is a retry only on an unreplayed row with
+the same payload text; any other is a persist fault, one P1 page per persist.
+
 Restore (E50-T49, 29 §1.3) is `Restorer.restore`: `open_sealed` (HMAC-SHA256
-over chart bytes + blob + machine key, CV-C53) -> `from_snapshot(minimum_version=3,
-expected_machine_hash=, plugins=)` (CV-C52, MUST-12, R13-W1) -> pre-start
-asserts (C45'', C60, C27', C54) -> `_cv_bring_up` -> bounded `start()` ->
-`journal.replay_once` -> `chain_trips` latch (C63). Any refusal writes a
-quarantine row and fires a P1 alert; a tampered blob is never loaded.
-`from_snapshot(` appears only in this module (CV-LINT-RESTORE).
+over chart bytes + blob + machine key, CV-C53) -> the three `cv_` keys checked and removed ->
+`from_snapshot(minimum_version=3, expected_machine_hash=, plugins=)` (CV-C52, MUST-12, R13-W1)
+-> pre-start asserts (C45'', C60, C27', C54) -> `_cv_bring_up` -> bounded `start()` ->
+`journal.replay_once` (only the rows the seal names, verified; one P1 page for the rest; a
+failure stops the machine) -> `chain_trips` latch (C63). Any refusal writes a
+quarantine row and fires a P1 alert; a tampered blob is never loaded. A machine that starts
+without a verified snapshot calls `Restorer.page_unclaimed` instead: no sealed set can claim its
+key's unreplayed rows. `from_snapshot(` appears only in this module (CV-LINT-RESTORE).
 
 Storage and audit are injected Protocols: `statechart` may not import
 `audit` or `storage` directly (import-linter, forbidden-M18). The Postgres
@@ -36,6 +45,10 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
+import secrets
+import weakref
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
@@ -98,29 +111,100 @@ class PersistAudit(Protocol):
     async def persist_refused(self, key: MachineKey, reason: str) -> None: ...
 
 
-class DrainJournal(Protocol):
-    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None: ...
+@dataclass(frozen=True, slots=True)
+class JournalConflict:
+    """An appended entry whose `send_id` already had a row: is that row stamped, and is its
+    stored `payload` text the entry's (24 §17.6)?"""
 
-    async def replay_once(self, key: MachineKey, interp: Interpreter[Any]) -> int: ...
+    send_id: str
+    stamped: bool
+    same_payload: bool
+
+    @property
+    def is_retry(self) -> bool:
+        """The retry of one drain: the only conflict that is a no-op; any other is a fault."""
+        return not self.stamped and self.same_payload
+
+
+@dataclass(frozen=True, slots=True)
+class DrainSeal:
+    """What a layout-3 blob seals about its persist (24 §17.6): the life's `cv_epoch`, the
+    persist's `cv_generation`, and `cv_drained`, the sorted `send_id`s it journaled."""
+
+    epoch: str
+    generation: int
+    drained: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayReport:
+    """One verified replay: how many rows were re-enqueued, the unreplayed rows skipped (their
+    `send_id` and why), and the sealed `send_id`s with no row of the key."""
+
+    replayed: int
+    skipped: tuple[tuple[str, str], ...] = ()
+    missing: tuple[str, ...] = ()
+
+
+class DrainJournal(Protocol):
+    async def append(
+        self, key: MachineKey, entries: Sequence[JournalEntry]
+    ) -> Sequence[JournalConflict]: ...
+
+    async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]: ...
+
+    async def replay_once(
+        self, key: MachineKey, interp: Interpreter[Any], drain: DrainSeal
+    ) -> ReplayReport: ...
 
 
 #: Seal callback: `(snapshot, machine_hash, version, key) -> seal` (E50-T49).
 Sealer = Callable[[dict[str, Any], str, int, MachineKey], Awaitable[Any]]
 
+_HEX32: Final = re.compile(r"[0-9a-f]{32}")
+#: The most `send_id`s one page names; the rest are counted (`+N more`). One page per restore of
+#: a key, per persist and per start without a snapshot, never one per row.
+PAGE_SEND_IDS_MAX: Final = 20
 
-def stable_send_id(key: MachineKey, ordinal: int, record: dict[str, Any]) -> str:
-    """Deterministic de-dup key for a drained event (R11-W-1, R14-02).
 
-    Same machine key + drain position + persisted record => same id, so a
-    re-submitted journal append after a crash is idempotent.
+def stable_send_id(
+    key: MachineKey, epoch: str, generation: int, ordinal: int, record: dict[str, Any]
+) -> str:
+    """The drain journal's de-dup key (24 §17.6, R11-W-1, R14-02): the first 32 hex of sha256
+    over `canonical_json([machine_kind, entity_id, env, cv_epoch, cv_generation, ordinal,
+    record])`, which refuses a value JSON cannot hold, NaN and infinities included.
+
+    The same persist re-appending the same record gets the same id, so a retried append is a
+    no-op; a later persist (the generation) or another life (the epoch) never shares one.
     """
-    canon = json.dumps(
-        [key.machine_kind, key.entity_id, key.env, ordinal, record],
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:32]
+    inputs = [key.machine_kind, key.entity_id, key.env, epoch, generation, ordinal, record]
+    return hashlib.sha256(canonical_json(inputs)).hexdigest()[:32]
+
+
+def _send_ids_text(send_ids: Sequence[str]) -> str:
+    shown = ", ".join(send_ids[:PAGE_SEND_IDS_MAX])
+    more = len(send_ids) - PAGE_SEND_IDS_MAX
+    return f"{shown} +{more} more" if more > 0 else shown
+
+
+def _os_epoch() -> str:
+    """A new life's `cv_epoch`: 128 bits from the OS CSPRNG, as 32 lowercase hex characters."""
+    return secrets.token_hex(16)
+
+
+@dataclass(frozen=True, slots=True)
+class _Life:
+    """A machine's life (24 §17.6): its epoch and the last generation it fixed: the restored one,
+    or one a persist spent once it had drained, whether or not that persist then succeeded."""
+
+    epoch: str
+    generation: int
+
+
+#: Each live interpreter's life: set by `Restorer.restore` from the verified blob, or minted by
+#: the first persist of an interpreter that was not restored (a fresh build, a build after a
+#: refused restore, a reset). Weak, so an interpreter's entry goes with it.
+_LIVES: Final[weakref.WeakKeyDictionary[Interpreter[Any], _Life]] = weakref.WeakKeyDictionary()
 
 
 def _is_settled(interp: Interpreter[Any]) -> bool:
@@ -129,94 +213,190 @@ def _is_settled(interp: Interpreter[Any]) -> bool:
     Reads engine internals (`_descent_done`, `_step_in_flight`) because the
     pinned 0.9.1 exposes no public "settled after start" flag; this module
     is the one place allowed to couple to the runtime (CV-LINT-IMPORT).
+    A restored interpreter has no initial descent: the library's resume path
+    attaches the run loop without creating `_descent_done`, so running is its
+    proof of start (F2; before E50-T62 no restored machine could persist again).
     """
+    if not interp.is_running or interp._step_in_flight():
+        return False
     descent = getattr(interp, "_descent_done", None)
-    return (
-        bool(interp.is_running)
-        and descent is not None
-        and bool(descent.is_set())
-        and not interp._step_in_flight()
-    )
+    if descent is None:
+        return bool(interp.restored_from_snapshot)
+    return bool(descent.is_set())
+
+
+def _record_lane(record: dict[str, Any]) -> JournalLane:
+    """The lane a record names, as the library's own restore reads it (CV-C42)."""
+    return "priority" if record.get("lane") == "priority" else "inbox"
+
+
+def _refusal(
+    key: MachineKey, drain: DrainSeal, sealed: frozenset[str], row: JournalEntry
+) -> str | None:
+    """Why an unreplayed row may not be replayed under the verified `drain`; `None` if it may."""
+    if row.send_id not in sealed:
+        return "not in the sealed drained set"
+    if not isinstance(row.record, dict):
+        return "record is not an object"
+    try:
+        recomputed = stable_send_id(key, drain.epoch, drain.generation, row.ordinal, row.record)
+    except (TypeError, ValueError):  # e.g. `1e400` read back as Infinity: no JSON for it
+        recomputed = ""
+    if recomputed != row.send_id:
+        return "send_id does not recompute"
+    if (row.lane == "priority") != (row.record.get("lane") == "priority"):
+        return "lane column disagrees with the record"
+    if row.event_type != row.record.get("type"):
+        return "event_type column disagrees with the record"
+    return None
+
+
+class JournalRowStore(Protocol):
+    """One machine's `machine_drain_journal` rows (E50-T62): the composition root's
+    `JournalRowsAdapter` over Postgres, or `InMemoryDrainJournal`. Replay needs the library, so
+    it stays here, in `replay_sealed`."""
+
+    async def append(
+        self, key: MachineKey, entries: Sequence[JournalEntry]
+    ) -> Sequence[JournalConflict]: ...
+
+    async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]: ...
+
+    async def present(self, key: MachineKey, send_ids: Sequence[str]) -> frozenset[str]: ...
+
+    async def mark_replayed(self, key: MachineKey, send_ids: Sequence[str]) -> None: ...
+
+
+async def replay_sealed(
+    rows: JournalRowStore, key: MachineKey, interp: Interpreter[Any], drain: DrainSeal
+) -> ReplayReport:
+    """Replay exactly the rows the verified blob seals (24 §17.6, CV-C65').
+
+    An unreplayed row is re-enqueued only when its `send_id` is in `cv_drained`, recomputes from
+    the row with the blob's epoch and generation, and its `lane` and `event_type` columns agree
+    with its record; its lane is the record's, never the column's (CV-C42). Accepted rows go in
+    `ordinal` order through the restore hook (lane and engine provenance kept, library #214), and
+    only then are they stamped, in one call: a crash between the two re-delivers them, and an
+    order retry reuses its client order id (C-2.10), where stamping first could lose an event.
+    Every other unreplayed row is skipped (neither enqueued nor stamped) and reported, as is each
+    sealed `send_id` that has no row of the key; the caller pages them.
+    """
+    sealed = frozenset(drain.drained)
+    unreplayed = sorted(await rows.list_unreplayed(key), key=lambda e: (e.ordinal, e.send_id))
+    accepted: list[JournalEntry] = []
+    skipped: list[tuple[str, str]] = []
+    for row in unreplayed:
+        why = _refusal(key, drain, sealed, row)
+        if why is None:
+            accepted.append(row)
+        else:
+            skipped.append((row.send_id, why))
+    listed = {row.send_id for row in unreplayed}
+    unseen = [send_id for send_id in drain.drained if send_id not in listed]
+    present = await rows.present(key, unseen) if unseen else frozenset[str]()
+    missing = tuple(send_id for send_id in unseen if send_id not in present)
+    for row in accepted:
+        ev = restore_event(row.record)
+        interp._enqueue_restored(ev, priority=_record_lane(row.record) == "priority")
+    if accepted:
+        await rows.mark_replayed(key, [row.send_id for row in accepted])
+    return ReplayReport(len(accepted), tuple(skipped), missing)
 
 
 class InMemoryDrainJournal:
     """Reference `DrainJournal` (tests, contract suite, dev).
 
-    Semantics match `machine_drain_journal`: PK includes `send_id` (append is
-    idempotent), rows are replayed in `ordinal` order (priority first) and
-    stamped `replayed` so a second `replay_once` is a no-op (CV-C65').
+    Semantics match `machine_drain_journal`: PK includes `send_id` (an append reports each id
+    that already has a row: stamped or not, and whether its payload is the entry's, as canonical
+    JSON), rows are replayed in `ordinal` order (priority first) through `replay_sealed`, and
+    stamped `replayed`, so a second `replay_once` is a no-op (CV-C65').
     """
 
     def __init__(self) -> None:
         self._rows: dict[MachineKey, dict[str, JournalEntry]] = {}
         self._replayed: set[tuple[MachineKey, str]] = set()
 
-    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None:
-        rows = self._rows.setdefault(key, {})
+    async def append(
+        self, key: MachineKey, entries: Sequence[JournalEntry]
+    ) -> list[JournalConflict]:
+        rows, conflicts = self._rows.setdefault(key, {}), []
         for entry in entries:
-            rows.setdefault(entry.send_id, entry)
+            held = rows.get(entry.send_id)
+            if held is None:
+                rows[entry.send_id] = entry
+                continue
+            stamped = (key, entry.send_id) in self._replayed
+            same = canonical_json(held.record) == canonical_json(entry.record)
+            conflicts.append(JournalConflict(entry.send_id, stamped, same))
+        return conflicts
 
     def rows(self, key: MachineKey) -> list[JournalEntry]:
         return sorted(self._rows.get(key, {}).values(), key=lambda e: e.ordinal)
 
-    async def replay_once(self, key: MachineKey, interp: Interpreter[Any]) -> int:
-        count = 0
-        for entry in self.rows(key):
-            marker = (key, entry.send_id)
-            if marker in self._replayed:
-                continue
-            self._replayed.add(marker)
-            ev = restore_event(entry.record)
-            # Restore hook, not `send()`: keeps lane + engine provenance of
-            # fired timers / completions (library #214), priority ahead of inbox.
-            interp._enqueue_restored(ev, priority=entry.lane == "priority")
-            count += 1
-        return count
+    async def list_unreplayed(self, key: MachineKey) -> list[JournalEntry]:
+        return [e for e in self.rows(key) if (key, e.send_id) not in self._replayed]
 
+    async def present(self, key: MachineKey, send_ids: Sequence[str]) -> frozenset[str]:
+        held = self._rows.get(key, {})
+        return frozenset(send_id for send_id in send_ids if send_id in held)
 
-class JournalRowStore(Protocol):
-    """One machine's `machine_drain_journal` rows (E50-T62), served by the composition root's
-    `JournalRowsAdapter`. Replay needs the library, so `RowStoreDrainJournal` stays here."""
+    async def mark_replayed(self, key: MachineKey, send_ids: Sequence[str]) -> None:
+        self._replayed.update((key, send_id) for send_id in send_ids)
 
-    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None: ...
-
-    async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]: ...
-
-    async def mark_replayed(self, key: MachineKey, send_ids: Sequence[str]) -> None: ...
+    async def replay_once(
+        self, key: MachineKey, interp: Interpreter[Any], drain: DrainSeal
+    ) -> ReplayReport:
+        return await replay_sealed(self, key, interp, drain)
 
 
 @dataclass(slots=True)
 class RowStoreDrainJournal:
-    """`DrainJournal` over a `JournalRowStore` (E50-T62): the body of
-    `InMemoryDrainJournal.replay_once`, the reference, with the stamp after the re-enqueue. A crash
-    between the two re-delivers the rows, and an order retry reuses its client order id (C-2.10);
-    stamping first could lose an event."""
+    """`DrainJournal` over a `JournalRowStore` (E50-T62): the Postgres journal, replayed by
+    `replay_sealed`, as the reference is."""
 
     rows: JournalRowStore
 
-    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None:
-        await self.rows.append(key, entries)
+    async def append(
+        self, key: MachineKey, entries: Sequence[JournalEntry]
+    ) -> Sequence[JournalConflict]:
+        return await self.rows.append(key, entries)
 
-    async def replay_once(self, key: MachineKey, interp: Interpreter[Any]) -> int:
-        pending = sorted(await self.rows.list_unreplayed(key), key=lambda e: e.ordinal)
-        for entry in pending:
-            ev = restore_event(entry.record)
-            interp._enqueue_restored(ev, priority=entry.lane == "priority")
-        if pending:
-            await self.rows.mark_replayed(key, [entry.send_id for entry in pending])
-        return len(pending)
+    async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]:
+        return await self.rows.list_unreplayed(key)
+
+    async def replay_once(
+        self, key: MachineKey, interp: Interpreter[Any], drain: DrainSeal
+    ) -> ReplayReport:
+        return await replay_sealed(self.rows, key, interp, drain)
 
 
 @dataclass(slots=True)
 class Persister:
-    """Wires `persist()` to its injected collaborators."""
+    """Wires `persist()` to its injected collaborators.
+
+    `epoch_source` is a test-only seam: production keeps `_os_epoch`, the OS CSPRNG, so a life's
+    ids cannot be predicted before its first snapshot is readable (24 §17.6).
+    """
 
     repo: SnapshotRepo
     journal: DrainJournal
     audit: PersistAudit
     seal: Sealer
     machine_hash_of: Callable[[str], str]
+    pager: Pager
     version: int = field(default=SNAPSHOT_V)
+    epoch_source: Callable[[], str] = field(default=_os_epoch)
+
+    def _life(self, interp: Interpreter[Any]) -> _Life:
+        """The interpreter's life; for one that was not restored, a new life with a new epoch,
+        which the persist keeps once it has drained (nothing is journaled before that)."""
+        life = _LIVES.get(interp)
+        if life is None:
+            epoch = self.epoch_source()
+            if not isinstance(epoch, str) or _HEX32.fullmatch(epoch) is None:
+                raise ValueError("cv_epoch must be 32 lowercase hex characters (24 §17.6)")
+            life = _Life(epoch, 0)
+        return life
 
     async def persist(self, interp: Interpreter[Any], *, key: MachineKey) -> None:
         """Quiescent persist (29 §1.3). See module docstring for the order."""
@@ -231,12 +411,17 @@ class Persister:
             reason = "context carries _fault (MUST-01)"
             await self.audit.persist_refused(key, reason)
             raise PersistRefusedError(f"persist({key.machine_kind}/{key.entity_id}): {reason}")
+        life = self._life(interp)
 
         n_priority = len(interp._priority_queue)
         receipts = interp._receipts
         pending = list(interp.pending_events)
         waited = {id(ev) for ev in pending if id(ev) in receipts}
         drained = await interp.drain_pending()  # CV-LINT-DRAIN: only call site
+        # Fixed before any journal row is written, and spent even if this persist fails later:
+        # a retry gets new ids, so the failed attempt's rows stay out of every sealed set.
+        generation = life.generation + 1
+        _LIVES[interp] = _Life(life.epoch, generation)
 
         entries: list[JournalEntry] = []
         for ordinal, ev in enumerate(drained):
@@ -247,7 +432,7 @@ class Persister:
                 await self.audit.drain_error(key, receipt_error)  # R14-02
             entries.append(
                 JournalEntry(
-                    send_id=stable_send_id(key, ordinal, record),
+                    send_id=stable_send_id(key, life.epoch, generation, ordinal, record),
                     lane=lane,
                     ordinal=ordinal,
                     event_type=str(ev.type),
@@ -255,9 +440,24 @@ class Persister:
                     receipt_error=receipt_error,
                 )
             )
-        await self.journal.append(key, entries)
+        sealed_keys = {
+            "cv_epoch": life.epoch,
+            "cv_generation": generation,
+            "cv_drained": sorted({entry.send_id for entry in entries}),
+        }
+        conflicts = await self.journal.append(key, entries)
+        faults = [c for c in conflicts if not c.is_retry]
+        if faults:  # MUST-01: never a silent no-op; the send_ids only, never a payload
+            stamped = sum(c.stamped for c in faults)
+            await self.pager.page(
+                key,
+                "P1",
+                f"drain journal append: {len(faults)} conflicting row(s), a persist fault "
+                f"(MUST-01): {stamped} stamped already, {len(faults) - stamped} with another "
+                f"payload; send_ids {_send_ids_text([c.send_id for c in faults])}",
+            )
 
-        blob = interp.get_persisted_snapshot()  # root only (CV-C41)
+        blob = {**interp.get_persisted_snapshot(), **sealed_keys}  # root only (CV-C41)
         machine_hash = self.machine_hash_of(key.machine_kind)
         seal = await self.seal(blob, machine_hash, self.version, key)
         await self.repo.write_snapshot(
@@ -316,8 +516,11 @@ class Pager(Protocol):
 #: part, so a tag sealed under another layout, or for another purpose, never verifies. It is not
 #: `SNAPSHOT_V`: that is the library's snapshot floor (`from_snapshot(minimum_version=)`, CV-C52)
 #: and must not move with this. 1 = chart, blob, machine_hash, version; 2 adds the label and the
-#: machine key.
-SEAL_LAYOUT_V: Final[int] = 2
+#: machine key; 3 (E50-T62) keeps those parts, through `canonical_json`, which refuses NaN and
+#: infinities from E50-T62, and seals a blob that carries `cv_epoch`, `cv_generation` and
+#: `cv_drained` (24 §17.6). No upcaster: an envelope of an earlier layout fails the MAC and is
+#: quarantined.
+SEAL_LAYOUT_V: Final[int] = 3
 
 
 def _mac_input(
@@ -479,6 +682,42 @@ def _pre_start_checks(blob: dict[str, Any], interp: Interpreter[Any]) -> None:
 PluginsFactory = Callable[[MachineKey], Sequence[PluginBase[Any]]]
 
 
+_CV_KEYS: Final = ("cv_epoch", "cv_generation", "cv_drained")
+
+
+def split_sealed_drain(blob: dict[str, Any]) -> tuple[DrainSeal, dict[str, Any]]:
+    """A verified layout-3 blob's `DrainSeal`, and the blob without its three `cv_` keys, which
+    `from_snapshot` never sees. `ValueError` names a missing or malformed key (24 §17.6)."""
+    epoch, generation, drained = (blob.get(name) for name in _CV_KEYS)
+    if not isinstance(epoch, str) or _HEX32.fullmatch(epoch) is None:
+        raise ValueError("sealed cv_epoch is missing or not 32 lowercase hex (SEAL_LAYOUT_V 3)")
+    if type(generation) is not int or generation < 1:
+        raise ValueError("sealed cv_generation is missing or not an int of at least 1")
+    if (
+        not isinstance(drained, list)
+        or not all(isinstance(s, str) and _HEX32.fullmatch(s) for s in drained)
+        or drained != sorted(set(drained))
+    ):
+        raise ValueError(
+            "sealed cv_drained is missing or not a sorted, duplicate-free send_id list"
+        )
+    rest = {name: value for name, value in blob.items() if name not in _CV_KEYS}
+    return DrainSeal(epoch, generation, tuple(drained)), rest
+
+
+def _skipped_page(report: ReplayReport) -> str:
+    """One page for a restore of one key: the counts, why, and at most 20 `send_id`s."""
+    why = Counter(reason for _, reason in report.skipped)
+    tally = "; ".join(f"{n} {reason}" for reason, n in sorted(why.items()))
+    send_ids = [send_id for send_id, _ in report.skipped] + list(report.missing)
+    return (
+        f"drain journal: {len(report.skipped)} unreplayed row(s) skipped"
+        + (f" ({tally})" if tally else "")
+        + f", {len(report.missing)} sealed row(s) missing; nothing of them replayed or stamped; "
+        f"send_ids {_send_ids_text(send_ids)}"
+    )
+
+
 @dataclass(slots=True)
 class Restorer:
     """The only path from sealed bytes to a live machine (29 §1.3)."""
@@ -500,11 +739,51 @@ class Restorer:
         await self.pager.page(key, "P1", f"snapshot refused: {reason}")
         return RestoreRefusedError(key, reason)
 
+    async def _replay(
+        self, key: MachineKey, interp: Interpreter[Any], drain: DrainSeal
+    ) -> ReplayReport:
+        """The verified replay of a started machine. A replay that fails stops the machine, which
+        would otherwise run with no owner, and leaves its rows unstamped for the next restore
+        (F7, SR-E50T62-03): an error pages P1 by its type only and is raised again without its
+        chain; a cancellation stops the machine and passes through."""
+        try:
+            return await self.journal.replay_once(key, interp, drain)
+        except asyncio.CancelledError:
+            await interp.stop()
+            raise
+        except Exception as exc:
+            failure = exc
+        await interp.stop()
+        await self.pager.page(
+            key,
+            "P1",
+            f"drain journal replay failed ({type(failure).__name__}): the restored machine is "
+            "stopped and its rows stay unreplayed for the next restore",
+        )
+        raise failure from None
+
+    async def page_unclaimed(self, key: MachineKey) -> int:
+        """The start of a machine without a verified snapshot (fresh, after a refused restore,
+        after a reset): no sealed set can claim its key's unreplayed rows, such as those of a
+        crash between the first append and the first snapshot, so each is skipped, left
+        unstamped, and named in one P1 page (24 §17.6). Returns how many."""
+        rows = sorted(await self.journal.list_unreplayed(key), key=lambda e: (e.ordinal, e.send_id))
+        # replay_sealed's skip-and-page branch under an empty sealed set: nothing is replayed.
+        unclaimed = ReplayReport(
+            0, tuple((r.send_id, "no verified snapshot claims it") for r in rows)
+        )
+        if unclaimed.skipped:
+            await self.pager.page(key, "P1", _skipped_page(unclaimed))
+        return len(rows)
+
     async def restore(self, key: MachineKey, envelope: SealedSnapshot) -> RestoreResult:
         chart = self.registry.get(key.machine_kind)
         expected = self.registry.hash(key.machine_kind)
         try:
-            blob = open_sealed(self.keys, chart, envelope, key=key, expected_machine_hash=expected)
+            sealed = open_sealed(
+                self.keys, chart, envelope, key=key, expected_machine_hash=expected
+            )
+            drain, blob = split_sealed_drain(sealed)
         except ValueError as exc:
             raise await self._refuse(key, envelope, str(exc)) from None
 
@@ -522,6 +801,7 @@ class Restorer:
             _pre_start_checks(blob, interp)
         except (XStateMachineError, ValueError) as exc:
             raise await self._refuse(key, envelope, f"{type(exc).__name__}: {exc}") from None
+        _LIVES[interp] = _Life(drain.epoch, drain.generation)  # its next persist is the +1
 
         factory._cv_bring_up(interp)
         try:
@@ -531,7 +811,9 @@ class Restorer:
                 f"restore({key.machine_kind}) start() did not settle within "
                 f"{CV_START_TIMEOUT}s (CV-C56)"
             ) from exc
-        replayed = await self.journal.replay_once(key, interp)
+        report = await self._replay(key, interp, drain)
+        if report.skipped or report.missing:
+            await self.pager.page(key, "P1", _skipped_page(report))
 
         degraded = interp.chain_trips > 0  # CV-C63: read the count, not last_error
         if degraded:
@@ -539,7 +821,7 @@ class Restorer:
             self.latch.latch(key, reason)
             await self.pager.page(key, "P1", f"restored degraded ({reason})")
         return RestoreResult(
-            interpreter=interp, machine_hash=expected, replayed=replayed, degraded=degraded
+            interpreter=interp, machine_hash=expected, replayed=report.replayed, degraded=degraded
         )
 
 

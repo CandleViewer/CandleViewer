@@ -26,6 +26,7 @@ from candleviewer.statechart.persistence import (
     RestoreRefusedError,
     SealedSnapshot,
     hmac_sealer,
+    split_sealed_drain,
 )
 from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import (
@@ -99,6 +100,7 @@ async def _persisted(
         audit=rig.audit,
         seal=hmac_sealer(rig.keys, reg.get(machine)),
         machine_hash_of=reg.hash,
+        pager=rig.pager,
     ).persist(interp, key=rig.key)
     return rig, repo.rows[rig.key], before
 
@@ -121,7 +123,8 @@ async def test_round_trip_at_quiescence_point_is_identical_and_replays_once(
         assert res.replayed == 1 and not res.degraded
         await settle()
         assert interp.error is None  # an unknown replayed event never bricks
-        assert await rig.journal.replay_once(rig.key, interp) == 0  # exactly once
+        drain, _ = split_sealed_drain(env.snapshot)
+        assert (await rig.journal.replay_once(rig.key, interp, drain)).replayed == 0  # once
     finally:
         await interp.stop()
 

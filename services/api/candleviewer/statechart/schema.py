@@ -69,15 +69,21 @@ MACHINE_SCHEMA: dict[str, Any] = {
 }
 
 
-def canonical_json(chart: dict[str, Any]) -> bytes:
-    """Deterministic UTF-8 JSON bytes: sorted keys, no incidental whitespace.
+def canonical_json(value: object) -> bytes:
+    """Deterministic UTF-8 JSON bytes: sorted keys, no incidental whitespace, ASCII.
 
     Used by `registry.hash()` so `machine_hash` (`sha256(canonical_json(chart))`)
     is stable across key reordering (ticket acceptance criterion 3) and
     across platforms (fixed separators, no locale-dependent formatting).
+    From E50-T62 it is also the one serializer of the snapshot seal's MAC
+    input and of the drain journal's `send_id` (24 §17.6), and it sets
+    `allow_nan=False` with no `default`: a value JSON cannot hold, a NaN or
+    an infinity included, is an error, never a string. No chart holds one,
+    so no `machine_hash` changes.
     """
     import json
 
-    return json.dumps(chart, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
-        "utf-8"
+    text = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
     )
+    return text.encode("utf-8")

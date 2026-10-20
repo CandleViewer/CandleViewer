@@ -14,7 +14,8 @@ over these adapters.
   `write_snapshot` refuses an empty `entity_id` (`''` and the kind are different keys), then an
   envelope sealed for another key than the row's (#3082): `SnapshotKeyMismatchError` names the
   field. It never seals or verifies; `Restorer` does (CV-C53).
-- `JournalRowsAdapter` is the `persistence.JournalRowStore` under `RowStoreDrainJournal`.
+- `JournalRowsAdapter` is the `persistence.JournalRowStore` under `RowStoreDrainJournal`: the
+  append hands back the store's conflict report, and `present` names the `send_id`s with a row.
 - `EventsAdapter` maps `MachineEventRow`. `occurred_at` must be the audit plugin's ISO-8601 UTC
   string, so that `row_digest` over a row read back equals the `row_hash` it was stored with; one
   that would come back different is refused before the store sees the batch.
@@ -31,10 +32,13 @@ from candleviewer.admin.inspector import SnapshotRow, SnapshotStore
 from candleviewer.replay.sessions_service import SnapshotSource
 from candleviewer.statechart.persistence import (
     SEAL_LAYOUT_V,
+    DrainJournal,
+    JournalConflict,
     JournalEntry,
     JournalLane,
     JournalRowStore,
     MachineKey,
+    RowStoreDrainJournal,
     Seal,
     SealedSnapshot,
     SnapshotRepo,
@@ -42,6 +46,7 @@ from candleviewer.statechart.persistence import (
 from candleviewer.statechart.plugins.audit import MachineEventRow, Phase
 from candleviewer.storage.repositories.statechart_sqlalchemy import (
     EventRecord,
+    JournalConflictRecord,
     JournalRecord,
     SnapshotRecord,
 )
@@ -122,11 +127,15 @@ class SnapshotRows(Protocol):
 class JournalRows(Protocol):
     async def append(
         self, machine_kind: str, entity_id: str, env: str, records: Sequence[JournalRecord]
-    ) -> None: ...
+    ) -> Sequence[JournalConflictRecord]: ...
 
     async def list_unreplayed(
         self, machine_kind: str, entity_id: str, env: str
     ) -> Sequence[JournalRecord]: ...
+
+    async def present(
+        self, machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]
+    ) -> frozenset[str]: ...
 
     async def mark_replayed(
         self, machine_kind: str, entity_id: str, env: str, send_ids: Sequence[str]
@@ -187,13 +196,17 @@ class JournalRowsAdapter:
     def __init__(self, store: JournalRows) -> None:
         self._store = store
 
-    async def append(self, key: MachineKey, entries: Sequence[JournalEntry]) -> None:
-        if entries:
-            records = [
-                JournalRecord(e.send_id, e.lane, e.ordinal, e.event_type, e.record, e.receipt_error)
-                for e in entries
-            ]
-            await self._store.append(key.machine_kind, key.entity_id, key.env, records)
+    async def append(
+        self, key: MachineKey, entries: Sequence[JournalEntry]
+    ) -> tuple[JournalConflict, ...]:
+        if not entries:
+            return ()
+        records = [
+            JournalRecord(e.send_id, e.lane, e.ordinal, e.event_type, e.record, e.receipt_error)
+            for e in entries
+        ]
+        conflicts = await self._store.append(key.machine_kind, key.entity_id, key.env, records)
+        return tuple(JournalConflict(c.send_id, c.stamped, c.same_payload) for c in conflicts)
 
     async def list_unreplayed(self, key: MachineKey) -> Sequence[JournalEntry]:
         records = await self._store.list_unreplayed(key.machine_kind, key.entity_id, key.env)
@@ -203,6 +216,11 @@ class JournalRowsAdapter:
             )
             for r in records
         ]
+
+    async def present(self, key: MachineKey, send_ids: Sequence[str]) -> frozenset[str]:
+        if not send_ids:
+            return frozenset()
+        return await self._store.present(key.machine_kind, key.entity_id, key.env, send_ids)
 
     async def mark_replayed(self, key: MachineKey, send_ids: Sequence[str]) -> None:
         if send_ids:
@@ -275,3 +293,4 @@ _SNAPSHOT_REPO: Callable[[SnapshotRows], SnapshotRepo] = SnapshotAdapter
 _SNAPSHOT_SOURCE: Callable[[SnapshotRows], SnapshotSource] = SnapshotAdapter
 _SNAPSHOT_STORE: Callable[[SnapshotRows], SnapshotStore] = SnapshotAdapter
 _JOURNAL_ROWS: Callable[[JournalRows], JournalRowStore] = JournalRowsAdapter
+_DRAIN_JOURNAL: Callable[[JournalRowStore], DrainJournal] = RowStoreDrainJournal

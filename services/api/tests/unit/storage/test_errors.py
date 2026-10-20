@@ -12,6 +12,7 @@ from candleviewer.storage.errors import (
     AuditEntryTooLarge,
     BackupCheckViolation,
     BackupWriteOnceViolation,
+    ChainTooLongError,
     ColdReplayReadError,
     ColdReplayReadTimeout,
     HotReplayReadError,
@@ -22,6 +23,7 @@ from candleviewer.storage.errors import (
     MissingDesignatedTimestamp,
     RewrapAuditNotWired,
     RewrapAuditNotWritten,
+    SnapshotListTooLargeError,
     StorageDiskCritical,
     StorageError,
     StorageExportVerifyFailed,
@@ -68,6 +70,8 @@ def test_error_codes_are_stable_and_unique() -> None:
         KcvEnrolmentNotAudited: "STORAGE_KCV_ENROLMENT_NOT_AUDITED",
         ColdReplayReadError: "COLD_REPLAY_READ_ERROR",
         ColdReplayReadTimeout: "COLD_REPLAY_READ_TIMEOUT",
+        SnapshotListTooLargeError: "STORAGE_SNAPSHOT_LIST_TOO_LARGE",
+        ChainTooLongError: "STORAGE_CHAIN_TOO_LONG",
     }
     assert len(set(ERROR_CODES.values())) == len(ERROR_CODES)
 

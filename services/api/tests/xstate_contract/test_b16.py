@@ -497,7 +497,12 @@ async def test_b16_snapshot_round_trip_while_locked_and_read_only() -> None:
     key = MachineKey("session", "00000000-0000-0000-0000-0000000b1607", "demo")
     seal = hmac_sealer(keys, reg.get("session"))
     persister = Persister(
-        repo=repo, journal=journal, audit=Audit(), seal=seal, machine_hash_of=reg.hash
+        repo=repo,
+        journal=journal,
+        audit=Audit(),
+        seal=seal,
+        machine_hash_of=reg.hash,
+        pager=Pager(),
     )
     await persister.persist(interp, key=key)
     restorer = Restorer(
