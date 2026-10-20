@@ -47,6 +47,9 @@ export default tseslint.config(
       ...reactPlugin.configs.recommended.rules,
       ...reactHooksPlugin.configs.recommended.rules,
       "react/react-in-jsx-scope": "off",
+      // SR-127 (04-security-program.md §6.12): no markup strings, SVG included; the CI Semgrep
+      // rule cv-shell-dangerously-set-inner-html is its twin.
+      "react/no-danger": "error",
     },
     settings: {
       react: { version: "18.3" },
@@ -79,9 +82,9 @@ export default tseslint.config(
     },
   },
   {
-    // Glyphs come from the icon registry; its own modules (src/icons/**) draw the one <svg>.
+    // Glyphs come from the icon registry; its grid, src/icons/IconSvg.tsx, draws the one <svg>.
     files: ICON_RULE_FILES,
-    ignores: ["src/icons/**", FIXTURES],
+    ignores: ["src/icons/IconSvg.tsx", FIXTURES],
     plugins: { candleviewer },
     rules: {
       "candleviewer/no-raw-svg": "error",

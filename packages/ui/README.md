@@ -163,7 +163,9 @@ Use an icon by importing the component an element draws: `import { CloseIcon } f
 (`test/icons/tree-shaking.test.ts`). An icon beside visible text stays decorative; an icon-only
 control carries its own `aria-label`. Three lint rules bind this (`eslint.config.mjs`):
 
-- `candleviewer/no-raw-svg`: a raw `<svg>` outside `src/icons/` fails, naming the file.
+- `candleviewer/no-raw-svg`: a raw `<svg>` or an SVG data URL anywhere but the grid,
+  `src/icons/IconSvg.tsx`, fails, naming the file; `react/no-danger` fails markup strings (SR-127),
+  and `test/eslint-rules/no-raw-svg.test.ts` checks the MDX docs pages, which ESLint does not read.
 - `candleviewer/icon-only-control-label`: a control whose only content is icons needs an
   `aria-label` (or `aria-labelledby`; for IconButton, its `label`). Icons in text-free wrappers
   (`<span>`) or in conditionals (`{open ? <ChevronUpIcon /> : <ChevronDownIcon />}`) count as
