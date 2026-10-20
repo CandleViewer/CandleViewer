@@ -457,15 +457,20 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     `history`; `history` only trims what is sent. SR-E12-02's 250 000 figure is REST's estimate gate only. As
     `symbol` has no index, each statement of a read filters every row of its kind's table from where it starts,
     so a non-time read is also bounded by table rows (D2-M4, #2787; 21 §9.5): it first takes the `ts` of the
-    table's `MAX_TAIL_SCAN_ROWS`-th newest row in the window (500 000, of any series), a backward scan that stops
+    table's `MAX_TAIL_SCAN_ROWS`-th newest row in the window (of any series), a backward scan that stops
     there, then the `ts` of the series' newest `MAX_TAIL` rows from the later of that `ts` and its window start
     (D2-M2, #3688), then sorts only the rows from there, about `MAX_TAIL`. No statement visits more than
     `MAX_TAIL_SCAN_ROWS` rows and those tied with the last; a sparse series' snapshot may start later than its
-    window, or be empty (23 §6.1). A time read keeps one statement, over at most about twice the bars it asks for
-    (fewer once the 400 d cap applies; 21 §9.5): bounded by span, not by rows, a residual, as `bars_time` also
-    holds kline rows and no row estimate of it exists. REST `/market/bars` reads are bounded by the window caps,
-    the estimate gate and the 2 s timeout, not by rows. The read's cost is measured in D2-G3;
-    `MAX_TAIL_SCAN_ROWS` is re-sized on the target host with the D2-M4 bench.
+    window, or be empty (23 §6.1). The bound is global to the kind's table, so the depth of that snapshot
+    depends on the write rate of every series in it, within the spec caps: accepted with the D2-M4 ruling
+    (#2787). A time read keeps one statement, over at most about twice the bars it asks for (fewer once the
+    400 d cap applies; 21 §9.5): bounded by span, not by rows, a residual, as `bars_time` also holds kline rows
+    and no row estimate of it exists. It is mitigated by the 2 s read timeout, 8 reads at once
+    (`MAX_CONCURRENT_TAIL_READS`) and the span cap. Its owner is E12-T06 (#399), whose flag checklist holds
+    `bars_enabled` off: it is revisited before the flag goes to production, or sooner when a row estimate of
+    `bars_time` exists. REST `/market/bars` reads are bounded by the window caps, the estimate gate and the
+    2 s timeout, not by rows. The read's cost is measured in D2-G3; `MAX_TAIL_SCAN_ROWS` is re-sized on the
+    target host with the D2-M4 bench.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
@@ -497,3 +502,4 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
 | 2026-10-18 | code + security review r1 (#399 D8)                     | APPROVE ×2; minors folded                                |
 | 2026-10-18 | author (SR-E12-07, #3476)                               | SR-E12-07 subscribe rate per user built                  |
 | 2026-10-19 | author (SR-E12-02, #2787 D2-M4)                         | WS non-time scan bounded by table rows                   |
+| 2026-10-20 | code + security review r1 (#2787 D2-M4)                 | APPROVE ×2; minors folded                                |

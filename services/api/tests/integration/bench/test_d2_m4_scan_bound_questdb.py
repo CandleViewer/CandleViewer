@@ -6,8 +6,10 @@ every case's rows equal one statement of `main`'s read from the bound (every col
 whose keys a model of every seeded row predicts (the `:3` series and the rows with no bar index
 too); `dense` reads as with no bound; `count()` from the bound is k and its ties. The bound plans
 as a `Limit lo hi` over a backward scan from the window start, with no sort and no filter; the
-series bound starts at the bound, the tail there or later. `D2M4_TAIL_READS=` records the warm
-times of each statement of a `dense` and a `sparse` read; no time is asserted.
+series bound starts at the bound, the tail there or later. The bound at the shipped K
+(`MAX_TAIL_SCAN_ROWS`) is EXPLAINed too: a plan needs no 500 000 rows, so nothing runs at it, and
+`D2M4_TAIL_READS=` records the warm times of each statement of a `dense` and a `sparse` read at
+k = 50 000 only; no time is asserted.
 """
 
 from __future__ import annotations
@@ -20,9 +22,9 @@ from datetime import datetime
 import asyncpg
 import pytest
 
-from candleviewer.bars.limits import MAX_TAIL
+from candleviewer.bars.limits import MAX_TAIL, MAX_TAIL_SCAN_ROWS
 from candleviewer.bars.models import BarSpec
-from candleviewer.bars.reader import BarReader, row_key
+from candleviewer.bars.reader import BarReader, build_tail_scan_bound_query, row_key
 from candleviewer.bars.rows import bar_param_for
 from candleviewer.domain.sql_names import ts_param, ts_us_from_row
 from candleviewer.storage.questdb.runner import run_migrations
@@ -58,6 +60,14 @@ def _start(plan: str) -> int:
     return ts_us_from_row(datetime.fromisoformat(found[1]))
 
 
+def _scan_plan(plan: str, k: int) -> None:
+    """The table-row bound plans as a `Limit` of its k-th row over a backward scan of the
+    designated timestamp from the window start, with no sort and no filter."""
+    assert f"Limit lo: {k - 1} hi: {k}" in plan and "Row backward scan" in plan, plan
+    assert "Interval backward scan on: bars_" in plan, plan
+    assert "Sort" not in plan and "filter" not in plan.lower(), plan
+
+
 async def _plans(conn: asyncpg.Connection, rec: m2._Recorder, k: int, at: list[int]) -> list[str]:
     """QuestDB's `EXPLAIN` of the three statements `read_tail` ran, on their binds, checked; `at`:
     where each one's interval starts. Once per text: 8.1.1 caches an `EXPLAIN` and explains the
@@ -67,9 +77,7 @@ async def _plans(conn: asyncpg.Connection, rec: m2._Recorder, k: int, at: list[i
         for c in rec.calls
     ]
     scan, bound = plans[:2]
-    assert f"Limit lo: {k - 1} hi: {k}" in scan and "Row backward scan" in scan, scan
-    assert "Interval backward scan on: bars_" in scan, scan
-    assert "Sort" not in scan and "filter" not in scan.lower(), scan
+    _scan_plan(scan, k)
     assert "Row backward scan" in bound and f"limit: {MAX_TAIL}" in bound, bound
     assert "Sort" not in bound, bound
     assert [_start(p) for p in plans] == at, plans
@@ -106,6 +114,10 @@ async def test_d2_m4_the_table_row_bound_is_a_backward_scan_of_k_rows_on_questdb
             await hot.wait_for_row_count(conn, f"bars_{kind}", len(every), timeout_s=180)
         for kind in m2.KINDS:
             table, spec = f"bars_{kind}", BarSpec(kind=kind, range_ticks=2)
+            sql, binds = build_tail_scan_bound_query(kind, m2.SINCE, now_us=m2.NOW_US)  # shipped K
+            shipped = "\n".join(str(r[0]) for r in await conn.fetch("EXPLAIN " + sql, *binds))
+            _scan_plan(shipped, MAX_TAIL_SCAN_ROWS)
+            assert _start(shipped) == m2.SINCE, shipped
             for k in (K, tied):
                 at = window[k - 1]  # the k-th newest `ts` in the window
                 sql = f"SELECT count() FROM {table} WHERE ts >= $1"  # noqa: S608  # nosec B608 - test-owned literal table name

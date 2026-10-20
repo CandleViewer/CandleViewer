@@ -134,6 +134,20 @@ class _Steps(_Conn):
         return self.answers[len(self.calls) - 1]
 
 
+class _Fails(_Steps):
+    """`_Steps` whose `at`-th statement (1-based) raises `error` instead of answering."""
+
+    def __init__(self, error: Exception, at: int, *answers: list[dict[str, object]]) -> None:
+        super().__init__(*answers)
+        self.error, self.at = error, at
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        if len(self.calls) + 1 == self.at:
+            self.calls.append((sql, params))
+            raise self.error
+        return await super().fetch(sql, *params)
+
+
 def _select(
     rows: list[dict[str, object]], sql: str, binds: tuple[object, ...]
 ) -> list[dict[str, object]]:
@@ -269,6 +283,18 @@ def test_the_table_row_bound_refuses_a_window_beyond_the_sr_e12_02_cap() -> None
     build_tail_scan_bound_query("tick", NOW - MAX_NON_TIME_WINDOW_US, now_us=NOW)  # at the cap
     with pytest.raises(ValueError, match="SR-E12-02"):
         build_tail_scan_bound_query("tick", NOW - MAX_NON_TIME_WINDOW_US - 1, now_us=NOW)
+
+
+async def test_the_table_row_bound_cannot_be_raised_past_its_pin() -> None:
+    """D2-M4: a larger `rows`, the reader's `tail_scan_rows` included, is read as
+    `MAX_TAIL_SCAN_ROWS`, so no caller turns the bound into a no-op."""
+    pinned = build_tail_scan_bound_query("tick", T0, now_us=T0)
+    for rows in (MAX_TAIL_SCAN_ROWS + 1, 10**12):
+        assert build_tail_scan_bound_query("tick", T0, now_us=T0, rows=rows) == pinned
+    conn = _Conn([])
+    reader = BarReader(conn, _sched, now_us=lambda: NOW, tail_scan_rows=10**12)
+    await reader.read_tail(SYM, RSPEC, 3)
+    assert conn.calls[0] == build_tail_scan_bound_query("renko", RSINCE, now_us=NOW)
 
 
 def test_the_bound_query_takes_the_newest_ts_on_one_key_with_the_tail_query_s_where() -> None:
@@ -490,11 +516,33 @@ def _bounded_reads() -> float:
 
 async def test_the_bound_counts_the_reads_it_started_later_than_their_window_only() -> None:
     before = _bounded_reads()
-    await _read_k(_busy_table(), RSPEC, k=7)  # moved: counted
+    await _read_k(_busy_table(), RSPEC, k=7)  # moved, a tail read: counted
+    sparse = BarSpec(kind="renko", range_ticks=3)
+    await _read_k(_busy_table(), sparse, k=5)  # moved past all its rows, an empty read: counted
     await _read_k(_busy_table(), RSPEC, k=MAX_TAIL_SCAN_ROWS)  # 12 rows, fewer than k: not
+    at_start = BarReader(_Steps(_stamps(RSINCE), []), _sched, now_us=lambda: NOW)
+    await at_start.read_tail(SYM, RSPEC, 3)  # the bound is the window start: moved nothing, not
     time_reader = BarReader(_Conn([_row(0)]), _sched, now_us=lambda: NOW)
     await time_reader.read_tail(SYM, SPEC, 2)  # a time read: never bounded
-    assert _bounded_reads() == before + 1
+    assert _bounded_reads() == before + 2
+
+
+@pytest.mark.parametrize("error_type", [OSError, TimeoutError], ids=["os-error", "timeout"])
+@pytest.mark.parametrize("at", [1, 2, 3], ids=["the-table-bound", "the-series-bound", "the-tail"])
+async def test_a_failed_statement_fails_the_read_with_no_fallback_and_no_count(
+    at: int, error_type: type[Exception]
+) -> None:
+    """D2-M4: the table-row bound is the read's first statement, and when it fails or times out so
+    does the read (the store counts it and reads again): the statements that scan from the window
+    start never run in its place. A read that fails after the bound moved it is not counted:
+    the counter says how many reads the bound shaped, and the retry counts once."""
+    newest = _stamps(T0 + 9 * MIN, T0 + 8 * MIN, T0 + 7 * MIN)  # the limit: a tail follows
+    conn = _Fails(error_type("questdb down"), at, _stamps(K5), newest, [])
+    before = _bounded_reads()
+    with pytest.raises(error_type):
+        await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, RSPEC, 3)
+    assert len(conn.calls) == at and _is_scan_bound(conn.calls[0][0])
+    assert _bounded_reads() == before
 
 
 async def test_a_time_read_stays_one_statement_from_its_window_start() -> None:

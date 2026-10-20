@@ -680,18 +680,23 @@ async def test_a_read_that_skips_a_row_leaves_the_series_incomplete_until_one_sk
     assert hook.calls == [(SYM, SPEC, 7)]
 
 
-@pytest.mark.parametrize(("shift", "gap"), [(20, True), (-10, False)], ids=["inside", "before"])
+@pytest.mark.parametrize(
+    ("shift", "bounded", "gap"),
+    [(20, False, True), (-10, False, False), (20, True, False)],
+    ids=["inside", "before", "bounded"],
+)
 async def test_a_restart_emptying_a_series_read_with_rows_is_judged_by_that_reads_window(
-    shift: int, gap: bool
+    shift: int, bounded: bool, gap: bool
 ) -> None:
     """#3660 (b), which rule (1) keeps: rows 0..10 read clean, then a restarted run's bar 5 opens
     (a reset) and closes. It opened inside that read's window (`since_us`, kept for a read that
     found rows too), so the close counts one gap, (0, 4), and the one read it brings ends where it
     started: harmless, one count, one warning, one read, measured to the end of that read.
-    Opened before the window: none of them."""
+    Opened before the window: none of them. Nor after a read the table-row bound started (D2-M4,
+    `bounded`): bars below its start may exist, so no gap and no second read."""
     clock = Clock()
     tail = Tail(now=True)
-    tail.tail = BarTail(rows(*range(11)), since_us=T0)
+    tail.tail = BarTail(rows(*range(11)), since_us=T0, bounded=bounded)
     store = SeriesStore(tail, clock=clock)
     _held = await store.ensure(SYM, SPEC)
     before = counted("bars_series_gaps_total")

@@ -1027,7 +1027,9 @@ async def test_a_bounded_empty_read_judges_no_junction_and_nothing_reads_it_agai
     inside it, is no gap, whether it closes after the read or during it (the fold then judges it
     by this read's bound, #3660 rule (1)); after an unbounded read it is one (D2-H1a, above). The
     series ends `hydrated` and not `gapped`: the heal driver's `due` never lists it, and neither
-    `refresh` nor `ensure` reads it again. The store does not look at the kind: a time spec."""
+    `refresh` nor `ensure` reads it again. The store does not look at the kind: a time spec.
+    `bounded` is that read's alone: a live close that then skips 21 and 22 past held bar 20 is a
+    gap all the same, and the re-read, not bounded, judges bar 20 against its own start: (0, 19)."""
     clock, tail = Clock(), Tail()
     tail.tail = BarTail([], since_us=T0, bounded=True)
     store = SeriesStore(tail, clock=clock)
@@ -1048,6 +1050,13 @@ async def test_a_bounded_empty_read_judges_no_junction_and_nothing_reads_it_agai
     assert store.due(clock.t) == [] and not await store.refresh(SYM, H)
     (await store.ensure(SYM, SPEC)).release()
     assert tail.calls == 1
+    await emit(store, up("close", 23))
+    assert store.gapped(SYM, H) and store.due(clock.t) == [(SYM, H)]
+    tail.tail = BarTail([], since_us=T0)
+    with capture_logs() as logs:
+        await store.refresh(SYM, H)
+    gaps = [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")]
+    assert (tail.calls, gaps, store.gapped(SYM, H)) == (2, [(0, 19)], True)
     hold.release()
 
 

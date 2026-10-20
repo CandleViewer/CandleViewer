@@ -207,13 +207,15 @@ def build_tail_scan_bound_query(
     holds fewer. It names no symbol, so it counts table rows, the rows every later statement
     filters; and it reads nothing but `ts`. QuestDB 8.1.1 plans it as `Limit lo hi` over a
     backward scan of the designated timestamp, which stops after `rows` rows. Its window check is
-    the tail statements'."""
+    the tail statements'. A `rows` above `MAX_TAIL_SCAN_ROWS` is read as that pin: no caller can
+    raise the bound past it."""
     if kind not in _FAMILIES:  # the closed allow-list the table name comes from
         raise ValueError(f"unknown bar kind {kind!r}")
     if kind == "time":
         raise ValueError("no table-row bound for bar kind 'time': its window bounds its scan")
     if rows < 1:
         raise ValueError("rows must be at least 1")
+    rows = min(rows, MAX_TAIL_SCAN_ROWS)  # the pin: a larger caller value is read as it
     _check_window(kind, from_us, now_us)
     sql = (
         f"SELECT ts FROM bars_{kind} WHERE ts >= $1 ORDER BY ts DESC LIMIT {int(rows) - 1}, "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
@@ -395,12 +397,14 @@ class BarReader:
         each statement below filters every row of the kind's table from where it starts.
         `build_tail_scan_bound_query` takes the `ts` of the table's `MAX_TAIL_SCAN_ROWS`-th newest
         row in the window, of any series, and the read starts there when that is later than its
-        window start (`BarTail.bounded`, counted in `bars_tail_scan_bounded_total`), else at its
-        window start: no statement visits more than that many rows and the rows tied with the
-        last. Not exact, by design: the tail is the exact one restricted to the bars that opened
-        from that start (`since_us`) on. A dense series (`limit` rows there) gets the exact tail,
-        a sparse one only its rows there, perhaps none; older bars come over REST. A table with
-        fewer rows in the window has no such row, and the read is the exact one.
+        window start (`BarTail.bounded`), else at its window start: no statement visits more than
+        that many rows and the rows tied with the last. Not exact, by design: the tail is the
+        exact one restricted to the bars that opened from that start (`since_us`) on. A dense
+        series (`limit` rows there) gets the exact tail, a sparse one only its rows there, perhaps
+        none; older bars come over REST. A table with fewer rows in the window has no such row,
+        and the read is the exact one. A bound statement that fails or times out fails the read,
+        with no fallback to the unbounded one. A read the bound started later is counted when it
+        completes (`bars_tail_scan_bounded_total`), not when the bound is taken.
 
         A non-time read is bounded next (D2-M2, #3688): its window, the whole SR-E12-02 cap, can
         hold far more than `limit` rows of a series, which `build_tail_query` would sort whole.
@@ -438,12 +442,13 @@ class BarReader:
             if kth and ts_us_from_row(kth[0]["ts"]) > since:
                 since = start = ts_us_from_row(kth[0]["ts"])
                 bounded = True
-                bars_tail_scan_bounded_total.inc()
             sql, params = build_tail_bound_query(
                 spec.kind, symbol, bar_param, limit, since, now_us=now
             )
             newest = await self._conn.fetch(sql, *params)
             if not newest:  # nothing from `since` on: no second scan of it
+                if bounded:
+                    bars_tail_scan_bounded_total.inc()
                 return BarTail([], since_us=since, bounded=bounded)
             if len(newest) == limit:  # newest first: the last is the `limit`-th newest
                 start = max(since, ts_us_from_row(newest[-1]["ts"]))
@@ -478,6 +483,8 @@ class BarReader:
                 "bars_tail_rows_malformed", table=f"bars_{spec.kind}", spec_hash=spec.spec_hash,
                 rows=malformed, error_type=error,
             )  # fmt: skip
+        if bounded:
+            bars_tail_scan_bounded_total.inc()
         return BarTail(
             bars, skipped=skipped + malformed, builds=builds, dropped=dropped, since_us=since,
             fetched=len(raw), bounded=bounded,
