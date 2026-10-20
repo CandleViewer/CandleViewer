@@ -395,8 +395,9 @@ async def test_non_json_200_body_on_public_get_raises_transport_error_when_exhau
 @pytest.mark.asyncio
 @respx.mock
 async def test_non_json_body_on_order_class_stays_unknown_state_without_retry() -> None:
-    """C-2.10: order path is never blindly retried; reconciliation owns recovery."""
-    route = respx.post(f"{BASE_URL}/v5/order/create").mock(
+    """C-2.10: order path is never blindly retried; reconciliation owns recovery.
+    A create's unreadable answer is ambiguous instead (test_rest_create_no_resend.py)."""
+    route = respx.post(f"{BASE_URL}/v5/order/cancel").mock(
         return_value=httpx.Response(200, content=_TRUNCATED)
     )
     signer = BybitSigner(fake_capability("k"), CREDENTIAL_ID)
@@ -405,7 +406,7 @@ async def test_non_json_body_on_order_class_stays_unknown_state_without_retry() 
         with pytest.raises(UnknownStateError):
             await client.signed_request(
                 "POST",
-                "/v5/order/create",
+                "/v5/order/cancel",
                 body={"symbol": "BTCUSDT", "orderLinkId": "cv-1"},
                 endpoint_class=EndpointClass.ORDER,
             )

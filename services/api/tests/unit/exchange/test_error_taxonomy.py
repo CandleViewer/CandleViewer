@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
     AuthError,
     ClockDriftError,
     DuplicateClientIdError,
@@ -32,6 +33,7 @@ from candleviewer.exchange.base.errors import (
         (NotFoundError, OmsErrorCode.ORDER_NOT_FOUND, False),
         (TransportError, OmsErrorCode.TRANSPORT_ERROR, True),
         (UnknownStateError, OmsErrorCode.UNKNOWN_STATE, True),
+        (AmbiguousResultError, OmsErrorCode.TRANSPORT_ERROR, False),
     ],
 )
 def test_error_subclass_defaults_code_and_retryable(
@@ -46,6 +48,12 @@ def test_error_subclass_defaults_code_and_retryable(
 def test_error_subclass_retryable_can_be_overridden() -> None:
     err = RateLimitError("boom", retryable=False)
     assert err.retryable is False
+
+
+def test_an_ambiguous_create_is_a_transport_error_never_made_retryable() -> None:
+    err = AmbiguousResultError("boom", order_link_id="cv-1", retryable=True)
+    assert isinstance(err, TransportError) and err.retryable is False
+    assert err.order_link_id == "cv-1"
 
 
 def test_instrument_filter_error_carries_filter_name() -> None:

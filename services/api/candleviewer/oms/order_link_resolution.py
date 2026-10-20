@@ -2,6 +2,7 @@
 
 `place_or_adopt` sends one create and turns a duplicate-id rejection into the
 exchange's own order for that id ("success-after-lookup"), never an error.
+`adopt_or_resend` re-sends an ambiguous create only after a lookup (SR-E29-15).
 `HistoryRetentionPolicy` tells the E29-T06 reconciler when an id is too old for
 the exchange's order history to resolve.
 """
@@ -16,7 +17,14 @@ import structlog
 
 from candleviewer.domain.order_link import OUR_ID
 from candleviewer.domain.primitives import OrderLinkId, Symbol, TsUs
-from candleviewer.exchange.base.errors import DuplicateClientIdError, OmsErrorCode
+from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
+    AuthError,
+    ClockDriftError,
+    DuplicateClientIdError,
+    ExchangeError,
+    OmsErrorCode,
+)
 from candleviewer.exchange.base.models import (
     AccountRef,
     ExchangeCapabilities,
@@ -36,6 +44,8 @@ __all__ = [
     "PlacementPort",
     "Sent",
     "Unresolved",
+    "UnresolvedReason",
+    "adopt_or_resend",
     "place_or_adopt",
 ]
 
@@ -82,18 +92,34 @@ class Sent:
 
 @dataclass(frozen=True, slots=True)
 class Adopted:
-    """A duplicate-id rejection, resolved to the exchange's order for that id."""
+    """The exchange's order under the id, after a duplicate-id rejection (`place_or_adopt`)
+    or an ambiguous create (`adopt_or_resend`).
+
+    It is found on the id alone (in the account; open orders also by symbol), so it is not
+    yet proven ours. Before binding it to the row the caller checks every SR-E29-03 field
+    (account, symbol, side, quantity, order type, price or trigger, reduce-only, attached
+    stop), as B1's `is_duplicate_link_id_full_match` does; a mismatch is a squatted id
+    (OM-S05) that goes to `held` (`is_link_id_mismatch`) and is never bound."""
 
     order: Order
     source: Literal["realtime", "history"]
 
 
+type UnresolvedReason = Literal[
+    "not_found", "lookup_failed", "history_expired", "resend_unconfirmed"
+]
+
+
 @dataclass(frozen=True, slots=True)
 class Unresolved:
-    """A duplicate-id rejection neither lookup found: the caller moves the order to
-    `unknown`, and only reconciliation resolves it (§8.2 S1)."""
+    """No lookup settled the id: the caller moves the order to `unknown`, and only
+    reconciliation resolves it (§8.2 S1). `not_found` is a duplicate-id rejection
+    neither lookup found; the others end `adopt_or_resend`, which sends nothing more. A
+    `resend_unconfirmed` re-send met by a duplicate means the exchange holds an order under
+    the id: reconciliation (E29-T06) binds it, after the full match of `Adopted`."""
 
     order_link_id: OrderLinkId
+    reason: UnresolvedReason = "not_found"
 
 
 type PlaceOutcome = Sent | Adopted | Unresolved
@@ -104,7 +130,8 @@ async def place_or_adopt(port: PlacementPort, request: PlaceOrderRequest) -> Pla
 
     The request goes out unchanged, so a retry sends the same `order_link_id`
     and the same native stop-loss. Every other error propagates: a transport
-    failure after send is the caller's `unknown`, never a resend under a new id.
+    failure after send (`AmbiguousResultError`) is the caller's `unknown`, never a
+    resend under a new id, and any later re-send goes through `adopt_or_resend`.
 
     The id must be one the generator produced (`OUR_ID`). An `ext-` key never
     goes on the wire (§8.3), and any other id would come back from the adapter
@@ -122,8 +149,7 @@ async def place_or_adopt(port: PlacementPort, request: PlaceOrderRequest) -> Pla
       possible; for `Unresolved`, the move to `unknown` (§8.2 S1), written ahead like
       any other transition.
     """
-    if OUR_ID.fullmatch(request.order_link_id) is None:
-        raise InvalidOrderLinkId(f"not a generated order_link_id: {request.order_link_id!r}")
+    _require_our_id(request)
     try:
         ack = await port.place_order(request)
     except DuplicateClientIdError:
@@ -133,8 +159,73 @@ async def place_or_adopt(port: PlacementPort, request: PlaceOrderRequest) -> Pla
     return await _adopt(port, request)
 
 
+async def adopt_or_resend(
+    port: PlacementPort,
+    request: PlaceOrderRequest,
+    *,
+    retention: HistoryRetentionPolicy,
+    created_at: TsUs,
+    now: TsUs,
+) -> PlaceOutcome:
+    """Re-send a create whose result was ambiguous, after one lookup (SR-E29-15).
+
+    The id found in open orders, then in history, is adopted. Only if neither shows
+    it, and history still covers an id first sent at `created_at` (rule 6), is the
+    request sent once more, unchanged (same id, same native stop). A failed lookup,
+    an expired id, or a re-send met by a duplicate or another ambiguous result is
+    `Unresolved`. Other errors of the re-send propagate, as in `place_or_adopt`, and
+    so do `AuthError` and `ClockDriftError` from a lookup: they gate trading.
+
+    For E29-T04: the only re-send after an ambiguous create (a restart re-driving the
+    row, say), never from B1 `unknown` (INV-B1-e). The caller runs the synchronous gates
+    (kill switch, live-enablement gate, risk caps) just before calling it, and never
+    calls it for a `killed` or terminal row (C-2.21). It lets one driver resolve a row
+    at a time, because two drivers could both miss and both re-send. It binds an `Adopted`
+    order only on the SR-E29-03 full match (see `Adopted`), and audits as for
+    `place_or_adopt`: the re-send intent ahead, its outcome after (C-2.9). One call is one
+    attempt: a caller allowed several (a close retried with a lookup between, 24 §9.5.1)
+    calls it once per attempt.
+    """
+    _require_our_id(request)
+    link = request.order_link_id
+    try:
+        found = await _find(port, request)
+    except (AuthError, ClockDriftError):
+        raise
+    except ExchangeError:
+        return _not_resent(link, "lookup_failed")
+    if found is not None:
+        order, source = found
+        _log().info("order_link_id_ambiguous_adopted", order_link_id=link, source=source)
+        return Adopted(order=order, source=source)
+    if retention.unresolvable_by_history(created_at=created_at, now=now):
+        return _not_resent(link, "history_expired")
+    try:
+        ack = await port.place_order(request)
+    except (AmbiguousResultError, DuplicateClientIdError):
+        return _not_resent(link, "resend_unconfirmed")
+    if ack.ok or ack.error_code != OmsErrorCode.DUPLICATE_CLIENT_ID:
+        return Sent(ack)
+    return _not_resent(link, "resend_unconfirmed")
+
+
+def _require_our_id(request: PlaceOrderRequest) -> None:
+    if OUR_ID.fullmatch(request.order_link_id) is None:
+        raise InvalidOrderLinkId(f"not a generated order_link_id: {request.order_link_id!r}")
+
+
 async def _adopt(port: PlacementPort, request: PlaceOrderRequest) -> Adopted | Unresolved:
-    """Look the id up in open orders, then in history, and adopt what is found.
+    found = await _find(port, request)
+    if found is not None:
+        return _adopted(*found)
+    _log().warning("order_link_id_duplicate_unresolved", order_link_id=request.order_link_id)
+    return Unresolved(order_link_id=request.order_link_id)
+
+
+async def _find(
+    port: PlacementPort, request: PlaceOrderRequest
+) -> tuple[Order, Literal["realtime", "history"]] | None:
+    """One lookup round: the id in open orders, then in history.
 
     Open orders are filtered here until `open_orders` takes an id filter (#846
     Q5); history results are filtered again so no other order is ever adopted.
@@ -142,12 +233,11 @@ async def _adopt(port: PlacementPort, request: PlaceOrderRequest) -> Adopted | U
     link = request.order_link_id
     for order in await port.open_orders(request.account, request.symbol):
         if order.order_link_id == link:
-            return _adopted(order, "realtime")
+            return order, "realtime"
     for order in await port.order_history(request.account, order_link_id=link):
         if order.order_link_id == link:
-            return _adopted(order, "history")
-    _log().warning("order_link_id_duplicate_unresolved", order_link_id=link)
-    return Unresolved(order_link_id=link)
+            return order, "history"
+    return None
 
 
 def _adopted(order: Order, source: Literal["realtime", "history"]) -> Adopted:
@@ -158,6 +248,11 @@ def _adopted(order: Order, source: Literal["realtime", "history"]) -> Adopted:
         state=order.state,
     )
     return Adopted(order=order, source=source)
+
+
+def _not_resent(link: OrderLinkId, reason: UnresolvedReason) -> Unresolved:
+    _log().warning("order_link_id_ambiguous_unresolved", order_link_id=link, reason=reason)
+    return Unresolved(order_link_id=link, reason=reason)
 
 
 @dataclass(frozen=True, slots=True)

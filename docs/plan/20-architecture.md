@@ -1093,7 +1093,7 @@ class ExchangeCapabilities(Protocol):
 Rules for adapter authors:
 
 1. All exchange-specific error codes are mapped to the internal taxonomy: `AuthError`, `ClockDriftError` (Bybit 10002), `RateLimitError` (10018), `InsufficientMarginError`, `InstrumentFilterError`, `DuplicateClientIdError`, `NotFoundError`, `TransportError`, `UnknownStateError`.
-2. `place_order` **must** be idempotent on `client_order_id`; the adapter re-sends the same id on retry and treats a duplicate rejection as success-after-lookup.
+2. `place_order` **must** be idempotent on `client_order_id`; the adapter re-sends the same id on retry and treats a duplicate rejection as success-after-lookup. It never re-sends a create that has left the process: that result is ambiguous (`24-internal-schemas.md` §8.6, order creates).
 3. Capabilities drive OMS behaviour. If `supports_native_oco` is false, `AlgoSupervisor` emulates it; if `supports_ws_order_entry` is false for the environment, the REST path is used. No `if exchange == "bybit"` outside the adapter package.
 4. Adapters publish normalized events only; raw payloads are retained in the recorder for forensic replay (secrets redacted).
 5. Every adapter ships a contract-test suite run against recorded fixtures plus an opt-in live smoke test (`pytest -m exchange_smoke`).

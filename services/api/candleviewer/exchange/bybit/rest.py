@@ -27,6 +27,7 @@ import structlog
 
 from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
     ClockDriftError,
     ExchangeError,
     RateLimitError,
@@ -72,6 +73,15 @@ _SIGNATURE_RESYNC_TIMEOUT_S = 5.0
 #: to another host (it honours an absolute/scheme-relative URL over base_url).
 _SAFE_PATH = re.compile(r"/v5/[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)*\Z")
 
+#: 24 §8.6 "Order creates" (SR-E29-15): a create that has left is never sent again; amend,
+#: cancel and trading-stop keep their retries. 10016/10019 leave a create's outcome unknown.
+_CREATE_PATHS = frozenset({"/v5/order/create", "/v5/order/create-batch"})
+_AMBIGUOUS_RET_CODES = frozenset({10016, 10019})
+#: Raised while connecting or waiting for a pooled connection: nothing left. Any other failure
+#: may follow the send, a bare `TimeoutError` too (httpx maps its own; an unmapping transport
+#: raises it at a point this client cannot place).
+_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
 
 class RestPathRejected(ExchangeError, ValueError):
     """The request `path` is not a plain relative `/v5/...` path (SR-040a).
@@ -105,7 +115,8 @@ class RestBodyTooLarge(ExchangeError):
     """The response body exceeded the per-endpoint-class byte cap (SR-E12-09).
 
     Never retryable: a hostile/broken upstream will not shrink on resend. The
-    message carries sizes only, never any payload bytes."""
+    message carries sizes only, never any payload bytes. An order create's oversized
+    answer is the cause of an `AmbiguousResultError` instead (24 §8.6 "Order creates")."""
 
 
 async def _read_capped(response: httpx.Response, cap: int) -> bytes | None:
@@ -170,7 +181,8 @@ class BybitRestClient:
     Public (unauthenticated) calls work with `signer=None`; the signed path
     (`signed_request`) requires a `BybitSigner`. Every request is shaped by
     the shared per-UID token bucket, retried per the taxonomy's `retryable`
-    flag with full jitter, and logged with secrets redacted.
+    flag with full jitter (never an order create that has left: 24 §8.6
+    "Order creates"), and logged with secrets redacted.
     """
 
     def __init__(
@@ -275,7 +287,8 @@ class BybitRestClient:
         duplicate is recognised as "already accepted" rather than
         resubmitted under a new id. This is enforced here, not merely
         documented, because a future OMS caller forgetting it would
-        silently double-submit orders on a retried timeout."""
+        silently double-submit orders on a retried timeout. An order create
+        is retried only if it never left (24 §8.6 "Order creates")."""
         if self._signer is None:
             raise TypeError("signed_request called without a configured BybitSigner")
         if (
@@ -334,6 +347,7 @@ class BybitRestClient:
     ) -> dict[str, Any]:
         validate_rest_path(path)
         self._assert_same_host(method, path)
+        creates = method.upper() == "POST" and path in _CREATE_PATHS
         attempt = 0
         clock_retry_used = False
         while True:
@@ -389,10 +403,16 @@ class BybitRestClient:
                     await response.aclose()
             except (TimeoutError, httpx.TransportError) as exc:
                 bybit_rest_requests_total.labels(endpoint=path, result="transport_error").inc()
+                if creates and not isinstance(exc, _NOT_SENT):
+                    raise _ambiguous(path, body, type(exc).__name__) from exc
                 if attempt > self._config.max_retries:
                     raise TransportError(f"transport error calling {path}: {exc}") from exc
                 await self._backoff(attempt)
                 continue
+            except httpx.DecodingError as exc:  # a corrupt Content-Encoding: not a TransportError
+                if not creates:
+                    raise
+                raise _answer_ambiguous(path, body, "an undecodable body") from exc
             finally:
                 bybit_rest_latency_seconds.labels(endpoint=path).observe(time.monotonic() - start)
 
@@ -404,14 +424,19 @@ class BybitRestClient:
                     endpoint_class=str(endpoint_class),
                     cap_bytes=_MAX_BODY_BYTES[endpoint_class],
                 )
-                raise RestBodyTooLarge(
+                too_large = RestBodyTooLarge(
                     f"{path} response body exceeds {_MAX_BODY_BYTES[endpoint_class]} bytes"
                 )
+                if creates:  # an answer came and was left unread: the create left
+                    raise _ambiguous(path, body, "an oversized body") from too_large
+                raise too_large
 
             self._observe_rate_headers(response, endpoint_class)
 
             if response.status_code >= 500:
                 bybit_rest_requests_total.labels(endpoint=path, result="5xx").inc()
+                if creates:
+                    raise _ambiguous(path, body, f"HTTP {response.status_code}")
                 if attempt > self._config.max_retries:
                     raise TransportError(
                         f"{path} returned HTTP {response.status_code} after {attempt} attempts"
@@ -425,7 +450,13 @@ class BybitRestClient:
 
             try:
                 data = json.loads(raw)
+            except RecursionError as exc:  # nested past the parser's limit: unread, like non-JSON
+                if not creates:
+                    raise
+                raise _answer_ambiguous(path, body, "a body nested too deep") from exc
             except ValueError as exc:
+                if creates:  # cut mid-body, or not the venue's answer: the create left
+                    raise _answer_ambiguous(path, body, "a non-JSON body") from exc
                 if endpoint_class is not EndpointClass.ORDER:
                     # Idempotent read: a truncated/non-JSON body (proxy, reset
                     # mid-body) is a transport fault -> retry like a 5xx (E08-Q03 #6).
@@ -449,6 +480,8 @@ class BybitRestClient:
                     f"{path} returned HTTP {response.status_code} with a non-JSON body: {exc}"
                 ) from exc
 
+            if creates and not _usable_ret_code(data, is_http_error):
+                raise _answer_ambiguous(path, body, "no usable retCode")
             # A missing `retCode`, or `retCode == 0` on an HTTP error status,
             # is never treated as success — the raw body defaulted `retCode`
             # to 0 previously, which failed open on a 4xx with an unusual
@@ -466,7 +499,13 @@ class BybitRestClient:
                 return dict(data)
 
             ret_msg = str(data.get("retMsg", ""))
+            if creates and ret_code in _AMBIGUOUS_RET_CODES:
+                # Not a rate limit (#2863): no bucket drain, counted as the error raised.
+                venue = {"exchange_ret_code": ret_code, "exchange_ret_msg": ret_msg}
+                raise _answer_ambiguous(path, body, f"retCode {ret_code}", **venue)
             error = map_ret_code(ret_code, ret_msg)
+            if creates and isinstance(error, UnknownStateError):
+                error.retryable = False  # its outcome is open: polled and reconciled, never resent
             exchange_errors_total.labels(**{"class": error.code.value}).inc()
 
             if isinstance(error, ClockDriftError) and not clock_retry_used:
@@ -558,6 +597,38 @@ class BybitRestClient:
 
     async def _backoff(self, attempt: int) -> None:
         await self._sleep(self._retry_after_default(attempt))
+
+
+def _ambiguous(
+    path: str, body: Mapping[str, Any] | None, cause: str, **detail: object
+) -> AmbiguousResultError:
+    """The create to `path` left and `cause` hides its outcome (24 §8.6 "Order creates")."""
+    link = body.get("orderLinkId") if body else None
+    order_link_id = link if isinstance(link, str) else None
+    exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
+    logger().warning(
+        "bybit_rest_create_ambiguous", path=path, cause=cause, order_link_id=order_link_id
+    )
+    return AmbiguousResultError(
+        f"{path}: {cause} after the create left; its outcome is unknown",
+        order_link_id=order_link_id,
+        **detail,
+    )
+
+
+def _answer_ambiguous(
+    path: str, body: Mapping[str, Any] | None, cause: str, **detail: object
+) -> AmbiguousResultError:
+    """An answer to the create arrived but hides its outcome: counted as the error raised."""
+    bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
+    return _ambiguous(path, body, cause, **detail)
+
+
+def _usable_ret_code(data: object, is_http_error: bool) -> bool:
+    """A create's answer is readable only with an integer `retCode` (a bool is not one) that is
+    non-zero on an HTTP error status (24 §8.6 "Order creates")."""
+    code = data.get("retCode") if isinstance(data, dict) else None
+    return type(code) is int and not (is_http_error and code == 0)
 
 
 def _json_dumps(body: Mapping[str, Any]) -> str:
