@@ -427,7 +427,8 @@ def semgrep_include(path: str) -> str:
     the root does, but scans a file named as a target whatever that file says: so the changed
     files are includes, never targets, and the ignore list stays the one CI reads. The leading `/`
     anchors the pattern (a bare name also matches its namesakes in other directories); gitignore's
-    special characters are escaped (a `[id]` directory would be a character class)."""
+    special characters are escaped (a `[id]` directory would be a character class). Semantics as
+    observed with Semgrep 1.181.0, the pin in tools/ci/requirements-semgrep.txt."""
     return "--include=/" + GLOB_SPECIAL.sub(lambda m: "\\" + m.group(0), path)
 
 

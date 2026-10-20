@@ -2,7 +2,8 @@
 fixtures, each as the hunk that caused it, not as a checkout: an alert without a drill matrix row
 (#3862), a bars change whose bench pins no lane ran (#3868), a test that logs a password-named
 constant (#3875). Each runs through `plan()`, as `make pr-gate` does, with the tools faked so the
-argv of every step can be pinned. No real scanner runs and nothing reaches the network."""
+argv of every step can be pinned. Only the #3936 Semgrep tests run a real scanner, the installed
+Semgrep on a `tmp_path` repository (skipped without it); nothing reaches the network."""
 
 from __future__ import annotations
 
@@ -576,8 +577,12 @@ def test_a_finding_in_a_changed_file_the_scan_reads_still_fails_it(tmp_path: Pat
 
 @needs_semgrep
 def test_an_unchanged_namesake_of_a_changed_file_is_not_scanned(tmp_path: Path) -> None:
-    _write(tmp_path, "tools/a.py", "bad()\n")  # unchanged, with a finding
-    assert _semgrep_step(tmp_path, [_write(tmp_path, "a.py")]).run() == ("PASS", "")
+    """Semgrep reads the include as meant: anchored, and `[id]` as a name, not a class that
+    would also select `i/` or `d/`."""
+    for unchanged in ("tools/a.py", "i/a.py", "d/a.py"):
+        _write(tmp_path, unchanged, "bad()\n")  # namesakes with a finding, none changed
+    changed = [_write(tmp_path, "a.py"), _write(tmp_path, "[id]/a.py")]
+    assert _semgrep_step(tmp_path, changed).run() == ("PASS", "")
 
 
 #: Tracked files under the generated outputs of tools/ci/check_gen_freshness.py.
