@@ -613,7 +613,7 @@ Paging (scroll-back): when the viewport approaches the loaded history edge, the 
 
 ## 10. Replay integration
 
-Replay uses exactly the same series and the same frame types — only the topic namespace differs (`replay.{session}.*`). The engine adds three replay-specific behaviours:
+Replay uses exactly the same series and the same frame types — only the subscription differs: a replay session's frames carry its `replay_session_id` on the same WS topics (23 §11), and on the bus they use the `replay-{session_id}` namespace (24 §2.9). The engine adds three replay-specific behaviours:
 
 1. **Virtual-now marker**: a vertical line at the replay clock, with the area to its right dimmed so future data is visibly unavailable.
 2. **Step semantics**: `Alt+←/→` step by tick and `←/→` by bar are handled by the app (which asks the backend to step) rather than by the engine, so a step is a real data event, not a visual trick — this keeps replay honest.
