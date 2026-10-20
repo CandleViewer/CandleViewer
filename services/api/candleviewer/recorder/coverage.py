@@ -40,14 +40,15 @@ _CACHE_MAX: Final = 4096
 #: Cache entries span `[now - CACHE_DAYS, +inf)`; open sessions end at `now` at read time, and
 #: every session/gap write invalidates, so the far-future upper bound never goes stale.
 _FAR_FUTURE_US: Final = 253_402_300_799_000_000  # 9999-12-31T23:59:59Z
-#: DB `recording_gaps.cause` -> 22-api `DataCoverage.gaps[].reason` (a closed enum). A cause
-#: with no honest contract value (`seq_jump`, `backpressure_drop`) is NOT mapped: the route
-#: omits `reason` (optional in the schema) rather than mislabel it.
-# TODO(#2216): add the recorder-loss slugs to the contract enum and map them here.
+#: DB `recording_gaps.cause` -> 22-api `DataCoverage.gaps[].reason` (open-ended for readers,
+#: #2216). A cause with no contract value is NOT mapped: the route omits `reason` (optional in
+#: the schema) rather than mislabel it.
 GAP_REASON: Final[dict[str, str]] = {
     "ws_disconnect": "ws_disconnect",
     "process_restart": "backend_restart",
     "exchange_outage": "exchange_outage",
+    "seq_jump": "seq_jump",
+    "backpressure_drop": "backpressure_drop",
 }
 
 

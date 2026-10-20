@@ -405,6 +405,12 @@ class DiskBudget:
         return self.recording_refused or self._ladder.level is DiskPressureLevel.HALT
 
     @property
+    def effective_level(self) -> DiskPressureLevel:
+        """`level`, but 3 exactly when the write gate is closed (a refused volume too): the report
+        and the level gauge both read this."""
+        return DiskPressureLevel.HALT if self.halted else self._ladder.level
+
+    @property
     def refuses_auto_record(self) -> bool:
         """`RecordingPolicy`: no new chart-open recording from level 2 (ADR-0015 d6, AC3)."""
         return self.recording_refused or self._ladder.level >= DiskPressureLevel.AUTOSTOP
@@ -451,7 +457,9 @@ class DiskBudget:
         full_at, runway = project_full_at(
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, daily_growth=growth, now_us=now
         )
-        self._ladder.evaluate(  # first: the report names the ladder step of the sample it sizes
+        # Ladder first: the report names the step of the sample it sizes, and the write gate and
+        # the hot-path readers never wait on the report.
+        self._ladder.evaluate(
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, total=m.total_bytes, runway_days=runway
         )
         self._report = self._build_report(m, now, full_at, growth, rates, top, pinned)
@@ -479,7 +487,8 @@ class DiskBudget:
             "questdb": self._cfg.hot_days,
             "parquet": self._cfg.retention_days,
         }
-        gated = self.halted
+        level = self.effective_level
+        gated = level is DiskPressureLevel.HALT
         return StorageUsage(
             disk_total_bytes=m.total_bytes,
             disk_used_bytes=m.total_bytes - m.free_bytes,
@@ -499,11 +508,12 @@ class DiskBudget:
             ),
             generated_at=_utc(now),
             cap_bytes=self._cfg.cap_bytes,
-            level=DiskPressureLevel.HALT if gated else self._ladder.level,
+            level=level,
             write_gate="closed" if gated else "open",
             write_gate_reason=(
                 ("volume_refused" if self.recording_refused else "disk_halt") if gated else None
             ),
+            accelerate_retention=self._ladder.accelerate,
         )
 
     def _publish_metrics(
@@ -512,8 +522,7 @@ class DiskBudget:
         disk_used_ratio.set(used / self._cfg.cap_bytes)
         disk_free_bytes.set(free)
         # A refused volume closes the gate: the level must say so, or nothing pages.
-        level = DiskPressureLevel.HALT if self.recording_refused else self._ladder.level
-        recorder_disk_pressure_level.set(int(level))
+        recorder_disk_pressure_level.set(int(self.effective_level))
         recorder_projected_full_timestamp.set(0 if full_at is None else full_at // US_PER_S)
         for gone in self._rate_labels - rates.keys():
             recorder_bytes_per_day.remove(gone)

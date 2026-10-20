@@ -1,9 +1,9 @@
 import { describe, expect, it, expectTypeOf } from "vitest";
 import { generated } from "../src/index.js";
 
-// E16-D01 (#323, #492): the client's reading of the additive recorder status fields (C-6.2), on
-// the generated types; nothing serves them yet (E16-T08). The expectTypeOf checks bind under
-// `pnpm typecheck` (tsconfig.json includes test/), not the vitest run.
+// E16-D02 (#323), E16-T08 (#492): the client's reading of the additive recorder status fields
+// (C-6.2), on the generated types; nothing serves them yet (E16-T08). The expectTypeOf checks bind
+// under `pnpm typecheck` (tsconfig.json includes test/), not the vitest run.
 type Frame = generated.ws.Recorder;
 type Row = Frame["symbols"][number];
 type Storage = NonNullable<Frame["storage"]>;
@@ -18,11 +18,13 @@ type Gate = {
   level?: 0 | 1 | 2 | 3;
   write_gate?: "open" | "closed";
   write_gate_reason?: "disk_halt" | "volume_refused" | null;
+  accelerate_retention?: boolean;
 };
+type WsOnly = { used_bytes?: number }; // the meter's numerator; REST sums `tiers[]` instead
 type Policy = Rest["RecorderPolicySettings"];
 
-describe("recorder status fields (consumer side, 23-ws-protocol §15.8, E16-D01)", () => {
-  it("decodes a frame with and without the new fields", () => {
+describe("recorder status fields (consumer side, 23-ws-protocol §15.8, E16-D02)", () => {
+  it("accepts a frame with and without the new fields", () => {
     const old: Frame = { overall: "healthy", symbols: [{ symbol: "ETHUSDT", state: "recording" }] };
     const row: Row = { symbol: "SOLUSDT", state: "idle", refusal: "symbol_cap" };
     const gate: Storage = { level: 3, write_gate: "closed", write_gate_reason: "disk_halt" };
@@ -35,6 +37,8 @@ describe("recorder status fields (consumer side, 23-ws-protocol §15.8, E16-D01)
     expectTypeOf<Rest["RecordingStatus"]["role_restricted"]>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<Listed["role_restricted"]>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<Pick<Storage, keyof Gate>>().toEqualTypeOf<Gate>();
+    expectTypeOf<Pick<Storage, keyof WsOnly>>().toEqualTypeOf<WsOnly>();
+    expectTypeOf<Rest["StorageUsage"]>().not.toHaveProperty("used_bytes"); // REST sums `tiers[]`
     expectTypeOf<Pick<Rest["StorageUsage"], keyof Gate>>().toEqualTypeOf<Gate>();
     expectTypeOf<Pick<StatusRow, keyof Marks>>().toEqualTypeOf<Marks>();
     expectTypeOf<Pick<Rest["RecordedSymbol"], keyof Marks>>().toEqualTypeOf<Marks>();
@@ -44,7 +48,7 @@ describe("recorder status fields (consumer side, 23-ws-protocol §15.8, E16-D01)
     expectTypeOf<Row>().not.toHaveProperty("linger_until"); // the REST spelling
     expectTypeOf<NonNullable<Frame["policy"]>>().toEqualTypeOf<Policy>(); // one shape, both ways
     expectTypeOf<Rest["RecordingStatus"]["policy"]>().toEqualTypeOf<Policy | undefined>();
-    expectTypeOf<Policy["halt_pct"]>().toEqualTypeOf<number | undefined>();
-    expectTypeOf<Policy["autorecord_enabled"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<Policy["halt_pct"]>().toEqualTypeOf<number>(); // sent whole
+    expectTypeOf<Policy["autorecord_enabled"]>().toEqualTypeOf<boolean>();
   });
 });

@@ -3297,16 +3297,16 @@ class RecordingState(BaseModel):
     refusal: Literal["symbol_cap","disk_pressure","chart_open","position_open"] | None = None
 ```
 
-**Recorder status closed sets** (E16-D01). The server decides `refusal` and the storage `write_gate_reason` that the recorder status contract carries (`23-ws-protocol.md` §15.8); clients never derive them, and readers tolerate a value they do not know (C-6.3).
+**Recorder status closed sets** (E16-D02, #323). The server decides `refusal` and the storage `write_gate_reason` that the recorder status contract carries (`23-ws-protocol.md` §15.8); clients never derive them, and readers tolerate a value they do not know (C-6.3). `refusal` holds one value: with both stop refusals it is `position_open`. The two start refusals are `RecorderCapRefused.cause`; E16-T08 serves the stop refusals from the policy's trigger refs.
 
 | Value            | Field               | Raised by                   | Meaning                                                                           |
 | ---------------- | ------------------- | --------------------------- | --------------------------------------------------------------------------------- |
 | `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS` and retried every tick      |
 | `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume           |
-| `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T02) | a stop is refused while a chart of the symbol is open                             |
-| `position_open`  | `refusal`           | `RecordingPolicy` (E16-T02) | a stop is refused while a position is open (INV-B11-a)                            |
+| `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a chart of the symbol is open                             |
+| `position_open`  | `refusal`           | `RecordingPolicy` (E16-T08) | a stop is refused while a position is open (INV-B11-a)                            |
 | `disk_halt`      | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed at level 3                                               |
-| `volume_refused` | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed because the volume is shared with backend state (SR-096) |
+| `volume_refused` | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed because the volume was refused at boot (SR-096, §13.4.1) |
 
 **Auto-record lifecycle.** Opening a chart adds `chart_open` to `reasons` and starts recording within 2 s. Closing the last chart for that symbol removes the reason; if `reasons` becomes empty, recording continues for a `linger_minutes` grace period (default 15) before stopping, so a quick chart close/reopen does not punch a hole in the data. A symbol with an open position **cannot** stop recording while the position is open, regardless of chart state.
 
@@ -3375,8 +3375,9 @@ Covered = session windows − gaps, merged with `COVERAGE_MERGE_TOLERANCE_MS = 1
 across a gap row). Tier from the E16-T05 roll-off watermark: older → `parquet`, newer →
 `questdb`, split at the watermark. A `backfilled` (kline) gap stays a gap: tick coverage is
 never reconstructed from bars. DB `cause` → REST `reason`: `ws_disconnect`, `exchange_outage`
-1:1; `process_restart`→`backend_restart`; `seq_jump`/`backpressure_drop` have no contract value
-yet, so `reason` is omitted for them (never relabelled; #2216). `GET /market/data-coverage` is
+1:1; `process_restart`→`backend_restart`; `seq_jump`, `backpressure_drop` 1:1 (#2216). `reason` is
+open-ended for readers; a cause with no contract value is omitted, never relabelled.
+`GET /market/data-coverage` is
 capped server-side to the last 90 days (cache horizon) until the contract adds `from`/`to`
 (#2216). A `stale` feed topic (resubscribed on the live socket, no per-topic `healthy`) writes
 its observed silent window as a `ws_disconnect` gap; the session continues. Crash gaps start at
@@ -3404,7 +3405,9 @@ Daily retention job (03:00 UTC): move hot→cold past `hot_days`; apply `action_
 
 `candleviewer.recorder.budget.DiskBudget` measures the recording volume (`statvfs`) and the per-tier /
 per-symbol bytes every `CV_DISK_SAMPLE_INTERVAL_S` (60 s) on one supervised task; a request never
-measures (SCR-142), it reads the last report (the OpenAPI `StorageUsage` shape). One point per 10 min
+measures (SCR-142), it reads the last report (the OpenAPI `StorageUsage` shape, whose `level` is the
+effective step: 3 whenever the write gate is closed, as on the level gauge; `DiskBudget.level` and
+`DiskPressureChanged.level` are the ladder's own). One point per 10 min
 is committed to a rolling series kept for the fit window. It never deletes anything: deletion
 authority stays with retention (E16-T06).
 
@@ -4992,6 +4995,10 @@ These are contract-test obligations created by this pass; they belong in the CI 
 - `sl_offset_unit` drops `r_multiple` (§9.3.1: the stop defines R) and `tp_offset_unit` pairs with `tp_offset_value`.
 - Decision D11 (E28-X01 §4.7; decided under the Owner's delegation on 2026-10-20 and recorded on #2701): `all_symbols` is explicit, so an empty allow-list allows nothing, and a trading-enabled profile bounds every cap. §9.3 step 1 reads `all_symbols` and matches patterns. US-PROF-003's scenario "Empty list means all" (`11-user-stories.md`) and `AccountProfileInput.allowed_symbols` (`22-api-openapi.yaml`) still read the old rule until E28-T02's contract step changes them (recorded on #906).
 
-### 19.17 2026-10-20 — §13 recorder status fields (E16-D01, #323, #492)
+### 19.17 2026-10-20 — §13 recorder status fields (E16-D02, #323; E16-T08, #492)
 
 - `RecordingState` gains `lingering`, `linger_until` and `refusal`, which the recorder status contract (`23-ws-protocol.md` §15.8, `22-api-openapi.yaml`) carries as optional fields; §13.1 lists the closed sets of `refusal` and `write_gate_reason`. `StorageUsage` (§13.4.1) gains `cap_bytes`, `level` (a refused volume reports 3), `write_gate` and `write_gate_reason`, read from the same `DiskBudget` sample (`halted`, `recording_refused`). `DiskPressureChanged` (already has level and cap_bytes) and `RecorderSetChanged` are unchanged.
+
+### 19.18 2026-10-20 — §13 recorder status follow-up (E16-D02, #323; E16-T08, #492; #2216)
+
+- `StorageUsage` gains `accelerate_retention` (§13.4.1's flag: the ladder's own step, on from step 2 until used < 75 % and free > 25 %) and the WS `storage` block gains `used_bytes`, the meter's numerator. The coverage gap `reason` (§13.3) was a closed enum; it is opened for readers on purpose and gains `seq_jump` and `backpressure_drop` (#2216), outside C-6.3's additive list by the orchestrator's ruling of 2026-10-20 (recorded on #323), safe because no client reads data-coverage yet. The recorder `policy` lists its seven fields as required: it is new in §15.8 and no server emits it yet. The `volume_refused` row names every boot refusal and its precedence over `disk_halt`.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from fastapi import FastAPI, Request
@@ -12,8 +12,8 @@ from fastapi.testclient import TestClient
 from candleviewer.api._generated.openapi_models import DataCoverage, Problem
 from candleviewer.api.market import MarketDataPrincipal
 from candleviewer.api.market_coverage import make_data_coverage_router
-from candleviewer.recorder.coverage import CoverageService
-from candleviewer.recorder.sessions import to_dt, to_us
+from candleviewer.recorder.coverage import GAP_REASON, CoverageService
+from candleviewer.recorder.sessions import GapCause, to_dt, to_us
 from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
 
 NOW = to_us(datetime(2026, 9, 14, 10, 31, tzinfo=UTC))
@@ -252,33 +252,57 @@ def test_regression_bars_with_tape_and_no_sessions_is_served_not_422() -> None:
     assert resp.status_code == 200, resp.text
 
 
-async def test_unmappable_causes_omit_reason_never_relabel() -> None:
-    """Review HIGH #2 (TODO #2216): `seq_jump`/`backpressure_drop` have no contract value, so
-    `reason` is omitted (optional in `DataCoverage`), never reported as `ws_disconnect`."""
-    from candleviewer.api.market_coverage import coverage_gap_reason_unmapped_total
-
+async def _gaps(causes: list[str]) -> list[dict[str, str]]:
+    """The served gaps of one trades session with one gap per cause, a day apart."""
     store = MemRecorderStore()
     sid = await store.open_session_at(
         recorded_symbol_id="r", symbol="BTCUSDT", streams=["trades"], orderbook_depth=1,
         ws_endpoint="x", started_at=datetime(2026, 9, 1, tzinfo=UTC),
     )  # fmt: skip
-    causes = ["seq_jump", "backpressure_drop", "exchange_outage", "ws_disconnect"]
     for i, cause in enumerate(causes):
         await store.record_gap(
             session_id=sid, symbol="BTCUSDT", stream="trades",
             gap_start=datetime(2026, 9, 2 + i, tzinfo=UTC),
             gap_end=datetime(2026, 9, 2 + i, 0, 1, tzinfo=UTC), cause=cause,
         )  # fmt: skip
-    before = coverage_gap_reason_unmapped_total.labels(cause="seq_jump")._value.get()  # type: ignore[attr-defined]  # prometheus internals
     svc = CoverageService(store, now_us=UsClock(NOW))
     q = {"symbol": "BTCUSDT", "stream": "trades"}
     body = _client(svc).get("/market/data-coverage", params=q).json()
     DataCoverage.model_validate(body)
-    gaps = body["streams"][0]["gaps"]
-    assert [g.get("reason") for g in gaps] == [None, None, "exchange_outage", "ws_disconnect"]
+    gaps: list[dict[str, str]] = body["streams"][0]["gaps"]
+    return gaps
+
+
+async def test_every_recorder_cause_maps_to_its_own_reason() -> None:
+    """#2216: the contract's reason is open-ended and names every DB cause, so each maps 1:1
+    (`process_restart` as `backend_restart`), never relabelled as another cause."""
+    assert set(GAP_REASON) == set(get_args(GapCause))
+    pairs = [
+        ("seq_jump", "seq_jump"),
+        ("backpressure_drop", "backpressure_drop"),
+        ("exchange_outage", "exchange_outage"),
+        ("ws_disconnect", "ws_disconnect"),
+        ("process_restart", "backend_restart"),
+    ]
+    gaps = await _gaps([cause for cause, _ in pairs])
+    assert [g.get("reason") for g in gaps] == [reason for _, reason in pairs]
+
+
+async def test_a_cause_without_a_contract_value_omits_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review HIGH #2: a DB cause the contract has no value for is served without `reason`
+    (optional in `DataCoverage`), never reported as `ws_disconnect`, and counted: a DB cause by
+    name, anything else as `other`."""
+    from candleviewer.api.market_coverage import coverage_gap_reason_unmapped_total as unmapped
+
+    monkeypatch.delitem(GAP_REASON, "seq_jump")
+    before = [unmapped.labels(cause=c)._value.get() for c in ("seq_jump", "other")]
+    gaps = await _gaps(["seq_jump", "cosmic_ray", "ws_disconnect"])
+    assert [g.get("reason") for g in gaps] == [None, None, "ws_disconnect"]
     assert "reason" not in gaps[0] and "reason" not in gaps[1]
-    after = coverage_gap_reason_unmapped_total.labels(cause="seq_jump")._value.get()  # type: ignore[attr-defined]  # prometheus internals
-    assert after == before + 1
+    after = [unmapped.labels(cause=c)._value.get() for c in ("seq_jump", "other")]
+    assert after == [before[0] + 1, before[1] + 1]
 
 
 async def test_route_window_is_capped_to_last_90_days_from_the_cache() -> None:

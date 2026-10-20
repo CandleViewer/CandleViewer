@@ -3854,8 +3854,14 @@ export interface paths {
     /**
      * Disk budget — usage per tier, per symbol, growth rate and projection
      * @description `level` is the disk-pressure ladder step (0 normal, 1 warn, 2 autostop, 3 halt), latched with
-     *     hysteresis; `write_gate: closed` means rows of symbols without an open position are dropped
-     *     (level 3). The meter divides the `questdb` plus `parquet` `tiers[]` bytes by `cap_bytes`.
+     *     hysteresis; it is 3 whenever the write gate is closed, a refused volume included. Read it;
+     *     never derive it from the bytes. `write_gate: closed` means rows of symbols without an open
+     *     position are dropped (level 3). `write_gate_reason` is `volume_refused` when the recording
+     *     volume was refused at boot (root missing, unreadable or shared with backend state), which
+     *     wins over `disk_halt`. `accelerate_retention` follows the ladder's own step, not `level`: on
+     *     from step 2, it holds until recorded bytes are below 75 % of `cap_bytes` and free space is
+     *     above 25 % of the volume; a refused volume's `level: 3` does not turn it on. The meter divides
+     *     the `questdb` plus `parquet` `tiers[]` bytes by `cap_bytes`.
      */
     get: operations["getStorageUsage"];
     put?: never;
@@ -3890,7 +3896,8 @@ export interface paths {
      * @description Starts the ingestion subscriptions for the requested streams. Book depth 200 at 100 ms
      *     is the default for footprint/heatmap fidelity; depth 500 is allowed but the response
      *     carries an estimated disk-rate warning (~0.5–0.75 GB/day/symbol compressed at depth 200).
-     *     Adding a symbol already present is idempotent and returns `200` with the existing row.
+     *     Adding a symbol already present is idempotent and returns `200` with the existing row; a
+     *     symbol listed without `manual` (auto-recorded, or `lingering`) gains the `manual` reason.
      */
     post: operations["addRecordedSymbol"];
     delete?: never;
@@ -6190,13 +6197,18 @@ export interface components {
         gaps?: {
           /** Format: date-time */
           from?: string;
-          /** @enum {string} */
+          /**
+           * @description `backpressure_drop`: rows dropped under write backpressure, the level-3 write gate included; `seq_jump`: an order-book update-id jump. **Open-ended for readers:** a reason a client does not know is still a gap (C-6.3).
+           * @enum {string}
+           */
           reason?:
             | "ws_disconnect"
             | "backend_restart"
             | "retention_purge"
             | "never_recorded"
-            | "exchange_outage";
+            | "exchange_outage"
+            | "backpressure_drop"
+            | "seq_jump";
           /** Format: date-time */
           to?: string;
         }[];
@@ -8293,15 +8305,15 @@ export interface components {
         warning?: string | null;
       };
     };
-    /** @description The recorder policy the server applies, read from its settings (20-architecture.md §7.2: `CV_RECORDER_AUTOSTART_DELAY_S`, `CV_RECORDER_AUTOSTOP_GRACE_S`, `CV_RECORDER_MAX_SYMBOLS`, the `CV_DISK_*_PCT` steps as percentages of `StorageUsage.cap_bytes`, and `CV_RECORDER_AUTORECORD_ENABLED`, which gates chart-open starts only). Read-only and sent whole: a client explains a countdown or a refusal with it and never sends it back. */
+    /** @description The recorder policy the server applies, read from its settings (20-architecture.md §7.2: `CV_RECORDER_AUTOSTART_DELAY_S`, `CV_RECORDER_AUTOSTOP_GRACE_S`, `CV_RECORDER_MAX_SYMBOLS`, the `CV_DISK_*_PCT` steps as percentages of `StorageUsage.cap_bytes`, and `CV_RECORDER_AUTORECORD_ENABLED`, which gates chart-open starts only). Read-only and sent whole: a client explains a countdown or a refusal with it and never sends it back. The ladder also engages on the volume's free space and, for warn, on the projected runway, so read `StorageUsage.level`, never derive it from these percentages. */
     RecorderPolicySettings: {
-      autorecord_enabled?: boolean;
-      autostart_delay_s?: number;
-      autostop_grace_s?: number;
-      autostop_pct?: number;
-      halt_pct?: number;
-      max_symbols?: number;
-      warn_pct?: number;
+      autorecord_enabled: boolean;
+      autostart_delay_s: number;
+      autostop_grace_s: number;
+      autostop_pct: number;
+      halt_pct: number;
+      max_symbols: number;
+      warn_pct: number;
     };
     RecordingSession: {
       /** Format: int64 */
@@ -8365,7 +8377,7 @@ export interface components {
     RecordReason:
       "manual" | "chart_open" | "position_open" | "rule_dependency" | "alert_dependency";
     /**
-     * @description Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none. **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3).
+     * @description Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none; `position_open` outranks `chart_open` when both hold, and a role-restricted view never carries `position_open` (R-I2). **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3).
      * @enum {string|null}
      */
     RecordRefusal: "symbol_cap" | "disk_pressure" | "chart_open" | "position_open" | null;
@@ -9400,6 +9412,7 @@ export interface components {
       snapshots: components["schemas"]["AdminSliceStatus"];
     };
     StorageUsage: {
+      accelerate_retention?: boolean;
       /** Format: int64 */
       cap_bytes?: number;
       /** Format: int64 */
@@ -9433,7 +9446,10 @@ export interface components {
       }[];
       /** @enum {string} */
       write_gate?: "open" | "closed";
-      /** @enum {string|null} */
+      /**
+       * @description Why the write gate is closed, null when open. **Open-ended for readers:** adding a value is an additive change (C-6.3).
+       * @enum {string|null}
+       */
       write_gate_reason?: "disk_halt" | "volume_refused" | null;
     };
     /** @enum {string} */

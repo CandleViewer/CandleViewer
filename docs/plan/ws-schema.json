@@ -3138,6 +3138,15 @@
         },
         "policy": {
           "type": "object",
+          "required": [
+            "autostart_delay_s",
+            "autostop_grace_s",
+            "max_symbols",
+            "warn_pct",
+            "autostop_pct",
+            "halt_pct",
+            "autorecord_enabled"
+          ],
           "properties": {
             "autostart_delay_s": {
               "type": "integer",
@@ -3243,7 +3252,7 @@
               },
               "refusal": {
                 "enum": ["symbol_cap", "disk_pressure", "chart_open", "position_open", null],
-                "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3)."
+                "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. A role-restricted frame never carries position_open (R-I2). Open-ended for readers: adding a value is an additive change (C-6.3)."
               },
               "lag_ms": {
                 "type": "integer"
@@ -3287,6 +3296,11 @@
               "type": "integer",
               "minimum": 1
             },
+            "used_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Recorded bytes (QuestDB plus Parquet), the meter's numerator over cap_bytes; not the volume's used space."
+            },
             "level": {
               "enum": [0, 1, 2, 3]
             },
@@ -3294,7 +3308,11 @@
               "enum": ["open", "closed"]
             },
             "write_gate_reason": {
-              "enum": ["disk_halt", "volume_refused", null]
+              "enum": ["disk_halt", "volume_refused", null],
+              "description": "Why the write gate is closed, null when open. Open-ended for readers: adding a value is an additive change (C-6.3)."
+            },
+            "accelerate_retention": {
+              "type": "boolean"
             },
             "projected_full_at_ms": {
               "oneOf": [

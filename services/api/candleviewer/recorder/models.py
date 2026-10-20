@@ -140,3 +140,5 @@ class StorageUsage(BaseModel):
     level: DiskPressureLevel
     write_gate: Literal["open", "closed"]
     write_gate_reason: Literal["disk_halt", "volume_refused"] | None
+    #: The ladder's own flag, not `level`: on from step 2 until used < 75 % and free > 25 %.
+    accelerate_retention: bool

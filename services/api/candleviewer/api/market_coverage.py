@@ -2,9 +2,9 @@
 
 RBAC server-side (`marketdata:read`, C-12.4): no resolver wired -> 501, no session -> 401,
 missing permission -> 403. The contract has no window parameters, so the report spans the
-symbol's whole recorded history up to now. Gaps carry the contract's closed `reason` enum
-(`recorder.coverage.GAP_REASON`); backfilled (kline) gaps stay listed — bars-derived data
-never makes a tick window covered. `rows` is omitted (optional; needs QuestDB partition
+symbol's whole recorded history up to now. Gaps carry the contract's `reason` enum, open-ended
+for readers (`recorder.coverage.GAP_REASON`); backfilled (kline) gaps stay listed — bars-derived
+data never makes a tick window covered. `rows` is omitted (optional; needs QuestDB partition
 metadata, not wired).
 """
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 import inspect
 import re
 from collections.abc import Callable
-from typing import Annotated, Any, Final, Protocol
+from typing import Annotated, Any, Final, Protocol, get_args
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -21,13 +21,13 @@ from fastapi.responses import JSONResponse, Response
 from candleviewer.api.market_response import iso_us, problem
 from candleviewer.observability.metrics import Counter
 from candleviewer.recorder.coverage import GAP_REASON, CoverageService
-from candleviewer.recorder.sessions import DEFAULT_STREAMS
+from candleviewer.recorder.sessions import DEFAULT_STREAMS, GapCause
 
-#: Bounded label set for the unmapped-cause counter.
-_CAUSE_LABEL: Final = {"seq_jump": "seq_jump", "backpressure_drop": "backpressure_drop"}
+#: Bounded label set for the unmapped-cause counter: the DB causes, else `other`.
+_CAUSES: Final = frozenset(get_args(GapCause))
 coverage_gap_reason_unmapped_total = Counter(
     "coverage_gap_reason_unmapped_total",
-    "Coverage gaps served without a contract reason (cause has no enum value yet, #2216).",
+    "Coverage gaps served without a contract reason (a DB cause the contract has no value for).",
     ["cause"],
 )
 _REQUIRED_PERMISSION: Final = "marketdata:read"
@@ -58,12 +58,12 @@ def _z(us: int) -> str:
 
 def _gap(lo: int, hi: int, cause: str) -> dict[str, str]:
     """A gap with its contract `reason`, or with `reason` OMITTED (optional in `DataCoverage`)
-    when the DB cause has no honest contract value — never relabelled as another cause.
-    TODO(#2216): drop the omission once the enum carries the recorder-loss slugs."""
+    when the DB cause has no honest contract value — never relabelled as another cause."""
     out = {"from": _z(lo), "to": _z(hi)}
     reason = GAP_REASON.get(cause)
     if reason is None:
-        coverage_gap_reason_unmapped_total.labels(cause=_CAUSE_LABEL.get(cause, "other")).inc()
+        label = cause if cause in _CAUSES else "other"
+        coverage_gap_reason_unmapped_total.labels(cause=label).inc()
     else:
         out["reason"] = reason
     return out

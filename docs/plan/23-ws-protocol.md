@@ -3910,6 +3910,15 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
     "role_restricted": { "type": "boolean" },
     "policy": {
       "type": "object",
+      "required": [
+        "autostart_delay_s",
+        "autostop_grace_s",
+        "max_symbols",
+        "warn_pct",
+        "autostop_pct",
+        "halt_pct",
+        "autorecord_enabled"
+      ],
       "properties": {
         "autostart_delay_s": { "type": "integer", "minimum": 0 },
         "autostop_grace_s": { "type": "integer", "minimum": 0 },
@@ -3958,7 +3967,7 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
           },
           "refusal": {
             "enum": ["symbol_cap", "disk_pressure", "chart_open", "position_open", null],
-            "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3)."
+            "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. A role-restricted frame never carries position_open (R-I2). Open-ended for readers: adding a value is an additive change (C-6.3)."
           },
           "lag_ms": { "type": "integer" },
           "rows_last_hour": { "type": "integer" },
@@ -3981,9 +3990,18 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
         "disk_free_bytes": { "type": "integer" },
         "daily_growth_bytes": { "type": "integer" },
         "cap_bytes": { "type": "integer", "minimum": 1 },
+        "used_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Recorded bytes (QuestDB plus Parquet), the meter's numerator over cap_bytes; not the volume's used space."
+        },
         "level": { "enum": [0, 1, 2, 3] },
         "write_gate": { "enum": ["open", "closed"] },
-        "write_gate_reason": { "enum": ["disk_halt", "volume_refused", null] },
+        "write_gate_reason": {
+          "enum": ["disk_halt", "volume_refused", null],
+          "description": "Why the write gate is closed, null when open. Open-ended for readers: adding a value is an additive change (C-6.3)."
+        },
+        "accelerate_retention": { "type": "boolean" },
         "projected_full_at_ms": {
           "oneOf": [{ "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }, { "type": "null" }]
         }
@@ -3995,23 +4013,31 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
 }
 ```
 
-**Recording status fields (E16-D01, #323; served by E16-T08, #492).** All are optional, so a frame
+**Recording status fields (E16-D02, #323; served by E16-T08, #492).** All are optional, so a frame
 without them is valid (§2.3). A symbol in the stop grace window (B11 `lingering`) keeps its `state`
-and adds `lingering: true` and the `linger_until_ms` deadline (null otherwise); it can already be
-past while the startup warm-up holds stop decisions: show "stopping", never a negative count.
-`refusal` is the server's reason, never derived from `reason`, null when none: `symbol_cap` or
-`disk_pressure` for a start it refuses (an `idle` entry: a refused start has no row; level 2 refuses
-chart-open starts only), `chart_open` or `position_open` for a stop it refuses (a position open
-never stops, INV-B11-a). `storage.level` is the ladder step (0 normal, 1 warn, 2 autostop, 3 halt),
-latched with hysteresis: never derive it from `cap_bytes`. `write_gate: "closed"` means rows of
-symbols without an open position are dropped as gaps while the rest keep writing, so a symbol stays
-`recording`, gated; the level is then 3 and `write_gate_reason` is `disk_halt` or `volume_refused`
-(volume shared with backend state, SR-096). `cap_bytes` is the `CV_DISK_CAP_GB` budget for recorded
-bytes (QuestDB plus Parquet, not the volume's used space). `role_restricted: true` marks a
-role-reduced set (R-I2): a missing symbol is unknown, never "not recording"; it follows role, not
-what was withheld. `policy` is the recorder policy the server reads from its settings, the same
-fields as REST `RecorderPolicySettings`: read-only and sent whole, so a client explains a countdown
-or a refusal with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
+(`recording`, or `degraded` while a stream is unhealthy) and adds `lingering: true` and the
+`linger_until_ms` deadline (null otherwise); it can already be past while the startup warm-up holds
+stop decisions: show "stopping", never a negative count. `refusal` is the server's reason, never
+derived from `reason`, null when none: `symbol_cap` or `disk_pressure` for a start it refuses (an
+`idle` entry: a refused start has no row; from level 2, and on a refused volume, chart-open starts
+only), `chart_open` or `position_open` for a stop it refuses (a position open never stops,
+INV-B11-a; with both, `position_open`, so a protected symbol never reads as gated). `storage.level`
+is the ladder step (0 normal, 1 warn, 2 autostop, 3 halt), latched with hysteresis: never derive it
+from `used_bytes` and `cap_bytes`. `write_gate: "closed"` means rows of symbols without an open
+position are dropped as gaps while the rest keep writing, so a symbol stays `recording`, gated; the
+level is then 3 and `write_gate_reason` is `disk_halt`, or `volume_refused` when the recording
+volume was refused at boot (root missing, unreadable or shared with backend state, SR-096), which
+wins over `disk_halt`. `accelerate_retention` follows the ladder's own step, not `level`: on from
+step 2, it holds until recorded bytes are below 75 % of `cap_bytes` and free space is above 25 % of
+the volume, so it can outlive the step; a refused volume's `level: 3` does not turn it on.
+`cap_bytes` is the `CV_DISK_CAP_GB` budget (× 10^9 bytes) for recorded bytes (QuestDB plus Parquet,
+not the volume's used space), and `used_bytes` is those recorded bytes, the meter's numerator (the
+sum of REST `tiers[]` `questdb` and `parquet`). `role_restricted: true` marks a role-reduced set
+(R-I2): a missing symbol is unknown, never "not recording"; it follows role, not what was withheld,
+and such a set never carries `refusal: "position_open"`, which would reveal a position. `policy` is
+the recorder policy the server reads from its settings, the same fields as REST
+`RecorderPolicySettings`: read-only and sent whole, so a client explains a countdown or a refusal
+with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
 
 ### 15.9 `SystemUpdate`
 
