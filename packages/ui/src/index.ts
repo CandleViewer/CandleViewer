@@ -4,4 +4,5 @@
 export { TOKEN_SCHEMA_VERSION } from "./tokens/index.js";
 export { Placeholder } from "./primitives/Placeholder.js";
 export * from "./components/index.js";
+export * from "./icons/index.js";
 export * from "./theme/index.js";

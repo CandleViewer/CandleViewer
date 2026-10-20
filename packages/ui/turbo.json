@@ -9,6 +9,7 @@
         "scripts/**",
         "contrast/**",
         "eslint-rules/**",
+        "eslint.config.mjs",
         ".storybook/**",
         "vitest.config.mjs",
         "package.json",
@@ -28,6 +29,7 @@
         "scripts/**",
         "contrast/**",
         "eslint-rules/**",
+        "eslint.config.mjs",
         ".storybook/**",
         "vitest.config.mjs",
         "package.json",
@@ -53,6 +55,7 @@
       "inputs": [
         "$TURBO_EXTENDS$",
         "eslint-rules/*.d.mts",
+        "scripts/*.d.mts",
         "package.json",
         "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"
       ]
