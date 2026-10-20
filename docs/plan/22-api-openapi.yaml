@@ -45,7 +45,9 @@ info:
     ### Authentication
     Short-lived access JWT (10 min) in `Authorization: "Bearer`, plus an opaque refresh token"
     stored in an `HttpOnly; Secure; SameSite=Strict` cookie (`cv_refresh`) and rotated on every
-    use. Login is two-legged when MFA is enabled: `POST /auth/login` returns an `mfa_required`
+    use; the desktop shell's origin may get `SameSite=None` instead when it is listed (conditions:
+    "Cookie" under "CSRF").
+    Login is two-legged when MFA is enabled: `POST /auth/login` returns an `mfa_required`
     challenge, `POST /auth/mfa/verify` exchanges it for tokens.
 
     ### Enrolment-only session (#2295, #2344)
@@ -102,11 +104,25 @@ info:
     bearer exemption**: non-browser clients also receive the `__Host-cv_csrf` cookie and echo it.
 
     * **Cookie.** `__Host-cv_csrf`, `Secure; SameSite=Strict; Path=/`, no `Domain`, **not**
-      `HttpOnly` (the client must read it). `Max-Age` equals the refresh-token lifetime
+      `HttpOnly` (a page on the backend's own origin reads it; the desktop page cannot, see
+      "Client modes"). `Max-Age` equals the refresh-token lifetime
       (`refresh_expires_in`, the same as `cv_refresh`), so a browser restart never strands
       `/auth/refresh` or `/auth/logout`. The attributes match `cv_refresh` and the
-      deployment model: TLS via Tailscale or the Electron shell, and `http://127.0.0.1` /
-      `localhost` is a secure context, so `Secure` cookies work in local development.
+      deployment model: TLS via Tailscale, and plain HTTP only on loopback, for local development
+      and for the packaged desktop shell's host-local backend (SR-049); `http://127.0.0.1` (and
+      `localhost` in development) is a secure context, so `Secure` cookies work there.
+      **`SameSite` follows the request's `Origin` (C-12.9; ADR-0038 4b, 4c).** On a response to a
+      request whose `Origin` is exactly `app://candleviewer` and is listed in `CV_ALLOWED_ORIGINS`
+      (SR-042), with the `desktop.backend_connection` flag on, every `Set-Cookie` that issues,
+      rotates or re-issues either cookie carries `SameSite=None; Partitioned` instead of
+      `SameSite=Strict`: `__Host-cv_csrf` is `Secure; SameSite=None; Partitioned; Path=/` (still
+      not `HttpOnly`) and `cv_refresh` is `HttpOnly; Secure; SameSite=None; Partitioned;
+      Path=/api/v1/auth`. An expiry of either cookie on a response to a request whose `Origin` is
+      exactly `app://candleviewer` and listed carries the same attributes whatever the flag's
+      value: the S2 probe measured that a cross-site `SameSite=Strict` expiry leaves the cookie in
+      place, and so does an expiry without `Partitioned` for a partitioned cookie (ADR-0038 A7).
+      Every other request (no `Origin`, another origin, or the flag off) gets
+      `SameSite=Strict` on both cookies, so browser sessions are unchanged.
     * **Token.** `<nonce>.<mac>`. The nonce has at least 128 bits from a CSPRNG.
       `mac = HMAC-SHA256(csrf_key, len(session_id) || session_id || nonce)` (length-prefixed
       session id). `csrf_key` is a dedicated, rotatable server key, separate from the access-JWT
@@ -133,7 +149,8 @@ info:
       (`POST /auth/login`, `/auth/mfa/verify`, `/auth/mfa/recovery`,
       `/invites/{inviteToken}`, `/invites/{inviteToken}/confirm`) and the safe methods
       (`GET`/`HEAD`/`OPTIONS`). `SameSite=Strict` and the SR-042 `Origin` check are
-      additional controls, never the only one.
+      additional controls, never the only one; where the cookies are `SameSite=None` (the
+      `app://candleviewer` case in "Cookie"), the `Origin` check is the only additional control.
     * **Refusal.** A missing, mismatched or session-unbound token yields `403`
       `csrf_token_invalid` and an `auth.csrf_refused` audit record, up to a per-session /
       per-source budget (beyond it: the same `403` with an optional `Retry-After` and no audit
@@ -12960,7 +12977,9 @@ components:
       name: cv_refresh
       description: >
         Opaque, single-use, rotated refresh token. `HttpOnly; Secure; SameSite=Strict;
-        Path=/api/v1/auth`. Also identifies the session for `POST /auth/unlock`,
+        Path=/api/v1/auth`; on a response to the desktop shell's origin `app://candleviewer`,
+        `SameSite=None; Partitioned` instead (conditions: "Cookie" in the CSRF section of
+        `info.description`). Also identifies the session for `POST /auth/unlock`,
         `POST /auth/logout` and `GET /auth/session` without a live access token ("Idle lock").
     csrfCookie:
       type: apiKey
@@ -12969,8 +12988,11 @@ components:
       description: |
         SR-041 double-submit CSRF token, `<nonce>.<mac>` (rules in the CSRF section of
         `info.description`). `Secure; SameSite=Strict; Path=/`, no `Domain`, `Max-Age` equal to
-        the `cv_refresh` lifetime, deliberately **not** `HttpOnly` so the client can echo it in
-        `X-CSRF-Token`. Issued at login/MFA completion, rotated on every `/auth/refresh` and on a
+        the `cv_refresh` lifetime (on a response to the desktop shell's origin
+        `app://candleviewer`, `SameSite=None; Partitioned` instead; conditions: "Cookie"),
+        deliberately **not** `HttpOnly` so a page on the backend's own origin can echo it in
+        `X-CSRF-Token` (the desktop page takes the token from the `X-CSRF-Token` response header,
+        "Client modes"). Issued at login/MFA completion, rotated on every `/auth/refresh` and on a
         successful `/auth/step-up`, re-issued by `GET /auth/session`, expired on logout. It is not
         an authentication credential on its own and is listed here only to document the cookie.
         Enforcement is per operation via `components.parameters.CsrfToken`.

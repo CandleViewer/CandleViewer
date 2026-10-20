@@ -18,7 +18,8 @@ Owner: Security. Threat model: `docs/security/threat-models/e09-auth-rbac.md` (E
 
 `no-raw-account-id` SR-051 · `no-adhoc-authz` SR-017 · `no-target-user-on-self-service` SR-026 ·
 `stepup-required` SR-025 · `no-secret-logging` SR-122 · `no-jwt-in-browser-storage` SR-012 ·
-`cookie-flags` (+`-domain`) SR-012 · `argon2-params` SR-011 · `audit-write-required` SR-112.
+`cookie-flags` (+`-domain`, `-writer-location`, `-raw-header`) SR-012 · `argon2-params` SR-011 ·
+`audit-write-required` SR-112.
 Each finding message names its SR id.
 
 ## Allowlists
@@ -31,6 +32,21 @@ exclude needs Security review (CODEOWNERS).
 `pattern-not` list for the drawings and workspaces writes (not C-2.9 by #357 item 11 and #402 D20; foreign-id denials
 audited as `rbac.denied` where recorded). A new route in those routers is still flagged. The rule cannot see new
 behaviour inside an approved handler: revisit when E40 exposes `drawings.alert_id` and the 3.8.5 hotkey routes land.
+`cookie-flags` allow-lists one function in one file (C-12.9, ADR-0038 4b): outside
+`write_auth_cookie` (`services/api/candleviewer/api/csrf.py`), `set_cookie` needs `httponly=True`,
+`secure=True` and `samesite="strict"`, and `delete_cookie` needs `samesite="strict"`; inside it any
+`samesite` is admitted, but each call must state `secure=True`, `httponly=` and `samesite=`.
+`cookie-flags-writer-location` refuses a `write_auth_cookie` defined anywhere else (another `api/csrf.py`,
+nested, a method or `async` included). Its exclusion is that one path, anchored at the repository root,
+so a scan outside a git checkout, or of a single file from anywhere but the repo root, flags the writer
+instead. `cookie-flags-raw-header` refuses, outside that function, a `Set-Cookie` header written with a
+literal name and any write to a response's raw header list (`raw_headers` or `headers.raw`, whitespace at
+the dot included). The rules cannot see a header name that is not a literal, a header pair that is not a
+bytes tuple (a list-shaped ASGI pair, say), an alias or another route to the list, dynamic access, or a
+comment or backslash continuation at the dot of `headers.raw`. A write that matches two of the rule's
+patterns, such as a literal `Set-Cookie` pair added to `raw_headers`, is reported twice. Review covers what
+the rules cannot see: `api/csrf.py` has a Security CODEOWNER, and S4's attribute tests and S9a pin the
+result. Renaming or moving that function needs the rules changed in the same PR, with Security review.
 
 ## Suppressions
 

@@ -3,16 +3,39 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      SR-012: cookie set without httponly=True, secure=True and
-      samesite="strict", or with an explicit domain= (must be host-only).
+      SR-012 (C-12.9): outside write_auth_cookie() (services/api/candleviewer/api/csrf.py,
+      ADR-0038 4b) a cookie is set only with httponly=True, secure=True and samesite="strict", and
+      expired only with samesite="strict"; inside it, every set and expiry states secure=True,
+      httponly= and samesite=. The cookie must also be host-only (no domain=).
     metadata:
       sr: SR-012
-    patterns:
-      - pattern: $R.set_cookie(...)
-      - pattern-not: $R.set_cookie(..., httponly=True, ..., secure=True, ..., samesite="strict", ...)
-      - pattern-not: $R.set_cookie(..., secure=True, ..., httponly=True, ..., samesite="strict", ...)
-      - pattern-not: $R.set_cookie(..., samesite="strict", ..., httponly=True, ..., secure=True, ...)
-      - pattern-not: $R.set_cookie(..., samesite="strict", ..., secure=True, ..., httponly=True, ...)
+    pattern-either:
+      # Outside the ADR-0038 4b function: the three literals on an issue, "strict" on an expiry.
+      - patterns:
+          - pattern: $R.set_cookie(...)
+          - pattern-not: $R.set_cookie(..., httponly=True, ..., secure=True, ..., samesite="strict", ...)
+          - pattern-not: $R.set_cookie(..., secure=True, ..., httponly=True, ..., samesite="strict", ...)
+          - pattern-not: $R.set_cookie(..., samesite="strict", ..., httponly=True, ..., secure=True, ...)
+          - pattern-not: $R.set_cookie(..., samesite="strict", ..., secure=True, ..., httponly=True, ...)
+          - pattern-not-inside: |
+              def write_auth_cookie(...):
+                  ...
+      - patterns:
+          - pattern: $R.delete_cookie(...)
+          - pattern-not: $R.delete_cookie(..., samesite="strict", ...)
+          - pattern-not-inside: |
+              def write_auth_cookie(...):
+                  ...
+      # Inside it: any samesite expression, but secure=True as a literal and httponly=/samesite= stated.
+      - patterns:
+          - pattern-either:
+              - pattern: $R.set_cookie(...)
+              - pattern: $R.delete_cookie(...)
+          - pattern-inside: |
+              def write_auth_cookie(...):
+                  ...
+          - pattern-not: $R.set_cookie(..., httponly=$H, ..., secure=True, ..., samesite=$S, ...)
+          - pattern-not: $R.delete_cookie(..., httponly=$H, ..., secure=True, ..., samesite=$S, ...)
     paths:
       exclude:
         - "**/tests/**"
@@ -23,6 +46,77 @@ rules:
     metadata:
       sr: SR-012
     pattern: $R.set_cookie(..., domain=$D, ...)
+    paths:
+      exclude:
+        - "**/tests/**"
+  # cookie-flags and cookie-flags-raw-header exempt write_auth_cookie by name; this keeps the
+  # name in the one file, so a same-named function elsewhere gets no exemption (ADR-0038 4b).
+  - id: cookie-flags-writer-location
+    languages: [python]
+    severity: ERROR
+    message: >-
+      SR-012 (C-12.9): write_auth_cookie(), the one function that may choose a cookie's samesite
+      (ADR-0038 4b), is defined only in services/api/candleviewer/api/csrf.py. A function of that
+      name anywhere else, nested, a method or async included, would escape cookie-flags.
+    metadata:
+      sr: SR-012
+    pattern: |
+      def write_auth_cookie(...):
+          ...
+    paths:
+      exclude:
+        - "**/tests/**"
+        # Anchored at the repo root, which Semgrep uses for directory targets in a git checkout, so
+        # no other api/csrf.py is exempt. Outside a checkout, or for a single file scanned from
+        # anywhere but the repo root, it does not match and the writer is flagged: fails closed.
+        - "/services/api/candleviewer/api/csrf.py"
+  - id: cookie-flags-raw-header
+    languages: [python]
+    severity: ERROR
+    message: >-
+      SR-012 (C-12.9): a Set-Cookie header, or any entry of a response's raw header list, is
+      written only inside write_auth_cookie() (services/api/candleviewer/api/csrf.py, ADR-0038 4b);
+      elsewhere a cookie is set with set_cookie or delete_cookie, which cookie-flags checks.
+    metadata:
+      sr: SR-012
+    patterns:
+      # Each match must overlap one of these names, which lets Semgrep skip a file that has none.
+      # Whitespace and line breaks may sit at the dot of headers.raw (auth-security-gates.md).
+      - pattern-regex: (?i)set-cookie|raw_headers|headers\s*\.\s*raw
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $H.append($NAME, ...)
+                  - pattern: $H.setdefault($NAME, ...)
+                  - pattern: $H[$NAME] = $V
+                  - pattern: "{..., $NAME: $V, ...}"
+              - metavariable-regex:
+                  metavariable: $NAME
+                  regex: (?i)^b?["']set-cookie["']$
+          # A raw (ASGI) header pair; bytes only, so a tuple of header names is not a write.
+          - patterns:
+              - pattern: ($NAME, $V)
+              - metavariable-regex:
+                  metavariable: $NAME
+                  regex: (?i)^b["']set-cookie["']$
+          # Any write to a response's raw header list (raw_headers, or headers.raw, the same list),
+          # slices included, since its header name may be a variable.
+          - patterns:
+              - pattern-either:
+                  - pattern: $L.append(...)
+                  - pattern: $L.extend(...)
+                  - pattern: $L.insert(...)
+                  - pattern: $L[$I] = $V
+                  - pattern: $L += $V
+                  - pattern: $L = $V
+              - metavariable-pattern:
+                  metavariable: $L
+                  pattern-either:
+                    - pattern: $R.raw_headers
+                    - pattern: $R.headers.raw
+      - pattern-not-inside: |
+          def write_auth_cookie(...):
+              ...
     paths:
       exclude:
         - "**/tests/**"

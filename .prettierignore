@@ -59,3 +59,7 @@ docs/plan/backlog/_reconciliation-report.md
 scripts/tests/fixtures/pnpm-audit/*.json
 # #3558: `gh api --paginate --slurp` Dependabot alert listings as gh wrote them (compact, one line).
 scripts/tests/fixtures/dependabot-alerts/*.json
+
+# ADR-0038 S0 (#3947): CONSTITUTION.md predates Prettier and was never formatted by it; amendments
+# (C-16.1) edit it word by word, so a reflow must never ride along. Formatting it is its own PR.
+/CONSTITUTION.md

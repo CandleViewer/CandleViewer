@@ -49,6 +49,18 @@ def test_rule_without_fixture_fails(tmp_path: Path) -> None:
     assert any("no negative fixture" in e for e in errs)
 
 
+def test_nested_fixture_files_are_parsed(tmp_path: Path) -> None:
+    # The decoy fixtures/api/csrf.py pins the anchored writer exclusion only if it is read.
+    (tmp_path / "top.py").write_text("x = 1  # ruleid: r1\n", encoding="utf-8")
+    (tmp_path / "api").mkdir()
+    (tmp_path / "api" / "csrf.py").write_text(
+        "y = 2  # ruleid: r2\nz = 3  # ok: r2\n", encoding="utf-8"
+    )
+    pos, neg = chk.parse_fixtures(tmp_path)
+    assert set(pos) == {"r1", "r2"}
+    assert set(neg) == {"r2"}
+
+
 @pytest.mark.skipif(
     not __import__("shutil").which("semgrep"), reason="semgrep not installed"
 )
