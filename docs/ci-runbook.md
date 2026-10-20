@@ -986,11 +986,15 @@ section in the same sprint — do not just work around it and move on.
   shared: a path one lane lists inside another lane's path is carved out of it (`--ignore`), so
   `contract-security-1` runs `tests/contract` minus what the other two list below it, a
   subdirectory added later included.
-- **Budget.** No PR job over 8 minutes (#3881), so a lane stays at about 5: its job is its summed run
-  time plus collection and start-up, which is large for import-heavy directories (`tests/contract`
-  takes about 2 minutes to collect under `--cov`). The Postgres- and QuestDB-backed files
-  (`db-chaos-*`) ran up to 3 times slower on one run than on another a few hours earlier, so cut
-  them from a run's numbers, not from the best one, and leave that room.
+- **Budget.** No PR job over 8 minutes (#3881). On the sixteen lanes (run 39401416075) the longest
+  lane took 6m04s (`unit-heavy-1`), the others 3 to 5.5 minutes, and the run 7m39s, with
+  `semgrep-bandit` (7m02s) the longest job of any lane. The first cut into ten lanes had its
+  longest lane at 12m05s (run 39396453049), and before the split the longest was 14m32s (run
+  39369408394, listed in ADR-0013's Validation). A lane's job is its summed run time plus
+  collection and start-up, which is large for import-heavy directories (`tests/contract` takes about
+  2 minutes to collect under `--cov`). The Postgres- and QuestDB-backed files (`db-chaos-*`) ran up
+  to 3 times slower on one run than on another a few hours earlier, so cut lanes from a run's
+  numbers, not from the best one.
 - **To rebalance**, take the lane jobs' logs of a recent green `pr` run (job ids from
   `gh api repos/CandleViewer/CandleViewer/actions/runs/<run id>/jobs`, then
   `gh api --allow-escape-sequences repos/CandleViewer/CandleViewer/actions/jobs/<job id>/logs`) and

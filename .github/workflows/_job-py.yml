@@ -11,7 +11,7 @@ name: _job-py
 #     drift -> alert rules, promtool, amtool -> Grafana dashboard lint
 #     -> import-linter architecture contract (its own `architecture` check)
 #   py-tests: one job per lane of tools/ci/py-test-lanes.json, all at once (sixteen since #3881:
-#     the four heavy matrices sharded so that no PR job runs past about 5 minutes):
+#     the four heavy matrices sharded; docs/ci-runbook.md section 10 has the measured lane times):
 #     pytest -m "not exchange_smoke ..." --cov on the lane's paths
 #     (network-guarded, ADR-0012/SR-140) -> upload the lane's raw coverage data
 #   py (after both): coverage combine -> coverage.xml + term report -> the
