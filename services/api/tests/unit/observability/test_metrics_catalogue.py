@@ -41,7 +41,8 @@ _UNIT_SUFFIX = re.compile(
 _SAMPLES = ("_bucket", "_count", "_sum")
 #: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules), by
 #: the E12-T02 ticket's Observability section (`bars_symbol_cardinality{table}`, #1998), by the
-#: E42-T03 ticket's 1/0 order-gate gauge `cv_maintenance_mode`, and by E17-T06
+#: E42-T03 ticket's 1/0 order-gate gauge `cv_maintenance_mode`, by the E42-T05 ticket's
+#: Observability section (`cv_incidents_open`, #966), and by E17-T06
 #: (`cv_ws_connection_class`, a gauge per class; `cv_ws_queue_frames`, a histogram of frames).
 #: `cv_ws_coalesced_updates`, a histogram of updates, is #412's ruling D6 name
 #: `cv_ws_coalesced_count` without the `_count` end that a histogram may not have (see below).
@@ -52,6 +53,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "cv_audit_lane_journal_first",  # the 1/0 flag gauge named by S2b-2a's review (SR-S2B2A-02)
         "disk_used_ratio",
         "cv_maintenance_mode",
+        "cv_incidents_open",
         "recorder_disk_pressure_level",
         "recorder_bytes_per_day",
         "recorder_projected_full_timestamp",
@@ -369,6 +371,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.admin.backups.metrics import EXPORTED_NAMES as BACKUP_NAMES
     from candleviewer.admin.flags.metrics import EXPORTED_NAMES as FLAG_NAMES
     from candleviewer.admin.lifecycle_metrics import EXPORTED_NAMES as LIFECYCLE_NAMES
+    from candleviewer.admin.ops.incident_metrics import EXPORTED_NAMES as INCIDENT_NAMES
     from candleviewer.audit.metrics import EXPORTED_NAMES as LANE_NAMES
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars import reader, writer  # noqa: F401 - the write and read path (#1998)
@@ -394,6 +397,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     assert FLAG_NAMES <= {s.name for s in live_specs() if s.exported}
     others |= AUDIT_NAMES
     others |= BACKUP_NAMES
+    others |= INCIDENT_NAMES
     others |= LIFECYCLE_NAMES | LANE_NAMES
     others |= REPLAY_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others

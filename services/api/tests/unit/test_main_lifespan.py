@@ -166,6 +166,18 @@ async def test_lifespan_starts_and_stops_the_incidents_purge_task() -> None:
     task.stop.assert_awaited_once_with()
 
 
+async def test_lifespan_starts_and_stops_the_incidents_open_gauge() -> None:
+    """E42-T05 (#966 BK-15): `cv_incidents_open`'s refresher, a task like the purge beside it."""
+    app = FastAPI()
+    app.state.app_context = _fake_ctx()
+    app.state.incidents_open_gauge = task = SimpleNamespace(start=Mock(), stop=AsyncMock())
+
+    async with _lifespan(app):
+        task.start.assert_called_once_with()
+
+    task.stop.assert_awaited_once_with()
+
+
 async def test_lifespan_loads_the_backup_freshness_once_before_serving() -> None:
     """E42-T05 BK-5: the ages the stale-backup alert reads; `start` bounds its own load."""
     app = FastAPI()
