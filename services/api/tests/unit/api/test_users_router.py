@@ -518,8 +518,8 @@ def test_put_roles_conflict_and_audit_down_carry_registered_codes() -> None:
 
 @pytest.mark.parametrize("status", ["disabled", "locked", "invited"])
 def test_put_roles_demotes_a_non_active_owner_while_one_other_owner_is_active(status: str) -> None:
-    """hcl-worker-1's note on #2649: the route's pre-check counts a target's owner grant only while
-    the target is active, as the store's locked check does (`counted_roles`)."""
+    """SR-055, `counted_roles`: the route's pre-check counts a target's owner grant only while the
+    target is active, as the store's locked check does, so a non-active owner is demoted."""
     em, n = _Emitter(), _Notifier()
 
     class _Counted(_Store):  # the store's own floor, on the roles it counts

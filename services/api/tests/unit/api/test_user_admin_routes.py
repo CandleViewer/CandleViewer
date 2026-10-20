@@ -449,6 +449,19 @@ def test_mfa_required_false_400(b16_audit: RecordingAuditSink, spec: Any, role: 
     assert env.log == [] and env.store.users[M]["mfa_required"] is True
 
 
+@pytest.mark.parametrize("role", _ROLES)
+def test_mfa_required_null_400(b16_audit: RecordingAuditSink, spec: Any, role: str) -> None:
+    """O3 (C-12.2), the route's own line behind the generated `Literal[True]`: `mfa_required:
+    null` (the contract has no `null` there) is 400 `validation_failed` naming the field, never
+    a silent no-op, before any lookup or step-up; nothing changes."""
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, (role,)))
+    r = env.patch(M, {"mfa_required": None})
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert (r.status_code, r.json()["code"]) == (400, "validation_failed")
+    assert r.json()["detail"] == "not nullable: mfa_required"
+    assert env.log == [] and env.store.users[M]["mfa_required"] is True
+
+
 def test_mfa_required_true_sets_the_flag_and_records_it(
     b16_audit: RecordingAuditSink, spec: Any
 ) -> None:
@@ -859,10 +872,14 @@ def test_patch_disable_positions_unknown_409(b16_audit: RecordingAuditSink, spec
 def test_patch_disable_of_the_last_owner_is_409_and_audit_down_503(
     b16_audit: RecordingAuditSink, spec: Any
 ) -> None:
-    """AC6 / AC8 through the cascade's own refusals, mapped as the DELETE maps them."""
-    env, _ = _disable_env(b16_audit, spec, rel={"roles": ("owner",), "owners": 1})
+    """AC6 / AC8 through the cascade's own refusals, mapped as the DELETE maps them. A losing
+    disable writes nothing (UL-F13): no `users.disable`, its hook never called, and no refusal
+    record either, unlike a losing demotion's one `rbac.denied`."""
+    env, w = _disable_env(b16_audit, spec, rel={"roles": ("owner",), "owners": 1})
     r = env.patch(M, {"status": "disabled"})
     assert (r.status_code, r.json()["code"]) == (409, "conflict")
+    assert not w.rel.committed and w.calls == [] and "users.disable" not in w.log
+    assert env.emitter.calls == []
     env, w = _disable_env(b16_audit, spec, fail={"users.disable": [AuditUnavailable("x")]})
     r = env.patch(M, {"status": "disabled"})
     assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")

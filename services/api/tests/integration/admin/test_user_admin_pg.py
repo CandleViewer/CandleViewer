@@ -8,7 +8,8 @@ enabled owner remains. AC6: a demotion racing a disable, ten rounds, keeps an en
 loser writes no change record. R6: a re-enable restores no session and no grant. The PATCH disable
 runs the whole cascade (SR-029) and, while positions are unknown, needs the acknowledgement (AC7);
 its `If-Match` is judged under the disable's own lock, so a role change committed before that lock
-refuses it. Needs Docker (testcontainers); not run locally. CI `integration` runs it.
+refuses it. O3: a rename never clears `mfa_required`. Needs Docker (testcontainers); not run
+locally. CI `integration` runs it.
 """
 
 from __future__ import annotations
@@ -283,6 +284,22 @@ async def test_enable_no_regrant(db: Any) -> None:
     assert enabled[1] == disabled[1] and enabled[1][session][1] == "user_disabled"
     assert enabled[2] == disabled[2] and enabled[2][account][:2] == (False, False)
     assert await _roles(engine, manager) == ["manager"]
+
+
+async def test_a_rename_never_clears_mfa_required(db: Any) -> None:
+    """O3 (C-12.2) on the real statement: a rename of a user whose `mfa_required` is true (the
+    column's default) sends `require_mfa` false, and the update's `OR` keeps the flag true."""
+    rel, engine = db
+    owner, viewer = await _user(engine, "owner"), await _user(engine, "viewer")
+    admin = SqlAlchemyUserAdminStore(rel, owner_floor=_floor, audit_timeout_s=_WAIT_S)
+    patch = UserPatch(display_name="renamed", set_display_name=True)
+    change = await admin.update_user(
+        viewer, patch, actor=owner, check=lambda _: None, audit=_Hook()
+    )
+    assert change is not None and change.before["mfa_required"] is True
+    assert (change.after["display_name"], change.after["mfa_required"]) == ("renamed", True)
+    stored = await admin.get_user(viewer)
+    assert stored is not None and stored["mfa_required"] is True
 
 
 async def test_a_stale_precondition_and_a_refused_record_change_nothing(db: Any) -> None:

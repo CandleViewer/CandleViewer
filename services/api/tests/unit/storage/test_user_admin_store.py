@@ -238,6 +238,16 @@ async def test_name_mfa_and_enable_are_one_update_of_the_user_row() -> None:
     }
 
 
+def test_the_update_only_ever_sets_mfa_required() -> None:
+    """O3 (C-12.2), the store's own line behind the contract's `Literal[True]` and the route's
+    refusals: `_PATCH_USER` ORs the flag in and never assigns it, so no `UserPatch` (a rename
+    sends `require_mfa` false) can clear `mfa_required`. `_Db` applies the OR itself, so this
+    pins the statement; Postgres runs it (`test_a_rename_never_clears_mfa_required`)."""
+    sql = " ".join(str(m._PATCH_USER).split())
+    assert "mfa_required = mfa_required OR CAST(:require_mfa AS boolean)" in sql
+    assert sql.count("mfa_required =") == 1
+
+
 async def test_a_patch_that_changes_nothing_writes_audits_and_commits_nothing() -> None:
     db = _Db(a=("active", ("owner",)), b=("active", ("viewer",)))
     patch = UserPatch(roles=frozenset({"viewer"}), require_mfa=True, enable=True)
