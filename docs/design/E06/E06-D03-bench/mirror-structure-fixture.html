@@ -46,7 +46,7 @@
         role="application"
         tabindex="0"
         aria-roledescription="trading chart"
-        aria-label="BTCUSDT, 1 minute, 14:00 to 14:59, last 64,210"
+        aria-label="BTCUSDT, 1 minute"
         aria-describedby="chart-hint"
       >
         <!-- D4 / 05 §6.4: canvas is role=img, not a tab stop -->
@@ -58,7 +58,9 @@
           tabindex="-1"
           aria-label="BTCUSDT 1 minute chart, 60 bars visible, last close 64,210, delta +128"
         ></canvas>
-        <!-- D4 / §7.2 H6: the three-clause hint; the ? cheat-sheet (05 §3.4.9) carries the rest -->
+        <!-- D4 / §7.2 H6: the three-clause hint; the ? cheat-sheet (05 §3.4.9) carries the rest. In production the
+             text is generated from the live hotkey map (05 §3.1.3); this is the default rendering. The root label
+             carries symbol + interval only; range and last live on the canvas img label (05 §6.4). -->
         <p id="chart-hint" class="vh">
           Arrow keys move the cursor. Alt+T opens the data table. Tab leaves the chart.
         </p>
@@ -68,7 +70,12 @@
              (4,320 loaded bars + the header row), aria-rowindex the absolute position (header = 1,
              bar i = i + 2): WAI-ARIA 1.2 windowed-table semantics (review F-06), not the window size. -->
         <div class="vh">
-          <table id="mirror" aria-label="Visible bars" aria-rowcount="4321" aria-colcount="7">
+          <table
+            id="mirror"
+            aria-label="Bars around the cursor"
+            aria-rowcount="4321"
+            aria-colcount="7"
+          >
             <thead>
               <tr aria-rowindex="1">
                 <th scope="col">Time</th>

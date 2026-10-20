@@ -9,7 +9,8 @@
 //   live updates still land) unless noScan; |k| >= rows rewrites every row in place (no moves); aria-current follows
 //   the centre row. Added 2026-10-20 for design-review finding F-01.
 // ?set=main runs the 2026-10-14 matrix; ?set=recycle runs the recycling matrix with its same-binary controls;
-// ?set=recycle60 runs the default-window (60-row) fast-pan / storm / jump rows.
+// ?set=recycle60 runs the default-window (60-row) fast-pan / storm / jump rows; ?set=jumpfixed the hard jump with
+// table-layout: fixed at both sizes.
 const COLS=7, TOTAL=100000;
 const bars=new Array(TOTAL);let s=1;const rnd=()=>(s=(s*1664525+1013904223)>>>0)/4294967296;
 for(let i=0;i<TOTAL;i++){const o=64000+rnd()*200;bars[i]={t:i*60,o,h:o+rnd()*50,l:o-rnd()*50,c:o+rnd()*40-20,v:Math.round(rnd()*500),d:Math.round(rnd()*200-100)};}
@@ -121,8 +122,14 @@ function run(cfg){return new Promise(res=>{
    {name:'60r recycle storm 20msg/s',scn:'storm',rows:60,mode:'recycle'},
    {name:'60r recycle jump 1/s (Home/End-class, full rewrite)',scn:'jump',rows:60,mode:'recycle'},
   ];
+  // 2026-10-20, third invocation (bench-results-recycle-jumpfixed.json): the Home/End-class hard jump with
+  // table-layout: fixed, at both window sizes (orchestrator review, Minor 8).
+  const JUMPFIXED=[
+   {name:'200r recycle jump 1/s (Home/End-class, full rewrite), table-layout fixed',scn:'jump',rows:200,mode:'recycle',fixed:true},
+   {name:'60r recycle jump 1/s (Home/End-class, full rewrite), table-layout fixed',scn:'jump',rows:60,mode:'recycle',fixed:true},
+  ];
   const set=params.get('set')||'main';
-  const cfgs=set==='recycle'?RECYCLE:set==='recycle60'?RECYCLE60:MAIN;
+  const cfgs=set==='recycle'?RECYCLE:set==='recycle60'?RECYCLE60:set==='jumpfixed'?JUMPFIXED:MAIN;
   const only=params.get('only');
   const out=[];
   for(const c of cfgs){if(only&&!c.name.includes(only))continue;const r=[];for(let i=0;i<REPS;i++){r.push(await run({...c,ms:MS,_lc:0}));}
