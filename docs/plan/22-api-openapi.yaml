@@ -5326,7 +5326,9 @@ paths:
 
         **Intent.** The request's `intent` applies to every leg under `placeOrder`'s rule: an
         `intent` that disagrees with a leg's effect is refused with `validation_failed` /
-        `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`.
+        `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`. That refusal
+        is the whole request's, before any leg is sent or any exchange call is made, whatever
+        `atomicity` says; it is never a per-leg failure.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -5970,7 +5972,7 @@ paths:
               properties:
                 exchange_account_ids:
                   type: array
-                  description: Empty means the caller's granted accounts; one id outside them refuses the whole request (SR-E29-13).
+                  description: Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13).
                   items: { type: string, format: uuid }
                 symbol: { $ref: "#/components/schemas/Symbol" }
                 cancel_open_orders: { type: boolean, default: true }
@@ -13415,6 +13417,17 @@ components:
                   instance: "urn:cv:req:0193f2bb-222a",
                   code: session_not_armed,
                 }
+            accountScopeDenied:
+              summary: A body-named exchange account outside the caller's grants, or one that does not exist (SR-E29-13)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/account_scope_denied",
+                  title: "Caller has no granted access to the targeted exchange account",
+                  status: 403,
+                  detail: "An exchange account named in the request is not in your scope.",
+                  instance: "urn:cv:req:0193f2bb-222b",
+                  code: account_scope_denied,
+                }
             kekUnavailable:
               summary: A key operation while the credential key (KEK) is unavailable (ADR-0009 Amendment 1)
               value:
@@ -16237,7 +16250,7 @@ components:
           {
             type: array,
             items: { type: string, format: uuid },
-            description: "Empty means the caller's granted accounts; one id outside them refuses the whole request (SR-E29-13).",
+            description: "Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13).",
           }
         symbol: { oneOf: [{ $ref: "#/components/schemas/Symbol" }, { type: "null" }] }
         intents: { type: array, items: { $ref: "#/components/schemas/OrderIntent" } }

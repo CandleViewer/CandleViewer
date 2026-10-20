@@ -2300,7 +2300,7 @@ class CancelAllRequest(BaseModel):
     exchange_account_ids: Annotated[
         list[UUID] | None,
         Field(
-            description="Empty means the caller's granted accounts; one id outside them refuses the whole request (SR-E29-13)."
+            description="Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13)."
         ),
     ] = None
     symbol: Symbol | None = None

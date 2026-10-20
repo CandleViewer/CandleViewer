@@ -4709,7 +4709,9 @@ export interface paths {
      *
      *     **Intent.** The request's `intent` applies to every leg under `placeOrder`'s rule: an
      *     `intent` that disagrees with a leg's effect is refused with `validation_failed` /
-     *     `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`.
+     *     `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`. That refusal
+     *     is the whole request's, before any leg is sent or any exchange call is made, whatever
+     *     `atomicity` says; it is never a per-leg failure.
      */
     post: operations["createTradeGroup"];
     delete?: never;
@@ -5910,7 +5912,7 @@ export interface components {
       trade_group_id?: string;
     };
     CancelAllRequest: {
-      /** @description Empty means the caller's granted accounts; one id outside them refuses the whole request (SR-E29-13). */
+      /** @description Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13). */
       exchange_account_ids?: string[];
       /**
        * @description Protects TP/SL exits from a blanket cancel.
@@ -16492,7 +16494,7 @@ export interface operations {
         "application/json": {
           /** @default true */
           cancel_open_orders?: boolean;
-          /** @description Empty means the caller's granted accounts; one id outside them refuses the whole request (SR-E29-13). */
+          /** @description Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13). */
           exchange_account_ids?: string[];
           symbol?: components["schemas"]["Symbol"];
         };

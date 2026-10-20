@@ -138,6 +138,17 @@
         "content": {
           "application/problem+json": {
             "examples": {
+              "accountScopeDenied": {
+                "summary": "A body-named exchange account outside the caller's grants, or one that does not exist (SR-E29-13)",
+                "value": {
+                  "code": "account_scope_denied",
+                  "detail": "An exchange account named in the request is not in your scope.",
+                  "instance": "urn:cv:req:0193f2bb-222b",
+                  "status": 403,
+                  "title": "Caller has no granted access to the targeted exchange account",
+                  "type": "https://candleviewer.local/errors/account_scope_denied"
+                }
+              },
               "csrfTokenInvalid": {
                 "summary": "SR-041 refusal on a state-changing operation",
                 "value": {

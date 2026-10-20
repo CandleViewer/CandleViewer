@@ -187,7 +187,14 @@ def test_place_order_takes_an_opening_order_as_an_entry_whatever_its_intent() ->
 def test_a_trade_group_applies_the_intent_rule_to_every_leg() -> None:
     text = _words(_OPS["createTradeGroup"]["description"])
     assert "The request's `intent` applies to every leg under `placeOrder`'s rule" in text
-    assert "and so are the server-assigned `reverse` and `algo_child`" in text
+    assert (
+        "an `intent` that disagrees with a leg's effect is refused with `validation_failed` / "
+        "`intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`" in text
+    )
+    assert (
+        "That refusal is the whole request's, before any leg is sent or any exchange call is made, "
+        "whatever `atomicity` says; it is never a per-leg failure" in text
+    )
 
 
 def test_an_open_position_stop_is_never_cleared_whatever_the_profile_says() -> None:
@@ -310,9 +317,15 @@ def test_forbidden_names_the_scope_and_arm_refusals() -> None:
         "does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`)" in text
     )
     leg = _SCHEMAS["TradeGroupLegInput"]["properties"]["exchange_account_id"]["description"]
-    assert "refuses the whole group alike with `403 account_scope_denied`" in leg
+    assert (
+        "refuses the whole group alike with `403 account_scope_denied`, audited, before any "
+        "exchange call; never a per-leg rejection" in leg
+    )
     account = _SCHEMAS["PlaceOrderRequest"]["properties"]["exchange_account_id"]["description"]
-    assert "one that does not exist are refused alike (`403 account_scope_denied`)" in account
+    assert (
+        "one that does not exist are refused alike (`403 account_scope_denied`), audited, before "
+        "any exchange call" in account
+    )
     assert "it may be `code: session_not_armed` (SR-043" in text
     assert (
         "order mutation that `ArmToken` names (one that opens or increases exposure, "
@@ -320,10 +333,15 @@ def test_forbidden_names_the_scope_and_arm_refusals() -> None:
     )
     assert "decided after account scope like the gate" in text
     scope = _words(_SPEC["components"]["responses"]["AccountScopeDenied"]["description"])
-    assert (
-        "an account that does not exist is answered with the same status, code and `detail` "
-        "shape (SR-E29-13)" in scope
+    assert (  # scoped: getExchangeAccount's own 404 is E27-X03's (KV-I13)
+        "On the order routes that name an account in their body (`placeOrder`, "
+        "`createTradeGroup`, `cancelAllOrders` and `closeAllPositions`; see `Forbidden`), an "
+        "account that does not exist is answered with the same status, code and `detail` shape "
+        "(SR-E29-13)" in scope
     )
+    denied = forbidden["content"]["application/problem+json"]["examples"]["accountScopeDenied"]
+    assert (denied["value"]["status"], denied["value"]["code"]) == (403, "account_scope_denied")
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", denied["value"]["detail"])  # names no account
     example = forbidden["content"]["application/problem+json"]["examples"]["sessionNotArmed"]
     assert (example["value"]["status"], example["value"]["code"]) == (403, "session_not_armed")
     assert example["summary"] == "SR-043 refusal of a live order mutation that `ArmToken` names"
@@ -348,6 +366,8 @@ def test_a_bulk_route_refuses_an_out_of_scope_id_whole(operation: str) -> None:
     assert "reports exchange outcomes only" in text
     assert "Partial success is normal" not in text
     assert "404" not in op["responses"]  # an unknown account is not an existence oracle
+    field = _words(_request_properties(op)["exchange_account_ids"]["description"])
+    assert "one id outside them, or one that does not exist, refuses the whole request" in field
 
 
 def test_bulk_account_results_hold_exchange_outcomes_only() -> None:
