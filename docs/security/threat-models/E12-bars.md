@@ -451,9 +451,6 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     an estimate, not a bound: one print may complete up to 1 000 bricks (SR-E12-15). The count reads the
     hot `trades` tier only, whose retention (30 d) is shorter than the non-time bars' (90 d). The count's
     cost is unmeasured. #3279 replaces the print count with a count of the stored bars.
-  - BR-11 (SR-E12-15), replay, until #2762 merges: a series restored from a state blob replays the tape
-    through the same builder; a print the cap refuses inside the replayed range would make `register()` raise
-    (#2762 cold-starts the series instead). Same for renko since #2125.
   - BR-11 (SR-E12-15), digits: the volume bound is exact for thresholds of at most 25 significant digits
     (the wire takes whole numbers up to 10^12); a 26 to 28 digit threshold built directly can close one
     bar more or fewer, and can refuse a print that closes exactly 1 000.

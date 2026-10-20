@@ -156,24 +156,22 @@ async def test_a_close_emitted_while_register_awaits_is_in_the_store_so_in_the_f
     assert [f["t"] for f in conn.out] == ["sub_ok", "snap"] and conn.bars(1) == _items(whole)
 
 
-async def test_a_subscriber_attaching_mid_restore_gets_the_rest_of_the_closes_as_d_frames(
+async def test_a_subscriber_attaching_mid_restore_waits_for_it_then_gets_the_whole_series(
     rig: _Rig,
 ) -> None:
-    """A second connection subscribes while the first one's `register` awaits the replay: its own
-    `register` returns at once (the lease exists), its `snap` holds the closes emitted so far, and
-    each later one reaches it as a `d`, `s` contiguous, so `snap` plus `d`s are the whole series."""
+    """A second connection subscribes while the first one's `register` awaits the replay. Its own
+    `register` takes its lease and waits for that build (#2762: never a lease on a series that does
+    not exist yet), so its `sub_ok` follows the restore and its `snap` holds the whole series."""
     first, second, tape = _Conn(rig), _Conn(rig), rig.tape.trades
     pending = await _subscribing(rig, first)
-    async with asyncio.timeout(5):
-        await second.subscribe()
-    assert [f["t"] for f in second.out] == ["sub_ok", "snap"]
+    attaching = asyncio.create_task(second.subscribe())
+    await asyncio.sleep(0)  # one loop turn, no time: its `register` reaches the build in flight
+    (sub,) = second.authz.by_id.values()
+    leases = rig.bset._leases._series[(SYM, M1.spec_hash)].holders
+    assert (len(leases), sub.bar_lease, second.out) == (2, None, [])  # leased, still waiting
     rig.tape.release.set()
     async with asyncio.timeout(5):
-        await pending
-    deltas, whole = second.out[2:], _items(_bars(tape))
-    assert deltas, "no `d` reached it, its `snap` held it all: retune CUT, PARK or END"
-    assert [(f["t"], f["s"]) for f in deltas] == [("d", n) for n in range(2, 2 + len(deltas))]
-    series = {i["index"]: i for i in second.bars(1)}
-    for frame in deltas:
-        series.update({i["index"]: i for i in frame["p"]["bars"]})
-    assert [series[k] for k in sorted(series)] == whole and first.bars(1) == whole
+        await asyncio.gather(pending, attaching)
+    whole = _items(_bars(tape))
+    assert [f["t"] for f in second.out] == ["sub_ok", "snap"] and second.bars(1) == whole
+    assert first.bars(1) == whole
