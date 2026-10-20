@@ -1,6 +1,6 @@
 # ADR-0005 — WS protocol: snapshot + delta with binary market-data frames
 
-- Status: **decided**
+- Status: **decided** (amended 2026-10-06, 2026-10-20; Amendment 2 is **accepted (interim)**, conditional on E17-Q03, #568)
 - Date: 2026-09-14
 - Deciders: Architect, Backend lead, Frontend lead, Chart-engine lead
 - Consulted: `docs/research/22-architecture-options.md` §4, `docs/research/06-bybit-api.md` §14, digest 10 open question #6
@@ -65,6 +65,8 @@ Negative / risks:
 
 ## Amendment 1 — 2026-10-06: Spike S5 / E17-K01 validation result — gate NOT MET as specified
 
+_Amendment 2 (below) says what shipped and replaces whatever differs from it here._
+
 Evidence: `docs/plan/notes/e17-binary-vs-json.md`; harness and committed artefact `tests/perf/ws/`
 (`run_all.py`, `results.json`). 4-pane reference workspace (§16.3), 60 s, seed 17001, headless Chromium
 153 on an i7-8550U laptop, median of 5 runs. Workload is modelled on a documented-shape corpus, not a
@@ -97,3 +99,58 @@ benefit of binary exists only with a vectorised or native codec.
    (low volume), never on hot kinds.
 4. Not discharged: §3.4's prose record sizes (bars 69 B, footprint cell 33 B) disagree with its field
    lists (65 B, 29 B) and must be reconciled by E17-T02 before any codec is written.
+
+## Amendment 2 — 2026-10-20: as built (E17-T07)
+
+Approval: approved by the orchestrator under owner delegation, 2026-10-20; owner may revoke. The
+ruling will be recorded on the E17-T07 ticket (#572) when the PR opens. It stands on one condition: E17-Q03 (#568) measures the as-shipped arm (point 2) against the §16.3
+budgets, and the numbers meet them. If one misses, the owner chooses between structured-by-default
+(the per-subscription `options.encoding`, a policy default and not a wire change) and a change of
+the budget. The body of this ADR and Amendment 1 are left as written; this section is what a reader
+uses where they differ.
+
+**1. The gate was not met as specified.** Amendment 1's verdict stands for the arms E17-K01
+measured: decode PASS (-82.3 %), bandwidth against deflated JSON FAIL (binary 112 % larger),
+bandwidth uncompressed PASS (-67.2 %). The verdict is decided by deflate with context takeover,
+not by the encoding, and every arm is far inside the §16.3 envelope (raw JSON 154 KiB/s against a
+350 KiB/s target). So no arm was unfit. Amendment 1 itself was never ratified by name, and what
+shipped is not what it proposed.
+
+**2. What shipped, against what Amendment 1 proposed.**
+
+| Amendment 1 proposed                                             | As built                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The data plane stays JSON (`cv.v1.json`, deflate on)             | The web client offers `cv.v1.json` only (`apps/web/src/lib/ws/protocol/frames.ts`). On it a subscription whose family has a binary form defaults to binary (`ws/topics.py`), sent as `e: "b64"`: a base64 CVWB body inside the JSON envelope, deflated. K01 never measured this arm |
+| Binary re-scoped to footprint, heatmap and book snapshot, opt-in | All six body kinds ship, on by default per subscription. `hello.encodings` and `hello.capabilities` are advisory: the server reads neither, and `options.encoding` decides                                                                                                          |
+| Book delta, trades and bars stay JSON                            | They are binary by default; `bars` has a structured fallback for what kind 4 cannot hold (23 §3.4)                                                                                                                                                                                  |
+| MessagePack mid-tier only                                        | `cv.v1.msgpack` is served and preferred by the server as the envelope codec for every frame, with deflate withdrawn for it, decoded under the SR-185 bounds. The web client does not offer it (#2886)                                                                               |
+
+**3. Decision.** The hybrid stands: a readable control plane (§13) and fixed-layout binary bodies
+(§3.4) inside a self-describing envelope. What changed is which envelope codec carries the bodies
+(the shipped web path is the JSON envelope), which side defaults to binary (the server, per
+subscription) and where the negotiation happens (`options.encoding`, not `hello`). The deflate
+configuration is part of the wire contract in practice (23 §3.5): "binary is smaller" holds only
+with deflate on for `cv.v1.json` and off for `cv.v1.msgpack`.
+
+**4. The layout text of the ADR's body is stale; `23-ws-protocol.md` §3.4 and
+`packages/protocol/cvwb-layout.json` govern.**
+
+| The ADR says                                                                          | As built                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A header of `magic u16, version u8, kind u8, flags u16, topicId, seq, payloadLen`     | A 24-byte header: `magic u32` ("CVWB"), `format_version`, `body_kind`, `flags` (estimated, coalesced, replay, partial), `price_scale`, `qty_scale`, 3 reserved, `record_count u32`, `ts_base_ms u64`. The sequence number lives on the envelope (§3.3) |
+| Prices as int32 ticks from a `priceOrigin`, times as int64 microseconds               | Scaled `i64` (decimal exponents, per frame for bars) and per-record `u32` millisecond offsets from `ts_base_ms`                                                                                                                                        |
+| Struct-of-arrays payloads                                                             | Fixed-stride records; a struct-of-arrays decode output is deferred (#2067)                                                                                                                                                                             |
+| Records of 69 B (bars) and 33 B (footprint cell) against field lists of 65 B and 29 B | Bars are 85 B and footprint cells 33 B, each ending in 4 reserved zero bytes; the footprint group prefix is 28 B. Bars and footprint are `format_version` 2, which carries `(generation, index)` (#2014, #2529). Decoders ignore reserved bytes        |
+| Control frames `subscribe`, `unsubscribe`, `ack`, `error`, `resync_required`          | `sub`, `sub_ok`, `unsub`, `unsub_ok`, `err`, `resync`, `snap`, `d`, `ctl`, `ctl_ok`, `revoked`, `permission_change`, `bye`, `ping`, `pong` (§3.1)                                                                                                      |
+| Versioning by an integer `proto` the server supports with the previous one            | `protocol: "cv.v1"` and the `cv.v1.*` subprotocol; a breaking change is `cv.v2`, served in parallel for one release (§2.3, C-6.3)                                                                                                                      |
+
+**5. What the implementation taught.** (a) The envelope codec and the body encoding are two axes,
+and K01 measured three of the four combinations. (b) Fixed strides forced two `format_version`
+bumps before the freeze; after it each is a `cv.v2`. The only free growth is a later bit of a
+record's `flags` byte that 23 §3.4 calls reserved: naming a reserved byte or a header flag bit
+changes the layout the golden pins, so it is a `cv.v2` change too. (c) One layout declaration generating both codecs turned K01's 69/65 and 33/29 B
+disagreements into generation failures, and `wire-contract.v1.golden.json` extends that discipline
+to the whole contract. (d) Decoder bounds checked against the real buffer (SR-128), a seed corpus
+with a nightly fuzz run (SR-155) and the MessagePack decoder's bounds (SR-185) are why the freeze is
+also a security control. (e) Struct-of-arrays decode (#2067) and MessagePack in the web client
+(#2886) stay open on purpose.
