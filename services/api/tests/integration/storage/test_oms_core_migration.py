@@ -1,6 +1,7 @@
 """Integration: `0029_oms_core` against real Postgres 16 (E29-T01 #845).
 
-The catalog equals 21-database-schema.md Sec.3.3.4-3.3.7 but the two documented leg FKs; the #845
+The catalog equals 21-database-schema.md Sec.3.3.4-3.3.7, the two leg FKs included (added by
+0039_trade_groups, E28-T01 #905, as Postgres names the doc's inline REFERENCES); the #845
 Gherkin scenarios that are pure database behaviour hold on the engine; every invalid row is refused
 by its NAMED constraint; the C-5.7 guards (TRUNCATE trigger, revoked grants) and the Sec.3.3.4
 adopted-row rule (both id arms) hold; an empty and a seeded database round-trip and a populated
@@ -39,7 +40,6 @@ _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
 _REV, _PREV = "0029_oms_core", "0028_incidents_backups"
 _TABLES = ("orders", "order_events", "executions", "positions", "position_snapshots")
 _BLOCKS = ("3.3.4 `orders`", "3.3.5 `order_events`", "3.3.6 `executions`", "3.3.7 `positions`")
-_LEG_FK = " REFERENCES trade_group_legs(id) ON DELETE SET NULL"  # deferred to E28-T01 (#905)
 _NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 _OUR = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # the #845 Gherkin id, 24-internal-schemas.md Sec.8.3
 _TEMPLATE = "oms_head_template"
@@ -178,12 +178,13 @@ _CATALOG = (
 
 
 def _doc_ddl() -> str:
-    """Sec.3.3.4-3.3.7's ```sql blocks, to their fences, minus the deferred leg FK clause, then
-    Sec.3.3.4's second block (`0034_order_vocabulary`), so the doc is compared with the head."""
+    """Sec.3.3.4-3.3.7's ```sql blocks, to their fences, then Sec.3.3.4's second block
+    (`0034_order_vocabulary`), so the doc is compared with the head. The leg FKs resolve to
+    `public.trade_group_legs` through the search path, under the names the live ones carry."""
     sections = [_DOC.read_text(encoding="utf-8").split(f"#### {h}", 1)[1] for h in _BLOCKS]
     blocks = [s.split("```sql", 1)[1].split("```", 1)[0] for s in sections]
     blocks.append(sections[0].split("```sql", 2)[2].split("```", 1)[0])
-    return "\n".join(blocks).replace(_LEG_FK, "")
+    return "\n".join(blocks)
 
 
 def _catalog(c: Conn, schema: str) -> list[list[tuple[str, ...]]]:
@@ -211,7 +212,7 @@ def _assert_matches_plan_doc(c: Conn) -> None:
     assert got == want and got[0]
 
 
-def test_schema_matches_the_plan_doc_but_the_deferred_leg_fks(pg_dsn: str) -> None:
+def test_schema_matches_the_plan_doc(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         _assert_matches_plan_doc(c)
         indexes = set(re.findall(r"INDEX (\w+)\s+ON", _doc_ddl()))

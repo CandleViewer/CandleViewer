@@ -943,7 +943,7 @@ replay_sessions = Table(
 
 
 #: Rule-engine tables (E35-T02, revision 0013_rules) - `21-database-schema.md` Sec.3.4.
-#: `scope_account_id` / `trade_group_id` carry no FK yet (E27 / E34 own those tables).
+#: `scope_account_id` carries no FK yet (E27 owns it); `trade_group_id`'s is 0039_trade_groups'.
 rule_scope = ENUM(
     "global",
     "account",
@@ -1089,7 +1089,15 @@ rule_runs = Table(
     Column("matched", Boolean, nullable=False, server_default=text("false")),
     Column("actions_planned", JSONB),
     Column("actions_executed", JSONB),
-    Column("trade_group_id", UUID(as_uuid=True)),
+    Column(
+        "trade_group_id",
+        ForeignKey(
+            "trade_groups.id",
+            ondelete="SET NULL",
+            name="rule_runs_trade_group_id_fkey",
+            use_alter=True,  # a cycle with trade_groups.origin_rule_run_id
+        ),
+    ),
     Column("error_code", Text),
     Column("error_message", Text),
     Column("duration_ms", Integer),
@@ -2054,7 +2062,7 @@ backups = Table(
 )
 
 #: OMS core (E29-T01, revision 0029_oms_core): Sec.1.2 enums and Sec.3.3.4-3.3.7. Both
-#: `trade_group_leg_id` columns carry no FK until E28-T01 (#905) creates `trade_group_legs`; the
+#: `trade_group_leg_id` FKs come with `trade_group_legs` (0039_trade_groups, E28-T01 #905); the
 #: append-only triggers and the C-5.7 revocations are asserted by the 0029 tests, not autogenerate.
 #: 0034_order_vocabulary (E29-T03) appends to `order_state` and `order_event_kind`, adds
 #: `order_lifecycle_state` (the B1 chart's states verbatim), `orders.lifecycle_state` and the
@@ -2107,7 +2115,7 @@ orders = Table(
     "orders",
     metadata,
     Column("id", UUID(as_uuid=True), primary_key=True),
-    Column("trade_group_leg_id", UUID(as_uuid=True)),
+    Column("trade_group_leg_id", ForeignKey("trade_group_legs.id", ondelete="SET NULL")),
     Column(
         "exchange_account_id",
         ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
@@ -2258,7 +2266,7 @@ executions = Table(
         ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
         nullable=False,
     ),
-    Column("trade_group_leg_id", UUID(as_uuid=True)),
+    Column("trade_group_leg_id", ForeignKey("trade_group_legs.id", ondelete="SET NULL")),
     Column("exec_id", Text, nullable=False),
     Column("order_link_id", Text),
     Column("symbol", symbol_code, nullable=False),
@@ -2373,6 +2381,260 @@ position_snapshots = Table(
     ),
     Index("ix_psnap_acct_time", "exchange_account_id", text("snap_ts DESC")),
     Index("ix_psnap_sym_time", "symbol", text("snap_ts DESC")),
+)
+
+
+#: Trade groups (E28-T01 #905, revision 0039_trade_groups, 21 Sec.3.3.2, Sec.3.3.3 and Sec.3.3.3a).
+#: The triggers (environment, write-once, profile binding, the guard on `exchange_accounts`) are not
+#: compared by `alembic check`; `tests/unit/migrations/` pins them.
+TRADE_GROUP_STATUSES: tuple[str, ...] = (
+    "draft",
+    "submitting",
+    "partially_open",
+    "open",
+    "closing",
+    "closed",
+    "failed",
+    "cancelled",
+)
+LEG_STATUSES: tuple[str, ...] = (
+    "pending",
+    "submitted",
+    "rejected",
+    "open",
+    "partially_filled",
+    "filled",
+    "cancelled",
+    "closed",
+    "error",
+)
+ALGO_KINDS: tuple[str, ...] = ("none", "oco", "iceberg", "twap", "chase", "scaled", "bracket")
+trade_group_status = ENUM(
+    *TRADE_GROUP_STATUSES, name="trade_group_status", metadata=metadata, create_type=False
+)
+leg_status = ENUM(*LEG_STATUSES, name="leg_status", metadata=metadata, create_type=False)
+algo_kind = ENUM(*ALGO_KINDS, name="algo_kind", metadata=metadata, create_type=False)
+#: C-5.9 / Sec.12 class P1 on `trade_groups.intent_note`: free text a user wrote.
+GROUP_NOTE_COMMENT = "PII: free text a user wrote (21 Sec.12, class P1); never logged"
+#: The anchor's one format (`tg_ref_fmt`): the canonical lower-case UUID text, any version.
+GROUP_REF_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+
+trade_group_definitions = Table(
+    "trade_group_definitions",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("env", exchange_env, nullable=False),
+    Column("created_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("updated_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("deleted_at", TIMESTAMP(timezone=True)),
+    CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="tgd_name"),
+    Index(
+        "ux_tgd_name",
+        text("lower(name)"),
+        unique=True,
+        postgresql_where=text("deleted_at IS NULL"),
+    ),
+)
+
+trade_group_definition_members = Table(
+    "trade_group_definition_members",
+    metadata,
+    Column(
+        "definition_id",
+        ForeignKey("trade_group_definitions.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+        primary_key=True,
+    ),
+    Column("enabled", Boolean, nullable=False, server_default=text("true")),
+    Column("created_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("updated_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Index("ix_tgdm_account", "exchange_account_id"),
+)
+
+trade_groups = Table(
+    "trade_groups",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("client_group_ref", Text, nullable=False),
+    Column("client_body_sha256", _sha256_hex, nullable=False),
+    Column("definition_id", ForeignKey("trade_group_definitions.id", ondelete="RESTRICT")),
+    Column("env", exchange_env, nullable=False),
+    Column("symbol", symbol_code, nullable=False),
+    Column("side", Text, nullable=False),
+    Column("status", trade_group_status, nullable=False, server_default=text("'draft'")),
+    Column("algo", algo_kind, nullable=False, server_default=text("'none'")),
+    Column("algo_params", JSONB),
+    Column("intent_note", Text, comment=GROUP_NOTE_COMMENT),
+    Column("origin", Text, nullable=False, server_default=text("'manual'")),
+    Column("origin_rule_id", ForeignKey("rules.id", ondelete="SET NULL")),
+    Column("origin_rule_run_id", ForeignKey("rule_runs.id", ondelete="SET NULL")),
+    Column("requested_qty_mode", sizing_mode, nullable=False, server_default=text("'risk_based'")),
+    Column("requested_qty_value", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("entry_type", Text, nullable=False, server_default=text("'Market'")),
+    Column("entry_price", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("trigger_price", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("trigger_by", Text),
+    Column("sl_price_hint", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("tp_price_hint", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("is_paper", Boolean, nullable=False, server_default=text("false")),
+    Column("submitted_at", TIMESTAMP(timezone=True)),
+    Column("opened_at", TIMESTAMP(timezone=True)),
+    Column("closed_at", TIMESTAMP(timezone=True)),
+    Column("created_by", ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("side IN ('Buy','Sell')", name="tg_side"),
+    CheckConstraint(
+        "origin IN ('manual','hotkey','dom_click','chart_click','rule','alert','replay_sim')",
+        name="tg_origin",
+    ),
+    CheckConstraint("entry_type IN ('Market','Limit','Conditional')", name="tg_entrytype"),
+    CheckConstraint("(entry_type <> 'Limit' OR entry_price > 0) IS TRUE", name="tg_limit_px"),
+    CheckConstraint(
+        "(entry_type <> 'Conditional' OR (trigger_price > 0 AND trigger_by IS NOT NULL)) IS TRUE",
+        name="tg_cond_px",
+    ),
+    CheckConstraint(
+        "trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')",
+        name="tg_trigby",
+    ),
+    CheckConstraint(
+        "closed_at IS NULL OR opened_at IS NULL OR closed_at >= opened_at", name="tg_times"
+    ),
+    CheckConstraint(f"client_group_ref ~ '{GROUP_REF_PATTERN}'", name="tg_ref_fmt"),
+    CheckConstraint(
+        "requested_qty_value <> 'NaN' AND entry_price <> 'NaN' AND trigger_price <> 'NaN' "
+        "AND sl_price_hint <> 'NaN' AND tp_price_hint <> 'NaN'",
+        name="tg_finite",
+    ),
+    UniqueConstraint("created_by", "client_group_ref", name="ux_tg_creator_ref"),
+    Index(
+        "ix_tg_open",
+        "symbol",
+        text("created_at DESC"),
+        postgresql_where=text("status IN ('submitting','partially_open','open','closing')"),
+    ),
+    Index("ix_tg_user_time", "created_by", text("created_at DESC")),
+    Index("ix_tg_rule", "origin_rule_id", postgresql_where=text("origin_rule_id IS NOT NULL")),
+    Index("ix_tg_env_time", "env", text("created_at DESC")),
+    Index("ix_tg_definition", "definition_id", postgresql_where=text("definition_id IS NOT NULL")),
+)
+
+trade_group_legs = Table(
+    "trade_group_legs",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("trade_group_id", ForeignKey("trade_groups.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("account_profile_id", ForeignKey("account_profiles.id", ondelete="SET NULL")),
+    Column("profile_version", Integer, nullable=False),
+    Column("profile_snapshot", JSONB, nullable=False),
+    Column("status", leg_status, nullable=False, server_default=text("'pending'")),
+    Column("sequence_no", SmallInteger, nullable=False),
+    Column("target_qty", Numeric(38, 18), nullable=False, comment=OMS_MONEY_COMMENT),
+    Column(
+        "filled_qty",
+        Numeric(38, 18),
+        nullable=False,
+        server_default=text("0"),
+        comment=OMS_MONEY_COMMENT,
+    ),
+    Column("avg_entry_price", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("avg_exit_price", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("resolved_leverage", Numeric(10, 2), nullable=False),
+    Column("resolved_sl_price", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("resolved_tp_price", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column("native_sl_confirmed", Boolean, nullable=False, server_default=text("false")),
+    Column("native_sl_confirmed_at", TIMESTAMP(timezone=True)),
+    Column("risk_usd", Numeric(38, 18), comment=OMS_MONEY_COMMENT),
+    Column(
+        "realised_pnl",
+        Numeric(38, 18),
+        nullable=False,
+        server_default=text("0"),
+        comment=OMS_MONEY_COMMENT,
+    ),
+    Column(
+        "fees_paid",
+        Numeric(38, 18),
+        nullable=False,
+        server_default=text("0"),
+        comment=OMS_MONEY_COMMENT,
+    ),
+    Column("rejection_code", Text, comment=OMS_EXCHANGE_TEXT_COMMENT),
+    Column("rejection_message", Text, comment=OMS_EXCHANGE_TEXT_COMMENT),
+    Column("submitted_at", TIMESTAMP(timezone=True)),
+    Column("closed_at", TIMESTAMP(timezone=True)),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("target_qty > 0", name="tgl_qty_pos"),
+    CheckConstraint("filled_qty >= 0 AND filled_qty <= target_qty", name="tgl_filled_rng"),
+    CheckConstraint("sequence_no BETWEEN 0 AND 100", name="tgl_seq"),
+    CheckConstraint("resolved_leverage BETWEEN 1 AND 100", name="tgl_lev"),
+    CheckConstraint(
+        "native_sl_confirmed = false OR native_sl_confirmed_at IS NOT NULL", name="tgl_sl_conf"
+    ),
+    CheckConstraint("fees_paid >= 0", name="tgl_fees_nonneg"),
+    CheckConstraint("profile_version >= 1", name="tgl_profile_version"),
+    CheckConstraint(
+        "(jsonb_typeof(profile_snapshot) = 'object' "
+        "AND profile_snapshot ->> 'account_id' = exchange_account_id::text "
+        "AND profile_snapshot ->> 'version' = profile_version::text "
+        "AND (account_profile_id IS NULL "
+        "OR profile_snapshot ->> 'profile_id' = account_profile_id::text)) IS TRUE",
+        name="tgl_snapshot",
+    ),
+    CheckConstraint(
+        "(resolved_sl_price > 0 OR status IN ('rejected','cancelled','error')) IS TRUE",
+        name="tgl_sl_px",
+    ),
+    CheckConstraint(
+        "target_qty <> 'NaN' AND filled_qty <> 'NaN' AND avg_entry_price <> 'NaN' "
+        "AND avg_exit_price <> 'NaN' AND resolved_leverage <> 'NaN' "
+        "AND resolved_sl_price <> 'NaN' AND resolved_tp_price <> 'NaN' AND risk_usd <> 'NaN' "
+        "AND realised_pnl <> 'NaN' AND fees_paid <> 'NaN'",
+        name="tgl_finite",
+    ),
+    ForeignKeyConstraint(
+        ["account_profile_id", "profile_version"],
+        ["account_profile_revisions.profile_id", "account_profile_revisions.version"],
+        name="tgl_profile_revision",
+    ),
+    UniqueConstraint("trade_group_id", "exchange_account_id", name="ux_tgl_group_account"),
+    Index("ix_tgl_group", "trade_group_id", "sequence_no"),
+    Index("ix_tgl_account", "exchange_account_id", text("created_at DESC")),
+    Index(
+        "ix_tgl_open",
+        "exchange_account_id",
+        postgresql_where=text(
+            "status IN ('pending','submitted','open','partially_filled','filled')"
+        ),
+    ),
+    Index(
+        "ix_tgl_no_sl",
+        "trade_group_id",
+        postgresql_where=text(
+            "status IN ('open','partially_filled','filled') AND native_sl_confirmed = false"
+        ),
+    ),
+    Index(
+        "ix_tgl_profile",
+        "account_profile_id",
+        postgresql_where=text("account_profile_id IS NOT NULL"),
+    ),
 )
 
 

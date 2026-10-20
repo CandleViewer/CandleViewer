@@ -10,6 +10,10 @@ auth_keys
 exchange_accounts
 account_profiles
 account_profile_revisions
+trade_groups
+trade_group_legs
+trade_group_definitions
+trade_group_definition_members
 backups
 orders
 order_events

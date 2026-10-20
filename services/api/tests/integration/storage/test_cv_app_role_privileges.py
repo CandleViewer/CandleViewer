@@ -242,3 +242,26 @@ def test_risk_state_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
     for table in tables:
         assert held[("cv_app", table)] == ("INSERT SELECT UPDATE",), table
         assert held[("cv_ro", table)] == ("SELECT",), table
+
+
+def test_trade_group_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
+    """A trade group and its legs are trading history, and a definition leaves by soft delete
+    (21 Sec.3.3.3a, revision 0039_trade_groups): `cv_app` holds no DELETE or TRUNCATE on them.
+    A definition's member is removed outright, so `cv_app` keeps DELETE there; `cv_ro` reads."""
+    probe = (
+        "SELECT string_agg(p, ' ' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', "
+        "'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p "
+        "WHERE has_table_privilege(%s, %s, p)"
+    )
+    history = ("trade_groups", "trade_group_legs", "trade_group_definitions")
+    with psycopg.connect(cv_app_dsn) as conn:
+        held = {
+            (role, table): conn.execute(probe, (role, table)).fetchone()
+            for role in ("cv_app", "cv_ro")
+            for table in (*history, "trade_group_definition_members")
+        }
+    for table in history:
+        assert held[("cv_app", table)] == ("INSERT SELECT UPDATE",)
+        assert held[("cv_ro", table)] == ("SELECT",)
+    assert held[("cv_app", "trade_group_definition_members")] == ("DELETE INSERT SELECT UPDATE",)
+    assert held[("cv_ro", "trade_group_definition_members")] == ("SELECT",)
