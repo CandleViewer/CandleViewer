@@ -48,6 +48,7 @@ from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import GatewayOverloadedError
 from candleviewer.statechart.persistence import DegradedLatchError
+from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.statechart.registry import Registry
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.orders import NewOrder, NewOrderEvent, OrderTransition
@@ -1441,6 +1442,22 @@ async def test_every_place_carries_the_native_stop(rig: Rig) -> None:
         "1",
         "63000",
     )
+
+
+async def test_an_opening_order_with_no_stop_is_rejected_though_every_gate_passed(
+    rig: Rig,
+) -> None:
+    """C-2.6, C-2.21: `start` refuses an order that would open a position with no native stop,
+    whatever the gates it was given say. Its `VALIDATE` records the native-stop verdict as
+    `FAILED` and the others as given, so it ends `rejected` with no row and nothing sent."""
+    state = await rig.facade.start(order_of(stop_loss=None), environment="demo", gates=GATES)
+    assert state == "rejected" and rig.commands.sent == []
+    assert await rig.orders.get(ACCOUNT, UUID(int=1)) is None
+    sink = rig.facade._ports.sink
+    assert isinstance(sink, InMemoryMachineEventSink)
+    refused = GATES | {"native_stop": b01.FAILED}
+    recorded = [(r.phase, r.payload["gates"]) for r in sink.rows if r.event_type == "VALIDATE"]
+    assert recorded == [("ahead", refused), ("commit", refused)]
 
 
 async def test_a_kill_record_names_the_order_its_account_and_state(rig: Rig) -> None:

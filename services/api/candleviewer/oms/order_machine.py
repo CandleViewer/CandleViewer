@@ -609,7 +609,11 @@ class OrderMachines:
     ) -> str:
         """E29-T04's pipeline, once its synchronous gates ran (C-2.21): build the order's machine
         and record `VALIDATE` with their verdicts. The order's first row is written at `validated`
-        (24 Sec.8.4), or none when a verdict refused it. Answers the lifecycle state."""
+        (24 Sec.8.4), or none when a verdict refused it. An order that would open a position with
+        no stop is refused whatever its gates say: its native-stop verdict is recorded as `FAILED`
+        (C-2.6), so no caller places it unprotected. Answers the lifecycle state."""
+        if not order.reduce_only and order.stop_loss is None:
+            gates = {**gates, "native_stop": b01.FAILED}
         payload: dict[str, Any] = {"gates": dict(gates), "order": _order_fields(order)}
         if rate_reservation is not None:
             payload["rate_reservation"] = rate_reservation
