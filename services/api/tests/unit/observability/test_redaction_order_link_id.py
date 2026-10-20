@@ -53,9 +53,12 @@ def test_logging_ac24_json_lines_keep_the_id_and_redact_the_secret() -> None:
         log = structlog.get_logger("oms")
         log.info("oms_order_created", order_link_id=OUR)
         log.info("oms_order_created", order_link_id=CANARY)
+        # a stdlib line: the filter keeps the mapping arg, and the message it renders is scanned
+        logging.getLogger("t.order_link").info("%(order_link_id)s", {"order_link_id": OUR})
         reset_logging()  # stops the listener once it has written the queue out
     lines = [json.loads(line) for line in buf.getvalue().splitlines()]
-    assert [line["order_link_id"] for line in lines] == [OUR, KEY_SHAPE]
+    assert [line["event"] for line in lines] == ["oms_order_created"] * 2 + [KEY_SHAPE]
+    assert [line["order_link_id"] for line in lines[:2]] == [OUR, KEY_SHAPE]
     assert CANARY not in buf.getvalue()
 
 
@@ -91,8 +94,9 @@ def test_redactor_a_secret_or_partial_match_under_the_key_is_redacted(value: str
     assert _under(value) == KEY_SHAPE
 
 
-@pytest.mark.parametrize(  # `orderLinkId` too: the wire name, which no log line on main carries
-    "key", ["orderLinkId", "ORDER_LINK_ID", "order_link_id ", "order_link_ids", "client_order_id"]
+@pytest.mark.parametrize(  # `orderLinkId`, the wire name; the collision warning's next id
+    "key",
+    ["orderLinkId", "ORDER_LINK_ID", "order_link_id ", "order_link_ids", "next_order_link_id"],
 )
 def test_redactor_an_id_under_any_other_key_is_redacted(key: str) -> None:
     assert (_under(OUR, key), _under(EXT, key)) == (KEY_SHAPE, KEY_SHAPE)
@@ -130,14 +134,12 @@ def test_redactor_a_str_subclass_a_non_str_value_and_a_lying_key_get_no_pass() -
     assert list(_redact_mapping({_AnyKey("client_order_id"): OUR}).values()) == [KEY_SHAPE]
 
 
-def test_redaction_filter_passes_an_id_in_mapping_args_and_scans_the_rest() -> None:
-    kept = logging.LogRecord(
-        "x", logging.INFO, "", 1, "%(order_link_id)s", ({"order_link_id": OUR},), None
-    )
-    masked = logging.LogRecord("x", logging.INFO, "", 1, f"{OUR} %s", (OUR,), None)
+def test_redaction_filter_gives_mapping_args_the_pass_and_scans_the_rest() -> None:
+    args = {"order_link_id": OUR, "client_order_id": OUR}
+    kept = logging.LogRecord("x", logging.INFO, "", 1, "%(order_link_id)s", (args,), None)
+    masked = logging.LogRecord("x", logging.INFO, "", 1, "%s", (OUR,), None)
     assert RedactionFilter().filter(kept) and RedactionFilter().filter(masked)
-    assert kept.getMessage() == OUR
-    assert (masked.msg, masked.args) == (KEY_SHAPE, (KEY_SHAPE,))
+    assert (kept.args, masked.args) == ({**args, "client_order_id": KEY_SHAPE}, (KEY_SHAPE,))
 
 
 _GENERATED = st.builds(
