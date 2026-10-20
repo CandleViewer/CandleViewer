@@ -891,6 +891,23 @@ ALTER TABLE exchange_accounts
 
 Additional invariant, enforced by trigger `trg_ea_env_parent`: a sub-account's `env` must equal its parent's `env`. Cross-env parenting is a data-integrity bug that would let a demo key fan out into a live group. Once an account is a member of a trade-group definition or has a leg, `trg_ea_env_in_use` (§3.3.3a, revision `0039_trade_groups`) refuses any change of its `env`; blanket immutability is #2333's.
 
+**`env` is write-once (#2333, revision `0040_account_env_write_once`).** A demo account that became live, or the reverse, would let a key, a profile or a group of one environment act in the other (C-2.11), so `trg_ea_env_write_once` refuses any change of `env` once the row exists. It is `ENABLE ALWAYS` and refuses with SQLSTATE 23514, naming itself as the constraint and never a value. The API never patches `env` (`ExchangeAccountPatch` has no such field). `trg_ea_env_in_use` (§3.3.3a, revision `0038_trade_groups`), which refuses the change for an account in a trade group or a definition, stays as the narrower guard it was first.
+
+```sql
+CREATE FUNCTION ea_env_write_once() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+BEGIN
+  IF NEW.env IS DISTINCT FROM OLD.env THEN
+    RAISE EXCEPTION 'trg_ea_env_write_once: exchange_accounts.env is write-once'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ea_env_write_once';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_ea_env_write_once BEFORE UPDATE OF env ON exchange_accounts
+  FOR EACH ROW EXECUTE FUNCTION ea_env_write_once();
+ALTER TABLE exchange_accounts ENABLE ALWAYS TRIGGER trg_ea_env_write_once;
+```
+
 #### 3.2.2 `api_keys`
 
 Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; the DEK itself is wrapped by the **KEK** held outside the database (host launcher FIFO on WSL, systemd credential on the VPS — `docs/plan/spikes/e27-kek.md`). Postgres stores only ciphertext + nonce + the KEK-wrapped DEK. Withdrawal permission is **always OFF** — enforced by a CHECK against the permission snapshot.
@@ -4128,6 +4145,7 @@ NAMING_CONVENTION = {
 | `0038_risk_state`               | `risk_lockouts`, `risk_policy` (seeded singleton) and `kill_switch_state` (seeded global row) (§3.11); `DELETE` revoked from `cv_app` — **E39-T02 #882**; the downgrade refuses while risk state exists beyond the seed                                                                    |
 | `0039_trade_groups`             | `trade_groups`, `trade_group_legs`, `trade_group_definitions`, `trade_group_definition_members`, three enums, the environment, write-once and profile triggers, the leg and rule-run FKs (§3.3.2–§3.3.3a) — **E28-T01 #905 PR-2**; the downgrade refuses while any row exists              |
 | `0040_indicator_presets`        | `indicator_presets` (§3.8.4) with its four added CHECKs, `ux_ip_name`, `ix_ip_fav`, and the 18 §10.5 built-ins seeded `ON CONFLICT DO NOTHING` under fixed ids — **E13-T03 #427**; the downgrade refuses while any user preset exists, a soft-deleted one included                         |
+| `0040_account_env_write_once`   | trigger `trg_ea_env_write_once` (§3.2.1): `exchange_accounts.env` is write-once — **#2333**; the downgrade drops the trigger                                                                                                                                                               |
 
 ---
 
