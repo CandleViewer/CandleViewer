@@ -12,8 +12,9 @@ numbers agree with E11-D02's, E30-D01's and E09-D03's.
 Usage: python3 -I docs/design/_tools/e11_d03_scales_audit.py   (prints Markdown; exit 1 on a FAIL)
 Stdout is forced to UTF-8 (the tables carry `ΔE`, `≥`, `—`), so it also runs on a cp1252 console.
 
-Roles and bars: `text` 4.5:1, `non-text` 3:1, `hc-text` 7:1 (`05-accessibility-standard.md` §5
-item 6; gated in the high-contrast column only). `disabled` rows are the label of a disabled control
+Roles and bars: `text` 4.5:1 in every theme AND 7:1 in the high-contrast column (`05` §5 item 6 —
+the high-contrast theme's AAA-leaning bar, applied to every text row, not only to rows marked
+`hc-text`), `non-text` 3:1. `disabled` rows are the label of a disabled control
 (WCAG 1.4.3 exempts inactive components) — reported, never gated; the inline REASON attached to a
 disabled item is a `text` row and IS gated, because the explanation is not a control. `decorative`
 rows carry no meaning (`16-design-system-brief.md` §6 rule 7); `rejected-*` rows are pairs the spec
@@ -47,6 +48,9 @@ contrast_check = _load(ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 cvd = _load(ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py", "cvd_simulate")
 
 THEMES = ("dark", "light", "high-contrast")
+HC_TEXT_BAR = (
+    7.0  # 05 §5 item 6: the high-contrast theme's body-text bar, applied to every `text` row
+)
 BAR: dict[str, float | None] = {
     "text": 4.5,
     "non-text": 3.0,
@@ -82,6 +86,12 @@ T = {n: resolve_theme(n) for n in THEMES}
 CR = {
     # D03-CR-5: a field-boundary token for inputs on the overlay surface; aliases text.tertiary.
     "CR:color.border.field": {t: "color.text.tertiary" for t in THEMES},
+    # D03-CR-7: a distinct light danger hue (light danger.strong == warning.strong today).
+    "CR:color.status.danger.strong": {
+        "dark": "color.status.danger.strong",
+        "light": "palette.light.red.700",
+        "high-contrast": "color.status.danger.strong",
+    },
 }
 
 
@@ -358,6 +368,25 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "color.surface.overlay",
         "text",
     ),
+    # --- D03-CR-7 candidates (light: palette.light.red.700 / .500; dark, hc unchanged) -----------
+    (
+        "CR-7 error block icon",
+        "CR:color.status.danger.strong",
+        "color.status.danger.subtle",
+        "non-text",
+    ),
+    (
+        "CR-7 input invalid boundary",
+        "CR:color.status.danger.strong",
+        "color.surface.overlay",
+        "non-text",
+    ),
+    (
+        "CR-7 preview tile error icon",
+        "CR:color.status.danger.strong",
+        "color.surface.sunken",
+        "non-text",
+    ),
     # --- go-to-date landing on the chart ---------------------------------------------------------
     (
         "go-to-date marker (dashed, E11-D02 D8) on the canvas",
@@ -413,6 +442,11 @@ CVD_PAIRS: list[tuple[str, str, str]] = [
         "color.status.danger.strong",
         "CR:color.border.field",
     ),
+    (
+        "CR-7 error icon vs warning icon",
+        "CR:color.status.danger.strong",
+        "color.status.warning.strong",
+    ),
 ]
 JND = 5.0
 
@@ -434,6 +468,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # the reference machine's console is cp1252
     failed = 0
+    hc_text_rows, hc_text_min = 0, 99.0
     print("## A. Contrast matrix (ratio per theme; bar per role)\n")
     print("| Element | fg | bg | role | dark | light | hc | verdict |")
     print("|---|---|---|---|---|---|---|---|")
@@ -451,6 +486,11 @@ def main() -> int:
                 bad = ["high-contrast"] if vals[2] < bar else []
             else:
                 bad = [THEMES[i] for i, v in enumerate(vals) if v < bar]
+            if role == "text":
+                hc_text_rows += 1
+                hc_text_min = min(hc_text_min, vals[2])
+                if vals[2] < HC_TEXT_BAR:
+                    bad.append("hc 7:1")
             verdict = "PASS" if not bad else "FAIL: " + ", ".join(bad)
             if role.startswith("rejected"):
                 verdict = (
@@ -465,6 +505,11 @@ def main() -> int:
             f" {vals[2]:.2f} | {verdict} |"
         )
 
+    hc_ok = hc_text_min >= HC_TEXT_BAR
+    print(
+        f"\nhc 7:1 gate (05 §5 item 6): applied to {hc_text_rows} text rows; minimum high-contrast"
+        f" text ratio {hc_text_min:.2f}:1 → {'PASS' if hc_ok else 'FAIL'}"
+    )
     print("\n## B. Resolved values used above\n")
     print("| token | dark | light | hc |")
     print("|---|---|---|---|")
