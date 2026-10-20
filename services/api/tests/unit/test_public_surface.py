@@ -219,9 +219,18 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReplayStream",
         "StopReason",
         "check_speed",
-        # E26-T03: the stream adapter that makes one book update one replayed event (24 Sec.13.7).
+        # E26-T03: the injector (the clock's sink), its book hook port and injected live event
+        # models, the stream adapter that makes one book update one event, and their typed
+        # refusals (24 Sec.13.7).
+        "REEMITTED_STREAMS",
+        "LiveEventModels",
         "RegroupedStream",
+        "ReplayBookHook",
         "ReplayEventRefused",
+        "ReplayInjector",
+        "ReplayLoopStartUnknown",
+        "ReplayPriceOffGrid",
+        "ReplayTickSizeMissing",
     },
 }
 

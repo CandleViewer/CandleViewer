@@ -10,13 +10,32 @@ builds the wiring once per process, so every session shares the cold reader's ve
 cache and scan slots, opens one `ReplaySource` per session over `ReplayWiring.tiers`, and calls
 `ReplayWiring.aclose()` when the app stops, which closes the QuestDB connection and the cold
 reader's scan pool.
+
+E26-T03 adds the injection side (20 Sec.3.9): `build_replay_injector` wires one session's
+`ReplayInjector` to the bus, the live event models (M12 may not import M3) and `ReplayBooks`,
+the session's replay-scoped book engines, the hook the injector feeds book events through.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
+from uuid import UUID
 
-from candleviewer.replay import ReadAheadConfig, ReplayTiers
+from candleviewer.book.resync import BookEngine
+from candleviewer.bus.bus import Bus
+from candleviewer.bus.models import Topic, replay_env
+from candleviewer.domain.events import MarketEvent
+from candleviewer.exchange.base.models import BookDelta, BookSnapshot, TradeEvent
+from candleviewer.replay import (
+    LiveEventModels,
+    ReadAheadConfig,
+    ReplayEventRefused,
+    ReplayInjector,
+    ReplayRequest,
+    ReplayTiers,
+)
 from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.recorded_reader import ParquetRecordedReader
@@ -66,3 +85,90 @@ def build_replay_wiring(settings: Settings, gaps: RecordingGapReader | None) -> 
     cold = ParquetRecordedReader(DatasetRegistry(settings.parquet_root))
     tiers = ReplayTiers(hot=QuestDbRecordedReader(pg), cold=cold, coverage=cold, gaps=gaps)
     return ReplayWiring(tiers=tiers, pg=pg, cold=cold)
+
+
+#: The live market-event models every replay re-emits (24 Sec.13.7).
+LIVE_EVENT_MODELS = LiveEventModels(
+    trade=TradeEvent, book_delta=BookDelta, book_snapshot=BookSnapshot
+)
+
+
+class ReplayBooks:
+    """One session's replay-scoped `BookEngine`s (20 Sec.3.9): the `ReplayBookHook` its injector
+    feeds. One engine per (symbol, depth), built as `orderbook_wiring.BookStream` builds a live
+    one, publishing what it applies on `replay-{session_id}.md.{symbol}.book`. Its wiring makes
+    the unchanged engine replay-safe:
+
+    - its resubscribe never touches the live feed: after a gap the book holds the deltas back
+      and waits for the next recorded snapshot (24 Sec.13.7);
+    - a recorded snapshot is a full refresh: the engine re-enters `snapshot_pending`, dropping
+      what it holds and buffers (the snapshot supersedes it in the read order), and rebuilds from
+      it. On its own the engine takes a snapshot while LIVE for a server reset and waits for a
+      fresh one, which a recording never sends;
+    - its clock is the replay time of the event it applies, never the wall clock (RP-T12)."""
+
+    def __init__(self, bus: Bus, session_id: UUID) -> None:
+        self._bus, self._env = bus, replay_env(session_id)
+        self._engines: dict[tuple[str, int], BookEngine] = {}
+        self._now_us = 0
+
+    def engine(self, symbol: str, depth: int) -> BookEngine | None:
+        """The (symbol, depth) book, once a book event of it arrived."""
+        return self._engines.get((symbol, depth))
+
+    async def apply(self, event: MarketEvent) -> None:
+        if not isinstance(event, BookSnapshot | BookDelta) or event.source != "replay":
+            raise ReplayEventRefused("a replay book applies re-emitted book events only")
+        self._now_us = event.ts_event
+        engine = self._engines.get((event.symbol, event.depth))
+        if engine is None:
+            engine = await self._open(event.symbol, event.depth)
+        if isinstance(event, BookSnapshot):
+            await engine.request_snapshot()  # a recorded full refresh: rebuild from it
+        await engine.on_event(event)
+
+    async def reset(self, reason: str) -> None:
+        """Every LIVE book leaves LIVE (its consumers are told why); a book already waiting for
+        a snapshot keeps waiting, and the deltas it holds die with that snapshot."""
+        for engine in self._engines.values():
+            await engine.invalidate(reason)  # a no-op unless LIVE
+
+    async def _open(self, symbol: str, depth: int) -> BookEngine:
+        topic = Topic(env=self._env, domain="md", symbol=symbol, detail="book")
+
+        async def publish(obj: object) -> None:
+            await self._bus.publish(topic, obj)
+
+        async def resubscribe() -> None:
+            """A gap waits for the next recorded snapshot: never the live feed."""
+
+        engine = BookEngine(
+            symbol=symbol, depth=depth, publish=publish, resubscribe=resubscribe, now_us=self._now
+        )
+        self._engines[symbol, depth] = engine
+        await engine.start()
+        return engine
+
+    def _now(self) -> int:
+        return self._now_us
+
+
+def build_replay_injector(
+    *,
+    session_id: UUID,
+    request: ReplayRequest,
+    tick_sizes: Mapping[str, Decimal],
+    bus: Bus,
+    loop_start_us: int | None = None,
+) -> ReplayInjector:
+    """One session's injector over its own `ReplayBooks`, both in the session's namespace.
+    `tick_sizes` is what the session pinned from the instrument-info cache at creation."""
+    return ReplayInjector(
+        session_id=session_id,
+        request=request,
+        tick_sizes=tick_sizes,
+        bus=bus,
+        books=ReplayBooks(bus, session_id),
+        models=LIVE_EVENT_MODELS,
+        loop_start_us=loop_start_us,
+    )
