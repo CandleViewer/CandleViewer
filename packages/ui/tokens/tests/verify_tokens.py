@@ -10,7 +10,8 @@ packages/ui/tokens/, the acceptance criteria from the ticket's Gherkin:
   3. Light is tuned, not inverted (spot-checks candle/buy/sell hex values
      differ from a naive lightness inversion of the dark value).
   4. `color.status.danger.default` and `color.sell.default` are visibly
-     distinct hues (CIE76 dE) in every mode.
+     distinct hues (CIE76 dE) in every mode; so are danger's rest fill and
+     `color.status.danger.strong`, `.warning.default` and `.warning.strong` (#3896).
   5. #3896: the label-on-fill matrix of `tools/contrast/label-on-fill.json`
      (its `$comment` states the rules) holds in every mode. The CI gate for the
      same registry is `packages/ui/test/contrast/label-on-fill.test.ts`, which
@@ -149,6 +150,15 @@ def lab_hue(hex_: str) -> float:
     return math.degrees(math.atan2(b, a)) % 360
 
 
+def over(fg: str, bg: str, alpha: float) -> str:
+    """`fg` at `alpha` over opaque `bg`, mixed per sRGB channel and rounded half up, as painted."""
+    mix = [
+        math.floor(alpha * f + (1 - alpha) * b + 0.5)
+        for f, b in zip(hex_to_rgb(fg), hex_to_rgb(bg), strict=True)
+    ]
+    return "#" + "".join(f"{c:02X}" for c in mix)
+
+
 def label_on_fill_failures(theme: str, tokens: dict) -> list[str]:
     """#3896: the label-on-fill matrix of tools/contrast/label-on-fill.json for one theme."""
     reg = json.loads(LABEL_ON_FILL.read_text(encoding="utf-8"))
@@ -161,10 +171,21 @@ def label_on_fill_failures(theme: str, tokens: dict) -> list[str]:
             raise KeyError(f"[{theme}] label-on-fill: {name} is not an opaque hex colour")
         return value
 
+    def lightness(name: str) -> float:
+        return rgb_to_lab(hex_to_rgb(hx(name)))[0]
+
     def pair(fg: str, bg: str, minimum: float, what: str) -> None:
         cr = contrast_ratio(hx(fg), hx(bg))
         if cr < minimum:
             out.append(f"[{theme}] {what}: {fg} on {bg} {t3(cr)} < {minimum}")
+
+    gated = reg["disabledWithReason"]["gated"]
+    try:
+        alpha = float(tokens.get(gated["opacity"], "nan"))
+    except (TypeError, ValueError):
+        alpha = math.nan
+    if not 0 < alpha <= 1:
+        raise KeyError(f"[{theme}] label-on-fill: {gated['opacity']} is not an opacity in (0, 1]")
 
     for role, r in reg["roles"].items():
         states = r["states"]
@@ -174,9 +195,14 @@ def label_on_fill_failures(theme: str, tokens: dict) -> list[str]:
         fills = list(states.values())
         for i, a in enumerate(fills):
             for b in fills[i + 1 :]:
-                d = abs(rgb_to_lab(hex_to_rgb(hx(a)))[0] - rgb_to_lab(hex_to_rgb(hx(b)))[0])
+                d = abs(lightness(a) - lightness(b))
                 if d < t["stateLightness"]:
                     out.append(f"[{theme}] {role}: {a} vs {b} dL* {t3(d)} < {t['stateLightness']}")
+        for other in r.get("distinctFrom", []):
+            d = abs(lightness(rest) - lightness(other))
+            if d < t["stateLightness"]:
+                limit = t["stateLightness"]
+                out.append(f"[{theme}] {role}: {rest} vs {other} dL* {t3(d)} < {limit}")
         if r["hue"]:
             for fill in fills:
                 gap = abs((lab_hue(hx(fill)) - lab_hue(hx(rest)) + 540) % 360 - 180)
@@ -186,15 +212,38 @@ def label_on_fill_failures(theme: str, tokens: dict) -> list[str]:
         if r["boundary"]:
             for surface in reg["surfaces"]:
                 pair(rest, surface, t["boundary"], f"{role} rest boundary")
-        pair(r["label"], rest, t["glyph"], f"{role} locked glyph")
-        prefix = rest.removesuffix("default")
+        if "outline" in r:
+            for bg in [*reg["surfaces"], *fills]:
+                pair(r["outline"], bg, t["boundary"], f"{role} outline")
+        # Disabled with reason: the label and glyph stay at full opacity on the dimmed rest fill.
+        for surface in reg["surfaces"]:
+            dimmed = over(hx(rest), hx(surface), alpha)
+            for fg, minimum, what in (
+                (gated["label"], t["label"], "label"),
+                (gated["glyph"], t["glyph"], "locked glyph"),
+            ):
+                cr = contrast_ratio(hx(fg), dimmed)
+                if cr < minimum:
+                    out.append(
+                        f"[{theme}] gated {role} {what}: {fg} on {rest} at {alpha} over "
+                        f"{surface} {t3(cr)} < {minimum}"
+                    )
+        prefix = rest.removesuffix("default") if rest.endswith(".default") else rest + "."
         for suffix in reg["stateSuffixes"]:
             if prefix + suffix in tokens and prefix + suffix not in fills:
                 out.append(f"[{theme}] {role}: {prefix + suffix} is not in {LABEL_ON_FILL.name}")
     for fg, bg in reg["disabledWithReason"]["text"]:
         pair(fg, bg, t["label"], "reason text")
     for fg, bg in reg["disabledWithReason"]["glyph"]:
-        pair(fg, bg, t["glyph"], "locked glyph")
+        pair(fg, bg, t["glyph"], "ghost locked glyph")
+    ring = reg["focusRing"]
+    for surface in ring["surfaces"]:
+        pair(ring["ring"], surface, t["boundary"], "focus ring")
+    if theme in ring["distinctThemes"]:
+        for fill in ring["distinctFrom"]:
+            d = delta_e76(hx(ring["ring"]), hx(fill))
+            if d < t["ringDeltaE"]:
+                out.append(f"[{theme}] {ring['ring']} vs {fill} dE76 {t3(d)} < {t['ringDeltaE']}")
     return out
 
 
@@ -239,6 +288,16 @@ def main() -> int:
         de = delta_e76(danger, sell)
         if de < 8.0:
             failures.append(f"[{theme}] danger/sell hues too close (dE76={de:.2f} < 8.0): {danger} vs {sell}")
+        # #3896 (E05-D02 A6): danger's rest fill is never a warning colour, and the
+        # liquidation-intensity ramp from it to danger.strong keeps a visible step.
+        for other in (
+            "color.status.danger.strong",
+            "color.status.warning.default",
+            "color.status.warning.strong",
+        ):
+            de = delta_e76(danger, resolved_by_theme[theme][other])
+            if de < 8.0:
+                failures.append(f"[{theme}] danger.default vs {other} dE76={de:.2f} < 8.0")
 
     # focus ring contrast >=3:1 against every surface tier, every theme
     surfaces = ("color.surface.app", "color.surface.canvas", "color.surface.raised", "color.surface.overlay")
@@ -284,7 +343,10 @@ def main() -> int:
 
     # 5. #3896: label-on-fill matrix (tools/contrast/label-on-fill.json), every theme.
     for theme in THEMES:
-        failures.extend(label_on_fill_failures(theme, resolved_by_theme[theme]))
+        try:
+            failures.extend(label_on_fill_failures(theme, resolved_by_theme[theme]))
+        except KeyError as exc:  # a matrix token that is missing or not a colour fails, never skips
+            failures.append(str(exc.args[0]))
 
     if failures:
         for f in failures:

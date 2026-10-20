@@ -1,13 +1,22 @@
 {
   "$comment": [
-    "Label-on-fill contrast matrix (#3896): every filled CMP-001 Button role, the label token it binds, and the fill token of each interaction state that exists as a token.",
+    "Label-on-fill contrast matrix (#3896): every filled CMP-001 Button role, plus the selected fill of a pressed toggle (CMP-002 aria-pressed=true, CMP-003 selected segment), the label token it binds, and the fill token of each interaction state that exists as a token.",
     "Checked in every theme by packages/ui/test/contrast/label-on-fill.test.ts (the CI gate, unit-frontend; labels also in every chart colour mode) and by packages/ui/tokens/tests/verify_tokens.py (the token proof).",
-    "A label clears `label` (WCAG 2.2 SC 1.4.3) on every state fill. A role's states are pairwise at least `stateLightness` apart in CIE L*, and where `hue` is set each state is within `stateHue` degrees of LCh hue of the rest fill.",
-    "Where `boundary` is set, the rest fill clears `boundary` (SC 1.4.11) against every surface in `surfaces`. Hover and pressed fills are not held to it: SC 1.4.11 does not require a hover or pressed indicator to contrast with the rest state, and under a white label no three dark primary states 5 L* apart fit the band that clears both 4.5:1 and 3:1.",
-    "Disabled with reason: the reason tooltip text clears `label` on its surface, and the locked glyph (the label colour) clears `glyph` on the rest fill or, for ghost, on the surface. The dimmed label of an inactive control (`opacity.disabled`) is exempt under SC 1.4.3 and is not checked.",
+    "A label clears `label` (WCAG 2.2 SC 1.4.3) on every state fill. A role's states are pairwise at least `stateLightness` apart in CIE L*, and where `hue` is set each state is within `stateHue` degrees of LCh hue of the rest fill. Where `distinctFrom` is set, the role's rest fill is at least `stateLightness` L* from each listed fill, so a pressed toggle never looks like a primary button.",
+    "Where `boundary` is set, the rest fill clears `boundary` (SC 1.4.11) against every surface in `surfaces`. Where `outline` is set instead, the role draws a 2 px inner outline in that token, and the outline carries the boundary: it clears `boundary` against every surface and against each of the role's fills. Hover and pressed fills are not held to the boundary: SC 1.4.11 does not require a hover or pressed indicator to contrast with the rest state, and under a white label no three dark primary states 5 L* apart fit the band that clears both 4.5:1 and 3:1.",
+    "Disabled with reason (`disabledWithReason.gated`, the E05-D02 gated state): only the fill, outline or track dims to `opacity`; the label renders at full opacity in `label` and the locked glyph in `glyph`. Each role's rest fill is composited at that opacity over every surface in `surfaces`, and on the result the label clears `label` and the glyph clears `glyph`. The reason tooltip text clears `label` on its surface (`text`); a ghost control has no fill, so its glyph clears `glyph` on each surface (`glyph`).",
+    "Plain `disabled` (no reason) dims the whole control, label included, to `opacity.disabled`. It is an inactive control, which SC 1.4.3 exempts, so it is not checked.",
+    "Focus ring (`focusRing`): `ring` clears `boundary` against every surface in `focusRing.surfaces` in every theme (SC 1.4.11; with its 2 px offset the ring's adjacent colour is the surface). In each theme of `distinctThemes` it is also at least `ringDeltaE` (CIE76) from each fill in `distinctFrom`, so on a focused primary or selected control the ring never reads as part of the fill.",
     "A state with no token (danger hover and active, buy and sell active, secondary active) is owner decision A2 of the E05-D02 component spec (#161, PR #3914); once its token lands it must be added here, and the gate fails on any `<role>.<stateSuffix>` token missing from this list."
   ],
-  "thresholds": { "label": 4.5, "glyph": 3, "boundary": 3, "stateLightness": 5, "stateHue": 10 },
+  "thresholds": {
+    "label": 4.5,
+    "glyph": 3,
+    "boundary": 3,
+    "stateLightness": 5,
+    "stateHue": 10,
+    "ringDeltaE": 20
+  },
   "surfaces": ["color.surface.app", "color.surface.raised", "color.surface.overlay"],
   "stateSuffixes": ["hover", "active", "pressed"],
   "roles": {
@@ -47,9 +56,26 @@
       "states": { "default": "color.sell.default", "hover": "color.sell.hover" },
       "boundary": true,
       "hue": true
+    },
+    "selected": {
+      "label": "color.text.primary",
+      "states": { "default": "color.action.selected" },
+      "boundary": false,
+      "hue": false,
+      "outline": "color.border.selected",
+      "distinctFrom": [
+        "color.action.primary.default",
+        "color.action.primary.hover",
+        "color.action.primary.active"
+      ]
     }
   },
   "disabledWithReason": {
+    "gated": {
+      "opacity": "opacity.disabled",
+      "label": "color.text.primary",
+      "glyph": "color.text.secondary"
+    },
     "text": [
       ["color.text.primary", "color.surface.overlay"],
       ["color.text.secondary", "color.surface.overlay"]
@@ -59,6 +85,22 @@
       ["color.text.secondary", "color.surface.canvas"],
       ["color.text.secondary", "color.surface.raised"],
       ["color.text.secondary", "color.surface.overlay"]
+    ]
+  },
+  "focusRing": {
+    "ring": "color.focus.ring",
+    "surfaces": [
+      "color.surface.app",
+      "color.surface.canvas",
+      "color.surface.raised",
+      "color.surface.overlay"
+    ],
+    "distinctThemes": ["high-contrast"],
+    "distinctFrom": [
+      "color.action.primary.default",
+      "color.action.primary.hover",
+      "color.action.primary.active",
+      "color.action.selected"
     ]
   }
 }
