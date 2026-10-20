@@ -65,9 +65,30 @@ _ACK_ALL = _sql(
     "UPDATE alert_deliveries SET status = 'acked', acked_at = now(), "
     "acked_by = CAST(:by AS uuid) WHERE id IN (SELECT id FROM alert_deliveries "
     "WHERE user_id = CAST(:by AS uuid) AND status = 'sent' AND acked_at IS NULL "
-    "ORDER BY queued_at DESC LIMIT :cap FOR UPDATE SKIP LOCKED)"
+    "ORDER BY queued_at DESC LIMIT :cap FOR UPDATE SKIP LOCKED) RETURNING id"
 )
 _GET_OWNED = _sql("SELECT @C@ FROM alert_deliveries WHERE id = :id AND user_id = CAST(:by AS uuid)")
+#: Unscoped: the REST layer compares `user_id` itself, so a foreign id is audited before its 404.
+_GET = _sql("SELECT @C@ FROM alert_deliveries WHERE id = :id")
+#: The owner of an alert, soft-deleted or not: its delivery history outlives the alert.
+_ALERT_OWNER = sa.text("SELECT owner_user_id::text FROM alerts WHERE id = CAST(:id AS uuid)")
+#: E40-T04 desktop report-back: only a `desktop` row still `queued` moves (conditional update).
+_DESKTOP_SENT = _sql(
+    "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), error_message = NULL "
+    "WHERE id = :id AND channel = 'desktop' AND status = 'queued' RETURNING @C@"
+)
+_DESKTOP_FAILED = _sql(
+    "UPDATE alert_deliveries SET status = 'failed', error_message = :error "
+    "WHERE id = :id AND channel = 'desktop' AND status = 'queued' RETURNING @C@"
+)
+#: The channel-failure notice: an already-`sent` in_app record, so it never re-enters the
+#: outbox (no notice-about-a-notice loop) and shows in the inbox / `unacked_count`.
+CHANNEL_FAILURE_NOTICE = sa.text(
+    "INSERT INTO alert_deliveries (alert_id, user_id, channel, status, title, body, context, "
+    "sent_at) VALUES (CAST(:alert_id AS uuid), CAST(:user_id AS uuid), 'in_app', 'sent', :title, "
+    "'', CAST(:context AS jsonb), now())"
+)
+
 _UNACKED = _sql(
     "SELECT count(*) FROM alert_deliveries WHERE user_id = CAST(:user AS uuid) "
     "AND status = 'sent' AND acked_at IS NULL"
@@ -89,6 +110,13 @@ _LIST = _sql(
     "(queued_at, id) < (CAST(:after_ts AS timestamptz), CAST(:after_id AS bigint))) "
     "ORDER BY queued_at DESC, id DESC LIMIT :limit"
 )
+
+
+def failure_notice_context(failed_delivery_id: int) -> str:
+    """`CHANNEL_FAILURE_NOTICE`'s `context`: which delivery failed (SCR-090 links to it)."""
+    return json.dumps(
+        {"channel_failure": True, "failed_delivery_id": failed_delivery_id}, sort_keys=True
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,12 +196,48 @@ class SqlAlchemyAlertDeliveryRepository:
             row = m.mappings().first()
         return None if row is None else _row(row)
 
-    async def ack_all(self, user_id: str, cap: int = 1000) -> int:
-        """One bounded batch; callers loop while the result equals `cap`."""
+    async def get(self, delivery_id: int) -> DeliveryRow | None:
+        """Unscoped read; the caller decides ownership (and audits a foreign id)."""
+        async with self._relational.unit_of_work() as uow:
+            row = (await uow.session.execute(_GET, {"id": delivery_id})).mappings().first()
+        return None if row is None else _row(row)
+
+    async def alert_owner(self, alert_id: str) -> str | None:
+        """`alerts.owner_user_id`, deleted alerts included; None for an unknown alert."""
+        async with self._relational.unit_of_work() as uow:
+            got = (await uow.session.execute(_ALERT_OWNER, {"id": alert_id})).first()
+        return None if got is None else str(got[0])
+
+    async def report_desktop(
+        self, delivery_id: int, *, error: str | None, notice_title: str
+    ) -> DeliveryRow | None:
+        """The shell's outcome for a `desktop` row still `queued`: `error is None` is
+        `queued -> sent`; otherwise `queued -> failed` with *error* plus ONE in-app
+        channel-failure notice, in one transaction (as the dispatcher's terminal failure).
+        None when the row is not a queued desktop delivery: a repeated report is a no-op."""
+        async with self._relational.unit_of_work() as uow:
+            run = uow.session.execute
+            if error is None:
+                m = (await run(_DESKTOP_SENT, {"id": delivery_id})).mappings().first()
+            else:
+                params = {"id": delivery_id, "error": error}
+                m = (await run(_DESKTOP_FAILED, params)).mappings().first()
+                if m is not None:
+                    await run(CHANNEL_FAILURE_NOTICE, {
+                        "alert_id": m["alert_id"], "user_id": m["user_id"], "title": notice_title,
+                        "context": failure_notice_context(delivery_id),
+                    })  # fmt: skip
+            await uow.commit()
+        return None if m is None else _row(m)
+
+    async def ack_all(self, user_id: str, cap: int = 1000) -> list[int]:
+        """One bounded batch: the ids it acknowledged (the `alerts` topic's deltas); callers
+        loop while a batch comes back full (`cap` ids)."""
         async with self._relational.unit_of_work() as uow:
             res = await uow.session.execute(_ACK_ALL, {"by": user_id, "cap": cap})
+            ids = [int(r[0]) for r in res.all()]
             await uow.commit()
-        return int(getattr(res, "rowcount", 0) or 0)
+        return ids
 
     async def fetch_expired(self, days: int, limit: int = 5000) -> list[DeliveryRow]:
         """Oldest rows past the hot window (E40-T01); archived before `delete_ids`."""

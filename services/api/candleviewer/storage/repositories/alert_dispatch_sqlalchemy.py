@@ -9,14 +9,15 @@ between adapter call and settle re-delivers at most the adapter call, never the 
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
 import sqlalchemy as sa
 
 from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import (
+    CHANNEL_FAILURE_NOTICE,
     DeliveryRow,
+    failure_notice_context,
     row_of,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -69,13 +70,6 @@ _AD_FAILED = sa.text(
     "UPDATE alert_deliveries SET status = 'failed', attempt = :attempt, http_status = :http, "
     "error_message = :error WHERE id = :id AND status = 'queued' "
     "RETURNING alert_id, user_id"
-)
-#: The channel-failure notice: an already-`sent` in_app record, so it never re-enters the
-#: outbox (no notice-about-a-notice loop) and shows in the inbox / `unacked_count`.
-_AD_NOTICE = sa.text(
-    "INSERT INTO alert_deliveries (alert_id, user_id, channel, status, title, body, context, "
-    "sent_at) VALUES (:alert_id, :user_id, 'in_app', 'sent', :title, '', "
-    "CAST(:context AS jsonb), now())"
 )
 
 
@@ -150,10 +144,10 @@ class SqlAlchemyAlertDispatchStore:
                       "error": error}  # fmt: skip
             got = (await run(_AD_FAILED, params)).first()
             await run(_OB_DEAD, {"id": job.id, "attempts": job.attempts + 1, "error": error})
-            if got is not None:
-                ctx = {"channel_failure": True, "failed_delivery_id": job.delivery_id}
-                await run(_AD_NOTICE, {"alert_id": got[0], "user_id": got[1],
-                                       "title": notice_title,
-                                       "context": json.dumps(ctx, sort_keys=True)})  # fmt: skip
+            if got is not None:  # the shared notice row (desktop report-back writes it too)
+                await run(CHANNEL_FAILURE_NOTICE, {
+                    "alert_id": got[0], "user_id": got[1], "title": notice_title,
+                    "context": failure_notice_context(job.delivery_id),
+                })  # fmt: skip
             await uow.commit()
         return got is not None
