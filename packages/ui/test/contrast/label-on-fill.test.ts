@@ -262,6 +262,28 @@ describe("label-on-fill contrast matrix (#3896)", () => {
     expect(Object.keys(themes).sort()).toEqual(["dark", "high-contrast", "light"]);
   });
 
+  it("keeps the registry at or past its floors, so a data-only edit cannot loosen the gate", () => {
+    // WCAG 2.2 SC 1.4.3 (label) and SC 1.4.11 (glyph, boundary), the ticket's 5 L* state step
+    // and hue identity, and the high-contrast ring's 20 dE76 (verify_tokens.py holds the same).
+    expect(T.label).toBeGreaterThanOrEqual(4.5);
+    expect(T.glyph).toBeGreaterThanOrEqual(3);
+    expect(T.boundary).toBeGreaterThanOrEqual(3);
+    expect(T.stateLightness).toBeGreaterThanOrEqual(5);
+    expect(T.stateHue).toBeLessThanOrEqual(10);
+    expect(T.ringDeltaE).toBeGreaterThanOrEqual(20);
+    expect(Object.keys(registry.roles)).toEqual(
+      expect.arrayContaining(["primary", "secondary", "danger", "buy", "sell", "selected"]),
+    );
+    expect(registry.surfaces).toEqual(
+      expect.arrayContaining([
+        "color.surface.app",
+        "color.surface.raised",
+        "color.surface.overlay",
+      ]),
+    );
+    expect(registry.focusRing.distinctThemes).toContain("high-contrast");
+  });
+
   it("every label clears 4.5:1 on each of its state fills", () => {
     expect(everyTheme(labelFindings)).toEqual([]);
   });
