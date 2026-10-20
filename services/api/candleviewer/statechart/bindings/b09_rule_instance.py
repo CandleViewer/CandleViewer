@@ -174,6 +174,7 @@ register_binding_module("rule_instance", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "rule_instance",
     {
         "KILL": _ANY_PAYLOAD,
         "ARM_REQUESTED": _ANY_PAYLOAD,
@@ -191,5 +192,5 @@ register_event_schemas(
         "SAVE": _ANY_PAYLOAD,
         "SIM_FIRE": _ANY_PAYLOAD,
         "TRIGGER": _ANY_PAYLOAD,
-    }
+    },
 )

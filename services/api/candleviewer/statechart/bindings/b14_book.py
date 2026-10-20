@@ -86,6 +86,7 @@ register_binding_module("book", __name__)
 
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "book",
     {
         "BUFFER_OVERFLOW": _ANY_PAYLOAD,
         "DELTA": _ANY_PAYLOAD,
@@ -94,5 +95,5 @@ register_event_schemas(
         "SNAPSHOT_TIMEOUT": _ANY_PAYLOAD,
         "SUBSCRIBE": _ANY_PAYLOAD,
         "UNSUBSCRIBE": _ANY_PAYLOAD,
-    }
+    },
 )

@@ -120,6 +120,12 @@ class CvErrorHooks(HookFailureCounter):
         )
         if self.lane == "control":
             self._page(f"control-lane unhandled {event_type(event)}: {self.machine_kind}")
+        elif self.lane == "order" and disposition == "dropped":
+            # The deferral buffer was full (the runtime's DEFER_MAX) and evicted its oldest
+            # event: on the order lane that may be a fill (24 Sec.8.2 S10, #847).
+            self._page(
+                f"order-lane deferred event evicted {event_type(event)}: {self.machine_kind}"
+            )
 
     @contained
     def on_guard_evaluated(

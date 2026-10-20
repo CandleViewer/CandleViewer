@@ -62,10 +62,11 @@ register_binding_module("kill_switch", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "kill_switch",
     {
         "ENGAGE": _ANY_PAYLOAD,
         "KILL": _ANY_PAYLOAD,
         "RELEASE": _ANY_PAYLOAD,
         "RETRY_FLATTEN": _ANY_PAYLOAD,
-    }
+    },
 )

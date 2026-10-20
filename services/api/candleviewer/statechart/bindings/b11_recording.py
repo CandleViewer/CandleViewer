@@ -232,6 +232,7 @@ register_binding_module("recording", __name__)
 
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "recording",
     {
         "GAP_DETECTED": _ANY_PAYLOAD,
         "KILL": _ANY_PAYLOAD,
@@ -241,5 +242,5 @@ register_event_schemas(
         "RETRY": _ANY_PAYLOAD,
         "STREAM_HEALTHY": _ANY_PAYLOAD,
         "STREAM_UNHEALTHY": _ANY_PAYLOAD,
-    }
+    },
 )

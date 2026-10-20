@@ -162,6 +162,7 @@ register_binding_module("position_protection", __name__)
 
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "position_protection",
     {
         name: _ANY_PAYLOAD
         for name in (
@@ -175,5 +176,5 @@ register_event_schemas(
             "TIGHTEN_SL",
             "WATCHDOG_MISS",
         )
-    }
+    },
 )

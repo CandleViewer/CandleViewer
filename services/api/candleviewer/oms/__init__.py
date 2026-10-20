@@ -26,6 +26,15 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
   fake under the same contract (`fakes.InMemoryOrderStore`).
 - The fill arithmetic (E29-T03): `apply_execution` (`execution`), whose `apply_fields` the OMS
   facade sets into the B1 binding; hostile exchange data raises `ExecutionRefused` (`errors`).
+- B1's write-ahead step (E29-T03): `OrderStepWriter` (`order_steps`), the persist port the order
+  machine's `persist_event` calls, over the repositories above.
+- The OMS facade (E29-T03): `OrderMachines` (`order_machine`), one B1 machine per order behind a
+  keyed lock, with legality from the chart's static table (`IllegalTransition`), S5, S6
+  (`ReconcileAnomaly`), S9, the outbox, the publish port and eviction. E29-T04 wires its ports.
+- Recovery (E29-T03): `rebuild`, the fold of an order's `order_events` that equals its row, and
+  `replay_plan` (`recovery`), with which `OrderMachines.hydrate` replays an order's recorded steps
+  on a fresh machine after a restart; a history that does not rebuild its row raises
+  `OrderHistoryRefused` (`errors`).
 
 `service.py` (the lifecycle contract) and `models.py` are still the E02-T05 scaffold: the
 supervisor can construct and sequence the module, and `start()` builds the `Validator`, but
@@ -34,7 +43,8 @@ no other order logic runs yet.
 
 from __future__ import annotations
 
-from .errors import DuplicateOrderLinkId
+from .errors import DuplicateOrderLinkId, IllegalTransition, ReconcileAnomaly
+from .order_machine import OrderMachinePorts, OrderMachines
 from .repository import (
     ExecutionRepository,
     OrderEventRepository,
@@ -48,12 +58,16 @@ from .validator import OrderPlacementRefused, ReadOnlyCheck, Validator
 __all__: list[str] = [
     "DuplicateOrderLinkId",
     "ExecutionRepository",
+    "IllegalTransition",
     "OrderEventRepository",
+    "OrderMachinePorts",
+    "OrderMachines",
     "OrderPlacementRefused",
     "OrderRepository",
     "PositionRepository",
     "PositionSnapshotRepository",
     "ReadOnlyCheck",
+    "ReconcileAnomaly",
     "Validator",
     "WriteTimer",
 ]

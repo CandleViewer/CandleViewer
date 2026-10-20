@@ -223,3 +223,17 @@ def test_invalid_event_and_stranded_invocation_are_counted() -> None:
     hooks.on_guard_error(None, "g", None, RuntimeError("x"))
     assert (hooks.invalid_events, hooks.stranded_invocations, hooks.dropped_events) == (1, 1, 1)
     assert len(pager.calls) == 3
+
+
+def test_order_lane_pages_when_a_deferred_event_is_evicted() -> None:
+    """24 §8.2 S10 (#847): a full deferral buffer evicts its oldest event, which on the order
+    lane may be a fill, so it pages; a plain deferral, or an eviction elsewhere, does not."""
+    pager = _Pager()
+    order = CvErrorHooks(machine_kind=KIND, lane="order", pager=pager)
+    event = type("E", (), {"type": "EXEC"})()
+    order.on_unhandled_event(None, event, set(), "deferred")
+    order.on_unhandled_event(None, event, set(), "dropped")
+    CvErrorHooks(machine_kind=KIND, lane="platform", pager=pager).on_unhandled_event(
+        None, event, set(), "dropped"
+    )
+    assert pager.calls == [("page", f"order-lane deferred event evicted EXEC: {KIND}")]

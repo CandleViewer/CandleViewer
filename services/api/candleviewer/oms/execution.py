@@ -1,13 +1,15 @@
 """`apply_execution`: an order's cumulative fill values after one execution (E29-T03, #847).
 
 Pure: no I/O, no clock, no interpreter (a fill is a per-order event, never a hot path; C-2.20).
-Fields follow 24-internal-schemas.md Sec.8.1 and the numeric(38,18) columns of 21 Sec.3.3.4.
-Every input and total must fit numeric(38,18) as it stands (`require_money`), so each sum and
-product is exact under `_EXACT`, a local context with `Inexact` trapped; the thread's context is
-never used. `avg_price` is the one division, of the exact totals, rounded once (half-even) to 18
-places, so fills in any order give the same result (INV-B1-a). A fill the order cannot absorb
-raises `ExecutionRefused` (OM-T04) and is never clamped (INV-1). The `exec_id` dedupe (24 Sec.8.2
-S4) is the caller's. The OMS facade sets `apply_fields` into the B1 binding (`set_fill_core`)."""
+Fields follow 24-internal-schemas.md Sec.8.1 and the columns of 21 Sec.3.3.4 and Sec.3.3.6.
+Every input and total must fit its column as it stands (`require_money`): numeric(38,18), and
+numeric(18,10) for `fee_rate`, so a fill B1 admits is one its write-ahead step can store (OM-T04).
+Each sum and product is exact under `_EXACT`, a local context with `Inexact` trapped; the thread's
+context is never used. `avg_price` is the one division, of the exact totals, rounded once
+(half-even) to 18 places, so fills in any order give the same result (INV-B1-a). A fill the order
+cannot absorb raises `ExecutionRefused` (OM-T04) and is never clamped (INV-1). The `exec_id`
+dedupe (24 Sec.8.2 S4) is the caller's. The OMS facade sets `apply_fields` into the B1 binding
+(`set_fill_core`)."""
 
 from __future__ import annotations
 
@@ -26,6 +28,9 @@ _SCALE: Final = 18
 _EXACT: Final = Context(prec=80, traps=[InvalidOperation, Overflow, Inexact])
 #: A bound on hostile data (OM-T04), not a fee model: no fee or rebate passes 1% of the value.
 MAX_FEE_RATE: Final = Decimal("0.01")
+#: The money fields whose column is narrower than numeric(38,18): `executions.fee_rate` is
+#: numeric(18,10) (21 Sec.3.3.6, `NewExecution`).
+_NARROW: Final = {"fee_rate": (18, 10)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,13 +89,14 @@ def apply_fields(
 
 
 def _require_fit(*rows: Fill | OrderFills) -> None:
-    """Each money field fits numeric(38,18) exactly; the error names the field, never a value."""
+    """Each money field fits its column exactly, numeric(38,18) unless `_NARROW` names it; the
+    error names the field, never a value."""
     try:
         for row in rows:
             for field in fields(row):
                 value = getattr(row, field.name)
                 if value is not None:
-                    require_money(field.name, value)
+                    require_money(field.name, value, *_NARROW.get(field.name, (38, 18)))
     except (TypeError, ValueError) as exc:
         raise ExecutionRefused(str(exc)) from exc
 

@@ -181,6 +181,7 @@ register_binding_module("ws_conn", __name__)
 #: exactly the events this chart declares; owning epics tighten them.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "ws_conn",
     {
         "BACKOFF_DUE": _ANY_PAYLOAD,
         "BUDGET_RECHECK": _ANY_PAYLOAD,
@@ -192,5 +193,5 @@ register_event_schemas(
         "SOCKET_CLOSED": _ANY_PAYLOAD,
         "TOPICS_CHANGED": _ANY_PAYLOAD,
         "TOPIC_STALE": _ANY_PAYLOAD,
-    }
+    },
 )

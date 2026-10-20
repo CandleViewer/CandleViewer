@@ -167,6 +167,7 @@ register_binding_module("alert", __name__)
 #: exactly the events this chart declares.
 _ANY_PAYLOAD: dict[str, Any] = {"type": "object", "additionalProperties": True}
 register_event_schemas(
+    "alert",
     {
         "ACK": _ANY_PAYLOAD,
         "CONDITION_MET": _ANY_PAYLOAD,
@@ -176,5 +177,5 @@ register_event_schemas(
         "RESOLVE": _ANY_PAYLOAD,
         "RETRY_DUE": _ANY_PAYLOAD,
         "SUPPRESSION_EXPIRED": _ANY_PAYLOAD,
-    }
+    },
 )

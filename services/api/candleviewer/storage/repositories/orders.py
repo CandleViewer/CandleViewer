@@ -21,8 +21,9 @@ an event without a state transition (`OrderEventStore.append`). Updates of an ex
 (state, fills, reject fields) with events that carry `from_state`/`to_state` are E29-T03's
 write-ahead step (`transition`, `ExecutionStore.commit_fill`); E29-T04 adds the 24 Sec.8.4 columns.
 `state` is the persisted form of the B1 chart's state (`ORDER_STATE_OF`), and `lifecycle_state`
-(`0034`) the chart state verbatim. No write path sets `lifecycle_state` yet: `create` and every
-step leave it NULL. #847's remaining implementation PR sets it, beside `state`, on every path.
+(`0034`) the chart state verbatim. `create` and every step set it with `state` when the caller
+names it, as B1's write-ahead step always does (E29-T03 #847, `oms.order_steps`), and both stores
+refuse a pair that `ORDER_STATE_OF` does not map; a row written without it keeps NULL.
 
 For the OMS (24 Sec.8.2 S7): an exception from any call means its write is not confirmed. The OMS
 does not accept the order and sends nothing under its id; a commit cut off by a lost connection
@@ -76,7 +77,8 @@ IdempotencyState = Literal["unsent", "in_flight", "acked", "failed"]
 #: 24-internal-schemas.md Sec.8.2: the `order_state` value that persists each chart state. One to
 #: one; six names differ, and `submitted` names a different state on each side, so a reader of
 #: `orders` takes the chart's state from `lifecycle_state` (`ord_lifecycle` admits these pairs
-#: only). `order_events` keeps this value alone: E29-T03's rebuild from events inverts the map.
+#: only). `order_events` keeps this value alone: a reader of events maps it back through
+#: `LIFECYCLE_STATE_OF`.
 ORDER_STATE_OF: Final[Mapping[LifecycleState, OrderState]] = MappingProxyType({
     "draft": "new", "validated": "pending_submit", "submitting": "submitted",
     "submitted": "accepted", "triggered": "triggered", "partially_filled": "partially_filled",
@@ -84,6 +86,12 @@ ORDER_STATE_OF: Final[Mapping[LifecycleState, OrderState]] = MappingProxyType({
     "quarantined": "quarantined", "untracked": "untracked", "held": "held", "filled": "filled",
     "cancelled": "cancelled", "rejected": "rejected", "expired": "expired", "killed": "killed",
 })  # fmt: skip
+#: The inverse of `ORDER_STATE_OF` (21-database-schema.md Sec.3.3.5): the chart state each
+#: `order_state` value persists, which E29-T03's rebuild of an order from its `order_events` reads
+#: off each event's `to_state`. Exact, as the map is one to one.
+LIFECYCLE_STATE_OF: Final[Mapping[OrderState, LifecycleState]] = MappingProxyType(
+    {stored: chart for chart, stored in ORDER_STATE_OF.items()}
+)
 #: The `ix_orders_open` predicate: what `list_open` returns (a unit test pins the index). Neither
 #: `untracked` nor `held` is open: B1 treats both as orders the OMS does not own (INV-B1-n).
 OPEN_STATES: Final[frozenset[OrderState]] = frozenset(
@@ -105,6 +113,8 @@ EXCHANGE_SOURCES: Final = frozenset[OrderEventSource]({"rest", "ws_private", "re
 FILL_KINDS: Final = frozenset[OrderEventKind]({"fill", "partial_fill"})
 #: The values a step's `from_state`, `to_state`, `kind` and `source` may take (OM-T04).
 _LITERALS: Final = tuple(map(get_args, (OrderState, OrderState, OrderEventKind, OrderEventSource)))
+#: The order terms an accepted amend may change (22-api-openapi.yaml `AmendOrderRequest`).
+AMENDABLE: Final = ("qty", "price", "trigger_price", "take_profit", "stop_loss")
 #: The unique index that makes `order_link_id` an idempotency key (21 Sec.3.3.4).
 UX_ORDERS_LINK: Final = "ux_orders_link"
 #: Upper bound of one `list_for_order` page.
@@ -186,9 +196,11 @@ class NewOrder:
     exchange_created_ts: datetime | None = None
     exchange_updated_ts: datetime | None = None
     is_paper: bool = False
+    lifecycle_state: LifecycleState | None = None
 
     def __post_init__(self) -> None:
         check_fields(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
+        require_lifecycle(self.lifecycle_state, self.state)
 
 
 def typed_fields(cls: type, kind: type) -> tuple[str, ...]:
@@ -219,6 +231,13 @@ class NewOrderEvent:
         require_aware("event_ts", self.event_ts)
 
 
+def require_lifecycle(lifecycle_state: LifecycleState | None, state: OrderState) -> None:
+    """`ord_lifecycle` (21 Sec.3.3.4): a chart state comes only with the `order_state` value
+    24 Sec.8.2 maps it to."""
+    if lifecycle_state is not None and ORDER_STATE_OF.get(lifecycle_state) != state:
+        raise ValueError("lifecycle_state is not the chart state of state (ord_lifecycle)")
+
+
 def require_exchange_record(event: NewOrderEvent) -> None:
     """OM-R02: an event that puts an order in a state, `create`'s first one too, carries the
     exchange's message as its `payload` when the exchange reported it."""
@@ -237,8 +256,14 @@ def require_no_fill(event: NewOrderEvent, to_state: OrderState | None = None) ->
 class OrderTransition:
     """A write-ahead step (24 Sec.8.2 S8): `state` moves to `to_state` only while the row holds
     `from_state` (compare-and-set), and `event` is appended with both states, in one transaction.
-    `reject_code` and `reject_message` are set when given. Built only from the columns' values,
-    so every store refuses anything else alike, before any statement (OM-T04)."""
+    `reject_code`, `reject_message`, `lifecycle_state` (the chart state `to_state` persists),
+    `exchange_order_id` (the exchange's id for the order, once B1 binds it, SR-E29-03) and the
+    `terms` an accepted amend changed (`AMENDABLE`) are set when given; the row's CHECKs and
+    `ux_orders_exch_id` still apply (a `qty` under `cum_exec_qty` is `ord_cum`'s). Built only from
+    the columns' values, so every store refuses anything else alike, before any statement
+    (OM-T04). The reject columns are the event's: a step into `rejected` names its event's
+    `ret_code` and `ret_msg` as them, and no other step names any, so a fold of the order's events
+    rebuilds them (OM-T03)."""
 
     account_id: UUID
     order_id: UUID
@@ -247,16 +272,33 @@ class OrderTransition:
     event: NewOrderEvent
     reject_code: str | None = None
     reject_message: str | None = None
+    lifecycle_state: LifecycleState | None = None
+    exchange_order_id: str | None = None
+    terms: Mapping[str, Decimal] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         require_exchange_record(self.event)
         given = (self.from_state, self.to_state, self.event.kind, self.event.source)
         if any(value not in values for value, values in zip(given, _LITERALS, strict=True)):
             raise ValueError("a step's states, kind and source must be values of their columns")
+        require_lifecycle(self.lifecycle_state, self.to_state)
+        rejected = self.to_state == "rejected"
+        said = (self.event.ret_code, self.event.ret_msg) if rejected else (None, None)
+        if (self.reject_code, self.reject_message) != said:
+            raise ValueError("a step's reject columns are its event's, on a step into rejected")
+        if not set(self.terms) <= set(AMENDABLE):
+            raise ValueError("a step changes only the terms an amend may change")
+        for name, value in self.terms.items():
+            require_money(name, value)
 
     def changes(self) -> dict[str, object]:
         """The columns it sets, the exchange's text redacted like `ret_msg` (#845 decision 2)."""
         values: dict[str, object] = {"state": self.to_state}
+        if self.lifecycle_state is not None:
+            values["lifecycle_state"] = self.lifecycle_state
+        if self.exchange_order_id is not None:
+            values["exchange_order_id"] = self.exchange_order_id
+        values.update(self.terms)
         if self.reject_code is not None:
             values["reject_code"] = redact_exchange_text(self.reject_code, max_chars=MAX_CODE_CHARS)
         if self.reject_message is not None:

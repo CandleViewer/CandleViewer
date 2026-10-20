@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_DOWN, Context, Decimal, localcontext
 from typing import cast
 
 import pytest
@@ -59,6 +59,8 @@ def test_apply_execution_divides_once_rounding_half_even_to_18_places() -> None:
         (OrderFills(D("1")), _fill("1", "100", "-0.5", "0.0002")),  # a rebate at a positive rate
         (OrderFills(D("1")), _fill("1", "100", "0.5", "-0.0001")),  # a fee at a negative rate
         (OrderFills(D(MAX)), _fill(MAX, MAX)),  # cum_exec_value past numeric(38,18), not Inexact
+        (OrderFills(D("1")), _fill("1", "1", "0", "0.00000000001")),  # fee_rate: 11 places
+        (OrderFills(D("1")), _fill("1", "1", "0", "123456789")),  # fee_rate: 9 digits
         (OrderFills(D("1")), Fill(cast(Decimal, 1.0), D("1"), D("0"), D("0"))),  # a float
     ],
 )
@@ -70,6 +72,12 @@ def test_apply_execution_refuses_hostile_input(order: OrderFills, fill: Fill) ->
 @pytest.mark.parametrize("fee", ["1", "-1"])
 def test_apply_execution_takes_a_fee_or_rebate_of_exactly_max_fee_rate(fee: str) -> None:
     assert apply_execution(OrderFills(D("1")), _fill("1", "100", fee)).fee_paid == D(fee)
+
+
+@pytest.mark.parametrize("rate", ["99999999.9999999999", "-0.0000000001"])
+def test_apply_execution_takes_every_fee_rate_its_column_holds(rate: str) -> None:
+    """`executions.fee_rate` is numeric(18,10) (21 Sec.3.3.6): its extremes are admitted."""
+    assert apply_execution(OrderFills(D("1")), _fill("1", "100", "0", rate)).filled_qty == D(1)
 
 
 def _filled(order: OrderFills, fill: Fill) -> Decimal | None:
@@ -89,3 +97,17 @@ def test_apply_execution_keeps_inv_1(qty: Decimal, fills: list[tuple[Decimal, De
         assert after in (None, filled + fill_qty)  # applied exactly, never clamped
         assert (after is None) is (filled + fill_qty > qty)  # refused only past qty
         filled = after or filled
+
+
+_BIG = "12345678901234567890.123456789012345678"  # 38 digits, within numeric(38,18)
+
+
+def test_apply_execution_is_exact_at_38_digits_whatever_the_thread_context() -> None:
+    """Money is exact at numeric(38,18): the sums and the one division run under the exact local
+    context, so 38-digit values never round to the thread's precision, a hostile one included."""
+    tiny = apply_execution(OrderFills(D(_BIG)), Fill(D("0.000000000000000001"), D(1), D(0), D(0)))
+    assert tiny.leaves_qty == D("12345678901234567890.123456789012345677")
+    priced = apply_execution(OrderFills(D(2)), Fill(D(1), D(_BIG), D(0), D(0)))
+    assert priced.avg_price == D(_BIG)
+    with localcontext(Context(prec=3, rounding=ROUND_DOWN, traps=[])):
+        assert apply_execution(OrderFills(D(2)), Fill(D(1), D(_BIG), D(0), D(0))) == priced

@@ -2452,6 +2452,40 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=5,
     ),
     _s(
+        "oms_state_transitions_total",
+        "counter",
+        "transitions",
+        ("from", "to", "source"),
+        "Committed B1 lifecycle steps, by chart state and the event's source (24 Sec.8.2): each "
+        "is counted once its order_events row is written (E29-T03).",
+        "dashboard",
+        _P,
+        "E29",
+        max_series=256,
+    ),
+    _s(
+        "oms_illegal_transitions_total",
+        "counter",
+        "refusals",
+        (),
+        "Order commands, and lifecycle steps, that B1's static table does not list for the "
+        "order's state: refused before any send or write (ILLEGAL_TRANSITION, E29-T03).",
+        "> 0 (rule: E29-T08)",
+        _P,
+        "E29",
+    ),
+    _s(
+        "oms_reconcile_anomaly_total",
+        "counter",
+        "anomalies",
+        (),
+        "Exchange pushes a final or held order did not take (24 Sec.8.2 S6), and executions B1 "
+        "refused as hostile (OM-T04), each audited as oms.reconcile_anomaly (E29-T03).",
+        "> 0 (rule: E29-T08)",
+        _P,
+        "E29",
+    ),
+    _s(
         "bybit_clock_drift_ms",
         "gauge",
         "milliseconds",
@@ -3540,7 +3574,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuditSinkRefusing (any; ticket, page pending #2701)",
         _L,
         "E09",
-        max_series=34,
+        max_series=35,
         exported=True,
     ),
     _s(
