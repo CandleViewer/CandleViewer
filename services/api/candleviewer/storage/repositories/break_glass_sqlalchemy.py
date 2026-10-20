@@ -14,6 +14,7 @@ its incident (E42-T05, `21-database-schema.md` 3.10.2a), commit once.
 A refusal or any error rolls back and changes zero rows. In M10 so `auth` imports
 no storage driver (ADR-0003). Static, parameterised statements; the recovery code
 arrives as its keyed hash, never in clear, and only the consume statement binds it.
+The offline CLI (slice 5) also names its target through `find_active_owner`, read only.
 """
 
 from __future__ import annotations
@@ -68,6 +69,15 @@ _UNRESOLVED = sa.text(
 #: One `auth.break_glass_attempt` row per CLI run (its write-ahead first record), whatever the
 #: run's outcome. `audit_log` is append-only, so the count only rises. Served by `ix_audit_action`.
 _ATTEMPTS = sa.text("SELECT count(*) FROM audit_log WHERE action = 'auth.break_glass_attempt'")
+#: The active Owner a typed identifier names, as login resolves one (username or email, both
+#: `citext`), under the predicate `_LOCK_OWNER` checks again under `FOR UPDATE`. Two rows (a
+#: username that is another user's email) name no one.
+_FIND_OWNER = sa.text(
+    "SELECT u.id::text FROM users u WHERE u.deleted_at IS NULL AND u.status = 'active' "
+    "AND (u.username = :ident OR u.email = :ident) AND EXISTS (SELECT 1 FROM user_roles ur "
+    "JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = u.id AND r.name = 'owner' "
+    "AND (ur.expires_at IS NULL OR ur.expires_at > now())) LIMIT 2"
+)
 
 #: The port's refusal channel (`auth.break_glass.BreakGlassStoreRefusal`), typed here
 #: as a `Literal` because `storage` may not import the `auth` enum.
@@ -129,6 +139,12 @@ class SqlAlchemyBreakGlassRepository:
             await record_occurrence(uow.session, _INCIDENT, seen_at=now)
             await uow.commit()
         return row
+
+    async def find_active_owner(self, identifier: str) -> str | None:
+        """The id of the one active Owner `identifier` names, else None. Read only."""
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_FIND_OWNER, {"ident": identifier})).all()
+        return str(rows[0][0]) if len(rows) == 1 else None
 
 
 class SqlAlchemyBreakGlassEvents:

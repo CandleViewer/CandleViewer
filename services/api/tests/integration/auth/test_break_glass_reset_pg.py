@@ -5,7 +5,8 @@ The plan's named tests drive `SqlAlchemyBreakGlassRepository` through its
 S5 refusals for non-Owners (forbidden role) and the cross-Owner (IDOR) case. S6: under
 the live recovery-code rule of `BreakGlassResetService`, concurrent runs consume one
 code once. Slice 6 (S9): the notice port counts only unresolved break-glass events, and
-(#2496) the CLI's `auth.break_glass_attempt` rows in `audit_log`.
+(#2496) the CLI's `auth.break_glass_attempt` rows in `audit_log`. Slice 5: `find_active_owner`,
+which names the CLI's target, names exactly one active Owner or no one.
 Not run locally (no docker); exercised by CI `integration`.
 """
 
@@ -319,3 +320,64 @@ async def test_notice_port_counts_only_the_cli_attempt_rows(pg_dsn: str) -> None
     finally:
         await rel.dispose()
         await engine.dispose()
+
+
+#: One user under a chosen username and email, with one role (slice 5's Owner lookup). The role
+#: may already have expired and the user may be soft-deleted.
+_SEED_NAMED = sa.text(
+    "WITH u AS (INSERT INTO users (id, email, username, password_hash, status, deleted_at) "
+    "VALUES (CAST(:u AS uuid), :email, :name, :pw, CAST(:status AS user_status), "
+    "CASE WHEN :deleted THEN now() END) RETURNING id) "
+    "INSERT INTO user_roles (user_id, role_id, granted_at, expires_at) SELECT u.id, roles.id, "
+    "CASE WHEN :expired THEN now() - interval '2 days' ELSE now() END, "
+    "CASE WHEN :expired THEN now() - interval '1 day' END FROM u, roles "
+    "WHERE roles.name = CAST(:role AS role_name)"
+)
+_LOOKUP_KINDS = {  # kind -> (role, status, role already expired, soft-deleted)
+    **{kind: (*spec, False) for kind, spec in _KINDS.items()},
+    "deleted": ("owner", "active", False, True),
+}
+
+
+async def _named(engine: AsyncEngine, name: str, email: str, kind: str = "owner") -> str:
+    """Seed a `_SEED_NAMED` user of `kind` under `name` and `email`; returns its id."""
+    role, status, expired, deleted = _LOOKUP_KINDS[kind]
+    uid = str(uuid.uuid4())
+    params = {"u": uid, "email": email, "name": name, "pw": _PW, "status": status}
+    async with engine.begin() as conn:
+        await conn.execute(
+            _SEED_NAMED, {**params, "role": role, "expired": expired, "deleted": deleted}
+        )
+    return uid
+
+
+@pytest.mark.parametrize("by", ["username", "email"])
+@pytest.mark.parametrize("kind", sorted(_LOOKUP_KINDS))
+async def test_find_active_owner_names_only_an_active_owner(
+    pg_dsn: str, kind: str, by: str
+) -> None:
+    """Slice 5: the CLI's `--owner` names its target by username or by email in any case
+    (`citext`), and only an active, undeleted user with an unexpired `owner` role resolves."""
+    async with _env(pg_dsn) as (engine, store):
+        assert isinstance(store, SqlAlchemyBreakGlassRepository)
+        await _user(engine)  # an active Owner: keeps the owner floor satisfied
+        token = uuid.uuid4().hex[:12]
+        uid = await _named(engine, f"bg{token}", f"bg{token}@example.invalid", kind)
+        typed = f"bg{token}" if by == "username" else f"BG{token.upper()}@EXAMPLE.INVALID"
+        expected = uid if kind == "owner" else None
+        assert await store.find_active_owner(typed) == expected
+
+
+async def test_find_active_owner_names_no_one_when_unknown_or_ambiguous(pg_dsn: str) -> None:
+    """A username may hold `@`: one that is another active Owner's email names two Owners, so
+    it names no one; each Owner is still named by its own unambiguous identifier."""
+    async with _env(pg_dsn) as (engine, store):
+        assert isinstance(store, SqlAlchemyBreakGlassRepository)
+        token = uuid.uuid4().hex[:12]
+        shared = f"s{token}@x.invalid"
+        a = await _named(engine, shared, f"a{token}@example.invalid")
+        b = await _named(engine, f"b{token}", shared)
+        assert await store.find_active_owner(shared) is None  # a's username is b's email
+        assert await store.find_active_owner(f"a{token}@example.invalid") == a
+        assert await store.find_active_owner(f"b{token}") == b
+        assert await store.find_active_owner(f"nobody{token}") is None
