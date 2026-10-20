@@ -182,9 +182,10 @@ The offline break-glass CLI is modelled as a trust boundary distinct from the ru
   and chain-verified.
 - **How a use is surfaced:** the unresolved `break_glass_used` event reaches every client as a WS
   `system` notice after its first `auth_ok` (O4). Every run, refused ones included, pages
-  (`AuthBreakGlassAttempted`), an unresolved reset pages (`AuthBreakGlassUsed`), and a failure to read
-  that state raises a ticket (`AuthBreakGlassStateReadFailing`): decision R8 as built under #2496,
-  awaiting the owner's confirmation on #2119.
+  (AuthBreakGlassAttempted), an unresolved reset pages (AuthBreakGlassUsed), and a failure to read
+  that state raises a ticket (AuthBreakGlassStateReadFailing): decision R8 as built under #2496,
+  awaiting the owner's confirmation on #2119. The break-glass abuse-detection row of §8 routes all
+  three and states what they cannot see.
 - **Residual risk stated explicitly (not assumed away):** an attacker who has already achieved
   host-level compromise (RDP/SSH into the Windows host, or physical access) can use break-glass to
   strip the Owner's TOTP regardless of the device (in `live` only with an unused recovery code too).

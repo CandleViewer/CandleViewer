@@ -28,8 +28,9 @@ from candleviewer.admin import breakglass_wiring
 from candleviewer.admin.breakglass import BreakGlassExit as X
 from candleviewer.admin.breakglass import RunCancelled
 from candleviewer.audit.actions import UnknownAuditAction
-from candleviewer.audit.journal import hold_run_lock, journal_dir
+from candleviewer.audit.journal import RunLockHeld, hold_run_lock, journal_dir
 from candleviewer.audit.wal import AuditWal
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.observability.logging import configure_logging, reset_logging
 from candleviewer.secrets import KekCheckResult, prove_kek_possession
@@ -296,6 +297,33 @@ async def test_journal_writer_that_does_not_start_releases_the_lock(
     with pytest.raises(RuntimeError):
         await breakglass_wiring._open_journal(wal, FakeAuditRepository())
     hold_run_lock(journal_dir(wal), exclusive=True).close()
+
+
+async def test_journal_lock_outlives_the_writer_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # While the writer stops, its flusher may still write journal.wal: the run keeps the lock
+    # until the stop returns, so cv-api (or another run) cannot fold that journal in meanwhile.
+    wal = str(tmp_path / "audit.wal")
+    held: list[bool] = []
+
+    class _Watched(AuditWriter):
+        async def stop(self, grace_s: float = 5.0) -> None:
+            try:
+                hold_run_lock(journal_dir(wal), exclusive=True).close()
+            except RunLockHeld:
+                held.append(True)
+            else:
+                held.append(False)
+            await super().stop(grace_s)
+
+    monkeypatch.setattr(breakglass_wiring, "AuditWriter", _Watched)
+    audit_log = FakeAuditRepository()
+    trail = await breakglass_wiring._open_journal(wal, audit_log)
+    await trail.emit(ATTEMPT, **_FIELDS)
+    assert await trail.close(1.0) == 0
+    assert held == [True] and [row["action"] for row in audit_log.rows] == [ATTEMPT]
+    hold_run_lock(journal_dir(wal), exclusive=True).close()  # released once close returned
 
 
 async def test_live_rule_checks_the_code_with_the_configured_key(

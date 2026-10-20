@@ -248,7 +248,7 @@ point (R5):
 - ★ **Second factor in `live`:** the operator must supply one unused Owner recovery code (SR-023 sealed
   envelope), verified offline against its hash in the DB and consumed. KEK + host access alone is not
   enough in `live`. O3, replacing it with `--live` and the typed phrase alone, is the owner's call
-  (#2701); main-orchestrator's ruling of 2026-10-20 keeps the rule until then.
+  (#2701); until then the rule stays, as ruled on #2119 on 2026-10-20 (the comment of that date).
 - ★ The CLI writes its intent record to a host-local append-only journal **before** it checks or acts,
   then an outcome record, and flushes both to `audit_log` before it exits (R2d, E09 threat model
   §3.6.1). Only the records Postgres could not take (it was down) stay in the journal: cv-api folds

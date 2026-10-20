@@ -314,12 +314,12 @@ the CLI itself needs one unused code there (O3 below): do not hand-edit `users`,
 `recovery_codes` or audit rows; escalate to the repository owner, who decides on direct database
 repair under the security process. Record the incident in every case.
 
-**What a run does.** It writes `auth.break_glass_attempt` before any check, then checks, in this
-order: the host journal and its run lock, `--live` against `CV_ENVIRONMENT`, the KEK, that no other
-session of cv-api's database role is connected, the Owner, the terminal and the retyped phrase, and
-in `live` one recovery code. Then one transaction revokes every MFA method and live session of the
-Owner (`revoked_reason` `break_glass`) and raises the critical, unresolved `system_events` row
-`auth`/`break_glass_used`, which cv-api announces as a `system` notice (reason
+**What a run does.** It opens the host journal under the run lock and writes
+`auth.break_glass_attempt` into it, then checks, in this order: `--live` against `CV_ENVIRONMENT`,
+the KEK, that no other session of cv-api's database role is connected, the Owner, the terminal and
+the retyped phrase, and in `live` one recovery code. Then one transaction revokes every MFA method
+and live session of the Owner (`revoked_reason` `break_glass`) and raises the critical, unresolved
+`system_events` row `auth`/`break_glass_used`, which cv-api announces as a `system` notice (reason
 `auth.break_glass_used`) after each client's first WS `auth_ok`. The run's last record is
 `auth.break_glass_reset` or `auth.break_glass_refused` with its reason. Every record is critical,
 with actor `system:breakglass` and the run's id as `request_id`; the CLI writes it to
@@ -337,7 +337,7 @@ logged.
 | 2                                                                  | Usage or settings error (`--owner` missing, invalid settings, `CV_AUTH_RECOVERY_HMAC_KEY_HEX` unset or not 32 bytes of hex): nothing ran and nothing is recorded. |
 | 3 `reset_failed`                                                   | The reset transaction failed and rolled back, unless the link broke at COMMIT: an unresolved `break_glass_used` event means it applied.                           |
 | 4 `host_fs_unavailable`                                            | `CV_AUDIT_WAL_PATH` is relative, holds `..` or a symlink, or the journal is unusable.                                                                             |
-| 5 `api_running`                                                    | cv-api holds the run lock, or another session of its database role is connected.                                                                                  |
+| 5 `api_running`                                                    | cv-api or another break-glass run holds the run lock, or another session of its database role is connected.                                                       |
 | 6 `audit_unavailable`                                              | A record could not be written. If it was the attempt, nothing was checked; if it was the closing record, the line above it says how the run ended.                |
 | 7 `live_flag_required`, 8 `live_flag_mismatch`                     | `--live` is missing in `live`, or given outside it.                                                                                                               |
 | 9 `kek_unproven`                                                   | No KEK, a wrong or retired one, or one no cv-api boot enrolled for this environment: the proof never enrols one (decision O1).                                    |
@@ -357,15 +357,19 @@ logged.
   for this run (`docs/ops/runbooks/kek-custody.md`). Its check value must already be enrolled for
   this environment by a cv-api boot. In `live` a `file` KEK is refused, as for cv-api, and so is a
   run whose SR-009 process hardening did not take effect. The launcher and systemd steps are not
-  drilled yet (FU-1, #2151). Where cv-api has no KEK (the dev compose stack wires none), the CLI
-  refuses `kek_unproven` and changes nothing.
-- cv-api's recovery-code key, `CV_AUTH_RECOVERY_HMAC_KEY_HEX`: the `live` rule checks the code with
-  it. Never put its value, or any other secret, on a command line or in this file.
+  drilled yet (FU-1, #2151). Where cv-api has no KEK, the CLI refuses `kek_unproven` and changes
+  nothing.
+- cv-api's recovery-code key, `CV_AUTH_RECOVERY_HMAC_KEY_HEX`, in every environment: without 32
+  bytes of hex in it the CLI exits 2 before it runs anything (the `live` rule checks the code with
+  it). Never put its value, or any other secret, on a command line or in this file.
 - A terminal: `docker compose run` allocates one (with `-T` it does not, and the CLI refuses).
 - In `live`: `--live`, and one unused Owner recovery code from the SR-023 sealed envelope.
 
 **Procedure (compose).** Use the compose files (`-f`) and project (`-p`) of the running stack, as
 `docker compose ls` lists them, so that the run gets cv-api's settings, KEK handle and audit volume.
+The repository's compose files (`infra/compose/`) set neither `CV_AUTH_RECOVERY_HMAC_KEY_HEX` nor a
+KEK for `api`: with them alone the run exits 2, so the stack must add both (its own override file or
+environment).
 
 1. Record the incident: who, when, why, and who has the host.
 2. Stop cv-api and check that it is down:
@@ -408,11 +412,11 @@ delegation; it awaits the owner's confirmation on #2119. A severity is one label
 **Live gating (O3).** In `live` the CLI requires `--live`, the phrase naming `live`, and one unused
 Owner recovery code, verified offline against its hash and consumed in the reset's transaction:
 the rule ratified in ADR-0009 Amendment 1. There is no path with `--live` and the phrase alone.
-The owner may relax the code requirement (O3, asked on #2701); main-orchestrator's ruling of
-2026-10-20 keeps it until then.
+The owner may relax the code requirement (O3, asked on #2701); until then it stays, as ruled on
+#2119 on 2026-10-20 (see the comment of that date).
 
-**Dry-run transcript** (2026-10-20, this procedure's CLI on branch
-`feat/e09-s11-breakglass-entry-runbook`, run directly with the settings in its environment as
+**Dry-run transcript** (2026-10-20, this procedure's CLI as built for #2119, E09-S11 slices 5 and
+7, run directly with the settings in its environment as
 `docker compose run` passes them: a throwaway local Postgres 16 at head, `CV_ENVIRONMENT=demo`, a
 test KEK file enrolled for `demo`, a test recovery-code key, and a seeded `drill_owner` with one
 TOTP method and two live sessions; no real credential). The JSON lines are the CLI's structured

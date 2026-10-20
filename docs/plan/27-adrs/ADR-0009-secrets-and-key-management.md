@@ -92,6 +92,11 @@ Refines Design §1; does not reverse it. Detail: `docs/plan/spikes/e27-kek.md`.
 - KEK types are private to `secrets`; other modules get metadata-only calls (C-3.2).
 - Break-glass (#2119) lives in `candleviewer.admin`, proves KEK possession through `secrets`, and in
   `live` also requires an unused Owner recovery code; it audits before acting.
+- 2026-10-20 (E09-S11, #2119): built as the offline CLI `python -m candleviewer.breakglass`, whose
+  flow is in `candleviewer.admin`. It proves possession with `prove_kek_possession` in `secrets` and
+  enrols no KEK (O1). O3 asked to replace the `live` recovery code with `--live` and a typed phrase
+  alone; the ruling recorded on #2119 on 2026-10-20 (see the comment of that date) keeps the code,
+  on top of `--live` and the phrase, consumed on use. The owner may relax it on #2701.
 
 ## Amendment 2 (2026-10-13, #2339; decision owner-delegated per #1778)
 
