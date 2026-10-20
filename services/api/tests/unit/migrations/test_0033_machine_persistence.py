@@ -24,7 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, DOMAIN, JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, DOMAIN, JSON, JSONB, TIMESTAMP
 from sqlalchemy.schema import DefaultClause
 from sqlalchemy.types import TypeEngine
 
@@ -54,9 +54,13 @@ _SQL_TYPES: dict[type[Any], str] = {
     Text: "text",
     Integer: "int",
     BigInteger: "bigserial",
+    JSON: "json",
     JSONB: "jsonb",
     BYTEA: "bytea",
 }
+#: The section's four seal- and digest-bearing columns, `json` since the machine_persistence_json
+#: revision (#3857); 0033 created them as `jsonb`.
+_JSON_COLUMNS = re.compile(r"^(  (?:snapshot|payload|fault) +)json\b", re.M)
 
 
 @cache
@@ -104,6 +108,14 @@ def _section() -> str:
 def _doc_ddl() -> str:
     """The section's ```sql block: the three tables and their indexes."""
     return _section().split("```sql", 1)[1].split("```", 1)[0]
+
+
+def _as_created(ddl: str) -> str:
+    """The section's DDL as 0033 created it: the four columns the #3857 revision made `json` back
+    to `jsonb`."""
+    created, altered = _JSON_COLUMNS.subn(r"\1jsonb", ddl)
+    assert altered == 4, altered
+    return created
 
 
 def _doc_table(name: str) -> str:
@@ -166,12 +178,13 @@ def test_revision_chains_onto_its_parent_as_its_only_child() -> None:
 
 
 def test_upgrade_is_the_section_ddl_verbatim_under_a_bounded_lock_wait() -> None:
-    """24 Sec.17.6 is implementable as written: its ```sql block, comments aside, is the render."""
+    """24 Sec.17.6 is implementable as written: its ```sql block, comments aside and with the four
+    columns the #3857 revision altered as 0033 created them, is the render."""
     assert _in_order(
         _up(),
         [
             "SET LOCAL lock_timeout = '5s';",
-            _norm(_doc_ddl()),
+            _norm(_as_created(_doc_ddl())),
             "CREATE FUNCTION machine_drain_journal_stamp_once()",
             "DO $BODY$",
             "COMMENT ON COLUMN machine_snapshots.machine_kind IS",

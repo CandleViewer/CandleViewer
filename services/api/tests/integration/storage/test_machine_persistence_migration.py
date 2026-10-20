@@ -186,6 +186,16 @@ def _section_ddl() -> str:
     return text.split("\n### 17.6 ", 1)[1].split("```sql", 1)[1].split("```", 1)[0]
 
 
+def _as_created(ddl: str) -> str:
+    """The section's DDL as 0033 created it: the four columns the #3857 revision made `json`
+    back to the `jsonb` they were created as."""
+    created, altered = re.subn(
+        r"^(  (?:snapshot|payload|fault) +)json\b", r"\1jsonb", ddl, flags=re.M
+    )
+    assert altered == 4, altered
+    return created
+
+
 def _catalog(c: Conn, schema: str) -> list[list[tuple[str, ...]]]:
     unqualify = re.compile(r"\b(?:public|doc_ref)\.")
     return [
@@ -198,15 +208,15 @@ def _catalog(c: Conn, schema: str) -> list[list[tuple[str, ...]]]:
     ]
 
 
-def _assert_matches_section(c: Conn) -> None:
-    """Build the section's DDL in a scratch schema (rolled back) and diff the two catalogs:
-    columns, types, nullability, defaults, CHECKs, keys and indexes."""
+def _assert_matches_section(c: Conn, ddl: str | None = None) -> None:
+    """Build the section's DDL (or `ddl`) in a scratch schema (rolled back) and diff the two
+    catalogs: columns, types, nullability, defaults, CHECKs, keys and indexes."""
     got: list[list[tuple[str, ...]]] = []
     want: list[list[tuple[str, ...]]] = []
     with c.transaction():
         c.execute("CREATE SCHEMA doc_ref")
         c.execute("SET LOCAL search_path = doc_ref, public")
-        c.execute(_section_ddl().encode())
+        c.execute((ddl or _section_ddl()).encode())
         got, want = _catalog(c, "public"), _catalog(c, "doc_ref")
         raise psycopg.Rollback
     assert got == want and all(got)
@@ -249,7 +259,7 @@ def _dump(pg: PostgresContainer, name: str) -> list[str]:
 def test_round_trip_on_an_empty_database_restores_the_parent_schema(pg: PostgresContainer) -> None:
     """C-5.5, Gherkin "round trip on an empty database" (named revisions, so a later head cannot
     change what `-1` means): up, down and up again; the dump after the downgrade equals the dump
-    before the upgrade; the tables match the section again."""
+    before the upgrade; the tables match the section again, as 0033 created them."""
     dsn, name = _create(_url(pg))
     _migrate(dsn, "upgrade", _prev())
     before = _dump(pg, name)
@@ -258,14 +268,17 @@ def test_round_trip_on_an_empty_database_restores_the_parent_schema(pg: Postgres
     assert _dump(pg, name) == before and any("CREATE TABLE public.backups" in x for x in before)
     _migrate(dsn, "upgrade", _REV)
     with _conn(dsn) as c:
-        _assert_matches_section(c)
+        _assert_matches_section(c, _as_created(_section_ddl()))
 
 
 @pytest.mark.parametrize("name", _NAMES)
 def test_downgrade_refuses_while_one_table_holds_a_row(pg: PostgresContainer, name: str) -> None:
     """Gherkin "a populated database refuses the downgrade": the refusal names the table, and
-    nothing is dropped (C-5.2, C-5.7)."""
-    dsn, _ = _create(_url(pg), _TEMPLATE)
+    nothing is dropped (C-5.2, C-5.7). The database starts at `0034_order_vocabulary`, the
+    revision below #3857's, so 0034's downgrade runs first and 0033's guard is the one that
+    answers; #3857's revision refuses a populated downgrade itself, ahead of both."""
+    dsn, _ = _create(_url(pg))
+    _migrate(dsn, "upgrade", "0034_order_vocabulary")
     count = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(name))
     with _conn(dsn) as c:
         _ROW[name](c)

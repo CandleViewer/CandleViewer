@@ -49,6 +49,7 @@ from sqlalchemy.dialects.postgresql import (
     DOMAIN,
     ENUM,
     INET,
+    JSON,
     JSONB,
     TIMESTAMP,
     UUID,
@@ -2195,6 +2196,9 @@ position_snapshots = Table(
 
 #: `machine_snapshots`, `machine_drain_journal`, `machine_events` (E50-T61, revision
 #: 0033_machine_persistence): 24-internal-schemas.md Sec.17.6, the statechart runtime's persistence.
+#: The four seal- and digest-bearing columns are `json` since the machine_persistence_json
+#: revision (#3857), which keeps the text as written: `jsonb` re-rendered numbers the seal and
+#: `row_hash` cover.
 #: C-5.9 / 21 Sec.12: every column is classified in its comment, `PII:` on the three P1 columns and
 #: `P0:` with its meaning on every other one. Byte-identical to the 0033 COMMENT statements
 #: (`alembic check` diffs column comments); no quote, as each sits in a SQL string literal. The 0033
@@ -2264,7 +2268,7 @@ machine_snapshots = Table(
     Column("cv_schema_version", Integer, nullable=False, comment=_MS["cv_schema_version"]),
     Column("lib_snapshot_ver", Integer, nullable=False, comment=_MS["lib_snapshot_ver"]),
     Column("machine_hash", _sha256_hex, nullable=False, comment=_MS["machine_hash"]),
-    Column("snapshot", JSONB, nullable=False, comment=_MS["snapshot"]),
+    Column("snapshot", JSON, nullable=False, comment=_MS["snapshot"]),
     Column("hmac_key_id", Text, nullable=False, comment=_MS["hmac_key_id"]),
     Column("hmac_tag", BYTEA, nullable=False, comment=_MS["hmac_tag"]),
     Column("state_ids", ARRAY(Text), nullable=False, comment=_MS["state_ids"]),
@@ -2294,7 +2298,7 @@ machine_drain_journal = Table(
     Column("lane", Text, nullable=False, comment=_MDJ["lane"]),
     Column("ordinal", Integer, nullable=False, comment=_MDJ["ordinal"]),
     Column("event_type", Text, nullable=False, comment=_MDJ["event_type"]),
-    Column("payload", JSONB, nullable=False, comment=_MDJ["payload"]),
+    Column("payload", JSON, nullable=False, comment=_MDJ["payload"]),
     Column("receipt_error", Text, comment=_MDJ["receipt_error"]),
     Column("replayed_at", _UTC, comment=_MDJ["replayed_at"]),
     PrimaryKeyConstraint(
@@ -2322,11 +2326,12 @@ machine_events = Table(
     Column("entity_id", Text, nullable=False, comment=_ME["entity_id"]),
     Column("env", Text, nullable=False, comment=_ME["env"]),
     Column("event_type", Text, nullable=False, comment=_ME["event_type"]),
-    Column("payload", JSONB, nullable=False, comment=_ME["payload"]),
+    Column("payload", JSON, nullable=False, comment=_ME["payload"]),
     Column("from_states", ARRAY(Text), nullable=False, comment=_ME["from_states"]),
     Column("to_states", ARRAY(Text), nullable=False, comment=_ME["to_states"]),
     Column("actions_run", ARRAY(Text), nullable=False, comment=_ME["actions_run"]),
-    Column("fault", JSONB, comment=_ME["fault"]),
+    # `none_as_null`: Python None binds SQL NULL, which `me_fault_phase` needs, not JSON `null`.
+    Column("fault", JSON(none_as_null=True), comment=_ME["fault"]),
     Column("occurred_at", _UTC, nullable=False, comment=_ME["occurred_at"]),
     Column("phase", Text, nullable=False, comment=_ME["phase"]),
     Column("prev_hash", _sha256_hex, nullable=False, comment=_ME["prev_hash"]),
