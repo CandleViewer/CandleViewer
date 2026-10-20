@@ -526,8 +526,8 @@ def test_plan_has_every_family_of_steps_and_each_tool_gets_its_argv(
     semgrep = _argv(calls, steps["semgrep"])
     assert semgrep[:2] == ["semgrep", "scan"] and "--error" in semgrep
     assert semgrep[semgrep.index("--config") + 1] == ".semgrep/cv-x.yml"
-    files = semgrep[semgrep.index("--") + 1 :]  # after `--` only: a name is no option
-    assert BARS in files and extra in files
+    assert semgrep[-1] == "."  # the root, as CI scans it: `.semgrepignore` applies (#3936)
+    assert {f"--include=/{BARS}", f"--include=/{extra}"} <= set(semgrep)
     gitleaks = _argv(calls, steps["gitleaks"])
     assert gitleaks[:4] == ["gitleaks", "git", "--log-opts", "abc1234..HEAD"]
     # the CodeQL pattern check and the tests
@@ -535,6 +535,49 @@ def test_plan_has_every_family_of_steps_and_each_tool_gets_its_argv(
     assert _argv(calls, steps["pytest-scripts"])[1:3] == ["-m", "pytest"]
     assert "--tb=line" in _argv(calls, steps["pytest-api"])
     assert list(steps)[-1] == "gen-freshness"  # last: it deletes the tracked generated files
+
+
+def test_semgrep_includes_are_anchored_and_escape_the_glob_syntax() -> None:
+    """#3936: a changed file is an `--include` of a scan of the root, never a target."""
+    assert pr_gate.semgrep_include("a.py") == "--include=/a.py"  # not its namesakes elsewhere
+    got = pr_gate.semgrep_include("apps/web/routes/[id]/a*b?.ts")
+    assert got == r"--include=/apps/web/routes/\[id\]/a\*b\?.ts"
+
+
+SEMGREP_RULE = "rules:\n- id: cv-x\n  pattern: bad()\n  message: bad\n  languages: [python]\n"
+SEMGREP_RULE += "  severity: ERROR\n"
+GENERATED_MODELS = f"{API}/candleviewer/api/_generated/openapi_models.py"
+needs_semgrep = pytest.mark.skipif(not shutil.which("semgrep"), reason="semgrep not installed")
+
+
+def _semgrep_step(root: Path, changed: list[str]) -> Any:
+    """The gate's Semgrep step in a repository with CI's own `.semgrepignore` and one rule."""
+    _git(root, "init", "-q")
+    _write(root, ".semgrepignore", (ROOT / ".semgrepignore").read_text(encoding="utf-8"))
+    _write(root, ".semgrep/cv-x.yml", SEMGREP_RULE)
+    (step,) = [s for s in pr_gate.tool_steps(_change(root, changed)) if s.gate == "semgrep"]
+    return step
+
+
+@needs_semgrep
+def test_a_regenerated_file_the_ignore_file_skips_passes_the_semgrep_step(tmp_path: Path) -> None:
+    """#3936: CI's scan skips `_generated/` (`.semgrepignore`), so the gate's does too."""
+    generated = _write(tmp_path, GENERATED_MODELS, "bad()\n")
+    assert _semgrep_step(tmp_path, [generated]).run() == ("PASS", "")
+
+
+@needs_semgrep
+def test_a_finding_in_a_changed_file_the_scan_reads_still_fails_it(tmp_path: Path) -> None:
+    generated = _write(tmp_path, GENERATED_MODELS, "bad()\n")
+    source = _write(tmp_path, f"{API}/candleviewer/a.py", "bad()\n")
+    status, output = _semgrep_step(tmp_path, [generated, source]).run()
+    assert status == "FAIL" and "candleviewer/a.py" in output and "_generated" not in output
+
+
+@needs_semgrep
+def test_an_unchanged_namesake_of_a_changed_file_is_not_scanned(tmp_path: Path) -> None:
+    _write(tmp_path, "tools/a.py", "bad()\n")  # unchanged, with a finding
+    assert _semgrep_step(tmp_path, [_write(tmp_path, "a.py")]).run() == ("PASS", "")
 
 
 #: Tracked files under the generated outputs of tools/ci/check_gen_freshness.py.

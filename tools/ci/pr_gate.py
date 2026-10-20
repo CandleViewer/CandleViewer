@@ -86,6 +86,8 @@ LOG_METHODS = frozenset("debug info warning warn error exception critical log".s
 GEN_CHECK = "tools/ci/check_gen_freshness.py"
 CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".yml", ".yaml")
 SEMGREP_FLAGS = ("--error", "--metrics=off", "--disable-version-check", "--quiet")
+#: What a gitignore pattern reads as syntax in a path: escaped in `semgrep_include`.
+GLOB_SPECIAL = re.compile(r"[\\*?\[\]]")
 #: Results that are no failure but no pass either: the verdict line counts them.
 CAVEATS = (("SKIP", "skipped"), ("PARTIAL", "partial"))
 LEFT_TO_CI = (
@@ -419,6 +421,16 @@ def py_lane_extras(root: Path) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def semgrep_include(path: str) -> str:
+    """`path` as one `--include` of a Semgrep scan of the repository root (#3936). Semgrep applies
+    `.semgrepignore` to the files it finds under a root, before any `--include`, as CI's scan of
+    the root does, but scans a file named as a target whatever that file says: so the changed
+    files are includes, never targets, and the ignore list stays the one CI reads. The leading `/`
+    anchors the pattern (a bare name also matches its namesakes in other directories); gitignore's
+    special characters are escaped (a `[id]` directory would be a character class)."""
+    return "--include=/" + GLOB_SPECIAL.sub(lambda m: "\\" + m.group(0), path)
+
+
 def tool_steps(change: Change) -> list[Step]:
     """CI's `py` lint on the changed backend files, Semgrep and gitleaks."""
     root, api = change.root, change.root / API
@@ -441,7 +453,8 @@ def tool_steps(change: Change) -> list[Step]:
     rules = [p.relative_to(root).as_posix() for p in sorted((root / ".semgrep").glob("cv-*.yml"))]
     if code and rules:
         configs = [arg for rule in rules for arg in ("--config", rule)]
-        argv = ["semgrep", "scan", *SEMGREP_FLAGS, *configs, "--", *code]
+        includes = [semgrep_include(path) for path in code]
+        argv = ["semgrep", "scan", *SEMGREP_FLAGS, *configs, *includes, "."]
         steps.append(command("semgrep", f"{len(code)} file(s)", argv, root))
     leaks = ["--redact", "--no-banner", "--config", ".gitleaks.toml"]
     commits = ["gitleaks", "git", "--log-opts", f"{change.base}..HEAD", *leaks, "."]
