@@ -860,6 +860,8 @@ def test_repo_gitignore_covers_the_private_files_and_the_atomic_write_temp_file(
     shutil.copy2(REPO_ROOT / ".gitignore", cfg_root / ".gitignore")
     claude = cfg_root / ".claude"
     (claude / "relayroom" / "runs").mkdir(parents=True)
+    skill_dir = claude / "skills" / "candleviewer-relayroom-check"
+    skill_dir.mkdir(parents=True)
     fd, tmp_name = tempfile.mkstemp(dir=claude, prefix=creds.TMP_PREFIX, suffix=creds.TMP_SUFFIX)
     os.close(fd)
     private = [
@@ -868,6 +870,7 @@ def test_repo_gitignore_covers_the_private_files_and_the_atomic_write_temp_file(
         claude / "relayroom" / "runs" / "x.json",
         cfg_root / ".mcp.json",
         cfg_root / ".mcp.json.tmp",
+        skill_dir / "SKILL.md",
     ]
     for path in private:
         path.write_text("{}", encoding="utf-8")
@@ -877,7 +880,8 @@ def test_repo_gitignore_covers_the_private_files_and_the_atomic_write_temp_file(
         assert git(cfg_root, "check-ignore", "-q", rel).returncode == 0, f"{rel} not ignored"
     for shared in (
         ".claude/settings.json",
-        ".claude/skills/candleviewer-relayroom-check/SKILL.md",
+        ".claude/skills/other-skill/SKILL.md",  # the skill entry is narrow, not all of skills/
+        "docs/ops/relayroom-check-skill.template.md",
         "docs/ops/relayroom-mcp.template.json",
     ):
         assert git(cfg_root, "check-ignore", "-q", shared).returncode == 1, f"{shared} ignored"

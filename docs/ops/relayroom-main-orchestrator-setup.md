@@ -26,16 +26,18 @@ The three identifiers above are distinct: **agent** (server-registered part), **
 | File                                                   | Tracked?                              | Purpose                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docs/ops/relayroom-mcp.template.json`                 | yes (new; was root `.mcp.json`)       | Shared template: alias + `${ENV}` placeholders only; copied to a local, git-ignored root `.mcp.json`, which the doctor reads                                                                                                                                                                                |
-| `.github/CODEOWNERS`                                   | yes                                   | One line: `/docs/ops/relayroom-mcp.template.json` → `@CandleViewer/security @CandleViewer/devsecops` (GOV-001: the new MCP config surface must be code-owned; adds reviewers, removes none)                                                                                                                 |
-| `.gitignore`                                           | yes                                   | Adds `.claude/relayroom/`, `.claude/settings.local.json`, `.claude/.settings.local.*.tmp` (the credential script's temp file), `/.mcp.json` and `/.mcp.json.tmp` — narrow entries                                                                                                                           |
+| `.github/CODEOWNERS`                                   | yes                                   | Two lines: `/docs/ops/relayroom-mcp.template.json` → `@CandleViewer/security @CandleViewer/devsecops` (GOV-001: the new MCP config surface must be code-owned; adds reviewers, removes none); `/docs/ops/relayroom-check-skill.template.md` keeps the owners the old `/.claude/` path gave the skill        |
+| `.gitignore`                                           | yes                                   | Adds `.claude/relayroom/`, `.claude/settings.local.json`, `.claude/.settings.local.*.tmp` (the credential script's temp file), `/.mcp.json`, `/.mcp.json.tmp` and `/.claude/skills/candleviewer-relayroom-check/` — narrow entries                                                                          |
 | `CLAUDE.md`                                            | yes                                   | **One line** in §10a (toolkit list) pointing to `/candleviewer-relayroom-check` and this report. The coordination rules are **not** in the tracked file; see "Where the coordination rules live" below                                                                                                      |
 | `.claude/settings.json`                                | yes                                   | Two `permissions.deny` rules on the secret-bearing file only (`Read(./.claude/settings.local.json)` and `Bash(*settings.local.json*)`); the nonsecret `.claude/relayroom/` identity and run records stay readable because the skill and the worker policy read them; no `ask` rule, `defaultMode` unchanged |
 | `scripts/relayroom-main-doctor.py`                     | yes (new)                             | Redacting validator; allowlisted PASS/FAIL output only; exit 0 ready, 1 FAIL, 2 crashed                                                                                                                                                                                                                     |
 | `scripts/relayroom-enter-credentials.py`               | yes (new)                             | Masked-TTY, atomic JSON merge of the three env keys; refuses non-TTY; removes its temp file on every failure path                                                                                                                                                                                           |
 | `scripts/tests/test_relayroom_scripts.py`              | yes (new)                             | Unit tests for both scripts; synthetic values in temp directories only                                                                                                                                                                                                                                      |
-| `.claude/skills/candleviewer-relayroom-check/SKILL.md` | yes (new)                             | Manual `/candleviewer-relayroom-check` (read-oriented; stops on identity mismatch)                                                                                                                                                                                                                          |
+| `docs/ops/relayroom-check-skill.template.md`           | yes (new; was in `.claude/skills/`)   | Template of the manual `/candleviewer-relayroom-check` skill (read-oriented; stops on identity mismatch); installed per machine into the git-ignored `.claude/skills/candleviewer-relayroom-check/`                                                                                                         |
 | `.claude/relayroom/identity.local.json`                | **ignored**                           | Secret-free private binding descriptor                                                                                                                                                                                                                                                                      |
 | `.claude/relayroom/runs/8236a4ad-….json`               | **ignored**                           | This run's nonsecret record                                                                                                                                                                                                                                                                                 |
+| `.mcp.json`                                            | **ignored** (local copy)              | Copied from the MCP template; the doctor reads this live file (worker clients write their private MCP URL into it)                                                                                                                                                                                          |
+| `.claude/skills/candleviewer-relayroom-check/SKILL.md` | **ignored** (installed per machine)   | Local copy of the check skill, installed by the client tooling or by hand from the template (see Activation steps)                                                                                                                                                                                          |
 | `.claude/settings.local.json`                          | **ignored** (pre-existing, untracked) | Holds the three credential keys under `env` — **entered**; doctor → READY                                                                                                                                                                                                                                   |
 
 Not touched: `~/.claude/settings.json`, `~/.claude.json` user-scope MCP, Windows env vars,
@@ -96,14 +98,20 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
    progress event → `[SETUP-CHECK]` thread to `human` with a nonce → you reply `ACK <nonce>` in the
    dashboard → Atlas acks, replies, closes the thread, and appends the IDs to this report.
 
+The check skill is not tracked: the client tooling installs it per machine. To install it by hand,
+from CONFIG_ROOT:
+
+```sh
+mkdir -p .claude/skills/candleviewer-relayroom-check && cp docs/ops/relayroom-check-skill.template.md .claude/skills/candleviewer-relayroom-check/SKILL.md
+```
+
 ## Rollback
 
-Remove only: the `candleviewer-relayroom` entry in your local `.mcp.json` and the template
-`docs/ops/relayroom-mcp.template.json`; its line in `.github/CODEOWNERS` (together with the
-template, never alone); the five RelayRoom patterns in `.gitignore` (three under `.claude/`, plus
-`/.mcp.json` and `/.mcp.json.tmp`); the one-line pointer in `CLAUDE.md` §10a; the two RelayRoom
-`deny` rules in
-`.claude/settings.json`; the two scripts and `scripts/tests/test_relayroom_scripts.py`; the skill
-directory; and `.claude/relayroom/`. No token was issued by this setup (the existing one was kept),
-so rolling back does not touch the dashboard; rotate or revoke the token there only on an owner
-decision. Nothing else was changed.
+Remove only: the `candleviewer-relayroom` entry in your local `.mcp.json` and the templates
+`docs/ops/relayroom-mcp.template.json` and `docs/ops/relayroom-check-skill.template.md`; their lines
+in `.github/CODEOWNERS` (together with the templates, never alone); the six RelayRoom patterns in
+`.gitignore` (four under `.claude/`, plus `/.mcp.json` and `/.mcp.json.tmp`); the one-line pointer
+in `CLAUDE.md` §10a; the two RelayRoom `deny` rules in `.claude/settings.json`; the two scripts and
+`scripts/tests/test_relayroom_scripts.py`; the local skill directory; and `.claude/relayroom/`. No
+token was issued by this setup (the existing one was kept), so rolling back does not touch the
+dashboard; rotate or revoke the token there only on an owner decision. Nothing else was changed.

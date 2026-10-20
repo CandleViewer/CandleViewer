@@ -70,6 +70,8 @@ CLAUDE.local.md
 # project-scoped MCP config holds the RelayRoom connect URL — machine-local
 /.mcp.json
 /.mcp.json.tmp
+# the RelayRoom diagnostic skill is installed per machine by the client tooling
+/.claude/skills/candleviewer-relayroom-check/
 .coverage
 *.tmp.*
 .spike-tmp/

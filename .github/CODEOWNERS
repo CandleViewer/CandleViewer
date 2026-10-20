@@ -248,6 +248,9 @@
 # RelayRoom MCP config template (copied to a git-ignored root .mcp.json): GOV-001 keeps this MCP surface
 # security-owned. It sits after `/docs/` because the last matching rule wins.
 /docs/ops/relayroom-mcp.template.json   @CandleViewer/security @CandleViewer/devsecops @basiltt
+# RelayRoom check-skill template (installed per machine into a git-ignored .claude/skills/): keeps the
+# owners that the old `/.claude/` path gave the skill.
+/docs/ops/relayroom-check-skill.template.md @CandleViewer/architecture @CandleViewer/devsecops @basiltt
 /docs/design/                           @CandleViewer/design @CandleViewer/design-system @basiltt
 /docs/plan/                             @CandleViewer/architecture @basiltt
 /docs/plan/00-planning-brief.md         @basiltt @CandleViewer/architecture
