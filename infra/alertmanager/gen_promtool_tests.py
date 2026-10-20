@@ -179,6 +179,7 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
 }
 
 _LAST_OK = 'cv_audit_verify_last_ok_timestamp_seconds{env="live"}'
+_LAST_OK_DEMO = 'cv_audit_verify_last_ok_timestamp_seconds{env="demo"}'
 _STOPPED = 'cv_audit_verify_runs_total{env="live",result="stopped"}'
 _PASSED = 'cv_audit_verify_runs_total{env="live",result="ok"}'
 # A restart at 24 h re-seeds the gauge and resets the counter; start-up runs stop on each side.
@@ -235,8 +236,11 @@ def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
 
 # alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
 MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
-    # #2111. Pages: last pass at 5 min; runs that keep stopping across the restart. Healthy: no
-    # runner wired (0); a pass at 26 h, after the restart.
+    # #2111. Pages: last pass at 5 min; runs that keep stopping across the restart. Healthy: a
+    # pass at 26 h, after the restart.
+    # #2966: no runner wired in `live` (the gauge reads 0 and the counter has no series) pages at
+    # the first evaluation and keeps paging. The same reading in `demo` (the fake backend runs no
+    # job) and a job that has started (the gauge holds its start time) stay silent.
     # The 26 h threshold is 24 h (the daily run) + 5400 s (the longest deadline it covers; a longer
     # one needs the threshold raised, 24-internal-schemas.md section 15.4) + 30 min. A pass at 1 h
     # pins it from both sides: 25 h 30 min old (24 h + 5400 s, a healthy cadence at its slowest)
@@ -244,7 +248,10 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     "AuditVerifyNotPassing": (
         ("28h", True, {_LAST_OK: "300+0x1700"}),
         ("28h", True, {**_RESTART, _PASSED: "0+0x1685"}),
-        ("28h", False, {_LAST_OK: "0+0x1700"}),
+        ("5m", True, {_LAST_OK: "0+0x10"}),
+        ("28h", True, {_LAST_OK: "0+0x1700"}),
+        ("28h", False, {_LAST_OK_DEMO: "0+0x1700"}),
+        ("5m", False, {_LAST_OK: "300+0x10"}),
         ("28h", False, {**_RESTART, **_PASS_AT_26H}),
         ("1590m", False, {_LAST_OK: "3600+0x1590"}),
         ("1621m", True, {_LAST_OK: "3600+0x1621"}),

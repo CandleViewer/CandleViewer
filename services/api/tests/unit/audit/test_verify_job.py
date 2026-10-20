@@ -15,9 +15,11 @@ from typing import Any
 import pytest
 import structlog
 from audit_fakes import FakeAuditRepository
+from pydantic import SecretStr
 from verify_fakes import FakeVerifyRunner
 
 from candleviewer.admin.wiring import build_audit_verify_job
+from candleviewer.api.audit_verify_runner import ChainVerifyRunner
 from candleviewer.app import create_app
 from candleviewer.audit.service import AuditService
 from candleviewer.audit.verify_job import (
@@ -36,6 +38,7 @@ from candleviewer.audit.verify_runner import (
     VerifyTrigger,
 )
 from candleviewer.audit.verify_slot import VerifySlot
+from candleviewer.health_wiring import PgSystemEventWriter
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.settings import Environment, Settings
@@ -381,14 +384,45 @@ def test_a_job_with_a_bad_hour_or_deadline_is_refused(hour: int, deadline_s: flo
 
 def test_the_app_builds_no_job_until_a_verify_runner_is_wired() -> None:
     settings = Settings(environment=Environment.DEMO)
-    assert create_app(settings).state.audit_verify_job is None
+    assert create_app(settings).state.audit_verify_job is None  # the fake backend keeps none
     wired = create_app(settings, audit_verify_runner=FakeVerifyRunner())
     assert isinstance(wired.state.audit_verify_job, AuditVerifyJob)
 
 
+def _real_backend() -> Settings:
+    """The deployed composition's settings: the real backend, with the keys it refuses to boot
+    without. `create_app` does no I/O, so nothing here needs a database."""
+    return Settings(
+        storage_backend="real",
+        auth_pepper=SecretStr("test-pepper"),
+        auth_totp_key_hex=SecretStr("11" * 32),
+        auth_recovery_hmac_key_hex=SecretStr("22" * 32),
+        auth_csrf_key_hex=SecretStr("33" * 32),
+    )
+
+
+def test_the_real_backend_app_builds_the_job_with_the_chain_runner_over_its_own_audit() -> None:
+    """#2966: the served app runs the verify job, with the real runner over the app's own audit
+    service and the system event writer a break raises its event through."""
+    app = create_app(_real_backend())
+    job = app.state.audit_verify_job
+    assert isinstance(job, AuditVerifyJob)
+    runner = job._runner
+    assert isinstance(runner, ChainVerifyRunner)
+    assert runner._audit is app.state.app_context.audit
+    assert isinstance(runner._events, PgSystemEventWriter)
+
+
+def test_a_runner_passed_to_create_app_wins_on_the_real_backend() -> None:
+    runner = FakeVerifyRunner()
+    job = create_app(_real_backend(), audit_verify_runner=runner).state.audit_verify_job
+    assert isinstance(job, AuditVerifyJob) and job._runner is runner
+
+
 def test_an_app_without_a_runner_leaves_the_gauge_at_0_and_the_counter_without_a_series() -> None:
-    """07 (AuditChainVerificationFailed, interim state): nothing runs, so the page has no pass
-    time to read (a gauge at 0 is dropped by its `> 0`) and no run to count: it cannot fire."""
+    """07 (AuditVerifyNotPassing, row 1): the fake backend runs no job, so its gauge reads 0 and
+    its counter has no series. In `live` that reading pages (promtool cases); elsewhere it is
+    the expected state of an app with no audit store to check."""
     metrics: Metrics = create_app(Settings(environment=Environment.DEMO)).state.metrics_facade
     assert metrics.snapshot([LAST_OK_GAUGE]) == {LAST_OK_GAUGE: 0.0}
     assert metrics.snapshot(["cv_audit_verify_runs"]) == {}

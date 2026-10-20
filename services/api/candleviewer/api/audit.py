@@ -57,10 +57,12 @@ from candleviewer.api.audit_limiter import (
 )
 from candleviewer.api.audit_verify import (
     VERIFY_DEADLINE_S,
+    VERIFY_STOP_ERRORS,
     observe_stop,
     observe_verify,
     raise_break_event,
     result_record,
+    verify_stop,
     write_verify_record,
 )
 from candleviewer.audit.access import (
@@ -256,31 +258,14 @@ def _unavailable(detail: str = "audit record could not be written") -> JSONRespo
     return _problem(503, "Service unavailable", detail, code="store_unavailable", retry_after_s=1)
 
 
-#: Why a verify stopped early: the record's reason and the 503 detail. A store error carries
-#: only its SQLSTATE and is logged where it is raised. An entry over the per-entry cap is
-#: named in the reason, `entry_too_large@<id>`: never a pass, as it was not checked.
-_VERIFY_STOPS: tuple[tuple[type[Exception], str, str], ...] = (
-    (TimeoutError, "timeout", "audit verify exceeded its time budget"),
-    (ChainHasherBusy, "hasher_busy", "audit read capacity reached"),
-    (AuditEntryTooLarge, "entry_too_large", "an audit entry is over the verify size cap"),
-    (StorageTierUnavailable, "store_unavailable", "audit store unavailable"),
-)
-_VERIFY_STOP_ERRORS = tuple(kind for kind, _, _ in _VERIFY_STOPS)
 _SUCCESS, _FAILURE = AuditOutcome.SUCCESS, AuditOutcome.FAILURE
 _INFO, _WARNING = Severity.INFO, Severity.WARNING
-
-
-def _verify_stop(exc: Exception) -> tuple[str, str]:
-    reason, detail = next((r, d) for kind, r, d in _VERIFY_STOPS if isinstance(exc, kind))
-    if isinstance(exc, AuditEntryTooLarge):
-        reason = f"{reason}@{exc.entry_id}"
-    return reason, detail
 
 
 def _verify_unavailable(exc: Exception) -> JSONResponse:
     """The `503` for a verify that stopped early, with `Retry-After` but for an entry over the
     per-entry cap: no retry can pass that one until the cap is raised, so it has none."""
-    detail = _verify_stop(exc)[1]
+    detail = verify_stop(exc)[1]
     if isinstance(exc, AuditEntryTooLarge):
         return _problem(503, "Service unavailable", detail, code="store_unavailable")
     return _unavailable(detail)
@@ -652,7 +637,7 @@ def make_audit_router(
             )
         except VerifyRangeBeyondHead:
             return _problem(404, "Not found", "from_id is beyond the chain head", code="not_found")
-        except _VERIFY_STOP_ERRORS as exc:
+        except VERIFY_STOP_ERRORS as exc:
             return _verify_unavailable(exc)
         # Then the per-user limit (429) and single-flight (409). The head read (range
         # defaulting, above) comes first, as the contract orders the checks; a caller who is
@@ -698,13 +683,13 @@ def make_audit_router(
         verify_limits.record_start(str(principal.user_id))  # only a run that starts counts
         try:
             result = await service.query.run_verify(plan, deadline_s=verify_deadline_s)
-        except _VERIFY_STOP_ERRORS as exc:
+        except VERIFY_STOP_ERRORS as exc:
             observe_stop(full_chain=plan.full_chain)
             if isinstance(exc, AuditEntryTooLarge):  # the entry's id and the class only
                 _log().warning(
                     "audit.verify.entry_too_large", entry_id=exc.entry_id, error=type(exc).__name__
                 )
-            reason = _verify_stop(exc)[0]
+            reason = verify_stop(exc)[0]
             await write_verify_record(
                 emit, fields, outcome=_FAILURE, severity=_WARNING, reason=reason, after_state=span
             )

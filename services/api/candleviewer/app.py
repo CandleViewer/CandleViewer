@@ -101,6 +101,7 @@ from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
+from candleviewer.api.audit_verify_runner import ChainVerifyRunner
 from candleviewer.api.auth_perf import auth_perf_enabled, make_auth_perf_router
 from candleviewer.api.contract_conformance import load_contract_subset
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
@@ -1640,6 +1641,13 @@ def create_app(
     )
     # Flush cadence and shutdown drain for the budget's counts; the lifespan runs it.
     app.state.audit_budget_flush = AuditBudgetFlushTask(audit_budget, _LazyAuditEmitter(ctx.audit))
+    # A chain break also raises a critical system event, as the recorder's job does: from the
+    # on-demand route and from the scheduled verify run (#2966).
+    chain_break_events = (
+        PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
+        if health_pg is not None
+        else None
+    )
     app.include_router(
         make_audit_router(
             ctx.audit,
@@ -1657,12 +1665,7 @@ def create_app(
                 tracked_users=resolved.audit_budget_tracked_users,
             ),
             verify_deadline_s=resolved.audit_verify_deadline_s,
-            # A chain break also raises a critical system event, as the recorder's job does.
-            verify_events=(
-                PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
-                if health_pg is not None
-                else None
-            ),
+            verify_events=chain_break_events,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
@@ -1833,8 +1836,11 @@ def create_app(
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check
     )
-    # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966
-    # wires the real runner (E42-T02): no job, and its gauge stays 0 (never pages).
+    # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real
+    # backend runs it with the real runner (an injected one, a test's, wins); the fake backend has
+    # none: no job, and the lifespan logs `audit.verify_job_not_wired`.
+    if audit_verify_runner is None and resolved.storage_backend == "real":
+        audit_verify_runner = ChainVerifyRunner(ctx.audit, chain_break_events)
     app.state.audit_verify_job = build_audit_verify_job(
         ctx.audit, resolved, metrics_facade, audit_verify_runner
     )

@@ -31,6 +31,7 @@ from typing import Any
 import structlog
 
 from candleviewer.api.audit_budget import WRITE_TIMEOUT_S
+from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import AuditOutcome, Severity, VerifyResult
 from candleviewer.observability.audit_query_metrics import (
     audit_chain_verification_failures_total,
@@ -38,6 +39,7 @@ from candleviewer.observability.audit_query_metrics import (
 )
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from candleviewer.settings import Settings
+from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 
 VERIFY_ACTION = "admin.audit_verify"
 #: How long a run waits for its system event: best effort, the record is the primary.
@@ -45,6 +47,26 @@ EVENT_TIMEOUT_S = 2.0
 #: The `audit_verify_deadline_s` default: how long one run may take before it is stopped
 #: (503) and the single-flight slot is free again; well above a full `audit_verify_max_span` run.
 VERIFY_DEADLINE_S: float = Settings.model_fields["audit_verify_deadline_s"].default
+
+#: Why a verify stopped early: the record's reason and the 503 detail. A store error carries
+#: only its SQLSTATE and is logged where it is raised. An entry over the per-entry cap is
+#: named in the reason, `entry_too_large@<id>`: never a pass, as it was not checked. The
+#: on-demand route and the scheduled runner (`audit_verify_runner`) share this table.
+VERIFY_STOPS: tuple[tuple[type[Exception], str, str], ...] = (
+    (TimeoutError, "timeout", "audit verify exceeded its time budget"),
+    (ChainHasherBusy, "hasher_busy", "audit read capacity reached"),
+    (AuditEntryTooLarge, "entry_too_large", "an audit entry is over the verify size cap"),
+    (StorageTierUnavailable, "store_unavailable", "audit store unavailable"),
+)
+VERIFY_STOP_ERRORS = tuple(kind for kind, _, _ in VERIFY_STOPS)
+
+
+def verify_stop(exc: Exception) -> tuple[str, str]:
+    """The record reason and the 503 detail of a run that stopped on one of `VERIFY_STOPS`."""
+    reason, detail = next((r, d) for kind, r, d in VERIFY_STOPS if isinstance(exc, kind))
+    if isinstance(exc, AuditEntryTooLarge):
+        reason = f"{reason}@{exc.entry_id}"
+    return reason, detail
 
 
 def _log() -> Any:

@@ -834,7 +834,8 @@ tests:
         component: audit_verify
         env: live
       exp_annotations:
-        summary: No audit chain verify run has passed for 26 hours
+        summary: 'Audit chain verification is not passing: no run passed for 26 hours,
+          or no runner is wired in live'
         runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
 - interval: 1m
   input_series:
@@ -853,7 +854,24 @@ tests:
         component: audit_verify
         env: live
       exp_annotations:
-        summary: No audit chain verify run has passed for 26 hours
+        summary: 'Audit chain verification is not passing: no run passed for 26 hours,
+          or no runner is wired in live'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 0+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditVerifyNotPassing
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: audit_verify
+        env: live
+      exp_annotations:
+        summary: 'Audit chain verification is not passing: no run passed for 26 hours,
+          or no runner is wired in live'
         runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
 - interval: 1m
   input_series:
@@ -861,6 +879,30 @@ tests:
     values: 0+0x1700
   alert_rule_test:
   - eval_time: 28h
+    alertname: AuditVerifyNotPassing
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: audit_verify
+        env: live
+      exp_annotations:
+        summary: 'Audit chain verification is not passing: no run passed for 26 hours,
+          or no runner is wired in live'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="demo"}
+    values: 0+0x1700
+  alert_rule_test:
+  - eval_time: 28h
+    alertname: AuditVerifyNotPassing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
+    values: 300+0x10
+  alert_rule_test:
+  - eval_time: 5m
     alertname: AuditVerifyNotPassing
     exp_alerts: []
 - interval: 1m
@@ -896,7 +938,8 @@ tests:
         component: audit_verify
         env: live
       exp_annotations:
-        summary: No audit chain verify run has passed for 26 hours
+        summary: 'Audit chain verification is not passing: no run passed for 26 hours,
+          or no runner is wired in live'
         runbook_url: docs/plan/07-release-and-prr.md#alert-auditverifynotpassing
 - interval: 1m
   input_series:

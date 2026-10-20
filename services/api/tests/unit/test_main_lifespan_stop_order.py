@@ -9,8 +9,13 @@ from types import SimpleNamespace
 import pytest
 import structlog
 from fastapi import FastAPI
+from pydantic import SecretStr
 
+from candleviewer.api.audit_verify_runner import ChainVerifyRunner
+from candleviewer.app import create_app
+from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.main import _lifespan
+from candleviewer.settings import Settings
 
 _MODULES = (
     "storage",
@@ -226,6 +231,27 @@ async def test_lifespan_logs_at_boot_that_no_audit_verify_job_is_wired() -> None
         async with _lifespan(app):
             pass
     assert {"event": "audit.verify_job_not_wired", "log_level": "warning"} in logs
+
+
+async def test_lifespan_runs_the_real_backend_apps_verify_job_and_logs_no_unwired_line() -> None:
+    """#2966: the job `create_app` builds on the real backend is the one the lifespan starts and
+    stops, with the real runner, and nothing says the audit chain goes unchecked."""
+    real = Settings(
+        storage_backend="real",
+        auth_pepper=SecretStr("test-pepper"),
+        auth_totp_key_hex=SecretStr("11" * 32),
+        auth_recovery_hmac_key_hex=SecretStr("22" * 32),
+        auth_csrf_key_hex=SecretStr("33" * 32),
+    )
+    job = create_app(real).state.audit_verify_job
+    assert isinstance(job, AuditVerifyJob) and isinstance(job._runner, ChainVerifyRunner)
+    app = _app(_Stops())
+    app.state.audit_verify_job = job
+    with structlog.testing.capture_logs() as logs:
+        async with _lifespan(app):
+            assert job._task is not None  # its supervised loop is running
+    assert job._task is None  # and stopped with the app
+    assert "audit.verify_job_not_wired" not in [e["event"] for e in logs]
 
 
 async def test_lifespan_counts_the_lost_jobs_at_boot_and_saves_them_once_the_store_stopped() -> (
