@@ -10,11 +10,10 @@ a11y addon; Style Dictionary token build. Depends only on
 - `src/tokens/`, `src/primitives/`, `src/components/` — TS/React surface.
 - `scripts/build-tokens.mjs` — the token build entry point (E05-T01).
 - `build/` — generated artefacts, **gitignored, never committed**. CI
-  regenerates them on every run (`pnpm --filter @candleviewer/ui build:tokens`)
-  and the `generated-code` required check fails the PR if `tokens/*.tokens.json`
-  changed without a matching build (staleness is caught by re-running the
-  build and diffing against a checked-in reference, not by committing the
-  output — see "Build output policy" below).
+  regenerates them on every run: the `js` lane's `build` job builds this
+  package (which runs `pnpm --filter @candleviewer/ui build:tokens`) and then
+  `contrast:gate`, and the unit lane's `test/tokens-build/*` tests run the real
+  build and pin its artefacts (see "Build output policy" below).
 
 Architectural record: [`docs/plan/27-adrs/ADR-0024-design-token-architecture-and-theming.md`](../../docs/plan/27-adrs/ADR-0024-design-token-architecture-and-theming.md)
 records the tier model, theming/density decisions and the WebGL/Electron delivery
@@ -61,10 +60,14 @@ lockfile. Two consecutive builds are byte-identical (asserted by
 
 **Build output policy**: `build/` is gitignored. The build must be
 deterministic and fast enough (`<=10s` locally) to run on every `pnpm dev`
-start, so nothing is checked in — CI's `generated-code` check re-runs the
-build and fails if `packages/ui/tokens/**` changed without the corresponding
-consumer types/tests being updated in the same PR (there is no stale
-committed artefact to diff against, by design).
+start, so nothing is checked in and there is no stale committed artefact to
+diff against, by design. The guards over a token change are the ones
+`docs/plan/16-design-system-brief.md` §11 lists: the `js` lane's `build` job
+(package build, then `contrast:gate`), the a11y lane's second `contrast:gate`
+run before Storybook, and the unit lane's `test/tokens-build/*` tests, which
+run the real build and pin a resolved value. The generated-code freshness gate
+(`tools/ci/check_gen_freshness.py`) covers the protocol, CVWB and policy
+generators, not these tokens.
 
 **Raw-value lint**: `packages/ui/src/**` may not hardcode a hex colour or a
 raw `px` length — use a token from `build/ts/tokens.ts` instead
@@ -92,9 +95,11 @@ checklist, §11.5 change control and arbitration, §11.6 secrets. The short form
    `pnpm --filter @candleviewer/ui contrast:data-ink` and commit `contrast/data-ink-matrix.{json,md}`.
    Then `python3 tokens/tests/verify_tokens.py` and `pnpm --filter @candleviewer/ui test`: a value
    pinned in `test/tokens-build/build-integration.test.ts` moves with the token, never the reverse.
-4. Add a `## [x.y.z] - <date>` entry to `tokens/CHANGELOG.md` (patch = retune, minor = new name,
-   major = rename or removal, with `!`), commit `feat(design-system): …` and open the PR with the
-   contrast report and the Penpot page link (§11.2 steps 7–9).
+4. Add a `## [x.y.z] - <date>` entry to `tokens/CHANGELOG.md` (pre-1.0, C-15.5: PATCH = retune or
+   new name, MINOR = rename or removal, with `!` and a `BREAKING CHANGE:` footer; MAJOR only from
+   1.0.0), commit `feat(design-system): …` and open the PR with the contrast report and the Penpot
+   page link (§11.2 steps 7–9). CI adds `security-review` by itself (the token file names match
+   C-10.2's `*token*`): leave it on; the second review is the `security-reviewer` (§11.2 step 11).
 5. Never commit `build/`, never add to `tools/contrast/data-ink-baseline.json`, never lower a
    threshold, and never put a credential in a token file (§11.6).
 

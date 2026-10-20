@@ -53,7 +53,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
   - [ ] Design has been Done for ≥2 sprints (design-ahead rule) OR an explicit Architect/CDO waiver is recorded with reason.
   - [ ] Component(s) used are in `15-component-catalogue.md`; any new component has a design-system entry, not an ad hoc one-off.
   - [ ] States enumerated (empty, loading, error, populated, edge-density e.g. extreme footprint density) per `14-screens-catalogue.md` conventions.
-  - [ ] The design ticket carries its completed per-component handoff checklist (`16-design-system-brief.md` §11.4: Penpot link, Variants × States, keyboard table, accessible-name/role table, motion pair, density notes, essential-exceptions log), every line ticked or marked N/A with a reason, and this ticket links it.
+  - [ ] The design ticket carries its completed per-component handoff checklist (`16-design-system-brief.md` §11.4: Penpot link, Variants × States, keyboard table, accessible-name/role table, motion pair, density notes, essential-exceptions log), every line ticked or marked N/A with a reason, and this ticket links it (scope and effective date: `16-design-system-brief.md` §13.3 item 8).
 - [ ] Security-ready **[if labelled `security`, default-on for Stories touching auth/RBAC, API keys, OMS/order placement, withdrawal settings, or any admin screen]**:
   - [ ] Threat considerations noted on the ticket (what could go wrong: injection, privilege escalation, key leakage, replay).
   - [ ] Data classification noted (does this touch secrets/PII/financial data).
@@ -98,7 +98,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 - [ ] Coverage threshold met for touched package.
 - [ ] Docs updated (schema/architecture doc, code comments/docstrings, ADR if a design decision was made mid-implementation).
 - [ ] a11y **[if the Task touches shared UI primitives/design-system code]**: axe-core CI green.
-- [ ] design handoff **[if the Task is a `design`-labelled `CMP-*`/`SCR-*` ticket]**: the per-component handoff checklist (`16-design-system-brief.md` §11.4) is attached to the ticket and committed beside the spec, every line ticked or marked N/A with a reason; QA or the owner checks it before setting Done (`16-design-system-brief.md` §13.3 item 4).
+- [ ] design handoff **[if the Task is a `design`-labelled `CMP-*` ticket, or an `SCR-*` ticket that introduces or changes a component contract]**: the per-component handoff checklist (`16-design-system-brief.md` §11.4) is attached to the ticket and committed beside the spec, every line ticked or marked N/A with a reason; QA or the owner checks it before setting Done (`16-design-system-brief.md` §13.3 item 8, which also sets the effective date for designs already Done).
 - [ ] perf **[if labelled `perf`]**: benchmark recorded.
 - [ ] security **[if labelled `security`]**: SAST/SCA clean or triaged, reviewed by Security engineer.
 - [ ] QA sign-off **[if labelled `qa`, or if the Task is user-observable indirectly]**: verification recorded.
