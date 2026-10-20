@@ -36,6 +36,7 @@ from psycopg.types.json import Jsonb
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.accounts.profiles import AccountProfile
+from candleviewer.db.models import LEG_FAILURE_POLICIES
 from candleviewer.domain.primitives import AccountId, GroupId
 from candleviewer.oms.order_link import OrderLinkIdParts
 
@@ -1030,8 +1031,8 @@ _REWRITES: dict[str, Callable[[Conn], object]] = {
 
 @pytest.mark.parametrize("column", list(_REWRITES))
 def test_the_group_identity_and_anchor_are_write_once(pg_dsn: str, column: str) -> None:
-    """`trg_tg_write_once`: the group's identity, environment, author, replay anchor and the
-    definition it was fired from never change once written."""
+    """`trg_tg_write_once`: the group's identity, environment, author, replay anchor, the
+    definition it was fired from and its failure policy never change once written."""
     with _conn(_fresh(pg_dsn)) as c:
         group = _group(c, _user(c))
         other = _REWRITES[column](c)
@@ -1048,21 +1049,22 @@ def test_the_group_identity_and_anchor_are_write_once(pg_dsn: str, column: str) 
         )
 
 
-def test_a_group_takes_the_best_effort_policy_unless_it_names_another(pg_dsn: str) -> None:
-    """24 Sec.9.5: the failure policy that the unwind and a restart read is on the row, as the
-    PR-2b Q1 ruling set."""
+@pytest.mark.parametrize("policy", LEG_FAILURE_POLICIES)
+def test_a_group_stores_its_policy_and_defaults_to_best_effort(pg_dsn: str, policy: str) -> None:
+    """24 Sec.9.5: the failure policy that the unwind and a restart read is on the row (21
+    Sec.3.3.2); `best_effort`, the manual-ticket default, is the column's."""
     with _conn(_fresh(pg_dsn)) as c:
         user = _user(c)
         plain = _group(c, user)
-        strict = _group(c, user, leg_failure_policy="all_or_none")
-        policy = "SELECT leg_failure_policy FROM trade_groups WHERE id = %s"
-        assert (_one(c, policy, plain), _one(c, policy, strict)) == ("best_effort", "all_or_none")
+        named = _group(c, user, leg_failure_policy=policy)
+        stored = "SELECT leg_failure_policy FROM trade_groups WHERE id = %s"
+        assert (_one(c, stored, plain), _one(c, stored, named)) == ("best_effort", policy)
 
 
 def test_a_group_holds_one_leg_per_account_so_an_exit_is_never_a_leg(pg_dsn: str) -> None:
     """Groups are entry fan-outs: `ux_tgl_group_account` admits one leg per account, so a
     take-profit or an unwind for that account is a reduce-only order on the entry leg, never a
-    second leg row, and `tgl_sl_px` binds position-opening legs only (C-2.6)."""
+    second leg row: `tgl_sl_px` binds every leg, and every leg opens a position (C-2.6)."""
     with _conn(_fresh(pg_dsn)) as c:
         account = _account(c)
         group = _group(c, _user(c))

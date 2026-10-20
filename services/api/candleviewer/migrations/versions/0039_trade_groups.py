@@ -43,6 +43,9 @@ enums are Sec.1.2 verbatim; no earlier revision created them. `exchange_accounts
   `rejection_code` and `rejection_message` carry a `PII:` comment; `db.models` mirrors the texts
   byte for byte.
   `profile_snapshot` and the definitions are P0.
+* `trade_groups.leg_failure_policy` (24 Sec.9.5; the orchestrator's ruling, recorded in 21
+  Sec.3.3.2): default `best_effort`, CHECK `tg_policy`, frozen by `trg_tg_write_once`, so B2's
+  unwind and a restart read the policy from the row, never from a machine snapshot (SR-E28-25).
 * `SET LOCAL lock_timeout = '5s'` brackets both directions (C-5.6).
 * Downgrade locks the four tables and refuses unless all are empty (C-5.2: groups are trading
   history and definitions configuration); an empty or a seeded database (accounts, profiles and

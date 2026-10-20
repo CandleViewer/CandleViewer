@@ -189,7 +189,7 @@
     },
     "0039_trade_groups": {
       "path": "services/api/candleviewer/migrations/versions/0039_trade_groups.py",
-      "sha256": "8ddeb2d445b40e7b96160f659bc682b5f3f6dc27f717e2f895f054fece3f606e",
+      "sha256": "c28ec62b754e73bb0e58aae92a9d1bc846e901ec43b0c4d22fbe00c64e128ceb",
       "down_revision": "0038_risk_state"
     }
   }

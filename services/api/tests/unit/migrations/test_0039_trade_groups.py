@@ -867,6 +867,17 @@ def test_models_mirror_the_check_constraints(table: Table) -> None:
         assert _norm(f"CONSTRAINT {name} CHECK ({body})") in _up(), name
 
 
+def test_the_failure_policies_are_24s_and_tg_policy_holds_exactly_them() -> None:
+    """24 Sec.9.1 owns the three policies (Sec.9.5); `tg_policy` and `LEG_FAILURE_POLICIES` hold
+    exactly those, in that order, so neither can drift from the plan alone."""
+    body = _checks(models.trade_groups)["tg_policy"]
+    assert tuple(re.findall(r"'(\w+)'", body)) == models.LEG_FAILURE_POLICIES
+    plan = (_ROOT.parents[1] / "docs" / "plan" / "24-internal-schemas.md").read_text("utf-8")
+    literal = re.search(r"leg_failure_policy: Literal\[([^\]]*)\]", plan)
+    assert literal is not None
+    assert tuple(re.findall(r'"(\w+)"', literal[1])) == models.LEG_FAILURE_POLICIES
+
+
 def test_models_mirror_the_unique_constraints_under_their_given_names() -> None:
     """One group per (creator, ref) and one leg per (group, account); the anchor is never unique
     across creators and nothing indexes it alone (G-6(b), 21 Sec.3.3.2)."""
