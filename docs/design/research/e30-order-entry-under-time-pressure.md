@@ -89,15 +89,21 @@ one owner question and one recommended default per row, §1a).
 
    ![E30-D01 / 01 journey — the decide → size → fire journey, with the re-arm-after-reconnect journey (F21) and the staleness and hotkey-safety states (F18–F20)](../E30/img/E30-D01-01-journey.png)
 
-2. `E30-D01 / 02 legibility-matrix` (board id `0a41e3a8-e6a6-807a-8008-d1d649a29aa3`):
+2. `E30-D01 / 02 legibility-matrix` (board id `bcc63b26-089e-80fa-8008-d205306e9e84`):
 
    ![E30-D01 / 02 legibility-matrix — the armed/locked × demo/live legibility matrix (15 frames; the Probe B stimulus) plus the badge contrast matrix](../E30/img/E30-D01-02-legibility-matrix.png)
 
-3. `E30-D01 / 03 sizing-mode-probe` (board id `0a41e3a8-e6a6-807a-8008-d1d7b2bd73f4`):
+   Greyscale and deuteranopia renders of this board (`docs/design/_tools/cvd_sim.py`, Probe B condition (b)):
+
+   ![E30-D01 / 02 legibility-matrix — greyscale render](../E30/img/E30-D01-02-legibility-matrix-greyscale.png)
+
+   ![E30-D01 / 02 legibility-matrix — deuteranopia render](../E30/img/E30-D01-02-legibility-matrix-deuteranopia.png)
+
+3. `E30-D01 / 03 sizing-mode-probe` (board id `bcc63b26-089e-80fa-8008-d2059b03a060`):
 
    ![E30-D01 / 03 sizing-mode-probe — the sizing-mode probe wireframes: segmented control, mode-per-field, hybrid (the Probe C stimulus)](../E30/img/E30-D01-03-sizing-mode-probe.png)
 
-4. `E30-D01 / 04 rejection-failure-paths` (board id `0a41e3a8-e6a6-807a-8008-d1d92790b760`):
+4. `E30-D01 / 04 rejection-failure-paths` (board id `bcc63b26-089e-80fa-8008-d205f8ebf081`):
 
    ![E30-D01 / 04 rejection-failure-paths — the rejection failure-path map, with the protective-stop failure and the stale-inputs row](../E30/img/E30-D01-04-rejection-failure-paths.png)
 
