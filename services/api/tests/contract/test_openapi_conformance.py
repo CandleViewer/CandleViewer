@@ -196,7 +196,11 @@ def test_lifecycle_mutation_declares_every_status_it_cites(
     ("path", "method", "statuses"),
     [
         ("/users/{userId}", "patch", {"200", "400", "401", "403", "404", "409", "412", "503"}),
-        ("/users/{userId}", "delete", {"204", "400", "401", "403", "404", "409", "422", "503"}),
+        (
+            "/users/{userId}",
+            "delete",
+            {"204", "400", "401", "403", "404", "409", "422", "501", "503"},
+        ),
         ("/users/{userId}/roles", "put", {"200", "400", "401", "403", "404", "409", "503"}),
         (
             "/users/{userId}/account-access",

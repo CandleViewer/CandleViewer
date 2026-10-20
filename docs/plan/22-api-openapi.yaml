@@ -1932,7 +1932,13 @@ paths:
         `auth.session_revoked` per session; when the audit record cannot be written nothing
         changes (`503 audit_unavailable`). Disabling a disabled user is a no-op `204` with no
         new audit record. A call refused for a forbidden role or a self-target is audited too.
-        Passing `?purge=true` additionally anonymises PII after the 90-day retention window.
+        Passing `?purge=true` additionally anonymises PII after the 90-day retention window:
+        once the disable has committed, the purge is scheduled 90 days out, audited write-ahead
+        as `users.delete`; a repeat keeps the first date and writes no new record. When that
+        record cannot be written the user stays disabled with no purge scheduled
+        (`503 audit_unavailable`), and a retry schedules it. While the deployment runs no purge
+        reaper (retention disabled) `purge=true` answers `501 not_implemented`, and nothing
+        changes.
         A query parameter this operation does not declare is refused with
         `422 validation_failed`, never ignored, and nothing is read or changed.
         Without a live `users` step-up an authenticated caller first gets `403 step_up_required`,
@@ -1953,6 +1959,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}/roles:
