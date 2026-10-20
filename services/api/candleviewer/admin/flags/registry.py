@@ -23,6 +23,8 @@ from typing import Final
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
+
 #: A stored or resolved flag value: `boolean` -> bool, `percentage` -> rollout int (0-100),
 #: `variant` -> one of the spec's variants.
 FlagValue = bool | int | str
@@ -104,14 +106,17 @@ class FlagSpec:
         check_spec(self)
 
     @property
+    @audit_exempt("read")
     def fail_closed_value(self) -> FlagValue:
         return self.default if self.restrictive is None else self.restrictive
 
+    @audit_exempt("read")
     def visible_to(self, roles: frozenset[str]) -> bool:
         """Whether a principal with `roles` may learn this flag (its visibility)."""
         return self.visibility is Visibility.ALL_ROLES or "owner" in roles
 
     @property
+    @audit_exempt("read")
     def overridable(self) -> bool:
         """D2: the live gate and kill-switch-class flags take no per-user or per-role override,
         so neither can differ from the value the gate enforces."""
@@ -184,6 +189,7 @@ class FlagRegistry(Mapping[str, FlagSpec]):
     def __len__(self) -> int:
         return len(self._specs)
 
+    @audit_exempt("read")
     def visible_to(self, key: str, roles: frozenset[str]) -> bool:
         """Whether a principal with `roles` may learn flag `key`: its spec's `visibility`, and no
         one for a key no spec defines (deny by default). The composition root hands this to the
@@ -191,6 +197,7 @@ class FlagRegistry(Mapping[str, FlagSpec]):
         spec = self._specs.get(key)
         return spec is not None and spec.visible_to(roles)
 
+    @audit_exempt("lifecycle")
     def log_startup(self) -> None:
         """Log every definition with its declared gates, so an auditor sees what flags touch."""
         structlog.get_logger(__name__).info(

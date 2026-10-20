@@ -14,6 +14,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.backups.limits import EVIDENCE_BUDGET_S
 from candleviewer.admin.backups.ports import CONCLUSIVE, RunRecord
 from candleviewer.audit.models import AuditOutcome, AuditPage
@@ -67,6 +68,7 @@ class AuditRunEvidence:
     def __init__(self, pages: RecordPages) -> None:
         self._pages = pages
 
+    @audit_exempt("read")
     async def run_record(self, backup_id: UUID) -> RunRecord | None:
         """The newest successful `backup.run` record at `stage: finished`: the digest it bound and
         its `covers_to` (none until the run's record binds one, #3319)."""
@@ -76,10 +78,12 @@ class AuditRunEvidence:
                 return RunRecord(digest if isinstance(digest, str) else None, _aware(covers_to))
         return None
 
+    @audit_exempt("read")
     async def bound_digest(self, backup_id: UUID) -> str | None:
         record = await self.run_record(backup_id)
         return None if record is None else record.digest
 
+    @audit_exempt("read")
     async def verification(self, backup_id: UUID) -> Verification:
         """The newest `finished` record that concludes, a pass or a failure coded in `CONCLUSIVE`;
         an inconclusive end neither refuses nor clears, so the one before it decides. A failure

@@ -28,6 +28,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.errors import (
     IncidentNotFound,
     IncidentResolved,
@@ -138,6 +139,7 @@ class AdminIncidentsService:
         self._store, self._now, self._budget_s = store, now, budget_s
         self._write_budget_s = write_budget_s
 
+    @audit_exempt("read")
     async def page(self, *, status: str | None, cursor: str | None, limit: int) -> IncidentPage:
         if self._store is None:
             raise OpsNotWired("incidents: no store wired")
@@ -161,6 +163,7 @@ class AdminIncidentsService:
         nxt = None if last is None else encode_cursor(status, (last.last_seen_at, last.id), issued)
         return IncidentPage(tuple(shown), nxt)
 
+    @audited("incident.acknowledged")
     async def acknowledge(
         self, incident_id: UUID, *, by: UUID, write_ahead: AckWriteAhead
     ) -> IncidentRow:

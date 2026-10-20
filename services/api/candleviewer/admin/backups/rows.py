@@ -38,6 +38,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audited
 from candleviewer.admin.backups import limits
 from candleviewer.admin.backups.metrics import BackupFreshness
 from candleviewer.admin.errors import OpsUnavailable
@@ -127,6 +128,7 @@ class RunRows:
         self._store, self._audit, self._lost = store, audit, lost
         self._freshness, self._now = freshness, now
 
+    @audited("backup.run")
     async def insert(self, actor: Actor, new: port.NewBackup) -> port.BackupRow:
         """`new`'s `running` row; one that cannot be written ends its request first."""
         try:
@@ -140,6 +142,7 @@ class RunRows:
         await self.end(actor, new.id, port.RunFinished(self._now(), code))  # a lost commit too
         raise OpsUnavailable("backups: store unavailable")
 
+    @audited("backup.run")
     async def end(
         self,
         actor: Actor,
@@ -181,6 +184,7 @@ class RunRows:
             _log().error("backups.run_not_reread", backup_id=str(backup_id), error=failure)
             return None
 
+    @audited("backup.run")
     async def close_lost(self) -> int:
         """At boot, before this process runs anything, end every `running` row: the process that
         ran it is gone (SR-BK7-05). One page of `LOST_RUNS_LIMIT` rows; a store outage ends the
@@ -209,5 +213,6 @@ class LostRuns:
     def __init__(self, rows: RunRows) -> None:
         self._rows = rows
 
+    @audited("backup.run")
     async def start(self) -> None:
         await self._rows.close_lost()

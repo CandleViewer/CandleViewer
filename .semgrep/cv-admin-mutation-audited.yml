@@ -1,0 +1,55 @@
+rules:
+  - id: cv-admin-mutation-audited
+    languages: [python]
+    severity: ERROR
+    message: >-
+      `$C.$F` declares no audit. Every public method of a class under
+      services/api/candleviewer/admin/ that is not a Protocol says whether it writes the audit
+      record: `@audited("<action>", ...)` names the registered AUDIT_ACTIONS it writes, itself or
+      through what it calls, and `@audit_exempt("<reason>")` gives the reason it writes none
+      (candleviewer/admin/audited.py). The record itself stays write-ahead where the change is
+      made (C-2.9, SR-060; 21-database-schema.md §3.10.1, E42-X03).
+    metadata:
+      rule-id: cv-admin-mutation-audited
+      sr: SR-060
+    patterns:
+      - pattern-inside: |
+          class $C(...):
+            ...
+      # An instance method, a classmethod or a staticmethod. `def` matches `async def` too: a bare
+      # `async def` pattern matches nothing in a file that uses PEP 695 generics (`def f[T]`), with
+      # no parse error (X03-F4), so none is used here. A module-level function is out of scope
+      # (D1; X03-F7 in the admin threat model).
+      - pattern-either:
+          - pattern: |
+              def $F(self, ...):
+                ...
+          - pattern: |
+              def $F(cls, ...):
+                ...
+          - pattern: |
+              @staticmethod
+              def $F(...):
+                ...
+      # By the decorators' full name: a look-alike from another module declares nothing.
+      - pattern-not: |
+          @candleviewer.admin.audited.audited(...)
+          def $F(...):
+            ...
+      - pattern-not: |
+          @candleviewer.admin.audited.audit_exempt(...)
+          def $F(...):
+            ...
+      # A Protocol's methods are stubs: its implementations declare.
+      - pattern-not-inside: |
+          class $P(..., typing.Protocol, ...):
+            ...
+      - pattern-not-inside: |
+          class $P(..., typing.Protocol[...], ...):
+            ...
+      - metavariable-regex:
+          metavariable: $F
+          regex: ^[^_]
+    paths:
+      include:
+        - "services/api/candleviewer/admin/**"

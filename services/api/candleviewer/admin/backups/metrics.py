@@ -32,6 +32,7 @@ from typing import Final, Literal, Protocol, get_args
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.backups.catalogue import READ_BUDGET_S
 from candleviewer.admin.overview.fanout import utc_now
 from candleviewer.observability.metrics import (
@@ -132,6 +133,7 @@ class BackupFreshness:
         self._store, self._now, self._budget_s, self._gauge = store, now, budget_s, gauge
         self._last: dict[str, datetime] = {}
 
+    @audit_exempt("lifecycle")
     async def start(self) -> None:
         """Load each kind's last success, once, within the budget. An outage, a read the store
         refuses, or the budget spent is logged and fails nothing: boot goes on with the cache as it
@@ -151,6 +153,7 @@ class BackupFreshness:
         for kind, at in loaded.items():
             self._advance(kind, at)
 
+    @audit_exempt("read")
     def record_success(self, row: BackupRow) -> None:
         """A finished run: it moves its kind's last success forward only when it succeeded (`ok`,
         `verified` or `restored`, finished) and its artefact is kept. A failed, running or
@@ -159,6 +162,7 @@ class BackupFreshness:
         if row.status in SUCCESS_STATUSES and row.finished_at is not None and kept:
             self._advance(row.kind, row.finished_at)
 
+    @audit_exempt("read")
     async def recompute(self, row: BackupRow) -> None:
         """`row` is a success no longer. When it held its kind's last success, that kind's is read
         again within the budget: an older success, or no sample when none is left. A success
@@ -183,6 +187,7 @@ class BackupFreshness:
         else:
             self._last[kind] = loaded
 
+    @audit_exempt("read")
     def age_s(self, kind: str) -> float:
         """Now minus the kind's last success; a scrape calls it, and it does no I/O."""
         return (self._now() - self._last[kind]).total_seconds()

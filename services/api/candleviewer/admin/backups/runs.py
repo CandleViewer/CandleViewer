@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 
 import structlog
 
+from candleviewer.admin.audited import audited
 from candleviewer.admin.backups import limits
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.backups.ports import (
@@ -117,6 +118,7 @@ class BackupRuns:
         self._rows, self._runner, self._gate, self._jobs = rows, runner, gate, jobs
         self._audit, self._limit, self._now, self._new_id = audit, limit, now, new_id
 
+    @audited("backup.run")
     async def start(
         self, who: AuditPrincipal, *, kind: port.BackupKind, write_ahead: WriteAhead
     ) -> port.BackupRow:
@@ -191,6 +193,7 @@ class BackupRuns:
         _log().error("backups.plan_refused", error=_INVALID)
         raise BackupEngineInvalid
 
+    @audited("backup.run")
     async def audit_requested(
         self,
         who: AuditPrincipal,

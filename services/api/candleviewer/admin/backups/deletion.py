@@ -33,6 +33,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audited
 from candleviewer.admin.backups import limits
 from candleviewer.admin.backups.catalogue import READ_BUDGET_S
 from candleviewer.admin.backups.gate import Admission, BackupConflict, BackupJobGate
@@ -122,6 +123,7 @@ class BackupDeletion:
         self._read_budget_s, self._record_budget_s = read_budget_s, record_budget_s
         self._remove_budget_s, self._mark_budget_s = remove_budget_s, mark_budget_s
 
+    @audited("backup.deleted")
     async def delete(
         self, backup_id: UUID, who: AuditPrincipal, challenge_id: UUID, write_ahead: WriteAhead
     ) -> None:
@@ -136,6 +138,7 @@ class BackupDeletion:
                 await self._write(call, None, _UNAVAILABLE)
             raise
 
+    @audited("backup.deleted")
     async def audit_delete(self, who: AuditPrincipal, record: DeleteRecord) -> None:
         """`backup.deleted`, severity `warning`: the spent grant's `challenge_id`, the row's
         `before_state.status` when it was read, and for a refusal or a failure `outcome: failure`

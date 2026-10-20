@@ -34,6 +34,7 @@ from typing import Any, Final, cast
 
 import structlog
 
+from candleviewer.admin.audited import audited
 from candleviewer.admin.errors import AdminError
 from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.evidence import check_evidence_url
@@ -111,6 +112,7 @@ class FlagWriter:
         self._service, self._audit, self._step_up = service, audit, step_up
         self._users, self._on_change, self._timeout = users, on_change, await_timeout_s
 
+    @audited("flags.change", "maintenance.enabled", "maintenance.disabled", "auth.step_up_mismatch")
     async def set(
         self,
         key: str,
@@ -274,6 +276,7 @@ class _Audit:
                 **kwargs,
             )
 
+    @audited("flags.change")
     async def refused(
         self, before: StoredFlag | None, result: str, *, counted: bool = True
     ) -> None:
@@ -287,6 +290,7 @@ class _Audit:
             after_state={**self._request, "result": result},
         )
 
+    @audited("flags.change")
     async def intent(self, before: StoredFlag) -> None:
         await self._emit(
             "flags.change",
@@ -296,6 +300,7 @@ class _Audit:
             after_state={**self._request, "phase": "intent"},
         )
 
+    @audited("flags.change")
     async def outcome(self, before: StoredFlag, after: StoredFlag | None, result: str) -> None:
         flag_changes_total.labels(self._key, result).inc()
         try:
@@ -309,6 +314,7 @@ class _Audit:
         except Exception:  # best effort: the write's fate is settled, a lost record is logged
             logger().exception("flags_change_outcome_audit_failed", key=self._key, result=result)
 
+    @audited("maintenance.enabled", "maintenance.disabled")
     async def maintenance(self, after: StoredFlag) -> None:
         action = "maintenance.enabled" if after.value is True else "maintenance.disabled"
         try:

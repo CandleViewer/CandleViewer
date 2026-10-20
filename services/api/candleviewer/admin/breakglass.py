@@ -27,6 +27,7 @@ from typing import Any, Protocol
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.errors import BreakGlassUnavailable
 from candleviewer.audit.journal import ACTOR  # every record's `actor_label` (R3): no user acts
 from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
@@ -84,6 +85,7 @@ class BreakGlassExit(IntEnum):
     OPERATOR_CANCELLED = 16  # cancelled before a reset began; carried by `RunCancelled`
 
     @property
+    @audit_exempt("read")
     def reason(self) -> str:
         return self.name.lower()
 
@@ -201,10 +203,12 @@ class _Verdict:
     unrecorded: bool = False  # the closing record could not be written
 
     @property
+    @audit_exempt("read")
     def exit(self) -> BreakGlassExit:
         return _X.AUDIT_UNAVAILABLE if self.unrecorded else self.status
 
     @property
+    @audit_exempt("read")
     def record(self) -> tuple[str, AuditOutcome, str | None]:
         """The closing record's action, outcome and reason."""
         if self.status is _X.RESET:
@@ -226,6 +230,7 @@ class _Records:
         self.target: uuid.UUID | None = None
         self.cancelled, self.landed = False, 0
 
+    @audit_exempt("caller_audits")
     async def to_the_end[T](self, call: Coroutine[Any, Any, T], name: str) -> T:
         """`call`'s result once it has ended, even if the run is cancelled meanwhile: a cancel
         that cut a record or the reset's COMMIT short would leave the outcome unknown."""
@@ -240,6 +245,7 @@ class _Records:
             raise Interrupted(name)
         return task.result()
 
+    @audited(ATTEMPT, REFUSED, RESET)
     async def write(
         self, action: str, outcome: AuditOutcome, reason: str | None, state: _State
     ) -> None:
@@ -247,6 +253,7 @@ class _Records:
         await self.to_the_end(self._emit(action, outcome, reason, state), "record")
         self.landed += 1
 
+    @audit_exempt("lifecycle")
     async def close(self) -> int | None:
         """Close with the bounded grace: the count not in `audit_log` yet, or None if the close
         failed or was cancelled (the journal keeps what it has; the cancel is noted)."""
@@ -306,6 +313,7 @@ class BreakGlassFlow:
         self._ports, self._environment = ports, ports.reset.environment
         self._live = self._environment is Environment.LIVE
 
+    @audited(ATTEMPT, REFUSED, RESET)
     async def run(self, owner: str, *, live_flag: bool) -> BreakGlassExit:
         """Reset the MFA of the Owner named `owner` (username or email); `live_flag` is
         `--live`. Returns the exit status; no secret reaches the terminal or the log. A cancel

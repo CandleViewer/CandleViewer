@@ -15,6 +15,8 @@ from datetime import datetime
 from typing import Final, Protocol
 from uuid import UUID
 
+from candleviewer.admin.audited import audit_exempt
+
 #: The system-scope `settings` key of the recorded sub-account tier (`21-database-schema.md` 3.9).
 SUBACCOUNT_TIER_KEY: Final = "accounts.subaccount_tier"
 
@@ -89,6 +91,7 @@ class StorageSnapshot:
     cap_bytes: int
 
     @property
+    @audit_exempt("read")
     def headroom_bytes(self) -> int:
         """`min(cap - used, free)`, never below 0. Zero is exhaustion now: 0 days, everywhere."""
         return max(min(self.cap_bytes - self.used_bytes, self.free_bytes), 0)

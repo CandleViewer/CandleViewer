@@ -21,6 +21,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.metrics import flag_push_latency_seconds
 from candleviewer.admin.flags.resolver import StoredFlag, resolve
@@ -62,6 +63,7 @@ class FlagPush:
     ) -> None:
         self._service, self._sessions, self._clock = service, sessions, clock
 
+    @audit_exempt("caller_audits")
     async def flag_changed(self, key: str, before: StoredFlag | None, after: StoredFlag) -> None:
         """The `FlagWriter` hook: push the committed `after` row, resolved per session, to every
         session that may see the flag; a real maintenance toggle also notifies every session."""
@@ -78,6 +80,7 @@ class FlagPush:
                 _send(session, frame, key)
         flag_push_latency_seconds.observe(self._clock() - start)
 
+    @audit_exempt("caller_audits")
     def notify_maintenance(self, on: bool) -> None:
         """The maintenance `notice` to every session, for a stored transition the controller
         reads (`setFeatureFlag`); a write's own transition is announced by `flag_changed`."""

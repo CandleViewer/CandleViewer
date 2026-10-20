@@ -41,6 +41,7 @@ from uuid import UUID, uuid4
 
 import structlog
 
+from candleviewer.admin.audited import audited
 from candleviewer.admin.backups import limits
 from candleviewer.admin.backups.artefact_port import ArtefactReader, OpenArtefact
 from candleviewer.admin.backups.catalogue import READ_BUDGET_S, BackupCatalogue
@@ -123,6 +124,7 @@ class BackupVerifications:
         self._audit, self._limit, self._freshness, self._now = audit, limit, freshness, now
         self._new_id, self._check_s = new_id, check_s
 
+    @audited("backup.verified")
     async def start(
         self, who: AuditPrincipal, backup_id: UUID, *, write_ahead: WriteAhead
     ) -> UUID | None:
@@ -173,6 +175,7 @@ class BackupVerifications:
                 raise OpsUnavailable("backups: the verification could not start") from None
         return job_id
 
+    @audited("backup.verified")
     async def audit_requested(self, who: AuditPrincipal, backup_id: UUID, job_id: UUID) -> None:
         """Verification `job_id`'s `requested` record, for a `write_ahead`."""
         state: dict[str, object] = {"stage": "requested", "job_id": str(job_id)}

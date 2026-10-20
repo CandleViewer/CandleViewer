@@ -19,6 +19,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.errors import OpsNotWired, OpsUnavailable
 from candleviewer.admin.ops.incidents import decode_cursor, encode_cursor
 from candleviewer.admin.overview.fanout import utc_now
@@ -62,6 +63,7 @@ class BackupCatalogue:
     ) -> None:
         self._store, self._now, self._budget_s = store, now, budget_s
 
+    @audit_exempt("read")
     async def page(
         self,
         *,
@@ -79,6 +81,7 @@ class BackupCatalogue:
         nxt = None if last is None else encode_cursor(binding, (last.started_at, last.id), issued)
         return BackupPage(kept, nxt)
 
+    @audit_exempt("read")
     async def get(self, backup_id: UUID) -> BackupRow | None:
         """The row, a deleted artefact's included; `None` when the catalogue has no such id."""
         return await self._read("get", self._wired().get(backup_id))

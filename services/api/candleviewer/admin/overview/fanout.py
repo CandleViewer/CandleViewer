@@ -26,6 +26,7 @@ from typing import Final, Literal, cast
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.overview.metrics import source_duration_seconds, source_errors_total
 from candleviewer.admin.overview.slices import AdminSlice
 from candleviewer.observability.context import current_request_id
@@ -162,6 +163,7 @@ class SliceFanOut:
         self._cache: dict[AdminSlice, tuple[float, SliceResult[object]]] = {}
         self._inflight: dict[AdminSlice, asyncio.Future[SliceResult[object]]] = {}
 
+    @audit_exempt("read")
     async def read[T](
         self,
         name: AdminSlice,
@@ -205,10 +207,12 @@ class SliceFanOut:
                 del self._inflight[name]
 
     @property
+    @audit_exempt("read")
     def budget_s(self) -> float:
         """The per-source budget; a source's own sub-budgets must stay below it."""
         return self._budget_s
 
+    @audit_exempt("read")
     def invalidate(self, name: AdminSlice) -> None:
         """Drop the cached slice and detach a read already running (it may predate a write)."""
         self._cache.pop(name, None)

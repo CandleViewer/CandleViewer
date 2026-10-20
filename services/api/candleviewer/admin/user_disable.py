@@ -41,6 +41,7 @@ from typing import Any, Final, NoReturn, Protocol
 
 import structlog
 
+from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.errors import (
     LastOwnerError,
     LifecycleAuditUnavailableError,
@@ -163,6 +164,7 @@ class _Tally:  # one step's runs, each bounded and isolated so none stops the ot
     failures: int = 0
     error: str | None = None  # the type only: a message may carry ids
 
+    @audit_exempt("caller_audits")
     async def run[T](self, op: Callable[[], Awaitable[T]]) -> T | None:
         """`op` is called inside the bound and the isolation, so one that raises before it returns
         an awaitable fails this run like any other (a built awaitable would be outside both)."""
@@ -175,6 +177,7 @@ class _Tally:  # one step's runs, each bounded and isolated so none stops the ot
             return None
 
     @property
+    @audit_exempt("read")
     def outcome(self) -> str:
         return "failed" if self.failures else "ok" if self.attempted else "skipped"
 
@@ -184,6 +187,7 @@ class _OnTarget:  # `enforce` names no object: its `rbac.denied` names the targe
     audit: AuditEmitter
     user_id: uuid.UUID
 
+    @audited("rbac.denied")
     async def emit(self, action: str, **kwargs: Any) -> None:
         target = {"object_kind": "user", "object_id": str(self.user_id)}
         await self.audit.emit(action, **kwargs | target)
@@ -266,6 +270,7 @@ class UserDisableService:
         self._deadline_s = deadline_s
         self._cascades: set[asyncio.Task[tuple[str, ...]]] = set()  # tracked: see `drain`
 
+    @audited("users.disable", "users.invite_revoked", "rbac.denied")
     async def disable(
         self,
         user_id: uuid.UUID,
@@ -307,6 +312,7 @@ class UserDisableService:
         task.add_done_callback(self._untrack)
         return DisableResult(change.changed, await asyncio.shield(task))
 
+    @audited("rbac.denied")
     async def authorize(self, user_id: uuid.UUID, *, actor: PrincipalSnapshot) -> None:
         """The guard alone: `users:write`, then a self-target, each refusal audited before any
         read. A route that must put its step-up between the guard and the change (SR-025: the
@@ -321,6 +327,7 @@ class UserDisableService:
             with contextlib.suppress(Exception):  # a log sink must not raise out of a callback
                 _log().error("users.disable.steps_failed", error=type(exc).__name__, exc_info=exc)
 
+    @audit_exempt("lifecycle")
     async def drain(self) -> None:
         """Shutdown: wait for the steps still in flight; each run ends by its deadline (after a
         recovered change's record, which has its own closing bound)."""

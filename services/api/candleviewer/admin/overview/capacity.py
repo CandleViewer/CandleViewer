@@ -25,6 +25,7 @@ from types import MappingProxyType
 from typing import Final, Literal
 from uuid import UUID
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.overview.fanout import (
     Degraded,
     PartFailed,
@@ -176,6 +177,7 @@ class AdminCapacityService:
         self._recorder, self._ingestion, self._rate_limit = recorder, ingestion, rate_limit
         self._subaccounts_port, self._tier = subaccounts, tier
 
+    @audit_exempt("read")
     async def capacity(self) -> CapacitySnapshot:
         read = self._fan.read
         storage, ingestion, rate_budget, subaccounts = await asyncio.gather(
@@ -186,10 +188,12 @@ class AdminCapacityService:
         )
         return CapacitySnapshot(self._now(), storage, ingestion, rate_budget, subaccounts)
 
+    @audit_exempt("read")
     def invalidate_subaccounts(self) -> None:
         """Drop the cached `subaccounts` slice and any read in flight: the tier was just written."""
         self._fan.invalidate(AdminSlice.SUBACCOUNTS)
 
+    @audit_exempt("read")
     async def subaccounts_recorded(
         self, tier: Tier, recorded_at: datetime
     ) -> SliceResult[SubaccountCapacity]:

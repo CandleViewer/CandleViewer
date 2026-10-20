@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final
 
+from candleviewer.admin.audited import audit_exempt
 from candleviewer.admin.overview.fanout import (
     Degraded,
     SliceFanOut,
@@ -93,6 +94,7 @@ class AdminOverviewService:
         self._flag_budget_s, self._positions_budget_s = flag_budget_s, positions_budget_s
         self._counts, self._recorder, self._oms = counts, recorder, oms
 
+    @audit_exempt("read")
     async def overview(self) -> OverviewSnapshot:
         read = self._fan.read
         users, accounts, recorder, storage, trading, incidents = await asyncio.gather(
