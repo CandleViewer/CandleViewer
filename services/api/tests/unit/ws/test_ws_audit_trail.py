@@ -45,6 +45,7 @@ from tests.unit.ws.test_gateway_teardown import _UVICORN_CANCEL, _cancel, _Rig, 
 from tests.unit.ws.test_origin_refusal_audit import SLOW_S, _FailingAudit, _StalledAudit
 
 GRANTED, DENIED, REVOKED = "ws.subscribe.granted", "ws.subscribe.denied", "ws.subscription.revoked"
+REBUILD = "ws.rebuild.refused"
 MGR = uuid.UUID(int=0x2174)
 A, B, C, D = (uuid.UUID(int=n) for n in (0xA, 0xB, 0xC, 0xD))  # C and D are never granted
 PERMS = frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ, Permission.POSITIONS_READ})
@@ -256,7 +257,8 @@ async def test_through_the_real_writer_the_rows_keep_their_session_and_after_sta
     """#415 (E17-R-16): `AuditWriter.build` redacts a `session_id` key in a state (a session id is
     a token to it), so the denied and revoked rows put the socket's session in their `session_id`
     column, as the close row does, and their `after_state` leaves the writer as written: the
-    denial of one refusal, that of two (`count`, `codes` and `refusals` too) and the revocation."""
+    denial of one refusal, that of two (`count`, `codes` and `refusals` too), the revocation and
+    the record of a user's first rebuild refusal (#3476)."""
     sink, sent = _Built(), list[dict[str, Any]]()
     principal = PrincipalSnapshot(MGR, frozenset({"manager"}), PERMS, GRANTS)
     authz = ConnectionAuthz(principal, SubscriptionServices(audit=sink))
@@ -273,7 +275,10 @@ async def test_through_the_real_writer_the_rows_keep_their_session_and_after_sta
     await _sub(authz, sent, _acc("positions", A, B), _acc("orders", C))  # C is never granted
     await _sub(authz, sent, _acc("orders", C), _acc("wallet", C))  # two refusals, none granted
     await registry.grants_changed(MGR)
-    assert [row.action for _, row in sink.rows] == [DENIED, GRANTED, DENIED, REVOKED]
+    authz.services.user_rebuilds.limit = 0  # the next start is refused for the user: its denial,
+    await _sub(authz, sent, _acc("orders", A))  # then the record of the user's first refusal
+    actions = [row.action for _, row in sink.rows]
+    assert actions == [DENIED, GRANTED, DENIED, REVOKED, DENIED, REBUILD]
     for kw, row in [built for built in sink.rows if built[1].action != GRANTED]:
         assert (row.session_id, row.after_state) == (uuid.UUID(ls.SESSION), kw["after_state"])
         assert kw["after_state"]["connection_id"] == authz.connection_id
