@@ -2767,14 +2767,16 @@ CREATE TABLE orderbook_deltas (
   action      SYMBOL CAPACITY 8 CACHE,   -- 'insert' | 'update' | 'delete'
   update_id   LONG,               -- Bybit u
   cross_seq   LONG,               -- Bybit seq
-  epoch_id    LONG                -- increments on every snapshot rebuild
+  epoch_id    LONG,               -- increments on every snapshot rebuild
+  prev_update_id LONG,            -- the update id this delta follows (QuestDB 0006, E26-T03)
+  ts_match    TIMESTAMP           -- Bybit cts, matching-engine time (QuestDB 0006, E26-T03)
 ) TIMESTAMP(ts) PARTITION BY HOUR WAL
   DEDUP UPSERT KEYS(ts, symbol, depth, side, price, update_id);
 ```
 
 `PARTITION BY HOUR` because this is by far the largest table (see §11) — hourly partitions make retention drops and Parquet exports cheap and keep partition scan sizes bounded.
 
-**Planned (E26-T03, one migration).** `prev_update_id LONG` and `ts_match TIMESTAMP` (Bybit `cts`) join `orderbook_deltas`, and `ts_match` joins `orderbook_snapshots`: nullable, additive, recorded forward so replay re-emits them instead of deriving them (24 §13.7). Rows and Parquet partitions recorded before stay readable and read them as NULL (C-2.15). The migration ships together with the exporter's widening of the registered schema (§5.2); without it the first export after the change would fail closed and stall roll-off.
+**Replay columns (E26-T03, QuestDB 0006).** `backend/db/questdb/0006_orderbook_replay_columns.sql` adds `prev_update_id LONG` and `ts_match TIMESTAMP` (Bybit `cts`, µs) to `orderbook_deltas`, and `ts_match` to `orderbook_snapshots` (§4.3): nullable and additive, no DEDUP key change. The recorder writes both from the live `BookDelta` / `BookSnapshot` (`recorder/writer.py`; `ts_match` is an ILP timestamp field), so a replay re-emits them as recorded instead of deriving them (24 §13.7). Rows and Parquet partitions recorded before the migration stay readable and read them as NULL (`None` in the recorded-event payload), and the replay derives the value for those rows (C-2.15). The same change lists both columns in the exporter's allowed additions (§5.2), so the first export after the migration widens the registered schema instead of failing closed and stalling roll-off.
 
 ### 4.3 `orderbook_snapshots`
 
@@ -2793,7 +2795,8 @@ CREATE TABLE orderbook_snapshots (
   bids        STRING,            -- JSON array [[price,size],…] truncated to `depth`
   asks        STRING,
   level_count INT,
-  checksum    LONG               -- CRC32 of the serialized book, validates delta application
+  checksum    LONG,              -- CRC32 of the serialized book, validates delta application
+  ts_match    TIMESTAMP          -- Bybit cts, matching-engine time (QuestDB 0006, E26-T03, §4.2)
 ) TIMESTAMP(ts) PARTITION BY DAY WAL
   DEDUP UPSERT KEYS(ts, symbol, depth, epoch_id);
 ```
@@ -3143,7 +3146,7 @@ cold/
 | File naming    | `part-NNNN.parquet`, monotonically increasing per partition                                        | Compaction rewrites to `part-0000`                                              |
 | Checksums      | SHA-256 of each file recorded in the manifest and in `backups.checksum_sha256` for the archive run | Corruption detection                                                            |
 
-Canonical schemas mirror the QuestDB DDL in §4 column-for-column, with these additions on every file: `_export_run_id STRING`, `_exported_at TIMESTAMP`, `_source STRING` (`'questdb'`/`'postgres'`). The exporter fails closed if a column set drift is detected against the registered schema in `cold/_manifests/schema-registry.json`. **Planned (E26-T03):** an additive change, a strict superset of the registered columns (new nullable columns, nothing removed or retyped) whose added columns are all listed for that dataset in the exporter's allowed-additions table (in code, added by the PR that ships the column's migration, C-5.8), is registered as the dataset's new column set instead; any other difference, including an unlisted added column, still fails closed. Readers of older partitions read the new columns as NULL (`union_by_name`).
+Canonical schemas mirror the QuestDB DDL in §4 column-for-column, with these additions on every file: `_export_run_id STRING`, `_exported_at TIMESTAMP`, `_source STRING` (`'questdb'`/`'postgres'`). The exporter fails closed if a column set drift is detected against the registered schema in `cold/_manifests/schema-registry.json`. **Additive widening (E26-T03).** An additive change, a strict superset of the registered columns (new nullable columns, nothing removed) whose added columns are all listed for that dataset in the exporter's allowed-additions table (`ALLOWED_ADDITIONS` in `services/api/candleviewer/storage/cold/exporter.py`, added by the PR that ships the column's migration, C-5.8), is registered as the dataset's new column set and the export goes on; any other difference, including an unlisted added column, still fails closed. The table declares each column's Arrow type, and every part writes the column with that type, an all-NULL batch included (never Arrow `null`); a listed column that arrives with any other type (a retype) fails closed before the registry changes. Listed today (QuestDB 0006, §4.2): `orderbook_delta`: `prev_update_id` (int64) and `ts_match` (`TIMESTAMP(MICROS, UTC)`); `orderbook_snapshot`: `ts_match`. Such a column is the exception to the non-null rule above: rows recorded before its migration hold NULL. The registry records column names only, so a retype of an already registered column is not caught by this check: within one export the Parquet writer refuses a batch whose types differ from the first, and the compactor refuses parts whose types differ. Readers of older partitions read the new columns as NULL (`union_by_name`), and the compactor (§5.4) merges a part written before a widening with one written after it by giving the older part the listed columns as typed NULLs; parts that differ in any other way still fail the merge.
 
 ### 5.3 Export (hot → cold) job
 
@@ -3396,7 +3399,7 @@ A restore drill into a scratch namespace runs **monthly** and is a PRR gate item
 - Revision id format: `NNNN_<slug>` (`0001_initial`, `0002_add_trade_groups`) so file order matches apply order.
 - Migrations run as `cv_owner`; the app role `cv_app` has no DDL privileges.
 - QuestDB DDL lives in `backend/db/questdb/NNNN_*.sql`, applied by a small idempotent runner keyed on a `_cv_migrations` table inside QuestDB. DuckDB views are recreated from source on every start (they hold no state).
-  - `_cv_migrations` is a WAL table: an `INSERT` is acknowledged once it is committed to the sequencer, but a `SELECT` sees it only after QuestDB's apply job has run. The record is the only idempotency guard (0003/0005 use a plain `ADD COLUMN`: `IF NOT EXISTS` is rejected on the pinned 8.1.1), so before it reads the record set the runner waits (async, bounded 30 s, backoff 20 ms doubling to 250 ms) until `wal_tables()` shows `writerTxn` has reached `sequencerTxn` (#3064). A stale read would re-run the newest file and fail with `column '…' already exists`.
+  - `_cv_migrations` is a WAL table: an `INSERT` is acknowledged once it is committed to the sequencer, but a `SELECT` sees it only after QuestDB's apply job has run. The record is the only idempotency guard (0003, 0005 and 0006 use a plain `ADD COLUMN`: `IF NOT EXISTS` is rejected on the pinned 8.1.1), so before it reads the record set the runner waits (async, bounded 30 s, backoff 20 ms doubling to 250 ms) until `wal_tables()` shows `writerTxn` has reached `sequencerTxn` (#3064). A stale read would re-run the newest file and fail with `column '…' already exists`.
   - A suspended apply fails the wait at once and a stuck one at the bound, both as `StorageWalNotApplied` (`STORAGE_WAL_NOT_APPLIED`, `reason` = `suspended` / `timeout` / `unexpected_shape`), never as a stale read. Operator remedy for `suspended`: `ALTER TABLE _cv_migrations RESUME WAL` (`docs/ops/runbooks/recorder-rolloff.md`).
 
 ### 9.2 Layout
@@ -3690,6 +3693,8 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 | **Total hot**                                  |              |                   |                              | **≈ 13.2 GB/day/symbol** | **≈ 0.87 GB/day/symbol** |
 
 This matches the research estimate of ~0.5–0.75 GB/day/symbol compressed at 200-depth (owner decision #4 note); our figure is slightly higher because we additionally persist `heatmap_cells` and forced snapshots.
+
+The `orderbook_deltas` row size above predates QuestDB 0006 (E26-T03, §4.2): each row recorded since also holds `prev_update_id` and `ts_match`, 16 bytes more on disk (about 3 GB/day more raw at the volume above). The estimate is not re-derived here.
 
 > **Growth measurement status (E07-Q03, 2026-10-01):** the CI harness (`services/api/tests/integration/storage/test_storage_perf_harness.py`, artifact `storage-perf`) replays `packages/fixtures/raw/synthetic_sample.jsonl` for 10 min of fixture time through the real `IlpWriter` into QuestDB 8.1.1 and reads `table_partitions().diskSize`. The first run is **not usable as a growth figure**: deltas were exact multiples of 16 MiB (QuestDB's preallocated column append pages), i.e. allocation, not data (report flag `allocation_quantized`). The table above stays an **unmeasured estimate**; the earlier R0 seeded-proxy figure (1.36 GB/day) is withdrawn. Follow-up on #274: a dedicated container with a small `cairo.writer.data.append.page.size` plus a full 24 h replay of a recorded (not synthetic) capture.
 

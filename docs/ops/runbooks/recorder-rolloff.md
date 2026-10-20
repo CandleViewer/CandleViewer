@@ -42,6 +42,16 @@ fails, the run goes on with the next stream and counts
    (WARNING): the day had no live partition left when the drop came, so no DROP was issued; it
    left QuestDB another way after this run verified its archive (a concurrent drop or retention).
    Check `table_partitions()` and the retention log.
+7. `rolloff_run_failed` with `error=StorageSchemaDrift` (`STORAGE_SCHEMA_DRIFT`,
+   `recorder_rolloff_failures_total{reason="run_failed"}`): a hot table's columns differ from its
+   dataset's registered set (`<CV_PARQUET_ROOT>/_manifests/schema-registry.json`) in a way the
+   exporter does not accept. The run stops at the first export that drifts: that day is not
+   dropped, and the streams after it wait for the next run, which fails the same way until the
+   cause is fixed.
+   A new nullable column listed in the exporter's `ALLOWED_ADDITIONS` is registered on its own
+   (log `cold_export_schema_widened`, `21-database-schema.md` §5.2) and never stops a run; an
+   unlisted, removed or retyped column fails closed. Do not edit the registry by hand: ship the
+   column's migration with its `ALLOWED_ADDITIONS` entry (C-5.8), or revert the column change.
 
 ## Quarantined file
 
