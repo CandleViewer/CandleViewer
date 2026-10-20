@@ -135,3 +135,8 @@ class StorageUsage(BaseModel):
     tiers: tuple[TierUsage, ...]
     symbols: tuple[SymbolUsage, ...]
     generated_at: AwareDatetime
+    cap_bytes: int = Field(gt=0)
+    #: The effective ladder step: 3 whenever the write gate is closed (a refused volume too).
+    level: DiskPressureLevel
+    write_gate: Literal["open", "closed"]
+    write_gate_reason: Literal["disk_halt", "volume_refused"] | None

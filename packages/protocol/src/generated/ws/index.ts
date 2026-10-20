@@ -1231,6 +1231,16 @@ export interface ProfileSymbolKind {
 // Source: cv://ws/v1/recorder.schema.json
 export interface Recorder {
   overall: "healthy" | "degraded" | "warning" | "down";
+  role_restricted?: boolean;
+  policy?: {
+    autostart_delay_s?: number;
+    autostop_grace_s?: number;
+    max_symbols?: number;
+    warn_pct?: number;
+    autostop_pct?: number;
+    halt_pct?: number;
+    autorecord_enabled?: boolean;
+  };
   connections?: {
     endpoint?: string;
     state?: "connecting" | "connected" | "degraded" | "disconnected";
@@ -1243,6 +1253,12 @@ export interface Recorder {
     state: "idle" | "starting" | "recording" | "degraded" | "stopping" | "stopped" | "error";
     reason?: "manual" | "chart_open" | "position_open" | "rule_dependency" | "alert_dependency";
     pinned?: boolean;
+    lingering?: boolean;
+    linger_until_ms?: number | null;
+    /**
+     * Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3).
+     */
+    refusal?: "symbol_cap" | "disk_pressure" | "chart_open" | "position_open" | null;
     lag_ms?: number;
     rows_last_hour?: number;
     /**
@@ -1261,6 +1277,10 @@ export interface Recorder {
   storage?: {
     disk_free_bytes?: number;
     daily_growth_bytes?: number;
+    cap_bytes?: number;
+    level?: 0 | 1 | 2 | 3;
+    write_gate?: "open" | "closed";
+    write_gate_reason?: "disk_halt" | "volume_refused" | null;
     projected_full_at_ms?: number | null;
   };
 }

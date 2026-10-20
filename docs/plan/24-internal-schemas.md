@@ -3240,7 +3240,21 @@ class RecordingState(BaseModel):
     gap_count_24h: int
     error: str | None
     started_at: TsUs | None
+    lingering: bool = False               # B11 `lingering` (stop grace window); `state` is unchanged
+    linger_until: TsUs | None = None      # B11 `linger_until_us`, the deadline; set iff `lingering`
+    refusal: Literal["symbol_cap","disk_pressure","chart_open","position_open"] | None = None
 ```
+
+**Recorder status closed sets** (E16-D01). The server decides `refusal` and the storage `write_gate_reason` that the recorder status contract carries (`23-ws-protocol.md` §15.8); clients never derive them, and readers tolerate a value they do not know (C-6.3).
+
+| Value            | Field               | Raised by                   | Meaning                                                                           |
+| ---------------- | ------------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| `symbol_cap`     | `refusal`           | `RecordingPolicy` (E16-T02) | an auto-start is refused at `CV_RECORDER_MAX_SYMBOLS` and retried every tick      |
+| `disk_pressure`  | `refusal`           | `RecordingPolicy` (E16-T07) | a chart-open start is refused from disk level 2, or on a refused volume           |
+| `chart_open`     | `refusal`           | `RecordingPolicy` (E16-T02) | a stop is refused while a chart of the symbol is open                             |
+| `position_open`  | `refusal`           | `RecordingPolicy` (E16-T02) | a stop is refused while a position is open (INV-B11-a)                            |
+| `disk_halt`      | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed at level 3                                               |
+| `volume_refused` | `write_gate_reason` | `DiskBudget` (E16-T07)      | the write gate is closed because the volume is shared with backend state (SR-096) |
 
 **Auto-record lifecycle.** Opening a chart adds `chart_open` to `reasons` and starts recording within 2 s. Closing the last chart for that symbol removes the reason; if `reasons` becomes empty, recording continues for a `linger_minutes` grace period (default 15) before stopping, so a quick chart close/reopen does not punch a hole in the data. A symbol with an open position **cannot** stop recording while the position is open, regardless of chart state.
 
@@ -4923,3 +4937,7 @@ These are contract-test obligations created by this pass; they belong in the CI 
 - `tp_legs: tuple[TakeProfitLeg, ...]` becomes `tp_ladder: tuple[TakeProfitRung, ...]`: a profile holds relative rungs (`qty_pct`, `r`), and `TakeProfitLeg`'s absolute `price` exists only on a resolved leg (§9.1).
 - `sl_offset_unit` drops `r_multiple` (§9.3.1: the stop defines R) and `tp_offset_unit` pairs with `tp_offset_value`.
 - Decision D11 (E28-X01 §4.7; decided under the Owner's delegation on 2026-10-20 and recorded on #2701): `all_symbols` is explicit, so an empty allow-list allows nothing, and a trading-enabled profile bounds every cap. §9.3 step 1 reads `all_symbols` and matches patterns. US-PROF-003's scenario "Empty list means all" (`11-user-stories.md`) and `AccountProfileInput.allowed_symbols` (`22-api-openapi.yaml`) still read the old rule until E28-T02's contract step changes them (recorded on #906).
+
+### 19.17 2026-10-20 — §13 recorder status fields (E16-D01, #323, #492)
+
+- `RecordingState` gains `lingering`, `linger_until` and `refusal`, which the recorder status contract (`23-ws-protocol.md` §15.8, `22-api-openapi.yaml`) carries as optional fields; §13.1 lists the closed sets of `refusal` and `write_gate_reason`. `StorageUsage` (§13.4.1) gains `cap_bytes`, `level` (a refused volume reports 3), `write_gate` and `write_gate_reason`, read from the same `DiskBudget` sample (`halted`, `recording_refused`). `DiskPressureChanged` (already has level and cap_bytes) and `RecorderSetChanged` are unchanged.

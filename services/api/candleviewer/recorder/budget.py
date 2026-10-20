@@ -451,12 +451,12 @@ class DiskBudget:
         full_at, runway = project_full_at(
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, daily_growth=growth, now_us=now
         )
+        self._ladder.evaluate(  # first: the report names the ladder step of the sample it sizes
+            used=used, cap=cfg.cap_bytes, free=m.free_bytes, total=m.total_bytes, runway_days=runway
+        )
         self._report = self._build_report(m, now, full_at, growth, rates, top, pinned)
         if fresh:  # published with the report it sized, never ahead of it across the awaits
             self._fresh_at = now
-        self._ladder.evaluate(
-            used=used, cap=cfg.cap_bytes, free=m.free_bytes, total=m.total_bytes, runway_days=runway
-        )
         self._publish_metrics(used, m.free_bytes, full_at, rates)
         state = (self._ladder.level, self._ladder.accelerate)
         if state != self._announced:
@@ -479,6 +479,7 @@ class DiskBudget:
             "questdb": self._cfg.hot_days,
             "parquet": self._cfg.retention_days,
         }
+        gated = self.halted
         return StorageUsage(
             disk_total_bytes=m.total_bytes,
             disk_used_bytes=m.total_bytes - m.free_bytes,
@@ -497,6 +498,12 @@ class DiskBudget:
                 for s, b in top
             ),
             generated_at=_utc(now),
+            cap_bytes=self._cfg.cap_bytes,
+            level=DiskPressureLevel.HALT if gated else self._ladder.level,
+            write_gate="closed" if gated else "open",
+            write_gate_reason=(
+                ("volume_refused" if self.recording_refused else "disk_halt") if gated else None
+            ),
         )
 
     def _publish_metrics(

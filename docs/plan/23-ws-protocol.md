@@ -3907,6 +3907,20 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
   "required": ["overall", "symbols"],
   "properties": {
     "overall": { "enum": ["healthy", "degraded", "warning", "down"] },
+    "role_restricted": { "type": "boolean" },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "autostart_delay_s": { "type": "integer", "minimum": 0 },
+        "autostop_grace_s": { "type": "integer", "minimum": 0 },
+        "max_symbols": { "type": "integer", "minimum": 1 },
+        "warn_pct": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "autostop_pct": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "halt_pct": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "autorecord_enabled": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "connections": {
       "type": "array",
       "items": {
@@ -3935,6 +3949,17 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
             "enum": ["manual", "chart_open", "position_open", "rule_dependency", "alert_dependency"]
           },
           "pinned": { "type": "boolean" },
+          "lingering": { "type": "boolean" },
+          "linger_until_ms": {
+            "oneOf": [
+              { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+              { "type": "null" }
+            ]
+          },
+          "refusal": {
+            "enum": ["symbol_cap", "disk_pressure", "chart_open", "position_open", null],
+            "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3)."
+          },
           "lag_ms": { "type": "integer" },
           "rows_last_hour": { "type": "integer" },
           "dropped_messages": {
@@ -3955,6 +3980,10 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
       "properties": {
         "disk_free_bytes": { "type": "integer" },
         "daily_growth_bytes": { "type": "integer" },
+        "cap_bytes": { "type": "integer", "minimum": 1 },
+        "level": { "enum": [0, 1, 2, 3] },
+        "write_gate": { "enum": ["open", "closed"] },
+        "write_gate_reason": { "enum": ["disk_halt", "volume_refused", null] },
         "projected_full_at_ms": {
           "oneOf": [{ "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }, { "type": "null" }]
         }
@@ -3965,6 +3994,24 @@ last-write-wins (§8.2); a delta that only reports health has an empty `balances
   "additionalProperties": false
 }
 ```
+
+**Recording status fields (E16-D01, #323; served by E16-T08, #492).** All are optional, so a frame
+without them is valid (§2.3). A symbol in the stop grace window (B11 `lingering`) keeps its `state`
+and adds `lingering: true` and the `linger_until_ms` deadline (null otherwise); it can already be
+past while the startup warm-up holds stop decisions: show "stopping", never a negative count.
+`refusal` is the server's reason, never derived from `reason`, null when none: `symbol_cap` or
+`disk_pressure` for a start it refuses (an `idle` entry: a refused start has no row; level 2 refuses
+chart-open starts only), `chart_open` or `position_open` for a stop it refuses (a position open
+never stops, INV-B11-a). `storage.level` is the ladder step (0 normal, 1 warn, 2 autostop, 3 halt),
+latched with hysteresis: never derive it from `cap_bytes`. `write_gate: "closed"` means rows of
+symbols without an open position are dropped as gaps while the rest keep writing, so a symbol stays
+`recording`, gated; the level is then 3 and `write_gate_reason` is `disk_halt` or `volume_refused`
+(volume shared with backend state, SR-096). `cap_bytes` is the `CV_DISK_CAP_GB` budget for recorded
+bytes (QuestDB plus Parquet, not the volume's used space). `role_restricted: true` marks a
+role-reduced set (R-I2): a missing symbol is unknown, never "not recording"; it follows role, not
+what was withheld. `policy` is the recorder policy the server reads from its settings, the same
+fields as REST `RecorderPolicySettings`: read-only and sent whole, so a client explains a countdown
+or a refusal with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
 
 ### 15.9 `SystemUpdate`
 

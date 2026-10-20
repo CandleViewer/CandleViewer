@@ -7,12 +7,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.recorder.models import StorageUsage
-from tests.unit.recorder._budget_fakes import GB, FakeMeter, make_budget
+from tests.unit.recorder._budget_fakes import CAP, GB, TOTAL, FakeMeter, make_budget
 
-_SPEC = load_openapi_spec()
+_SPEC: dict[str, Any] = load_openapi_spec()
 _SCHEMA = _SPEC["components"]["schemas"]["StorageUsage"]["properties"]
 _OPERATION = _SPEC["paths"]["/recording/storage"]["get"]
 _EXAMPLE: dict[str, Any] = _OPERATION["responses"]["200"]["content"]["application/json"][
@@ -42,3 +44,27 @@ async def test_disk_budget_report_validates_against_the_schema() -> None:
     api.StorageUsage.model_validate(payload)
     assert set(payload) == set(_SCHEMA)
     assert [t["tier"] for t in payload["tiers"]] == ["questdb", "parquet", "postgres"]
+
+
+@pytest.mark.parametrize(
+    ("free", "refused", "expected"),
+    [
+        (TOTAL // 2, False, (0, "open", None)),
+        (TOTAL // 10, False, (2, "open", None)),
+        (TOTAL * 4 // 100, False, (3, "closed", "disk_halt")),
+        (TOTAL // 2, True, (3, "closed", "volume_refused")),
+        (TOTAL * 4 // 100, True, (3, "closed", "volume_refused")),
+    ],
+    ids=["normal", "autostop", "halt", "refused_volume", "refused_volume_at_halt"],
+)
+async def test_report_names_the_level_gate_and_cap_of_its_own_sample(
+    free: int, refused: bool, expected: tuple[int, str, str | None]
+) -> None:
+    """Halt on the very first sample reports 3 at once; a refused volume does over a ladder at 0."""
+    budget, _, _ = make_budget(FakeMeter(used=300 * GB, free=free))
+    budget.recording_refused = refused
+    await budget.sample_once()
+    report = budget.report()
+    assert report is not None and report.cap_bytes == CAP
+    assert (report.level, report.write_gate, report.write_gate_reason) == expected
+    api.StorageUsage.model_validate(report.model_dump(mode="json"))

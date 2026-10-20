@@ -3790,6 +3790,9 @@ export interface paths {
      * @description Primary data source for the Recorder/System-health screens and the `recorder` WS topic.
      *     `resyncs_last_hour` counts book rebuilds forced by sequence gaps; a non-zero
      *     `dropped_messages` is an incident (chaos-test assertion in 03-testing-strategy.md).
+     *     A symbol also reports `lingering`/`linger_until` and the server-decided `refusal` (a refused
+     *     start is an `idle` entry); `role_restricted: true` marks a role-reduced view (R-I2).
+     *     `policy` is the recorder policy in force, which the server reads from its settings.
      */
     get: operations["getRecordingStatus"];
     put?: never;
@@ -3807,7 +3810,12 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Disk budget — usage per tier, per symbol, growth rate and projection */
+    /**
+     * Disk budget — usage per tier, per symbol, growth rate and projection
+     * @description `level` is the disk-pressure ladder step (0 normal, 1 warn, 2 autostop, 3 halt), latched with
+     *     hysteresis; `write_gate: closed` means rows of symbols without an open position are dropped
+     *     (level 3). The meter divides the `questdb` plus `parquet` `tiers[]` bytes by `cap_bytes`.
+     */
     get: operations["getStorageUsage"];
     put?: never;
     post?: never;
@@ -3830,6 +3838,9 @@ export interface paths {
      *     user added them (`reason: "manual`) or because auto-record triggered on an open chart or"
      *     an open position. Auto-record entries expire when their trigger disappears, unless
      *     pinned.
+     *     A row in the stop grace window is `lingering` (still recording until `linger_until`);
+     *     `refusal` says why a stop is refused now. `role_restricted: true` marks a role-reduced
+     *     list (R-I2): a symbol missing from it is unknown, never "not recording".
      */
     get: operations["listRecordedSymbols"];
     put?: never;
@@ -8120,8 +8131,12 @@ export interface components {
       /** Format: uuid */
       id: string;
       lag_ms?: number;
+      /** Format: date-time */
+      linger_until?: string | null;
+      lingering?: boolean;
       pinned?: boolean;
       reason: components["schemas"]["RecordReason"];
+      refusal?: components["schemas"]["RecordRefusal"];
       retention_days?: number | null;
       /** Format: int64 */
       rows_last_hour?: number;
@@ -8140,6 +8155,16 @@ export interface components {
         daily_bytes_estimate?: number;
         warning?: string | null;
       };
+    };
+    /** @description The recorder policy the server applies, read from its settings (20-architecture.md §7.2: `CV_RECORDER_AUTOSTART_DELAY_S`, `CV_RECORDER_AUTOSTOP_GRACE_S`, `CV_RECORDER_MAX_SYMBOLS`, the `CV_DISK_*_PCT` steps as percentages of `StorageUsage.cap_bytes`, and `CV_RECORDER_AUTORECORD_ENABLED`, which gates chart-open starts only). Read-only and sent whole: a client explains a countdown or a refusal with it and never sends it back. */
+    RecorderPolicySettings: {
+      autorecord_enabled?: boolean;
+      autostart_delay_s?: number;
+      autostop_grace_s?: number;
+      autostop_pct?: number;
+      halt_pct?: number;
+      max_symbols?: number;
+      warn_pct?: number;
     };
     RecordingSession: {
       /** Format: int64 */
@@ -8178,12 +8203,18 @@ export interface components {
       generated_at?: string;
       ingest_rate_msgs_per_sec?: number;
       overall?: components["schemas"]["ComponentState"];
+      policy?: components["schemas"]["RecorderPolicySettings"];
+      role_restricted?: boolean;
       symbols?: {
         /** Format: int64 */
         dropped_messages?: number;
         lag_ms?: number;
         /** Format: date-time */
         last_event_at?: string;
+        /** Format: date-time */
+        linger_until?: string | null;
+        lingering?: boolean;
+        refusal?: components["schemas"]["RecordRefusal"];
         resyncs_last_hour?: number;
         /** Format: int64 */
         rows_last_hour?: number;
@@ -8196,6 +8227,11 @@ export interface components {
     /** @enum {string} */
     RecordReason:
       "manual" | "chart_open" | "position_open" | "rule_dependency" | "alert_dependency";
+    /**
+     * @description Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or omitted when none. **Open-ended for readers:** clients must tolerate values they do not know, so adding one is an additive change (C-6.3).
+     * @enum {string|null}
+     */
+    RecordRefusal: "symbol_cap" | "disk_pressure" | "chart_open" | "position_open" | null;
     RefreshRequest: {
       /** @description Only for clients that cannot use cookies. */
       refresh_token?: string;
@@ -9229,6 +9265,8 @@ export interface components {
     };
     StorageUsage: {
       /** Format: int64 */
+      cap_bytes?: number;
+      /** Format: int64 */
       daily_growth_bytes?: number;
       /** Format: int64 */
       disk_free_bytes?: number;
@@ -9238,6 +9276,8 @@ export interface components {
       disk_used_bytes?: number;
       /** Format: date-time */
       generated_at?: string;
+      /** @enum {integer} */
+      level?: 0 | 1 | 2 | 3;
       /** Format: date-time */
       projected_full_at?: string | null;
       symbols?: {
@@ -9255,6 +9295,10 @@ export interface components {
         /** Format: int64 */
         used_bytes?: number;
       }[];
+      /** @enum {string} */
+      write_gate?: "open" | "closed";
+      /** @enum {string|null} */
+      write_gate_reason?: "disk_halt" | "volume_refused" | null;
     };
     /** @enum {string} */
     StreamKind:
@@ -16395,6 +16439,7 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["Page"] & {
             items?: components["schemas"]["RecordedSymbol"][];
+            role_restricted?: boolean;
           };
         };
       };

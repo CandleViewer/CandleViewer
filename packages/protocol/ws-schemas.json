@@ -2605,14 +2605,65 @@
             "down"
           ]
         },
+        "policy": {
+          "additionalProperties": false,
+          "properties": {
+            "autorecord_enabled": {
+              "type": "boolean"
+            },
+            "autostart_delay_s": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "autostop_grace_s": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "autostop_pct": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "halt_pct": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_symbols": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "warn_pct": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "role_restricted": {
+          "type": "boolean"
+        },
         "storage": {
           "additionalProperties": false,
           "properties": {
+            "cap_bytes": {
+              "minimum": 1,
+              "type": "integer"
+            },
             "daily_growth_bytes": {
               "type": "integer"
             },
             "disk_free_bytes": {
               "type": "integer"
+            },
+            "level": {
+              "enum": [
+                0,
+                1,
+                2,
+                3
+              ]
             },
             "projected_full_at_ms": {
               "oneOf": [
@@ -2622,6 +2673,19 @@
                 {
                   "type": "null"
                 }
+              ]
+            },
+            "write_gate": {
+              "enum": [
+                "open",
+                "closed"
+              ]
+            },
+            "write_gate_reason": {
+              "enum": [
+                "disk_halt",
+                "volume_refused",
+                null
               ]
             }
           },
@@ -2644,6 +2708,19 @@
               "last_event_at_ms": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
               },
+              "linger_until_ms": {
+                "oneOf": [
+                  {
+                    "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lingering": {
+                "type": "boolean"
+              },
               "pinned": {
                 "type": "boolean"
               },
@@ -2654,6 +2731,16 @@
                   "position_open",
                   "rule_dependency",
                   "alert_dependency"
+                ]
+              },
+              "refusal": {
+                "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3).",
+                "enum": [
+                  "symbol_cap",
+                  "disk_pressure",
+                  "chart_open",
+                  "position_open",
+                  null
                 ]
               },
               "resyncs_last_hour": {

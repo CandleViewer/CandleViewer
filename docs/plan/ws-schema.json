@@ -3133,6 +3133,45 @@
         "overall": {
           "enum": ["healthy", "degraded", "warning", "down"]
         },
+        "role_restricted": {
+          "type": "boolean"
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "autostart_delay_s": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "autostop_grace_s": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_symbols": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "warn_pct": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "autostop_pct": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "halt_pct": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "autorecord_enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
         "connections": {
           "type": "array",
           "items": {
@@ -3189,6 +3228,23 @@
               "pinned": {
                 "type": "boolean"
               },
+              "lingering": {
+                "type": "boolean"
+              },
+              "linger_until_ms": {
+                "oneOf": [
+                  {
+                    "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "refusal": {
+                "enum": ["symbol_cap", "disk_pressure", "chart_open", "position_open", null],
+                "description": "Why the server refuses the next start (symbol_cap, disk_pressure) or stop (chart_open, position_open) of this symbol; null or absent when none. Open-ended for readers: adding a value is an additive change (C-6.3)."
+              },
               "lag_ms": {
                 "type": "integer"
               },
@@ -3226,6 +3282,19 @@
             },
             "daily_growth_bytes": {
               "type": "integer"
+            },
+            "cap_bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "level": {
+              "enum": [0, 1, 2, 3]
+            },
+            "write_gate": {
+              "enum": ["open", "closed"]
+            },
+            "write_gate_reason": {
+              "enum": ["disk_halt", "volume_refused", null]
             },
             "projected_full_at_ms": {
               "oneOf": [

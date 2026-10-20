@@ -4319,6 +4319,9 @@ paths:
         user added them (`reason: "manual`) or because auto-record triggered on an open chart or"
         an open position. Auto-record entries expire when their trigger disappears, unless
         pinned.
+        A row in the stop grace window is `lingering` (still recording until `linger_until`);
+        `refusal` says why a stop is refused now. `role_restricted: true` marks a role-reduced
+        list (R-I2): a symbol missing from it is unknown, never "not recording".
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -4343,6 +4346,7 @@ paths:
                   - type: object
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/RecordedSymbol" } }
+                      role_restricted: { type: boolean }
               examples:
                 two:
                   value:
@@ -4365,6 +4369,8 @@ paths:
                         reason: chart_open
                         pinned: false
                         state: recording
+                        lingering: true
+                        linger_until: "2026-09-14T11:00:30Z"
                         streams: [trades, orderbook_delta, tickers]
                         depth: 50
                         started_at: "2026-09-14T09:58:00Z"
@@ -4537,6 +4543,9 @@ paths:
         Primary data source for the Recorder/System-health screens and the `recorder` WS topic.
         `resyncs_last_hour` counts book rebuilds forced by sequence gaps; a non-zero
         `dropped_messages` is an incident (chaos-test assertion in 03-testing-strategy.md).
+        A symbol also reports `lingering`/`linger_until` and the server-decided `refusal` (a refused
+        start is an `idle` entry); `role_restricted: true` marks a role-reduced view (R-I2).
+        `policy` is the recorder policy in force, which the server reads from its settings.
       x-rbac: { permissions: [recording:read], scope: none }
       responses:
         "200":
@@ -4570,15 +4579,26 @@ paths:
                       - {
                           symbol: ETHUSDT,
                           state: recording,
+                          lingering: true,
+                          linger_until: "2026-09-14T11:00:30Z",
                           lag_ms: 31,
                           rows_last_hour: 8122004,
                           dropped_messages: 0,
                           resyncs_last_hour: 0,
                           last_event_at: "2026-09-14T10:31:02.098Z",
                         }
+                      - { symbol: SOLUSDT, state: idle, refusal: symbol_cap }
                     ingest_rate_msgs_per_sec: 18422
                     write_backlog_rows: 0
                     generated_at: "2026-09-14T10:31:02.900Z"
+                    policy:
+                      autostart_delay_s: 60
+                      autostop_grace_s: 1800
+                      max_symbols: 20
+                      warn_pct: 80
+                      autostop_pct: 90
+                      halt_pct: 95
+                      autorecord_enabled: true
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -4587,6 +4607,10 @@ paths:
       tags: [recording]
       operationId: getStorageUsage
       summary: Disk budget — usage per tier, per symbol, growth rate and projection
+      description: |
+        `level` is the disk-pressure ladder step (0 normal, 1 warn, 2 autostop, 3 halt), latched with
+        hysteresis; `write_gate: closed` means rows of symbols without an open position are dropped
+        (level 3). The meter divides the `questdb` plus `parquet` `tiers[]` bytes by `cap_bytes`.
       x-rbac: { permissions: [recording:read], scope: none }
       responses:
         "200":
@@ -4602,6 +4626,10 @@ paths:
                     disk_free_bytes: 2796000000000
                     projected_full_at: "2027-02-11T00:00:00Z"
                     daily_growth_bytes: 1450000000
+                    cap_bytes: 2000000000000
+                    level: 0
+                    write_gate: open
+                    write_gate_reason: null
                     tiers:
                       - { tier: questdb, used_bytes: 640000000000, retention_days: 7 }
                       - { tier: parquet, used_bytes: 548000000000, retention_days: 30 }
@@ -14425,6 +14453,14 @@ components:
         enum: [manual, chart_open, position_open, rule_dependency, alert_dependency],
         x-db-enum: record_reason,
       }
+    RecordRefusal:
+      type: ["string", "null"]
+      enum: [symbol_cap, disk_pressure, chart_open, position_open, null]
+      description: >-
+        Why the server refuses the next start (`symbol_cap`, `disk_pressure`; such a symbol has no
+        row, so only status carries it) or stop (`chart_open`, `position_open`) of a symbol, null or
+        omitted when none. **Open-ended for readers:** clients must tolerate values they do not
+        know, so adding one is an additive change (C-6.3).
     StreamKind:
       {
         type: string,
@@ -15775,6 +15811,9 @@ components:
         rows_last_hour: { type: integer, format: int64 }
         lag_ms: { type: integer }
         added_by: { type: ["string", "null"], format: uuid }
+        lingering: { type: boolean }
+        linger_until: { type: ["string", "null"], format: date-time }
+        refusal: { $ref: "#/components/schemas/RecordRefusal" }
     RecordedSymbolWithEstimate:
       allOf:
         - $ref: "#/components/schemas/RecordedSymbol"
@@ -15837,9 +15876,30 @@ components:
               dropped_messages: { type: integer, format: int64 }
               resyncs_last_hour: { type: integer }
               last_event_at: { type: string, format: date-time }
+              lingering: { type: boolean }
+              linger_until: { type: ["string", "null"], format: date-time }
+              refusal: { $ref: "#/components/schemas/RecordRefusal" }
         ingest_rate_msgs_per_sec: { type: integer }
         write_backlog_rows: { type: integer, format: int64 }
         generated_at: { type: string, format: date-time }
+        role_restricted: { type: boolean }
+        policy: { $ref: "#/components/schemas/RecorderPolicySettings" }
+    RecorderPolicySettings:
+      type: object
+      description: >-
+        The recorder policy the server applies, read from its settings (20-architecture.md §7.2:
+        `CV_RECORDER_AUTOSTART_DELAY_S`, `CV_RECORDER_AUTOSTOP_GRACE_S`, `CV_RECORDER_MAX_SYMBOLS`,
+        the `CV_DISK_*_PCT` steps as percentages of `StorageUsage.cap_bytes`, and
+        `CV_RECORDER_AUTORECORD_ENABLED`, which gates chart-open starts only). Read-only and sent
+        whole: a client explains a countdown or a refusal with it and never sends it back.
+      properties:
+        autostart_delay_s: { type: integer, minimum: 0 }
+        autostop_grace_s: { type: integer, minimum: 0 }
+        max_symbols: { type: integer, minimum: 1 }
+        warn_pct: { type: integer, minimum: 1, maximum: 100 }
+        autostop_pct: { type: integer, minimum: 1, maximum: 100 }
+        halt_pct: { type: integer, minimum: 1, maximum: 100 }
+        autorecord_enabled: { type: boolean }
     StorageUsage:
       type: object
       properties:
@@ -15866,6 +15926,10 @@ components:
               daily_growth_bytes: { type: integer, format: int64 }
               pinned: { type: boolean }
         generated_at: { type: string, format: date-time }
+        cap_bytes: { type: integer, format: int64, minimum: 1 }
+        level: { type: integer, enum: [0, 1, 2, 3] }
+        write_gate: { type: string, enum: [open, closed] }
+        write_gate_reason: { type: ["string", "null"], enum: [disk_halt, volume_refused, null] }
     RetentionPolicyInput:
       type: object
       required: [stream, retain_days, action]
