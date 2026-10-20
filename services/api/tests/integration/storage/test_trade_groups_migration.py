@@ -1120,8 +1120,7 @@ def test_a_definition_environment_is_write_once(pg_dsn: str) -> None:
             )
         assert exc.value.diag.constraint_name == "trg_tgd_write_once"
         c.execute(
-            "UPDATE trade_group_definitions SET name = 'Renamed', deleted_at = now() "
-            "WHERE id = %s",
+            "UPDATE trade_group_definitions SET name = 'Renamed', deleted_at = now() WHERE id = %s",
             (definition,),
         )
         assert (
@@ -1319,8 +1318,7 @@ def test_a_filled_leg_without_a_confirmed_stop_is_in_the_alarm_set(pg_dsn: str) 
     with _conn(_fresh(pg_dsn)) as c:
         leg = _leg(c, _group(c, _user(c)), _account(c))
         c.execute(
-            "UPDATE trade_group_legs SET status = 'filled', filled_qty = target_qty "
-            "WHERE id = %s",
+            "UPDATE trade_group_legs SET status = 'filled', filled_qty = target_qty WHERE id = %s",
             (leg,),
         )
         assert c.execute(_ALARM).fetchall() == [(leg,)]
