@@ -33,8 +33,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       `packages/ui/tokens` at the PR base, plus PR #3925's retune for the light danger tone (E16-D02 §10.4 finding 2)
 - [ ] **Data contract confirmed** — REST `GET /recording/symbols`, `RecordingStatus`, `StorageUsage`; WS `recorder`
       §15.8; the recording-status amendment (`lingering`, `linger_until`, `refusal`, `level`, `write_gate`,
-      `cap_bytes`, `role_restricted`, `policy`). Pending: the amendment PR, and contract items C-2 to C-4
-      (E16-D02 §15)
+      `cap_bytes`, `accelerate_retention`, `role_restricted`, `policy`, the `backpressure_drop` gap reason and the
+      add-reason rule). Pending: the amendment PR (E16-D02 §2, §15)
 - [ ] **Contrast and CVD** — every pair is computed in E16-D02 §10.4 and passes. Pending: registering the pairs this
       row introduces in `tools/contrast/pairs.mjs` (status `.strong` icons and `danger.default` on
       `color.surface.raised`; `text.secondary` on `color.surface.sunken`). That is a security-owned `tools/` change,
