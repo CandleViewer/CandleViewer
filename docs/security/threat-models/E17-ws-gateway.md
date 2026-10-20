@@ -237,7 +237,8 @@ requires `hello` as the first frame and `auth` with a bearer token within 10 s (
 The argument is that the window is **bounded and cheap**:
 
 - **Bounded in time.** `AUTH_TIMEOUT_S = 10` is evaluated by the per-connection watchdog against an injected
-  clock; expiry sends `bye auth_timeout` and closes `4401`.
+  clock; expiry sends `bye auth_timeout` and closes `4401`. From `accept`, 10 s plus the 2 s close flush bound
+  also ends a socket with no `auth_ok` whose writer is still parked on a send, flag on or off (#415).
 - **Bounded in attempts.** Three failed `auth` frames close `4401` with a `warning` audit entry. Three
   non-`auth` frames before `auth_ok` close the socket. Anything other than `hello` first closes `1002`.
 - **Bounded in rate and size, before auth as well as after.** The 30/s and 300/min inbound limiter runs on
@@ -264,7 +265,8 @@ The argument is that the window is **bounded and cheap**:
   fails closed to deny-all first, at 5 s (#2525). The outbound queue's `maxsize`: 1 024 data frames + the close items.
 
 **Residual risk.** An unauthenticated party who can reach the port can occupy up to 64 such slots and a small
-amount of memory per slot for 10 s at a time. Exposure is Tailscale-only with loopback/WSL-internal binds
+amount of memory per slot for 10 s plus the 2 s close flush bound at a time (#415). The port is reachable over
+Tailscale only, with loopback/WSL-internal binds
 (SR-045, SR-047), so "who can reach the port" means **a device already on the tailnet**. This is stated, not
 assumed: if the exposure model changes (N3 in `04-security-program.md` §5.10), WS-S03 and WS-D07 rise to
 High and the cap's size is reviewed first. Rated **Low** since #2155 (Medium before it). The cap bounds what sockets
@@ -427,8 +429,8 @@ exception of `23-ws-protocol.md` §4.4). The `bye` is always enqueued before the
 an undeliverable flush, never the attempt. With the flag on an expiry is observable: the close audit row carries
 `flush_abandoned: true` (with the `trigger` that `23-ws-protocol.md` §4.3 defines, `flush_deadline` only when no
 step 3 trigger fired) and `cv_ws_overflow_total{reason="close_flush_deadline"}` counts it (`23-ws-protocol.md`
-§8.4). Flag off, as built, neither is recorded, and the same 2 s starts when the reader returns, so a peer that is
-silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout); the
+§8.4). Flag off, as built (#415), that counter counts it too and the same 2 s starts when the close is queued, and
+until the first `auth_ok` `auth_timeout_s` plus the 2 s from `accept` bound a socket either way; flag off, the
 `internal_error` close after a writer fault has no flush deadline at all (`23-ws-protocol.md` §10.1).
 
 ## 7. Abuse-case seeds (handed to E17-X02)
@@ -501,6 +503,8 @@ which grows with the users and the minutes, not with the frames.
 A refused private-family `sub` entry is still in its frame's one `ws.subscribe.denied` record (23 §5.2), within
 #3185's per-connection budget (23 §4.3). One that a §9.5 change ends before its `sub_ok` is queued is in that
 change's `ws.subscription.revoked` row instead (23 §5.2, #2896).
+At the 200-subscription cap (#415) a refusal is counted as `subscription_limit`, whatever the topic would have
+got; a private family's row records that reason (accepted residual: classification only).
 
 A `system` frame left out for its kind or its socket (`cv_ws_system_frames_withheld_total`) is a producer or
 session fault, not a user action, so it writes no audit row: one per socket and frame would grow with both.
@@ -747,3 +751,4 @@ scope on the open tickets named above.
 | 2026-10-18 | author (agent; PR for #3476)                      | WS-D16, WS-D03: a rebuild limit per user over its connections (§6, §7 AC-31, §8 record, §9, §10: per process); no rating or count changes    |
 | 2026-10-19 | author (agent; PR for #2896)                      | §8: a topic a §9.5 change ends before its reply is in `ws.subscription.revoked`, not the denial record (23 §5.2); no rating or count changes |
 | 2026-10-19 | author (agent; PR for #415 re-auth guard)         | WS-S04: two independent checks keep a re-auth on its user (the token's, the snapshot's, also at first auth); no rating or count changes      |
+| 2026-10-19 | author (agent; PR for #415 fair scheduling)       | §4, §6: slot bound 10 s plus the 2 s close flush bound (flag off too); §8: cap precedence (classification only); no rating or count changes  |

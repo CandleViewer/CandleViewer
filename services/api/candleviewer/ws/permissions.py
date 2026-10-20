@@ -141,6 +141,9 @@ _ABANDONED_USERS_LOGGED: Final = 10
 #: SR-186 (#2174): the one `ws.subscribe.granted` record of a `sub` frame lists the `ch` and
 #: account ids of at most this many of its new private subscriptions; its `count` holds them all.
 MAX_GRANTS_LISTED: Final = 10
+#: Fair scheduling between connections (C-2.17): `handle_sub` yields to the loop after this many
+#: entries, so one task step of a `sub` reads at most this many, refused or not.
+SUB_ENTRIES_PER_STEP: Final = 10
 #: #3413: an access token's lifetime in seconds, ADR-0020's 12 minutes: `auth.session_service.
 #: ACCESS_TOKEN_TTL`, which the composition root passes (a test pins the equality). A token expires
 #: at its issue instant plus at most this, so `issued_before_disable` can date a token, which the
@@ -373,7 +376,9 @@ class ConnectionAuthz:
     """Authorisation + subscription state of one authenticated WS connection.
 
     Indexes: `by_id` (sub_id -> Subscription) and a reverse index by topic name, so `unsub`,
-    `ctl` and grant re-evaluation resolve in O(affected)."""
+    `ctl` and grant re-evaluation resolve in O(affected). `held_symbols` counts the subscriptions
+    holding each symbol, kept with `by_id` (`_record`, `_drop`), so the 40-symbol test costs
+    O(the entry's symbols) and the 200-subscription test one bounded lookup of its name."""
 
     def __init__(
         self,
@@ -390,6 +395,8 @@ class ConnectionAuthz:
         self.connection_id = connection_id or f"c-{uuid.uuid4().hex[:12]}"
         self.by_id: dict[str, Subscription] = {}
         self._by_topic: dict[str, set[str]] = {}
+        #: symbol -> how many subscriptions in `by_id` hold it; never a zero count (read-only).
+        self.held_symbols: dict[str, int] = {}
         self._ids = itertools.count(1)
         #: SR-193 (§7.5): the connection's rebuild budget, on its clock (`do_auth` passes it),
         #: and its user's, which all of the user's connections share (#3476).
@@ -464,6 +471,17 @@ class ConnectionAuthz:
         """True when `needed` more subscriptions would exceed `MAX_SUBSCRIPTIONS` (C-2.18)."""
         return len(self.by_id) + needed > MAX_SUBSCRIPTIONS
 
+    def _over_capacity(self, ch: Any, replay_session_id: Any) -> bool:
+        """The 200-subscription test of a `sub` entry, bounded and before the entry is read: at the
+        cap, every entry adds a subscription but `system` (§6.2) and one naming a subscription held
+        in the stream its `replay_session_id` names, which `_admit` answers as below the cap."""
+        if ch == SYSTEM_TOPIC or not self.at_capacity():
+            return False
+        return (
+            not isinstance(ch, str)
+            or self.find(ch, parse_replay_session_id(replay_session_id)) is None
+        )
+
     def may_submit_order(self) -> bool:
         return isinstance(decide(self.principal, Permission.ORDERS_WRITE), Allow)
 
@@ -518,6 +536,10 @@ class ConnectionAuthz:
     ) -> tuple[dict[str, Any], Subscription | None]:
         if isinstance(entry, dict) and set(entry) - {"ch", "opts"}:
             raise TopicError("invalid_options", "Unknown topic entry field.", "topics")
+        # The 200 test, bounded and before the entry is read: it holds at `_record` below only
+        # while `_admit` stays synchronous (an await between the two would need a re-check).
+        if self._over_capacity(ch, replay_session_id):
+            raise TopicError("subscription_limit", "200 subscriptions reached.")
         topic = parse_topic(ch, instrument_known=self.services.instrument_known)
         fam = topic.family
         if fam.family == SYSTEM_TOPIC:  # §6.2: implicit and permanent - already attached
@@ -539,8 +561,6 @@ class ConnectionAuthz:
             effective["exchange_account_ids"] = sorted(str(a) for a in accounts)
         if self.find(topic.ch, rs) is not None:
             raise TopicError("duplicate_subscription", "Already subscribed; use ctl to retune.")
-        if self.at_capacity():
-            raise TopicError("subscription_limit", "200 subscriptions reached.")
         sub = Subscription(
             f"s_{next(self._ids):02d}",
             topic,
@@ -554,10 +574,8 @@ class ConnectionAuthz:
         )
         if not snapshot and not self._continuity(sub):
             sub.snapshot_pending = forced = True  # §7.6: continuity unproven -> snap anyway
-        held: set[str] = set()
-        for s in self.by_id.values():
-            held |= s.symbols
-        if len(held | sub.symbols) > MAX_SYMBOLS_PER_CONNECTION:
+        fresh = sum(1 for s in sub.symbols if s not in self.held_symbols)  # O(the entry's)
+        if len(self.held_symbols) + fresh > MAX_SYMBOLS_PER_CONNECTION:
             raise TopicError("subscription_limit", "40 symbols per connection reached.")
         key = topic_key(topic, rs)
         if (scope := self.rebuilds.refusal(key, "sub")) is not None:
@@ -628,6 +646,8 @@ class ConnectionAuthz:
     def _record(self, sub: Subscription) -> None:
         self.by_id[sub.sub_id] = sub
         self._by_topic.setdefault(sub.ch, set()).add(sub.sub_id)
+        for symbol in sub.symbols:  # fixed for its life: `symbols` is a scope option (no `ctl`)
+            self.held_symbols[symbol] = self.held_symbols.get(symbol, 0) + 1
 
     def _consumer(self, sub: Subscription) -> str:
         return f"{self.connection_id}/{sub.sub_id}"
@@ -766,7 +786,10 @@ class ConnectionAuthz:
     def _drop(self, sub: Subscription) -> None:
         """Bookkeeping only: each operation that calls it reports through `_dropped`, once."""
         sub.ended = True
-        self.by_id.pop(sub.sub_id, None)
+        if (held := self.by_id.pop(sub.sub_id, None)) is not None:  # once, if dropped twice
+            for symbol in held.symbols:  # with `by_id`, before a release below can raise
+                if (count := self.held_symbols.pop(symbol, 1) - 1) > 0:  # never a KeyError
+                    self.held_symbols[symbol] = count
         ids = self._by_topic.get(sub.ch)
         if ids is not None:
             ids.discard(sub.sub_id)
@@ -1444,7 +1467,9 @@ async def handle_sub(
     one bad topic never fails the batch (§5.2). A frame whose shape breaks §13.5 is refused
     whole instead: one `err`, no `sub_ok`, nothing subscribed and no strike (#2396, #2399), a
     `topics` array over `MAX_TOPICS_PER_SUB` included (`too_many_topics`, SR-192, #2292). The
-    refusals the audit keeps are written as ONE record for the frame (`_audit_denials`).
+    refusals the audit keeps are written as ONE record for the frame (`_audit_denials`). Fair
+    scheduling between connections: it yields to the loop after every `SUB_ENTRIES_PER_STEP`
+    entries, an await of the frame like any other below.
 
     #2831: the new subscriptions are announced only once the `sub_ok` is queued, so no hub
     flush or resnapshot during the awaits below can send a `snap` ahead of it; the gateway's
@@ -1470,7 +1495,9 @@ async def handle_sub(
     replay = body.get("replay_session_id")
     rs = parse_replay_session_id(replay)  # §5.2 (#3218): on each result but `system`'s, refused too
     try:
-        for entry in body["topics"]:  # at most `MAX_TOPICS_PER_SUB`, by the shape
+        for i, entry in enumerate(body["topics"]):  # at most `MAX_TOPICS_PER_SUB`, by the shape
+            if i and not i % SUB_ENTRIES_PER_STEP:  # fair scheduling: a bounded step (C-2.17)
+                await asyncio.sleep(0)
             ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by shape
             result, sub = authz.admit(entry, snapshot=snapshot, replay_session_id=replay)
             why = authz.refusal_reason  # a refused entity's internal reason; read before any await
