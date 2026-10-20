@@ -127,11 +127,13 @@ class ReplayBooks:
             await engine.request_snapshot()  # a recorded full refresh: rebuild from it
         await engine.on_event(event)
 
-    async def reset(self, reason: str) -> None:
-        """Every LIVE book leaves LIVE (its consumers are told why); a book already waiting for
-        a snapshot keeps waiting, and the deltas it holds die with that snapshot."""
-        for engine in self._engines.values():
-            await engine.invalidate(reason)  # a no-op unless LIVE
+    async def reset(self, reason: str, *, symbol: str | None = None) -> None:
+        """Every LIVE book, or only `symbol`'s, leaves LIVE (its consumers are told why); a book
+        already waiting for a snapshot keeps waiting, and the deltas it holds die with that
+        snapshot."""
+        for (book_symbol, _depth), engine in self._engines.items():
+            if symbol is None or book_symbol == symbol:
+                await engine.invalidate(reason)  # a no-op unless LIVE
 
     async def _open(self, symbol: str, depth: int) -> BookEngine:
         topic = Topic(env=self._env, domain="md", symbol=symbol, detail="book")

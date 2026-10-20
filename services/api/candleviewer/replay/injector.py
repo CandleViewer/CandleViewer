@@ -16,7 +16,12 @@ marker, a stream whose derivations 24 Sec.13.7 does not list, a book row that wa
 a symbol outside the session, an event that does not fit the live model, or a price off the
 session's pinned tick grid (`ReplayPriceOffGrid`, never rounded). The clock then stops with
 `error`, and every event before it stays delivered. A session whose request names a stream the
-replay does not re-emit, or a symbol with no pinned tick size, is refused at construction.
+replay does not re-emit (`check_reemitted`, which the session's `ReplayRun` applies too), or a
+symbol with no pinned tick size, is refused at construction.
+
+**Gaps.** Gap markers never reach the injector, so the run that drives it reports a gap on a
+symbol's book stream through `reset_book`: that symbol's replay book leaves LIVE and waits for
+its next recorded snapshot (24 Sec.13.7, "A derivation never hides a gap").
 
 **Identity.** `event_id` hashes the session id, a generation and the event's ordinal (24 Sec.13.7):
 the ordinal is the event's 0-based position among the session's re-emitted events from
@@ -93,6 +98,18 @@ def replay_event_id(ts_us: int, session_id: UUID, generation: int, ordinal: int)
     return EventId(UUID(int=(value & ~(0x3 << 62)) | (0x2 << 62)))
 
 
+def check_reemitted(request: ReplayRequest) -> None:
+    """Refuse (`ReplayRequestInvalid`) a request that reads a stream the replay does not re-emit
+    yet: 24 Sec.13.7 lists no derivation for it, so a session reading one is refused before
+    anything starts, by the injector and by the session's run alike."""
+    refused = sorted(s.value for s in request.streams if s not in REEMITTED_STREAMS)
+    if refused:
+        raise ReplayRequestInvalid(
+            f"invalid replay request: streams {', '.join(refused)} are not re-emitted yet "
+            "(24 Sec.13.7 lists no derivation for them)"
+        )
+
+
 def price_ticks(price: Decimal, tick_size: Decimal, *, symbol: str, stream: StreamKind) -> int:
     """`price / tick_size`, which must be an exact integer (24 Sec.13.7): `price` is the recorded
     price as the readers convert the stored DOUBLE, `Decimal(repr(x))`. Off the grid, or not a
@@ -127,8 +144,9 @@ class ReplayBookHook(Protocol):
         """Apply one re-emitted `BookSnapshot` or `BookDelta`."""
         ...
 
-    async def reset(self, reason: str) -> None:
-        """The stream jumped (a seek or a loop restart): every replay book leaves LIVE and waits
+    async def reset(self, reason: str, *, symbol: str | None = None) -> None:
+        """The stream jumped (a seek or a loop restart; `symbol=None`), or `symbol`'s book
+        stream has a recording gap: every replay book, or only `symbol`'s, leaves LIVE and waits
         for its next recorded snapshot (or the seek anchor), never for the live feed; nothing it
         held before the jump is applied after it."""
         ...
@@ -150,12 +168,7 @@ class ReplayInjector:
     ) -> None:
         if not isinstance(session_id, UUID):
             raise ReplayConfigInvalid("a replay session id is a UUID")
-        refused = sorted(s.value for s in request.streams if s not in REEMITTED_STREAMS)
-        if refused:
-            raise ReplayRequestInvalid(
-                f"invalid replay request: streams {', '.join(refused)} are not re-emitted yet "
-                "(24 Sec.13.7 lists no derivation for them)"
-            )
+        check_reemitted(request)
         missing = [s for s in request.symbols if s not in tick_sizes]
         if missing:
             raise ReplayTickSizeMissing(symbols=missing)
@@ -233,6 +246,17 @@ class ReplayInjector:
         if ordinal is None:
             raise ReplayLoopStartUnknown()
         await self.restart(ordinal=ordinal)
+
+    async def reset_book(self, symbol: str, *, reason: str = "recording_gap") -> None:
+        """A recording gap on `symbol`'s book stream was reached: its replay books leave LIVE and
+        wait for its next recorded snapshot, so a gap whose update ids still chain is never
+        bridged (24 Sec.13.7). The ordinal, the generation and every other symbol's book are
+        untouched. The run calls it before the next event is re-emitted."""
+        if self._busy:
+            raise ReplayClockStateError("the injector is re-emitting an event")
+        if symbol not in self._ticks:
+            raise ReplayRequestInvalid("a replay book reset names a symbol outside the session")
+        await self._books.reset(reason, symbol=symbol)
 
     # -- re-emission ---------------------------------------------------------------------------
     async def _emit(self, event: RecordedEvent, reason: SnapshotReason) -> None:

@@ -146,6 +146,22 @@ async def test_reset_takes_a_live_book_out_of_live_and_held_deltas_never_outlive
     assert book_of(books) == ([(Decimal("99"), Decimal(1))], [(Decimal("101"), Decimal(1))])
 
 
+async def test_a_symbol_reset_takes_only_that_symbols_book_out_of_live() -> None:
+    """A recording gap on one symbol's book stream (the run's `reset_book`) leaves every other
+    symbol's replay book LIVE."""
+    bus = LoggingBus()
+    books = ReplayBooks(bus, SESSION)
+    await books.apply(rsnap(500, [lvl(990, 1)], [lvl(1010, 1)]))
+    other = rsnap(500, [lvl(990, 1)], [lvl(1010, 1)]).model_copy(update={"symbol": "ETHUSDT"})
+    await books.apply(other)
+    await books.reset("recording_gap", symbol=SYM)
+    eth = books.engine("ETHUSDT", 200)
+    assert phase(books) is BookPhase.SNAPSHOT_PENDING
+    assert eth is not None and eth.phase is BookPhase.LIVE
+    [desync] = [s for s in bus.statuses() if s.state is BookPhase.DESYNCED]
+    assert (desync.symbol, desync.reason) == (SYM, "recording_gap")
+
+
 async def test_the_replay_book_reads_replay_time_never_the_wall_clock() -> None:
     bus = LoggingBus()
     books = ReplayBooks(bus, SESSION)

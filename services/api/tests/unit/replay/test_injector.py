@@ -33,7 +33,12 @@ from candleviewer.replay import (
     ReplayRequestInvalid,
     ReplayTickSizeMissing,
 )
-from candleviewer.replay.injector import ReplayInjector, price_ticks, replay_event_id
+from candleviewer.replay.injector import (
+    ReplayInjector,
+    check_reemitted,
+    price_ticks,
+    replay_event_id,
+)
 from candleviewer.replay_wiring import LIVE_EVENT_MODELS
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.repositories.recorded import (
@@ -65,6 +70,7 @@ class RecordingBooks:
     def __init__(self) -> None:
         self.applied: list[MarketEvent] = []
         self.resets: list[str] = []
+        self.symbol_resets: list[tuple[str, str]] = []
         self.fail: Exception | None = None
         self.gate: asyncio.Event | None = None
 
@@ -75,8 +81,11 @@ class RecordingBooks:
             raise self.fail
         self.applied.append(event)
 
-    async def reset(self, reason: str) -> None:
-        self.resets.append(reason)
+    async def reset(self, reason: str, *, symbol: str | None = None) -> None:
+        if symbol is None:
+            self.resets.append(reason)
+        else:
+            self.symbol_resets.append((symbol, reason))
 
 
 class TopicLog(Bus):
@@ -555,6 +564,42 @@ async def test_a_loop_start_set_behind_playback_is_learnt_only_when_playback_cro
     await r.injector.deliver(SESSION_EVENTS[0])
     await r.injector.deliver(SESSION_EVENTS[1])  # ts 2: the first at or after the loop start
     assert r.injector.loop_start_ordinal == 1
+
+
+async def test_reset_book_resets_only_that_symbols_book_and_keeps_the_ids_running() -> None:
+    r = rig()
+    await r.injector.deliver(SESSION_EVENTS[0])
+    await r.injector.reset_book(SYM)
+    assert (r.books.symbol_resets, r.books.resets) == ([(SYM, "recording_gap")], [])
+    assert (r.injector.generation, r.injector.next_ordinal) == (0, 1)
+    await r.injector.deliver(SESSION_EVENTS[1])
+    [trade_event] = r.published()
+    assert trade_event.event_id == replay_event_id(T0 + 2, SESSION, 0, 1)
+
+
+async def test_reset_book_is_refused_mid_event_and_for_a_symbol_outside_the_session() -> None:
+    r = rig()
+    with pytest.raises(ReplayRequestInvalid, match="outside the session"):
+        await r.injector.reset_book("ETHUSDT")
+    r.books.gate = asyncio.Event()
+    pending = asyncio.ensure_future(r.injector.deliver(update(1, 5)))
+    await asyncio.sleep(0)
+    with pytest.raises(ReplayClockStateError):
+        await r.injector.reset_book(SYM)
+    r.books.gate.set()
+    await pending
+    assert r.books.symbol_resets == []
+
+
+@pytest.mark.parametrize("streams", [(TRADES,), REEMITTED])
+def test_check_reemitted_accepts_the_reemitted_streams(streams: tuple[StreamKind, ...]) -> None:
+    check_reemitted(request(streams=streams))
+
+
+def test_check_reemitted_names_every_stream_it_refuses() -> None:
+    req = request(streams=(StreamKind.TICKERS, TRADES, StreamKind.KLINES))
+    with pytest.raises(ReplayRequestInvalid, match="streams klines, tickers are not re-emitted"):
+        check_reemitted(req)
 
 
 async def test_trades_publish_on_the_sessions_namespace_and_books_go_to_the_hook() -> None:
