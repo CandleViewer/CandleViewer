@@ -1,8 +1,9 @@
-"""Replay read-path metrics (E26-T02), served on the scraped registry.
+"""Replay read-path (E26-T02) and playback (E26-T03) metrics, served on the scraped registry.
 
-The series are defined beside the code that updates them (`replay.merge`, `replay.source`) and
-register on the library's default registry; `export_replay_metrics` serves them on the app's
-scraped registry with the `env` label, as every other module's exported series are.
+The series are defined beside the code that updates them (`replay.merge`, `replay.source`,
+`replay.clock`) and register on the library's default registry; `export_replay_metrics` serves
+them on the app's scraped registry with the `env` label, as every other module's exported series
+are.
 """
 
 from __future__ import annotations
@@ -18,6 +19,10 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "replay_gap_warnings_total",
         "replay_source_read_seconds",
         "replay_readahead_depth",
+        "replay_clock_lag_ms",
+        "replay_events_emitted_total",
+        "replay_backpressure_seconds_total",
+        "replay_achieved_speed_ratio",
     }
 )
 

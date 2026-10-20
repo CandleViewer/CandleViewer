@@ -35,6 +35,13 @@ class ReplayConfigInvalid(ReplayError, ValueError):
     code = "REPLAY_CONFIG_INVALID"
 
 
+class ReplayClockStateError(ReplayError):
+    """A clock control call its current state does not allow: playing at speed 0, a step while
+    playing, playing while a stop is still in progress, or any call after the clock closed."""
+
+    code = "REPLAY_CLOCK_STATE"
+
+
 class ReplayMemoryCeilingExceeded(ReplayError):
     """A read cannot fit the replay's bounds, so the replay stops with this error instead of
     growing memory (ticket E26-T02): the per-session byte budget cannot hold even the smallest
