@@ -3,17 +3,17 @@
   "exemptions": [
     {
       "token": "color.action.primary.active",
-      "reason": "Pressed-state variant of color.action.primary.default, which is already a declared pair; the active state is momentary (pointer/keyboard-down) and never the resting contrast a user reads.",
+      "reason": "Pressed-state fill of the primary button. Its label pairing (color.text.on-action, 4.5:1), its lightness step from the other states and its hue are gated by the label-on-fill matrix (tools/contrast/label-on-fill.json, #3896) rather than this pair registry.",
       "owner": "basiltt"
     },
     {
       "token": "color.action.primary.hover",
-      "reason": "Hover-state variant of color.action.primary.default; not reachable on touch/keyboard-only paths and never the resting state.",
+      "reason": "Hover-state fill of the primary button. Its label pairing (color.text.on-action, 4.5:1), its lightness step from the other states and its hue are gated by the label-on-fill matrix (tools/contrast/label-on-fill.json, #3896) rather than this pair registry.",
       "owner": "basiltt"
     },
     {
       "token": "color.action.secondary.hover",
-      "reason": "Hover-state variant of color.action.secondary.default; transient, not a resting-state contrast pair.",
+      "reason": "Hover-state fill of the secondary button. Its label pairing (color.text.primary, 4.5:1) and its lightness step from the rest fill are gated by the label-on-fill matrix (tools/contrast/label-on-fill.json, #3896) rather than this pair registry.",
       "owner": "basiltt"
     },
     {
@@ -23,7 +23,7 @@
     },
     {
       "token": "color.buy.hover",
-      "reason": "Hover-state variant of color.buy.default, which is declared at the non-text threshold; transient state.",
+      "reason": "Hover-state fill of the buy button. Its label pairing (color.text.inverse, 4.5:1), its lightness step from color.buy.default and its hue are gated by the label-on-fill matrix (tools/contrast/label-on-fill.json, #3896) rather than this pair registry.",
       "owner": "basiltt"
     },
     {
@@ -38,7 +38,7 @@
     },
     {
       "token": "color.sell.hover",
-      "reason": "Hover-state variant of color.sell.default, which is declared at the non-text threshold; transient state.",
+      "reason": "Hover-state fill of the sell button. Its label pairing (color.text.inverse, 4.5:1), its lightness step from color.sell.default and its hue are gated by the label-on-fill matrix (tools/contrast/label-on-fill.json, #3896) rather than this pair registry.",
       "owner": "basiltt"
     },
     {
@@ -83,7 +83,7 @@
     },
     {
       "token": "color.text.inverse",
-      "reason": "Only ever composited onto color.action.primary.default-family fills whose text pairing is already declared via color.text.on-action; color.text.inverse itself is the light-theme equivalent used inside the same filled-button pattern, not a standalone surface pairing.",
+      "reason": "Label and glyph colour on filled controls (the buy and sell buttons among them), never a standalone text-on-surface colour; its pairing with every buy and sell state fill is gated by the label-on-fill matrix (tools/contrast/label-on-fill.json, #3896) rather than this pair registry.",
       "owner": "basiltt"
     },
     {

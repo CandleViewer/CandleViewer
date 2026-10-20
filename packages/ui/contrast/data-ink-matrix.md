@@ -56,6 +56,8 @@ CVD transform: Brettel/Vienot dichromacy projection (`tools/contrast/color-math.
 | dark | compact | color.text.link on color.surface.app | 7.45 | 4.5 | PASS |
 | dark | comfortable | color.text.on-action on color.action.primary.default | 4.76 | 4.5 | PASS |
 | dark | compact | color.text.on-action on color.action.primary.default | 4.76 | 4.5 | PASS |
+| dark | comfortable | color.text.primary on color.action.selected | 12.33 | 4.5 | PASS |
+| dark | compact | color.text.primary on color.action.selected | 12.33 | 4.5 | PASS |
 | dark | comfortable | color.axis.text on color.surface.canvas | 5.96 | 3 | PASS |
 | dark | compact | color.axis.text on color.surface.canvas | 5.96 | 4.5 | PASS |
 | light | comfortable | color.text.primary on color.surface.app | 17.99 | 4.5 | PASS |
@@ -76,6 +78,8 @@ CVD transform: Brettel/Vienot dichromacy projection (`tools/contrast/color-math.
 | light | compact | color.text.link on color.surface.app | 6.75 | 4.5 | PASS |
 | light | comfortable | color.text.on-action on color.action.primary.default | 4.76 | 4.5 | PASS |
 | light | compact | color.text.on-action on color.action.primary.default | 4.76 | 4.5 | PASS |
+| light | comfortable | color.text.primary on color.action.selected | 14.58 | 4.5 | PASS |
+| light | compact | color.text.primary on color.action.selected | 14.58 | 4.5 | PASS |
 | light | comfortable | color.axis.text on color.surface.canvas | 6.36 | 3 | PASS |
 | light | compact | color.axis.text on color.surface.canvas | 6.36 | 4.5 | PASS |
 | high-contrast | comfortable | color.text.primary on color.surface.app | 18.18 | 7 | PASS |
@@ -96,6 +100,8 @@ CVD transform: Brettel/Vienot dichromacy projection (`tools/contrast/color-math.
 | high-contrast | compact | color.text.link on color.surface.app | 7.45 | 7 | PASS |
 | high-contrast | comfortable | color.text.on-action on color.action.primary.default | 7.45 | 7 | PASS |
 | high-contrast | compact | color.text.on-action on color.action.primary.default | 7.45 | 7 | PASS |
+| high-contrast | comfortable | color.text.primary on color.action.selected | 13.96 | 7 | PASS |
+| high-contrast | compact | color.text.primary on color.action.selected | 13.96 | 7 | PASS |
 | high-contrast | comfortable | color.axis.text on color.surface.canvas | 5.96 | 3 | PASS |
 | high-contrast | compact | color.axis.text on color.surface.canvas | 5.96 | 4.5 | PASS |
 
