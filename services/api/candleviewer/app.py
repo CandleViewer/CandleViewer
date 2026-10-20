@@ -42,6 +42,7 @@ from candleviewer.admin.flags.metrics import export_flag_metrics
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.lifecycle_metrics import export_user_lifecycle_metrics
 from candleviewer.admin.ops.health import AdminHealthService
+from candleviewer.admin.ops.incident_metrics import export_incident_metrics
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
@@ -61,6 +62,7 @@ from candleviewer.admin.wiring import (
 from candleviewer.admin_wiring import (
     build_admin_incidents,
     build_admin_read_models,
+    build_open_incidents_gauge,
     build_statechart_inspector,
     build_system_settings,
 )
@@ -1949,6 +1951,14 @@ def create_app(
     )
     app.state.admin_overview_metrics = export_overview_metrics(
         ctx.metrics, env=resolved.environment.value
+    )
+    # E42-T05 (#966 BK-15): `cv_incidents_open`, the count the overview shows, refreshed by the
+    # lifespan and served with no sample while the incidents cannot be read.
+    app.state.incidents_open_gauge = build_open_incidents_gauge(
+        resolved, system_settings=admin_settings
+    )
+    app.state.incidents_open_metrics = export_incident_metrics(
+        ctx.metrics, env=resolved.environment.value, gauge=app.state.incidents_open_gauge
     )
     # E42-T03: list and set the feature flags, on the audited admin router.
     for flags_router in make_feature_flags_routers(

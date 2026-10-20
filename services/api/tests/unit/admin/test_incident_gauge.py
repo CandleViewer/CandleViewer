@@ -123,8 +123,8 @@ async def test_a_failed_read_is_logged_by_its_class_only() -> None:
 async def test_a_read_that_never_returns_is_a_failed_read() -> None:
     gauge = OpenIncidentsGauge(_Source(3, HANG), timeout_s=0.05)
     await gauge.refresh()
-    await gauge.refresh()  # outlasts its bound, so it is a failed read: the 3 is not kept
-    assert _served(gauge) == []
+    await asyncio.wait_for(gauge.refresh(), 2)  # the test's own bound: a read with none fails here
+    assert _served(gauge) == []  # it outlasted its bound, so it failed: the 3 is not kept
 
 
 async def test_a_sample_older_than_three_intervals_is_not_served() -> None:

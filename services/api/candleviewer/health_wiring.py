@@ -143,8 +143,31 @@ def _exchange_word(c: ComponentHealth | None) -> str:
     return "connected" if c.state is ComponentState.HEALTHY else c.state.value
 
 
+#: `23-ws-protocol.md` 15.9, "Health components": `not_deployed` exists only in the REST report. The
+#: frame sends it as the `healthy` it ranks as for `overall`, with this detail.
+_NOT_DEPLOYED_DETAIL = "not deployed"
+
+
+def _component(c: ComponentHealth) -> dict[str, str]:
+    """One `components[]` item of the `health` frame: the component as `GET /admin/health` names
+    it, so a snapshot read over REST and the frames pushed here agree. A name no client knows is
+    passed through, never dropped. `detail` is the Owner's alone (the cut in `ws.system_filter`
+    leaves it out for a Manager or Viewer), and `last_good_at`, the REST report's text, is left out
+    until the component has been healthy once."""
+    undeployed = c.state is ComponentState.NOT_DEPLOYED
+    item = {
+        "name": c.name,
+        "state": ComponentState.HEALTHY.value if undeployed else c.state.value,
+        "detail": _NOT_DEPLOYED_DETAIL if undeployed else c.detail,
+    }
+    if c.last_good_at is not None:
+        item["last_good_at"] = c.last_good_at.isoformat().replace("+00:00", "Z")
+    return item
+
+
 class HealthSystemPublisher:
-    """Publishes the `health`/`exchange` block to `{env}.system` per snapshot."""
+    """Publishes the `health` frame to `{env}.system` per snapshot: the overall word, every
+    component (`components[]`) and the `exchange` block."""
 
     def __init__(self, bus: _Publisher, env: str) -> None:
         self._bus = bus
@@ -155,6 +178,7 @@ class HealthSystemPublisher:
         payload: dict[str, object] = {
             "kind": "health",
             "health": snap.overall.value,
+            "components": [_component(c) for c in snap.components],
             "exchange": {
                 "public_ws": _exchange_word(by_name.get("bybit_public_ws")),
                 "private_ws": _exchange_word(by_name.get("bybit_private_ws")),

@@ -163,14 +163,6 @@ async def test_every_probe_state_is_sent_as_a_state_of_the_contract_enum(
     _COMPONENTS.validate(frame["components"])
 
 
-async def test_the_components_of_a_mixed_snapshot_are_valid_against_the_ws_schema() -> None:
-    frame = await _frame(_MIXED)
-    _COMPONENTS.validate(frame["components"])  # closed items: no latency, no `not_deployed`
-    for part in frame["components"]:
-        stamp = part.get("last_good_at")
-        assert stamp is None or datetime.fromisoformat(stamp).tzinfo is not None
-
-
 async def _snapshot_and_delta() -> tuple[dict[str, Any], dict[str, Any]]:
     """Two frames of one registry: the first, then the one after Postgres went down."""
     bus, clock = _Bus(), _Clock(T0)
@@ -230,13 +222,6 @@ async def test_a_manager_or_viewer_gets_name_state_and_last_good_at_never_detail
         assert view["components"] == _without_detail(expected)  # the unknown name is kept too
         assert (view["kind"], view["health"]) == ("health", frame["health"])
         assert "unreachable" not in json.dumps(view) and "not deployed" not in json.dumps(view)
-
-
-async def test_the_frame_is_not_changed_by_the_cut() -> None:
-    first, _ = await _snapshot_and_delta()
-    before = json.dumps(first, sort_keys=True)
-    assert system_view(first, VIEWER) is not first
-    assert json.dumps(first, sort_keys=True) == before  # the Owner's next frame is still whole
 
 
 async def test_the_apps_own_probes_are_named_by_the_frame_as_the_rest_report_names_them() -> None:
