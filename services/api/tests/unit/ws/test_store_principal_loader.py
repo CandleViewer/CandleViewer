@@ -89,7 +89,7 @@ async def test_manager_principal_has_its_roles_known_permissions_and_grants() ->
         (VIEWLESS, False, False),
     ]
     assert not any(g.can_trade for g in principal.account_grants)  # never loaded: fail closed
-    assert auth_ok_payload(principal)["account_scope"] == sorted([str(GRANTED), str(FROZEN)])
+    assert auth_ok_payload(principal)["account_scope"] == [str(GRANTED)]  # not the frozen one
 
 
 async def test_only_a_viewable_unfrozen_grant_lets_a_manager_see_an_account() -> None:

@@ -310,22 +310,30 @@ set, so a withdrawn account cannot be emitted after the synchronous step. The re
   every subscription that holds its permission (WS-I09). No producer or snapshot adapter for `alerts` or
   `recorder` exists yet; when they land, the `alerts` ones must scope by the connection's user. Recorded as a
   referenced control (WS-I02).
-- _Queued and windowed data (E17-T03, flag on)._ With two outbound lanes (`23-ws-protocol.md` §8.4),
+- _Queued and windowed data (E17-T03, flag on; #415, both flags)._ With two outbound lanes (`23-ws-protocol.md` §8.4),
   `permission_change` and `revoked` ride the priority lane and overtake what the normal lane still holds, and a
   throttle window can hold data coalesced under the old scope. Requirement: in the narrowing step itself, before
   any frame that announces it is queued, the subscription's pre-narrowing window **and** every frame of it still
   queued on the normal lane are discarded; the subscription is then re-pended `reconfigure` and the snapshot is
-  built under the new scope. What the priority lane holds of it (`orders`, `executions`) is queued ahead of
-  `permission_change` in the same lane and needs no drop (dropping it would lose a kept account's last order
-  transition). A subscription dropped outright loses its window and its queued normal-lane frames the same way.
-  Invariant: no row of a removed account is delivered after the first frame that announces the narrowing:
-  `permission_change`, or `auth_ok` on an in-place re-`auth`, which sends none. Built behind the flag, off by
-  default (#412): `test_narrowing_delivers_no_row_of_a_removed_account_after_permission_change` asserts it with
-  a full window and a queued backlog (WS-E02). AC-13 covers a subscription dropped outright; no
-  seed covers the kept-accounts case yet (M1 on `positions` [A, B], O withdraws B: no B row after the announcing
-  frame, and a `reconfigure` snap that carries only A), so E17-T03's own test is its only coverage until E17-X02
-  adds one. With the flag off the single FIFO queue sends everything already queued ahead of `permission_change`,
-  so this window does not exist.
+  built under the new scope. A subscription dropped outright loses its window and its queued normal-lane frames
+  the same way. #415, whatever the flag: a withdrawn grant's queued frames are dropped before `permission_change`
+  is queued, every frame of a subscription the change revokes or narrows, on both lanes, `orders` and `executions`
+  included. A permission that a role change removes is withdrawn the same way, through the same path (C-12.4: one
+  rule at the sending boundary), also when one change removes the grant and the permission together. A kept
+  account's state on a narrowed subscription comes back in its `reconfigure` snapshot, which with the flag off
+  follows only when frames of it were dropped (23 §9.5); a socket that the change evicts gets its `bye` with
+  nothing queued ahead of it. Invariant: no row of a removed account or of a removed permission's topic reaches
+  the client once the change is applied, ahead of the frame that announces it (`permission_change`, or `auth_ok`
+  on an in-place re-`auth`, which sends none) or after it. Residual: a frame whose send has begun is not recalled;
+  `system` frames are cut to the account scope at queue time; frames of a subscription that ended before the
+  change (an `unsub`, a `resync_rate_limited` revoke) precede its `unsub_ok` / `revoked` as before. Tests:
+  E17-T03's `test_narrowing_delivers_no_row_of_a_removed_account_after_permission_change` (flag on, a full window
+  and a queued backlog: WS-E02) and E17-X02's `tests/unit/ws/test_withdrawn_grant_frames.py` (both flags and
+  subprotocols: B's grant removed or frozen, its topics' permission removed, or both at once, or B narrowed out of
+  [A, B] by a grant change or a re-`auth`, while frames of A, B and a public topic or B's snapshots are queued;
+  a replay subscription's frames beside its live twin's; a sampled frame of a kept subscription; two narrowed
+  topics with frames of one; nothing of B queued; a queue at its bound; an eviction whose swap raised, also of
+  a socket already closing). AC-13 covers a subscription dropped outright.
 
 Detection: `ws_revoked_total{reason}`, the `ws.subscription.revoked` and `ws.subscribe.denied` audit actions,
 and a metric for denied cross-account subscribes per identity (§8).
@@ -559,7 +567,7 @@ The registry's eviction of a connection whose `permission_change` or `revoked` s
 send timeout above) is also a `slow_consumer` close: it carries no step 3 trigger (when its own flush expires it
 carries `trigger` `flush_deadline` and `flush_abandoned: true`), and with the flag on, like every `slow_consumer`
 close, it clears both lanes before the `bye`, so nothing queued under the old scope follows an identity change
-(flag off, as built: the `bye` follows the frames already queued, `23-ws-protocol.md` §8.4). A non-droppable frame
+(flag off: sealed, the `bye` sent next; #415, `23-ws-protocol.md` §9.5). A non-droppable frame
 (`orders`, `executions`, control, `system`) that cannot be encoded, or whose emission raises, closes the connection
 `internal_error`: it fails closed and never drops silently, because a client that missed an order transition or a
 `revoked` would act on a false state. That close is audited (`ws.connection.closed`, reason `internal_error`,

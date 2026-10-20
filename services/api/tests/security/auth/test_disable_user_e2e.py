@@ -108,7 +108,7 @@ class _Rows(FakeSessionRepository):
 
     async def session_info(self, user_id: str) -> dict[str, Any]:
         uid = uuid.UUID(user_id)
-        viewed = [str(acct) for acct, view, _ in await self.load_grants(uid) if view]
+        viewed = [str(a) for a, view, frozen in await self.load_grants(uid) if view and not frozen]
         return {"permissions": sorted(await self.load_permissions(uid)), "account_scope": viewed}
 
     async def load_grants(self, owner: uuid.UUID) -> list[tuple[uuid.UUID, bool, bool]]:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 
 import pytest
 from hypothesis import event, given, settings
@@ -20,7 +21,8 @@ from candleviewer.observability.redaction import redact_text
 #: `_VALUE_PATTERN` as it was before #2689: the same alternatives, with the backtracking `_JWT_RE`.
 _REFERENCE = re.compile(
     f"(?P<jwt>{redaction._JWT_RE})|(?P<apikey>{redaction._APIKEY_RE})"
-    f"|(?P<invite>{redaction._INVITE_SHAPE_RE})|(?P<totp>{redaction._TOTP_RE})"
+    f"|(?P<invite>{redaction._INVITE_SHAPE_RE})|(?P<refresh>{redaction._REFRESH_SHAPE_RE})"
+    f"|(?P<totp>{redaction._TOTP_RE})|(?P<download>{redaction._DOWNLOAD_PATH_RE})"
 )
 #: Non-ASCII word characters and digits: separators for the JWT segments (ASCII classes), word
 #: characters for the `\b` and `\d` of the API-key and TOTP alternatives.
@@ -41,20 +43,43 @@ _AROUND = st.text(alphabet=_SEGMENT + ". =" + _UNICODE, max_size=6)
 _JWT_IN_TEXT = st.tuples(_AROUND, st.from_regex(redaction._JWT_RE, fullmatch=True), _AROUND)
 #: Alphanumeric runs of API-key and invite-token length (18-36 and 43) in random context.
 _KEY_IN_TEXT = st.tuples(_AROUND, st.text(alphabet="aZ09", min_size=16, max_size=45), _AROUND)
+#: URL-safe, lowercase hex and snake_case runs about the token lengths in random context (#415).
+_LONG_RUN = st.one_of(
+    st.text(alphabet=_SEGMENT, min_size=63, max_size=65),
+    st.text("0a9f", min_size=63, max_size=65),
+    st.text("a0_", min_size=41, max_size=65),
+)
+_LONG_IN_TEXT = st.tuples(_AROUND, _LONG_RUN, _AROUND)
 #: Free text over the characters the alternatives tell apart, runs, and embedded secret shapes.
 _TEXT = st.one_of(
     st.text(alphabet=_SEGMENT + ". 1234567" + _UNICODE, max_size=200),
     _RUNS,
     _JWT_IN_TEXT.map("".join),
     _KEY_IN_TEXT.map("".join),
+    _LONG_IN_TEXT.map("".join),
 )
 _CAP = redaction._MAX_SCAN_LEN
-#: Inputs at the scan cap that made the old JWT alternative backtrack from every offset.
+#: Inputs at the scan cap that made the old JWT alternative backtrack from every offset, and runs
+#: that the token alternatives read to their bounds and reject (#415).
 _PATHOLOGICAL = [
     pytest.param("k" * _CAP, id="letter-run"),
     pytest.param("_-" * (_CAP // 2), id="underscore-dash-run"),
     pytest.param(("aZ09" * _CAP)[:_CAP], id="alnum-run"),
     pytest.param("x" * 12 + "." + "y" * (_CAP - 13), id="one-dot-then-run"),
+    pytest.param(("0123456789abcdef" * 4 + " ") * (_CAP // 65), id="hex-digest-runs"),
+    pytest.param((("aZ09_-" * 11)[:65] + " ") * (_CAP // 66), id="url-safe-65-runs"),
+    pytest.param(("snake_case_" * _CAP)[:_CAP], id="snake-case-run"),
+    pytest.param((("ab_" * 15)[:44] + " ") * (_CAP // 45), id="snake-case-runs"),
+]
+#: A long traceback with a backup download path on each line, and texts at the cap whose backup id
+#: reads on: prefixes with no `/download/`, prefixes nested before one path, and an id with no `/`
+#: after it (#415).
+_PATH = f"/admin/backups/{'0' * 8}/download/{'aZ09_-' * 7}a"
+_DOWNLOAD_HEAVY = [
+    pytest.param(f'  File "{_PATH}/app.py", line 1\n' * 3000, id="a-path-per-line"),
+    pytest.param("/admin/backups/" * (_CAP // 15), id="prefixes"),
+    pytest.param("/admin/backups/a" * (_CAP // 16) + "/download/k", id="nested-prefixes"),
+    pytest.param("/admin/backups/" + "k " * (_CAP // 2), id="id-to-the-end"),
 ]
 
 _Found = tuple[str | None, tuple[int, int]] | None
@@ -82,6 +107,7 @@ def test_redaction_scan_finds_the_same_match_as_the_backtracking_pattern(text: s
         "x" * 30 + "." + "y" * 9 + "." + "z" * 30,  # middle segment one character short
         "token=" + "q" * 15 + "." + "r" * 15 + "." + "s" * 15 + "!",
         *_PATHOLOGICAL,
+        *_DOWNLOAD_HEAVY,
     ],
 )
 def test_redaction_scan_matches_the_backtracking_pattern_on_known_shapes(text: str) -> None:
@@ -114,3 +140,35 @@ def test_perf_redact_text_scans_a_capped_pathological_string_within_budget(text:
         redact_text(text)
         best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
     assert best_ms < 2.0, f"{best_ms:.3f} ms (about 10 ms before #2689)"
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize(
+    "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
+)
+def test_perf_a_5_mb_run_is_cut_within_budget(redact: Callable[[str], str]) -> None:
+    text = "k" * 5_000_000  # one run: the cut reads the character at its end, not the run (#415)
+    best_ms = float("inf")
+    for _ in range(5):
+        start = time.perf_counter()
+        out = redact(text)
+        best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
+    assert out == redaction._TRUNCATED  # the run is dropped whole
+    assert best_ms < 1.0, f"{best_ms:.3f} ms (the whole run was read: about 30 ms)"
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("text", _DOWNLOAD_HEAVY)
+@pytest.mark.parametrize(
+    "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
+)
+def test_perf_backup_download_paths_are_redacted_within_budget(
+    redact: Callable[[str], str], text: str
+) -> None:
+    best_ms = float("inf")
+    for _ in range(5):
+        start = time.perf_counter()
+        out = redact(text)
+        best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
+    assert re.search(redaction._DOWNLOAD_PATH_RE, out) is None
+    assert best_ms < 2.0, f"{best_ms:.3f} ms (each `/admin/backups/` is read once)"

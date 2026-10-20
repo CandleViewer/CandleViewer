@@ -34,7 +34,10 @@ _UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 #: §7.5 (#3218): a replay session id, the §13 `$defs/uuid` form in either letter case. No other
 #: spelling (`urn:uuid:`, braces, no or extra hyphens, non-ASCII digits) is one, though
 #: `uuid.UUID` reads them; ASCII ranges only, matched whole (`fullmatch`).
+#: The ids of the `uuids` options (`exchange_account_ids`, `rule_ids`) are read the same way (#415).
 _SESSION_RE: Final = re.compile(r"[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+#: §6.1 (22 `PaneIntervalCode`: one spelling per value): a whole number has no leading zeros.
+_WHOLE_RE: Final = re.compile(r"0|[1-9][0-9]*")
 _DECIMAL_RE: Final = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 #: Accepted characters of a bars/footprint `param`; dots are illegal (§6.1, use a colon).
 _PARAM_RE: Final = re.compile(r"^[A-Za-z0-9:]{1,24}$")
@@ -133,11 +136,7 @@ def _items(o: Opt, v: Any, item: Callable[[Any], bool]) -> bool:
 
 
 def _uuid_ok(v: Any) -> bool:
-    try:
-        uuid.UUID(str(v))
-    except ValueError:
-        return False
-    return isinstance(v, str)
+    return isinstance(v, str) and _SESSION_RE.fullmatch(v) is not None
 
 
 #: §13 `common.schema.json#/$defs/indicatorInstance`: an `IndicatorDescriptor` id (22) and at most
@@ -636,6 +635,11 @@ def _entity(seg: str, instrument_known: Callable[[str], bool] | None) -> tuple[s
     return name, ident
 
 
+def _spelled_once(part: str) -> bool:
+    """A `:` part of a `param` (§6.1): not empty, and a whole number has no leading zero."""
+    return bool(part) and (not part.isdecimal() or _WHOLE_RE.fullmatch(part) is not None)
+
+
 def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | None) -> Any:
     if kind == "symbol":
         if not SYMBOL_RE.fullmatch(seg) or (
@@ -644,7 +648,7 @@ def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | 
             raise TopicError("unsupported_symbol", "Not a supported USDT linear perpetual.")
         return seg
     if kind == "depth":
-        if not seg.isdigit() or int(seg) not in DEPTHS:
+        if not _WHOLE_RE.fullmatch(seg) or int(seg) not in DEPTHS:
             raise TopicError("invalid_topic_format", "Book depth must be 1, 50, 200 or 500.")
         return int(seg)
     if kind == "bar_type":
@@ -652,7 +656,7 @@ def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | 
             raise TopicError("invalid_topic_format", "Unknown bar type.")
         return seg
     if kind == "param":
-        if not _PARAM_RE.fullmatch(seg):
+        if not _PARAM_RE.fullmatch(seg) or not all(map(_spelled_once, seg.split(":"))):
             raise TopicError("invalid_topic_format", "Bar param is malformed.")
         return seg
     if kind == "state":

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from candleviewer.observability.redaction import _JWT_RE, _REDACT_KEYS
+from candleviewer.observability.redaction import _JWT_RE, _KEY_NAMES, _NO_VALUE, _NOT_DOTTED
 
 
 @dataclass(frozen=True)
@@ -22,11 +22,13 @@ class Finding:
     rule: str
 
 
-_KEY_NAMES = "|".join(sorted(re.escape(k) for k in _REDACT_KEYS))
-#: `api_secret=ABC...` / `"password": "ABC..."`; redacted/omitted placeholders are fine.
-_LABELLED = re.compile(
-    rf"""(?ix)["']?\b(?:{_KEY_NAMES})["']?\s*[:=]\s*["']?(?!\[redacted|<omitted>|\*\*\*|null\b|none\b)[^\s"',}}\]]{{6,}}"""
-)
+#: `api_secret=ABC...` / `"password": "ABC..."`, each key name with `-` and `_` alike; what
+#: the redaction writes for a value (a marker, the end of a cut text) or a placeholder is fine.
+#: The log buffer writes a line break as `\n` (#415): a label after one, or with one before its
+#: value, is read as on one line, so a label and its value on two lines are found. The space after
+#: the separator is possessive: an escaped `\t` given back would read as a value.
+_LABELLED = re.compile(rf"""(?ix)["']?(?:\b|(?<=\\[tnr])){_NOT_DOTTED}(?:{_KEY_NAMES})["']?
+    \s*[:=](?:\s|\\[tnr])*+["']?{_NO_VALUE}[^\s"',}}\]]{{6,}}""")
 _RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ("private-key-block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("aws-access-key-id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),

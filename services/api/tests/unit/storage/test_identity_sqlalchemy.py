@@ -77,6 +77,27 @@ async def test_session_info_lists_permissions_and_scope() -> None:
     assert info == {"permissions": ["orders:submit", "users:write"], "account_scope": ["acc-1"]}
 
 
+async def test_session_scope_reads_only_the_callers_view_grants_that_are_not_frozen() -> None:
+    rel = _Rel([[], []])
+    await _provider(rel).session_info("u1")
+    sql, params = rel.calls[1]  # the permissions are read first, then the account scope
+    assert params == {"id": "u1"}, "the only bind is the caller; no client-supplied scope"
+    # The one scope rule (C-12.4): the grants that currently permit access, decided in the
+    # statement and never filtered after the fetch, so a frozen grant is not listed.
+    assert "WHERE user_id = CAST(:id AS uuid) AND can_view AND NOT frozen" in " ".join(sql.split())
+
+
+async def test_session_scope_and_me_accounts_use_the_same_grant_predicate() -> None:
+    rel = _Rel([[], [], []])
+    provider = _provider(rel)
+    await provider.session_info("u1")
+    await provider.accounts("u1")
+    scope_sql = " ".join(rel.calls[1][0].split())
+    accounts_sql = " ".join(rel.calls[2][0].split()).replace("uaa.", "")
+    # `Me.accounts` is the model: the two copies of the grant predicate cannot drift apart.
+    assert "can_view AND NOT frozen" in scope_sql and "can_view AND NOT frozen" in accounts_sql
+
+
 def _account_row(account_id: str, mode: str, label: str = "main") -> Any:
     return SimpleNamespace(
         _mapping={

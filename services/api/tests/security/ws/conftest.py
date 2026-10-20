@@ -8,6 +8,7 @@ from collections.abc import Iterator
 
 import pytest
 from structlog.contextvars import merge_contextvars
+from structlog.processors import format_exc_info
 from structlog.testing import capture_logs
 
 from tests.contract.ws._harness import OFFERS, reset_wire, use_wire
@@ -31,10 +32,10 @@ def world(
     wire: str, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
 ) -> Iterator[RawWorld]:
     """A `RawWorld` with its client running and the sinks a token must stay out of captured: the
-    gateway's log events as production's chain builds them (bound context merged in), stdlib
-    logging, stdout and stderr."""
+    gateway's log events as production's chain builds them (bound context merged in, an exception
+    rendered into the event as `format_exc_info` does), stdlib logging, stdout and stderr."""
     caplog.set_level(logging.DEBUG)
     w = RawWorld(caplog, capsys)
-    with capture_logs(processors=[merge_contextvars]) as events, w.client:
+    with capture_logs(processors=[merge_contextvars, format_exc_info]) as events, w.client:
         w.events = events
         yield w

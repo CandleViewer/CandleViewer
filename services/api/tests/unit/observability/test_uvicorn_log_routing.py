@@ -29,6 +29,7 @@ from typing import Any, NamedTuple
 
 import pytest
 import uvicorn
+from websockets.frames import Frame, Opcode
 
 from candleviewer.observability.logging import UpgradeLineFilter, configure_logging, reset_logging
 from candleviewer.observability.metrics import Metrics
@@ -209,10 +210,11 @@ def test_uvicorn_lines_reach_the_redacted_json_log_and_nowhere_else(config_first
         ("info", '127.0.0.1:50000 - "GET <redacted> HTTP/1.1" 200'),
         ("info", '127.0.0.1:50000 - "GET /health/live HTTP/1.1" 200'),
     ]
-    # Today a record's traceback is not rendered at all: `RedactionFilter` moves `exc_info` to
-    # `exc_text`, which the JSON formatter drops. Pinning the absence tells "dropped" from
-    # "redacted"; rendering it redacted is a follow-up that changes this assertion on purpose.
-    assert "exception" not in got.lines()[0]
+    # A record's traceback is rendered, then redacted where each value stands (#415): its frames
+    # stay, and the value-shaped text of the exception is a marker.
+    exception = got.lines()[0]["exception"]
+    assert exception.startswith("Traceback (most recent call last):\n")
+    assert exception.endswith("RuntimeError: failed with [redacted:key-shape]")
 
 
 @pytest.mark.parametrize("name", _UVICORN_LOGGERS)
@@ -302,13 +304,17 @@ _TARGETS = {
 }
 
 
+#: A cookie that an accepted upgrade sets in its response: only the header's name can hide it.
+_SET_COOKIE = [(b"set-cookie", f"access_token=%22{VALUE}%22".encode())]
+
+
 async def _bare_app(scope: Any, receive: Any, send: Any) -> None:
-    """Accepts a WebSocket upgrade whose target names `/ws`, however it is spelled, and refuses
-    every other."""
+    """Accepts a WebSocket upgrade whose target names `/ws`, however it is spelled, with a cookie
+    in the response, and refuses every other."""
     if scope["type"] == "websocket":
         await receive()  # websocket.connect
         if b"/ws" in scope["raw_path"]:
-            await send({"type": "websocket.accept"})
+            await send({"type": "websocket.accept", "headers": _SET_COOKIE})
             await receive()  # the client's close
         else:
             await send({"type": "websocket.close"})
@@ -376,9 +382,10 @@ async def _upgrade_to(*targets: str, app: Callable[..., Awaitable[None]] = _bare
 def test_websocket_upgrade_lines_name_the_path_and_not_the_query(
     target: str, level: str, request_lines: list[str]
 ) -> None:
-    """The accepted and refused lines (INFO) and the request and cookie lines (DEBUG) of an upgrade
-    with a query string, as a real server writes them and the app's log config formats them: the
-    path alone and the cookie's marker, on stdout and in the support bundle's buffer."""
+    """The accepted and refused lines (INFO) and the request, cookie and set-cookie lines (DEBUG)
+    of an upgrade with a query string, as a real server writes them and the app's log config
+    formats them: the path alone and the cookies' markers, on stdout and in the support bundle's
+    buffer."""
     targets = [target.format(p=path, v=VALUE) for path in ("/ws", "/other")]
     got = _replay_boot(lambda: asyncio.run(_upgrade_to(*targets)), level=level, ring=True)
 
@@ -388,6 +395,8 @@ def test_websocket_upgrade_lines_name_the_path_and_not_the_query(
     upgrades = [m[1] for line in lines if (m := re.match(r'\S+ - ("WebSocket .*)', line))]
     assert upgrades == ['"WebSocket /ws" [accepted]', '"WebSocket /other" 403']
     assert [line for line in lines if line.startswith(("< GET", "< cookie"))] == request_lines
+    set_cookie = ["> set-cookie: <redacted>"] if level == "debug" else []  # the response header
+    assert [line for line in lines if line.startswith("> set-cookie")] == set_cookie
 
 
 @pytest.mark.parametrize("level", ["info", "debug"])
@@ -405,6 +414,26 @@ def test_websocket_denial_response_lines_name_the_path_and_not_the_query(level: 
     lines = [event for _, event in got.events()]
     upgrades = [m[1] for line in lines if (m := re.match(r'\S+ - ("WebSocket .*)', line))]
     assert upgrades == ['"WebSocket /ws" 404', '"WebSocket /other" 404']
+
+
+def test_a_websocket_frame_line_reaches_the_buffer_redacted_as_on_stdout() -> None:
+    """websockets logs a frame at DEBUG as `< %s` with the frame itself (`protocol.py`), so its text
+    is rendered after the filters ran. The buffer redacts the rendered line as stdout's chain
+    does (#415): here an auth frame whose elided preview ends with 20 characters of its token."""
+    auth = {"t": "auth", "id": "c-2", "p": {"access_token": VALUE}}
+    frame = Frame(Opcode.TEXT, json.dumps(auth, separators=(",", ":")).encode())
+    got = _replay_boot(
+        lambda: logging.getLogger("uvicorn.error").debug("< %s", frame), level="debug", ring=True
+    )
+
+    shown = str(frame)
+    assert VALUE[-20:] in shown  # the preview shows 20 characters of the token
+    assert VALUE[-20:] not in "\n".join((got.out, *got.ring))
+    start = shown.index('"access_token":"') + len('"access_token":"')
+    end = shown.index('"', start)
+    line = f"< {shown[:start]}<redacted>{shown[end:]}"  # the label stays; its value is a marker
+    assert got.events() == [("debug", line)]
+    assert got.ring_lines() == [f"DEBUG uvicorn.error {line}"]
 
 
 def _upgrade_filters() -> list[UpgradeLineFilter]:

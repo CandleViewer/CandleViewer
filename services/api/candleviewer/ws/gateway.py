@@ -185,11 +185,12 @@ from candleviewer.ws.metrics import (
     cv_ws_connect_rate_limited_total,
     cv_ws_connections_in_use,
     cv_ws_handshake_seconds,
+    cv_ws_overflow_total,
     cv_ws_system_frames_withheld_total,
     frame_bytes,
 )
 from candleviewer.ws.origin_audit import OriginRefusalAudit
-from candleviewer.ws.outbound import Spanned
+from candleviewer.ws.outbound import Key, Spanned, data_key
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -843,14 +844,49 @@ class _Connection:
         del code  # carried inside the bye frame
         self.close_with(str(frame["p"]["reason"]), bye=frame, seal=True)
 
-    async def evict(self) -> None:
-        """Registry hook: sending a `permission_change` or `revoked` stalled or failed, so the
-        connection closes `slow_consumer`. With the flag on its `bye` is the step 3 one
-        (`retry_after_ms` 3 000 and the generic message, `23-ws-protocol.md` §8.4)."""
+    def purge(self, subs: list[Subscription]) -> set[Key]:
+        """`ConnectionAuthz.on_purge` (#415, §9.5): the queued frames of what a change revokes, a
+        grant or a permission withdrawn alike, are dropped before `permission_change` is queued,
+        whatever the flag. Every `d` and `snap` of `subs` goes, from both lanes with the flag on;
+        every other item keeps its place. Counted per frame as
+        `cv_ws_overflow_total{reason="withdrawn"}`. Returns the keys whose frames went."""
+        keys = {(sub.ch, sub.replay_session_id) for sub in subs}
+        gone: list[Key] = []
         if self.pipeline is not None:
+            gone = self.pipeline.queue.purge(keys)
+        else:  # the queue's own order, as `_seal` keeps it; a sampled frame is `(received, frame)`
+            for item in [self.outbound.get_nowait() for _ in range(self.outbound.qsize())]:
+                frame = item[1] if type(item) is tuple else item
+                key = data_key(frame) if isinstance(frame, dict) else None
+                if key is not None and key in keys:
+                    gone.append(key)
+                else:
+                    self.outbound.put_nowait(item)
+        if gone:
+            cv_ws_overflow_total.labels(reason="withdrawn").inc(len(gone))
+        return set(gone)
+
+    async def evict(self) -> None:
+        """Registry hook: sending a `permission_change` or `revoked` stalled or failed, or the
+        swap or the settle around them raised, so the connection closes `slow_consumer` with
+        nothing still queued ahead of its `bye` (#415, §9.5), whatever the flag: sealed with the
+        flag off; with it on, the step 3 `bye`, which clears both lanes (`retry_after_ms` 3 000 and
+        the generic message, `23-ws-protocol.md` §8.4). A close already under way stays the
+        connection's one close (§8.6): it is sealed (with the flag on, the priority lane goes too),
+        and counted and logged as no second close."""
+        if self.closing and not self.sealed:
+            dropped = self._seal()
+            _log().info(
+                "ws eviction sealed",
+                connection_id=self.connection_id,
+                dropped=dropped,
+                user_id=str(self.user_id) if self.user_id else None,
+                session_id=self.session_id,
+            )
+        elif self.pipeline is not None:
             self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
-            return
-        self.close_with("slow_consumer")
+        else:
+            self.close_with("slow_consumer", seal=True)
 
     # -- inbound ------------------------------------------------------------
 
@@ -1414,7 +1450,9 @@ def make_ws_router(
                 svc.sequencing.register(conn.authz, sink)
             if conn.pipeline is not None:  # E17-T03: the §8.4 ladder, from the first auth_ok
                 conn.pipeline.attach(conn.authz, conn.emitter, conn.push_system)
-                conn.authz.on_settle = lambda subs: settle(conn, subs)
+            # #415 (§9.5), whatever the flag: a change's purge, and the snapshots that follow it
+            conn.authz.on_purge = conn.purge
+            conn.authz.on_settle = lambda subs: settle(conn, subs)
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
         principal = conn.authz.principal  # the applied snapshot: the newest, never the stale read
         view = kill_switch_view(killed(), principal)  # SR-188: as the `system` topic gives it
@@ -1470,11 +1508,25 @@ def make_ws_router(
             )
 
     def settle(conn: _Connection, subs: list[Subscription]) -> None:
-        """Flag on, once a permission change's frames are queued: the `reconfigure` snapshots of
-        what its narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). The
-        pipeline contains one that raises (§10.1); if this raises, the registry evicts."""
+        """Once a permission change's frames are queued: the `reconfigure` snapshots of what its
+        narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). One that
+        raises is contained to its subscription (§10.1): flag on, by the pipeline; flag off, as
+        the hub contains one (`SequencingHub._snapshot_failed`), left pending with its reason
+        for the next flush, and nothing closes. The flag-off `ws snapshot failed` line is the
+        settle's own: one per subscription per change, not throttled as the hub's is (§9.5)."""
         if conn.pipeline is not None:
             conn.pipeline.flush_pending(subs)
+        elif (emitter := conn.emitter) is not None:
+            for sub in subs:
+                try:
+                    emitter.flush_pending((sub,))
+                except Exception as exc:  # contained to `sub`, as the hub contains one
+                    sub.snapshot_pending = True  # a raise may follow the build, which cleared it
+                    fam = sub.topic.family  # by family and error class, never the text (C-12.6)
+                    fields = {"family": fam.family, "error": type(exc).__name__}
+                    with contextlib.suppress(Exception):  # a failing logger changes nothing
+                        log = _log().error if fam.never_throttled else _log().warning
+                        log("ws snapshot failed", connection_id=conn.connection_id, **fields)
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
         if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):
@@ -1789,7 +1841,7 @@ def make_ws_router(
                     with _step(conn, "pipeline"):
                         conn.pipeline.release()
                 if conn.authz is not None:
-                    conn.authz.on_settle = None  # its `on_drop` went with the pipeline
+                    conn.authz.on_purge = conn.authz.on_settle = None  # `on_drop`: the pipeline's
                     with _step(conn, "sequencing"):
                         if registry.services.sequencing is not None:
                             registry.services.sequencing.unregister(conn.authz)

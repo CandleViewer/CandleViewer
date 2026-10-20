@@ -1,7 +1,8 @@
 """Real collectors + metrics for the support bundle (E04-S02).
 
-Logs come from an in-memory ring buffer (stdout is the only log sink), already
-redacted by `RedactionFilter`; the bundle scan is still the fail-closed gate.
+Logs come from an in-memory ring buffer (stdout is the only log sink), redacted as on stdout: by
+its own `RedactionFilter`, and a stdlib record's rendered message once more (#415); the bundle
+scan is still the fail-closed gate.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from prometheus_client import generate_latest
 from candleviewer.observability.health_probes import HealthRegistry
 from candleviewer.observability.logging import RedactionFilter
 from candleviewer.observability.metrics import CollectorRegistry, Metrics
+from candleviewer.observability.redaction import _redact_str_value
 from candleviewer.observability.support_bundle import (
     BundleJob,
     BundleSources,
@@ -29,7 +31,14 @@ _RING_MAX = 20000
 
 
 class LogRingBuffer(logging.Handler):
-    """Bounded newest-last buffer of redacted, formatted log lines."""
+    """Bounded newest-last buffer of redacted, formatted log lines.
+
+    A stdlib record's message is rendered here, after the filter ran (an argument that is not a
+    `str`, such as a websockets frame, is turned into text only now), so the rendered message
+    passes the same redaction as stdout's `event` (#415). A structlog record's message is its
+    event dict, which the processor chain has redacted already, as on stdout. Each record is one
+    line, a line break written as `\\n`, as in its traceback (#415).
+    """
 
     def __init__(self, maxlen: int = _RING_MAX) -> None:
         super().__init__()
@@ -38,9 +47,18 @@ class LogRingBuffer(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self._buf.append(
-                (record.created, f"{record.levelname} {record.name} {record.getMessage()}")
-            )
+            message = record.getMessage()
+            if not (isinstance(record.msg, dict) and hasattr(record, "_logger")):
+                message = _redact_str_value(message)
+            line = f"{record.levelname} {record.name} {message}"
+            # a stdlib record's traceback and stack, as `RedactionFilter` stored them; one line
+            if record.exc_text:
+                line += f" exception={record.exc_text!r}"
+            if record.stack_info:
+                line += f" stack={record.stack_info!r}"
+            # one physical line: the bundle's logs.ndjson keeps a record per line, and its scan
+            # reads a label and its value on two lines of a message together (#415)
+            self._buf.append((record.created, line.replace("\r", "\\r").replace("\n", "\\n")))
         except Exception:
             return
 

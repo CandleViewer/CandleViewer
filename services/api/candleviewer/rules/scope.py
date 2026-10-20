@@ -180,7 +180,9 @@ class ScopeResolver:
 
     def listable_accounts(self, caller: UUID) -> list[UUID]:
         granted = self._state.granted_accounts(caller)
-        return sorted((a for a in granted if self._state.account(caller, a) is not None), key=str)
+        known = ((a, self._state.account(caller, a)) for a in granted)
+        # Not a frozen grant: it is no access (C-12.4); `granted_accounts` keeps it for the runtime.
+        return sorted((a for a, s in known if s is not None and not s.frozen), key=str)
 
     async def authorize_environments(
         self, caller: UUID, scope: RuleScope, *, audit_armed: bool = True

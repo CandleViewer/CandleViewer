@@ -2192,11 +2192,12 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("reason",),
         "WS 23 section 8.4: per topic drop/drop_share/unmergeable/resnapshot, per "
         "close_budget/close_redrop, and close_flush_deadline per close whose flush expired (also "
-        "counted beside a step 3).",
+        "counted beside a step 3); withdrawn per queued frame a withdrawn grant or permission "
+        "dropped (9.5).",
         "client health",
         _L,
         "E17",
-        max_series=7,
+        max_series=8,
         exported=True,
     ),
     _s(
