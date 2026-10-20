@@ -73,6 +73,7 @@ class RecordingBooks:
         self.symbol_resets: list[tuple[str, str]] = []
         self.fail: Exception | None = None
         self.gate: asyncio.Event | None = None
+        self.reset_gate: asyncio.Event | None = None
 
     async def apply(self, event: MarketEvent) -> None:
         if self.gate is not None:
@@ -82,6 +83,8 @@ class RecordingBooks:
         self.applied.append(event)
 
     async def reset(self, reason: str, *, symbol: str | None = None) -> None:
+        if self.reset_gate is not None:
+            await self.reset_gate.wait()
         if symbol is None:
             self.resets.append(reason)
         else:
@@ -535,6 +538,54 @@ async def test_restart_is_refused_while_an_event_is_being_handed_on() -> None:
     r.books.gate.set()
     await pending
     assert r.injector.next_ordinal == 1
+
+
+async def test_a_delivery_is_refused_while_restart_resets_the_books() -> None:
+    """Review m2: the books' reset is awaited, and an event delivered meanwhile would go out
+    under the generation the restart is replacing, its ordinal then overwritten. The restart
+    holds the injector until it is done."""
+    r = rig()
+    await r.injector.deliver(SESSION_EVENTS[0])
+    r.books.reset_gate = asyncio.Event()
+    restarting = asyncio.ensure_future(r.injector.restart(ordinal=0))
+    await asyncio.sleep(0)  # parked in the books' reset
+    with pytest.raises(ReplayClockStateError):
+        await r.injector.deliver(SESSION_EVENTS[1])
+    with pytest.raises(ReplayClockStateError):
+        await r.injector.reset_book(SYM)
+    r.books.reset_gate.set()
+    await restarting
+    assert (r.injector.generation, r.injector.next_ordinal) == (1, 0)
+    assert len(r.books.applied) == 1 and r.published() == []  # nothing slipped in
+    for event in SESSION_EVENTS[:2]:
+        await r.injector.deliver(event)
+    [trade_event] = r.published()
+    assert [r.books.applied[-1].event_id, trade_event.event_id] == [
+        replay_event_id(T0 + 1, SESSION, 1, 0),
+        replay_event_id(T0 + 2, SESSION, 1, 1),
+    ]
+
+
+async def test_a_delivery_is_refused_while_reset_book_resets_that_book() -> None:
+    """The same hold while one symbol's book resets after a gap: nothing reaches a book that is
+    being replaced, and the ids run on once the reset is done."""
+    r = rig()
+    r.books.reset_gate = asyncio.Event()
+    resetting = asyncio.ensure_future(r.injector.reset_book(SYM))
+    await asyncio.sleep(0)
+    with pytest.raises(ReplayClockStateError):
+        await r.injector.deliver(SESSION_EVENTS[0])
+    with pytest.raises(ReplayClockStateError):
+        await r.injector.restart(ordinal=0)
+    r.books.reset_gate.set()
+    await resetting
+    assert (r.books.symbol_resets, r.books.resets, r.books.applied) == (
+        [(SYM, "recording_gap")],
+        [],
+        [],
+    )
+    await r.injector.deliver(SESSION_EVENTS[0])
+    assert r.books.applied[-1].event_id == replay_event_id(T0 + 1, SESSION, 0, 0)
 
 
 async def test_the_loop_restarts_at_the_first_event_at_or_after_the_loop_start() -> None:

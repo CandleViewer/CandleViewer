@@ -81,6 +81,9 @@ _MAX_GENERATION: Final = (1 << 32) - 1  # `generation` is hashed as 4 bytes
 _ORDINALS: Final = 1 << 64  # and `ordinal` as 8
 #: A snapshot's `reason`: the anchor a seek starts from, or any other recorded full refresh.
 SnapshotReason = Literal["resync", "replay_seek"]
+#: Refused while the injector re-emits an event or resets the books: the two never overlap, so
+#: no event goes out under a generation a restart is replacing, or into a book being replaced.
+_BUSY: Final = "the injector re-emits one event or resets the replay books at a time"
 type _Fields = dict[str, object]
 
 
@@ -227,17 +230,22 @@ class ReplayInjector:
         """The seek hook (E26-T04) and the loop wrap: the stream continues with the event at
         `ordinal`, its 0-based position among the session's re-emitted events from
         `range_start`, under a new generation, so no id repeats. The replay books drop what they
-        hold first (`ReplayBookHook.reset`). The caller repositions the clock to that event, on a
-        new source wrapped in a `RegroupedStream`."""
+        hold first (`ReplayBookHook.reset`), and an event delivered meanwhile is refused
+        (`ReplayClockStateError`). The caller repositions the clock to that event, on a new
+        source wrapped in a `RegroupedStream`."""
         if self._busy:
-            raise ReplayClockStateError("the injector is re-emitting an event")
+            raise ReplayClockStateError(_BUSY)
         if not 0 <= ordinal < _ORDINALS:
             raise ReplayRequestInvalid("a replay ordinal is between 0 and 2**64 - 1")
         if self._generation >= _MAX_GENERATION:
             raise ReplayClockStateError("the replay session has restarted too often")
-        await self._books.reset("replay_restart")
-        self._generation += 1
-        self._next, self._prev_ts = ordinal, None
+        self._busy = True
+        try:
+            await self._books.reset("replay_restart")
+            self._generation += 1
+            self._next, self._prev_ts = ordinal, None
+        finally:
+            self._busy = False
 
     async def restart_loop(self) -> None:
         """US-RPL-008's wrap: `restart` at the loop start's ordinal. `ReplayLoopStartUnknown` if
@@ -251,17 +259,22 @@ class ReplayInjector:
         """A recording gap on `symbol`'s book stream was reached: its replay books leave LIVE and
         wait for its next recorded snapshot, so a gap whose update ids still chain is never
         bridged (24 Sec.13.7). The ordinal, the generation and every other symbol's book are
-        untouched. The run calls it before the next event is re-emitted."""
+        untouched; an event delivered during the reset is refused, as during `restart`. The run
+        calls it before the next event is re-emitted."""
         if self._busy:
-            raise ReplayClockStateError("the injector is re-emitting an event")
+            raise ReplayClockStateError(_BUSY)
         if symbol not in self._ticks:
             raise ReplayRequestInvalid("a replay book reset names a symbol outside the session")
-        await self._books.reset(reason, symbol=symbol)
+        self._busy = True
+        try:
+            await self._books.reset(reason, symbol=symbol)
+        finally:
+            self._busy = False
 
     # -- re-emission ---------------------------------------------------------------------------
     async def _emit(self, event: RecordedEvent, reason: SnapshotReason) -> None:
         if self._busy:
-            raise ReplayClockStateError("the injector re-emits one event at a time")
+            raise ReplayClockStateError(_BUSY)
         if not isinstance(event, RecordedEvent):
             raise ReplayEventRefused("only recorded market events are re-emitted, never a marker")
         payload, ordinal = event.payload, self._next

@@ -6,6 +6,7 @@ book afresh (never `degraded` by resets), and its clock is replay time."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Sequence
 from decimal import Decimal
@@ -14,7 +15,7 @@ import pytest
 
 from candleviewer.book.models import BookPhase, BookStatus
 from candleviewer.bus.bus import Bus
-from candleviewer.bus.models import Topic, is_replay_env, replay_env
+from candleviewer.bus.models import QueuePolicy, Topic, is_replay_env, replay_env
 from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import BookDelta, BookLevel, BookSnapshot
 from candleviewer.replay import ReplayEventRefused, ReplayInjector
@@ -166,6 +167,27 @@ async def test_a_symbol_reset_takes_only_that_symbols_book_out_of_live() -> None
     assert eth is not None and eth.phase is BookPhase.LIVE
     [desync] = [s for s in bus.statuses() if s.state is BookPhase.DESYNCED]
     assert (desync.symbol, desync.reason) == (SYM, "recording_gap")
+
+
+async def test_a_book_opened_while_a_reset_is_held_up_leaves_the_reset_whole() -> None:
+    """A reset awaits each book's consumers (bus backpressure), so another symbol's first event
+    can open a book meanwhile: the reset walks the books it found, and the new one stays LIVE."""
+    bus = LoggingBus()
+    books = ReplayBooks(bus, SESSION)
+    await books.apply(rsnap(500, [lvl(990, 1)], [lvl(1010, 1)]))
+    slow = bus.subscribe("slow", BOOK, QueuePolicy.NEVER_DROP, maxsize=1)
+    slow.queue.put_nowait("unread")
+    resetting = asyncio.ensure_future(books.reset("replay_restart"))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not resetting.done()  # held by `slow`, announcing the book left LIVE
+    other = rsnap(500, [lvl(990, 1)], [lvl(1010, 1)]).model_copy(update={"symbol": "ETHUSDT"})
+    await books.apply(other)
+    assert slow.get_nowait() == "unread"
+    await resetting
+    eth = books.engine("ETHUSDT", 200)
+    assert phase(books) is BookPhase.SNAPSHOT_PENDING
+    assert eth is not None and eth.phase is BookPhase.LIVE
 
 
 def recorded_snapshot(offset_us: int, update_id: int) -> RecordedEvent:
