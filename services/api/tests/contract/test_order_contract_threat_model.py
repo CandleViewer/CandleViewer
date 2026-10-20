@@ -103,6 +103,21 @@ def _refs(node: object) -> Iterator[str]:
             yield from _refs(value)
 
 
+def _named(node: object, pattern: str, path: str) -> Iterator[str]:
+    """Every `<schema>.<property path>` under `node` whose property name matches `pattern`."""
+    if isinstance(node, dict):
+        for name, sub in node.get("properties", {}).items():
+            if re.search(pattern, name, re.IGNORECASE):
+                yield f"{path}.{name}"
+            yield from _named(sub, pattern, f"{path}.{name}")
+        for key, sub in node.items():
+            if key != "properties":
+                yield from _named(sub, pattern, path)
+    elif isinstance(node, list):
+        for sub in node:
+            yield from _named(sub, pattern, path)
+
+
 def _referrers(target: str) -> set[str]:
     """The component schemas and the operations whose subtree refers to `target`."""
     found = {f"schemas/{name}" for name, node in _SCHEMAS.items() if target in set(_refs(node))}
@@ -180,9 +195,12 @@ def test_the_stored_exchange_records_have_closed_schemas_and_bounded_strings() -
             field
             for field, node in schema["properties"].items()
             if "string" in node.get("type", ())
-            and not ({"maxLength", "enum", "format"} & set(node))
+            and not ({"maxLength", "enum", "format", "pattern"} & set(node))
         ]
         assert unbounded == []
+    codes = _SCHEMAS["ExchangeRecordFields"]["properties"]
+    for code in ("order_status", "reject_reason"):  # exchange codes, never message text
+        assert codes[code]["pattern"] == "^[A-Za-z0-9_]{1,64}$"
 
 
 def test_the_exchange_text_reaches_no_order_route_but_diagnostics() -> None:
@@ -193,6 +211,12 @@ def test_the_exchange_text_reaches_no_order_route_but_diagnostics() -> None:
         if "request_redacted" in schema.get("properties", {})
     )
     assert holders == ["ExchangeCallRecord"]
+    named = {hit for name, schema in _SCHEMAS.items() for hit in _named(schema, "ret_?msg", name)}
+    assert named == {"ExchangeCallRecord.ret_msg", "Problem.exchange.ret_msg"}
+    reason = _words(_SCHEMAS["Order"]["properties"]["rejected_reason"]["description"])
+    assert "CandleViewer's reason, never the exchange's text" in reason
+    message = _words(_SCHEMAS["LegError"]["properties"]["message"]["description"])
+    assert "the OMS's own text for `code`, never the exchange's `ret_msg`" in message
     assert _referrers("#/components/schemas/ExchangeRecordFields") == {"schemas/ExchangeCallRecord"}
     assert _referrers("#/components/schemas/ExchangeCallRecord") == {"schemas/OrderDiagnostics"}
     assert _referrers("#/components/schemas/OrderDiagnostics") == {"op/getOrderDiagnostics"}
@@ -216,6 +240,7 @@ def test_the_exchange_text_reaches_no_order_route_but_diagnostics() -> None:
 def test_the_diagnostics_read_is_audited_and_its_roles_wait_for_d7() -> None:
     text = _words(_OPS["getOrderDiagnostics"]["description"])
     assert "every read is audited (`order.diagnostics_viewed`)" in text
+    assert "on the order path it is the only place the exchange's text (`ret_msg`)" in text
     # D7 is the Owner's open decision (#2701): the contract names it and invents no roles.
     assert "the Owner's decision D7 (E29 threat model section 4.3, queued on #2701)" in text
     assert "its `x-rbac` is provisional until then" in text
@@ -243,7 +268,13 @@ def test_a_trade_group_with_an_ungranted_leg_is_answered_as_missing() -> None:
 def test_forbidden_names_the_scope_and_arm_refusals() -> None:
     forbidden = _SPEC["components"]["responses"]["Forbidden"]
     text = _words(forbidden["description"])
-    assert "alike with `code: account_scope_denied` (see `AccountScopeDenied`)" in text
+    assert (
+        "`placeOrder`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named "
+        "in their body that is outside the caller's grants, and one that does not exist, alike "
+        "with `code: account_scope_denied` (see `AccountScopeDenied`)" in text
+    )
+    account = _SCHEMAS["PlaceOrderRequest"]["properties"]["exchange_account_id"]["description"]
+    assert "one that does not exist are refused alike (`403 account_scope_denied`)" in account
     assert "it may be `code: session_not_armed` (SR-043" in text
     example = forbidden["content"]["application/problem+json"]["examples"]["sessionNotArmed"]
     assert (example["value"]["status"], example["value"]["code"]) == (403, "session_not_armed")
@@ -283,6 +314,7 @@ def test_a_risk_increasing_order_mutation_declares_the_arm_token(operation: str)
     op = _OPS[operation]
     assert _ARM_TOKEN in op["parameters"]
     assert "arm_token" not in _request_properties(op)
+    assert op["responses"]["403"] == _ref("responses", "Forbidden")  # it documents the refusal
 
 
 @pytest.mark.parametrize("operation", _CARVED_OUT)
@@ -302,7 +334,10 @@ def test_the_arm_token_is_refused_with_a_registered_code_and_spares_the_carve_ou
     assert "before the idempotency lookup" in text
     assert "cancels, `closePosition`, `closeAllPositions`, quantity-reducing amends" in text
     assert "The token is never logged (C-12.6)." in text
-    assert "reduce-only ones included" in text and "a leverage change in either direction" in text
+    assert "reduce-only ones included" in text
+    assert (
+        "it for a leverage change in either direction, which that section does not classify" in text
+    )
     assert "so is a token issued without the live step-up" in text
     entry = next(e for e in _SPEC["x-error-codes"] if e["code"] == "session_not_armed")
     assert (entry["status"], entry["retryable"]) == (403, False)

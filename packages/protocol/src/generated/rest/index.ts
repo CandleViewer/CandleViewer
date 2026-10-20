@@ -3531,7 +3531,7 @@ export interface paths {
     };
     /**
      * Full lifecycle trace for one order
-     * @description Returns the ordered `order_events` chain plus the stored exchange records (the adapter's allow-listed request, response and push records, with credentials and signatures never stored: SR-E29-08) and the reconciliation verdict. This is the "why did my order do that" surface; it is the only place the exchange's text (`ret_msg`) and the stored records are served (SR-E29-09; an order route's error body carries the return code only, `OrderExchangeProblem`), and every read is audited (`order.diagnostics_viewed`). Which roles receive `exchange_calls` and `ret_msg` is the Owner's decision D7 (E29 threat model section 4.3, queued on #2701); the route is not mounted before it is decided, and its `x-rbac` is provisional until then.
+     * @description Returns the ordered `order_events` chain plus the stored exchange records (the adapter's allow-listed request, response and push records, with credentials and signatures never stored: SR-E29-08) and the reconciliation verdict. This is the "why did my order do that" surface; on the order path it is the only place the exchange's text (`ret_msg`) and the stored records are served (SR-E29-09; an order route's error body carries the return code only, `OrderExchangeProblem`), and every read is audited (`order.diagnostics_viewed`). Which roles receive `exchange_calls` and `ret_msg` is the Owner's decision D7 (E29 threat model section 4.3, queued on #2701); the route is not mounted before it is decided, and its `x-rbac` is provisional until then.
      */
     get: operations["getOrderDiagnostics"];
     put?: never;
@@ -4519,7 +4519,7 @@ export interface paths {
      *     `X-Arm-Token` header (`ArmToken`), which a live account's risk-increasing order
      *     mutations require (SR-043); whether one-click and hotkey entry use the same token is
      *     E30-S04's (#1088). Arming needs a fresh step-up while a live account is within the caller's
-     *     reach: for the Owner whenever one exists, for a Manager through a trade grant (SR-025).
+     *     reach: for the Owner whenever one exists, for a Manager through a trade grant (SR-043 with SR-025's step-up, against threat O11).
      *     Without one it answers `403 step_up_required` with the class `live_enablement`, which
      *     is no-grace and single-use, so a client that holds only the session and the CSRF token
      *     cannot arm itself (OM-S01, N2). A token records whether it was issued under that step-up;
@@ -6566,7 +6566,7 @@ export interface components {
      * @enum {string}
      */
     ExchangeCode: "bybit";
-    /** @description The allow-listed fields of one exchange request, response or push (SR-E29-08), named as on `Order` and `Execution`. The adapter keeps no other field; adding one is a contract change. Strings are bounded as the store's redactor bounds them (codes and ids 64 characters, text 2048); `order_status` and `reject_reason` are exchange text, so like `ret_msg` they take the redactor's message rule (E29 threat model section 6 item 2). */
+    /** @description The allow-listed fields of one exchange request, response or push (SR-E29-08), named as on `Order` and `Execution`. The adapter keeps no other field; adding one is a contract change. Strings are bounded as the store's redactor bounds them: codes and ids 64 characters, `ret_msg` 2048. `order_status` and `reject_reason` are the exchange's codes, so the adapter keeps them only in that shape (letters, digits and underscores). */
     ExchangeRecordFields: {
       activation_price?: components["schemas"]["Decimal"] | null;
       avg_fill_price?: components["schemas"]["Decimal"] | null;
@@ -6587,7 +6587,7 @@ export interface components {
       /** @description The cancel-all filter, always explicit so it never reaches a position's TP/SL (SR-E29-06). */
       order_filter?: string | null;
       order_link_id?: string;
-      /** @description The exchange's order status. */
+      /** @description The exchange's order status code. */
       order_status?: string | null;
       order_type?: components["schemas"]["OrderType"];
       /** @enum {integer} */
@@ -6595,7 +6595,7 @@ export interface components {
       price?: components["schemas"]["Decimal"] | null;
       qty?: components["schemas"]["Decimal"];
       reduce_only?: boolean;
-      /** @description The exchange's reject reason. */
+      /** @description The exchange's reject reason code. */
       reject_reason?: string | null;
       remaining_qty?: components["schemas"]["Decimal"];
       side?: components["schemas"]["OrderSide"];
@@ -9611,7 +9611,7 @@ export interface components {
       | "closed"
       | "failed"
       | "cancelled";
-    /** @description The `403 trading_disabled` problem the order-entry gate returns when it refuses a submission or amend that opens or increases exposure, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it and gets a `404`. Cancels, flatten and quantity-reducing or stop-tightening amends never pass through the gate. Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. */
+    /** @description The `403 trading_disabled` problem the order-entry gate returns when it refuses a submission or amend that opens or increases exposure, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it: an id route answers it as a missing id (`404`), and a request that names it in its body is refused with `403 account_scope_denied` (SR-E29-13). Cancels, flatten and quantity-reducing or stop-tightening amends never pass through the gate. Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. */
     TradingDisabledProblem: components["schemas"]["Problem"] & {
       /** @constant */
       code?: "trading_disabled";
@@ -9970,7 +9970,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. On a live account's order mutation that opens or increases exposure it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). A route that names exchange accounts in its body refuses one outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. On a live account's order mutation that opens or increases exposure it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -10139,10 +10139,10 @@ export interface components {
      *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
      *     increases exposure requires it, as the order-entry gate classifies them
      *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-     *     reduce-only ones included, and `reversePosition`), a leverage change in either
-     *     direction, and an amend with any risk-increasing component
-     *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-     *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+     *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+     *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+     *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+     *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
      *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
      *     without the live step-up (see `POST /settings/arm`). It is checked with the
      *     session-state checks, before the idempotency lookup: a refused request binds no
@@ -15870,10 +15870,10 @@ export interface operations {
          *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included, and `reversePosition`), a leverage change in either
-         *     direction, and an amend with any risk-increasing component
-         *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+         *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+         *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+         *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
          *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
          *     without the live step-up (see `POST /settings/arm`). It is checked with the
          *     session-state checks, before the idempotency lookup: a refused request binds no
@@ -16004,10 +16004,10 @@ export interface operations {
          *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included, and `reversePosition`), a leverage change in either
-         *     direction, and an amend with any risk-increasing component
-         *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+         *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+         *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+         *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
          *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
          *     without the live step-up (see `POST /settings/arm`). It is checked with the
          *     session-state checks, before the idempotency lookup: a refused request binds no
@@ -16261,10 +16261,10 @@ export interface operations {
          *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included, and `reversePosition`), a leverage change in either
-         *     direction, and an amend with any risk-increasing component
-         *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+         *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+         *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+         *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
          *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
          *     without the live step-up (see `POST /settings/arm`). It is checked with the
          *     session-state checks, before the idempotency lookup: a refused request binds no
@@ -16327,10 +16327,10 @@ export interface operations {
          *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included, and `reversePosition`), a leverage change in either
-         *     direction, and an amend with any risk-increasing component
-         *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+         *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+         *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+         *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
          *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
          *     without the live step-up (see `POST /settings/arm`). It is checked with the
          *     session-state checks, before the idempotency lookup: a refused request binds no
@@ -16390,10 +16390,10 @@ export interface operations {
          *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included, and `reversePosition`), a leverage change in either
-         *     direction, and an amend with any risk-increasing component
-         *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+         *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+         *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+         *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
          *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
          *     without the live step-up (see `POST /settings/arm`). It is checked with the
          *     session-state checks, before the idempotency lookup: a refused request binds no
@@ -18252,10 +18252,10 @@ export interface operations {
          *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included, and `reversePosition`), a leverage change in either
-         *     direction, and an amend with any risk-increasing component
-         *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+         *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+         *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+         *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
          *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
          *     without the live step-up (see `POST /settings/arm`). It is checked with the
          *     session-state checks, before the idempotency lookup: a refused request binds no
@@ -18339,10 +18339,10 @@ export interface operations {
          *     `arm_token` body field (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
          *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included, and `reversePosition`), a leverage change in either
-         *     direction, and an amend with any risk-increasing component
-         *     (quantity up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
-         *     `setPositionTpSl`. Missing, expired, revoked or bound to another session →
+         *     reduce-only ones included, and `reversePosition`) and an amend with any risk-increasing
+         *     component (quantity up, stop loosened, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`. This contract also requires it for a leverage
+         *     change in either direction, which that section does not classify. Missing, expired, revoked or bound to another session →
          *     `403 session_not_armed`, audited, before any exchange call; so is a token issued
          *     without the live step-up (see `POST /settings/arm`). It is checked with the
          *     session-state checks, before the idempotency lookup: a refused request binds no

@@ -5156,7 +5156,8 @@ class ExchangeRecordFields(BaseModel):
         ),
     ] = None
     order_status: Annotated[
-        str | None, Field(description="The exchange's order status.", max_length=64)
+        str | None,
+        Field(description="The exchange's order status code.", pattern="^[A-Za-z0-9_]{1,64}$"),
     ] = None
     filled_qty: Annotated[
         str | None,
@@ -5176,7 +5177,8 @@ class ExchangeRecordFields(BaseModel):
     ] = None
     avg_fill_price: Decimal | None = None
     reject_reason: Annotated[
-        str | None, Field(description="The exchange's reject reason.", max_length=64)
+        str | None,
+        Field(description="The exchange's reject reason code.", pattern="^[A-Za-z0-9_]{1,64}$"),
     ] = None
     exec_id: Annotated[str | None, Field(max_length=64)] = None
     exec_qty: Annotated[
