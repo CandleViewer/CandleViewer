@@ -119,6 +119,13 @@ def token_of(actor: str) -> str:
     return f"tok-{actor}"
 
 
+def seed_payload(kind: str) -> dict[str, Any]:
+    """A 23 §15.10 payload of an entity of `kind` (`algo`: B4's chart), as the registry records."""
+    chart = "oco" if kind == "algo" else kind
+    return {"machine_kind": chart, "state": "seeded", "tags": [], "degraded": False,
+            "machine_hash": "0" * 64, "environment": "demo", "updated_at_ms": 1}  # fmt: skip
+
+
 def seed_machine(app: FastAPI, row: dict[str, Any], actor: str) -> None:
     """Before a `machines.{kind}` cell: an emptied registry holding only the row's sample
     entity, on account A (`granted_accounts`) or as the caller's own (`self`), as in 23 §6.4."""
@@ -133,7 +140,7 @@ def seed_machine(app: FastAPI, row: dict[str, Any], actor: str) -> None:
         scope = EntityScope(accounts=frozenset({GRANTED}))
     elif row["scope"] == "self":
         scope = EntityScope(user=_USER_IDS.get(actor))
-    registry.publish(MachineEntity(kind, ident or None, scope), {"state": "seeded"})
+    assert registry.publish(MachineEntity(kind, ident or None, scope), seed_payload(kind))
 
 
 class _Identity:

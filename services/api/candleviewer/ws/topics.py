@@ -499,6 +499,12 @@ MACHINE_KINDS: Final[Mapping[str, MachineKind]] = {
     "reconciliation": MachineKind(_U, None, _G, pending=True),
     "risk_lockout": MachineKind(_U, Permission.POSITIONS_READ, _G),
 }
+#: §6.4: each exposed chart id (its §15.10 `machine_kind`) and its entity kind. B4-B7 share
+#: `algo`; every other kind is its own chart's id.
+MACHINE_ENTITY_KIND: Final[Mapping[str, str]] = {
+    **{k: k for k in MACHINE_KINDS if k != "algo"},
+    **dict.fromkeys(("oco", "iceberg", "twap", "chase"), "algo"),
+}
 
 
 @dataclass(frozen=True, slots=True)

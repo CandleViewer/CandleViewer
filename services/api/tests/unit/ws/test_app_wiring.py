@@ -35,6 +35,7 @@ from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.indicators_publish import IndicatorsPublisher
 from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
+from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.metrics import CV_WS_NAMES
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
@@ -47,6 +48,7 @@ from candleviewer.ws_wiring import (
     WsRuntime,
     ingestion_streams,
 )
+from tests.unit.ws.test_machines import _payload
 
 USER = uuid.uuid4()
 ACC = uuid.uuid4()
@@ -466,6 +468,17 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
     assert runtime.hub.shutting_down is False
     runtime._sweeper.cancel()
     await asyncio.wait({runtime._sweeper})
+
+
+async def test_runtime_stop_cancels_the_machine_registry_timers() -> None:
+    """E17-T08: once the sockets are closed, no `machines` window or retention timer is left."""
+    machines = MachineStateRegistry(call_later=asyncio.get_running_loop().call_later)
+    switch = MachineEntity("kill_switch")
+    machines.publish(switch, _payload("kill_switch", "clear"))
+    machines.terminal(switch, _payload("kill_switch", "engaged"))  # waits for its window
+    timers = [machines._entries[switch.ch].timer, machines._sweep_timer]
+    await WsRuntime(GatewayHub(), UpstreamRefs(), _settings(), machines=machines).stop()
+    assert all(t is not None and t.cancelled() for t in timers) and machines._sweep_timer is None
 
 
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:

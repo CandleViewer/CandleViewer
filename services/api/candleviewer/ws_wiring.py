@@ -48,7 +48,8 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
-from candleviewer.ws.permissions import ConnectionRegistry, Subscription
+from candleviewer.ws.machines import MachineStateRegistry
+from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, SnapshotSource
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
 
@@ -353,6 +354,35 @@ class WsEvents:
         await self.registry.kill_switch_changed()
 
 
+def loop_call_later(delay: float, callback: Callable[[], None]) -> asyncio.TimerHandle:
+    """`MachineStateRegistry`'s timers: the running loop's, the loop the registry runs on."""
+    return asyncio.get_running_loop().call_later(delay, callback)
+
+
+class MachineRevocationAudit:
+    """`MachineStateRegistry.on_revoked` (§6.4): a removal's `topic_removed` rows (`evicted`), as
+    a resync loop's (`ConnectionRegistry.audit_revoked`, bounded), one task per connection held
+    until done (C-2.18). Never raises: with no running loop to write on, it only logs."""
+
+    def __init__(self, registry: ConnectionRegistry) -> None:
+        self.registry = registry
+        self.tasks: set[asyncio.Task[None]] = set()
+
+    def __call__(self, revoked: list[tuple[ConnectionAuthz, dict[str, Any]]]) -> None:
+        by_conn: dict[int, tuple[ConnectionAuthz, list[dict[str, Any]]]] = {}
+        for authz, frame in revoked:
+            by_conn.setdefault(id(authz), (authz, []))[1].append(frame)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:  # a synchronous caller: no loop, so no writer either
+            logger().warning("ws machine revocations not audited", count=len(revoked))
+            return
+        for authz, frames in by_conn.values():
+            task = spawn(self.registry.audit_revoked(authz, frames), name="ws-revoked-audit")
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+
+
 class WsRuntime:
     """Lifespan owner of the gateway's background work and its planned shutdown."""
 
@@ -363,9 +393,11 @@ class WsRuntime:
         settings: Settings,
         *,
         clock: Callable[[], float] = time.monotonic,
+        machines: MachineStateRegistry | None = None,
     ) -> None:
         self.hub = hub
         self.upstream = upstream
+        self.machines = machines
         self._settings = settings
         self._clock = clock
         self._sweeper: asyncio.Task[None] | None = None
@@ -379,7 +411,8 @@ class WsRuntime:
 
     async def stop(self) -> int:
         """§9.4: `shutdown_notice`, grace, `bye` + `1001`; then wait (bounded) for the sockets
-        to flush and stop the sweeper. Returns the number of connections offered the notice.
+        to flush, stop the sweeper and cancel the `machines` registry's timers. Returns the number
+        of connections offered the notice.
 
         The notice and grace run once (#2546): the server runs this before uvicorn's own
         shutdown closes the sockets, and the lifespan teardown's later call only stops the
@@ -403,4 +436,6 @@ class WsRuntime:
             self._sweeper.cancel()
             await asyncio.wait({self._sweeper})  # never raises; our own cancel is consumed
             self._sweeper = None
+        if self.machines is not None:
+            self.machines.close()
         return notified

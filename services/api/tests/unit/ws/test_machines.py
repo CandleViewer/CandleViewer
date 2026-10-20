@@ -1,7 +1,7 @@
 """E17-T08 `machines.{entity}.state` (`23-ws-protocol.md` §6.4): the entity grammar, the per-entity
 refusal with no existence oracle, the bounded registry that answers `sub` and fans each publish
-out, its metrics, entity-scoped matching and the §9.5 re-check on the stored scope. No network, no
-clock reads, no sleeps."""
+out, coalesced, its retention and removal, its metrics, entity-scoped matching and the §9.5
+re-check on the stored scope. No network, no clock reads, no sleeps: timers run on a fake loop."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import asyncio
 import json
 import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,11 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.ws.limits import (
+    MACHINE_ENTRIES_MAX,
+    MACHINE_TERMINAL_MAX,
+    MACHINE_TERMINAL_RETENTION_S,
+)
 from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.permissions import (
     ConnectionRegistry,
@@ -33,7 +39,10 @@ from candleviewer.ws.permissions import (
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.topics import MACHINE_KINDS, EntityScope, TopicError, machine_refusal
 from candleviewer.ws.topics import parse_topic as parse
+from candleviewer.ws_wiring import MachineRevocationAudit
 from tests.unit.ws._seq_support import USER, Clock, Conn, Source, principal
+from tests.unit.ws.test_pipeline_outbound import _queued
+from tests.unit.ws.test_pipeline_pacing import _routed
 
 A, B = uuid.UUID(int=0xA), uuid.UUID(int=0xB)
 OID, OTHER = "0a000000-0000-4000-8000-000000000001", "0a000000-0000-4000-8000-000000000002"
@@ -640,3 +649,219 @@ def test_resync_snaps_a_machines_subscription_from_the_registry() -> None:
         "client_resync",
         "submitted",
     )
+
+
+# -- coalescing, retention and removal (§6.4) on a fake loop --------------------------------------
+
+
+class _Timer:
+    def __init__(self, due: float, callback: Callable[[], None]) -> None:
+        self.due, self.callback, self.cancelled = due, callback, False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class _Loop:
+    """A fake clock and `call_later`: `advance` moves the clock and runs each timer that falls due,
+    in order. `kw` is a registry's: its clock, timers and a fixed wall clock."""
+
+    def __init__(self, clock: Clock | None = None) -> None:
+        self.clock, self.timers = clock or Clock(), list[_Timer]()
+        self.kw = {"clock": self.clock, "call_later": self.call_later, "wall_ms": lambda: 7}
+
+    def call_later(self, delay: float, callback: Callable[[], None]) -> _Timer:
+        self.timers.append(timer := _Timer(self.clock.now + delay, callback))
+        return timer
+
+    def advance(self, to: float) -> None:
+        while due := sorted((t for t in self.timers if t.due <= to), key=lambda t: t.due):
+            self.timers.remove(due[0])
+            self.clock.now = due[0].due
+            if not due[0].cancelled:
+                due[0].callback()
+        self.clock.now = to
+
+    def armed(self) -> int:
+        return sum(not t.cancelled for t in self.timers)
+
+
+def _states(conn: Conn) -> list[tuple[str, str | None]]:
+    return [(f["t"], f["p"].get("state")) for f in conn.take()]
+
+
+def test_a_burst_leaves_at_once_then_as_one_d_with_the_latest_state() -> None:
+    """The first payload after a quiet window leaves at once; the rest are recorded at once, so a
+    `sub` mid-burst is snapped with the latest, and leave as one `d` when the window closes.
+    `cv_machine_ws_publish_total` counts each recorded payload, not each frame."""
+    loop = _Loop()
+    conn, registry, hub = _world(**loop.kw)
+    switch, late = MachineEntity("kill_switch"), Conn(Source())
+    registry.publish(switch, _payload("kill_switch", "clear"))
+    conn.sub(switch.ch)
+    loop.advance(1.0)
+    before = _count("cv_machine_ws_publish_total", "kill_switch")
+    for state in ("engaging", "cancelling", "engaged"):
+        assert registry.publish(switch, _payload("kill_switch", state))
+    _attach(late, registry, hub)
+    late.sub(switch.ch)
+    assert _states(late) == [("snap", "engaged")]
+    assert _states(conn) == [("snap", "clear"), ("d", "engaging")] and loop.armed() == 1
+    loop.advance(1.1)
+    assert _states(conn) == _states(late) == [("d", "engaged")]
+    assert _count("cv_machine_ws_publish_total", "kill_switch") - before == 3
+    registry.publish(switch, _payload("kill_switch", "clear"))  # inside the window that `d` opened
+    assert _states(conn) == [] and loop.armed() == 1
+
+
+def test_flag_on_the_pipeline_still_gets_one_d_per_window_with_the_latest() -> None:
+    """E17-T03 on: its pacer's window stacks on the registry's, and the client still gets the
+    leading `d`, then one `d` per window carrying the latest state (§16.4)."""
+    hub = SequencingHub()
+    pipe, _, conn = _routed(hub)
+    loop = _Loop(conn.clock)
+    registry = MachineStateRegistry(hub=hub, **loop.kw)
+    services, switch = conn.authz.services, MachineEntity("kill_switch")
+    services.machines = services.snapshots = conn.emitter.source = registry
+    registry.publish(switch, _payload("kill_switch", "clear"))
+    conn.sub(switch.ch)
+    for at, state in ((1.0, "engaging"), (1.05, "cancelling"), (1.06, "engaged"), (1.15, "clear")):
+        loop.advance(at)
+        registry.publish(switch, _payload("kill_switch", state))
+    loop.advance(2.0)  # each window's `d` leaves the pacer at once: its window closed too
+    assert [(f["t"], f["p"]["state"]) for f in _queued(pipe)] == [
+        ("snap", "clear"),
+        ("d", "engaging"),
+        ("d", "engaged"),
+        ("d", "clear"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("entity", "resubscribe"),
+    [(MachineEntity("order", OID, ON_A), False), (MachineEntity("book", "BTCUSDT"), True)],
+)
+def test_a_terminal_entry_is_removed_after_60_s_with_topic_removed(
+    entity: MachineEntity, resubscribe: bool
+) -> None:
+    """Its subscribers are revoked; only an unscoped kind's may subscribe again (pending), and a
+    scoped kind's `sub` is refused as an unknown entity's."""
+    loop = _Loop()
+    conn, registry, _ = _world(**loop.kw)
+    registry.publish(entity, _payload(entity.kind))
+    conn.sub(entity.ch)
+    assert registry.terminal(entity, _payload(entity.kind, "done"))
+    loop.advance(59.9)
+    assert registry.scope(entity.ch) == entity.scope
+    loop.advance(60.0)
+    p = {"reason": "topic_removed", "message": "This topic is no longer available."}
+    p |= {"resubscribe_allowed": resubscribe, "sub_id": "s_01"}
+    assert conn.take()[-1] == {"t": "revoked", "ch": entity.ch, "ts": 7, "p": p}
+    assert registry.scope(entity.ch) is None and conn.authz.find(entity.ch) is None
+    assert conn.authz.admit(entity.ch)[0]["ok"] is resubscribe and loop.armed() == 0
+
+
+def test_past_the_cap_the_oldest_terminal_entry_is_removed_at_once() -> None:
+    loop = _Loop()
+    conn, registry, _ = _world(terminal_max=2, **loop.kw)
+    orders = [MachineEntity("order", str(uuid.UUID(int=n)), ON_A) for n in (1, 2, 3)]
+    registry.publish(orders[0], _payload())
+    conn.sub(orders[0].ch)
+    for n, order in enumerate(orders):
+        loop.advance(n)
+        registry.terminal(order, _payload(state="filled"))
+    assert [registry.scope(o.ch) for o in orders] == [None, ON_A, ON_A]
+    assert [f["t"] for f in conn.take()] == ["snap", "d", "revoked"]
+
+
+def test_a_cleared_registry_leaves_a_stale_retention_index_harmless() -> None:
+    """Harness code empties `_entries` (the RBAC pack): the index entry left is dropped, never
+    taken for the live entry the entity has since."""
+    loop = _Loop()
+    _, registry, _ = _world(**loop.kw)
+    order = MachineEntity("order", OID, ON_A)
+    registry.terminal(order, _payload(state="filled"))
+    registry._entries.clear()
+    registry.publish(order, _payload())
+    loop.advance(60.0)
+    assert registry.scope(order.ch) == ON_A and loop.armed() == 0
+
+
+def test_only_the_last_owner_removes_a_live_entry_and_never_a_terminal_one() -> None:
+    """A stopped machine's late `remove` leaves the entry a newer machine of the entity owns."""
+    _, registry, _ = _world()
+    order, old, new = MachineEntity("order", OID, ON_A), object(), object()
+    registry.publish(order, _payload(), owner=old)
+    registry.publish(order, _payload(state="filled"), owner=new)
+    assert not registry.remove(order, owner=old) and not registry.remove(order)
+    assert registry.remove(order, owner=new) and not registry.remove(order, owner=new)
+    registry.terminal(order, _payload(state="filled"), owner=new)
+    assert not registry.remove(order, owner=new) and registry.scope(order.ch) == ON_A
+
+
+def test_a_removal_sends_what_waits_for_the_window_before_the_revocation() -> None:
+    loop = _Loop()
+    conn, registry, _ = _world(**loop.kw)
+    order = MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    conn.sub(order.ch)
+    registry.publish(order, _payload(state="filled"))
+    assert registry.remove(order) and loop.armed() == 0
+    assert _states(conn) == [("snap", "submitted"), ("d", "filled"), ("revoked", None)]
+
+
+async def test_a_removal_is_audited_as_evicted() -> None:
+    """The deployed `on_revoked` writes each `topic_removed` frame's row, as a resync loop's, with
+    the full `ch` and the internal reason `evicted` (§6.4)."""
+    conn, registry, _ = _world()
+    conn.authz.services.audit = audit = _Audit()
+
+    async def resolve(_user: uuid.UUID) -> PrincipalSnapshot:
+        return conn.authz.principal
+
+    registry.on_revoked = on_revoked = MachineRevocationAudit(
+        ConnectionRegistry(resolve, lambda: 7, conn.authz.services)
+    )
+    order = MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    conn.sub(order.ch)
+    registry.remove(order)
+    await asyncio.gather(*on_revoked.tasks)
+    assert [(r["action"], r["object_id"], r["reason"]) for r in audit.rows] == [
+        ("ws.subscription.revoked", order.ch, "evicted")
+    ]
+
+
+def test_a_refused_payload_changes_nothing() -> None:
+    """One that breaks §15.10 (logged with its field, never a value) or cannot be copied leaves
+    the entry, its payload and its terminal flag as they were, and sends nothing."""
+    conn, registry, _ = _world()
+    order = MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    conn.sub(order.ch)
+    before = _count("cv_machine_ws_publish_total")
+    with capture_logs() as logs:
+        assert not registry.terminal(order, {**_payload(state="filled"), "state_ids": []})
+        assert not registry.publish(order, _payload("kill_switch"))  # another kind's chart
+    with pytest.raises(TypeError):
+        registry.terminal(order, {**_payload(state="filled"), "feed": (n for n in range(0))})
+    assert logs == [{**_line("machine state refused: invalid payload", "error"), "field": "fields"}]
+    assert _count("cv_machine_ws_publish_total") == before
+    assert registry._entries[order.ch].payload == _payload() and len(conn.take()) == 1  # its snap
+    assert registry.publish(order, _payload(state="filled"))  # still live
+
+
+def test_a_payload_after_the_terminal_one_is_refused_and_logged() -> None:
+    registry, order = MachineStateRegistry(), MachineEntity("order", OID, ON_A)
+    registry.terminal(order, _payload(state="filled"))
+    with capture_logs() as logs:
+        assert not registry.publish(order, _payload())
+    assert logs == [_line("machine state after terminal ignored", "warning")]
+
+
+def test_the_registry_bounds_are_pinned() -> None:
+    """R2-n6: the §16.2 values as literals, and a registry's defaults (the 100 ms window, §6.4)."""
+    limits = (MACHINE_ENTRIES_MAX, MACHINE_TERMINAL_MAX, MACHINE_TERMINAL_RETENTION_S)
+    assert limits == (20_000, 10_000, 60.0)
+    r = MachineStateRegistry()
+    assert (r.max_entries, r.terminal_max, r.retention_s, r.coalesce_s) == (*limits, 0.1)

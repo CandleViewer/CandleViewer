@@ -684,11 +684,14 @@ class ConnectionAuthz:
         from_ts = sub.opts.get("from_ts_ms")
         return source.continuity(sub, from_ts if isinstance(from_ts, int) else None)
 
-    def revoke(self, sub: Subscription, reason: RevokedReason, now_ms: int) -> dict[str, Any]:
-        """Drop one subscription and return its `revoked` frame (e.g. §7.5 resync loop)."""
+    def revoke(
+        self, sub: Subscription, reason: RevokedReason, now_ms: int, *, resubscribe: bool = False
+    ) -> dict[str, Any]:
+        """Drop one subscription and return its `revoked` frame (e.g. §7.5 resync loop; §6.4
+        `topic_removed`, which allows a resubscribe to an unscoped kind)."""
         self._drop(sub)
         self._dropped([sub])
-        return self._revoked(sub, reason, now_ms)
+        return self._revoked(sub, reason, now_ms, resubscribe=resubscribe)
 
     def _authorise(self, topic: ParsedTopic, opts: Mapping[str, Any]) -> frozenset[uuid.UUID]:
         """Permission, then §6.2 silent narrowing. Raises `forbidden` / `account_scope_denied`."""
@@ -2014,8 +2017,12 @@ async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
 
 #: §6.4: a `machines` revocation's internal reason. `_reevaluate_entity` revokes with
 #: `permission_revoked` exactly when the row refuses on `role`; otherwise the subscription held
-#: its entity at `sub`, so the refusal is `foreign`. (`evicted` comes with entry removal.)
-_MACHINE_REVOKED: Final = {"permission_revoked": "role", "account_scope_changed": "foreign"}
+#: its entity at `sub`, so the refusal is `foreign`. A removed entry's `topic_removed` is `evicted`.
+_MACHINE_REVOKED: Final = {
+    "permission_revoked": "role",
+    "account_scope_changed": "foreign",
+    "topic_removed": "evicted",
+}
 
 
 def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> list[_AuditRow]:

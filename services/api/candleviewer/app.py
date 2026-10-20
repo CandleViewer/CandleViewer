@@ -408,12 +408,14 @@ from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
     IngestionUpstreamSink,
     KillSwitchView,
+    MachineRevocationAudit,
     StorePrincipalLoader,
     WsEvents,
     WsRuntime,
     book_snapshot_source,
     default_snapshot_router,
     ingestion_streams,
+    loop_call_later,
     wallet_topic,
 )
 
@@ -1503,8 +1505,11 @@ def create_app(
     ws_wallet = wallet_topic(ws_sequencing)
     snapshot_adapters["wallet"] = ws_wallet
     # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
-    # publish fans out through the sequencing hub, waking a pending subscription.
-    machine_states = MachineStateRegistry(hub=ws_sequencing)
+    # publish fans out through the sequencing hub, waking a pending subscription, at most once per
+    # entity per 100 ms window. The loop's timers close a window and end a terminal entry (§6.4).
+    machine_states = MachineStateRegistry(
+        hub=ws_sequencing, call_later=loop_call_later, wall_ms=_now_ms
+    )
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
         bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
@@ -1531,6 +1536,7 @@ def create_app(
         disabled_memory_s=ACCESS_TOKEN_TTL.total_seconds(),
         access_token_ttl_s=ACCESS_TOKEN_TTL.total_seconds(),
     )
+    machine_states.on_revoked = MachineRevocationAudit(ws_registry)  # its `evicted` rows (§6.4)
     ws_hub = GatewayHub(
         max_per_user=resolved.ws_max_connections_per_user,
         max_auths_per_min=resolved.ws_max_auths_per_user_per_min,
@@ -1539,7 +1545,7 @@ def create_app(
     app.state.ws_registry = ws_registry
     app.state.ws_hub = ws_hub
     app.state.ws_events = ws_events = WsEvents(ws_registry, ws_hub, kill_switch)
-    app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved)
+    app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved, machines=machine_states)
     # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, off by default. Without a config
     # the gateway keeps its 1 024-frame push bound: the flag swaps the bound, never removes it.
     ws_backpressure = (
