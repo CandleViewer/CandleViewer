@@ -6,12 +6,12 @@ MPL-2.0) instead of Figma. Agents drive it through the **official Penpot MCP ser
 
 ## Topology
 
-| Piece | Where | Notes |
-|---|---|---|
-| Penpot instance | https://design.penpot.app — team **CandleViewer** (`team-id b564c72c-f31f-81ec-8008-b109a9175d0b`) | Cloud-hosted for now. Self-hosting in WSL2 is a later option; nothing on the agent side changes. |
-| MCP server | **Hosted:** `https://design.penpot.app/mcp/stream?userToken=<MCP key>` (Streamable HTTP) | Registered user-scope in `~/.claude.json` as `penpot`. The key is per-user (Your account → Integrations → MCP Server) and lives only in `~/.claude.json` — never in the repo or a ticket. Tools: `high_level_overview`, `penpot_api_info`, `execute_code`, `export_shape` (no `import_image` on hosted). |
-| Plugin | Penpot's built-in **MCP plugin** (Plugins menu in any open file) | The plugin *is* the bridge: without an open, connected plugin every tool call fails with "No plugin instance connected". |
-| Local fallback | `C:\Users\basil\Desktop\Projects\PublicProjects\penpot\mcp` → `start-penpot-mcp.cmd` (`:4401/mcp`, plugin `:4400/manifest.json`, WS `:4402`) | Built 2026-09-25 from Penpot `develop`. Use if the hosted endpoint is down or when self-hosting. |
+| Piece           | Where                                                                                                                                        | Notes                                                                                                                                                                                                                                                                                                    |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Penpot instance | https://design.penpot.app — team **CandleViewer** (`team-id b564c72c-f31f-81ec-8008-b109a9175d0b`)                                           | Cloud-hosted for now. Self-hosting in WSL2 is a later option; nothing on the agent side changes.                                                                                                                                                                                                         |
+| MCP server      | **Hosted:** `https://design.penpot.app/mcp/stream?userToken=<MCP key>` (Streamable HTTP)                                                     | Registered user-scope in `~/.claude.json` as `penpot`. The key is per-user (Your account → Integrations → MCP Server) and lives only in `~/.claude.json` — never in the repo or a ticket. Tools: `high_level_overview`, `penpot_api_info`, `execute_code`, `export_shape` (no `import_image` on hosted). |
+| Plugin          | Penpot's built-in **MCP plugin** (Plugins menu in any open file)                                                                             | The plugin _is_ the bridge: without an open, connected plugin every tool call fails with "No plugin instance connected".                                                                                                                                                                                 |
+| Local fallback  | `C:\Users\basil\Desktop\Projects\PublicProjects\penpot\mcp` → `start-penpot-mcp.cmd` (`:4401/mcp`, plugin `:4400/manifest.json`, WS `:4402`) | Built 2026-09-25 from Penpot `develop`. Use if the hosted endpoint is down or when self-hosting.                                                                                                                                                                                                         |
 
 ## Session ritual (human, once per session)
 
@@ -38,7 +38,8 @@ ticket only moves to **Done** when the owner has approved it. Concretely:
 
 **Mandatory evidence on EVERY design ticket — no exceptions for "research" or "wireframe" tickets (owner decision
 2026-09-25).** A design PR without both of the following is incomplete and must be sent back:
-- **Penpot link** to the ticket's page, in the PR body *and* the issue comment:
+
+- **Penpot link** to the ticket's page, in the PR body _and_ the issue comment:
   `https://design.penpot.app/#/workspace?team-id=<team>&file-id=<file>&page-id=<page-id>` — read `page.id` from the
   plugin API (`penpotUtils.getPageByName(...).id`); team/file ids are in §Topology.
 - **Screenshots**: one PNG per frame/state exported with `docs/design/_tools/penpot_export.py`, committed under
@@ -46,8 +47,9 @@ ticket only moves to **Done** when the owner has approved it. Concretely:
   or the raw GitHub URL) so the owner can review without opening Penpot.
 - UX-research tickets still design in Penpot: the artefact is a research board (personas/journey/findings cards,
   comparison matrices, annotated wireframes) on the ticket's page — not a markdown file alone. Journey maps and
-  flows are drawn as frames; Mermaid may be *additional*, never the only deliverable.
+  flows are drawn as frames; Mermaid may be _additional_, never the only deliverable.
 - The `code-reviewer` for a design PR fails the review (`REQUEST_CHANGES`) if either item is missing.
+
 3. Owner reviews in Penpot (and the PR). Approval = **owner merges the spec PR** and/or comments `approved`.
    Any other comment = rework; agent iterates on the same page.
 4. Only after approval may the dependent frontend ticket enter Ready (design-ahead rule, C-11.1).
@@ -62,11 +64,13 @@ in the ticket. Skills: the official `penpot-*` skill set (penpot-ai-kit 0.4.0) i
 
 - One Penpot **file per epic**, one **page per screen** (`SCR-nnn <name>`); components live in the shared
   **CandleViewer DS** library file (`packages/ui` tokens are the source of truth — never invent a token).
-- Deliverables per design ticket (all three, or the ticket is not Done):
+- Deliverables per design ticket (all of these, or the ticket is not Done):
   1. Penpot artefacts (frames named `SCR-nnn/<state>`; every state in `14-screens-catalogue.md`).
   2. `docs/design/<epic>/<ticket>.md` — spec: purpose, states, data, interactions, hotkeys, a11y notes,
      token usage, and **PNG exports** of each frame (`export_shape`) committed under `docs/design/<epic>/img/`.
   3. Storybook stories for any `CMP-*` touched (`packages/ui`).
+  4. For `CMP-*` tickets (and `SCR-*` tickets that change a component contract): the handoff checklist
+     `docs/design/<epic>/<ticket>-handoff.md`, per `16-design-system-brief.md` §11.4 / §13.3 item 8.
 - Design sign-off = PR merge of the spec + exports; the Penpot file link goes in the ticket comment.
 - `execute_code` runs arbitrary JS in the plugin sandbox: only mutate the file named in the ticket; never
   delete pages/components you did not create; export before and after large mutations.
@@ -83,5 +87,5 @@ in the ticket. Skills: the official `penpot-*` skill set (penpot-ai-kit 0.4.0) i
   `page.root.appendChild(shape)`.
 - Export from code: `await shape.export({type:"png", scale:1})` returns a `Uint8Array`.
 - **Browser tab suspension** kills the bridge within ~30–45 s of the tab losing focus. Before an agent session:
-  pin the Penpot tab, Chrome → Settings → Performance → *Always keep these sites active* → `design.penpot.app`,
+  pin the Penpot tab, Chrome → Settings → Performance → _Always keep these sites active_ → `design.penpot.app`,
   and disable Memory Saver for it. Without this, every design ticket stalls.

@@ -16,6 +16,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 ## 2. Epic
 
 ### 2.1 DoR (Backlog → Ready)
+
 - [ ] Problem statement and business/user value written (why this Epic exists, who benefits).
 - [ ] Scope boundaries stated: explicit "In scope" and "Out of scope" bullet lists (e.g., "Android: out of scope per owner decision 2026-09-14").
 - [ ] Linked research: relevant `docs/research/digests/*.digest.md` and/or `docs/research/24-owner-decisions.md` items referenced.
@@ -27,6 +28,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 - [ ] Owner (a named engineer/lead, not just a team) assigned for decomposition.
 
 ### 2.2 DoD (→ Done)
+
 - [ ] Every child Story/Task/Spike/Bug is Done (100% rollup) or explicitly descoped with a Won't/Later disposition recorded on this Epic.
 - [ ] Acceptance criteria at the Epic level (the outcome, not each child's AC) verified end-to-end, not just per-child.
 - [ ] Cross-cutting quality gates rolled up and green: coverage thresholds met across all touched packages (≥85% backend/engine, ≥80% frontend), no open P0/P1 bugs against this Epic's scope.
@@ -43,6 +45,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 ## 3. Story
 
 ### 3.1 DoR (Backlog → Ready)
+
 - [ ] Written in INVEST form (Independent, Negotiable, Valuable, Estimable, Small ≤8pts, Testable).
 - [ ] Acceptance criteria written in **Gherkin** (`Given/When/Then`), covering the happy path plus at least one edge case and one error/failure case.
 - [ ] Design-ready **[if labelled `design` or the Story has any UI surface]**:
@@ -50,6 +53,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
   - [ ] Design has been Done for ≥2 sprints (design-ahead rule) OR an explicit Architect/CDO waiver is recorded with reason.
   - [ ] Component(s) used are in `15-component-catalogue.md`; any new component has a design-system entry, not an ad hoc one-off.
   - [ ] States enumerated (empty, loading, error, populated, edge-density e.g. extreme footprint density) per `14-screens-catalogue.md` conventions.
+  - [ ] The design ticket carries its completed per-component handoff checklist (`16-design-system-brief.md` §11.4: Penpot link, Variants × States, keyboard table, accessible-name/role table, motion pair, density notes, essential-exceptions log), every line ticked or marked N/A with a reason, and this ticket links it (scope and effective date: `16-design-system-brief.md` §13.3 item 8).
 - [ ] Security-ready **[if labelled `security`, default-on for Stories touching auth/RBAC, API keys, OMS/order placement, withdrawal settings, or any admin screen]**:
   - [ ] Threat considerations noted on the ticket (what could go wrong: injection, privilege escalation, key leakage, replay).
   - [ ] Data classification noted (does this touch secrets/PII/financial data).
@@ -61,6 +65,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 - [ ] Out-of-scope notes present if the Story is deliberately narrow (e.g., "single symbol only, multi-symbol is a follow-up Story").
 
 ### 3.2 DoD (→ Done)
+
 - [ ] All Gherkin acceptance criteria pass, demonstrated by an automated test (unit/integration/E2E) referencing the specific scenario, or by an executed manual QA test-plan step for scenarios that cannot yet be automated (with a Task filed to automate it).
 - [ ] Coverage: new/changed lines meet or exceed package threshold (≥85% backend/engine packages, ≥80% frontend) — CI coverage gate green, no regression to package baseline.
 - [ ] Docs: any new endpoint/topic/schema reflected in `22-api-openapi.yaml`/`23-ws-protocol.md`/`24-internal-schemas.md`; any new screen/component reflected in `14-screens-catalogue.md`/`15-component-catalogue.md` if design changed during implementation; user-facing behavior changes noted in changelog fragment (see `07-release-and-prr.md` changelog automation).
@@ -68,6 +73,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 - [ ] perf **[if labelled `perf`, default-on for chart-engine/order-flow/high-frequency-update Stories]**: benchmark run recorded (engine fps at target bar/density count, or API/WS latency under k6/Locust profile) against `06-performance-and-load-standard.md` budget; no regression beyond the agreed threshold.
 - [ ] security **[if labelled `security`]**: SAST/SCA/secrets-scan clean or findings triaged with accepted-risk sign-off; Security engineer review comment present; for anything touching keys/withdrawal/RBAC, a manual abuse-case check performed (e.g., attempt privilege escalation, attempt withdrawal toggle).
 - [ ] design-qa **[if labelled `design-qa`, default-on for net-new UI Stories]**: built screen compared against design spec (spacing/tokens/type/color/states) by a designer or design-system-trained reviewer; discrepancies either fixed or filed as follow-up Bug with `priority/*` set.
+- [ ] design handoff **[if the Story consumes a `CMP-*`/`SCR-*` design ticket]**: the built component matches the design ticket's handoff checklist (`16-design-system-brief.md` §11.4: Variants × States, keyboard and accessible-name/role tables, motion pair, density notes, logged essential exceptions); any design change after sign-off went through `16-design-system-brief.md` §11.5 (design ticket re-opened, this Story flagged for re-sync) rather than being absorbed silently.
 - [ ] QA sign-off: black-box test plan executed by QA/SDET (or ticket owner if QA capacity constrained — recorded explicitly as a deviation), sign-off comment posted with pass/fail per scenario.
 - [ ] Demo: Story demoed at Sprint Review (screen recording acceptable if live demo infeasible) OR explicitly marked "non-demoable infra-adjacent" with Architect concurrence.
 - [ ] PR(s) implementing the Story are merged to `main` via the merge queue with required approvals and checks (per `01-sdlc-and-branching.md` §7).
@@ -78,6 +84,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 ## 4. Task
 
 ### 4.1 DoR (Backlog → Ready)
+
 - [ ] Clear technical description of the change and why (what breaks/what's missing without it).
 - [ ] Acceptance criteria stated (may be technical, e.g. "p99 ingestion latency < 50ms under 2x expected tick rate" rather than Gherkin, but must be objectively checkable).
 - [ ] Interface-first check: if this Task defines or changes a contract consumed by another area (API/WS schema, internal event schema, exchange-adapter interface), the schema diff is drafted and reviewed **before** implementation starts, per `01-sdlc-and-branching.md` §10.
@@ -86,10 +93,12 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 - [ ] Dependencies/parent set, estimate ≤8 points agreed.
 
 ### 4.2 DoD (→ Done)
+
 - [ ] Acceptance criteria objectively verified (test or measurement attached).
 - [ ] Coverage threshold met for touched package.
 - [ ] Docs updated (schema/architecture doc, code comments/docstrings, ADR if a design decision was made mid-implementation).
 - [ ] a11y **[if the Task touches shared UI primitives/design-system code]**: axe-core CI green.
+- [ ] design handoff **[if the Task is a `design`-labelled `CMP-*` ticket, or an `SCR-*` ticket that introduces or changes a component contract]**: the per-component handoff checklist (`16-design-system-brief.md` §11.4) is attached to the ticket and committed beside the spec, every line ticked or marked N/A with a reason; QA or the owner checks it before setting Done (`16-design-system-brief.md` §13.3 item 8, which also sets the effective date for designs already Done).
 - [ ] perf **[if labelled `perf`]**: benchmark recorded.
 - [ ] security **[if labelled `security`]**: SAST/SCA clean or triaged, reviewed by Security engineer.
 - [ ] QA sign-off **[if labelled `qa`, or if the Task is user-observable indirectly]**: verification recorded.
@@ -101,6 +110,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 ## 5. Spike
 
 ### 5.1 DoR (Backlog → Ready)
+
 - [ ] Question(s) to be answered stated precisely (e.g., "Can the custom WebGL engine render footprint cells + DOM heatmap at 100ms cadence, 100k bars, 60fps in Electron, Chromium, and Tauri/WebView2?").
 - [ ] Timebox stated (days), agreed with the Architect.
 - [ ] Success/decision criteria stated up front (what result leads to which decision — e.g., "if <45fps in Tauri, Electron is chosen outright without a second spike").
@@ -108,6 +118,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 - [ ] Explicitly NOT expected to produce production-shippable code (stated on the ticket) unless the ticket says otherwise.
 
 ### 5.2 DoD (→ Done)
+
 - [ ] Question(s) answered with recorded evidence (benchmark numbers, prototype repo/branch link, comparison table).
 - [ ] Decision recorded as an ADR in `27-adrs/` (even if the decision is "defer, need more data" — that itself is an ADR entry).
 - [ ] Follow-up tickets filed for whichever path was chosen (new Epics/Stories/Tasks), with the spike's findings linked as context so implementers don't re-derive them.
@@ -120,6 +131,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 ## 6. Bug
 
 ### 6.1 DoR (Backlog → Ready)
+
 - [ ] Reproduction steps documented (exact steps, environment: dev/staging/prod, symbol/account context if relevant).
 - [ ] Expected vs actual behavior stated.
 - [ ] Severity/Priority assessed (`priority/p0-critical` for anything touching live money/safety invariants — e.g., missing native SL on fan-out — through `priority/p3-low`).
@@ -128,6 +140,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 - [ ] Linked to the original Story/Epic if it's a regression of prior work.
 
 ### 6.2 DoD (→ Done)
+
 - [ ] Root cause fixed (not just symptom-patched) or, if a symptom patch is deliberate/temporary, that's stated with a follow-up Task filed.
 - [ ] Regression test added that would have caught this bug, at the appropriate pyramid layer, and it fails on the pre-fix code / passes on post-fix code.
 - [ ] Coverage threshold maintained.
@@ -144,11 +157,13 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 ## 7. Chore
 
 ### 7.1 DoR (Backlog → Ready)
+
 - [ ] What's changing and why is stated in one or two sentences (e.g., "bump Playwright 1.4x→1.5x to fix known flaky selector API").
 - [ ] Risk assessed as low (if a "chore" turns out to have real behavior risk, it should be reclassified as a Task).
 - [ ] Estimate ≤3 points agreed.
 
 ### 7.2 DoD (→ Done)
+
 - [ ] Change applied, CI green (build/lint/typecheck/unit at minimum).
 - [ ] Coverage not regressed.
 - [ ] Docs updated if the chore changes a documented version/process (e.g., CONTRIBUTING.md tooling versions).
@@ -160,7 +175,7 @@ Status: locked. Companion to `01-sdlc-and-branching.md`. These checklists gate t
 
 ## 8. Cross-Kind gating notes
 
-- **QA sign-off** for Story/Bug is never silently skipped: if QA capacity is constrained, the ticket owner performs and records the black-box test plan themselves and states "QA capacity deviation" explicitly — Status still cannot reach Done without *some* recorded sign-off.
+- **QA sign-off** for Story/Bug is never silently skipped: if QA capacity is constrained, the ticket owner performs and records the black-box test plan themselves and states "QA capacity deviation" explicitly — Status still cannot reach Done without _some_ recorded sign-off.
 - **Security sign-off**: any ticket touching `area/auth-rbac`, `area/oms-execution` order-placement paths, API-key storage/handling, withdrawal-permission settings, or the fan-out safety invariant (every fanned-out order carries a native exchange-side SL) is **always** treated as `security`-labelled for DoD purposes, whether or not the label was applied at creation — reviewers must add the label and block Done if missing.
 - **a11y**: default-on (WCAG 2.2 AA) for any ticket that ships or changes a UI surface, including owner/admin screens — there is no "internal tool, a11y doesn't matter" exception, since owner/admin screens are inside the same web app and RBAC-gated, not absent of users with accessibility needs.
 - **perf**: default-on for anything in `area/chart-engine`, `area/order-flow`, ingestion, WS fan-out paths, or DOM heatmap/footprint rendering, per the mandatory-spike findings in `24-owner-decisions.md`.
