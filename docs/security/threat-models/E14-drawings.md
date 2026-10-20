@@ -1,9 +1,9 @@
 # E14 — STRIDE threat model: drawings persistence, sync and annotation content
 
 - Ticket: E14-X01 (issue #433). Owner: Security engineer (CODEOWNER). Status: **Approved** (2026-10-20; independent
-  reviews on PR #2564: sonnet security, sonnet code, sonnet delta security; the Fable security pass and the Architect
-  review are recorded on the close-out PR). Owner acceptance of the residuals (RR-24 to RR-26 in
-  `04-security-program.md` §16.1) is pending, queued on #2701; review log at the end of §7.
+  reviews on PR #2564: sonnet security, sonnet code, sonnet delta security; the Architect review is in the review log
+  at the end of §7 and the Fable security pass is recorded on the close-out PR). Owner acceptance of the residuals
+  (RR-24 to RR-26 in `04-security-program.md` §16.1) is pending, queued on #2701.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per epic (C-12.1). Format mirrors
   `E22-big-trades.md`. Auth/session mechanics are E09's (`e09-auth-rbac.md`) and consumed as given.
 - **Basis: the shipped backend, not the idealised design.** The backend slice of E14-T01 (#357) is described
@@ -245,7 +245,7 @@ look-alike text.
 | SR-E14-08 | When E40 exposes `alert_id`: same-owner check, identical response for foreign/missing alert | E40 | E40 tests |
 | SR-E14-09 | When E15 adds the layouts FK: same-owner rule and composite key so one owner's layout delete cannot cascade into another owner's drawings | E15-T01 (#402; FK added in `0022_workspaces.py`, rewrite of this row: #3055) | E15 migration test |
 | SR-E14-10 | Production bundle must not contain `__cvEngine.projectForTest` | E14-Q03, E14-X03 | E14-X03 bundle assertion |
-| SR-E14-11 | Telemetry: authorisation-denied counter, oversized-payload rejection and batch-cap rejection counters, per-user drawing count gauge | #2727 for the per-user gauge only (max and p95, no per-user label); the denied, 413/422 and batch-cap counters have no owning ticket yet (§7) | metrics catalogue test |
+| SR-E14-11 | Telemetry: authorisation-denied counter, oversized-payload rejection and batch-cap rejection counters, per-user drawing count gauge | #2727 (widened 2026-10-20): the per-user gauge (max and p95, no per-user label) and the denied, 413/422 and batch-cap counters on `/drawings` (§7) | metrics catalogue test |
 
 Today the shipped telemetry is `cv_drawings_batch_ops`, `cv_drawings_conflicts_total{rule}` and the live-row gauge by
 tool (all users): per-user counts, 413/422 rejection counters and a denied counter on the drawings routes do **not**
@@ -258,9 +258,9 @@ exist (`rbac.denied` audit records are the only denial signal). SR-E14-11 is the
 | RR1 (**R3**) | A single PUT/DELETE probe of a foreign id is audited and so measurably slower than a missing id (DR24). Batch probes are audited too, foreign and missing alike, so the batch adds no such difference (decided and shipped in #2407); foreign `layout_id` probes are RR2 | Low | hpe-worker-1 (E14-T01, #357) | 2027-03-25 |
 | RR2 (**`layout_id` gap**) | Foreign `layout_id` probes (422 writes / 404 list) are refused identically but unaudited, unlike Workspaces D18. And `layout_id` (later `alert_id`) has no same-owner rule or FK in the DB; today every non-null `layout_id` is refused | Low | hpe-worker-1 (E14-T01) for the audit decision; E15-T01 (#402) for FK + same-owner rule (SR-E14-09); E40 for `alert_id` | 2027-03-25 |
 | RR3 (R2, R4) | Id-existence oracle on client-minted ids (`id_unavailable`); after the 90-day purge an id can be re-created (no tombstone). R1, the batch snapshot's lock-wait side channel, is closed in #2407: the snapshot is owner-scoped (DR23) | Low | E14-T01 (#357), accepted on #357 | 2026-11-13 |
-| RR4 | **No per-user or per-symbol quota and no route rate limit**: bounded per call only, unbounded in aggregate (DR32, DR33); this includes the durable `rbac.denied` records that probes write (a foreign-id PUT/DELETE, or a foreign or missing batch target), one per probe, as 403s do (DR17) | Medium | #2727 (E14-T01 follow-up; SR-E14-05), with E14-Q05 numbers; the owning ticket now exists, the value is an Owner decision (below); **E14 epic sign-off is refused until the quota value is decided** | before E14 epic sign-off |
+| RR4 | **No per-user or per-symbol quota and no route rate limit**: bounded per call only, unbounded in aggregate (DR32, DR33); this includes the durable `rbac.denied` records that probes write (a foreign-id PUT/DELETE, or a foreign or missing batch target), one per probe, as 403s do (DR17) | Medium | #2727 (E14-T01 follow-up; SR-E14-05), with E14-Q05 numbers; the owning ticket now exists, the value is an Owner decision (below); **E14 epic sign-off is refused until the quota value is decided** | 2026-11-15, or earlier at #2727's PR, and in any case before E14 epic sign-off |
 | RR5 | Drawings are outside the append-only audit scope; no edit history. State this in `04-security-program.md` so nobody assumes coverage | Medium | Security engineer / Owner (accepted by decision record 11) | at sign-off |
-| RR6 | Client render sinks, position-tool integrity and the production-handle check are **requirements only** until E14-T02/T03/S06/S07/S08 land | High until built | E14 story owners (E14-T02, T03, S06, S07, S08; requests on #358, #545, #546, #547, #467, #549 and #542 below) | each story's PR |
+| RR6 | Client render sinks, position-tool integrity and the production-handle check are **requirements only** until E14-T02/T03/S06/S07/S08 land | High until built | E14 story owners (E14-T02, T03, S06, S07, S08; requests on #358, #545, #546, #547, #467, #549 and #542 below) | 2026-11-15, or earlier at each story's PR |
 | RR7 | **Homoglyph and invisible-character spoofing in labels/text.** The sanitiser strips C0/C1, U+2028/9, LRM/RLM, embeddings and isolates (`drawings_models.py` `_STRIP`), but **not** zero-width characters (U+200B–D, U+2060, U+FEFF) and does **no** NFC normalisation, so look-alike labels are possible. Accepted: labels are display text only and never feed identity, authorisation or order logic | Low | Security engineer (accepted); revisit if labels ever drive an action | at sign-off |
 
 Quota values. The model proposed (to be confirmed against E14-Q05's measured numbers, not invented) a cap of **2 000**
@@ -273,18 +273,19 @@ RR4 with them. The two sets disagree and neither is enforced today. The value, a
 sign-off, are Owner decisions queued on #2701.
 
 Register entries. `04-security-program.md` §16.1 records RR6 as RR-24 (open High until built, not accepted;
-`32-risk-register.md` RSK-087), RR4 as RR-25 (RSK-088) and RR1, RR2, RR3, RR5 and RR7 as RR-26, each with owner
-sign-off pending, queued on #2701 (RR3 was accepted on #357). SR-E14-11's denied, 413/422 and batch-cap counters have
-no owning ticket: #2727 covers only the per-user gauge, so a ticket is to be filed or #2727 widened (the close-out PR
-lists it as needing filing).
+`32-risk-register.md` RSK-087, which gates R1), RR4 as RR-25 (RSK-088) and RR1, RR2, RR3, RR5 and RR7 as RR-26 (RR5
+also as RSK-089), each with owner sign-off pending, queued on #2701 (RR3 was accepted on #357). SR-E14-11's denied,
+413/422 and batch-cap counters are carried by #2727 (widened 2026-10-20), by the orchestrator's ruling under the filing
+freeze ([comment](https://github.com/CandleViewer/CandleViewer/issues/2727#issuecomment-6288660955)), alongside the
+per-user gauge, so the model has no unfiled gap.
 
 ### Sign-off
 
 - Independent security review complete on PR #2564 (sonnet security-reviewer: APPROVE at `8d293d1c`, delta APPROVE
   at `1af40ce8`; sonnet code-reviewer: APPROVE at `8d293d1c`; both carried over at `74867db3`, an identical tree).
-  The QA record of 2026-10-20 on #433 is logged below. The Fable security pass and the Architect review (via PR
-  review; agent sign-off, owner-delegated per #1778 2026-10-13) are recorded on the close-out PR, and the
-  Security-engineer sign-off on #433 follows the Fable pass (agent-delivery adaptation, as in E22).
+  The QA record of 2026-10-20 on #433 is logged below. The Architect review (decision agent, orchestrator-delegated
+  per #1778) is logged below; the Fable security pass is recorded on the close-out PR, and the Security-engineer
+  sign-off on #433 follows the Fable pass (agent-delivery adaptation, as in E22).
 - Owner acceptance of the residuals is pending, queued on #2701. RR1 and RR4 were queued first (the 2026-10-15 item
   there; its RR1 ask also covered the foreign `layout_id` probes now recorded as RR2); the close-out adds RR-24 to
   RR-26 (RR6; RR4; RR1, RR2, RR3, RR5 and RR7) in `04-security-program.md` §16.1.
@@ -305,10 +306,11 @@ lists it as needing filing).
 | 2026-10-15 | security-reviewer (sonnet, independent; PR #2564; threat completeness and correctness) | APPROVE at `8d293d1c` with 5 MINOR findings; 79 cited tests present at the stack head `98be7c95`, the tallies and about ten controls checked against the code |
 | 2026-10-15 | code-reviewer (sonnet, independent; PR #2564; docs accuracy and traceability) | APPROVE at `8d293d1c` with 1 MINOR and 2 NIT findings; rule references checked (`scripts/check_rule_refs.py` exit 0) |
 | 2026-10-15 | security-reviewer (sonnet, independent; PR #2564; delta `8d293d1c..1af40ce8`) | APPROVE at `1af40ce8`: all 8 findings fixed and the 8 newly cited tests present; both approvals carried over at `74867db3` (message-only change, tree identical); merged as `c96974be4` |
-| 2026-10-20 | QA (sonnet, independent; #433) | FAIL on main `a7583e991` (reviewed files identical to `61533c2e3`): Draft status, an author-only log, no per-element coverage matrix, SR-E14-05 and SR-E14-11 owned by a placeholder, and the requests, tabletop and register entries missing. Open after this amendment: the SR-E14-11 counters' owning ticket (to be filed), the two rows below and the Owner decisions (RR1, RR4) |
+| 2026-10-20 | QA (sonnet, independent; #433) | FAIL on main `a7583e991` (reviewed files identical to `61533c2e3`): Draft status, an author-only log, no per-element coverage matrix, SR-E14-05 and SR-E14-11 owned by a placeholder, and the requests, tabletop and register entries missing. Open after this amendment: the Owner decisions (RR1, RR4), the Fable row below and the SR-E14-11 counters' owning ticket, which #2727 (widened 2026-10-20) has since taken |
 | 2026-10-20 | amendment author (agent) | Approved. Added the §5.1 coverage matrix, cited #2727 (DR32, DR33, RR4, SR-E14-05), laid the two quota proposals side by side and routed the value to the Owner, completed this log, posted the requests (hand-offs below) and the tabletop record (sign-off above) and recorded RR6, RR4 and the accepted residuals as RR-24 to RR-26 in `04-security-program.md` §16.1 and RSK-087, RSK-088 in `32-risk-register.md`. No row is re-rated and no control is changed |
+| 2026-10-20 | amendment author (agent), folding the security and code review lenses' findings on the close-out PR and the orchestrator's rulings | Folded: a calendar backstop on RR-24 and RR-25 (review-by 2026-11-15, or earlier at the story's or #2727's PR); #2727 (widened 2026-10-20) carries SR-E14-11's denied, 413/422 and batch-cap counters, so no new ticket is needed; RR5 recorded as RSK-089 (84 register entries); RSK-087 added to the R1 gate row; RR7 worded as proposed for acceptance and RR3 as accepted on #357; the Architect row below completed. No row is re-rated and no control is changed |
+| 2026-10-20 | architect (decision agent, orchestrator-delegated per #1778; the close-out PR) | APPROVE at the fix head (the commit after `35a5a1f2` on this PR) |
 | pending | security-reviewer (Fable, independent; the close-out PR) | Fable security pass on this PR: record on the PR |
-| pending | architect (agent sign-off, owner-delegated per #1778 2026-10-13; the close-out PR) | Architect review via PR review: record on the PR |
 
 ### Requests and hand-offs
 
