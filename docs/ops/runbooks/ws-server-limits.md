@@ -74,7 +74,8 @@ rendered message through the same redaction as stdout. What that looks like:
   redacted.
 - **Tracebacks.** A traceback or a stack is rendered first and redacted after (#415), on stdout and
   in the support bundle's buffer (on one line there), where each value stands: a labelled value
-  shows the key-name marker, and each run of characters that has the shape of a secret shows its
+  shows the key-name marker, a backup download path (to the end of its token) shows
+  `[redacted:download-path]`, and each run of characters that has the shape of a secret shows its
   marker, so the frames and lines stay readable. On the last line, most exception classes with a
   name of 18 or more letters show as a marker (`ConnectionResetError: …` shows
   `[redacted:key-shape]: …`), as does a dotted name of three parts of 10 or more characters each

@@ -185,15 +185,22 @@ _CUT_LEN: Final = _MAX_SCAN_LEN + len(_TRUNCATED)
 _TAIL_MAX: Final = 3072
 
 #: A run of the characters the value shapes are made of: word characters, `.` and `-`. A match of
-#: `_VALUE_PATTERN` lies inside one run, and the pattern matches a run alone exactly as it matches
-#: it inside the text (what borders a run is a boundary to every shape), so `_redact_runs` can
-#: replace a whole run, and no part of a matched value stays beside its marker.
+#: each shape but the download path lies inside one run, and the pattern matches a run alone exactly
+#: as it matches it inside the text (what borders a run is a boundary to each of those shapes), so
+#: `_redact_runs` can replace a whole run, and no part of a matched value stays beside its marker. A
+#: download path holds `/`, which no run does: `_DOWNLOAD_PATH` takes it.
 _RUN: Final = re.compile(r"[\w.-]+")
 #: A run as `_cut` reads it: `_RUN` and the other characters of a marker and a placeholder (`[`,
 #: `]`, `:`, `<`, `>`, `*`), so that a cut drops a marker or a placeholder whole: a part of one
 #: after a label would read as a value (`_NO_VALUE`), and a second pass would change the text
 #: (#415).
 _CUT_RUN: Final = re.compile(r"[\w.\[\]:<>*-]+")
+#: A backup download path as `_redact_runs` reads it (#415): `_DOWNLOAD_PATH_RE` and the rest of its
+#: token, to a `/` or a space. It is replaced by `_DOWNLOAD_MARK` where it stands, the marker that a
+#: message line holding one becomes. Linear: a backup id ends at the next `/`, so no two ids
+#: overlap, and the token is possessive.
+_DOWNLOAD_PATH: Final = re.compile(f"{_DOWNLOAD_PATH_RE}[^/\\s]*+")
+_DOWNLOAD_MARK: Final = f"[redacted:{_REASON_BY_GROUP['download']}]"
 
 
 def _is_redact_key(key: object) -> bool:
@@ -256,15 +263,19 @@ def _run_marker(run: re.Match[str]) -> str:
 def _redact_runs(text: str) -> str:
     """Redact the text of a traceback or a stack where each value stands (#415).
 
-    Each value labelled with a key name shows the key-name marker, and each run (`_RUN`) in which a
-    value shape matches is replaced by that shape's marker; the rest of the text stays, so a
-    traceback keeps its frames and lines. A long text is cut first (`_cut`), and bounded again
-    after, as markers can lengthen it: a second pass changes nothing.
+    Each value labelled with a key name shows the key-name marker, each backup download path
+    (`_DOWNLOAD_PATH`) shows its marker, and each run (`_RUN`) in which a value shape matches is
+    replaced by that shape's marker; the rest of the text stays, so a traceback keeps its frames
+    and lines. A long text is cut first (`_cut`), and bounded again after, as markers can lengthen
+    it: a second pass changes nothing. A path still left at the end (paths nested in one another,
+    or a cut right after a path's `/download/`) makes the whole text the marker, as for a message
+    line.
     """
     text = _cut(_LABELLED_VALUE.sub(_label_marker, _cut(text)))
+    text = _DOWNLOAD_PATH.sub(_DOWNLOAD_MARK, text)
     if _VALUE_PATTERN.search(text) is not None:
         text = _cut(_RUN.sub(_run_marker, text))
-    return text
+    return _DOWNLOAD_MARK if _DOWNLOAD_PATH.search(text) else text
 
 
 def _exception_text(exc: BaseException, depth: int) -> str:

@@ -22,7 +22,7 @@ from candleviewer.observability.redaction import redact_text
 _REFERENCE = re.compile(
     f"(?P<jwt>{redaction._JWT_RE})|(?P<apikey>{redaction._APIKEY_RE})"
     f"|(?P<invite>{redaction._INVITE_SHAPE_RE})|(?P<refresh>{redaction._REFRESH_SHAPE_RE})"
-    f"|(?P<totp>{redaction._TOTP_RE})"
+    f"|(?P<totp>{redaction._TOTP_RE})|(?P<download>{redaction._DOWNLOAD_PATH_RE})"
 )
 #: Non-ASCII word characters and digits: separators for the JWT segments (ASCII classes), word
 #: characters for the `\b` and `\d` of the API-key and TOTP alternatives.
@@ -71,6 +71,16 @@ _PATHOLOGICAL = [
     pytest.param(("snake_case_" * _CAP)[:_CAP], id="snake-case-run"),
     pytest.param((("ab_" * 15)[:44] + " ") * (_CAP // 45), id="snake-case-runs"),
 ]
+#: A long traceback with a backup download path on each line, and texts at the cap whose backup id
+#: reads on: prefixes with no `/download/`, prefixes nested before one path, and an id with no `/`
+#: after it (#415).
+_PATH = f"/admin/backups/{'0' * 8}/download/{'aZ09_-' * 7}a"
+_DOWNLOAD_HEAVY = [
+    pytest.param(f'  File "{_PATH}/app.py", line 1\n' * 3000, id="a-path-per-line"),
+    pytest.param("/admin/backups/" * (_CAP // 15), id="prefixes"),
+    pytest.param("/admin/backups/a" * (_CAP // 16) + "/download/k", id="nested-prefixes"),
+    pytest.param("/admin/backups/" + "k " * (_CAP // 2), id="id-to-the-end"),
+]
 
 _Found = tuple[str | None, tuple[int, int]] | None
 
@@ -97,6 +107,7 @@ def test_redaction_scan_finds_the_same_match_as_the_backtracking_pattern(text: s
         "x" * 30 + "." + "y" * 9 + "." + "z" * 30,  # middle segment one character short
         "token=" + "q" * 15 + "." + "r" * 15 + "." + "s" * 15 + "!",
         *_PATHOLOGICAL,
+        *_DOWNLOAD_HEAVY,
     ],
 )
 def test_redaction_scan_matches_the_backtracking_pattern_on_known_shapes(text: str) -> None:
@@ -144,3 +155,20 @@ def test_perf_a_5_mb_run_is_cut_within_budget(redact: Callable[[str], str]) -> N
         best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
     assert out == redaction._TRUNCATED  # the run is dropped whole
     assert best_ms < 1.0, f"{best_ms:.3f} ms (the whole run was read: about 30 ms)"
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("text", _DOWNLOAD_HEAVY)
+@pytest.mark.parametrize(
+    "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
+)
+def test_perf_backup_download_paths_are_redacted_within_budget(
+    redact: Callable[[str], str], text: str
+) -> None:
+    best_ms = float("inf")
+    for _ in range(5):
+        start = time.perf_counter()
+        out = redact(text)
+        best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
+    assert re.search(redaction._DOWNLOAD_PATH_RE, out) is None
+    assert best_ms < 2.0, f"{best_ms:.3f} ms (each `/admin/backups/` is read once)"

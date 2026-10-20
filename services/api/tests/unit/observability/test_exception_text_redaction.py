@@ -11,6 +11,8 @@ exception text (`token = …`), so such a line passes the support bundle's scan.
 its start and its last lines, and a second pass changes nothing. A placeholder is no value only as
 the whole value, the last part of a dotted name is no label, a format string is left to format,
 and the buffer writes each record on one line, so a label and its value on two lines are refused.
+A backup download path (E42-T05 BK-11) in a traceback or a stack shows its marker where it stood,
+as the whole of a message line that holds one does.
 
 Values are assembled at runtime, so no secret-shaped literal sits in the repo.
 """
@@ -169,10 +171,10 @@ def _warn_with_stack(log: Any) -> None:
     log.warning("with_stack", stack_info=True)
 
 
-def _log_stack(path: str) -> Callable[[], None]:
+def _log_stack(path: str, directory: str = f"/srv/{TOKEN}") -> Callable[[], None]:
     """`_warn_with_stack` as if its file sat in a directory named by the value, on a thread of its
     own: the stack is short, so all of it is within the length that is scanned."""
-    code = _warn_with_stack.__code__.replace(co_filename=f"/srv/{TOKEN}/app.py")
+    code = _warn_with_stack.__code__.replace(co_filename=f"{directory}/app.py")
     warn = types.FunctionType(code, globals())
 
     def emit() -> None:
@@ -875,3 +877,131 @@ def test_a_signature_is_redacted_by_its_name(name: str) -> None:
     assert redact_text(signature) == signature  # no value shape takes it: its name is the control
     assert redaction.redact_structure({name: signature}) == {name: "[redacted:key-name]"}
     assert redact_text(f"{name}: {signature}") == f"{name}: [redacted:key-name]"
+
+
+#: A backup fetch's path (E42-T05 BK-11): its token shaped like `secrets.token_urlsafe(32)` or too
+#: short for any other shape, and its backup id a uuid or empty.
+_BACKUP_ID = str(uuid.UUID(int=1, version=4))
+_DL_MARK = "[redacted:download-path]"
+_DOWNLOAD_PATHS = {
+    "token-43": f"/admin/backups/{_BACKUP_ID}/download/{TOKEN}",
+    "token-22": f"/admin/backups/{_BACKUP_ID}/download/{_url_safe(22)}",
+    "empty-id": f"/admin/backups//download/{_url_safe(22)}",
+}
+#: Three dotted segments: the JWT shape.
+_JWT = ".".join((_CHARS[:12],) * 3)
+#: Each path alone, and beside a JWT, a TOTP and an access token, with the text each shows.
+_DOWNLOAD_VALUES = {
+    **{f"{name}-alone": (path, _DL_MARK) for name, path in _DOWNLOAD_PATHS.items()},
+    **{
+        f"{name}-beside": (
+            f"{_JWT} {path} 123456 {TOKEN}",
+            f"[redacted:jwt-shape] {_DL_MARK} [redacted:totp-shape] {_MARK}",
+        )
+        for name, path in _DOWNLOAD_PATHS.items()
+    },
+}
+
+
+@pytest.mark.parametrize(("value", "shown"), _DOWNLOAD_VALUES.values(), ids=_DOWNLOAD_VALUES)
+@pytest.mark.parametrize("chain", _CHAINS)
+@pytest.mark.parametrize("path", ["structlog", "stdlib"])
+def test_a_traceback_shows_the_download_path_marker_where_the_path_stood(
+    path: str, chain: str, value: str, shown: str
+) -> None:
+    lines, ring = _capture(_log_exc_info(path, chain, value))
+
+    assert _PART not in _logged(lines, ring) and _BACKUP_ID not in _logged(lines, ring)
+    [line], [entry] = lines, ring
+    _assert_readable(line["exception"], chain, shown)
+    field = "'exception': {!r}" if path == "structlog" else " exception={!r}"
+    assert field.format(line["exception"]) in entry
+
+
+@pytest.mark.parametrize(("value", "shown"), _DOWNLOAD_VALUES.values(), ids=_DOWNLOAD_VALUES)
+@pytest.mark.parametrize("path", ["structlog", "stdlib"])
+def test_a_stack_shows_the_download_path_marker_where_the_path_stood(
+    path: str, value: str, shown: str
+) -> None:
+    lines, ring = _capture(_log_stack(path, value))
+
+    assert _PART not in _logged(lines, ring) and _BACKUP_ID not in _logged(lines, ring)
+    [line], [entry] = lines, ring
+    frame = f", line {_warn_with_stack.__code__.co_firstlineno + 1}, in _warn_with_stack"
+    assert line["stack"].endswith(f'  File "{shown}/app.py"{frame}')
+    field = "'stack': {!r}" if path == "structlog" else " stack={!r}"
+    assert field.format(line["stack"]) in entry
+
+
+@pytest.mark.parametrize("beside", [False, True], ids=["alone", "beside"])
+@pytest.mark.parametrize("value", _DOWNLOAD_PATHS.values(), ids=_DOWNLOAD_PATHS)
+@pytest.mark.parametrize(
+    ("emit", "field", "text"),
+    [
+        (_structlog_field, "error", _DL_MARK),
+        (_stdlib_argument, "event", f"op failed: {_DL_MARK}"),
+        (_stdlib_message, "event", _DL_MARK),
+    ],
+    ids=["structlog-field", "stdlib-argument", "stdlib-message"],
+)
+def test_an_exception_logged_as_a_value_with_a_download_path_is_its_marker(
+    emit: Callable[[BaseException], None], field: str, text: str, value: str, beside: bool
+) -> None:
+    # the path first: a message line is the marker of the first shape in it, as a whole
+    message = f"fetch {value} failed" + (f" for {_JWT} 123456 {TOKEN}" if beside else "")
+    lines, ring = _capture(lambda: emit(ValueError(message)))
+
+    assert _PART not in _logged(lines, ring) and _BACKUP_ID not in _logged(lines, ring)
+    [line], [entry] = lines, ring
+    assert line[field] == text
+    assert text in entry
+
+
+def test_paths_nested_in_one_another_make_the_whole_traceback_text_the_marker() -> None:
+    inner = _DOWNLOAD_PATHS["empty-id"]
+    text = f"ValueError: /admin/backups/a{inner}/download/{_url_safe(22)} failed"
+
+    assert redaction._redact_runs(text) == _DL_MARK  # no path is left for a second pass to find
+    assert redact_text(text) == _DL_MARK
+
+
+def test_a_cut_right_after_a_path_download_segment_makes_the_whole_text_the_marker() -> None:
+    # stated: the run pass's markers move the cut to the `/download/` of a path with no token
+    text = "123456 " * 185 + "/admin/backups/a/download/ " + "123456 " * 10
+
+    assert redaction._redact_runs(text) == _DL_MARK
+
+
+def test_a_download_path_that_the_cut_ends_shows_its_marker_where_it_stood() -> None:
+    prefix = f"/admin/backups/{_BACKUP_ID}/download/"
+    head = "x" * (redaction._MAX_SCAN_LEN - len(prefix) - 11) + " "  # the cap falls 10 into TOKEN
+    out = redaction._redact_runs(head + prefix + TOKEN + " tail" * 10)
+
+    assert out == head + _DL_MARK  # the path and the cut's marker after it
+    assert redaction._redact_runs(out) == out
+
+
+#: Pieces of backup download paths, whole, nested or cut, among labels, quotes, spaces and TOTP
+#: shapes, whose markers lengthen a text: a cut can fall inside a path.
+_PATH_PIECES = (
+    *("/admin/backups/", "/download/", "/", _BACKUP_ID, "a", _url_safe(22), TOKEN, "%0A"),
+    *("token=", "password: ", '"', "'", " ", "\n", "123456", redaction._TRUNCATED, _DL_MARK),
+)
+_PATH_HEAVY = st.builds(
+    lambda pad, before, pieces: "x" * pad + " " + "123456 " * before + pieces,
+    st.integers(0, 21),
+    st.integers(0, 600),
+    st.lists(st.sampled_from(_PATH_PIECES), max_size=40).map("".join),
+)
+
+
+@settings(max_examples=300, deadline=None)
+@given(_PATH_HEAVY)
+@example(f"x /admin/backups/a{_DOWNLOAD_PATHS['empty-id']}/download/{TOKEN}")
+def test_no_download_path_is_left_and_a_second_pass_changes_nothing(text: str) -> None:
+    for redact in _REDACTIONS.values():
+        out = redact(text)
+
+        assert re.search(redaction._DOWNLOAD_PATH_RE, out) is None
+        assert len(out) <= _CAP
+        assert redact(out) == out
