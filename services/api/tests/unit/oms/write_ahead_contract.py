@@ -322,11 +322,13 @@ class WriteAheadContract:
         """OM-T04: exchange text the redaction never sees (an
         `exec_id`, an `exchange_order_id`) cannot hold NUL in Postgres text. The statement is
         refused whole (SQLSTATE 22021 as the server decodes the value), so a hostile push is a
-        write that fails every retry, never one the fake takes (C-13.3), and nothing is written."""
+        write that fails every retry, never one the fake takes (C-13.3), and nothing is written.
+        A read binding that text is refused the same way."""
         row, nul = await h.order(), "x\x001"
+        mine: dict[str, Any] = {"exchange_account_id": row.exchange_account_id}
         with pytest.raises(StorageQueryFailed):
-            if write == "create":
-                await h.order(exchange_order_id=nul, id=(late := uuid4()))
+            if write == "create":  # in the account the late check reads
+                await h.order(**mine, exchange_order_id=nul, id=(late := uuid4()))
             elif write == "transition":
                 await h.orders.transition(step(row, "submitted", exchange_order_id=nul))
             elif write == "commit_fill":
@@ -334,7 +336,8 @@ class WriteAheadContract:
             else:
                 await h.executions.insert(fill(row, nul, "0.1").execution)
         assert await h.stored(row) == (row, [0])
-        assert await h.executions.get(row.exchange_account_id, nul) is None
+        with pytest.raises(StorageQueryFailed):  # Postgres decodes the bound text first
+            await h.executions.get(row.exchange_account_id, nul)
         if write == "create":
             assert await h.orders.get(row.exchange_account_id, late) is None
 

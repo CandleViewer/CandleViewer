@@ -333,6 +333,7 @@ class InMemoryExecutionStore:
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None:
         await asyncio.sleep(0)
+        _bindable((exec_id,))  # the SELECT's `exec_id` is bound before it runs
         return self._db._fills.get((account_id, exec_id))
 
     async def commit_fill(self, fill: OrderFill) -> Step | None:

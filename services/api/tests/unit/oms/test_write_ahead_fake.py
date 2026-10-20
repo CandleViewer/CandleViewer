@@ -14,7 +14,7 @@ from sqlalchemy import CheckConstraint
 from candleviewer.db import models
 from candleviewer.oms import ExecutionRepository, OrderEventRepository, OrderRepository, fakes
 from candleviewer.oms.fakes import InMemoryOrderStore as Fake
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories import orders as port
 from tests.unit.oms.write_ahead_contract import (
     QTY,
@@ -84,6 +84,13 @@ class TestInMemoryStore(WriteAheadContract):
         assert await h.orders.list_open(mine, symbol="ETHUSDT") == ()
         assert await h.events.list_for_order(theirs, row.id) == ()
         assert [await h.executions.get(a, "E1") is None for a in (mine, theirs)] == [False, True]
+
+    async def test_a_read_by_an_exec_id_holding_nul_is_refused(self, h: Harness) -> None:
+        """As on Postgres, which decodes every bound text before the statement runs: the read is
+        refused whole, by the SQLSTATE Postgres reports (22021), never answered None (C-13.3)."""
+        with pytest.raises(StorageQueryFailed) as err:
+            await h.executions.get(uuid4(), "x\x001")
+        assert err.value.sqlstate == "22021"
 
     async def test_an_insert_naming_another_accounts_order_is_refused(self, h: Harness) -> None:
         """As on Postgres: the execution's account must hold its order, and nothing is stored."""
