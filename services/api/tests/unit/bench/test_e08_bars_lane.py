@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,7 @@ from bench.ingestion.bars_lane import (
     HISTORY_END_US,
     NON_TIME_STEP_US,
     SPECS,
+    WIRE,
     BarsFixture,
     BarsLane,
     _Table,
@@ -31,10 +34,17 @@ from bench.ingestion.engine import T0_MS, LaneConfig, ScriptedSampler, run_lanes
 from bench.ingestion.runner import _lane_cfg, run_soak
 from candleviewer.bars.activity_builders import TickBarBuilder
 from candleviewer.bars.leases import CAP_PER_SYMBOL
-from candleviewer.bars.limits import MAX_TAIL, MAX_TAIL_SCAN_ROWS
+from candleviewer.bars.limits import (
+    MAX_TAIL,
+    MAX_TAIL_SCAN_ROWS,
+    QTY_PARAM_MIN_STEPS,
+    RANGE_TICKS_RANGE,
+    TICK_PARAM_RANGE,
+)
 from candleviewer.bars.models import BarSpec, BarUpdate
 from candleviewer.bars.reader import build_tail_scan_bound_query, tail_window_us
 from candleviewer.bars.series_store import MAX_HISTORY, Hold, SeriesStore
+from candleviewer.bars.spec import check_param_bounds
 from candleviewer.bars.state_store import StateStore, StoredState
 from candleviewer.bus.bus import Bus
 from candleviewer.exchange.base.models import TradeEvent
@@ -283,6 +293,69 @@ async def test_run_soak_gates_the_bars_lane_on_budget_8_beside_the_cap_checks(
     rss = checks["rss_per_symbol_p95"]  # the window reads 650 ... 950 MiB: 750 MiB added
     assert not rss.passed and rss.hard and rss.measured == pytest.approx(750.0) and not v.passed
     assert v.metrics["bars_setup_mb_per_symbol"]["p95"] == pytest.approx(150.0)
+
+
+def _short(root: Path) -> dict[str, Any]:
+    """`run_soak` overrides for 150 s of two symbols with one series each, sampled each second."""
+    syms = ("BTCUSDT", "ETHUSDT")
+    over: dict[str, Any] = {"symbols": syms, "duration_s": 150.0, "sample_every_s": 1.0}
+    return over | {"warmup_s": 0.0, "warmup_wall_s": 0.0, "bars_specs": 1, "bars_state_root": root}
+
+
+@pytest.mark.parametrize(("bytes_a_second", "passed"), [(-73, True), (73, False)])
+async def test_the_full_soak_fails_a_creep_that_passes_the_flatness_band_and_passes_a_decline(
+    tmp_path: Path, bytes_a_second: int, passed: bool
+) -> None:
+    full = load("soak_bars", "full")
+    sc = replace(full, params={**full.params, "plateau_window_s": 120.0})  # the rule on a 150 s run
+    # call 0: before the lanes, 1 and 2: around the bars path, 3 on: the window. 73 B a second a
+    # symbol is 0.25 MB an hour, 11 KB over the run: neither the flatness band nor budget #8 sees it
+    sampler = ScriptedSampler(base=200 * MiB, slope=2 * bytes_a_second)  # two symbols
+    v = await run_soak(sc, sampler, **_short(tmp_path))
+    checks = {c.name: c for c in v.checks}
+    assert checks["memory_flatness"].passed and checks["rss_per_symbol_p95"].passed
+    assert v.passed is passed  # R1 and R2 pass the creep: the plateau decides the run
+    r4 = checks["rss_plateau_slope"]
+    assert r4.passed is passed and r4.hard and "last 120 s" in r4.note  # the scenario's window
+    # a decline reads 0: budget #8's figure is the RSS added since before the lanes, never below 0
+    assert r4.measured == pytest.approx(max(bytes_a_second, 0) * 3600 / MiB, abs=0.005)
+    assert v.metrics["rss_slope_mb_per_h_per_symbol"]["p95"] == pytest.approx(r4.measured)
+    assert [c.name for c in v.checks][-1] == "rss_plateau_slope"  # R4 after R1 to R3, as registered
+
+
+def test_the_full_soak_bars_profile_carries_a_12_hour_plateau_window() -> None:
+    full = load("soak_bars", "full")
+    assert full.p("plateau_window_s") == 43_200 == 12 * 3600
+    assert full.p("duration_s") == 86_400  # hours 12 to 24 of the run
+    assert full.p("plateau_window_s") / full.p("sample_every_s") + 1 == 721  # 721 samples in it
+
+
+async def test_the_smoke_has_no_plateau_window_so_no_plateau_check_or_metric(
+    tmp_path: Path,
+) -> None:
+    smoke = load("soak_bars")
+    assert "plateau_window_s" not in smoke.params
+    assert all("plateau_window_s" not in load("soak_steady", f).params for f in ("smoke", "full"))
+    v = await run_soak(smoke, ScriptedSampler(base=200 * MiB, slope=146), **_short(tmp_path))
+    assert "rss_plateau_slope" not in {c.name for c in v.checks}  # nothing judges the same creep
+    assert "rss_slope_mb_per_h_per_symbol" not in v.metrics and v.passed
+
+
+def test_the_lane_wire_starts_each_kind_at_its_densest_legal_param() -> None:
+    kinds = dict.fromkeys(kind for kind, _ in WIRE)
+    params = {kind: [int(p) for k, p in WIRE if k == kind] for kind in kinds}
+    assert all(p == sorted(p) for p in params.values())  # ascending: the first is the densest
+    assert {kind: p[0] for kind, p in params.items()} == {
+        "tick": TICK_PARAM_RANGE[0],
+        "time": 1,  # the one-minute interval
+        "volume": 1,  # the wire takes whole numbers
+        "range": RANGE_TICKS_RANGE[0],
+        "delta": 1,
+    }
+    step = Decimal("0.001")  # BTCUSDT's lot step: the floor is 0.01, so 1 is legal
+    assert QTY_PARAM_MIN_STEPS * step <= 1
+    for (kind, _), spec in zip(WIRE, SPECS, strict=True):
+        check_param_bounds(spec, kind, qty_step=step)  # raises when a param is out of range
 
 
 def test_the_gate_holds_the_bars_lane_to_its_committed_baseline() -> None:
