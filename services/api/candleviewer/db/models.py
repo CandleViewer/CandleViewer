@@ -2416,6 +2416,11 @@ leg_status = ENUM(*LEG_STATUSES, name="leg_status", metadata=metadata, create_ty
 algo_kind = ENUM(*ALGO_KINDS, name="algo_kind", metadata=metadata, create_type=False)
 #: C-5.9 / Sec.12 class P1 on `trade_groups.intent_note`: free text a user wrote.
 GROUP_NOTE_COMMENT = "PII: free text a user wrote (21 Sec.12, class P1); never logged"
+#: C-5.9 / Sec.12 class P1 on `trade_groups.algo_params`: it can repeat the order's values.
+GROUP_ALGO_COMMENT = (
+    "PII: algo parameters that can repeat order prices and quantities (21 Sec.12, class P1); "
+    "never logged"
+)
 #: The anchor's one format (`tg_ref_fmt`): the canonical lower-case UUID text, any version.
 GROUP_REF_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
@@ -2472,7 +2477,7 @@ trade_groups = Table(
     Column("side", Text, nullable=False),
     Column("status", trade_group_status, nullable=False, server_default=text("'draft'")),
     Column("algo", algo_kind, nullable=False, server_default=text("'none'")),
-    Column("algo_params", JSONB),
+    Column("algo_params", JSONB, comment=GROUP_ALGO_COMMENT),
     Column("intent_note", Text, comment=GROUP_NOTE_COMMENT),
     Column("origin", Text, nullable=False, server_default=text("'manual'")),
     Column("origin_rule_id", ForeignKey("rules.id", ondelete="SET NULL")),
@@ -2525,6 +2530,11 @@ trade_groups = Table(
     ),
     Index("ix_tg_user_time", "created_by", text("created_at DESC")),
     Index("ix_tg_rule", "origin_rule_id", postgresql_where=text("origin_rule_id IS NOT NULL")),
+    Index(
+        "ix_tg_rule_run",
+        "origin_rule_run_id",
+        postgresql_where=text("origin_rule_run_id IS NOT NULL"),
+    ),
     Index("ix_tg_env_time", "env", text("created_at DESC")),
     Index("ix_tg_definition", "definition_id", postgresql_where=text("definition_id IS NOT NULL")),
 )

@@ -326,9 +326,9 @@ def test_upgrade_ships_only_these_objects() -> None:
     doc = " ".join(_doc_block(h, i) for h, i in _BLOCKS)
     assert sql.count("CREATE TABLE ") == 4 and sql.count("CREATE TYPE ") == 3
     assert sql.count("CREATE UNIQUE INDEX ") == doc.count("CREATE UNIQUE INDEX ") == 1
-    assert sql.count("CREATE INDEX ") == doc.count("CREATE INDEX ") == 11
+    assert sql.count("CREATE INDEX ") == doc.count("CREATE INDEX ") == 12
     assert sql.count("CREATE FUNCTION ") == 8 and sql.count("CREATE TRIGGER ") == 12
-    assert sql.count("ENABLE ALWAYS TRIGGER ") == 8 and sql.count("COMMENT ON COLUMN ") == 17
+    assert sql.count("ENABLE ALWAYS TRIGGER ") == 8 and sql.count("COMMENT ON COLUMN ") == 18
     assert sql.count("ADD CONSTRAINT ") == 3 and sql.count("VALIDATE CONSTRAINT ") == 3
     assert sql.count("REVOKE ") == 3
     for absent in ("GRANT ", "IF NOT EXISTS", "DROP ", "INSERT INTO ", "SECURITY DEFINER"):
@@ -579,16 +579,19 @@ def test_the_app_role_cannot_hard_delete_a_group_a_leg_or_a_definition() -> None
 
 
 _COMMENT = re.compile(r"COMMENT ON COLUMN (\w+)\.(\w+) IS '([^']*)';")
-#: The columns whose comment is not the money one: the exchange's answer to a leg, a user's note.
+#: The columns whose comment is not the money one: the exchange's answer to a leg, a user's note
+#: and the algo parameters, which can repeat the order's values.
 _EXCHANGE_TEXT = {"trade_group_legs": {"rejection_code", "rejection_message"}}
 _NOTES = {"trade_groups": {"intent_note"}}
+_ALGO = {"trade_groups": {"algo_params"}}
 
 
 @pytest.mark.parametrize("name", list(_TABLES))
 def test_columns_carry_the_p1_classification_comment_the_plan_gives_them(name: str) -> None:
     """C-5.9 / 21 Sec.12: every `numeric(38,18)` column is class P1, so are the legs' rejection
-    code and message (the exchange's answer can repeat order values) and the group's note;
-    everything else, `profile_snapshot` and the definitions included, is P0 and carries none."""
+    code and message (the exchange's answer can repeat order values), the group's note and its
+    algo parameters; everything else, `profile_snapshot` and the definitions included, is P0 and
+    carries none."""
     table = _TABLES[name]
     money = {
         c.name
@@ -598,18 +601,19 @@ def test_columns_carry_the_p1_classification_comment_the_plan_gives_them(name: s
     want = dict.fromkeys(money, models.OMS_MONEY_COMMENT)
     want |= dict.fromkeys(_EXCHANGE_TEXT.get(name, ()), models.OMS_EXCHANGE_TEXT_COMMENT)
     want |= dict.fromkeys(_NOTES.get(name, ()), models.GROUP_NOTE_COMMENT)
+    want |= dict.fromkeys(_ALGO.get(name, ()), models.GROUP_ALGO_COMMENT)
     assert {c.name: c.comment for c in table.columns if c.comment} == want
     for column, comment in want.items():
         assert f"COMMENT ON COLUMN {name}.{column} IS '{comment}';" in _up()
 
 
-def test_the_models_classify_six_group_columns_and_eleven_leg_columns() -> None:
+def test_the_models_classify_seven_group_columns_and_eleven_leg_columns() -> None:
     """Counted from the models, so a classification dropped from a column and from the SQL
     together still fails here."""
     classified = {
         name: {c.name for c in table.columns if c.comment} for name, table in _TABLES.items()
     }
-    assert len(classified["trade_groups"]) == 5 + 1  # money columns, intent_note
+    assert len(classified["trade_groups"]) == 5 + 2  # money columns, intent_note, algo_params
     assert len(classified["trade_group_legs"]) == 9 + 2  # money columns, rejection text
     assert (
         classified["trade_group_definitions"]
@@ -627,14 +631,19 @@ def test_every_rendered_comment_is_a_model_comment_and_the_other_way_round() -> 
     model = [
         (t.name, c.name, str(c.comment)) for t in _TABLES.values() for c in t.columns if c.comment
     ]
-    assert len(rendered) == len(model) == 17
+    assert len(rendered) == len(model) == 18
     assert sorted(rendered) == sorted(model)
 
 
 @pytest.mark.parametrize(
     "comment",
-    [models.OMS_MONEY_COMMENT, models.OMS_EXCHANGE_TEXT_COMMENT, models.GROUP_NOTE_COMMENT],
-    ids=["money", "exchange-text", "note"],
+    [
+        models.OMS_MONEY_COMMENT,
+        models.OMS_EXCHANGE_TEXT_COMMENT,
+        models.GROUP_NOTE_COMMENT,
+        models.GROUP_ALGO_COMMENT,
+    ],
+    ids=["money", "exchange-text", "note", "algo"],
 )
 def test_each_classification_comment_is_a_p1_text_that_fits_a_sql_literal(comment: str) -> None:
     assert comment.startswith("PII: ") and "class P1" in comment

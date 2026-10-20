@@ -1042,6 +1042,73 @@ def test_the_group_identity_and_anchor_are_write_once(pg_dsn: str, column: str) 
         )
 
 
+#: Re-points that stay in the leg's environment, so only `trg_tgl_write_once` can refuse them.
+_LEG_REWRITES: dict[str, Callable[[Conn, str], object]] = {
+    "id": lambda c, user: str(uuid.uuid4()),
+    "trade_group_id": lambda c, user: _group(c, user),
+    "exchange_account_id": lambda c, user: _account(c),
+}
+
+
+@pytest.mark.parametrize("column", list(_LEG_REWRITES))
+def test_a_leg_identity_group_and_account_are_write_once(pg_dsn: str, column: str) -> None:
+    """`trg_tgl_write_once` on SR-E28-16's re-point path: a leg never changes its id, its group
+    or its account, even to a live group or account of its own environment."""
+    with _conn(_fresh(pg_dsn)) as c:
+        user = _user(c)
+        leg = _leg(c, _group(c, user), _account(c))
+        other = _LEG_REWRITES[column](c, user)
+        with pytest.raises(pgerr.CheckViolation) as exc:
+            c.execute(
+                sql.SQL("UPDATE trade_group_legs SET {} = %s WHERE id = %s").format(
+                    sql.Identifier(column)
+                ),
+                (other, leg),
+            )
+        assert exc.value.diag.constraint_name == "trg_tgl_write_once"
+        assert exc.value.diag.message_primary == (
+            f"trg_tgl_write_once: trade_group_legs.{column} is write-once"
+        )
+
+
+@pytest.mark.parametrize("column", ["exchange_account_id", "trade_group_id"])
+def test_a_leg_moved_out_of_its_environment_is_refused_by_the_environment_guard(
+    pg_dsn: str, column: str
+) -> None:
+    """Both guards refuse a re-point into the other environment; `trg_tgl_env` sorts before
+    `trg_tgl_write_once`, so it names the refusal (SR-E28-16)."""
+    with _conn(_fresh(pg_dsn)) as c:
+        user = _user(c)
+        leg = _leg(c, _group(c, user), _account(c))
+        if column == "exchange_account_id":
+            live = _account(c, "live")
+        else:
+            live = _group(c, user, env="live")
+        with pytest.raises(pgerr.CheckViolation) as exc:
+            c.execute(
+                sql.SQL("UPDATE trade_group_legs SET {} = %s WHERE id = %s").format(
+                    sql.Identifier(column)
+                ),
+                (live, leg),
+            )
+        assert exc.value.diag.constraint_name == "trg_tgl_env"
+
+
+def test_a_definition_identity_is_write_once(pg_dsn: str) -> None:
+    """`trg_tgd_write_once`'s other arm: a definition's id never changes."""
+    with _conn(_fresh(pg_dsn)) as c:
+        definition = _definition(c)
+        with pytest.raises(pgerr.CheckViolation) as exc:
+            c.execute(
+                "UPDATE trade_group_definitions SET id = %s WHERE id = %s",
+                (str(uuid.uuid4()), definition),
+            )
+        assert exc.value.diag.constraint_name == "trg_tgd_write_once"
+        assert exc.value.diag.message_primary == (
+            "trg_tgd_write_once: trade_group_definitions.id is write-once"
+        )
+
+
 def test_a_definition_environment_is_write_once(pg_dsn: str) -> None:
     """`trg_tgd_write_once`: a definition stays in its environment; its name and its soft delete
     remain writable."""

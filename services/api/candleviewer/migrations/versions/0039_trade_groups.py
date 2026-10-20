@@ -39,8 +39,9 @@ enums are Sec.1.2 verbatim; no earlier revision created them. `exchange_accounts
   where the role exists (0024's `api_keys` precedent): groups and legs are history, a
   definition leaves by soft delete; members keep DELETE.
 * C-5.9 / Sec.12: the money columns of `trade_groups` and `trade_group_legs` (class P1, every
-  `numeric(38,18)` column), `trade_groups.intent_note` and the legs' `rejection_code` and
-  `rejection_message` carry a `PII:` comment; `db.models` mirrors the texts byte for byte.
+  `numeric(38,18)` column), `trade_groups.intent_note` and `algo_params` and the legs'
+  `rejection_code` and `rejection_message` carry a `PII:` comment; `db.models` mirrors the texts
+  byte for byte.
   `profile_snapshot` and the definitions are P0.
 * `SET LOCAL lock_timeout = '5s'` brackets both directions (C-5.6).
 * Downgrade locks the four tables and refuses unless all are empty (C-5.2: groups are trading
@@ -168,6 +169,7 @@ CREATE TABLE trade_groups (
 CREATE INDEX ix_tg_open       ON trade_groups (symbol, created_at DESC) WHERE status IN ('submitting','partially_open','open','closing');
 CREATE INDEX ix_tg_user_time  ON trade_groups (created_by, created_at DESC);
 CREATE INDEX ix_tg_rule       ON trade_groups (origin_rule_id) WHERE origin_rule_id IS NOT NULL;
+CREATE INDEX ix_tg_rule_run   ON trade_groups (origin_rule_run_id) WHERE origin_rule_run_id IS NOT NULL;
 CREATE INDEX ix_tg_env_time   ON trade_groups (env, created_at DESC);
 CREATE INDEX ix_tg_definition ON trade_groups (definition_id) WHERE definition_id IS NOT NULL;
 """
@@ -432,6 +434,10 @@ _EXCHANGE_TEXT_COMMENT = (
     "redacted before insert; never logged"
 )
 _NOTE_COMMENT = "PII: free text a user wrote (21 Sec.12, class P1); never logged"
+_ALGO_COMMENT = (
+    "PII: algo parameters that can repeat order prices and quantities (21 Sec.12, class P1); "
+    "never logged"
+)
 _COMMENTED: dict[str, dict[str, tuple[str, ...]]] = {
     _MONEY_COMMENT: {
         "trade_groups": (
@@ -444,6 +450,7 @@ _COMMENTED: dict[str, dict[str, tuple[str, ...]]] = {
     },
     _EXCHANGE_TEXT_COMMENT: {"trade_group_legs": ("rejection_code", "rejection_message")},
     _NOTE_COMMENT: {"trade_groups": ("intent_note",)},
+    _ALGO_COMMENT: {"trade_groups": ("algo_params",)},
 }  # fmt: skip
 _COMMENT_SQL = "\n".join(
     f"COMMENT ON COLUMN {table}.{column} IS '{comment}';"
