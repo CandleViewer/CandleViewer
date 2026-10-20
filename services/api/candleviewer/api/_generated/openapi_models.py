@@ -701,6 +701,12 @@ class KeyExchangeProblem(Problem):
     ] = None
 
 
+class OrderExchangeProblem(Problem):
+    exchange: Annotated[
+        Exchange | None, Field(description="Present when the failure originated at Bybit.")
+    ] = None
+
+
 class RotateApiKeyRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -892,7 +898,9 @@ class AccountProfileInput(BaseModel):
     ] = None
     require_native_stop: Annotated[
         Literal[True],
-        Field(description="Always true; the safety invariant cannot be disabled (arch P4)."),
+        Field(
+            description="Always true; the safety invariant cannot be disabled (arch P4). The order path never reads it: the stop requirement keys on each order's effect on the position (SR-E29-01).\n"
+        ),
     ] = True
     default_time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
     default_tpsl_mode: Literal["Full", "Partial"] | None = None
@@ -2214,7 +2222,12 @@ class PlaceOrderRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    exchange_account_id: UUID
+    exchange_account_id: Annotated[
+        UUID,
+        Field(
+            description="An account outside the caller's grants and one that does not exist are refused alike (`403 account_scope_denied`), audited, before any exchange call (SR-E29-13)."
+        ),
+    ]
     symbol: Annotated[
         str,
         Field(
@@ -2261,10 +2274,6 @@ class PlaceOrderRequest(BaseModel):
     profile_id: Annotated[
         UUID | None, Field(description="Override the account's active profile for this order.")
     ] = None
-    arm_token: Annotated[
-        str | None,
-        Field(description="Required when the request originates from one-click/hotkey entry."),
-    ] = None
     note: Annotated[str | None, Field(max_length=280)] = None
 
 
@@ -2305,7 +2314,10 @@ class CancelAllRequest(BaseModel):
         extra="forbid",
     )
     exchange_account_ids: Annotated[
-        list[UUID] | None, Field(description="Empty = every account in scope.")
+        list[UUID] | None,
+        Field(
+            description="Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13)."
+        ),
     ] = None
     symbol: Symbol | None = None
     intents: (
@@ -2460,12 +2472,20 @@ class Order(BaseModel):
             description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
         ),
     ] = None
-    rejected_reason: str | None = None
+    rejected_reason: Annotated[
+        str | None,
+        Field(
+            description="CandleViewer's reason, never the exchange's text, which only the audited diagnostics read serves (SR-E29-09)."
+        ),
+    ] = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
 
 
 class OrderEvent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
     id: int | None = None
     kind: Annotated[
         Literal[
@@ -2492,7 +2512,6 @@ class OrderEvent(BaseModel):
         ),
     ] = None
     event_ts: AwareDatetime | None = None
-    payload: dict[str, Any] | None = None
 
 
 class Overrides(BaseModel):
@@ -2533,7 +2552,12 @@ class TradeGroupLegInput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    exchange_account_id: UUID
+    exchange_account_id: Annotated[
+        UUID,
+        Field(
+            description="A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any exchange call; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13)."
+        ),
+    ]
     overrides: Annotated[
         Overrides | None,
         Field(
@@ -2600,7 +2624,6 @@ class CreateTradeGroupRequest(BaseModel):
     defaults: Defaults | None = None
     algo: AlgoSpec | None = None
     legs: Annotated[list[TradeGroupLegInput], Field(max_length=25, min_length=1)]
-    arm_token: str | None = None
     note: Annotated[str | None, Field(max_length=280)] = None
     rule_id: Annotated[
         UUID | None, Field(description="Set when the group originates from the rule engine.")
@@ -2674,7 +2697,12 @@ class LegError(BaseModel):
         str | None,
         Field(description="One of the `x-error-codes` slugs; persisted as `rejection_code`."),
     ] = None
-    message: Annotated[str | None, Field(description="Persisted as `rejection_message`.")] = None
+    message: Annotated[
+        str | None,
+        Field(
+            description="Persisted as `rejection_message`: the OMS's own text for `code`, never the exchange's `ret_msg` (SR-E29-09)."
+        ),
+    ] = None
     exchange_ret_code: int | None = None
     retryable: bool | None = None
 
@@ -2800,11 +2828,26 @@ class SetKillSwitchRequest(BaseModel):
     reason: Annotated[str, Field(max_length=280, min_length=3)]
 
 
+class Failure(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID | None = None
+    ok: bool | None = None
+    affected: int | None = None
+    error: LegError | None = None
+
+
 class Actions(BaseModel):
     orders_cancelled: int | None = None
     positions_flattened: int | None = None
     rules_disarmed: int | None = None
-    failures: list[dict[str, Any]] | None = None
+    failures: Annotated[
+        list[Failure] | None,
+        Field(
+            description="The accounts whose cancel or flatten failed at the exchange, shaped as `BulkAccountResult` rows; `error` is CandleViewer's code, never the exchange's text (SR-E29-09).\n"
+        ),
+    ] = None
 
 
 class KillSwitchResult(BaseModel):
@@ -3054,7 +3097,6 @@ class ClosePositionRequest(BaseModel):
         ),
     ] = None
     time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
-    arm_token: str | None = None
 
 
 class ReversePositionRequest(BaseModel):
@@ -3079,7 +3121,6 @@ class ReversePositionRequest(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    arm_token: str | None = None
 
 
 class Execution(BaseModel):
@@ -5056,33 +5097,144 @@ class IndicatorOutput(BaseModel):
     name: str
 
 
-class ExchangeCall(BaseModel):
-    at: AwareDatetime | None = None
-    endpoint: str | None = None
-    http_status: int | None = None
-    ret_code: int | None = None
-    ret_msg: str | None = None
-    latency_ms: int | None = None
-    request_redacted: dict[str, Any] | None = None
-    response_redacted: dict[str, Any] | None = None
-
-
 class Reconciliation(BaseModel):
     last_checked_at: AwareDatetime | None = None
     verdict: Literal["in_sync", "drifted", "repaired", "unresolvable"] | None = None
     detail: str | None = None
 
 
-class OrderDiagnostics(BaseModel):
-    order: Order
-    events: list[OrderEvent]
-    exchange_calls: Annotated[
-        list[ExchangeCall] | None,
+class ExchangeRecordFields(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    order_link_id: Annotated[str | None, Field(max_length=36)] = None
+    exchange_order_id: Annotated[str | None, Field(max_length=64)] = None
+    symbol: Annotated[
+        str | None,
         Field(
-            description="Request/response pairs with credentials, signatures and headers redacted."
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
         ),
     ] = None
-    reconciliation: Reconciliation | None = None
+    side: Literal["buy", "sell"] | None = None
+    order_type: Literal["market", "limit"] | None = None
+    qty: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    price: Decimal | None = None
+    time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
+    reduce_only: bool | None = None
+    close_on_trigger: bool | None = None
+    position_idx: Literal[0, 1, 2] | None = None
+    trigger_price: Decimal | None = None
+    trigger_by: Literal["LastPrice", "MarkPrice", "IndexPrice"] | None = None
+    trigger_direction: Literal["rise", "fall"] | None = None
+    take_profit: Decimal | None = None
+    stop_loss: Decimal | None = None
+    tpsl_mode: Literal["Full", "Partial"] | None = None
+    trailing_stop: Decimal | None = None
+    activation_price: Decimal | None = None
+    tp_size: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    sl_size: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    tp_trigger_by: Literal["LastPrice", "MarkPrice", "IndexPrice"] | None = None
+    sl_trigger_by: Literal["LastPrice", "MarkPrice", "IndexPrice"] | None = None
+    category: Annotated[
+        Literal["linear"] | None, Field(description="Always explicit (SR-054).")
+    ] = None
+    order_filter: Annotated[
+        str | None,
+        Field(
+            description="The cancel-all filter, always explicit so it never reaches a position's TP/SL (SR-E29-06).",
+            max_length=64,
+        ),
+    ] = None
+    leverage: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    order_status: Annotated[
+        str | None,
+        Field(
+            description="The exchange's order status code.",
+            max_length=64,
+            pattern="^[A-Za-z0-9_]{1,64}$",
+        ),
+    ] = None
+    filled_qty: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    remaining_qty: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    avg_fill_price: Decimal | None = None
+    reject_reason: Annotated[
+        str | None,
+        Field(
+            description="The exchange's reject reason code.",
+            max_length=64,
+            pattern="^[A-Za-z0-9_]{1,64}$",
+        ),
+    ] = None
+    exec_id: Annotated[str | None, Field(max_length=64)] = None
+    exec_qty: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    exec_price: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    fee: Annotated[
+        str | None,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    is_maker: bool | None = None
 
 
 class Rejection(BaseModel):
@@ -6481,6 +6633,50 @@ class IndicatorDescriptor(BaseModel):
     ] = None
 
 
+class ExchangeCallRecord(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    event_id: Annotated[int, Field(description="The `OrderEvent.id` it belongs to.")]
+    at: AwareDatetime
+    transport: Annotated[
+        Literal["rest", "ws_trade", "ws_private"],
+        Field(description="A REST call, a trade-socket request or a private-stream push."),
+    ]
+    method: Annotated[Literal["GET", "POST"] | None, Field(description="REST only.")] = None
+    endpoint: Annotated[
+        str | None,
+        Field(
+            description="REST path only, never with a query string.",
+            max_length=64,
+            pattern="^/[A-Za-z0-9/._-]*$",
+        ),
+    ] = None
+    op: Annotated[
+        str | None,
+        Field(
+            description="Trade-socket operation only.", max_length=64, pattern="^[a-z][a-z0-9._-]*$"
+        ),
+    ] = None
+    req_id: Annotated[
+        str | None, Field(description="Trade-socket request id only.", max_length=64)
+    ] = None
+    topic: Annotated[
+        str | None,
+        Field(
+            description="Private-stream topic of a push only.",
+            max_length=64,
+            pattern="^[a-z][a-z0-9._-]*$",
+        ),
+    ] = None
+    http_status: int | None = None
+    ret_code: int | None = None
+    ret_msg: Annotated[str | None, Field(max_length=2048)] = None
+    latency_ms: Annotated[int | None, Field(ge=0)] = None
+    request_redacted: ExchangeRecordFields | None = None
+    response_redacted: ExchangeRecordFields | None = None
+
+
 class CapacityReport(BaseModel):
     generated_at: AwareDatetime | None = None
     storage: Storage1 | None = None
@@ -6493,6 +6689,21 @@ class CapacityReport(BaseModel):
 class ApiKeyWithVerification(BaseModel):
     key: ApiKey
     verification: KeyVerificationPassed
+
+
+class OrderDiagnostics(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    order: Order
+    events: list[OrderEvent]
+    exchange_calls: Annotated[
+        list[ExchangeCallRecord] | None,
+        Field(
+            description="The order's stored exchange records, oldest first, each linked to its event by `event_id` (SR-E29-08).\n"
+        ),
+    ] = None
+    reconciliation: Reconciliation | None = None
 
 
 class RuleArithmeticNode(BaseModel):

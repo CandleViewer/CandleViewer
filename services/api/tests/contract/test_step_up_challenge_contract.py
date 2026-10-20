@@ -643,7 +643,8 @@ async def test_step_up_required_route_body_carries_the_challenge(spec: dict[str,
         "On every operation that requires the key (parameter `IdempotencyKeyRequired`, which "
         "every `x-idempotency: required` operation takes) the key is recorded only after the "
         "request has passed every admission check",
-        "authorisation (RBAC, account scope and `step_up_required`)",
+        "authorisation (RBAC, account scope, `step_up_required` and the arm state's "
+        "`session_not_armed` of SR-043)",
         "A request refused by any of them stores no idempotency record and executes nothing",
         "only the refusal's own effects remain (such as its audit record, where that refusal is "
         "audited, and for `step_up_required` the challenge it issues)",

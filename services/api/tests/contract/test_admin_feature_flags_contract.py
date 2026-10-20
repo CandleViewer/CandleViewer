@@ -199,7 +199,9 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "submission or amend that opens or increases exposure, before any OMS work (C-2.21): the "
         "problem body plus the gate's `reason`. `detail` is human text and never carries an id or "
         "a secret. The gate runs after authentication, RBAC and account-scope resolution, so an "
-        "account outside the caller's scope never reaches it and gets a `404`. Cancels, flatten "
+        "account outside the caller's scope never reaches it: an id route answers it as a missing "
+        "id (`404`), and a request that names it in its body is refused with "
+        "`403 account_scope_denied` (SR-E29-13). Cancels, flatten "
         "and quantity-reducing or stop-tightening amends never pass through the gate. "
         + _PROTECTIVE,
     ),

@@ -3464,10 +3464,20 @@ export interface paths {
      *     * The account's active profile must allow the symbol, otherwise `risk_limit_breached`.
      *     * Price is snapped/validated against `tick_size`; qty against `qty_step`/min/max
      *       (`tick_size_violation` / `lot_size_violation`).
-     *     * A native exchange-side stop-loss is mandatory for entry intents
-     *       (`require_native_stop`, arch P4). If the request omits `stop_loss`, the account
-     *       profile's SL offset is applied; if the profile has none either, the request is
-     *       rejected with `validation_failed` / `native_stop_required`.
+     *     * A native exchange-side stop-loss is mandatory for every entry (C-2.6, arch P4). The
+     *       server classifies an order by its effect on the exchange-truth position, never by
+     *       its label: an order that is not reduce-only, or whose quantity exceeds the position
+     *       it reduces, is an entry whatever its `intent` (SR-E29-01). If an entry omits
+     *       `stop_loss`, the account profile's SL offset is applied; if the profile has none
+     *       either, the request is rejected with `validation_failed` / `native_stop_required`.
+     *       No field, flag or profile setting waives it (C-4.14). The stop requirement is checked
+     *       first. Then an `intent` that disagrees with the effect is refused too
+     *       (`validation_failed` / `intent_mismatch`): a reducing one (`stop_loss`, `take_profit`,
+     *       `scale_out`, `flatten`) on an entry, or an opening one (`entry`, `scale_in`) on an
+     *       order that is not an entry; `errors[]` lists every rule that fails, so a mislabelled
+     *       opening order with no stop to apply carries both `native_stop_required` and
+     *       `intent_mismatch`. `reverse` and `algo_child` are server-assigned (`reversePosition`,
+     *       the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too.
      *     * `Idempotency-Key` is REQUIRED. The server derives a deterministic `orderLinkId`
      *       (≤36 chars) from it, so a retried request can never double-submit.
      *     * The kill-switch, if engaged for the account or globally, rejects with
@@ -3488,6 +3498,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -3507,9 +3518,10 @@ export interface paths {
      * Amend price, quantity, trigger or attached TP/SL
      * @description Maps to `POST /v5/order/amend`. Amendment is refused with `order_not_amendable` when the
      *     order is terminal or already has a cancel/amend in flight. Omitted fields are left
-     *     untouched; sending `null` for `take_profit`/`stop_loss` clears them — except that an
-     *     entry order's stop-loss can never be cleared while the leg is open (arch P4), which
-     *     returns `validation_failed` / `native_stop_required`.
+     *     untouched; sending `null` for `take_profit`/`stop_loss` clears them — except that the
+     *     stop-loss of an entry (classified by its effect, as on `placeOrder`, never by its
+     *     `intent`: SR-E29-01) can never be cleared while the leg is open (C-2.6, arch P4),
+     *     which returns `validation_failed` / `native_stop_required`.
      *
      *     Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
      *     server therefore re-sends both sides whenever either changes, and records the paired
@@ -3523,13 +3535,14 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
     };
     /**
      * Full lifecycle trace for one order
-     * @description Returns the ordered `order_events` chain plus the exchange request/response pairs (with credentials and signatures redacted) and the reconciliation verdict. This is the "why did my order do that" surface; it is the only place the raw retCode and retMsg from Bybit are exposed, and it is audited on read.
+     * @description Returns the ordered `order_events` chain plus the stored exchange records (the adapter's allow-listed request, response and push records, with credentials and signatures never stored: SR-E29-08) and the reconciliation verdict. This is the "why did my order do that" surface; on the order path it is the only place the exchange's text (`ret_msg`) and the stored records are served (SR-E29-09; an order route's error body carries the return code only, `OrderExchangeProblem`), and every read is audited (`order.diagnostics_viewed`). Which roles receive `exchange_calls` and `ret_msg` is the Owner's decision D7 (E29 threat model section 4.3, queued on #2701); the route is not mounted before it is decided, and its `x-rbac` is provisional until then.
      */
     get: operations["getOrderDiagnostics"];
     put?: never;
@@ -3552,9 +3565,14 @@ export interface paths {
     /**
      * Cancel all open orders matching a filter
      * @description Fans out `POST /v5/order/cancel-all` per account (Bybit rate cost: 1 req/s per account
-     *     for `linear` cancel-all — the fan-out scheduler serialises accordingly). Partial
-     *     success is normal and reported per account; the HTTP status is `207`-style `200` with
-     *     per-account results rather than an all-or-nothing error.
+     *     for `linear` cancel-all — the fan-out scheduler serialises accordingly).
+     *
+     *     Scope is settled before anything is sent (SR-E29-13): an empty `exchange_account_ids`
+     *     means the caller's granted accounts, and one listed id outside them, or one that does
+     *     not exist, refuses the whole request alike with `403 account_scope_denied`: nothing is
+     *     cancelled, no exchange call is made, and the refusal is audited. Once the scope check
+     *     passes, `results` reports exchange outcomes only: one account's exchange error does not
+     *     undo another account's cancels, so the status is `200` with per-account results.
      */
     post: operations["cancelAllOrders"];
     delete?: never;
@@ -3610,6 +3628,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -3629,6 +3648,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -3654,6 +3674,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -3676,6 +3697,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -3701,6 +3723,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -3716,8 +3739,9 @@ export interface paths {
      *     * Sending only one of TP/SL breaks Bybit's OCO pairing, so the server always re-asserts
      *       both sides; pass `null` explicitly to clear one.
      *     * `tpsl_mode: Partial` requires `tp_size`/`sl_size` that match the position size rules.
-     *     * The stop-loss cannot be cleared while `require_native_stop` is set on the account
-     *       profile — `validation_failed` / `native_stop_required`.
+     *     * The stop-loss of an open position can never be cleared (C-2.6): the rule keys on the
+     *       open exposure, never on a profile setting or an order's `intent` (SR-E29-01) —
+     *       `validation_failed` / `native_stop_required`.
      */
     put: operations["setPositionTpSl"];
     post?: never;
@@ -3738,7 +3762,14 @@ export interface paths {
     put?: never;
     /**
      * Flatten every position matching a filter
-     * @description The "flatten all" panic control. Independent of the kill-switch, which additionally blocks new orders.
+     * @description The "flatten all" panic control. Independent of the kill-switch, which additionally
+     *     blocks new orders.
+     *
+     *     Scope is settled before anything is sent (SR-E29-13): an empty `exchange_account_ids`
+     *     means the caller's granted accounts, and one listed id outside them, or one that does
+     *     not exist, refuses the whole request alike with `403 account_scope_denied`: nothing is
+     *     closed, no exchange call is made, and the refusal is audited. Once the scope check
+     *     passes, `results` reports exchange outcomes only.
      */
     post: operations["closeAllPositions"];
     delete?: never;
@@ -4377,7 +4408,7 @@ export interface paths {
      * @description Static analysis used by both editors on every keystroke-debounce. Checks schema
      *     conformance, variable existence, type compatibility, action-parameter completeness,
      *     unreachable branches, missing guards, the action-budget hard caps (`x-cv-limit-caps` on
-     *     `RuleIr`), and the `require_native_stop` invariant. Returns errors **and** warnings;
+     *     `RuleIr`), and the native-stop invariant (C-2.6). Returns errors **and** warnings;
      *     warnings do not block saving but do block arming.
      */
     post: operations["validateRule"];
@@ -4505,8 +4536,17 @@ export interface paths {
      * Arm or disarm one-click trading and obtain an arm token
      * @description One-click trading (DOM click-trade, chart click-trade, hotkey fire) is **off by default**
      *     and must be explicitly armed, mirroring Bookmap's arm/lock pattern (digest 09 §1). Arming
-     *     returns an `arm_token` with a TTL (`arm_timeout_seconds`, default 300 s, max 3600 s); the
-     *     token must accompany any order request flagged `one_click` and is single-session.
+     *     returns an `arm_token` with a TTL (`arm_timeout_seconds`, default 300 s, max 3600 s), bound
+     *     to the session and returned by this route alone. The client sends it as the
+     *     `X-Arm-Token` header (`ArmToken`), which a live account's risk-increasing order
+     *     mutations require (SR-043); whether one-click and hotkey entry use the same token is
+     *     E30-S04's (#1088). Arming needs a fresh step-up while a live account is within the caller's
+     *     reach: for the Owner whenever one exists, for a Manager through a trade grant (SR-043 with SR-025's step-up, against threat O11).
+     *     Without one it answers `403 step_up_required` with the class `live_enablement`, which
+     *     is no-grace and single-use, so a client that holds only the session and the CSRF token
+     *     cannot arm itself (OM-S01, N2). A token records whether it was issued under that step-up;
+     *     one issued without it never satisfies a live mutation, so the caller arms again, with
+     *     the step-up, once a live account comes within reach.
      *     Disarming, session end, kill-switch engagement or a risk-cap breach invalidates it
      *     immediately.
      */
@@ -4687,6 +4727,12 @@ export interface paths {
      *     exist on `/v5/order/create`), `twap` (timed slices), `chase` (repeated cancel/replace to
      *     stay at the touch), `scaled` (ladder of N limits, equal/linear/geometric distribution).
      *     Child orders are created with `intent: "algo_child` and linked to the leg."
+     *
+     *     **Intent.** The request's `intent` applies to every leg under `placeOrder`'s rule: an
+     *     `intent` that disagrees with a leg's effect is refused with `validation_failed` /
+     *     `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`. That refusal
+     *     is the whole request's, before any leg is sent or any exchange call is made, whatever
+     *     `atomicity` says; it is never a per-leg failure.
      */
     post: operations["createTradeGroup"];
     delete?: never;
@@ -4700,6 +4746,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -4719,6 +4766,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -4741,6 +4789,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -4805,10 +4854,10 @@ export interface paths {
      *     exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated.
      *
      *     Managers may engage the switch for accounts in their own scope; only the owner may
-     *     engage it globally or **release** it. Bybit's dead-man's-switch
-     *     (`POST /v5/order/disconnected-cancel-all`) is armed separately by the OMS for `inverse`
-     *     only — it is not available for `linear`, so the local kill-switch is the operative
-     *     control here.
+     *     engage it globally or **release** it. The local kill-switch is the operative control
+     *     here: the OMS arms no exchange-side dead-man's switch, so the compensating control for a
+     *     lost connection is the native stop (C-2.6) plus reconciliation on reconnect (SR-058,
+     *     SR-059).
      *
      *     Every transition writes a `critical` audit entry and broadcasts a `system` WS frame.
      */
@@ -5368,7 +5417,7 @@ export interface components {
       leverage: components["schemas"]["Decimal"];
       name: string;
       /**
-       * @description Always true; the safety invariant cannot be disabled (arch P4).
+       * @description Always true; the safety invariant cannot be disabled (arch P4). The order path never reads it: the stop requirement keys on each order's effect on the position (SR-E29-01).
        * @default true
        * @constant
        */
@@ -5856,6 +5905,7 @@ export interface components {
       version: string;
       ws_protocol_version?: string;
     };
+    /** @description Per-account exchange outcomes of a bulk route whose scope check passed (SR-E29-13). A scope refusal never appears here: one out-of-scope id refuses the whole request before any exchange call, with `403 account_scope_denied`. */
     BulkAccountResult: {
       requested?: number;
       results?: {
@@ -5883,7 +5933,7 @@ export interface components {
       trade_group_id?: string;
     };
     CancelAllRequest: {
-      /** @description Empty = every account in scope. */
+      /** @description Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13). */
       exchange_account_ids?: string[];
       /**
        * @description Protects TP/SL exits from a blanket cancel.
@@ -6025,7 +6075,6 @@ export interface components {
       symbol?: components["schemas"]["Symbol"];
     };
     ClosePositionRequest: {
-      arm_token?: string | null;
       order_type: components["schemas"]["OrderType"];
       /** @description 0 < pct <= 100. Mutually exclusive with `qty`. */
       pct?: components["schemas"]["Decimal"];
@@ -6085,7 +6134,6 @@ export interface components {
     };
     CreateTradeGroupRequest: {
       algo?: components["schemas"]["AlgoSpec"];
-      arm_token?: string | null;
       /**
        * @default best_effort
        * @enum {string}
@@ -6504,6 +6552,40 @@ export interface components {
       /** Format: date-time */
       updated_at?: string;
     };
+    /** @description One exchange call or push as the exchange adapter records it (SR-E29-08; E29 threat model section 6). The adapter builds an allow-listed record, mapping the exchange's field names into this contract's vocabulary (C-2.2), and the store redacts it again, failing closed, before insert. Headers, signatures, an `auth` frame, a URL query and any field this schema does not name are never stored, so they are never served. */
+    ExchangeCallRecord: {
+      /** Format: date-time */
+      at: string;
+      /** @description REST path only, never with a query string. */
+      endpoint?: string | null;
+      /**
+       * Format: int64
+       * @description The `OrderEvent.id` it belongs to.
+       */
+      event_id: number;
+      http_status?: number | null;
+      latency_ms?: number | null;
+      /**
+       * @description REST only.
+       * @enum {string|null}
+       */
+      method?: "GET" | "POST" | null;
+      /** @description Trade-socket operation only. */
+      op?: string | null;
+      /** @description Trade-socket request id only. */
+      req_id?: string | null;
+      request_redacted?: components["schemas"]["ExchangeRecordFields"] | null;
+      response_redacted?: components["schemas"]["ExchangeRecordFields"] | null;
+      ret_code?: number | null;
+      ret_msg?: string | null;
+      /** @description Private-stream topic of a push only. */
+      topic?: string | null;
+      /**
+       * @description A REST call, a trade-socket request or a private-stream push.
+       * @enum {string}
+       */
+      transport: "rest" | "ws_trade" | "ws_private";
+    };
     /**
      * @description Exchange identifier. v1 supports Bybit only (locked scope: Bybit USDT linear perpetuals).
      *     Mirrors the Postgres type `exchange_code`; the adapter abstraction
@@ -6512,6 +6594,54 @@ export interface components {
      * @enum {string}
      */
     ExchangeCode: "bybit";
+    /** @description The allow-listed fields of one exchange request, response or push (SR-E29-08), named as on `Order` and `Execution`. The adapter keeps no other field; adding one is a contract change. Strings are bounded as the store's redactor bounds them: codes and ids 64 characters, `ret_msg` 2048. `order_status` and `reject_reason` are the exchange's codes, so the adapter keeps them only in that shape (letters, digits and underscores); a value of any other shape is dropped, never stored. */
+    ExchangeRecordFields: {
+      activation_price?: components["schemas"]["Decimal"] | null;
+      avg_fill_price?: components["schemas"]["Decimal"] | null;
+      /**
+       * @description Always explicit (SR-054).
+       * @enum {string}
+       */
+      category?: "linear";
+      close_on_trigger?: boolean;
+      exchange_order_id?: string | null;
+      exec_id?: string;
+      exec_price?: components["schemas"]["Decimal"];
+      exec_qty?: components["schemas"]["Decimal"];
+      fee?: components["schemas"]["Decimal"];
+      filled_qty?: components["schemas"]["Decimal"];
+      is_maker?: boolean;
+      leverage?: components["schemas"]["Decimal"];
+      /** @description The cancel-all filter, always explicit so it never reaches a position's TP/SL (SR-E29-06). */
+      order_filter?: string | null;
+      order_link_id?: string;
+      /** @description The exchange's order status code. */
+      order_status?: string | null;
+      order_type?: components["schemas"]["OrderType"];
+      /** @enum {integer} */
+      position_idx?: 0 | 1 | 2;
+      price?: components["schemas"]["Decimal"] | null;
+      qty?: components["schemas"]["Decimal"];
+      reduce_only?: boolean;
+      /** @description The exchange's reject reason code. */
+      reject_reason?: string | null;
+      remaining_qty?: components["schemas"]["Decimal"];
+      side?: components["schemas"]["OrderSide"];
+      sl_size?: components["schemas"]["Decimal"];
+      sl_trigger_by?: components["schemas"]["TriggerBy"];
+      stop_loss?: components["schemas"]["Decimal"] | null;
+      symbol?: components["schemas"]["Symbol"];
+      take_profit?: components["schemas"]["Decimal"] | null;
+      time_in_force?: components["schemas"]["TimeInForce"];
+      tp_size?: components["schemas"]["Decimal"];
+      tp_trigger_by?: components["schemas"]["TriggerBy"];
+      tpsl_mode?: components["schemas"]["TpSlMode"];
+      trailing_stop?: components["schemas"]["Decimal"] | null;
+      trigger_by?: components["schemas"]["TriggerBy"] | null;
+      /** @enum {string|null} */
+      trigger_direction?: "rise" | "fall" | null;
+      trigger_price?: components["schemas"]["Decimal"] | null;
+    };
     Execution: {
       /** Format: uuid */
       exchange_account_id?: string;
@@ -7187,8 +7317,13 @@ export interface components {
     };
     KillSwitchResult: {
       actions?: {
+        /** @description The accounts whose cancel or flatten failed at the exchange, shaped as `BulkAccountResult` rows; `error` is CandleViewer's code, never the exchange's text (SR-E29-09). */
         failures?: {
-          [key: string]: unknown;
+          affected?: number;
+          error?: components["schemas"]["LegError"] | null;
+          /** Format: uuid */
+          exchange_account_id?: string;
+          ok?: boolean;
         }[];
         orders_cancelled?: number;
         positions_flattened?: number;
@@ -7393,7 +7528,7 @@ export interface components {
       /** @description One of the `x-error-codes` slugs; persisted as `rejection_code`. */
       code?: string;
       exchange_ret_code?: number | null;
-      /** @description Persisted as `rejection_message`. */
+      /** @description Persisted as `rejection_message`: the OMS's own text for `code`, never the exchange's `ret_msg` (SR-E29-09). */
       message?: string;
       retryable?: boolean;
     };
@@ -7703,6 +7838,7 @@ export interface components {
       price?: components["schemas"]["Decimal"] | null;
       qty: components["schemas"]["Decimal"];
       reduce_only?: boolean;
+      /** @description CandleViewer's reason, never the exchange's text, which only the audited diagnostics read serves (SR-E29-09). */
       rejected_reason?: string | null;
       remaining_qty?: components["schemas"]["Decimal"];
       side: components["schemas"]["OrderSide"];
@@ -7747,22 +7883,8 @@ export interface components {
     };
     OrderDiagnostics: {
       events: components["schemas"]["OrderEvent"][];
-      /** @description Request/response pairs with credentials, signatures and headers redacted. */
-      exchange_calls?: {
-        /** Format: date-time */
-        at?: string;
-        endpoint?: string;
-        http_status?: number;
-        latency_ms?: number;
-        request_redacted?: {
-          [key: string]: unknown;
-        };
-        response_redacted?: {
-          [key: string]: unknown;
-        };
-        ret_code?: number | null;
-        ret_msg?: string | null;
-      }[];
+      /** @description The order's stored exchange records, oldest first, each linked to its event by `event_id` (SR-E29-08). */
+      exchange_calls?: components["schemas"]["ExchangeCallRecord"][];
       order: components["schemas"]["Order"];
       reconciliation?: {
         detail?: string | null;
@@ -7778,15 +7900,13 @@ export interface components {
      */
     OrderEntryRefusalReason:
       "maintenance" | "account_disabled_by_policy" | "no_active_key" | "account_unhealthy";
+    /** @description One entry of an order's append-only event chain, served without its stored payload (SR-E29-09). The exchange record behind an exchange-sourced event is served only by the audited diagnostics read, as `OrderDiagnostics.exchange_calls` (SR-E29-08). */
     OrderEvent: {
       /** Format: date-time */
       event_ts?: string;
       /** Format: int64 */
       id?: number;
       kind?: components["schemas"]["OrderEventKind"];
-      payload?: {
-        [key: string]: unknown;
-      };
     };
     /**
      * @description Append-only OMS event taxonomy. Exact 1:1 mirror of the Postgres type
@@ -7813,6 +7933,12 @@ export interface components {
       | "error"
       | "kill"
       | "adopt";
+    /** @description The `502` problem of an order or position route: the problem body whose `exchange` member holds the exchange's return code only, never `ret_msg`, `endpoint`, `request_id` or any other exchange text (SR-E29-09), as `KeyExchangeProblem` is for key operations. This schema alone refuses the other members: the generated class of `Problem` admits them, so a route builds `exchange` from the return code alone and its provider test validates the real `502` against this schema. */
+    OrderExchangeProblem: components["schemas"]["Problem"] & {
+      exchange?: {
+        ret_code?: number;
+      };
+    };
     /** @enum {string} */
     OrderIntent:
       | "entry"
@@ -7953,11 +8079,12 @@ export interface components {
     PaneSettingValue: string | number | boolean | null | (string | number | boolean)[];
     PlaceOrderRequest: {
       algo?: components["schemas"]["AlgoSpec"];
-      /** @description Required when the request originates from one-click/hotkey entry. */
-      arm_token?: string | null;
       /** @default false */
       close_on_trigger: boolean;
-      /** Format: uuid */
+      /**
+       * Format: uuid
+       * @description An account outside the caller's grants and one that does not exist are refused alike (`403 account_scope_denied`), audited, before any exchange call (SR-E29-13).
+       */
       exchange_account_id: string;
       /** @default entry */
       intent: components["schemas"]["OrderIntent"];
@@ -8334,7 +8461,6 @@ export interface components {
       symbol?: components["schemas"]["Symbol"] | null;
     };
     ReversePositionRequest: {
-      arm_token?: string | null;
       /** @default market */
       order_type: components["schemas"]["OrderType"];
       price?: components["schemas"]["Decimal"];
@@ -9480,7 +9606,10 @@ export interface components {
       updated_at?: string;
     };
     TradeGroupLegInput: {
-      /** Format: uuid */
+      /**
+       * Format: uuid
+       * @description A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any exchange call; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13).
+       */
       exchange_account_id: string;
       /** @description Per-leg overrides layered on top of the account profile and request defaults. */
       overrides?: {
@@ -9547,7 +9676,7 @@ export interface components {
       | "closed"
       | "failed"
       | "cancelled";
-    /** @description The `403 trading_disabled` problem the order-entry gate returns when it refuses a submission or amend that opens or increases exposure, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it and gets a `404`. Cancels, flatten and quantity-reducing or stop-tightening amends never pass through the gate. Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. */
+    /** @description The `403 trading_disabled` problem the order-entry gate returns when it refuses a submission or amend that opens or increases exposure, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it: an id route answers it as a missing id (`404`), and a request that names it in its body is refused with `403 account_scope_denied` (SR-E29-13). Cancels, flatten and quantity-reducing or stop-tightening amends never pass through the gate. Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. */
     TradingDisabledProblem: components["schemas"]["Problem"] & {
       /** @constant */
       code?: "trading_disabled";
@@ -9783,7 +9912,7 @@ export interface components {
     };
   };
   responses: {
-    /** @description The targeted exchange account is outside the caller's granted scope. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`). */
+    /** @description The targeted exchange account is outside the caller's granted scope. On the order routes that name an account in their body (`placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions`; see `Forbidden`), an account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`). */
     AccountScopeDenied: {
       headers: {
         [name: string]: unknown;
@@ -9906,7 +10035,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -9985,6 +10114,15 @@ export interface components {
         "application/problem+json": components["schemas"]["OpenExposureProblem"];
       };
     };
+    /** @description The exchange refused an order or position call. `exchange` holds `ret_code` only (`OrderExchangeProblem`, SR-E29-09): the exchange's text is served only by the audited diagnostics read (`getOrderDiagnostics`). */
+    OrderExchangeError: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["OrderExchangeProblem"];
+      };
+    };
     /** @description The request body or the number of batch operations exceeds the operation's ceiling (`payload_too_large`). Checked before per-item validation. */
     PayloadTooLarge: {
       headers: {
@@ -10061,6 +10199,30 @@ export interface components {
     /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
     AcknowledgeUnknownPositions: boolean;
     AlertId: string;
+    /**
+     * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+     *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+     *     increases exposure requires it, as the order-entry gate classifies them
+     *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+     *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+     *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+     *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+     *     leverage change in either direction, which that section does not classify. One live
+     *     account among a request's targets is enough. Missing, expired, revoked or bound to
+     *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+     *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+     *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+     *     foreign or missing id still answers `404` and a foreign or missing body account
+     *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+     *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+     *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+     *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+     *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+     *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+     *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+     *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+     */
+    ArmToken: string;
     BackupId: string;
     /** @description Maximum number of bars returned in one page. */
     BarLimit: number;
@@ -10197,7 +10359,9 @@ export interface components {
      *     store (no `Idempotency-Replayed`).
      */
     OpenExposure: components["schemas"]["OpenExposureChoice"];
+    /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     OrderId: string;
+    /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     PositionId: string;
     PresetId: string;
     ProfileId: string;
@@ -10211,6 +10375,7 @@ export interface components {
     TemplateId: string;
     /** @description Exclusive end of the time window (RFC 3339 UTC). Defaults to now. */
     To: string;
+    /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     TradeGroupId: string;
     UserId: string;
     VersionId: string;
@@ -15769,6 +15934,30 @@ export interface operations {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
+         * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+         *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+         *     increases exposure requires it, as the order-entry gate classifies them
+         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     leverage change in either direction, which that section does not classify. One live
+         *     account among a request's targets is enough. Missing, expired, revoked or bound to
+         *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+         *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+         *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+         *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+         *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+         *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+         *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+         *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+         */
+        "X-Arm-Token"?: components["parameters"]["ArmToken"];
+        /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
          *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
@@ -15802,17 +15991,19 @@ export interface operations {
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
-      502: components["responses"]["ExchangeError"];
+      502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
   getOrder: {
     parameters: {
       query?: {
+        /** @description Adds the order's event chain without payloads (`OrderEvent`, SR-E29-09). The stored exchange records behind it are served only by the audited `getOrderDiagnostics`. */
         include_events?: boolean;
       };
       header?: never;
       path: {
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -15849,6 +16040,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -15864,9 +16056,9 @@ export interface operations {
           "application/json": components["schemas"]["Order"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
-      502: components["responses"]["ExchangeError"];
+      502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15879,6 +16071,30 @@ export interface operations {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
+         * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+         *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+         *     increases exposure requires it, as the order-entry gate classifies them
+         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     leverage change in either direction, which that section does not classify. One live
+         *     account among a request's targets is enough. Missing, expired, revoked or bound to
+         *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+         *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+         *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+         *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+         *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+         *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+         *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+         *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+         */
+        "X-Arm-Token"?: components["parameters"]["ArmToken"];
+        /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
          *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
@@ -15888,6 +16104,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -15911,7 +16128,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
-      502: components["responses"]["ExchangeError"];
+      502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15920,6 +16137,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -16043,6 +16261,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -16079,6 +16298,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -16098,7 +16318,7 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroup"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
@@ -16111,6 +16331,30 @@ export interface operations {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
+         * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+         *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+         *     increases exposure requires it, as the order-entry gate classifies them
+         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     leverage change in either direction, which that section does not classify. One live
+         *     account among a request's targets is enough. Missing, expired, revoked or bound to
+         *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+         *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+         *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+         *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+         *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+         *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+         *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+         *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+         */
+        "X-Arm-Token"?: components["parameters"]["ArmToken"];
+        /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
          *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
@@ -16120,6 +16364,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -16141,9 +16386,10 @@ export interface operations {
           "application/json": components["schemas"]["Position"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
-      502: components["responses"]["ExchangeError"];
+      502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -16154,6 +16400,30 @@ export interface operations {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
+         * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+         *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+         *     increases exposure requires it, as the order-entry gate classifies them
+         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     leverage change in either direction, which that section does not classify. One live
+         *     account among a request's targets is enough. Missing, expired, revoked or bound to
+         *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+         *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+         *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+         *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+         *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+         *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+         *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+         *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+         */
+        "X-Arm-Token"?: components["parameters"]["ArmToken"];
+        /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
          *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
@@ -16163,6 +16433,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -16182,7 +16453,7 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroup"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
@@ -16195,6 +16466,30 @@ export interface operations {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
+         * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+         *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+         *     increases exposure requires it, as the order-entry gate classifies them
+         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     leverage change in either direction, which that section does not classify. One live
+         *     account among a request's targets is enough. Missing, expired, revoked or bound to
+         *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+         *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+         *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+         *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+         *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+         *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+         *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+         *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+         */
+        "X-Arm-Token"?: components["parameters"]["ArmToken"];
+        /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
          *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
@@ -16204,6 +16499,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         positionId: components["parameters"]["PositionId"];
       };
       cookie?: never;
@@ -16223,10 +16519,10 @@ export interface operations {
           "application/json": components["schemas"]["TpSlResult"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
-      502: components["responses"]["ExchangeError"];
+      502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -16253,6 +16549,7 @@ export interface operations {
         "application/json": {
           /** @default true */
           cancel_open_orders?: boolean;
+          /** @description Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13). */
           exchange_account_ids?: string[];
           symbol?: components["schemas"]["Symbol"];
         };
@@ -16270,7 +16567,6 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -18036,6 +18332,30 @@ export interface operations {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
+         * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+         *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+         *     increases exposure requires it, as the order-entry gate classifies them
+         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     leverage change in either direction, which that section does not classify. One live
+         *     account among a request's targets is enough. Missing, expired, revoked or bound to
+         *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+         *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+         *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+         *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+         *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+         *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+         *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+         *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+         */
+        "X-Arm-Token"?: components["parameters"]["ArmToken"];
+        /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
          *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
@@ -18074,6 +18394,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -18101,6 +18422,30 @@ export interface operations {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
+         * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
+         *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
+         *     increases exposure requires it, as the order-entry gate classifies them
+         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
+         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
+         *     up, stop loosened, trigger re-armed) on `amendOrder`, `amendTradeGroup` or
+         *     `setPositionTpSl`. This contract also requires it for `reversePosition` and for a
+         *     leverage change in either direction, which that section does not classify. One live
+         *     account among a request's targets is enough. Missing, expired, revoked or bound to
+         *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
+         *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
+         *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
+         *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
+         *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
+         *     quantity-reducing amends, a take-profit change, and attaching a missing native SL,
+         *     tightening a stop or re-arming a protective trigger are never refused for want of it,
+         *     so the cancel and close routes do not declare it. The token is never logged (C-12.6).
+         *     Its single-use rule and lifetime are E30-S04's (#1088) and E44's.
+         */
+        "X-Arm-Token"?: components["parameters"]["ArmToken"];
+        /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
          *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
@@ -18110,6 +18455,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -18129,7 +18475,7 @@ export interface operations {
           "application/json": components["schemas"]["BulkLegResult"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
@@ -18151,6 +18497,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -18175,7 +18522,7 @@ export interface operations {
           "application/json": components["schemas"]["BulkLegResult"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };

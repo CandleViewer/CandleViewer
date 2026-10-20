@@ -30,6 +30,7 @@ class ErrorCode(StrEnum):
     POSITIONS_UNKNOWN = "positions_unknown"
     FORBIDDEN = "forbidden"
     CSRF_TOKEN_INVALID = "csrf_token_invalid"
+    SESSION_NOT_ARMED = "session_not_armed"
     ACCOUNT_SCOPE_DENIED = "account_scope_denied"
     KEK_UNAVAILABLE = "kek_unavailable"
     TRADING_DISABLED = "trading_disabled"
@@ -122,6 +123,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.POSITIONS_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "Open-position state is unavailable; resend with acknowledge_unknown_positions=true"),
     ErrorCode.FORBIDDEN: ErrorMeta(("rest", "ws",), "any", False, None, None, "Authenticated but lacking the required permission"),
     ErrorCode.CSRF_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)"),
+    ErrorCode.SESSION_NOT_ARMED: ErrorMeta(("rest",), None, False, None, None, "The session is not armed for a live order mutation (SR-043)"),
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Caller has no granted access to the targeted exchange account"),
     ErrorCode.KEK_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The credential key is unavailable; operations that need it are refused"),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Order entry refused"),
