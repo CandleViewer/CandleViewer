@@ -8,15 +8,63 @@ Do not pass `--ws-*` flags or override the entrypoint in compose; edit `ws/limit
 | -------------------------------------- | ------------------------------------ | ------------------------------- |
 | `ws_max_size`                          | inbound frame cap + 4 KiB headroom   | `SERVER_WS_MAX_SIZE`            |
 | `ws_per_message_deflate`               | on (JSON encoding only; size-capped) | `SERVER_WS_PER_MESSAGE_DEFLATE` |
-| `ws_max_queue`                         | 4                                    | `SERVER_WS_MAX_QUEUE`           |
-| `limit_concurrency`                    | 256                                  | `SERVER_LIMIT_CONCURRENCY`      |
+| `limit_concurrency`                    | 256; live WebSockets not counted     | `SERVER_LIMIT_CONCURRENCY`      |
 | `ws_ping_interval` / `ws_ping_timeout` | 15 s / 45 s                          | `ws/lifecycle.py` heartbeat     |
+| `timeout_keep_alive`                   | 5 s idle between HTTP requests       | `SERVER_KEEP_ALIVE_TIMEOUT_S`   |
+| request line and headers deadline      | 10 s, in both protocol classes       | `SERVER_READ_HEADER_TIMEOUT_S`  |
+| fragments per WebSocket message        | 64                                   | `WS_MAX_FRAGMENTS_PER_MESSAGE`  |
+| size charged per fragment              | 64 B, against `ws_max_size`          | `WS_FRAGMENT_OVERHEAD_BYTES`    |
+| request line and headers size          | 32 KiB, in the HTTP protocol class   | `SERVER_MAX_REQUEST_HEAD_BYTES` |
+| messages queued per WebSocket          | 1 024, then reading pauses           | `WS_MAX_QUEUED_MESSAGES`        |
+| frames per WebSocket, at once          | 256, then 4429                       | `WS_INBOUND_FRAME_BURST`        |
+| frames per WebSocket, refill           | 64 a second                          | `WS_INBOUND_FRAMES_PER_S`       |
+| drain after a close, or a peer's FIN   | 5 s, then the transport is aborted   | `SERVER_CLOSE_DRAIN_TIMEOUT_S`  |
 
 `proxy_headers` is off (see below). Symptom of a too-small cap: clients closed with 1009.
 Regression test: `tests/unit/ws/test_server_limits.py`.
 
 Deflate per subprotocol (on for `cv.v1.json`, off for `cv.v1.msgpack`, protocol §3.5) comes from
 `ws=CvWebSocketsProtocol` in `uvicorn_kwargs()`: any other start also deflates `cv.v1.msgpack`.
+
+The rows from the request deadline on, and `limit_concurrency`'s exclusion of WebSockets, live in
+the protocol classes that `uvicorn_kwargs()` passes (`http=CvHttpToolsProtocol`,
+`ws=CvWebSocketsProtocol`, #2176): any other start has none of them.
+
+- A client that sends its request line and headers slower than the deadline (10 s from the
+  connection's opening, or from its first bytes after a response) is closed with no response, no
+  log line and no metric. On an upgrade it bounds the request line and headers, not the `101`
+  (the "Upgrade complete within" row of `23-ws-protocol.md` §16.2).
+- Request line and headers over 32 KiB get uvicorn's `400` and the close, with the warning
+  `Request line and headers too large.` on `uvicorn.error`. A WebSocket upgrade is an HTTP request
+  until then, so it meets this bound first.
+- An upgrade under 32 KiB with a line over 8 192 bytes, or more than 128 headers, gets websockets'
+  `414` or `431` at once, and the close.
+- A request answered before its body has all come gets its answer, and the rest of the body is
+  read and let go of, as uvicorn does. The answer starts the deadline: the rest of the body and the
+  next request line and headers must come within 10 s of it, or the connection is closed (one that
+  gets nothing at all after the answer is closed earlier, at 5 s, by `timeout_keep_alive`). An
+  upload still coming at 10 s is cut; this API takes small JSON bodies.
+- A WebSocket message of more than 64 fragments, or over `ws_max_size` with the charge per
+  fragment, is closed with 1009 and counted in `cv_ws_closes_total{reason="frame_too_big"}`, as
+  the gateway counts its own refusal (no `bye`).
+- Past 1 024 messages queued for the app, the WebSocket protocol leaves the rest of a read
+  unparsed, and reading paused, until the app has read the queue: nothing is refused or lost.
+- Every inbound WebSocket frame (data, continuation, ping, pong) takes one token of a bucket of
+  256, refilled at 64 a second; a frame that finds none closes the connection with 4429 and is
+  counted in `cv_ws_closes_total{reason="client_rate_limited"}` (no `bye`). While the transport's
+  write buffer is over its high-water mark, the client's pings get one pong, for the latest, sent
+  once it drains; reading goes on.
+- A connection the server has closed, or whose peer has closed its side (FIN), and whose
+  transport has not sent what it holds within 5 s is aborted. The bound is on the total drain
+  time, not on a stall: it cuts a peer that stopped reading, and also one that reads more slowly
+  than what is held over 5 s, a peer that has sent its FIN included.
+- Live WebSockets do not count against `limit_concurrency`: with every slot held by them, a REST
+  request is still answered, and a request on the 256th HTTP connection gets uvicorn's 503. A
+  WebSocket's handler still running after its connection is lost (its close's audit write) counts
+  until it returns.
+
+Regression tests: `tests/unit/ws/test_request_header_deadline_real_socket.py`,
+`tests/unit/ws/test_server_ws_frames.py` and `tests/unit/ws/test_server_limits.py`.
 
 ## Forwarded headers and a reverse proxy (#2275)
 

@@ -42,7 +42,10 @@ sizes if it ever stalls. uvicorn's transport keepalive (a 15 s ping, a 45 s pong
 `1011`) is off there: it is timed on the loop's wall clock and the scenarios on the virtual one, so
 a slow run (coverage) would close a paused client mid-scenario. The §9.1 application heartbeat
 stays, on the virtual clock. Production keeps both: a reader stalled for 60 real seconds meets that
-`1011`, which this harness leaves out. `trades_step` publishes the recorded BTCUSDT tape (production
+`1011`, which this harness leaves out. The server's per-connection frame budget (#2176) is kept
+there but refilled on the virtual clock (`_server._frames_on`), like the gateway's own inbound
+limiter; the flag-off stack keeps the loop clock, as production does.
+`trades_step` publishes the recorded BTCUSDT tape (production
 parser) as §14.2 batches, replayed in rounds with unique ids. Client opt-ins, set before `start()`:
 the §9.1 client `ping` (`heartbeat_s`), no permessage-deflate (`deflate`), and `on_data`, which
 takes the data frames of a stream too large to keep. The flag-off scenarios use none of these.

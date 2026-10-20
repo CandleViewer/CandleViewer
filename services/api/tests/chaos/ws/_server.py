@@ -17,8 +17,8 @@ default `BackpressureConfig` (8 MiB / 2 000 frames), every socket it accepts has
 `SEND_BUFFER`, and each of its lanes a fixed upstream receive buffer (`LANE_RCVBUF`), so a stopped
 reader's backlog reaches that budget once well under 1 MB is in flight (the sockets', the
 transport's and the proxy's buffers), not after the megabytes loopback autotuning holds. Its
-transport keepalive is off (`_boot`): it runs on wall time. `trades_step` replays the recorded
-tape.
+transport keepalive is off (`_boot`): it runs on wall time. Its per-connection frame budget
+(#2176) runs on the virtual clock (`_frames_on`). `trades_step` replays the recorded tape.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService, access_token_expires_at
 from candleviewer.exchange.base.trade_print import TradePrint
 from candleviewer.observability.context import spawn
-from candleviewer.server import PlannedShutdownServer, uvicorn_kwargs
+from candleviewer.server import CvWebSocketsProtocol, PlannedShutdownServer, uvicorn_kwargs
 from candleviewer.settings import Settings
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
@@ -89,6 +89,20 @@ BUFFERS = f"lane SO_RCVBUF {LANE_RCVBUF} B, server SO_SNDBUF {SEND_BUFFER} B, as
 
 async def _no_wait(_seconds: float) -> None:
     return None
+
+
+def _frames_on(clock: VirtualClock) -> type[CvWebSocketsProtocol]:
+    """The production WS protocol with its frame budget (#2176) refilled on `clock`. The budget
+    refills on the loop's clock, and a scenario paces its sends on the virtual one: the
+    fair-scheduling test sends 28 frames a socket every 6.5 s of virtual time, which a fast
+    runner turns into about 230 a second of wall time."""
+
+    class _Protocol(CvWebSocketsProtocol):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.frame_clock = clock
+
+    return _Protocol
 
 
 class _Hub(GatewayHub):
@@ -170,6 +184,8 @@ class Stack:
             # only; the §9.1 application heartbeat stays on, on the virtual clock (production keeps
             # both).
             kw["ws_ping_interval"] = None
+            # The same split for the frame budget, which is kept but timed on the virtual clock.
+            kw["ws"] = _frames_on(self.clock)
         # Merged as a dict, so it holds whether or not `uvicorn_kwargs` already sets `log_config`.
         conf = uvicorn.Config(app, **{**kw, "lifespan": "off", "log_config": None})
         self.server = PlannedShutdownServer(conf)
