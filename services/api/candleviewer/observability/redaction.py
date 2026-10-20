@@ -82,10 +82,11 @@ _NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr"'])[^\s"'])"""
 #: as the whole value, so `password=***x` holds a value (#415). What follows it ends a value: a
 #: space, a quote, a comma, a closing bracket, the end, a `\`, as the bundle's buffer writes a line
 #: break or a quote (`\n`, `\'`), or the end of a cut text, which a cut right after a marker leaves
-#: there. The bundle scan reads the same as no value.
+#: there, when a space, a quote, a `\` or the end follows it, as a cut leaves it (#415). The bundle
+#: scan reads the same as no value.
 _NO_VALUE: Final = (
     r"(?!(?:\[redacted:[a-z-]+\]|\.\.\.\[truncated:oversize\]|<omitted>|\*\*\*|null|none)"
-    r"""(?=[\s"',}\]\\]|\.\.\.\[truncated:oversize\]|\Z))"""
+    r"""(?=[\s"',}\]\\]|\.\.\.\[truncated:oversize\](?=[\s"'\\]|\Z)|\Z))"""
 )
 #: The first letters of the key names: most words fail this check before any name is tried.
 _KEY_FIRST: Final = "".join(sorted({k[0] for k in _REDACT_KEY_FORMS}))

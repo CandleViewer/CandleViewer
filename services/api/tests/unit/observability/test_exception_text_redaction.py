@@ -463,6 +463,16 @@ _LABELLED_ONLY = "".join(("hun", "ter2x"))
 @pytest.mark.parametrize(
     ("text", "shown"),
     [
+        # a cut marker ends a placeholder only as a cut leaves it; a value right before it is one
+        (f"password='***{redaction._TRUNCATED}{_LABELLED_ONLY}'", f"password='{_KEY_MARK}'"),
+        (f"password='{_LABELLED_ONLY}{redaction._TRUNCATED}'", f"password='{_KEY_MARK}'"),
+        # unquoted, a value ends at `]`, the marker's too, as in `password=ab]cdefgh`: a value that
+        # follows the marker directly stays (a cut never writes one: it joins its parts at a line
+        # break)
+        (
+            f"password=***{redaction._TRUNCATED}{_LABELLED_ONLY}",
+            f"password={_KEY_MARK}]{_LABELLED_ONLY}",
+        ),
         *[(text, text) for text in ("token=***", "token=null, x=1", "password='***'")],
         *[
             (f"token={mark}", f"token={mark}")  # the last: a cut right after a marker
