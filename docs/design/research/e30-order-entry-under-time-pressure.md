@@ -67,8 +67,8 @@ a recommendation pending the owner run; **open** = needs sessions or an owner de
 ## Research boards (Penpot)
 
 Per `docs/design/README.md` ("Approval rule"), a research ticket still ships boards on its Penpot page plus PNG exports:
-team `b564c72c-f31f-81ec-8008-b109a9175d0b`, file `b564c72c-f31f-81ec-8008-b112c6fdc116`. **Page `E30-D01`: not created
-as of 2026-10-20 (the Penpot bridge is down); no PNG exists; the PR is incomplete under the README until exported.**
+team `b564c72c-f31f-81ec-8008-b109a9175d0b`, file `b564c72c-f31f-81ec-8008-b112c6fdc116`. Page **`E30-D01`**, page id `0a41e3a8-e6a6-807a-8008-d1d0922b0ebc`:
+`https://design.penpot.app/#/workspace?team-id=b564c72c-f31f-81ec-8008-b109a9175d0b&file-id=b564c72c-f31f-81ec-8008-b112c6fdc116&page-id=0a41e3a8-e6a6-807a-8008-d1d0922b0ebc`.
 Planned: one frame per board, bound to semantic tokens in `packages/ui/tokens` only (no raw hex), exported with
 `docs/design/_tools/penpot_export.py` to `docs/design/E30/img/E30-D01-<board>.png`, page link in the PR body and the
 issue comment, no image embedded until exports exist. Boards 2 and 3 are also the Probe B and Probe C stimulus (protocol
@@ -83,6 +83,34 @@ computed result visible (§5b) · **4 Rejection failure-path map** by class, wit
 stale-inputs row (§4) · **5 Comparative matrix** TradingView / Bookmap / Bybit / Sierra Chart vs SCR-060 (§6) · **6
 Findings → heuristics → E30-D02 decision map** (§7, §8) · **7 Source conflicts SC-1 to SC-10** (the §1 table as a frame,
 one owner question and one recommended default per row, §1a).
+
+1. `E30-D01 / 01 journey` (board id `0a41e3a8-e6a6-807a-8008-d1d41914b335`):
+
+   ![E30-D01 / 01 journey — the decide → size → fire journey, with the re-arm-after-reconnect journey (F21) and the staleness and hotkey-safety states (F18–F20)](../E30/img/E30-D01-01-journey.png)
+
+2. `E30-D01 / 02 legibility-matrix` (board id `0a41e3a8-e6a6-807a-8008-d1d649a29aa3`):
+
+   ![E30-D01 / 02 legibility-matrix — the armed/locked × demo/live legibility matrix (15 frames; the Probe B stimulus) plus the badge contrast matrix](../E30/img/E30-D01-02-legibility-matrix.png)
+
+3. `E30-D01 / 03 sizing-mode-probe` (board id `0a41e3a8-e6a6-807a-8008-d1d7b2bd73f4`):
+
+   ![E30-D01 / 03 sizing-mode-probe — the sizing-mode probe wireframes: segmented control, mode-per-field, hybrid (the Probe C stimulus)](../E30/img/E30-D01-03-sizing-mode-probe.png)
+
+4. `E30-D01 / 04 rejection-failure-paths` (board id `0a41e3a8-e6a6-807a-8008-d1d92790b760`):
+
+   ![E30-D01 / 04 rejection-failure-paths — the rejection failure-path map, with the protective-stop failure and the stale-inputs row](../E30/img/E30-D01-04-rejection-failure-paths.png)
+
+5. `E30-D01 / 05 comparative-matrix` (board id `55e86c27-99d4-8006-8008-d1e06a8a477c`):
+
+   ![E30-D01 / 05 comparative-matrix — TradingView / Bookmap / Bybit / Sierra Chart vs SCR-060](../E30/img/E30-D01-05-comparative-matrix.png)
+
+6. `E30-D01 / 06 findings-decision-map` (board id `55e86c27-99d4-8006-8008-d1e1bdc205f9`):
+
+   ![E30-D01 / 06 findings-decision-map — the findings → heuristics → E30-D02 decision map (F1–F21)](../E30/img/E30-D01-06-findings-decision-map.png)
+
+7. `E30-D01 / 07 source-conflicts` (board id `55e86c27-99d4-8006-8008-d1e232ce1e4b`):
+
+   ![E30-D01 / 07 source-conflicts — SC-1 to SC-10 with the owner question and the recommended default per row](../E30/img/E30-D01-07-source-conflicts.png)
 
 ## Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
