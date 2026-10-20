@@ -414,12 +414,12 @@ def test_release_note_files_follow_the_marker_procedure(
     place and later unlinked, each step then fsyncing the directory."""
     files, seen = lj.LaneFiles(tmp_path), list[list[str]]()
     (tmp_path / "released.tmp").write_bytes(b"half a note")
-    files.boot()
+    names, _, note = files.boot()
     monkeypatch.setattr(lj.LaneFiles, "sync_dir", lambda *_: seen.append(os.listdir(tmp_path)))
     files.write_note(b"note")
     files.drop_note()
 
-    assert seen == [["released"], []]
+    assert (names, note) == ([], None) and seen == [["released"], []]
 
 
 def test_release_runs_as_a_module_with_its_logging_configured_first(
