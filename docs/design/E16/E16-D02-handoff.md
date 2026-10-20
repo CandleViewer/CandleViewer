@@ -45,25 +45,26 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States
 
-| State (Storybook)     | Penpot variant                                | Condition                        | Notes                                      |
-| --------------------- | --------------------------------------------- | -------------------------------- | ------------------------------------------ |
-| `Recording`           | CMP-177 · RecorderStatusRow / State=recording | manual, recording                | catalogue name                             |
-| `Stopped`             | State=stopped                                 | stopped, data kept per retention | catalogue name; "Record again"             |
-| `Pinned`              | State=recording, Pinned=true                  | keep forever                     | catalogue name; Retention "Forever"        |
-| `NearDiskBudget`      | State=recording, Disk=near                    | disk level ≥ 1                   | catalogue name; "· N % of budget" in words |
-| `AutoChartOpen`       | State=recording, Reason=chart_open            | auto, chart open                 | Stop disabled with its reason              |
-| `AutoPositionOpen`    | State=recording, Reason=position_open         | auto, open position              | Stop disabled with its reason (INV-B11-a)  |
-| `Lingering`           | State=lingering                               | amendment `lingering`            | "stops in N min"; "Keep recording"         |
-| `Starting`            | State=starting                                | initial snapshot                 | spinner; Stop disabled                     |
-| `Degraded`            | State=degraded                                | a stream unhealthy               | gap count secondary                        |
-| `Gated`               | State=gated                                   | write gate closed, no position   | "Gated · data dropped"                     |
-| `RefusedSymbolCap`    | State=refused, Refusal=symbol_cap             | 20-symbol limit                  | no action                                  |
-| `RefusedDiskPressure` | State=refused, Refusal=disk_pressure          | level 2 refusal                  | no action                                  |
-| `Silent`              | State=silent                                  | no writes for ≥ 60 s             | "No writes since …"                        |
-| `Error`               | State=error                                   | error                            | error text in the row detail               |
-| `Stopping`            | State=stopping                                | flushing                         | no action                                  |
-| `ReadOnly`            | State=recording, CanWrite=false               | no `recording:write` (SCR-103)   | controls disabled with the Owner reason    |
-| `Standalone`          | State=recording, Variant=standalone           | outside a table (SCR-103 drawer) | group role, tab stops (tables 2–3)         |
+| State (Storybook)     | Penpot variant                                | Condition                           | Notes                                                |
+| --------------------- | --------------------------------------------- | ----------------------------------- | ---------------------------------------------------- |
+| `Recording`           | CMP-177 · RecorderStatusRow / State=recording | manual, recording                   | catalogue name                                       |
+| `Stopped`             | State=stopped                                 | stopped, data kept per retention    | catalogue name; "Record again"                       |
+| `Pinned`              | State=recording, Pinned=true                  | keep forever                        | catalogue name; Retention "Forever"                  |
+| `NearDiskBudget`      | State=recording, Disk=near                    | disk level ≥ 1                      | catalogue name; "· N % of budget" in words           |
+| `AutoChartOpen`       | State=recording, Reason=chart_open            | auto, chart open                    | Stop disabled with its reason                        |
+| `AutoPositionOpen`    | State=recording, Reason=position_open         | auto, open position                 | Stop disabled with its reason (INV-B11-a)            |
+| `ManualWithPosition`  | State=recording, Reason=manual, Position=true | manual symbol with an open position | Stop disabled (refusal `position_open`), never Gated |
+| `Lingering`           | State=lingering                               | amendment `lingering`               | "stops in N min"; "Keep recording"                   |
+| `Starting`            | State=starting                                | initial snapshot                    | spinner; Stop disabled                               |
+| `Degraded`            | State=degraded                                | a stream unhealthy                  | gap count secondary                                  |
+| `Gated`               | State=gated                                   | write gate closed, no position      | "Gated · data dropped"                               |
+| `RefusedSymbolCap`    | State=refused, Refusal=symbol_cap             | 20-symbol limit                     | no action                                            |
+| `RefusedDiskPressure` | State=refused, Refusal=disk_pressure          | level 2 refusal                     | no action                                            |
+| `Silent`              | State=silent                                  | no writes for ≥ 60 s                | "No writes since …"                                  |
+| `Error`               | State=error                                   | error                               | error text in the row detail                         |
+| `Stopping`            | State=stopping                                | flushing                            | no action                                            |
+| `ReadOnly`            | State=recording, CanWrite=false               | no `recording:write` (SCR-103)      | controls disabled with the Owner reason              |
+| `Standalone`          | State=recording, Variant=standalone           | outside a table (SCR-103 drawer)    | group role, tab stops (tables 2–3)                   |
 
 ### Table 2 — Keyboard
 
