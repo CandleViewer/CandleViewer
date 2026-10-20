@@ -116,7 +116,7 @@ from time import perf_counter
 from typing import Any, Final, Protocol
 
 import structlog
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.net import RESOLVED_SOURCE_KEY
@@ -226,6 +226,10 @@ from candleviewer.ws.system_filter import (
 )
 
 WS_PATH = "/ws"
+#: #3907: the REST contract's server base (`22-api-openapi.yaml` `servers`). The gateway's one route
+#: is also served under it, as `/api/v1/ws`: the external URL the web client opens (23 section
+#: 2.1). The same router is included twice, so it is one gateway, not a second one.
+WS_SERVER_BASE: Final = "/api/v1"
 SYSTEM_TOPIC: Final = "system"
 OUTBOUND_QUEUE_MAX: Final = 1024
 #: The items `close_with` queues past the `push` bound: `bye`, the close sentinel and its code.
@@ -1120,6 +1124,21 @@ def _reply(t: str, frame_id: Any, **fields: Any) -> dict[str, Any]:
     return out | fields
 
 
+def include_ws_router(app: FastAPI, router: APIRouter) -> None:
+    """#3907: serve the gateway's route at `WS_PATH` and under `WS_SERVER_BASE`.
+
+    One router, one endpoint and one hub: the second include copies the route under the prefix,
+    so both paths run the same handler with the same guards, limits and audit. FastAPI replays a
+    router's startup and shutdown hooks once per include, so this router may carry none
+    (`make_ws_router` adds none): a hook would run twice."""
+    if router.on_startup or router.on_shutdown:
+        raise ValueError(
+            "the WS router may carry no startup or shutdown hook: each include replays it"
+        )
+    app.include_router(router)
+    app.include_router(router, prefix=WS_SERVER_BASE)
+
+
 def make_ws_router(
     *,
     authenticate: Authenticate,
@@ -1149,7 +1168,9 @@ def make_ws_router(
     backpressure: BackpressureConfig | None = None,
     close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
 ) -> APIRouter:
-    """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline but one, so tests
+    """The gateway endpoint, served at `/ws` and `/api/v1/ws` (`include_ws_router`).
+
+    `clock` (monotonic seconds) drives every deadline but one, so tests
     inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
     deadline with the flag on, which runs on the event loop's clock: only an `asyncio.Timeout`
     can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`). So does

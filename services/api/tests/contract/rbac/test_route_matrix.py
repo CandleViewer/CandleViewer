@@ -160,7 +160,11 @@ def test_topic_matrix_is_total_over_the_ws_registry_and_agrees_with_it() -> None
             kind_perm, scope = _MACHINE_ROWS[fam]
             value = kind_perm.value if kind_perm else None
             assert (row["permission"], row["scope"]) == (value, scope.value), fam
-    assert DECLARED_WS_ROUTES == {"/ws"}, "a new WS route needs its own matrix section"
+    # `/api/v1/ws` is `/ws` under the server base (#3907): one endpoint, this one topic matrix.
+    assert DECLARED_WS_ROUTES == {
+        "/ws",
+        "/api/v1/ws",
+    }, "a new WS route needs its own matrix section"
 
 
 def test_topic_matrix_is_total_over_registry_patterns_both_ways() -> None:

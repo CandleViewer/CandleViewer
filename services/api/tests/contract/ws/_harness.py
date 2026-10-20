@@ -40,7 +40,7 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import BOOK_DELTA, Frame, decode, decode_b64, encode_b64
 from candleviewer.ws.cvwb_vectors import structured, vector_frames
-from candleviewer.ws.gateway import GatewayHub, make_ws_router
+from candleviewer.ws.gateway import GatewayHub, include_ws_router, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
@@ -359,7 +359,8 @@ class World:
         )
         self.registry = ConnectionRegistry(self._resolve, self.clock.wall_ms, services)
         app = FastAPI()
-        app.include_router(
+        include_ws_router(  # `/ws` and `/api/v1/ws`, as `create_app` serves them (#3907)
+            app,
             make_ws_router(
                 authenticate=self._authenticate,
                 registry=self.registry,
@@ -373,7 +374,7 @@ class World:
                 git_sha="conformance",
                 system_notices=system_notices,
                 backpressure=backpressure,
-            )
+            ),
         )
         self.app = app
         self.client = TestClient(app, headers={"origin": ORIGIN})

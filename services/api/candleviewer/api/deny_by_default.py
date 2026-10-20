@@ -20,8 +20,9 @@ from candleviewer.api.contract_conformance import NON_CONTRACT_ROUTES
 PUBLIC_OPERATIONAL_ROUTES = NON_CONTRACT_ROUTES | frozenset({"/healthz", "/readyz", "/metrics"})
 
 #: WebSocket routes (`23-ws-protocol.md`): authenticated in-band (`auth`
-#: frame) with per-topic RBAC; any other WS path is refused (1008).
-DECLARED_WS_ROUTES = frozenset({"/ws"})
+#: frame) with per-topic RBAC; any other WS path is refused (1008). `/api/v1/ws` is the same route
+#: under the server base, the external URL (#3907): one endpoint, one topic matrix.
+DECLARED_WS_ROUTES = frozenset({"/ws", "/api/v1/ws"})
 
 _METHODS = frozenset({"get", "put", "post", "delete", "patch", "options", "head"})
 

@@ -381,7 +381,14 @@ from candleviewer.user_cascade_wiring import build_user_disable_service, build_u
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
-from candleviewer.ws.gateway import Authenticate, AuthRefused, GatewayHub, make_ws_router
+from candleviewer.ws.gateway import (
+    WS_PATH,
+    Authenticate,
+    AuthRefused,
+    GatewayHub,
+    include_ws_router,
+    make_ws_router,
+)
 from candleviewer.ws.indicators_publish import IndicatorsPublisher
 from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
 from candleviewer.ws.machines import MachineStateRegistry
@@ -1004,20 +1011,20 @@ def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Auth
         try:
             verdict = await ctx.auth.classify(record)
         except Exception as exc:
-            refusals.unclassified(exc, channel="ws", method="GET", path="/ws", record=record)
+            refusals.unclassified(exc, channel="ws", method="GET", path=WS_PATH, record=record)
             raise
         if verdict is SessionClass.FULL:
             return
         if verdict is SessionClass.ENROLMENT_ONLY:
 
             async def _audit(ip: str | None) -> None:
-                await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=ip)
+                await refusals.refused(record, channel="ws", method="GET", path=WS_PATH, ip=ip)
 
             raise AuthRefused("mfa_enrollment_required", audit=_audit)
         if verdict is SessionClass.USER_INACTIVE:  # disabled or gone since the lookup (#2911)
             ids = {"session_id": str(record.id), "user_id": str(record.user_id)}
             raise AuthRefused("user_disabled", ids=ids)  # as a late registration is (#3413)
-        refusals.expired(record, channel="ws", method="GET", path="/ws")
+        refusals.expired(record, channel="ws", method="GET", path=WS_PATH)
         raise PermissionError("not a live enrolment-only session")
 
     return _authenticate
@@ -1532,7 +1539,8 @@ def create_app(
     ws_backpressure = (
         BackpressureConfig.from_settings(resolved) if resolved.ws_backpressure_enabled else None
     )
-    app.include_router(
+    include_ws_router(  # #3907: `/ws` and, under the server base, `/api/v1/ws`
+        app,
         make_ws_router(
             authenticate=ws_authenticate or _session_authenticator(ctx, enrolment_refusals),
             registry=ws_registry,
@@ -1553,7 +1561,7 @@ def create_app(
             # `visibility` admits; a key the registry does not define reaches the Owner alone.
             flag_visible=default_registry().visible_to,
             backpressure=ws_backpressure,
-        )
+        ),
     )
     # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.
     ctx.mesh_system_topic_publisher.direct_sinks.append(ws_hub.broadcast_system)
