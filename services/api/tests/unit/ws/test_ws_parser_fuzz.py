@@ -502,10 +502,18 @@ def test_topics_json_has_an_ok_seed_for_every_registry_family_shape_and_kind() -
     assert {what: names for what, names in missing.items() if names} == {}
 
 
+#: A value each option a family requires takes (`indicators`' `instances`, E13-T02, #426).
+_REQUIRED_FILL: Final[dict[str, Any]] = {"instances": [{"indicator": "rsi"}]}
+
+
 def _refused(family: str, opts: dict[str, Any]) -> str | None:
-    """The option `validate_options` refuses `opts` for; None when it accepts them."""
+    """The option `validate_options` refuses `opts` for; None when it accepts them. A required
+    option an object of `opts` leaves out takes `_REQUIRED_FILL`'s value: only `opts` is judged."""
+    fam = topics.FAMILIES[family]
+    if isinstance(opts, dict):
+        opts = {r: _REQUIRED_FILL[r] for r in fam.required} | opts
     try:
-        topics.validate_options(topics.FAMILIES[family], opts)
+        topics.validate_options(fam, opts)
     except topics.TopicError as exc:
         return exc.field if exc.code == "invalid_options" else exc.code
     return None

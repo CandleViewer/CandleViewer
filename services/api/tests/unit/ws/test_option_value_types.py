@@ -167,12 +167,14 @@ def test_validate_options_any_json_value_is_a_valid_value_or_a_topic_error(
     option: tuple[str, str, Opt], value: Any
 ) -> None:
     family, name, _ = option
+    # A required option (`indicators`' `instances`, E13-T02) left out is refused for itself.
+    fill = {r: [{"indicator": "rsi"}] for r in FAMILIES[family].required if r != name}
     try:
-        out = validate_options(FAMILIES[family], {name: value})
+        out = validate_options(FAMILIES[family], {name: value, **fill})
     except TopicError as err:  # any other exception fails the test
         assert (err.code, err.field) == ("invalid_options", name)
     else:
-        assert set(out) == {name}
+        assert set(out) == {name, *fill}
 
 
 @settings(max_examples=400, deadline=None)

@@ -1277,8 +1277,8 @@ def test_a_fractional_qty_step_floors_at_ten_steps_on_ws_too() -> None:
 )
 def test_every_family_with_a_param_segment_names_a_bar_series(family: str) -> None:
     """The floor gates on a topic that has a `bar_type` segment, not on a list of families, so a
-    family with these segments (`indicators`: E13-T02, #426, and 23 §6.1's `indicators` bullet) is
-    floored once it is served."""
+    family with these segments is floored once it is served, as `indicators` is since E13-T02
+    (#426, 23 §6.1's `indicators` bullet; `test_an_indicators_series_*` below)."""
     topic = parse_topic(f"{family}.BTCUSDT.volume.1")
     assert (topic.bar_type, topic.param) == ("volume", "1")
 
@@ -1287,8 +1287,8 @@ def test_the_floor_follows_the_bar_series_a_topic_names_not_its_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A `bars`-shaped family under another name is floored and takes a builder lease: the gate
-    follows the topic's `bar_type`, not its family. 23 §6.1's `indicators` bullet (E13-T02, #426)
-    holds an `indicators` series as a live `bars.*` one is held, under the same param bounds."""
+    follows the topic's `bar_type`, not its family. Since E13-T02 (#426) an `indicators` series is
+    held as a live `bars.*` one is, under the same param bounds (23 §6.1's `indicators` bullet)."""
     probe = dataclasses.replace(FAMILIES["bars"], family="probe")  # `bars`' shape, a new name
     monkeypatch.setattr("candleviewer.ws.topics.FAMILIES", {**FAMILIES, "probe": probe})
     bars = _Bars()
@@ -1297,6 +1297,39 @@ def test_the_floor_follows_the_bar_series_a_topic_names_not_its_family(
     got = (below["ok"], below.get("error", {}).get("code"), at["ok"])
     assert got == (False, "invalid_topic_format", True)
     assert len(bars.registered) == 1
+
+
+#: An `indicators.*` subscription's required option (§6.1): one server-computed instance.
+_EMA = {"instances": [{"indicator": "ema", "params": {"n": 5}}]}
+
+
+@pytest.mark.parametrize("bar_type", ["volume", "delta"])
+def test_an_indicators_series_below_ten_qty_steps_is_refused_naming_the_floor(
+    bar_type: str,
+) -> None:
+    """E13-T02 (#426): `indicators.*` names its series as `bars.*` does, and the same floor refuses
+    it (SR-E12-03) before its instances are read or anything is held."""
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_step))
+    (r,) = _sub(conn, {"ch": f"indicators.BTCUSDT.{bar_type}.9", "opts": _EMA})
+    assert (r["ok"], r["error"]["code"]) == (False, "invalid_topic_format")
+    assert r["error"]["message"] == (
+        f"param for bar_type {bar_type} must be at least 10 (10 x this symbol's qty step of 1)."
+    )
+    assert bars.registered == [] and conn.by_id == {}
+
+
+def test_an_indicators_series_at_ten_qty_steps_is_admitted_leased_and_retuned() -> None:
+    """At the floor it is admitted and leased as `bars.*` is, and a `ctl` of its instances bounds
+    the series by the same floor (`_retune`), so it is retuned, not refused."""
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_step))
+    volume, delta = "indicators.BTCUSDT.volume.10", "indicators.BTCUSDT.delta.10"
+    results = _sub(conn, {"ch": volume, "opts": _EMA}, {"ch": delta, "opts": _EMA})
+    assert [r["ok"] for r in results] == [True, True] and len(bars.registered) == 2
+    ok = _ctl(conn, volume, {"instances": [{"indicator": "ema", "params": {"n": 8}}]})
+    assert ok["t"] == "ctl_ok"
+    assert [i["params"] for i in ok["p"]["effective"]["instances"]] == [{"n": 8}]
 
 
 @pytest.mark.parametrize("topic", ["bars.BTCUSDT.volume.1", "footprint.BTCUSDT.delta.1"])
