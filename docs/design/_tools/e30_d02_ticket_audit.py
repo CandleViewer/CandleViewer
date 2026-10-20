@@ -180,7 +180,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("selected preset border (reinforcement beside the check glyph)", "color.border.strong", "color.surface.selected", "decorative"),
     ("input well fill vs the panel (reinforcement only; the boundary carries 1.4.11)", "color.surface.app", "color.surface.canvas", "decorative"),
     ("section divider hairline", "color.border.default", "color.surface.canvas", "decorative"),
-    ("(estimated) hatch over the greyed preview (texture)", "color.border.strong", "color.surface.canvas", "decorative"),
+    ("(provisional) hatch over the greyed preview (texture)", "color.border.strong", "color.surface.canvas", "decorative"),
 ]
 
 # CVD: colour pairs that must stay distinguishable without their text (ΔE76 ≥ 5.0 JND floor, tools/contrast).
