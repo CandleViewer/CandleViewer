@@ -133,6 +133,7 @@ CREATE TABLE trade_groups (
   symbol              symbol_code NOT NULL,
   side                text NOT NULL,
   status              trade_group_status NOT NULL DEFAULT 'draft',
+  leg_failure_policy  text NOT NULL DEFAULT 'best_effort',
   algo                algo_kind NOT NULL DEFAULT 'none',
   algo_params         jsonb,
   intent_note         text,
@@ -156,6 +157,7 @@ CREATE TABLE trade_groups (
   updated_at          timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT tg_side      CHECK (side IN ('Buy','Sell')),
   CONSTRAINT tg_origin    CHECK (origin IN ('manual','hotkey','dom_click','chart_click','rule','alert','replay_sim')),
+  CONSTRAINT tg_policy    CHECK (leg_failure_policy IN ('best_effort','all_or_none','abort_on_first')),
   CONSTRAINT tg_entrytype CHECK (entry_type IN ('Market','Limit','Conditional')),
   CONSTRAINT tg_limit_px  CHECK ((entry_type <> 'Limit' OR entry_price > 0) IS TRUE),
   CONSTRAINT tg_cond_px   CHECK ((entry_type <> 'Conditional' OR (trigger_price > 0 AND trigger_by IS NOT NULL)) IS TRUE),
@@ -258,6 +260,7 @@ BEGIN
     WHEN NEW.client_group_ref IS DISTINCT FROM OLD.client_group_ref THEN 'client_group_ref'
     WHEN NEW.client_body_sha256 IS DISTINCT FROM OLD.client_body_sha256 THEN 'client_body_sha256'
     WHEN NEW.definition_id IS DISTINCT FROM OLD.definition_id THEN 'definition_id'
+    WHEN NEW.leg_failure_policy IS DISTINCT FROM OLD.leg_failure_policy THEN 'leg_failure_policy'
   END;
   IF changed IS NOT NULL THEN
     RAISE EXCEPTION 'trg_tg_write_once: trade_groups.% is write-once', changed

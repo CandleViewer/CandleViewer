@@ -1450,6 +1450,7 @@ A single ticket that fans out to N accounts. `client_group_ref` is the replay an
 | `symbol`                  | symbol_code        | no   | —              | e.g. `BTCUSDT`                                                        |
 | `side`                    | text               | no   | —              | CHECK in ('Buy','Sell')                                               |
 | `status`                  | trade_group_status | no   | `'draft'`      |                                                                       |
+| `leg_failure_policy`      | text               | no   | `best_effort`  | best_effort / all_or_none / abort_on_first (24 §9.5); write-once      |
 | `algo`                    | algo_kind          | no   | `'none'`       | bracket / scaled / twap / chase / iceberg / oco                       |
 | `algo_params`             | jsonb              | yes  | NULL           | Validated per `algo` by app-layer schema (doc 24)                     |
 | `intent_note`             | text               | yes  | NULL           | Free text captured at ticket time → journal                           |
@@ -1481,6 +1482,7 @@ CREATE TABLE trade_groups (
   symbol              symbol_code NOT NULL,
   side                text NOT NULL,
   status              trade_group_status NOT NULL DEFAULT 'draft',
+  leg_failure_policy  text NOT NULL DEFAULT 'best_effort',
   algo                algo_kind NOT NULL DEFAULT 'none',
   algo_params         jsonb,
   intent_note         text,
@@ -1504,6 +1506,7 @@ CREATE TABLE trade_groups (
   updated_at          timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT tg_side      CHECK (side IN ('Buy','Sell')),
   CONSTRAINT tg_origin    CHECK (origin IN ('manual','hotkey','dom_click','chart_click','rule','alert','replay_sim')),
+  CONSTRAINT tg_policy    CHECK (leg_failure_policy IN ('best_effort','all_or_none','abort_on_first')),
   CONSTRAINT tg_entrytype CHECK (entry_type IN ('Market','Limit','Conditional')),
   CONSTRAINT tg_limit_px  CHECK ((entry_type <> 'Limit' OR entry_price > 0) IS TRUE),
   CONSTRAINT tg_cond_px   CHECK ((entry_type <> 'Conditional' OR (trigger_price > 0 AND trigger_by IS NOT NULL)) IS TRUE),
@@ -1522,10 +1525,10 @@ CREATE INDEX ix_tg_env_time   ON trade_groups (env, created_at DESC);
 CREATE INDEX ix_tg_definition ON trade_groups (definition_id) WHERE definition_id IS NOT NULL;
 ```
 
-`tg_limit_px` and `tg_cond_px` are NULL-safe (`IS TRUE`): a bare CHECK passes a NULL result, so a Limit group without its price would be stored. `tg_finite` keeps NaN out of the prices, as `ap_finite` does for profiles (§3.2.4). `tg_ref_fmt` settles one format for the anchor, the canonical lower-case UUID text (any version, so a server-minted ref of a rule, alert or replay origin fits too); the service stores `str(UUID(header))`, never the header as received. There is no index or lookup on `client_group_ref` alone. `ix_tg_rule_run` serves the `ON DELETE SET NULL` of `origin_rule_run_id` when the run retention (§7) prunes `rule_runs`. `symbol`, `side`, `entry_type`, `origin`, `origin_rule_id`, `is_paper` and `algo_params` are written when the group is created; the trade-group store (E28-T01's last slice) never updates them, and freezing them in the schema once a group leaves `draft` is left to E28-T05. Two triggers, both `ENABLE ALWAYS`, refuse with SQLSTATE 23514 naming themselves as the constraint and never a value:
+`tg_limit_px` and `tg_cond_px` are NULL-safe (`IS TRUE`): a bare CHECK passes a NULL result, so a Limit group without its price would be stored. `tg_finite` keeps NaN out of the prices, as `ap_finite` does for profiles (§3.2.4). `tg_ref_fmt` settles one format for the anchor, the canonical lower-case UUID text (any version, so a server-minted ref of a rule, alert or replay origin fits too); the service stores `str(UUID(header))`, never the header as received. There is no index or lookup on `client_group_ref` alone. `leg_failure_policy` is the group's failure policy (24 §9.5, `tg_policy`), stored so that B2's unwind and a restart read it from the row, never from a machine snapshot; 22's and 23's two-value `atomicity` is its projection until SR-E28-25 settles one vocabulary. Groups are entry fan-outs only (`ux_tgl_group_account`: one leg per account), so every leg opens a position and `tgl_sl_px` is C-2.6 as written: a take-profit or an unwind is a reduce-only `orders` row on the entry leg, never a leg. `ix_tg_rule_run` serves the `ON DELETE SET NULL` of `origin_rule_run_id` when the run retention (§7) prunes `rule_runs`. `symbol`, `side`, `entry_type`, `origin`, `origin_rule_id`, `is_paper` and `algo_params` are written when the group is created; the trade-group store (E28-T01's last slice) never updates them, and freezing them in the schema once a group leaves `draft` is left to E28-T05. Two triggers, both `ENABLE ALWAYS`, refuse with SQLSTATE 23514 naming themselves as the constraint and never a value:
 
 - `trg_tg_env` (BEFORE INSERT): a group fired from a definition is in the definition's environment.
-- `trg_tg_write_once` (BEFORE UPDATE): `id`, `env`, `created_by`, `client_group_ref`, `client_body_sha256` and `definition_id` never change.
+- `trg_tg_write_once` (BEFORE UPDATE): `id`, `env`, `created_by`, `client_group_ref`, `client_body_sha256`, `definition_id` and `leg_failure_policy` never change.
 
 `trg_trade_groups_touch` (BEFORE UPDATE) is `set_updated_at()` (§1.4).
 
@@ -1557,6 +1560,7 @@ BEGIN
     WHEN NEW.client_group_ref IS DISTINCT FROM OLD.client_group_ref THEN 'client_group_ref'
     WHEN NEW.client_body_sha256 IS DISTINCT FROM OLD.client_body_sha256 THEN 'client_body_sha256'
     WHEN NEW.definition_id IS DISTINCT FROM OLD.definition_id THEN 'definition_id'
+    WHEN NEW.leg_failure_policy IS DISTINCT FROM OLD.leg_failure_policy THEN 'leg_failure_policy'
   END;
   IF changed IS NOT NULL THEN
     RAISE EXCEPTION 'trg_tg_write_once: trade_groups.% is write-once', changed

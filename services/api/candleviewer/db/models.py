@@ -2409,6 +2409,8 @@ LEG_STATUSES: tuple[str, ...] = (
     "error",
 )
 ALGO_KINDS: tuple[str, ...] = ("none", "oco", "iceberg", "twap", "chase", "scaled", "bracket")
+#: 24 Sec.9.5: the group's failure policy (`tg_policy`), write-once.
+LEG_FAILURE_POLICIES: tuple[str, ...] = ("best_effort", "all_or_none", "abort_on_first")
 trade_group_status = ENUM(
     *TRADE_GROUP_STATUSES, name="trade_group_status", metadata=metadata, create_type=False
 )
@@ -2476,6 +2478,7 @@ trade_groups = Table(
     Column("symbol", symbol_code, nullable=False),
     Column("side", Text, nullable=False),
     Column("status", trade_group_status, nullable=False, server_default=text("'draft'")),
+    Column("leg_failure_policy", Text, nullable=False, server_default=text("'best_effort'")),
     Column("algo", algo_kind, nullable=False, server_default=text("'none'")),
     Column("algo_params", JSONB, comment=GROUP_ALGO_COMMENT),
     Column("intent_note", Text, comment=GROUP_NOTE_COMMENT),
@@ -2501,6 +2504,9 @@ trade_groups = Table(
     CheckConstraint(
         "origin IN ('manual','hotkey','dom_click','chart_click','rule','alert','replay_sim')",
         name="tg_origin",
+    ),
+    CheckConstraint(
+        "leg_failure_policy IN ('best_effort','all_or_none','abort_on_first')", name="tg_policy"
     ),
     CheckConstraint("entry_type IN ('Market','Limit','Conditional')", name="tg_entrytype"),
     CheckConstraint("(entry_type <> 'Limit' OR entry_price > 0) IS TRUE", name="tg_limit_px"),

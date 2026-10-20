@@ -477,6 +477,7 @@ def test_downgrade_refuses_while_a_group_definition_or_member_exists(
 
 _INVALID_GROUP: dict[str, tuple[str, dict[str, object]]] = {
     "tg_side": ("tg_side", {"side": "Long"}),
+    "tg_policy": ("tg_policy", {"leg_failure_policy": "compensate"}),
     "tg_origin": ("tg_origin", {"origin": "api"}),
     "tg_entrytype": ("tg_entrytype", {"entry_type": "Stop"}),
     "tg_limit_px-zero": ("tg_limit_px", {"entry_type": "Limit", "entry_price": Decimal("0")}),
@@ -1019,6 +1020,7 @@ _REWRITES: dict[str, Callable[[Conn], object]] = {
     "client_group_ref": lambda c: str(uuid.uuid4()),
     "client_body_sha256": lambda c: _OTHER_BODY,
     "definition_id": lambda c: _definition(c),
+    "leg_failure_policy": lambda c: "all_or_none",
 }
 
 
@@ -1040,6 +1042,33 @@ def test_the_group_identity_and_anchor_are_write_once(pg_dsn: str, column: str) 
         assert exc.value.diag.message_primary == (
             f"trg_tg_write_once: trade_groups.{column} is write-once"
         )
+
+
+def test_a_group_takes_the_best_effort_policy_unless_it_names_another(pg_dsn: str) -> None:
+    """24 Sec.9.5: the failure policy that the unwind and a restart read is on the row, as the
+    PR-2b Q1 ruling set."""
+    with _conn(_fresh(pg_dsn)) as c:
+        user = _user(c)
+        plain = _group(c, user)
+        strict = _group(c, user, leg_failure_policy="all_or_none")
+        policy = "SELECT leg_failure_policy FROM trade_groups WHERE id = %s"
+        assert (_one(c, policy, plain), _one(c, policy, strict)) == ("best_effort", "all_or_none")
+
+
+def test_a_group_holds_one_leg_per_account_so_an_exit_is_never_a_leg(pg_dsn: str) -> None:
+    """Groups are entry fan-outs: `ux_tgl_group_account` admits one leg per account, so a
+    take-profit or an unwind for that account is a reduce-only order on the entry leg, never a
+    second leg row, and `tgl_sl_px` binds position-opening legs only (C-2.6)."""
+    with _conn(_fresh(pg_dsn)) as c:
+        account = _account(c)
+        group = _group(c, _user(c))
+        _leg(c, group, account)
+        with pytest.raises(pgerr.UniqueViolation) as exc:
+            _leg(c, group, account, sequence_no=1)
+        assert exc.value.diag.constraint_name == "ux_tgl_group_account"
+        with pytest.raises(pgerr.CheckViolation) as stopless:
+            _leg(c, _group(c, _user(c)), account, resolved_sl_price=None)
+        assert stopless.value.diag.constraint_name == "tgl_sl_px"
 
 
 #: Re-points that stay in the leg's environment, so only `trg_tgl_write_once` can refuse them.

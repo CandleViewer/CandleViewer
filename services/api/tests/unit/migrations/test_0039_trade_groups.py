@@ -114,6 +114,7 @@ _WRITE_ONCE = {
         "client_group_ref",
         "client_body_sha256",
         "definition_id",
+        "leg_failure_policy",
     ),
     "trg_tgl_write_once": (
         "id",
