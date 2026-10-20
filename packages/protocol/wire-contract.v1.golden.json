@@ -1,0 +1,599 @@
+{
+  "contract": "cv.v1",
+  "header": {
+    "bytes": 24,
+    "endianness": "little",
+    "magic": "0x43565742",
+    "fields": [
+      {"name": "magic", "type": "u32", "offset": 0, "size": 4},
+      {"name": "format_version", "type": "u8", "offset": 4, "size": 1},
+      {"name": "body_kind", "type": "u8", "offset": 5, "size": 1},
+      {"name": "flags", "type": "u8", "offset": 6, "size": 1},
+      {"name": "price_scale", "type": "u8", "offset": 7, "size": 1},
+      {"name": "qty_scale", "type": "u8", "offset": 8, "size": 1},
+      {"name": "reserved", "type": "pad3", "offset": 9, "size": 3},
+      {"name": "record_count", "type": "u32", "offset": 12, "size": 4},
+      {"name": "ts_base_ms", "type": "u64", "offset": 16, "size": 8}
+    ],
+    "flags": ["estimated", "coalesced", "replay", "partial"]
+  },
+  "body_kinds": {
+    "1": {
+      "name": "book_snapshot",
+      "format_version": 1,
+      "length_rule": "min",
+      "record_stride": 17,
+      "record": [
+        {"name": "side", "type": "u8", "offset": 0, "size": 1, "enum": [0, 1]},
+        {"name": "price", "type": "i64", "offset": 1, "size": 8},
+        {"name": "size", "type": "u64", "offset": 9, "size": 8}
+      ],
+      "trailer": {
+        "size": 16,
+        "fields": [
+          {"name": "xu", "type": "u64", "offset": 0, "size": 8},
+          {"name": "xseq", "type": "u64", "offset": 8, "size": 8}
+        ]
+      }
+    },
+    "2": {
+      "name": "book_delta",
+      "format_version": 1,
+      "length_rule": "min",
+      "record_stride": 17,
+      "record": [
+        {"name": "side", "type": "u8", "offset": 0, "size": 1, "enum": [0, 1]},
+        {"name": "price", "type": "i64", "offset": 1, "size": 8},
+        {"name": "size", "type": "u64", "offset": 9, "size": 8}
+      ]
+    },
+    "3": {
+      "name": "trades",
+      "format_version": 1,
+      "length_rule": "min",
+      "record_stride": 22,
+      "record": [
+        {"name": "ts_offset_ms", "type": "u32", "offset": 0, "size": 4},
+        {"name": "price", "type": "i64", "offset": 4, "size": 8},
+        {"name": "size", "type": "u64", "offset": 12, "size": 8},
+        {"name": "side", "type": "u8", "offset": 20, "size": 1, "enum": [0, 1]},
+        {"name": "flags", "type": "u8", "offset": 21, "size": 1}
+      ]
+    },
+    "4": {
+      "name": "bars",
+      "format_version": 2,
+      "length_rule": "exact",
+      "record_stride": 85,
+      "record": [
+        {"name": "generation", "type": "u64", "offset": 0, "size": 8},
+        {"name": "index", "type": "u64", "offset": 8, "size": 8},
+        {"name": "ts_offset_ms", "type": "u32", "offset": 16, "size": 4},
+        {"name": "open", "type": "i64", "offset": 20, "size": 8},
+        {"name": "high", "type": "i64", "offset": 28, "size": 8},
+        {"name": "low", "type": "i64", "offset": 36, "size": 8},
+        {"name": "close", "type": "i64", "offset": 44, "size": 8},
+        {"name": "volume", "type": "u64", "offset": 52, "size": 8},
+        {"name": "turnover", "type": "u64", "offset": 60, "size": 8},
+        {"name": "trades", "type": "u32", "offset": 68, "size": 4},
+        {"name": "delta", "type": "i64", "offset": 72, "size": 8},
+        {"name": "flags", "type": "u8", "offset": 80, "size": 1},
+        {"name": "reserved", "type": "pad4", "offset": 81, "size": 4}
+      ]
+    },
+    "5": {
+      "name": "footprint",
+      "format_version": 2,
+      "length_rule": "min",
+      "record_stride": 33,
+      "record": [
+        {"name": "price", "type": "i64", "offset": 0, "size": 8},
+        {"name": "bid_volume", "type": "u64", "offset": 8, "size": 8},
+        {"name": "ask_volume", "type": "u64", "offset": 16, "size": 8},
+        {"name": "trades", "type": "u32", "offset": 24, "size": 4},
+        {"name": "flags", "type": "u8", "offset": 28, "size": 1},
+        {"name": "reserved", "type": "pad4", "offset": 29, "size": 4}
+      ],
+      "group_prefix": {
+        "size": 28,
+        "fields": [
+          {"name": "generation", "type": "u64", "offset": 0, "size": 8},
+          {"name": "index", "type": "u64", "offset": 8, "size": 8},
+          {"name": "ts_offset_ms", "type": "u32", "offset": 16, "size": 4},
+          {"name": "cell_count", "type": "u32", "offset": 20, "size": 4, "count": true},
+          {"name": "flags", "type": "u8", "offset": 24, "size": 1},
+          {"name": "reserved", "type": "pad3", "offset": 25, "size": 3}
+        ]
+      }
+    },
+    "6": {
+      "name": "heatmap_column",
+      "format_version": 1,
+      "length_rule": "min",
+      "record_stride": 16,
+      "record": [
+        {"name": "bid_size", "type": "u64", "offset": 0, "size": 8},
+        {"name": "ask_size", "type": "u64", "offset": 8, "size": 8}
+      ],
+      "body_prefix": {
+        "size": 24,
+        "fields": [
+          {"name": "ts_offset_ms", "type": "u32", "offset": 0, "size": 4},
+          {"name": "price_min", "type": "i64", "offset": 4, "size": 8},
+          {"name": "price_step", "type": "i64", "offset": 12, "size": 8},
+          {"name": "row_count", "type": "u32", "offset": 20, "size": 4, "count": true}
+        ]
+      }
+    }
+  },
+  "envelope": {
+    "frame_types": [
+      "hello",
+      "welcome",
+      "auth",
+      "auth_ok",
+      "sub",
+      "sub_ok",
+      "unsub",
+      "unsub_ok",
+      "snap",
+      "d",
+      "resync",
+      "revoked",
+      "permission_change",
+      "ping",
+      "pong",
+      "err",
+      "ctl",
+      "ctl_ok",
+      "bye"
+    ],
+    "encodings": ["j", "b", "b64"],
+    "members": {
+      "ch": "string",
+      "e": "string",
+      "id": "string",
+      "meta": "object",
+      "p": "any",
+      "rs": "string",
+      "s": "integer|null",
+      "sp": "string",
+      "t": "string",
+      "ts": "integer",
+      "wt": "integer"
+    },
+    "required": ["t"],
+    "per_type_required": {"d": ["ch", "p", "s", "ts"], "snap": ["ch", "p", "s", "ts"]},
+    "per_type_properties": {"d": {"s": "integer"}},
+    "additional_properties": false
+  },
+  "control_frames": {
+    "auth": {
+      "required": ["access_token"],
+      "members": {"access_token": "string", "environments": "array"},
+      "additional_properties": false
+    },
+    "auth_ok": {
+      "required": ["account_scope", "permissions", "roles", "session_id", "token_expires_at_ms", "user_id"],
+      "members": {
+        "account_scope": "array",
+        "allowed_environments": "array",
+        "kill_switch": "object",
+        "permissions": "array",
+        "roles": "array",
+        "session_id": "string",
+        "token_expires_at_ms": "integer",
+        "user_id": "string",
+        "username": "string"
+      },
+      "additional_properties": false
+    },
+    "bye": {
+      "required": ["code", "message", "reason"],
+      "members": {
+        "code": "integer",
+        "hint": "object",
+        "message": "string",
+        "reason": "string",
+        "reconnect": "boolean",
+        "retry_after_ms": "integer"
+      },
+      "additional_properties": false
+    },
+    "bye#/properties/hint": {
+      "required": [],
+      "members": {"most_expensive_topics": "array"},
+      "additional_properties": false
+    },
+    "common#/$defs/error": {
+      "required": ["code", "message"],
+      "members": {
+        "close": "boolean",
+        "code": "string",
+        "field": "string",
+        "message": "string",
+        "request_id": "string",
+        "retryable": "boolean"
+      },
+      "additional_properties": false
+    },
+    "common#/$defs/indicatorInstance": {
+      "required": ["indicator"],
+      "members": {"indicator": "string", "params": "object"},
+      "additional_properties": false
+    },
+    "ctl": {
+      "required": [],
+      "members": {
+        "coalesce": "boolean",
+        "depth": "integer",
+        "instances": "array",
+        "metrics": "array",
+        "min_size": "string",
+        "paused": "boolean",
+        "price_grouping": "integer",
+        "throttle_ms": "integer",
+        "time_bucket_ms": "integer"
+      },
+      "additional_properties": false,
+      "min_properties": 1
+    },
+    "ctl_ok": {
+      "required": ["effective"],
+      "members": {"effective": "object", "resnapshot": "boolean", "sub_id": "string"},
+      "additional_properties": false
+    },
+    "heartbeat": {
+      "required": [],
+      "members": {"client_ms": "integer", "rtt_hint_ms": "integer", "server_ms": "integer"},
+      "additional_properties": false
+    },
+    "hello": {
+      "required": ["client", "client_version", "protocol"],
+      "members": {
+        "capabilities": "array",
+        "client": "string",
+        "client_version": "string",
+        "clock_ms": "integer",
+        "encodings": "array",
+        "locale": "string",
+        "protocol": "string",
+        "shell": "string"
+      },
+      "additional_properties": false
+    },
+    "permission_change": {
+      "required": ["account_scope", "permissions", "roles", "user_id"],
+      "members": {"account_scope": "array", "permissions": "array", "roles": "array", "user_id": "string"},
+      "additional_properties": false
+    },
+    "resync": {
+      "required": ["reason"],
+      "members": {"last_seq": "integer|null", "reason": "string", "sub_id": "string"},
+      "additional_properties": false
+    },
+    "revoked": {
+      "required": ["message", "reason"],
+      "members": {
+        "message": "string",
+        "reason": "string",
+        "removed_accounts": "array",
+        "resubscribe_allowed": "boolean",
+        "sub_id": "string"
+      },
+      "additional_properties": false
+    },
+    "sub": {
+      "required": ["topics"],
+      "members": {"replay_session_id": "null|string", "snapshot": "boolean", "topics": "array"},
+      "additional_properties": false
+    },
+    "sub#/$defs/indicatorOptions": {
+      "required": ["instances"],
+      "members": {
+        "coalesce": "boolean",
+        "encoding": "string",
+        "from_seq": "integer",
+        "from_ts_ms": "integer",
+        "history": "integer",
+        "instances": "array",
+        "throttle_ms": "integer"
+      },
+      "additional_properties": false
+    },
+    "sub#/$defs/options": {
+      "required": [],
+      "members": {
+        "bar_type": "string",
+        "cluster_tolerance_ticks": "integer",
+        "cluster_window_ms": "integer",
+        "coalesce": "boolean",
+        "depth": "integer",
+        "encoding": "string",
+        "exchange_account_ids": "array",
+        "from_seq": "integer",
+        "from_ts_ms": "integer",
+        "history": "integer",
+        "imbalance_ratio": "number",
+        "include_delta": "boolean",
+        "include_events": "boolean",
+        "metrics": "array",
+        "min_imbalance_volume": "string",
+        "min_notional_usd": "string",
+        "min_size": "string",
+        "min_stack": "integer",
+        "open_only": "boolean",
+        "param": "string",
+        "params": "object",
+        "price_grouping": "integer",
+        "rule_ids": "array",
+        "session_anchor": "string",
+        "split": "string",
+        "status": "array",
+        "symbols": "array",
+        "throttle_ms": "integer",
+        "time_bucket_ms": "integer",
+        "unacked_only": "boolean",
+        "value_area_pct": "number",
+        "window_seconds": "integer"
+      },
+      "additional_properties": false
+    },
+    "sub#/properties/topics/items": {
+      "required": ["ch"],
+      "members": {"ch": "string", "opts": "object"},
+      "additional_properties": false
+    },
+    "sub_ok": {"required": ["results"], "members": {"results": "array"}, "additional_properties": false},
+    "sub_ok#/properties/results/items": {
+      "required": ["ch", "ok"],
+      "members": {
+        "ch": "string",
+        "effective": "object",
+        "error": "object",
+        "ok": "boolean",
+        "rs": "string",
+        "snapshot_forced": "boolean",
+        "snapshot_pending": "boolean",
+        "sub_id": "string",
+        "warning": "object"
+      },
+      "additional_properties": false
+    },
+    "system#/$defs/killSwitch": {
+      "required": ["engaged", "scope"],
+      "members": {
+        "engaged": "boolean",
+        "engaged_at_ms": "integer|null",
+        "engaged_by": "null|string",
+        "engaged_by_username": "null|string",
+        "exchange_account_ids": "array",
+        "reason": "null|string",
+        "scope": "string"
+      },
+      "additional_properties": false
+    },
+    "unsub": {"required": ["topics"], "members": {"topics": "array"}, "additional_properties": false},
+    "unsub_ok": {"required": ["results"], "members": {"results": "array"}, "additional_properties": false},
+    "unsub_ok#/properties/results/items": {
+      "required": ["ch", "ok"],
+      "members": {"ch": "string", "ended": "array", "noop": "boolean", "ok": "boolean"},
+      "additional_properties": false
+    },
+    "unsub_ok#/properties/results/items/properties/ended/items": {
+      "required": ["sub_id"],
+      "members": {"rs": "string", "sub_id": "string"},
+      "additional_properties": false
+    },
+    "welcome": {
+      "required": [
+        "auth_required",
+        "connection_id",
+        "encoding",
+        "heartbeat",
+        "limits",
+        "protocol",
+        "server_time_ms",
+        "server_version"
+      ],
+      "members": {
+        "auth_required": "boolean",
+        "auth_timeout_ms": "integer",
+        "clock_skew_ms": "integer",
+        "connection_id": "string",
+        "encoding": "string",
+        "features": "object",
+        "git_sha": "string",
+        "heartbeat": "object",
+        "limits": "object",
+        "protocol": "string",
+        "server_time_ms": "integer",
+        "server_version": "string"
+      },
+      "additional_properties": false
+    },
+    "welcome#/properties/heartbeat": {
+      "required": ["interval_ms", "timeout_ms"],
+      "members": {"interval_ms": "integer", "timeout_ms": "integer"},
+      "additional_properties": false
+    },
+    "welcome#/properties/limits": {
+      "required": [
+        "max_inbound_frame_bytes",
+        "max_outbound_frame_bytes",
+        "max_subscriptions",
+        "max_symbols_per_connection",
+        "max_topics_per_request",
+        "min_throttle_ms"
+      ],
+      "members": {
+        "max_inbound_frame_bytes": "integer",
+        "max_outbound_frame_bytes": "integer",
+        "max_subscriptions": "integer",
+        "max_symbols_per_connection": "integer",
+        "max_topics_per_request": "integer",
+        "min_throttle_ms": "integer"
+      },
+      "additional_properties": false
+    }
+  },
+  "enums": {
+    "welcome.encoding": {"open": false, "values": ["msgpack", "json"]},
+    "auth_ok.roles": {"open": false, "values": ["owner", "manager", "viewer"]},
+    "permission_change.roles": {"open": false, "values": ["owner", "manager", "viewer"]},
+    "revoked.reason": {
+      "open": true,
+      "values": [
+        "permission_revoked",
+        "account_scope_changed",
+        "user_disabled",
+        "session_revoked",
+        "key_revoked",
+        "account_disabled",
+        "replay_session_ended",
+        "resync_rate_limited",
+        "topic_removed"
+      ]
+    },
+    "snap.meta.reason": {
+      "open": true,
+      "values": [
+        "initial",
+        "client_resync",
+        "upstream_desync",
+        "upstream_reconnect",
+        "backpressure",
+        "reconfigure",
+        "instrument_revision",
+        "replay_seek",
+        "generation_swap",
+        "history_repair"
+      ]
+    },
+    "snap.meta.source": {"open": false, "values": ["live", "replay"]}
+  },
+  "bounds": {
+    "common.subId": {"side": "response", "type": "string", "minLength": 1, "maxLength": 64},
+    "ctl.metrics": {
+      "side": "request",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "sub.indicator_options.from_seq": {"side": "request", "type": "integer", "minimum": 0},
+    "sub.options.from_seq": {"side": "request", "type": "integer", "minimum": 0},
+    "sub.options.metrics": {
+      "side": "request",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "sub.options.rule_ids": {"side": "request", "type": "array", "maxItems": 100, "items": {"type": "string"}},
+    "sub.options.status": {
+      "side": "request",
+      "type": "array",
+      "maxItems": 16,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "sub.options.symbols": {
+      "side": "request",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": {"type": "string"}
+    },
+    "sub_ok.results.sub_id": {"side": "response", "type": "string", "minLength": 1, "maxLength": 64}
+  },
+  "close_codes": {
+    "gateway": [1000, 1001, 1002, 1009, 1011, 1013, 4400, 4401, 4403, 4429],
+    "host_only": [1012],
+    "reasons": {
+      "normal": {"code": 1000, "reconnect": false},
+      "heartbeat_timeout": {"code": 1001, "reconnect": true},
+      "shutdown": {"code": 1001, "reconnect": true},
+      "protocol_violation": {"code": 1002, "reconnect": false},
+      "unsupported_protocol": {"code": 1002, "reconnect": false},
+      "frame_too_big": {"code": 1009, "reconnect": false},
+      "internal_error": {"code": 1011, "reconnect": true},
+      "server_shedding_load": {"code": 1013, "reconnect": true},
+      "bad_client": {"code": 4400, "reconnect": false},
+      "auth_failed": {"code": 4401, "reconnect": true},
+      "auth_timeout": {"code": 4401, "reconnect": true},
+      "not_authenticated": {"code": 4401, "reconnect": true},
+      "session_revoked": {"code": 4401, "reconnect": false},
+      "token_expired": {"code": 4401, "reconnect": true},
+      "mfa_enrollment_required": {"code": 4403, "reconnect": false},
+      "origin_forbidden": {"code": 4403, "reconnect": false},
+      "user_disabled": {"code": 4403, "reconnect": false},
+      "client_rate_limited": {"code": 4429, "reconnect": true},
+      "slow_consumer": {"code": 4429, "reconnect": true},
+      "too_many_connections": {"code": 4429, "reconnect": true}
+    }
+  },
+  "error_codes": {
+    "account_scope_denied": {"scope": "any", "retryable": false, "close_code": null},
+    "auth_failed": {"scope": "connection", "retryable": false, "close_code": 4401},
+    "auth_timeout": {"scope": "connection", "retryable": false, "close_code": 4401},
+    "client_rate_limited": {"scope": "connection", "retryable": true, "close_code": 4429},
+    "degraded_data": {"scope": "any", "retryable": true, "close_code": null},
+    "duplicate_subscription": {"scope": "topic", "retryable": false, "close_code": null},
+    "encoding_unsupported": {"scope": "topic", "retryable": false, "close_code": null},
+    "exchange_unavailable": {"scope": "any", "retryable": true, "close_code": null},
+    "forbidden": {"scope": "any", "retryable": false, "close_code": null},
+    "frame_malformed": {"scope": "connection", "retryable": false, "close_code": 1002},
+    "internal_error": {"scope": "any", "retryable": true, "close_code": null},
+    "invalid_options": {"scope": "topic", "retryable": false, "close_code": null},
+    "invalid_topic_format": {"scope": "topic", "retryable": false, "close_code": null},
+    "no_data_recorded": {"scope": "any", "retryable": false, "close_code": null},
+    "not_authenticated": {"scope": "connection", "retryable": false, "close_code": 4401},
+    "not_subscribed": {"scope": "topic", "retryable": false, "close_code": null},
+    "protocol_violation": {"scope": "connection", "retryable": false, "close_code": 1002},
+    "replay_session_ended": {"scope": "topic", "retryable": false, "close_code": null},
+    "replay_session_not_found": {"scope": "topic", "retryable": false, "close_code": null},
+    "resync_rate_limited": {"scope": "topic", "retryable": true, "close_code": null},
+    "slow_consumer": {"scope": "connection", "retryable": true, "close_code": 4429},
+    "subscription_limit": {"scope": "topic", "retryable": true, "close_code": null},
+    "token_expired": {"scope": "connection", "retryable": true, "close_code": 4401},
+    "too_many_topics": {"scope": "request", "retryable": true, "close_code": null},
+    "unknown_topic": {"scope": "topic", "retryable": false, "close_code": null},
+    "unsupported_protocol": {"scope": "connection", "retryable": false, "close_code": 1002},
+    "unsupported_symbol": {"scope": "topic", "retryable": false, "close_code": null},
+    "user_disabled": {"scope": "connection", "retryable": false, "close_code": 4403},
+    "view_as_read_only": {"scope": "any", "retryable": false, "close_code": null}
+  },
+  "limits": {
+    "max_subscriptions": {"floor": 200},
+    "max_topics_per_request": {"floor": 50},
+    "max_inbound_frame_bytes": {"floor": 262144},
+    "max_outbound_frame_bytes": {"ceiling": 4194304},
+    "min_throttle_ms": {"ceiling": 50},
+    "max_symbols_per_connection": {"floor": 40}
+  },
+  "topics": {
+    "book.{symbol}.{depth}": "BookSnapshot",
+    "trades.{symbol}": "TradesBatch",
+    "bars.{symbol}.{bar_type}.{param}": "BarsBatch",
+    "footprint.{symbol}.{bar_type}.{param}": "FootprintUpdate",
+    "indicators.{symbol}.{bar_type}.{param}": "IndicatorSeriesBatch",
+    "heatmap.{symbol}": "HeatmapColumn",
+    "profile.{symbol}.{kind}": "ProfileUpdate",
+    "metrics.{symbol}": "MetricsUpdate",
+    "ticker.{symbol}": "TickerUpdate",
+    "ticker": "TickerUpdate",
+    "liquidations.{symbol}": "LiquidationBatch",
+    "liquidations": "LiquidationBatch",
+    "orders": "OrderUpdate",
+    "positions": "PositionUpdate",
+    "executions": "ExecutionUpdate",
+    "wallet": "WalletUpdate",
+    "trade_groups": "TradeGroupUpdate",
+    "rules": "RuleUpdate",
+    "alerts": "AlertUpdate",
+    "recorder": "RecorderUpdate",
+    "system": "SystemUpdate",
+    "machines.{entity}.state": "MachineStateUpdate"
+  },
+  "subprotocols": {"offered": ["cv.v1.msgpack", "cv.v1.json"], "protocol": "cv.v1"}
+}

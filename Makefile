@@ -36,12 +36,14 @@ gen:
 	uv run --project services/api python scripts/keymap_lint.py --docs
 
 # E17-T01: offline WS contract gates (23-ws-protocol.md 16.5): bundle freshness,
-# constants freshness and the blocking `ws_message_schemas` gate.
+# constants freshness and the blocking `ws_message_schemas` gate. E17-T07: and the cv.v1 wire
+# contract, which fails on any change to what packages/protocol/wire-contract.v1.golden.json pins.
 contracts:
 	uv run --project services/api python tools/contracts/extract_ws_schemas.py --check
 	uv run --project services/api python tools/contracts/gen_ws_constants.py --check
 	uv run --project services/api python tools/contracts/validate_ws_schemas.py --draft 2020-12
 	uv run --project services/api python tools/contracts/check_error_registry.py
+	uv run --project services/api python tools/contracts/wire_contract.py
 
 # E03-T05: generated-code freshness gate (ADR-0013 binding rule 3). Runs `pnpm generate`
 # (the first step of `make gen`) twice, then judges the generated paths; each failure names a

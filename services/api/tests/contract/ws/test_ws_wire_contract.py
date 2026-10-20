@@ -593,3 +593,47 @@ def test_write_refuses_a_contract_whose_own_sources_disagree(
     monkeypatch.setattr(wc, "collect", lambda **_: disagreeing)
     assert wc.main(["--write", "--golden", str(tmp_path / "golden.json")]) == 1
     assert not (tmp_path / "golden.json").exists()
+
+
+# --- the committed golden -----------------------------------------------------------------------
+
+
+def test_the_committed_golden_is_kept_by_the_implementation() -> None:
+    """The gate itself, run by the `contract` job and the `py` job's contract lane, so a PR that
+    touches `ws/limits.py` and nothing else still meets it."""
+    golden = json.loads(wc.GOLDEN.read_text(encoding="utf-8"))
+    findings = wc.check(golden, _base())
+    assert not wc.breaking(findings), wc.render(findings)
+
+
+def test_the_committed_golden_is_the_tools_own_rendering() -> None:
+    """Written by `--write` or `--extend`: a reformatted or reflowed file differs. An edited value
+    renders the same, and is caught by the check against the implementation."""
+    text = wc.GOLDEN.read_text(encoding="utf-8")
+    assert text == wc.render_golden(json.loads(text))
+
+
+def test_the_golden_is_not_marked_generated_so_its_diff_is_shown_in_review() -> None:
+    attrs = [
+        line.split()[1:]
+        for line in (_REPO / ".gitattributes").read_text(encoding="utf-8").splitlines()
+        if line.split()[:1] == [wc.GOLDEN_PATH]
+    ]
+    assert len(attrs) == 1 and {"text", "eol=lf"} <= set(attrs[0])
+    assert not [
+        a for a in attrs[0] if a.startswith("linguist-generated") or a in {"-diff", "binary"}
+    ]
+    ignored = (_REPO / ".prettierignore").read_text(encoding="utf-8").splitlines()
+    assert wc.GOLDEN_PATH in ignored  # prettier must not reflow the tool's own rendering
+
+
+def test_make_contracts_runs_the_wire_contract_check_and_never_a_mode_that_writes() -> None:
+    lines = (_REPO / "Makefile").read_text(encoding="utf-8").splitlines()
+    start = lines.index("contracts:")
+    recipe = []
+    for line in lines[start + 1 :]:
+        if not line.startswith("\t"):
+            break
+        recipe.append(line)
+    (step,) = [line for line in recipe if "wire_contract.py" in line]
+    assert step.strip() == "uv run --project services/api python tools/contracts/wire_contract.py"
