@@ -383,7 +383,36 @@ export interface CvWsV1CtlSchemaJson {
   coalesce?: boolean;
   depth?: 1 | 50 | 200 | 500;
   price_grouping?: number;
-  metrics?: string[];
+  /**
+   * @minItems 1
+   * @maxItems 12
+   */
+  metrics?:
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
   /**
    * indicators.* only (§6.1); a change triggers `resnapshot: true`.
    *
@@ -1396,7 +1425,7 @@ export interface Options {
   throttle_ms?: number;
   encoding?: "binary" | "structured";
   coalesce?: boolean;
-  from_seq?: number | null;
+  from_seq?: number;
   /**
    * Epoch milliseconds, UTC.
    */
@@ -1465,11 +1494,110 @@ export interface Options {
    */
   exchange_account_ids?: string[];
   /**
+   * @minItems 1
    * @maxItems 40
    */
-  symbols?: string[];
+  symbols?: [string, ...string[]];
   open_only?: boolean;
-  status?: string[];
+  /**
+   * @maxItems 16
+   */
+  status?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+  /**
+   * @maxItems 100
+   */
   rule_ids?: string[];
   include_events?: boolean;
   unacked_only?: boolean;
@@ -1488,7 +1616,7 @@ export interface IndicatorOptions {
   throttle_ms?: number;
   encoding?: "binary" | "structured";
   coalesce?: boolean;
-  from_seq?: number | null;
+  from_seq?: number;
   /**
    * Epoch milliseconds, UTC.
    */
@@ -1559,6 +1687,9 @@ export interface CvWsV1SubOkSchemaJson {
   results: {
     ch: string;
     ok: boolean;
+    /**
+     * A subscription's id (§5.2): opaque, compared for equality only, never reused on the connection.
+     */
     sub_id?: string;
     /**
      * On each result of a replay `sub` but the `system` one, accepted or refused (§5.2).
@@ -2012,7 +2143,7 @@ export interface CvWsV1WelcomeSchemaJson {
     max_inbound_frame_bytes: number;
     max_outbound_frame_bytes: number;
     min_throttle_ms: number;
-    max_symbols_per_connection?: number;
+    max_symbols_per_connection: number;
   };
   features?: {
     [k: string]: boolean;

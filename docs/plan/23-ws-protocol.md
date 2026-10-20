@@ -1158,13 +1158,13 @@ A client that already bootstrapped over REST may attach to deltas only:
   "p": {
     "snapshot": false,
     "topics": [
-      { "ch": "bars.BTCUSDT.time.1", "opts": { "from_seq": null, "from_ts_ms": 1789132000000 } },
+      { "ch": "bars.BTCUSDT.time.1", "opts": { "from_seq": 0, "from_ts_ms": 1789132000000 } },
     ],
   },
 }
 ```
 
-The server accepts this **only** when it can prove continuity: it holds state covering `from_ts_ms` and no resync occurred since. Otherwise it answers `sub_ok` with `ok: true, snapshot_forced: true` and sends a `snap` anyway. The client must handle the forced snapshot; it may not assume its REST-derived state survived.
+The server accepts this **only** when it can prove continuity: it holds state covering `from_ts_ms` and no resync occurred since. Otherwise it answers `sub_ok` with `ok: true, snapshot_forced: true` and sends a `snap` anyway. The client must handle the forced snapshot; it may not assume its REST-derived state survived. `from_seq` is a whole number, 0 or more, and never `null` (§13.5); a `sub` with `snapshot: false` and no `from_seq` is `invalid_options` (§5.1). The server reads the key and not its value yet: every such attach is forced (§7.7).
 
 ### 7.7 As built (E17-S03, #2178; wired by #377)
 
@@ -2047,11 +2047,11 @@ Shared definitions used throughout:
   "allOf": [
     {
       "if": { "properties": { "t": { "const": "d" } }, "required": ["t"] },
-      "then": { "required": ["ch", "s", "ts", "p"] }
+      "then": { "required": ["ch", "s", "ts", "p"], "properties": { "s": { "type": "integer" } } }
     },
     {
       "if": { "properties": { "t": { "const": "snap" } }, "required": ["t"] },
-      "then": { "required": ["ch", "ts", "p"] }
+      "then": { "required": ["ch", "s", "ts", "p"] }
     },
     {
       "if": { "properties": { "e": { "const": "b" } }, "required": ["e"] },
@@ -2072,7 +2072,7 @@ Shared definitions used throughout:
 }
 ```
 
-A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the last, which takes the set's one sequence number; the chunks share one `id`. The envelope has no `partial` field: `partial` is a CVWB header bit (§3.4), so on either encoding the shared `id` marks a `snap` as a chunk of a set (a single-frame `snap` has none) and `s: null` marks a chunk that is not the last; the set is assembled and applied as §7.2 says. That `id` is an opaque server-minted set id, never a request's: clients compare it for equality only. No other frame carries `s: null`: a single-frame `snap`, the final chunk and every `d` carry an integer `s` (§7.1).
+A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the last, which takes the set's one sequence number; the chunks share one `id`. The envelope has no `partial` field: `partial` is a CVWB header bit (§3.4), so on either encoding the shared `id` marks a `snap` as a chunk of a set (a single-frame `snap` has none) and `s: null` marks a chunk that is not the last; the set is assembled and applied as §7.2 says. That `id` is an opaque server-minted set id, never a request's: clients compare it for equality only. No other frame carries `s: null`: a single-frame `snap`, the final chunk and every `d` carry an integer `s` (§7.1). The schema states it: `s` is required on every `snap` (`null` only on a chunk that is not the last) and is an integer on every `d`.
 
 ### 13.2 `hello`
 
@@ -2153,7 +2153,8 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "max_topics_per_request",
         "max_inbound_frame_bytes",
         "max_outbound_frame_bytes",
-        "min_throttle_ms"
+        "min_throttle_ms",
+        "max_symbols_per_connection"
       ],
       "properties": {
         "max_subscriptions": { "type": "integer" },
@@ -2299,7 +2300,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "throttle_ms": { "type": "integer", "minimum": 0, "maximum": 60000 },
         "encoding": { "enum": ["binary", "structured"] },
         "coalesce": { "type": "boolean", "default": true },
-        "from_seq": { "$ref": "cv://ws/v1/common.schema.json#/$defs/seq" },
+        "from_seq": { "type": "integer", "minimum": 0 },
         "from_ts_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
 
         "min_size": { "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal" },
@@ -2330,7 +2331,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
           "type": "array",
           "minItems": 1,
           "maxItems": 12,
-          "items": { "type": "string" }
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
         },
         "bar_type": { "$ref": "cv://ws/v1/common.schema.json#/$defs/barType" },
         "param": { "type": "string", "maxLength": 24 },
@@ -2343,13 +2344,19 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         },
         "symbols": {
           "type": "array",
+          "minItems": 1,
           "maxItems": 40,
           "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol" }
         },
         "open_only": { "type": "boolean" },
-        "status": { "type": "array", "items": { "type": "string" } },
+        "status": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
         "rule_ids": {
           "type": "array",
+          "maxItems": 100,
           "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
         },
         "include_events": { "type": "boolean" },
@@ -2366,7 +2373,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "throttle_ms": { "type": "integer", "minimum": 0, "maximum": 60000 },
         "encoding": { "enum": ["binary", "structured"] },
         "coalesce": { "type": "boolean", "default": true },
-        "from_seq": { "$ref": "cv://ws/v1/common.schema.json#/$defs/seq" },
+        "from_seq": { "type": "integer", "minimum": 0 },
         "from_ts_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
         "instances": {
           "type": "array",
@@ -2399,7 +2406,7 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
         "properties": {
           "ch": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" },
           "ok": { "type": "boolean" },
-          "sub_id": { "type": "string" },
+          "sub_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/subId" },
           "rs": {
             "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid",
             "description": "On each result of a replay `sub` but the `system` one, accepted or refused (§5.2)."
@@ -2488,7 +2495,12 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
     "coalesce": { "type": "boolean" },
     "depth": { "$ref": "cv://ws/v1/common.schema.json#/$defs/depth" },
     "price_grouping": { "type": "integer", "minimum": 1, "maximum": 1000 },
-    "metrics": { "type": "array", "items": { "type": "string" } },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
     "instances": {
       "type": "array",
       "minItems": 1,
