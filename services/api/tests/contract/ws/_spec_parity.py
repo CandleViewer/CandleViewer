@@ -397,6 +397,27 @@ def subprotocol_drifts() -> list[Drift]:
     return [] if doc == code else [Drift("subprotocols", "order", doc, code, "section 2.2 table")]
 
 
+_URL_LINE: Final = re.compile(r"^wss://<host>(/\S*)$", re.M)
+_OTHER_MOUNT: Final = re.compile(r"the same route without the server base, `(/[^`]*)`")
+
+
+def endpoint_drifts() -> list[Drift]:
+    """2.1's URL is the server base and the route of `ws/gateway.py`; its as-built paragraph names
+    the other mount, the route without the base (#3907). A URL or a mount that the section no
+    longer states is an assertion failure, never a skipped row."""
+    from candleviewer.ws import gateway
+
+    text = _doc.section("### 2.1 Endpoint", "### 2.2 ").text
+    url, mount = _URL_LINE.findall(text), _OTHER_MOUNT.findall(text)
+    assert len(url) == 1, f"23 section 2.1 states {len(url)} URLs; this test reads exactly one"
+    assert len(mount) == 1, f"23 section 2.1 names {len(mount)} mounts without the server base"
+    rows = {
+        "url": (url[0], gateway.WS_SERVER_BASE + gateway.WS_PATH),
+        "mount": (mount[0], gateway.WS_PATH),
+    }
+    return [Drift("endpoint", k, d, c, "section 2.1") for k, (d, c) in rows.items() if d != c]
+
+
 def _settings_bullet() -> str:
     sec = _doc.section("### 4.3 ", "### 4.4 ")
     return _doc.paragraph(sec.text.replace("\n- ", "\n\n- "), "- Settings (`CV_WS_*`):")

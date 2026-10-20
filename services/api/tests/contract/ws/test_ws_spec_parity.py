@@ -3,7 +3,8 @@
 The first comparison of the running gateway with the document: `welcome.limits` (advertised
 against enforced against documented), the limits summary of 16.2, the error catalogue's scope and
 `retryable`, the close codes, the binary layout of 3.4, the frame types of 3.1, the `CV_WS_*`
-settings and the subprotocols. The topic catalogue is `test_ws_topic_registry_as_built.py`'s
+settings, the URL of 2.1 and the subprotocols. The topic catalogue is
+`test_ws_topic_registry_as_built.py`'s
 (#2823), extended there. The document is the source of truth (C-6.1): a drift here means the code
 moves to match, in the same PR that moves either.
 
@@ -18,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.ws import lifecycle, limits
+from candleviewer.ws import gateway, lifecycle, limits
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.topics import FAMILIES
@@ -258,6 +259,48 @@ def test_4_3_settings_are_the_defaults_and_bounds_of_settings() -> None:
 def test_2_2_subprotocols_are_the_servers_in_its_order() -> None:
     drifts = sp.subprotocol_drifts()
     assert not drifts, sp.render(drifts)
+
+
+def test_2_1_url_and_second_mount_are_the_gateways_server_base_and_route() -> None:
+    drifts = sp.endpoint_drifts()
+    assert not drifts, sp.render(drifts)
+
+
+def test_a_changed_url_in_the_document_fails_parity(monkeypatch: pytest.MonkeyPatch) -> None:
+    edited = _doc.DOC.replace("wss://<host>/api/v1/ws", "wss://<host>/ws", 1)
+    monkeypatch.setattr(_doc, "DOC", edited)
+    assert [(d.key, d.doc, d.runtime) for d in sp.endpoint_drifts()] == [
+        ("url", "/ws", "/api/v1/ws")
+    ]
+
+
+def test_a_changed_server_base_fails_parity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gateway, "WS_SERVER_BASE", "/api/v2")
+    assert [(d.key, d.doc, d.runtime) for d in sp.endpoint_drifts()] == [
+        ("url", "/api/v1/ws", "/api/v2/ws")
+    ]
+
+
+def test_a_changed_route_fails_parity_for_the_url_and_the_second_mount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gateway, "WS_PATH", "/socket")
+    assert [(d.key, d.doc, d.runtime) for d in sp.endpoint_drifts()] == [
+        ("url", "/api/v1/ws", "/api/v1/socket"),
+        ("mount", "/ws", "/socket"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cut", "left"),
+    [("wss://<host>/api/v1/ws\n", "0 URLs"), ("without the server base, `/ws`", "0 mounts")],
+)
+def test_a_2_1_that_no_longer_states_its_url_or_mount_is_a_failure(
+    cut: str, left: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_doc, "DOC", _doc.DOC.replace(cut, "", 1))
+    with pytest.raises(AssertionError, match=left):
+        sp.endpoint_drifts()
 
 
 def test_a_changed_setting_default_fails_parity(monkeypatch: pytest.MonkeyPatch) -> None:
