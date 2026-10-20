@@ -81,6 +81,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | KeyExpiringWithin14Days | ticket | 10m | `docs/plan/07-release-and-prr.md#alert-keyexpiring` | synthetic | | | | | | pending (promtool, #836: 10 days fires, 14 days silent: `infra/prometheus/tests/system_alerts.test.yml`) |
 | KeyExpiringWithin7Days | ticket | 10m | `docs/plan/07-release-and-prr.md#alert-keyexpiring` | synthetic | | | | | | pending (promtool, #836: 3 days fires, 7 days silent: `infra/prometheus/tests/system_alerts.test.yml`) |
 | KeyExpiringWithin1Day | ticket | 10m | `docs/plan/07-release-and-prr.md#alert-keyexpiring` | synthetic | | | | | | pending (promtool, #836: 12 h fires, an unset 0 silent: `infra/prometheus/tests/system_alerts.test.yml`) |
+| RollOffStreamUnlisted | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-rolloffstreamunlisted` | synthetic | | | | | | pending (promtool, #3794: one increase in 25 h fires, none stays silent) |
 
 ## Execution status and exception request (2026-10-02)
 
