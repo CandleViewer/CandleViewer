@@ -20,7 +20,15 @@ from io import FileIO
 from pathlib import Path
 from typing import Any, Protocol
 
-from candleviewer.admin.breakglass import AuditTrail, BreakGlassPorts, Terminal
+from candleviewer.admin.audited import audit_exempt, audited
+from candleviewer.admin.breakglass import (
+    ATTEMPT,
+    REFUSED,
+    RESET,
+    AuditTrail,
+    BreakGlassPorts,
+    Terminal,
+)
 from candleviewer.admin.errors import BreakGlassUnavailable
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
@@ -128,10 +136,12 @@ class _JournalTrail:
     def __init__(self, writer: AuditWriter, lock: FileIO, journal: Path) -> None:
         self._writer, self._lock, self._journal = writer, lock, journal
 
+    @audited(ATTEMPT, REFUSED, RESET)
     async def emit(self, action: str, **fields: Any) -> None:
         _admit(action)
         await self._writer.emit(action, **fields)
 
+    @audit_exempt("lifecycle")
     async def close(self, grace_s: float) -> int:
         """Flush up to `grace_s`, stop, count what the journal still holds, unlock. The lock
         outlives the writer: a stop that fails or is cancelled leaves it to the process's exit,
@@ -154,6 +164,7 @@ class _DirectTrail:
     def __init__(self, audit_log: AuditRepository) -> None:
         self._audit_log = audit_log
 
+    @audited(ATTEMPT, REFUSED, RESET)
     async def emit(self, action: str, **fields: Any) -> None:
         _admit(action)
         states = {key: redact(fields.get(key)) for key in ("before_state", "after_state")}
@@ -162,6 +173,7 @@ class _DirectTrail:
         )
         await self._audit_log.insert(storable(json.loads(emission.model_dump_json())))
 
+    @audit_exempt("lifecycle")
     async def close(self, grace_s: float) -> int:
         del grace_s  # nothing is buffered: every record was committed by its `emit`
         return 0
