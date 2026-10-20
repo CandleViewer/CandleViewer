@@ -84,11 +84,13 @@ def test_a_the_option_names_a_ctl_refusal_may_name_are_13_5s_and_13_6s() -> None
 
 
 def test_a_indicators_takes_exactly_its_13_5_option_set() -> None:
-    """§13.5: `indicatorOptions` is closed and holds the universal options and the family's own."""
+    """§13.5: `indicatorOptions` is closed and holds the universal options and the family's own,
+    and the options it requires are the ones the registry refuses a `sub` without (E13-T02)."""
     assert _INDICATOR_OPTS["additionalProperties"] is False
     assert set(_INDICATOR_OPTS["properties"]) == set(UNIVERSAL) | set(
         FAMILIES["indicators"].options
     )
+    assert set(_INDICATOR_OPTS["required"]) == FAMILIES["indicators"].required == {"instances"}
 
 
 def test_a_an_indicators_instance_is_checked_by_13s_indicator_instance() -> None:

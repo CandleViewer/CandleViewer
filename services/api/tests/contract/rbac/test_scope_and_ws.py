@@ -594,10 +594,14 @@ def _auth(ws: Any, actor: str) -> dict[str, Any]:
     return _recv(ws)
 
 
-def _sub(ws: Any, ch: str, account: uuid.UUID | None) -> dict[str, Any]:
+def _sub(
+    ws: Any, ch: str, account: uuid.UUID | None, opts: dict[str, Any] | None = None
+) -> dict[str, Any]:
     entry: dict[str, Any] = {"ch": ch}
+    if account is not None or opts:
+        entry["opts"] = dict(opts or {})
     if account is not None:
-        entry["opts"] = {"exchange_account_ids": [str(account)]}
+        entry["opts"]["exchange_account_ids"] = [str(account)]
     ws.send_json({"t": "sub", "id": ch, "p": {"topics": [entry]}})
     frame = _recv(ws)
     if frame["t"] != "sub_ok":
@@ -634,7 +638,7 @@ def test_every_topic_family_x_actor_matches_the_matrix(
                 assert _auth(ws, actor)["t"] == "auth_ok"
             else:
                 _hello(ws)
-            result = _sub(ws, row["sample"], account)
+            result = _sub(ws, row["sample"], account, row.get("opts"))
         observed = "sub_ok" if result["ok"] else result["error"]["code"]
         assert observed == expected, f"{msg}, got {observed}"
     except BaseException:

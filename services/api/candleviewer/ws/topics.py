@@ -330,7 +330,7 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
                 "history": Opt("int", 0, 200),
             },
         ),
-        _md(  # E13-T02 (#426): the contract only, until its engine is wired
+        _md(  # E13-T02 (#426): served by the indicator engine; defaults: INDICATORS_DEFAULTS
             "indicators",
             (("symbol", "bar_type", "param"),),
             250,
@@ -340,7 +340,7 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
                 "instances": Opt("instances", min_items=1, max_items=8),
                 "history": Opt("int", 0, 1000),
             },
-            served=False,
+            frozenset({"instances"}),
         ),
         _md(
             "heatmap",
@@ -707,6 +707,8 @@ def effective_throttle_ms(topic: ParsedTopic, requested: int | None) -> int:
 
 #: §6.1: the `bars` options when the client leaves them out, echoed in `effective`.
 BARS_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({"history": 500, "include_delta": False})
+#: §6.1: the `indicators` option a client may leave out, echoed in `effective`.
+INDICATORS_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({"history": 500})
 
 
 def effective_options(topic: ParsedTopic, opts: Mapping[str, Any]) -> dict[str, Any]:
@@ -722,9 +724,9 @@ def effective_options(topic: ParsedTopic, opts: Mapping[str, Any]) -> dict[str, 
     eff["coalesce"] = False if fam.never_throttled else opts.get("coalesce", True)
     if topic.depth is not None:
         eff["depth"] = topic.depth
-    if fam.family == "bars":
-        for key, value in BARS_DEFAULTS.items():
-            eff.setdefault(key, value)
+    defaults = {"bars": BARS_DEFAULTS, "indicators": INDICATORS_DEFAULTS}.get(fam.family, {})
+    for key, value in defaults.items():
+        eff.setdefault(key, value)
     if fam.family == "heatmap":
         eff.setdefault("time_bucket_ms", 500)
         eff["throttle_ms"] = (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,9 @@ from candleviewer.bars.series_store import SeriesStore
 from candleviewer.bars_wiring import BarsRuntime, wire_bars
 from candleviewer.bus.models import Topic
 from candleviewer.main import _lifespan
+from candleviewer.orderflow.indicators.engine import IndicatorEngine
 from candleviewer.settings import Environment, Settings
+from candleviewer.ws.bars_publish import BarsPublisher
 from tests.unit.bars._trades import SYM, trade, us
 
 M1 = BarSpec(kind="time", interval_ms=60_000)
@@ -87,16 +90,31 @@ def test_the_repair_hook_is_the_publishers_history_repair_set_once_and_only_with
 ) -> None:
     """#2787 P4b: 23 §7.4's `history_repair` has one caller, the store's repair hook (a task that
     diffs `latest()` across an await can miss a repair or send extra snaps). `create_app` sets it
-    once, on the store the gateway serves, to the publisher on the emit path; flag off, no store
-    exists to hook."""
+    once, on the store the gateway serves, to the publisher on the emit path and then the
+    indicator engine there (E13-T02, #426), the sinks found by name; flag off, no store exists
+    to hook."""
     hooks: list[tuple[SeriesStore, Any]] = []
     monkeypatch.setattr(SeriesStore, "on_repair", lambda store, hook: hooks.append((store, hook)))
+    calls: list[Any] = []  # E13-T02: the hook's two repairs, in order
+    for name, owner in (("ws", BarsPublisher), ("indicators", IndicatorEngine)):
+        monkeypatch.setattr(owner, "history_repair", functools.partialmethod(_record, calls, name))
     services = create_app(_settings(tmp_path, enabled=enabled)).state.ws_registry.services
     if not enabled:
         assert (hooks, services.series) == ([], None)
         return
-    _store, publisher, _writer = services.bars._router._sinks
-    assert hooks == [(services.series, publisher.history_repair)]
+    ((store, hook),) = hooks
+    assert store is services.series
+    sinks = {sink.name: sink for sink in services.bars._router._sinks}  # by name, not position
+    hook("BTCUSDT", M1, 3)
+    assert calls == [
+        ("ws", sinks["ws"], "BTCUSDT", M1, 3),
+        ("indicators", sinks["indicators"], "BTCUSDT", M1, 3),
+    ]
+
+
+def _record(sink: Any, calls: list[Any], name: str, *args: Any) -> None:
+    """A recording `history_repair` bound to `sink`: which owner's it is, the sink, the call."""
+    calls.append((name, sink, *args))
 
 
 async def test_the_lifespan_runs_the_heal_driver_task_and_stops_it_before_the_set(

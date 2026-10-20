@@ -54,6 +54,12 @@ from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import check_param_bounds, from_wire, qty_step_for
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.orderflow.errors import (
+    InstanceCapError,
+    InstanceRefusedError,
+    RecomputeRefusedError,
+)
+from candleviewer.orderflow.indicators.engine import Requested, resolve_instances
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.errors import WsError, build_ws_error
 from candleviewer.ws.limits import (
@@ -95,6 +101,7 @@ from candleviewer.ws.topics import (
     CTL_KEYS,
     FAMILIES,
     IDENTITY_OPTIONS,
+    INDICATORS_DEFAULTS,
     MACHINE_KINDS,
     OPTION_NAMES,
     SCOPE_OPTIONS,
@@ -187,6 +194,37 @@ class SeriesHolds(Protocol):
     async def ensure(self, symbol: str, spec: BarSpec) -> Hold: ...
 
 
+class IndicatorInstances(Protocol):
+    """`IndicatorEngine` (E13-T02): a live `indicators.*` subscription holds its instances.
+    `user` is ALWAYS the authenticated principal; `consumer` the subscription's own id."""
+
+    def check(
+        self,
+        symbol: str,
+        spec: BarSpec,
+        requested: tuple[Requested, ...],
+        user: str | None,
+        *,
+        history: int,
+        consumer: str | None = None,
+    ) -> None: ...
+
+    def admit(
+        self,
+        symbol: str,
+        spec: BarSpec,
+        requested: tuple[Requested, ...],
+        consumer: str,
+        user: str | None,
+        *,
+        history: int,
+        replacing: tuple[str, ...] = (),
+        reason: Literal["param_change"] | None = None,
+    ) -> None: ...
+
+    def release(self, symbol: str, keys: tuple[str, ...], consumer: str) -> None: ...
+
+
 class AuditSink(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
@@ -205,6 +243,9 @@ class SubscriptionServices:
     upstream: UpstreamRefs = field(default_factory=UpstreamRefs)
     bars: BarLeases | None = None
     series: SeriesHolds | None = None  # E12-T06: the `bars` snapshot store; None: no hold
+    #: E13-T02: the indicator engine an `indicators.*` subscription holds instances of (with
+    #: `bars_enabled`); None: its instances are validated and echoed, and nothing is held.
+    indicators: IndicatorInstances | None = None
     audit: AuditSink | None = None
     clock: Callable[[], float] = time.monotonic
     instrument_known: Callable[[str], bool] | None = None
@@ -295,6 +336,8 @@ class Subscription:
     upstream: tuple[UpstreamKey, ...] = ()
     bar_lease: tuple[str, str] | None = None  # (spec_hash, symbol)
     series_hold: Hold | None = None  # a live `bars.*` one's series in the snapshot store
+    #: A live `indicators.*` one's instance keys in the indicator engine (E13-T02).
+    indicator_keys: tuple[str, ...] = ()
     #: §7.4 reason the pending `snap` will carry (E17-S03).
     pending_reason: SnapReason = "initial"
     #: §6.4 `machines`: the entity's scope, read from its entry at `sub`, so every RBAC change
@@ -688,13 +731,17 @@ class ConnectionAuthz:
     async def subscribe_upstream(self, sub: Subscription) -> dict[str, Any] | None:
         """Take what a subscription needs upstream, or refuse it (drop it, return the failure). A
         topic of a family nothing serves yet (`served`) is refused `unknown_topic` first (§6.1). A
-        `bars.*` one first passes `_bars_refusal`; a `bars.*` or `footprint.*` spec is bounded
+        `bars.*` one first passes `_bars_refusal`, an `indicators.*` one `_indicators` (its
+        instances against the catalogue); a `bars.*` or `footprint.*` spec is bounded
         (`_bar_spec`, SR-E12-03) wherever a builder could serve it, live or replay. Only a live
-        public one takes anything, in order: for `bars.*`, once the set's `check` passes, a hold on
-        its series (`ensure`: a restoring builder's closes reach it); the `BarBuilderSet` lease
-        (`register` checks again; `user=` the authenticated principal id, never a client value);
-        the upstream refs (`bars.*`: its symbol's trades). `_drop` releases what was taken, on a
-        refusal, an `unsub`, a revocation or the socket's end.
+        public one takes anything, in order: for `indicators.*`, once the engine's `check` passes
+        (SR-E13-03/04, before anything is held); for `bars.*` and `indicators.*`, once the set's
+        `check` passes, a hold on its series (`ensure`: a restoring builder's closes reach it); the
+        `BarBuilderSet` lease (`register` checks again; `user=` the authenticated principal id,
+        never a client value); the upstream refs (`bars.*` and `indicators.*`: its symbol's
+        trades); for `indicators.*`, its instance leases (`admit`, which can still refuse a read
+        with no recompute slot free). `_drop` releases what was taken, on a refusal, an `unsub`, a
+        revocation or the socket's end.
         A topic that names a bar series (`bars.*`, `footprint.*`, ...) is bounded and leased alike.
 
         #2896: a change that ends `sub` during these awaits (a revocation, §9.5, or the socket's
@@ -748,9 +795,15 @@ class ConnectionAuthz:
             self._drop(sub)
             return _fail(sub.ch, "unknown_topic", _UNSERVED)
         spec: BarSpec | None = None
+        requested: tuple[Requested, ...] = ()
+        if family == "indicators":
+            spec, requested, refused = self._indicators(sub)
+            if refused is not None:
+                self._drop(sub)
+                return refused
         # The topic has a `bar_type` segment (`bars`, `footprint`): its spec is bounded and, where a
         # builder serves it, leased. A series that only an option names (`metrics`) is not seen.
-        if sub.topic.bar_type is not None:
+        elif sub.topic.bar_type is not None:
             refused = self._bars_refusal(sub) if family == "bars" else None
             # SR-E12-03 for live and replay alike, wherever a builder could serve the series.
             served = sub.replay_session_id is not None or self.services.bars is not None
@@ -761,23 +814,35 @@ class ConnectionAuthz:
                 return refused
         if sub.replay_session_id is not None or sub.topic.family.private:
             return None
-        consumer = self._consumer(sub)
+        consumer, user, symbol = self._consumer(sub), str(self.principal.user_id), sub.topic.symbol
+        engine = self.services.indicators
+        history = int(sub.effective.get("history", INDICATORS_DEFAULTS["history"]))
         try:
+            if engine is not None and spec is not None and requested:  # before anything is held
+                engine.check(symbol or "", spec, requested, user, history=history)
             bars = self.services.bars
             if spec is not None and bars is not None:
-                symbol = sub.topic.symbol or ""
-                if family == "bars" and self.services.series is not None:
-                    bars.check(spec, symbol, user=str(self.principal.user_id))
-                    sub.series_hold = await self.services.series.ensure(symbol, spec)
-                await bars.register(spec, symbol, consumer, user=str(self.principal.user_id))
-                sub.bar_lease = (spec.spec_hash, symbol)
+                if family in {"bars", "indicators"} and self.services.series is not None:
+                    bars.check(spec, symbol or "", user=user)
+                    sub.series_hold = await self.services.series.ensure(symbol or "", spec)
+                await bars.register(spec, symbol or "", consumer, user=user)
+                sub.bar_lease = (spec.spec_hash, symbol or "")
             keys = _upstream_keys(sub)
             for key in keys:
                 await self.services.upstream.acquire(key, consumer)
                 sub.upstream = (*sub.upstream, key)
+            if engine is not None and spec is not None and requested:
+                engine.admit(symbol or "", spec, requested, consumer, user, history=history)
+                sub.indicator_keys = tuple(r.key for r in requested)
         except SpecCapExceeded:
             self._drop(sub)
             return _fail(sub.ch, "subscription_limit", "Too many distinct bar series.")
+        except InstanceCapError as exc:  # SR-E13-03, naming the cap
+            self._drop(sub)
+            return _fail(sub.ch, "subscription_limit", str(exc))
+        except RecomputeRefusedError as exc:  # SR-E13-04: refused, never queued; retryable
+            self._drop(sub)
+            return _fail(sub.ch, "internal_error", str(exc))
         except BarServiceStopping:
             self._drop(sub)
             return _fail(sub.ch, "internal_error", "The bar service is restarting; retry.")
@@ -785,6 +850,26 @@ class ConnectionAuthz:
             self._drop(sub)
             return _fail(sub.ch, "invalid_topic_format", "This bar series is not available.")
         return None
+
+    def _indicators(
+        self, sub: Subscription
+    ) -> tuple[BarSpec | None, tuple[Requested, ...], dict[str, Any] | None]:
+        """§6.1 for `indicators.*`, before anything is held: `unknown_topic` while the bars feature
+        is off and for a replay (the topic is live only); the series' spec, bounded as `bars.*`
+        bounds it (SR-E12-03); the instances against the catalogue (`resolve_instances`, IR-24,
+        IR-41), refused `invalid_options` on `instances`. The accepted ones are echoed in
+        `effective`, every param written out, each with its `key`."""
+        if self.services.bars_off or sub.replay_session_id is not None:
+            return None, (), _fail(sub.ch, "unknown_topic", _UNSERVED)
+        spec, refused = _bar_spec(sub, self.services.qty_step)
+        if spec is None:
+            return None, (), refused
+        try:
+            requested = resolve_instances(sub.opts.get("instances") or (), spec)
+        except InstanceRefusedError as exc:
+            return None, (), _fail(sub.ch, "invalid_options", str(exc), "instances")
+        sub.effective["instances"] = [r.echo() for r in requested]
+        return spec, requested, None
 
     def _bars_refusal(self, sub: Subscription) -> dict[str, Any] | None:
         """§6.1: `unknown_topic` while the bars feature is off, and `subscription_limit` past
@@ -840,6 +925,9 @@ class ConnectionAuthz:
         if hold is not None:  # first: a lease release below can raise (#2735)
             # A lease never taken (refused, or the connection ended mid-subscribe): no grace.
             hold.release(grace=sub.bar_lease is not None)
+        keys, sub.indicator_keys = sub.indicator_keys, ()
+        if keys and self.services.indicators is not None:
+            self.services.indicators.release(sub.topic.symbol or "", keys, consumer)
         for key in sub.upstream:
             self.services.upstream.release(key, consumer, now)
         if sub.bar_lease is not None and self.services.bars is not None:
@@ -897,8 +985,11 @@ class ConnectionAuthz:
                 named = key if key in OPTION_NAMES else "p"
                 raise TopicError("invalid_options", "Unknown ctl option.", named)
             changes[key] = spec.check(key, body[key])
+        retune = self._retune(sub, changes["instances"]) if "instances" in changes else None
         opts = {**sub.opts, **{k: v for k, v in changes.items() if k != "paused"}}
         effective = effective_options(sub.topic, opts)
+        if sub.topic.family.family == "indicators":  # the canonical echo, never the raw entries
+            effective["instances"] = sub.effective.get("instances") if retune is None else retune[2]
         # #2517: a pause holds until a ctl lifts it (`opts` never holds it, so carry it over).
         # A delta suppressed while paused never took a sequence number, so a resume
         # re-snapshots like an identity change instead of losing that state silently.
@@ -916,6 +1007,8 @@ class ConnectionAuthz:
                 )
                 spent = self.rebuilds.count_refusal("ctl", scope, key)
                 raise TopicError("resync_rate_limited", f"{spent}; nothing was changed.")
+        if retune is not None and effective["instances"] != sub.effective.get("instances"):
+            self._hold_instances(sub, retune[0], retune[1])
         if paused or "paused" in changes:
             effective["paused"] = paused
         if sub.accounts:
@@ -932,6 +1025,56 @@ class ConnectionAuthz:
             k: v for k, v in effective.items() if k in changes or k in ("throttle_ms", "paused")
         }
         return echoed, resnapshot, sub
+
+    def _retune(
+        self, sub: Subscription, raw: list[dict[str, Any]]
+    ) -> tuple[BarSpec, tuple[Requested, ...], list[dict[str, Any]]]:
+        """A `ctl` of `instances` (§6.1), checked as a `sub` is and before anything changes:
+        `invalid_options` (`resolve_instances`), then the engine's caps and executor
+        (`subscription_limit`, `internal_error`). Returns the series, the instances and their
+        echo."""
+        spec, refused = _bar_spec(sub, self.services.qty_step)
+        if spec is None or refused is not None:  # admitted, so its spec was fine: never here
+            raise TopicError("invalid_options", "This bar series is not available.", "instances")
+        try:
+            requested = resolve_instances(raw, spec)
+        except InstanceRefusedError as exc:
+            raise TopicError("invalid_options", str(exc), "instances") from None
+        engine = self.services.indicators
+        if engine is not None and sub.replay_session_id is None:
+            history = int(sub.effective.get("history", INDICATORS_DEFAULTS["history"]))
+            user, consumer = str(self.principal.user_id), self._consumer(sub)
+            try:
+                engine.check(
+                    sub.topic.symbol or "",
+                    spec,
+                    requested,
+                    user,
+                    history=history,
+                    consumer=consumer,
+                )
+            except InstanceCapError as exc:
+                raise TopicError("subscription_limit", str(exc)) from None
+            except RecomputeRefusedError as exc:
+                raise TopicError("internal_error", str(exc)) from None
+        return spec, requested, [r.echo() for r in requested]
+
+    def _hold_instances(
+        self, sub: Subscription, spec: BarSpec, requested: tuple[Requested, ...]
+    ) -> None:
+        """Swap the instances a `ctl` changed (after `_retune` and the rebuild budget): the new
+        ones are held, then the old ones the new set leaves out are released (`param_change`).
+        One admitted with no engine holds none, and holds none after."""
+        engine = self.services.indicators
+        if engine is None or not sub.indicator_keys:
+            return
+        history = int(sub.effective.get("history", INDICATORS_DEFAULTS["history"]))
+        engine.admit(
+            sub.topic.symbol or "", spec, requested, self._consumer(sub),
+            str(self.principal.user_id), history=history, replacing=sub.indicator_keys,
+            reason="param_change",
+        )  # fmt: skip
+        sub.indicator_keys = tuple(r.key for r in requested)
 
     # -- live revocation (§9.5, S7) -----------------------------------------------------------
 

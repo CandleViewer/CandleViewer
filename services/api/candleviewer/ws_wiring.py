@@ -112,11 +112,12 @@ class IngestionUpstreamSink:
 
 def ingestion_streams(ctx: AppContext) -> Callable[[str], _Demand | None]:
     """Family -> the ingestion stream that owns its upstream demand (resolved per call: the
-    streams are attached by `wire_public_ws` only when its flag is on); `bars` needs trades."""
+    streams are attached by `wire_public_ws` only when its flag is on); `bars` and `indicators`
+    (whose series' builder they feed, E13-T02) need trades."""
 
     def resolve(family: str) -> _Demand | None:
         ing = ctx.ingestion
-        if family in ("trades", "bars"):
+        if family in ("trades", "bars", "indicators"):
             return ing.trades
         if family == "book":
             return ing.books

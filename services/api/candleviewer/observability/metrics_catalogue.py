@@ -950,15 +950,16 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "emissions",
         ("reason",),
-        "Bar emissions a sink (questdb, series_store, ws) failed to accept, by sink or"
-        " <sink>_timeout; ws also counts generation swaps (ws_generation_swap) and binary groups"
-        " sent structured (ws_no_scales, ws_binary_refused).",
+        "Bar emissions a sink (questdb, series_store, ws, indicators) failed to accept, by sink"
+        " or <sink>_timeout; ws also counts generation swaps (ws_generation_swap) and binary"
+        " groups sent structured (ws_no_scales, ws_binary_refused); indicators counts each"
+        " instance update that raised.",
         "questdb/series_store/ws = bars missing downstream; ws_generation_swap several a minute ="
         " two builders on one series; ws_no_scales/ws_binary_refused = binary subscribers on"
-        " structured frames",
+        " structured frames; indicators = server indicator values missing",
         _L,
         "E12",
-        max_series=9,  # each sink and <sink>_timeout, and the 3 publisher reasons
+        max_series=11,  # each of the 4 sinks and <sink>_timeout, and the 3 publisher reasons
         exported=True,
     ),
     _s(
@@ -1386,9 +1387,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E04",
     ),
-    # --- Indicator kernels (E13-T02, ADR-0034, E13 threat model section 10) (planned) ------
-    # Named ahead: the engine and the `indicators.*` WS delivery that observe them are #426's
-    # second PR. `indicator` is a server kernel id (10), `where` is `server`.
+    # --- Indicator engine (E13-T02, ADR-0034, E13 threat model section 10) -------------------
+    # Served by orderflow.indicators.metrics.export_indicator_metrics. `indicator` is a server
+    # kernel id (10), `where` is `server`.
     _s(
         "indicator_compute_seconds",
         "histogram",
@@ -1397,10 +1398,11 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Indicator kernel time per instance: one closed-bar update, or one full recompute, by "
         "indicator and where it ran (server: the backend kernel).",
         "n/a (E13-Q03 owns the perf gate)",
-        _P,
+        _L,
         "E13",
         INDICATOR_COMPUTE_BUCKETS,
         max_series=10,
+        exported=True,
     ),
     _s(
         "indicator_cache_hits_total",
@@ -1410,9 +1412,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Indicator reads served by an instance already running for that symbol and spec_hash "
         "(memoised, 24 section 7.3).",
         "n/a",
-        _P,
+        _L,
         "E13",
         max_series=1,
+        exported=True,
     ),
     _s(
         "indicator_cache_misses_total",
@@ -1421,9 +1424,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "Indicator reads that had to start an instance: none ran for that symbol and spec_hash.",
         "n/a",
-        _P,
+        _L,
         "E13",
         max_series=1,
+        exported=True,
     ),
     _s(
         "indicator_recompute_total",
@@ -1433,9 +1437,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Indicator series recomputed from an earlier bar: amended (a late trade changed a "
         "closed bar), param_change, or backfill (re-primed from stored bars).",
         "n/a",
-        _P,
+        _L,
         "E13",
         max_series=3,
+        exported=True,
     ),
     _s(
         "indicator_subscriptions",
@@ -1445,9 +1450,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Users holding server indicator instances, by how many they hold: 1, 2-4, 5-7 or 8 (the "
         "SR-E13-03 per-user cap). Never a user id (IR-21).",
         "bucket 8 held: a user at the cap (IR-31)",
-        _P,
+        _L,
         "E13",
         max_series=4,
+        exported=True,
     ),
     _s(
         "indicator_cap_rejected_total",
@@ -1457,9 +1463,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "Server indicator requests refused by a cap: user, symbol or process instances "
         "(SR-E13-03), the window or the recompute slots (SR-E13-04).",
         "sustained = abuse or caps too low (SR-E13-03/04)",
-        _P,
+        _L,
         "E13",
         max_series=5,
+        exported=True,
     ),
     # --- Statechart (E50) ---------------------------------------------------
     _s(
@@ -2096,7 +2103,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "capacity",
         _L,
         "E17",
-        max_series=200,
+        max_series=210,  # 21 symbol labels x the 10 public served families
         exported=True,
     ),
     _s(
@@ -2243,7 +2250,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "client health (feed compression per family)",
         _L,
         "E17",
-        max_series=9,
+        max_series=10,
         exported=True,
     ),
     _s(

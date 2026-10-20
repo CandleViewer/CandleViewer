@@ -603,6 +603,8 @@ def entry(
     o: dict[str, Any] = dict(opts)
     if fam.account_scoped:
         o.setdefault("exchange_account_ids", [str(ACC_A)])
+    if "instances" in fam.required:  # `indicators.*` names its instances (§6.1)
+        o.setdefault("instances", [{"indicator": "ema", "params": {"n": 2}}])
     if fam.binary:
         o.setdefault("encoding", "binary" if mode == "binary" else "structured")
     elif mode == "binary":

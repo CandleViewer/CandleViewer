@@ -187,8 +187,9 @@ from candleviewer.backups_wiring import (
 )
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
+from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
-from candleviewer.bars.series_store import SeriesStore
+from candleviewer.bars.series_store import RepairHook, SeriesStore
 from candleviewer.bars.service import BarsService
 from candleviewer.bars_wiring import wire_bars
 from candleviewer.book.service import BookService
@@ -270,6 +271,8 @@ from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySi
 from candleviewer.oms.service import OmsService
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
+from candleviewer.orderflow.indicators.engine import IndicatorEngine, stored_history
+from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.recorder.coverage import CoverageService
@@ -379,6 +382,8 @@ from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.bars_publish import BarsPublisher
 from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import Authenticate, AuthRefused, GatewayHub, make_ws_router
+from candleviewer.ws.indicators_publish import IndicatorsPublisher
+from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.origin_audit import OriginRefusalAudit
@@ -1308,6 +1313,7 @@ def create_app(
     ws_sequencing = SequencingHub()
     bars_reader: BarReader | None = None
     bars_series: SeriesStore | None = None
+    indicators: IndicatorEngine | None = None
     snapshot_adapters: dict[str, SnapshotSource] = {}
     if resolved.bars_enabled:
         bars_sink = _build_bars_sink(resolved)
@@ -1323,9 +1329,14 @@ def create_app(
         bars_series = SeriesStore(hydrate_reader.read_tail if hydrate_reader is not None else None)
         scales = functools.partial(_catalogue_scales, ctx)
         publisher = BarsPublisher(ws_sequencing, scales, swap_reason="generation_swap")
+        # E13-T02 (#426): the indicator engine, on the emit path after the publisher; it primes
+        # from the store and reads older bars through the REST reader's connection.
+        history = stored_history(bars_reader) if bars_reader is not None else None
+        indicators = IndicatorEngine(bars_series, history=history, now_us=bars_clock)
+        indicators.listen(IndicatorsPublisher(ws_sequencing))
         # #2787 D2-H1, 23 §7.4: a repairing read reaches the subscribers through the store's hook
         # alone, never a task that diffs `latest()` across an await (it can miss a repair).
-        bars_series.on_repair(publisher.history_repair)
+        bars_series.on_repair(_repair_hooks(publisher.history_repair, indicators.history_repair))
         app.state.bars_runtime = wire_bars(
             ctx,
             inner_sink=bars_sink,
@@ -1336,11 +1347,15 @@ def create_app(
             tick_size=lambda sym: _catalogue_tick_size(ctx, sym),
             series=bars_series,
             publisher=publisher,
+            indicators=indicators,
         )
         snapshot_adapters["bars"] = BarsSnapshotSource(
             bars_series, scales, seed=publisher.note_generation,
             stale=app.state.bars_runtime.builder_set.quarantined,
         )  # fmt: skip
+        snapshot_adapters["indicators"] = IndicatorsSnapshotSource(
+            indicators, stale=app.state.bars_runtime.builder_set.quarantined
+        )
         if bars_reader is not None and ctx.ingestion.klines is not None:
             # E12-T05: `/market/klines` tier (1) — tape-built `bars_time` wins over klines.
             ctx.ingestion.klines.attach_tape(
@@ -1483,6 +1498,7 @@ def create_app(
         instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
         qty_step=lambda sym: _catalogue_qty_step(ctx, sym),
         series=bars_series,
+        indicators=indicators,
         snapshots=default_snapshot_router(
             {"machines": machine_states, "book": book_snapshot_source(ctx), **snapshot_adapters}
         ),
@@ -1735,6 +1751,10 @@ def create_app(
     )
     # E12-T03: bars series (builders + BarBuilderSet) on the scraped registry.
     app.state.bars_metrics = export_bars_metrics(ctx.metrics, env=resolved.environment.value)
+    # E13-T02: the indicator engine's series (instances, recomputes, caps).
+    app.state.indicator_metrics = export_indicator_metrics(
+        ctx.metrics, env=resolved.environment.value
+    )
     # E16-T03/T07: StreamWriter and DiskBudget series on the scraped registry.
     app.state.recorder_metrics = export_recorder_metrics(
         ctx.metrics, env=resolved.environment.value
@@ -2611,6 +2631,24 @@ def wire_instrument_catalogue(
     )
     ctx.ingestion.attach_instruments(scheduler)
     return scheduler
+
+
+def _repair_hooks(*hooks: RepairHook) -> RepairHook:
+    """The series store's one repair hook (#2787 D2-H1): each of `hooks` in order, the bars
+    publisher's `history_repair`, then the indicator engine's (E13-T02). A hook that raises does
+    not stop the next; the first error is raised once all have run, and the store counts it."""
+
+    def repair(symbol: str, spec: BarSpec, min_history: int) -> None:
+        failure: Exception | None = None
+        for hook in hooks:
+            try:
+                hook(symbol, spec, min_history)
+            except Exception as exc:  # the next hook still runs; the first error is raised
+                failure = failure or exc
+        if failure is not None:
+            raise failure
+
+    return repair
 
 
 async def _no_rebuild_executor(symbol: str, spec_hash: str, from_us: int, to_us: int) -> None:
