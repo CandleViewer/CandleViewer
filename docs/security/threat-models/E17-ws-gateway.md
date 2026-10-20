@@ -25,7 +25,7 @@
 
 ## 1. Scope
 
-In scope: the `/ws/v1` endpoint and module M23 — subprotocol negotiation, `hello`/`welcome`, `auth`/`auth_ok`
+In scope: the `/api/v1/ws` endpoint, also mounted at `/ws`, and module M23 — subprotocol negotiation, `hello`/`welcome`, `auth`/`auth_ok`
 and in-place re-auth, heartbeats and close codes (E17-S01); the topic registry, parser, per-topic permission
 matrix, limits and live revocation (E17-S02); snapshot+delta sequencing and resync (E17-S03);
 coalescing and the outbound budget (E17-T03, built behind a flag that is off by default, §6); the CVWB binary
@@ -135,7 +135,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 | WS-S02 | F2, P1         | Stolen token used from another tailnet host                                                          | L   | H   | Medium | Tailnet-only reachability (SR-045/047); token TTL; session revocation path as WS-S01; device binding is E09's scope (U-rows), not re-modelled here                                                                                | E09            | manual-review     | R     | Low      |
 | WS-S03 | F1, P1         | Unauthenticated socket held open to consume slots during the 10 s window                             | M   | M   | Medium | 10 s auth timeout, 3 auth attempts, 3 unauthenticated frames, inbound rate limit before auth, frame-size cap before decode; 64 sockets awaiting auth per process, 6 s per auth call (#2155) — see §4 Requirement: SR-074, SR-040. | E17-S01, #2155 | unit, load, chaos | M     | Low      |
 | WS-S04 | F2, P1         | Re-auth on a live socket switches it to a different user                                             | L   | H   | Medium | In-place re-auth must keep the same `user_id` or counts as a failed attempt; two independent checks: token's user and snapshot's (`apply_snapshot`, #415; also at first auth); subscriptions re-evaluated Requirement: SR-074.    | E17-S01, #415  | unit              | M     | Low      |
-| WS-S05 | F2, P1         | `hello` claims another client build / shell / capabilities to unlock behaviour                       | M   | L   | Low    | `hello` fields are advisory only: no authorisation, limit or feature decision reads them; `welcome.limits` are server constants. Rule: no future control may key off `hello` content Requirement: SR-040.                         | E17-S01        | unit, review      | M     | Low      |
+| WS-S05 | F2, P1         | `hello` claims another client build / shell / capabilities to unlock behaviour                       | M   | L   | Low    | `hello` fields are advisory only: no authorisation, limit or feature decision reads them; `welcome.limits` are set by the server, never by the client. Rule: no future control may key off `hello` content Requirement: SR-040.   | E17-S01        | unit, review      | M     | Low      |
 | WS-S06 | F1, P1         | Cross-site page in the user's browser opens a socket to the gateway (cross-site WebSocket hijacking) | L   | H   | Medium | Auth is a first-frame bearer token, not ambient cookies, so a foreign page cannot authenticate without the token; the upgrade also refuses any Origin outside the allow-list (SR-183, #2239)                                      | E17-S01        | integration       | M     | Low      |
 
 ### 3.2 Tampering
