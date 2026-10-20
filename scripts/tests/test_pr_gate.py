@@ -7,12 +7,14 @@ argv of every step can be pinned. No real scanner runs and nothing reaches the n
 from __future__ import annotations
 
 import functools
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -51,9 +53,8 @@ def _write(root: Path, rel: str, text: str = "x = 1\n") -> str:
 
 def _git(cwd: Path, *args: str) -> str:
     config = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
-    done = subprocess.run(
-        ["git", *config, *args], cwd=cwd, check=True, capture_output=True, text=True
-    )
+    argv = ["git", *config, *args]
+    done = subprocess.run(argv, cwd=cwd, check=True, capture_output=True, text=True)  # noqa: S603
     return done.stdout.strip()
 
 
@@ -65,7 +66,7 @@ def _fake_tools(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
         calls.append(list(argv))
         return 0, ""
 
-    monkeypatch.setattr(pr_gate.shutil, "which", lambda name: name)
+    monkeypatch.setattr(shutil, "which", lambda name: name)
     monkeypatch.setattr(pr_gate, "run_command", run_command)
     return calls
 
@@ -91,7 +92,7 @@ def test_selection_reads_the_rules_pr_yml_declares_and_keeps_no_copy() -> None:
     declared = yaml.safe_load(path_filters.filter_step(workflow)["with"]["filters"])
     assert path_filters.load_filters() == declared
     assert set(declared) == set(workflow["jobs"]["changed-paths"]["outputs"]) - {"pr"}
-    assert pr_gate.path_filters is path_filters
+    assert vars(pr_gate)["path_filters"] is path_filters  # the gate reads pr.yml through the module
 
 
 @pytest.mark.parametrize(
@@ -156,14 +157,14 @@ def test_a_workflow_or_step_of_another_shape_is_a_value_error_with_a_message(
         path_filters.load_filters(workflow)
     del step["with"]["predicate-quantifier"]
     del step["with"]["filters"]
-    steps = {"jobs": {"changed-paths": {"steps": [1]}}}  # a step that is no mapping
-    for broken in (
+    shapes: list[dict[str, Any]] = [
         workflow,
         {},
         {"jobs": {"changed-paths": {}}},
         {"jobs": {"changed-paths": 1}},
-        steps,
-    ):
+        {"jobs": {"changed-paths": {"steps": [1]}}},  # a step that is no mapping
+    ]
+    for broken in shapes:
         with pytest.raises(ValueError, match="cannot be read"):
             path_filters.load_filters(broken)
     for text, message in (("a: [b\n", "is not YAML"), ("- a\n", "is not a workflow")):
@@ -219,6 +220,23 @@ def test_changed_reads_the_pr_yml_of_its_tree_and_lists_commits_edits_and_new_fi
         pr_gate.changed(tmp_path, "no/such/ref")
 
 
+@pytest.mark.parametrize("name", ["py", "infra", "docs"])
+def test_a_pr_yml_without_a_filter_the_gate_maps_is_a_value_error_not_a_key_error(
+    tmp_path: Path, name: str
+) -> None:
+    shutil.copytree(WORKFLOWS, tmp_path / ".github" / "workflows")
+    pr_yml = tmp_path / ".github" / "workflows" / "pr.yml"
+    text = pr_yml.read_text(encoding="utf-8")
+    key = f"\n            {name}:\n"
+    assert text.count(key) == 1
+    pr_yml.write_text(text.replace(key, key.replace(name, f"{name}x")), encoding="utf-8")
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    with pytest.raises(ValueError, match=rf"filter \['{name}'\] the gate maps"):
+        pr_gate.changed(tmp_path, "HEAD")
+
+
 def test_the_header_names_the_base_and_the_lanes(tmp_path: Path) -> None:
     change = _change(tmp_path, ["docs/a.md", "services/api/x.py"], base="0123456789abcdef")
     head = pr_gate.header(change, "origin/main")
@@ -261,7 +279,42 @@ def test_main_passes_fast_on_prints_the_header_first_and_exits_on_failures(
         monkeypatch.setattr(pr_gate, "plan", lambda c, fast, step=step: [step])
         assert pr_gate.main([]) == code
     monkeypatch.undo()
+    capsys.readouterr()
     assert pr_gate.main(["--base", "no/such/ref"]) == 2
+    err = capsys.readouterr().err  # git failed: a fetch may mend it, and the message says so
+    assert "cannot plan: git merge-base" in err and err.rstrip().endswith(
+        "(git fetch origin main?)"
+    )
+
+
+def test_main_runs_the_steps_with_sigterm_raised_as_ctrl_c_and_puts_it_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    before = signal.getsignal(signal.SIGTERM)
+    during: list[object] = []
+
+    def run() -> tuple[str, str]:
+        during.append(signal.getsignal(signal.SIGTERM))
+        return "PASS", ""
+
+    monkeypatch.setattr(pr_gate, "changed", lambda root, base: _change(tmp_path, ["a.txt"]))
+    monkeypatch.setattr(pr_gate, "plan", lambda c, fast: [pr_gate.Step("g", "s", run)])
+    assert pr_gate.main([]) == 0
+    assert len(during) == 1 and during[0] is not before
+    assert signal.getsignal(signal.SIGTERM) is before
+
+
+def test_a_pr_yml_without_a_filter_the_gate_maps_is_exit_2_with_a_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def missing(root: Path, base: str) -> Any:
+        raise ValueError("pr.yml has no `changed-paths` filter ['py'] the gate maps")
+
+    monkeypatch.setattr(pr_gate, "changed", missing)
+    assert pr_gate.main([]) == 2
+    err = capsys.readouterr().err
+    assert "cannot plan: pr.yml has no `changed-paths` filter ['py']" in err
+    assert "git fetch" not in err  # fetching mends a missing ref, not a pr.yml of another shape
 
 
 def test_fast_skips_the_tests_of_a_docs_only_change_shows_them_as_skipped_and_only_of_that(
@@ -398,6 +451,28 @@ def test_the_pattern_check_leaves_out_what_codeqls_own_config_ignores(tmp_path: 
     assert any(path_filters.matches(".semgrep/tests/x.py", glob) for glob in real)
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        "paths-ignore: [a\n",  # not YAML
+        "- a\n",  # a list: no `.get`
+        "just text\n",
+        "paths-ignore: docs/**\n",  # a scalar would be read one character at a time
+        "paths-ignore:\n",
+        "paths-ignore:\n  - 5\n",
+        "paths-ignore:\n  - '!docs/**'\n",  # syntax matches() does not know
+    ],
+)
+def test_a_codeql_config_of_another_shape_is_a_value_error_not_a_traceback(
+    tmp_path: Path, config: str
+) -> None:
+    _write(tmp_path, ".github/codeql/codeql-config.yml", config)
+    with pytest.raises(ValueError, match=r"codeql-config\.yml"):
+        pr_gate.codeql_ignored(tmp_path)
+    _write(tmp_path, ".github/codeql/codeql-config.yml", "queries:\n  - uses: security\n")
+    assert pr_gate.codeql_ignored(tmp_path) == []  # no paths-ignore: nothing is ignored
+
+
 def test_a_test_file_the_pattern_check_cannot_read_is_named_and_never_passed_in_silence(
     tmp_path: Path,
 ) -> None:
@@ -462,6 +537,22 @@ def test_plan_has_every_family_of_steps_and_each_tool_gets_its_argv(
     assert list(steps)[-1] == "gen-freshness"  # last: it deletes the tracked generated files
 
 
+#: Tracked files under the generated outputs of tools/ci/check_gen_freshness.py.
+GENERATED = ("packages/protocol/src/generated/a.ts", "packages/fixtures/golden/policy/rules.json")
+
+
+def _gen_step(root: Path, modules: bool = True) -> Any:
+    """The gen step of a repo that tracks two generated files, with node_modules installed."""
+    for rel in GENERATED:
+        _write(root, rel, "x\n")
+    if modules:
+        (root / "node_modules").mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "base")
+    return pr_gate.gen_steps(_change(root, ["a.txt"]))[0]
+
+
 def test_gen_freshness_runs_on_every_change_as_ci_does_and_skips_visibly_without_its_toolchain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -469,15 +560,59 @@ def test_gen_freshness_runs_on_every_change_as_ci_does_and_skips_visibly_without
     for paths in (["docs/a.md"], ["packages/protocol/x.json"], ["tools/gen/export_x.py"], []):
         gates = [s.gate for s in pr_gate.plan(_change(tmp_path, paths))]
         assert gates.count("gen-freshness") == 1 and gates[-1] == "gen-freshness"
-    gen = pr_gate.plan(_change(tmp_path, ["docs/a.md"]))[-1]
+    gen = _gen_step(tmp_path, modules=False)
     calls.clear()
-    status, why = gen.run()  # tmp_path has no node_modules
+    status, why = gen.run()
     assert status == "SKIP" and "pnpm install --frozen-lockfile" in why and not calls
     (tmp_path / "node_modules").mkdir()
     assert gen.run() == ("PASS", "") and calls == [[sys.executable, pr_gate.GEN_CHECK]]
-    monkeypatch.setattr(pr_gate.shutil, "which", lambda name: None if name == "pnpm" else name)
+    monkeypatch.setattr(shutil, "which", lambda name: None if name == "pnpm" else name)
     calls.clear()
     assert gen.run()[0] == "SKIP" and not calls  # node_modules is there, pnpm is not
+
+
+def test_gen_freshness_is_skipped_while_the_generated_files_have_unstaged_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _fake_tools(monkeypatch)
+    gen = _gen_step(tmp_path)
+    (tmp_path / GENERATED[1]).write_text(
+        "edited\n", encoding="utf-8"
+    )  # the step would overwrite it
+    status, why = gen.run()
+    assert status == "SKIP" and "unstaged changes under the generated files" in why
+    assert "restore" not in why and not calls  # nothing is deleted, nothing ran
+    _git(tmp_path, "add", GENERATED[1])  # staged: the step compares the tree with the index
+    assert gen.run() == ("PASS", "") and len(calls) == 1
+    assert capsys.readouterr().err == ""  # no file is missing: no note
+
+
+def test_a_gen_step_cut_off_after_it_deleted_files_prints_how_to_restore_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_tools(monkeypatch)
+    gen = _gen_step(tmp_path)
+    restore = f"git --literal-pathspecs restore -- {GENERATED[0]}"
+
+    def cut_off(error: BaseException | None) -> Callable[[Sequence[str], Path], tuple[int, str]]:
+        def run(argv: Sequence[str], cwd: Path) -> tuple[int, str]:
+            (cwd / GENERATED[0]).unlink()  # step 1 of the script deletes the tracked outputs ...
+            if error is not None:
+                raise error  # ... and Ctrl-C cuts it off, or the timeout:
+            return 124, "python timed out after 25 minutes"
+
+        return run
+
+    monkeypatch.setattr(pr_gate, "run_command", cut_off(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        gen.run()
+    assert restore in capsys.readouterr().err
+    status, why = gen.run()  # the next run does not delete what is already gone: it says how
+    assert status == "SKIP" and restore in why
+    _git(tmp_path, "restore", "--", GENERATED[0])
+    monkeypatch.setattr(pr_gate, "run_command", cut_off(None))
+    assert gen.run() == ("FAIL", "python timed out after 25 minutes")
+    assert restore in capsys.readouterr().err
 
 
 def test_a_file_the_py_lane_checks_beyond_services_api_alone_runs_ruff_and_mypy(
@@ -528,17 +663,20 @@ def test_tests_follow_the_changed_files(tmp_path: Path) -> None:
     ]
 
 
-def test_the_pyproject_and_the_lock_of_services_api_run_the_unit_tests_that_name_them(
+def test_the_pyproject_and_the_lock_of_services_api_run_the_tests_that_name_them(
     tmp_path: Path,
 ) -> None:
     paths = [_write(tmp_path, f"{API}/pyproject.toml"), _write(tmp_path, f"{API}/uv.lock")]
     _write(tmp_path, f"{UNIT}/exchange/test_pack.py", "p = root / 'pyproject.toml'\n")
     _write(tmp_path, f"{UNIT}/test_lock.py", "Path('services/api/uv.lock')\n")
     _write(tmp_path, f"{UNIT}/test_prose.py", "# the pyproject.toml of services/api: prose only\n")
-    _write(tmp_path, "scripts/tests/test_root.py", "Path('pyproject.toml')\n")  # not services/api's
-    both = ([f"{UNIT}/exchange/test_pack.py", f"{UNIT}/test_lock.py"], [])
-    assert pr_gate.select_tests(tmp_path, paths) == both
-    assert pr_gate.select_tests(tmp_path, paths[:1]) == (both[0][:1], [])
+    _write(tmp_path, "scripts/tests/test_markers.py", "Path('services/api/pyproject.toml')\n")
+    _write(tmp_path, "scripts/tests/test_lanes.py", "LOCK = 'uv.lock'\n")
+    _write(tmp_path, "scripts/tests/test_prose.py", "# services/api/uv.lock: prose only\n")
+    units = [f"{UNIT}/exchange/test_pack.py", f"{UNIT}/test_lock.py"]
+    scripts = ["scripts/tests/test_lanes.py", "scripts/tests/test_markers.py"]
+    assert pr_gate.select_tests(tmp_path, paths) == (units, scripts)
+    assert pr_gate.select_tests(tmp_path, paths[:1]) == (units[:1], scripts[1:])
     other = _write(tmp_path, f"{API}/alembic.ini", "pyproject.toml\n")  # services/api, no input
     assert pr_gate.select_tests(tmp_path, [other]) == ([], [])
 
@@ -568,7 +706,8 @@ def test_on_windows_what_needs_fcntl_is_partial_and_never_a_pass() -> None:
     assert "tests/unit/bench/test_e08_engine.py" in note and "tests/unit/bars/test_a.py" in note
     assert pr_gate.pytest_status(1, posix, windows=False)[0] == "FAIL"
     assert pr_gate.pytest_status(0, "", windows=True) == ("PASS", "")
-    assert pr_gate.pytest_status(5, "no tests ran", windows=False) == ("PASS", "")
+    for windows in (False, True):  # nothing collected is no pass: no test ran
+        assert pr_gate.pytest_status(5, "no tests ran", windows) == ("SKIP", "nothing collected")
 
 
 def test_a_genuine_failure_next_to_a_posix_error_is_a_failure() -> None:
@@ -619,18 +758,19 @@ def test_a_failure_from_winerror_1314_says_what_it_needs() -> None:
     assert "WinError 1314" not in pr_gate.pytest_status(1, "FAILED t.py::t - assert 0\n", True)[1]
 
 
-#: A step that starts a grandchild, which appends to a file every 50 ms (for 20 s at most, so that
-#: a regression fails a test and never hangs it), and then waits: a `uv run pytest` in miniature.
+#: A step that starts a grandchild, which adds a byte to a file every 50 ms (for 40 s at most, so
+#: that a regression fails a test and never hangs it), and then waits: a `uv run pytest` in
+#: miniature.
 BEAT = (
-    "import sys, time\n"
-    "for _ in range(400):\n"
+    "import sys, threading\n"
+    "for _ in range(800):\n"
     "    open(sys.argv[1], 'a').write('.')\n"
-    "    time.sleep(0.05)\n"
+    "    threading.Event().wait(0.05)\n"
 )
 TREE = (
-    "import subprocess, sys, time\n"
+    "import subprocess, sys, threading\n"
     "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]])\n"
-    "time.sleep(60)\n"
+    "threading.Event().wait(60)\n"
 )
 
 
@@ -639,32 +779,65 @@ def _tree(tmp_path: Path) -> tuple[list[str], Path]:
     return [sys.executable, "-c", TREE, BEAT, str(beat)], beat
 
 
+def _until(condition: Callable[[], bool], what: str, seconds: float = 30) -> None:
+    """The one place a test waits: it polls `condition` until a deadline, never for a fixed time."""
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, f"never happened: {what}"
+        time.sleep(0.02)
+
+
 def _beats(beat: Path) -> int:
+    """How often the grandchild has beaten: the size of its file, which only ever grows."""
     return beat.stat().st_size if beat.exists() else 0
 
 
-def _running(beat: Path) -> None:
-    """Wait until the grandchild has beaten a few times."""
-    deadline = time.monotonic() + 30
-    while _beats(beat) < 3:
-        assert time.monotonic() < deadline, "the grandchild never started"
-        time.sleep(0.05)
+def _running(beat: Path) -> bool:
+    return _beats(beat) > 0
 
 
-def _stopped(beat: Path) -> bool:
-    before = _beats(beat)
-    time.sleep(0.5)
-    return _beats(beat) == before
+def _wait_stopped(beat: Path) -> None:
+    """A killed grandchild adds nothing to its file for a second; one that survived adds a byte
+    every 50 ms for 40 s. (A file rewritten on each beat could be left empty by the kill.)"""
+    size, since = -1, time.monotonic()
+
+    def quiet() -> bool:
+        nonlocal size, since
+        if (now := _beats(beat)) != size:
+            size, since = now, time.monotonic()
+        return time.monotonic() - since > 1.0
+
+    _until(quiet, "the grandchild stops", seconds=10)
+
+
+def _first_wait_ends_in(
+    monkeypatch: pytest.MonkeyPatch, beat: Path, error: BaseException
+) -> list[object]:
+    """The step's first wait ends in `error` as soon as its grandchild runs: a timeout or Ctrl-C
+    that does not depend on the clock. The wait that reaps the killed step is the real one.
+    Returns the timeout the first wait was asked for."""
+    real_wait = subprocess.Popen.wait
+    asked: list[object] = []
+
+    def wait(self: subprocess.Popen[bytes], timeout: float | None = None) -> int:
+        if asked:
+            return real_wait(self, timeout)
+        asked.append(timeout)
+        _until(lambda: _running(beat), "the grandchild runs")
+        raise error
+
+    monkeypatch.setattr(subprocess.Popen, "wait", wait)
+    return asked
 
 
 def test_kill_tree_ends_a_step_and_the_grandchild_it_started(tmp_path: Path) -> None:
     argv, beat = _tree(tmp_path)
-    step = subprocess.Popen(argv, start_new_session=True)  # as run_command starts a step
+    step = subprocess.Popen(argv, start_new_session=True)  # noqa: S603 - as run_command starts one
     try:
-        _running(beat)
+        _until(lambda: _running(beat), "the grandchild runs")
         pr_gate.kill_tree(step)
-        assert step.wait(timeout=10) != 0
-        assert _stopped(beat), "the grandchild outlived its step"
+        assert step.poll() is not None  # reaped, not just signalled
+        _wait_stopped(beat)
     finally:
         step.kill()
 
@@ -673,14 +846,14 @@ def test_a_step_that_outruns_its_timeout_is_killed_with_its_tree_and_fails_with_
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     argv, beat = _tree(tmp_path)
-    monkeypatch.setattr(pr_gate, "STEP_TIMEOUT", 4)
-    started = time.monotonic()
+    expired = subprocess.TimeoutExpired("x", pr_gate.STEP_TIMEOUT)
+    asked = _first_wait_ends_in(monkeypatch, beat, expired)
     assert pr_gate.run_command(argv, tmp_path) == (
         124,
-        f"{sys.executable} timed out after 0 minutes",
+        f"{sys.executable} timed out after 25 minutes",
     )
-    assert time.monotonic() - started < 30  # the 4 s timeout, not the minute the step waits
-    assert _beats(beat) > 0 and _stopped(beat), "the grandchild outlived its step"
+    assert asked == [pr_gate.STEP_TIMEOUT]  # the step was given its timeout, and no other
+    _wait_stopped(beat)
     monkeypatch.setattr(pr_gate, "run_command", lambda a, c: (124, "x timed out"))
     assert pr_gate.command("g", "s", argv, tmp_path).run() == ("FAIL", "x timed out")
 
@@ -689,20 +862,52 @@ def test_ctrl_c_in_a_step_kills_what_it_started_and_goes_on_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     argv, beat = _tree(tmp_path)
-    wait = subprocess.Popen.wait
-    asked: list[object] = []
-
-    def interrupt(self: subprocess.Popen[bytes], timeout: float | None = None) -> int:
-        if asked:
-            return wait(self, timeout)  # the wait that reaps the step once it is killed
-        asked.append(timeout)
-        _running(beat)
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(subprocess.Popen, "wait", interrupt)
+    _first_wait_ends_in(monkeypatch, beat, KeyboardInterrupt())
     with pytest.raises(KeyboardInterrupt):
         pr_gate.run_command(argv, tmp_path)
-    assert _stopped(beat), "the grandchild outlived its step"
+    _wait_stopped(beat)
+
+
+class _Stubborn:
+    """A step that the tree kill does not reach: its wait times out until it is killed itself."""
+
+    pid = 999_999  # no real process: the kill calls are stubbed in the test
+    killed = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        if not self.killed:
+            raise subprocess.TimeoutExpired("x", timeout or 0)
+        return -9
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def test_a_step_that_outlives_the_tree_kill_is_killed_directly_not_waited_on_for_ever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: None, raising=False)  # POSIX
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: None)  # Windows: taskkill
+    step: Any = _Stubborn()
+    pr_gate.kill_tree(step)
+    assert step.killed
+
+
+@pytest.mark.parametrize("name", [s for s in ("SIGTERM", "SIGHUP") if hasattr(signal, s)])
+def test_a_sigterm_or_sighup_is_raised_as_ctrl_c_while_steps_run_and_then_put_back(
+    name: str,
+) -> None:
+    sig = getattr(signal, name)
+    before = signal.getsignal(sig)
+    with pytest.raises(KeyboardInterrupt), pr_gate.hangups_as_interrupts():
+        signal.raise_signal(sig)
+    assert signal.getsignal(sig) is before
+    signal.signal(sig, signal.SIG_IGN)  # what is ignored (nohup) stays ignored
+    try:
+        with pr_gate.hangups_as_interrupts():
+            assert signal.getsignal(sig) is signal.SIG_IGN
+    finally:
+        signal.signal(sig, before)
 
 
 def test_a_steps_output_is_kept_as_its_tail_with_unix_newlines_and_its_exit_code(
@@ -719,7 +924,7 @@ def test_a_steps_output_is_kept_as_its_tail_with_unix_newlines_and_its_exit_code
 def test_a_scanner_that_is_not_installed_is_skipped_not_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(pr_gate.shutil, "which", lambda name: None)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     steps = {s.gate: s for s in pr_gate.tool_steps(_change(ROOT, ["tools/ci/pr_gate.py"]))}
     assert steps["semgrep"].run() == ("SKIP", "semgrep is not installed")
     assert steps["gitleaks"].run() == ("SKIP", "gitleaks is not installed")
@@ -770,8 +975,9 @@ def test_what_is_left_to_ci_names_the_docker_tests_the_title_the_size_and_the_bl
     ):
         assert left in pr_gate.LEFT_TO_CI
     doc = " ".join((pr_gate.__doc__ or "").split())
-    for said in ("wants a clean tree", "runs last", "what a deletion breaks", *blind):
-        assert said in doc
+    said = ("wants a clean tree", "runs last", "the gate prints the `git restore` command")
+    for text in (*said, "what a deletion breaks", *blind):
+        assert text in doc
     assert "not integration" in pr_gate.LOCAL_MARKERS and "not chaos" in pr_gate.LOCAL_MARKERS
     assert pr_gate.LOCAL_MARKERS.startswith(pr_gate.PYTEST_MARKERS)
 

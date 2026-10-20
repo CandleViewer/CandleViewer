@@ -25,6 +25,11 @@ _GLOB = {r"\*\*/": "(?:.*/)?", r"\*\*": ".*", r"\*": "[^/]*", r"\?": "[^/]"}
 _RULE = re.compile(r"(?!\./)[\w.*?/-]+")
 
 
+def valid_rule(rule: object) -> bool:
+    """Whether `rule` is a glob whose syntax `matches` follows (any other is refused)."""
+    return isinstance(rule, str) and _RULE.fullmatch(rule) is not None
+
+
 def load_workflow(path: Path = PR_YML) -> dict[str, Any]:
     try:
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -67,7 +72,7 @@ def load_filters(workflow: Mapping[str, Any] | None = None) -> dict[str, list[st
         if not isinstance(rules, list):
             raise ValueError(f"filter {name!r}: a list of rules is needed, not {rules!r}")
         for rule in rules:
-            if not isinstance(rule, str) or not _RULE.fullmatch(rule):
+            if not valid_rule(rule):
                 raise ValueError(f"filter {name!r}: {rule!r} is syntax matches() does not know")
     return filters
 
