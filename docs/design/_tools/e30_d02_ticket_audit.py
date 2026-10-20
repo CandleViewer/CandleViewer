@@ -18,7 +18,7 @@ high-contrast theme only, the AAA stretch of §5 item 3 is reported per theme). 
 pairs the spec considered and designed around — both are reported, never gated. `exempt` rows are
 inactive controls (WCAG 1.4.3 exception); the reason text beside them is gated as text. Candidate
 tokens that do not exist yet (design-system change requests for E30-D04) are prefixed `CR:` and
-measured on the primitive or token they would alias, never on an invented hex.
+measured on the primitive or token they would alias, never on an invented hex. The hpe Fable lens round 1 (F-6) added the light `danger.default` candidates and the boundary-vs-ARMED CVD row.
 """
 from __future__ import annotations
 
@@ -87,6 +87,12 @@ CR = {
     # (`palette.light.amber.300`), so a danger glyph and an attention glyph are one colour there; CR-3 proposes
     # the existing dark-red primitive for the light danger glyph (dark and hc unchanged)
     "CR:color.status.danger.strong (light = light.red.700)": {"dark": "color.status.danger.strong", "light": "palette.light.red.700", "high-contrast": "color.status.danger.strong"},
+    # the light theme also resolves `status.danger.default` to an amber (`palette.light.amber.500`), so the 2 px invalid
+    # field boundary shares its hue with the ARMED pill border; CR-3 extends to it with an existing light red that is
+    # not the SELL primitive (`palette.light.red.500`): both candidates the review named are measured, the adopted one
+    # is the darker `.350` (dark and hc unchanged: `palette.red.600`)
+    "CR:color.status.danger.default (light = light.red.350)": {"dark": "color.status.danger.default", "light": "palette.light.red.350", "high-contrast": "color.status.danger.default"},
+    "CR:color.status.danger.default (light = light.red.400)": {"dark": "color.status.danger.default", "light": "palette.light.red.400", "high-contrast": "color.status.danger.default"},
 }
 
 
@@ -145,7 +151,11 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("focus ring on the BUY button — REJECTED pair (ring directly on the fill)", "color.focus.ring", "color.buy.default", "rejected-non-text"),
     ("focus ring on the SELL button — REJECTED pair", "color.focus.ring", "color.sell.default", "rejected-non-text"),
     ("focus ring on the submit button — adopted (D3): ring outside a 1 px surface.canvas halo; ring vs canvas", "color.focus.ring", "color.surface.canvas", "non-text"),
-    ("invalid input boundary 2 px (danger.default)", "color.status.danger.default", "color.surface.canvas", "non-text"),
+    ("invalid input boundary 2 px (danger.default) — amber in light until CR-3", "color.status.danger.default", "color.surface.canvas", "non-text"),
+    ("CR-3: light invalid boundary candidate light.red.350 on the panel — adopted", "CR:color.status.danger.default (light = light.red.350)", "color.surface.canvas", "non-text"),
+    ("CR-3: light invalid boundary candidate light.red.350 in the input well — adopted", "CR:color.status.danger.default (light = light.red.350)", "color.surface.app", "non-text"),
+    ("CR-3: light invalid boundary candidate light.red.400 on the panel — measured, not adopted", "CR:color.status.danger.default (light = light.red.400)", "color.surface.canvas", "non-text"),
+    ("CR-3: light invalid boundary candidate light.red.400 in the input well — measured, not adopted", "CR:color.status.danger.default (light = light.red.400)", "color.surface.app", "non-text"),
     ("field error glyph; invalid boundary alternative (danger.strong)", "color.status.danger.strong", "color.surface.canvas", "non-text"),
     ("ARMED pill glyph (unlock / bolt) and 1 px border", "color.status.warning.strong", "color.status.warning.subtle", "non-text"),
     ("LOCKED pill lock glyph", "color.text.secondary", "color.surface.raised", "non-text"),
@@ -189,6 +199,10 @@ CVD_PAIRS: list[tuple[str, str, str]] = [
     ("stale indicator vs ARMED glyph (same token in dark)", "color.data-confidence.stale.indicator", "color.status.warning.strong"),
     ("CR-2 text.danger vs SELL fill", "CR:color.text.danger", "color.sell.default"),
     ("CR-3 light danger glyph vs ARMED glyph (warning.strong)", "CR:color.status.danger.strong (light = light.red.700)", "color.status.warning.strong"),
+    ("invalid boundary (danger.default) vs ARMED border / glyph (warning.strong)", "color.status.danger.default", "color.status.warning.strong"),
+    ("CR-3 light boundary candidate light.red.350 vs ARMED glyph (warning.strong)", "CR:color.status.danger.default (light = light.red.350)", "color.status.warning.strong"),
+    ("CR-3 light boundary candidate light.red.350 vs SELL fill", "CR:color.status.danger.default (light = light.red.350)", "color.sell.default"),
+    ("CR-3 light boundary candidate light.red.400 vs SELL fill", "CR:color.status.danger.default (light = light.red.400)", "color.sell.default"),
 ]
 JND = 5.0
 
@@ -248,7 +262,7 @@ def main() -> int:
     print("|---|---|---|---|---|---|")
     for tok in [
         "color.buy.default", "color.sell.default", "color.env.live", "color.env.demo",
-        "color.status.warning.strong", "color.status.warning.subtle", "color.status.danger.strong",
+        "color.status.warning.strong", "color.status.warning.subtle", "color.status.danger.strong", "color.status.danger.default",
         "color.status.danger.subtle", "color.status.success.strong", "color.status.info.strong",
         "color.focus.ring", "color.action.primary.default", "color.data-confidence.stale.indicator",
     ]:
