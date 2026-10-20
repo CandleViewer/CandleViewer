@@ -9,11 +9,14 @@ The contrast formula is `contrast_ratio()` from `docs/design/_tools/contrast_che
 not re-implemented), so the numbers agree with E30-D01's and E09-D03's.
 
 Usage: python3 -I docs/design/_tools/e11_d02_chassis_audit.py   (prints Markdown; exit 1 on a FAIL)
+Stdout is forced to UTF-8 (the tables carry `ΔE`, `≥`, `—`), so it also runs on a cp1252 Windows console
+(the reference machine).
 
 A PASS/FAIL verdict applies the role's bar (text 4.5:1, non-text 3:1, `hc-text` 7:1 per
 `05-accessibility-standard.md` §5 item 6; every gated row counts, the hc-text rows included); rows marked
-`decorative` carry no meaning (`16-design-system-brief.md` §6 rule 7) and `rejected-*` rows are pairs the spec
-considered and designed around — both are reported, never gated. Candidate tokens that do not
+`decorative` carry no meaning (`16-design-system-brief.md` §6 rule 7) — the post-scrim rows are the frozen,
+deliberately de-emphasised chart of the disconnected state — and `rejected-*` rows are pairs the spec considered
+and designed around — both are reported, never gated. Candidate tokens that do not
 exist yet (design-system change requests for E11-D05) are prefixed `CR:` and measured on the
 primitive they would alias, never on an invented hex.
 """
@@ -78,6 +81,10 @@ def col(theme: str, token: str) -> str:
     if token.startswith("dim85:"):  # the stale-state 15 % dim: data-ink multiplied by 0.85 (a uniform, no extra pass)
         r, g, b = hex_to_rgb(T[theme][token[6:]])
         return "#%02X%02X%02X" % (round(r * 0.85), round(g * 0.85), round(b * 0.85))
+    if token.startswith("scrim60:") or token.startswith("scrim45:"):  # the disconnected scrim: surface.app at alpha over the token
+        alpha = 0.6 if token.startswith("scrim60:") else 0.45
+        app = hex_to_rgb(T[theme]["color.surface.app"]); under = hex_to_rgb(T[theme][token.split(":", 1)[1]])
+        return "#%02X%02X%02X" % tuple(round(alpha * a + (1 - alpha) * u) for a, u in zip(app, under))
     return T[theme][token]
 
 
@@ -109,8 +116,24 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("last-price pill text on up fill", "color.text.inverse", "color.candle.up", "text"),
     ("last-price pill text on down fill", "color.text.inverse", "color.candle.down", "text"),
     ("last-price neutral pill text", "color.text.primary", "color.surface.raised", "text"),
+    ("mark-price pill text (M …)", "color.text.primary", "color.surface.raised", "text"),
+    ("mark-price line (short-dashed, meaning-carrying)", "color.text.tertiary", "color.surface.canvas", "non-text"),
+    ("left-gutter indicator last-value pill text (neutral pill)", "color.text.primary", "color.surface.raised", "text"),
+    ("disconnected strip text (its own raised strip above the scrim)", "color.text.primary", "color.surface.raised", "text"),
+    ("post-scrim candle up at opacity.scrim 0.6 (frozen chart, de-emphasised by design)", "scrim60:color.candle.up", "scrim60:color.surface.canvas", "decorative"),
+    ("post-scrim candle down at 0.6", "scrim60:color.candle.down", "scrim60:color.surface.canvas", "decorative"),
+    ("post-scrim wick at 0.6", "scrim60:color.candle.wick", "scrim60:color.surface.canvas", "decorative"),
+    ("post-scrim candle up at opacity.disabled 0.45 (alternative; also below 3:1)", "scrim45:color.candle.up", "scrim45:color.surface.canvas", "decorative"),
+    ("post-scrim candle down at 0.45 (alternative)", "scrim45:color.candle.down", "scrim45:color.surface.canvas", "decorative"),
     ("stale chip text", "color.data-confidence.stale.text", "color.data-confidence.stale.surface", "text"),
     ("stale chip indicator", "color.data-confidence.stale.indicator", "color.data-confidence.stale.surface", "non-text"),
+    ("stale chip last-good timestamp text (`· last 13:42:05`)", "color.data-confidence.stale.text", "color.data-confidence.stale.surface", "text"),
+    ("reconnecting / offline chip text (canvas-filled pill)", "color.data-confidence.reconnecting.text", "color.surface.canvas", "text"),
+    ("reconnecting chip indicator on the canvas fill", "color.data-confidence.reconnecting.indicator", "color.surface.canvas", "non-text"),
+    ("reconnecting indicator — REJECTED pair (on the raised row)", "color.data-confidence.reconnecting.indicator", "color.surface.raised", "rejected-non-text"),
+    ("delayed 'Reduced rate' chip text", "color.text.primary", "color.surface.canvas", "text"),
+    ("delayed 'Reduced rate' chip indicator", "color.status.info.strong", "color.surface.canvas", "non-text"),
+    ("feed chip border on the raised row", "color.border.default", "color.surface.raised", "decorative"),
     ("paused badge text", "color.text.primary", "color.status.warning.subtle", "text"),
     ("paused badge icon", "color.status.warning.strong", "color.status.warning.subtle", "non-text"),
     ("disconnected label text", "color.data-confidence.disconnected.text", "color.surface.canvas", "text"),
@@ -184,6 +207,8 @@ JND = 5.0
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")  # the reference machine's console is cp1252
     failed = 0
     print("## A. Contrast matrix (ratio per theme; bar per role)\n")
     print("| Element | fg | bg | role | dark | light | hc | verdict |")
