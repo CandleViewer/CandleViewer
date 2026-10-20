@@ -11,9 +11,10 @@
   (`ExecutionRepository.commit_fill`). An `exec_id` stored already refuses it, as the machine has
   just counted it (S4): for an `EXEC` whose execution this order holds as `StaleOrderState`, since
   the row holds a fill the machine did not know, so the facade rebuilds the machine from the row
-  (24 Sec.8.2 S7); for one another order holds (hostile or misrouted, OM-T04), for one whose
-  holder is not read within `HOLDER_READ_TIMEOUT`, and for a finding, as a `ValueError`, which
-  rebuilds nothing;
+  (24 Sec.8.2 S7); for one another order holds (hostile or misrouted, OM-T04), and for a
+  finding, as a `ValueError`, which rebuilds nothing; for one whose holder is not read within
+  `HOLDER_READ_TIMEOUT` as `HolderNotRead`, which rebuilds nothing either and which a later
+  delivery may pass;
 * any other step is a compare-and-set of the state with its event (`OrderRepository.transition`).
   A `filled` step needs its execution: the store refuses `filled` without one (OM-R02).
 
@@ -57,6 +58,7 @@ from candleviewer.storage.repositories.orders import (
     StaleOrderState,
 )
 
+from .errors import HolderNotRead
 from .repository import ExecutionRepository, OrderRepository
 
 __all__ = ["HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "OrderStepWriter", "event_kind"]
@@ -65,7 +67,8 @@ __all__ = ["HOLDER_READ_TIMEOUT", "MAX_EXPECTED", "OrderStepWriter", "event_kind
 MAX_EXPECTED: Final = 1024
 #: Seconds the read of which order holds a stored `exec_id` may take, a quarter of the step's
 #: `CV_PERSIST_TIMEOUT` (C-2.18): the step wrote nothing, so a read that does not answer in time
-#: refuses it as another order's execution would be, never as an outcome in doubt.
+#: refuses it (`HolderNotRead`), as a store that did not serve would, never as an outcome in doubt
+#: or as a refusal of the fill's own data.
 HOLDER_READ_TIMEOUT: Final = CV_PERSIST_TIMEOUT / 4
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 #: Wide enough that a fill's value, qty times price, is exact before the column check refuses it.
@@ -170,9 +173,10 @@ class OrderStepWriter:
             async with asyncio.timeout(HOLDER_READ_TIMEOUT):
                 stored = await self._executions.get(account, str(step.payload.get("exec_id")))
         except TimeoutError:
-            # Nothing was written: refused, as for another order's execution. Were it this
-            # order's, the machine stays behind its row until one of its writes meets the row.
-            raise ValueError("the execution is stored already; its order was not read") from None
+            # Nothing was written: refused, but not for the fill's own data, as a later read may
+            # answer. Were it this order's, the machine stays behind its row until one of its
+            # writes meets the row.
+            raise HolderNotRead("the execution is stored already; its order was not read") from None
         if stored is None or stored.order_id != order_id:
             # Another order's execution under this order's pairing fields: hostile or misrouted
             # (OM-T04), never a row that moved on, so nothing is rebuilt for it.

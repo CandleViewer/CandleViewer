@@ -559,9 +559,34 @@ def test_a_failing_guard_denies_and_logs_once() -> None:
 
 def test_text_and_id_bounds_are_pinned() -> None:
     """A negative zero renders as `0`; an id of 1 and of `MAX_TEXT` characters is
-    taken, 0 and `MAX_TEXT + 1` are not."""
+    taken, 0 and `MAX_TEXT + 1` are not, nor one holding a control character (OM-T04)."""
     assert b01._text(Decimal("-0")) == "0" and b01._text(Decimal("-0.000")) == "0"
     assert [b01._id("x" * n) is not None for n in (0, 1, 64, 65)] == [False, True, True, False]
+    controls = ["e\x001", "e\n1", "\t", "e\x1f", "e\x7f", "e\x80", "e\x9f"]
+    assert [b01.text_id(text) for text in controls] == [None] * len(controls)
+    assert [b01.text_id(text) for text in ("e 1", "e\xa01", "BTC-é")] == ["e 1", "e\xa01", "BTC-é"]
+    assert b01.text_id(7) is None and b01._id is b01.text_id
+
+
+@pytest.mark.parametrize(
+    ("exec_id", "over"),
+    [("e\x001", {}), ("e1", {"fee_currency": "US\x00DT"}), ("e1", {"fee_currency": "US\nDT"})],
+)
+async def test_a_fill_holding_a_control_character_is_refused_as_hostile(
+    exec_id: str, over: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OM-T04: an `exec_id` or a fee currency holding a control character is refused by B1's
+    admission, logged at ERROR, never applied, so the write-ahead store never meets text a
+    Postgres column cannot hold (NUL), and the facade answers it with `FAULT`."""
+    monkeypatch.setattr(b01, "_hook", AsyncMock())
+    ctx = _ctx()
+    event = _exec(exec_id, "0.4", **over)
+    assert not b01.exec_new_and_closes(ctx, event) and not b01.exec_new_and_partial(ctx, event)
+    with capture_logs() as logs:
+        await _run("audit_guard_denied", ctx, event)
+    assert [e["log_level"] for e in logs] == ["error"]
+    assert logs[0]["reason"] not in (b01.REPEAT, b01.UNBOUND)
+    assert (await _run("apply_fill", ctx, event))["seen_exec_ids"] == []
 
 
 async def test_an_exec_before_the_bind_waits_and_is_logged_below_error(

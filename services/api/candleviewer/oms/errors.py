@@ -47,15 +47,23 @@ class OrderStepRefused(OmsError):
     but a `RECON_MISS` self-loop's second row makes the next hydration refuse the history (it
     pages), and a `SEND`'s `submitting` row is sent by a restart's hydration (24 Sec.8.2 "An
     unknown outcome", residuals). `failure` is the error's class. `deterministic` says the step's
-    own data was refused (a `ValueError`, a `FillRefused` or a named constraint: hostile or
-    malformed, OM-T04), so the same event is refused on every delivery; it is False for a
-    failure that may pass later, such as a store that did not serve."""
+    own data was refused (a `ValueError`, a `FillRefused`, a named constraint, or a statement the
+    database refused with a data-class SQLSTATE, 22 or 23: hostile or malformed, OM-T04), so the
+    same event is refused on every delivery; it is False for a failure that may pass later, such
+    as a store that did not serve or a read it did not answer in time (`HolderNotRead`)."""
 
     def __init__(self, event: str, failure: str, *, deterministic: bool = False) -> None:
         super().__init__(f"the order did not take {event}: {failure}")
         self.event = event
         self.failure = failure
         self.deterministic = deterministic
+
+
+class HolderNotRead(OmsError):
+    """A fill's `exec_id` is stored already, and the read of which order holds it did not answer
+    within `HOLDER_READ_TIMEOUT` (24 Sec.8.2 S4): the step wrote nothing and is refused, but a
+    later delivery may pass, as the read may answer then. Never a refusal of the fill's own data,
+    and never an outcome in doubt, which would rebuild the machine."""
 
 
 class OrderStepUnknown(OmsError):

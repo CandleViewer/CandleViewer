@@ -67,6 +67,7 @@ from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.gateway import Gateway, GatewayError, receipt_is_conclusive
 from candleviewer.statechart.persistence import ChainTripLatch, MachineKey
 from candleviewer.statechart.plugins import LogPager, MachineEventSink, Pager, cv_plugins
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import (
     LIFECYCLE_STATE_OF,
     MAX_EVENT_PAGE,
@@ -178,6 +179,10 @@ _BEHIND_ROW: Final = (b01.StepOutcomeUnknown, StaleOrderState)
 #: The failures of a rolled-back step that refused its own data (hostile or malformed, OM-T04):
 #: the same event is refused on every delivery (`OrderStepRefused.deterministic`).
 _DATA_REFUSALS: Final = (ValueError, TypeError, LookupError, ArithmeticError, OrderStoreError)
+#: The SQLSTATE classes of a statement the database refused for its data (22, a data exception;
+#: 23, an integrity constraint), which `StorageQueryFailed` carries; an outage's (08, 57) or a
+#: driver failure with none may pass later.
+_DATA_SQLSTATES: Final = frozenset({"22", "23"})
 Outcome = Literal["success", "failure", "denied"]
 Severity = Literal["info", "warning", "error", "critical"]
 #: Command sources that never act on an `untracked` order (S9, SR-E29-12).
@@ -424,10 +429,19 @@ def _outruns(push: Mapping[str, Any], filled: object) -> bool:
 
 
 def _exec_id(push: Mapping[str, Any]) -> str | None:
-    """A push's `exec_id` as B1 keeps one (text of 1 to `MAX_TEXT` characters), else None: a
-    record or a log holds ids, never a caller's value (C-12.6)."""
-    raw = push.get("exec_id")
-    return raw if isinstance(raw, str) and 0 < len(raw) <= b01.MAX_TEXT else None
+    """A push's `exec_id` as B1 keeps one (`b01.text_id`: text of 1 to `MAX_TEXT` characters with
+    no control character), else None: a record or a log holds ids, never a caller's value
+    (C-12.6), and a `FAULT` naming it passes B1's schema and the store."""
+    return b01.text_id(push.get("exec_id"))
+
+
+def _data_refusal(error: BaseException) -> bool:
+    """A rolled-back step's failure refused the step's own data, so every delivery meets it: one
+    of `_DATA_REFUSALS`, or a statement the database refused with a data-class SQLSTATE
+    (`_DATA_SQLSTATES`)."""
+    if isinstance(error, StorageQueryFailed):
+        return (error.sqlstate or "")[:2] in _DATA_SQLSTATES
+    return isinstance(error, _DATA_REFUSALS)
 
 
 def _summary(view: Mapping[str, Any]) -> dict[str, Any]:
@@ -504,14 +518,15 @@ class _Order:
 class _Observer:
     """The facade's plugin, duck-typed (only the factory imports the runtime, CV-LINT-IMPORT): its
     `on_transition` runs once a step has committed, and never for a rolled-back one, which
-    `on_transition_failed` reports instead (with each failed action's error)."""
+    `on_transition_failed` reports instead (its trigger, with each failed action's error), before
+    the rollback restores the machine."""
 
     __slots__ = ("_failed", "_order", "_stepped")
 
     def __init__(
         self,
         stepped: Callable[[_Order, Any], None],
-        failed: Callable[[_Order, Any], None],
+        failed: Callable[[_Order, Any, str, Any], None],
         order: _Order,
     ) -> None:
         self._stepped = stepped
@@ -521,8 +536,9 @@ class _Observer:
     def on_transition(self, interpreter: Any, *_transition: Any) -> None:
         self._stepped(self._order, interpreter)
 
-    def on_transition_failed(self, _interpreter: Any, _transition: Any, failed: Any) -> None:
-        self._failed(self._order, failed)
+    def on_transition_failed(self, interpreter: Any, transition: Any, failed: Any) -> None:
+        trigger = getattr(transition, "event", None)
+        self._failed(self._order, interpreter, trigger if isinstance(trigger, str) else "", failed)
 
 
 class OrderMachines:
@@ -731,8 +747,9 @@ class OrderMachines:
         (INV-B1-h). The orders are killed concurrently, each under its own lock, so a slow order
         delays no other. An order whose machine a resync is rebuilding, or rebuilds while its KILL
         waits (a KILL in doubt included), is killed on the rebuilt machine. Answers the orders
-        whose KILL did not commit, each logged and paged, an order a resync left with no machine
-        among them (24 Sec.8.2 "An unknown outcome"). A reason B1's schema would refuse is cut to
+        whose KILL did not commit, each logged and paged, among them a live order a resync left
+        with no machine (24 Sec.8.2 "An unknown outcome") and one whose hydration, which the KILL
+        waited on, refused its history (OM-T03). A reason B1's schema would refuse is cut to
         `MAX_TEXT`, or `kill` when empty, never refused: a malformed reason must not stop a
         KILL."""
         reason = reason[: b01.MAX_TEXT] or "kill"
@@ -752,9 +769,10 @@ class OrderMachines:
     async def _kill_one(self, o: _Order, reason: str) -> bool:
         """One order's KILL, under its lock, on the machine that holds the order: one a resync
         closed (another caller's, or this KILL's own unknown outcome) leads to the machine it
-        rebuilt, which is killed in turn. True once a KILL commits, or when the machine was
-        evicted (final, MUST-11); False, paged, when it did not commit, when no machine holds the
-        order any more, or when its machine is still being built, so nothing recorded it."""
+        rebuilt, which is killed in turn. True once a KILL commits, or when the closed machine
+        left nothing to kill (`_settled`); False, paged, when it did not commit, when no machine
+        holds a live order any more (a resync, or a hydration whose history was refused, left
+        none), or when its machine is still being built, so nothing recorded it."""
         error = "no machine"
         for _ in range(FOLLOWS):
             async with self._holding(o):
@@ -770,15 +788,26 @@ class OrderMachines:
                     if not o.resynced:
                         break  # refused: the order is as it was
                 elif not o.resynced:
-                    if self._orders.get(o.order_id) is not o:
-                        return True  # evicted
-                    error = "the machine is being built"
-                    break
+                    if self._orders.get(o.order_id) is o:
+                        error = "the machine is being built"
+                    elif await self._settled(o):
+                        return True  # evicted once final (MUST-11), or no live row to kill
+                    break  # a live order with no machine: nothing recorded the KILL
             if o.successor is None:
                 break
             o = o.successor
         self._page("oms_kill_not_recorded", o, error=error)
         return False
+
+    async def _settled(self, o: _Order) -> bool:
+        """A machine closed by no resync left nothing to kill: it was evicted once final (MUST-11),
+        or the order has no row (its first step was refused, S7) or a final one. A live row whose
+        machine is gone, as a hydration whose history was refused leaves it (OM-T03), has nothing
+        to record a KILL; a row that cannot be read raises."""
+        if o.lifecycle in self.legality.finals:
+            return True
+        row = await self._bounded(self._ports.orders.get(o.account_id, o.order_id))
+        return row is None or _row_state(row) in self.legality.finals
 
     async def idle(self) -> None:
         """Until no turn is pending (the composition root's shutdown, and tests). It waits on the
@@ -1066,14 +1095,14 @@ class OrderMachines:
     async def _send_order(self, o: _Order, event: str, payload: Mapping[str, Any]) -> None:
         """Through the gateway, the only send path (E50-T15), as *event*: the payload cannot
         rename it. A step B1 rolled back raises `OrderStepRefused`, `deterministic` when it
-        refused its own data (`_DATA_REFUSALS`), or `OrderStepUnknown` when its row may be ahead
+        refused its own data (`_data_refusal`), or `OrderStepUnknown` when its row may be ahead
         of the machine (`_BEHIND_ROW`, which also set `resync`); a deferred one is no error (S10),
         and no receipt is a gate (CV-C06)."""
         receipt = await self._gateway.send(o.key, {**payload, "type": event}, wait=_AWAIT_STEP)
         if receipt_is_conclusive(receipt) and (error := receipt.error) is not None:
             if isinstance(error, _BEHIND_ROW):
                 raise OrderStepUnknown(event, type(error).__name__)
-            data = isinstance(error, _DATA_REFUSALS)
+            data = _data_refusal(error)
             raise OrderStepRefused(event, type(error).__name__, deterministic=data)
 
     async def _take(self, o: _Order, event: str, push: dict[str, Any]) -> bool:
@@ -1348,14 +1377,30 @@ class OrderMachines:
 
     # --- The observer: every committed step (C-2.20, CV-C02, OM-I02) -----------------------------
 
-    def _failed(self, o: _Order, failed: Any) -> None:
+    def _failed(self, o: _Order, interp: Any, trigger: str, failed: Any) -> None:
         """A step B1 rolled back (S11). When a failure leaves its row perhaps ahead of the machine
         (`_BEHIND_ROW`), the next settle rebuilds the machine: a caller settles before it lets go
-        of the order, and a step no caller drove (an invoke's answer) gets a turn."""
+        of the order, and a step no caller drove (an invoke's answer) gets a turn. When the store
+        refused a service result's step for its data (`done.invoke.<id>`: a place ack naming an
+        exchange order id another order of the account holds, say), the attempt is recorded as
+        failed (`b01.fail_attempt`), so the invoke the rollback re-arms takes the order to
+        `unknown` (S1), where reconciliation decides, rather than answering the same result into
+        the same refusal until the runtime cuts the chain: the order would rest in its invoking
+        state with nothing running and no stop started for a position the exchange may have
+        opened (C-2.6)."""
+        if o.replaying is not None:
+            return
         errors = [error for _action, error in failed or ()]
-        if o.replaying is None and any(isinstance(error, _BEHIND_ROW) for error in errors):
+        if any(isinstance(error, _BEHIND_ROW) for error in errors):
             o.resync = True
             self._schedule(o)
+            return
+        invoke = trigger.removeprefix("done.invoke.")
+        refused = next((error for error in errors if _data_refusal(error)), None)
+        if invoke != trigger and refused is not None:
+            link, failure = o.view.get("order_link_id"), type(refused).__name__
+            logger().error("oms_invoke_result_refused", order_link_id=link, error=failure)
+            b01.fail_attempt(interp.context, invoke, failure)
 
     def _stepped(self, o: _Order, interp: Any) -> None:
         """A step committed (a rolled-back one never gets here, so its notices never do, CV-C02):

@@ -288,6 +288,48 @@ async def test_a_failed_command_fails_again_with_nothing_resent(commands: Comman
     assert commands.kinds() == ["place"]
 
 
+@pytest.mark.parametrize("invoke", ["place", "cancel", "amend"])
+async def test_an_attempt_whose_result_the_store_refused_fails_again_with_nothing_sent(
+    commands: Commands, invoke: str
+) -> None:
+    """S1: once the facade records that the store refused a result's step for its data
+    (`fail_attempt`), the invoke the rollback re-arms fails (`RecordedFailureError`), so `onError`
+    takes the order to `unknown`; the recorded result is never answered again, and nothing is
+    sent."""
+    ctx = _ctx(amend_terms={"price": "64000"})
+    _begun(ctx, invoke)
+    services = {"place": b01.place_order, "cancel": b01.cancel_order, "amend": b01.amend_order}
+    await services[invoke](None, ctx, None)
+    b01.fail_attempt(ctx, invoke, "OrderConstraintError")
+    with pytest.raises(b01.RecordedFailureError, match="OrderConstraintError"):
+        await services[invoke](None, ctx, None)
+    assert commands.kinds() == [invoke]
+
+
+async def test_a_refused_result_of_another_invoke_marks_no_attempt(commands: Commands) -> None:
+    """Only the `lifecycle` invokes' results commit a step: another invoke's id (the stop's
+    attach) marks no attempt, and an unknown one neither."""
+    ctx = _ctx()
+    _begun(ctx, "place")
+    before = {key: (a.result, a.failure) for key, a in b01._ATTEMPTS.items()}
+    for invoke in ("attach_sl", "nope"):
+        b01.fail_attempt(ctx, invoke, "OrderConstraintError")
+    assert {key: (a.result, a.failure) for key, a in b01._ATTEMPTS.items()} == before
+    assert await b01.place_order(None, ctx, None) == {"ok": True, "exchange_order_id": "x1"}
+
+
+async def test_a_refused_result_with_no_attempt_left_fails_the_re_armed_invoke(
+    commands: Commands,
+) -> None:
+    """C-2.18: an attempt the bounded store dropped is recorded as failed all the same, so the
+    re-armed invoke never looks the id up and sends again (SR-E29-15)."""
+    ctx = _ctx()
+    b01.fail_attempt(ctx, "place", "OrderConstraintError")
+    with pytest.raises(b01.RecordedFailureError):
+        await b01.place_order(None, ctx, None)
+    assert commands.sent == []
+
+
 FOUND: dict[str, Any] = {"exchange_order_id": "x9", "order_link_id": LINK}
 FOUND["account_id"] = str(ACCOUNT)
 FOUND |= {"symbol": "BTCUSDT", "side": "buy", "qty": "1", "price": "63000", "stop_loss": "62000"}

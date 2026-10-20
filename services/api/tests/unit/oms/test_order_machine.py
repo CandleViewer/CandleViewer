@@ -49,7 +49,7 @@ from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import GatewayOverloadedError
 from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.statechart.registry import Registry
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.orders import NewOrder, NewOrderEvent, OrderTransition
 from tests.unit.oms.order_rig import (
     ACCOUNT,
@@ -703,21 +703,153 @@ async def test_a_held_fill_the_store_refuses_for_its_data_is_answered_not_held_a
 
 
 @pytest.mark.parametrize(
-    ("over", "outage", "deterministic"),
-    [({"source": "paper"}, False, True), ({}, True, False)],
+    ("over", "fault", "deterministic"),
+    [
+        ({"source": "paper"}, None, True),
+        ({}, StorageTierUnavailable("postgres unreachable"), False),
+        ({}, StorageQueryFailed("22021"), True),  # a data exception: text the column cannot hold
+        ({}, StorageQueryFailed("23502"), True),  # an integrity constraint the store names not
+        ({}, StorageQueryFailed("08006"), False),  # the connection failed
+        ({}, StorageQueryFailed("57014"), False),  # the statement was cancelled
+        ({}, StorageQueryFailed(None), False),  # a driver failure with no SQLSTATE
+    ],
 )
 async def test_a_refused_fill_says_whether_a_redelivery_meets_the_same_refusal(
-    rig: Rig, over: dict[str, Any], outage: bool, deterministic: bool
+    rig: Rig, over: dict[str, Any], fault: Exception | None, deterministic: bool
 ) -> None:
-    """S7: a step the store refused for the push's own data is refused on every delivery
-    (`deterministic`); one it refused while it did not serve may pass later."""
+    """S7, OM-T04: a step the store refused for the push's own data is refused on every delivery
+    (`deterministic`): a domain refusal, or a statement the database refused with a data-class
+    SQLSTATE (22, 23). One it refused while it did not serve, or with an outage's SQLSTATE or
+    none, may pass later."""
     order = await rig.submitted()
-    if outage:
-        rig.store.fail_next(StorageTierUnavailable("postgres unreachable"))
+    if fault is not None:
+        rig.store.fail_next(fault)
     with pytest.raises(OrderStepRefused) as refused:
         await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4", **over))
     assert refused.value.deterministic is deterministic
     assert rig.facade.state(order.id) == ("submitted", "not_required")
+
+
+@pytest.mark.parametrize(
+    ("exec_id", "over"),
+    [("e\x001", {}), ("e1", {"fee_currency": "US\x00DT"}), ("e\n1", {})],
+    ids=["nul-exec-id", "nul-fee-currency", "newline-exec-id"],
+)
+async def test_a_fill_holding_a_control_character_quarantines_the_order_once(
+    rig: Rig, exec_id: str, over: dict[str, Any]
+) -> None:
+    """OM-T04, C-2.18: an `exec_id` or a fee currency holding a control character (NUL, which no
+    Postgres text column holds, included) is refused by B1's admission, never by the write-ahead
+    store on every delivery: the first delivery quarantines the order, audited, and a redelivery
+    raises nothing and writes nothing."""
+    order = await rig.submitted()
+    hostile = fill_of(order, exec_id, "0.4", **over)
+    for _ in range(2):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", hostile)
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("quarantined", "not_required")
+    events = await rig.events.list_for_order(ACCOUNT, order.id)
+    assert [e.to_state for e in events].count("quarantined") == 1
+    assert "guard_denied" in rig.audit.reasons("oms.reconcile_anomaly")
+    assert rig.context(order)["seen_exec_ids"] == []
+
+
+async def test_a_held_fill_holding_nul_is_answered_by_b1_and_never_held_again(rig: Rig) -> None:
+    """OM-T04, C-2.18: a fill whose `exec_id` holds NUL outran the place ack and waits for the
+    bind; then B1's admission refuses it, audited, and the facade answers it with FAULT:
+    quarantined on its first release, nothing written and nothing held for a later turn."""
+    order, gate = await _sent_unbound(rig)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e\x001", "0.4"))
+    gate.set()
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("quarantined", "not_required")
+    assert rig.facade._orders[order.id].held == []
+    assert "oms_held_push_dropped" not in rig.pager.calls
+    events = await rig.events.list_for_order(ACCOUNT, order.id)
+    assert [e.to_state for e in events][-1] == "quarantined"
+    assert rig.context(order)["seen_exec_ids"] == []
+
+
+async def test_a_held_fill_whose_holder_is_not_read_waits_and_is_never_quarantined(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4, C-2.18: a held fill whose step meets a stored `exec_id` whose holder is not read in
+    time is refused, but not for its own data (`HolderNotRead`): it waits for a later turn,
+    `MAX_RELEASES` times at most, then drops, paged, for reconciliation to apply again (24
+    Sec.8.5 step 2). It is never answered as a hostile fill, so the order is not quarantined."""
+    monkeypatch.setattr("candleviewer.oms.order_machine.MAX_RELEASES", 2)
+    b = await rig.submitted(order_of(2))
+    await rig.facade.push(ACCOUNT, b.id, "EXEC", fill_of(b, "eB", "0.4"))
+    await rig.quiet()
+    a = await _unknown(rig)
+    await rig.facade.push(ACCOUNT, a.id, "EXEC", fill_of(a, "eB", "0.1"))  # unbound: it waits
+
+    async def stalled(_account_id: UUID, _exec_id: str) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(rig.fills, "get", stalled)
+    monkeypatch.setattr("candleviewer.oms.order_steps.HOLDER_READ_TIMEOUT", 0.0)
+    found = {"exchange_order_id": "x1"}
+    await rig.facade.command(ACCOUNT, a.id, "RECON_FOUND_LIVE", found, actor="system")
+    assert len(rig.facade._orders[a.id].held) == 1  # refused once, not for its data: it waits
+    assert rig.facade.state(a.id) == ("submitted", "not_required")
+    await rig.facade.push(ACCOUNT, a.id, "TRIGGERED", {"updated_time": 1})
+    assert rig.facade._orders[a.id].held == []
+    assert rig.pager.calls.count("oms_held_push_dropped") == 1
+    assert rig.facade.state(a.id) == ("triggered", "not_required")
+    assert "guard_denied" not in rig.audit.reasons("oms.reconcile_anomaly")
+
+
+async def test_a_place_ack_the_store_refuses_for_its_data_lands_in_unknown_once(
+    rig: Rig,
+) -> None:
+    """S1, C-2.6: a place ack naming the exchange order id another order of the account holds is
+    refused by the store for its data (`ux_orders_exch_id`). The attempt is recorded as failed,
+    so the place the rollback re-arms lands in `unknown` once, with one page and nothing resent,
+    rather than answering the same ack into the same refusal until the runtime cuts the chain
+    with nothing running. Reconciliation then binds the order's own id, and its fill starts the
+    stop (24 Sec.8.8 rule 2)."""
+    await rig.submitted(order_of(1))  # bound as `x1`
+
+    async def taken(_command: b01.Command) -> Mapping[str, Any]:
+        return {"ok": True, "exchange_order_id": "x1"}
+
+    rig.commands.on_place = taken
+    order = order_of(2)
+    await rig.start(order)
+    with capture_logs() as logs:
+        await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+        await rig.quiet()
+    assert rig.facade.state(order.id) == ("unknown", "not_required")
+    assert rig.pager.calls.count("transition failed: order") == 1
+    assert rig.commands.kinds() == ["place", "place"]  # one send per order: nothing resent (S1)
+    refused = [e["error"] for e in logs if e["event"] == "oms_invoke_result_refused"]
+    assert refused == ["OrderConstraintError"]
+    assert rig.context(order)["exchange_order_id"] is None
+    found = {"exchange_order_id": "x2"}
+    await rig.facade.command(ACCOUNT, order.id, "RECON_FOUND_LIVE", found, actor="system")
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.4"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    assert rig.commands.kinds()[-1] == "attach_stop"
+
+
+async def test_a_place_ack_whose_step_meets_an_outage_is_taken_once_the_store_serves(
+    rig: Rig,
+) -> None:
+    """S7, S1: an outage refuses the step a place ack would commit, which may pass later: the
+    attempt keeps its result (only a refusal of the step's own data fails it), so the place the
+    rollback re-arms answers the recorded ack again, nothing resent, and the order is bound."""
+    order = order_of()
+    gate, rig.commands.on_place = gated({"ok": True, "exchange_order_id": "x1"})
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    rig.store.fail_next(StorageTierUnavailable("postgres unreachable"))
+    gate.set()
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    assert rig.context(order)["exchange_order_id"] == "x1"
+    assert rig.commands.kinds() == ["place"]
 
 
 async def test_a_lost_kill_is_sent_again_ahead_of_a_held_fill_the_store_refuses(
@@ -943,7 +1075,8 @@ async def test_a_hostile_fill_whose_fault_is_refused_leaves_the_order_as_it_was(
 
 async def test_a_caller_that_waited_out_an_eviction_takes_the_evicted_path(rig: Rig) -> None:
     """Every send runs under the order's lock. A push, a command, a KILL and a turn that waited
-    while the machine was evicted find it gone; one turn is ever pending per order."""
+    while the machine was evicted find it gone; one turn is ever pending per order. The order's
+    row is live, so the KILL, which no machine recorded, answers it, paged (INV-B1-h)."""
     order = await rig.submitted()
     o = rig.facade._orders[order.id]
     async with o.lock:
@@ -959,7 +1092,8 @@ async def test_a_caller_that_waited_out_an_eviction_takes_the_evicted_path(rig: 
     for waited in (push, cancel):
         with pytest.raises(OrderNotLoaded):  # its row is live: `hydrate` brings it back
             await waited
-    assert await kill == ()
+    assert await kill == (order.id,)  # nothing recorded the KILL of a live row (C-2.9)
+    assert rig.pager.calls == ["oms_kill_not_recorded"]
     await rig.facade.idle()
     await rig.facade._close(o, publish=False)  # closing twice is harmless
     assert rig.commands.kinds() == ["place"]
@@ -1438,10 +1572,11 @@ async def test_a_slow_kill_cancel_delays_no_other_orders_kill(rig: Rig) -> None:
     assert row is not None and row.state == "killed"
 
 
-@pytest.mark.parametrize("exec_id", ["e" * 100_000, 123, ""])
+@pytest.mark.parametrize("exec_id", ["e" * 100_000, 123, "", "e\x001", "e\r\n1"])
 async def test_an_s6_record_keeps_no_exec_id_b1_would_not_keep(rig: Rig, exec_id: object) -> None:
     """C-12.6: a push for an evicted final order never met B1's closed schema; its `exec_id`
-    enters the record and the log only as B1 keeps one (text of 1 to `MAX_TEXT` characters)."""
+    enters the record and the log only as B1 keeps one (`b01_order.text_id`: text of 1 to
+    `MAX_TEXT` characters with no control character)."""
     order = await rig.submitted()
     await rig.facade.push(ACCOUNT, order.id, "EXPIRE", {"updated_time": 5})
     await rig.quiet()
@@ -1804,6 +1939,81 @@ async def test_a_kill_while_a_first_row_is_in_doubt_kills_the_rebuilt_machine(
     assert await kill == ()
     row = await rig.orders.get(ACCOUNT, UUID(int=1))
     assert row is not None and row.state == "killed" and rig.commands.sent == []
+
+
+async def test_a_kill_that_waited_on_a_refused_first_step_finds_nothing_to_kill(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S7, INV-B1-h: a KILL that waited on the lock of an order whose first row the store then
+    refuses finds no machine and no row: nothing is left to kill, so it is neither answered nor
+    paged (C-2.21 refused the order's sends meanwhile)."""
+    send, held = rig.facade._send_order, asyncio.Event()
+
+    async def held_at_validate(o: Any, event: str, payload: Mapping[str, Any]) -> None:
+        if event == "VALIDATE":  # the order's first step holds its lock until the KILL waits
+            await held.wait()
+        await send(o, event, payload)
+
+    monkeypatch.setattr(rig.facade, "_send_order", held_at_validate)
+    order = order_of()
+    starting = asyncio.ensure_future(rig.start(order))
+    await rig.quiet()
+    assert rig.facade._orders[order.id].lock.locked()
+    killing = asyncio.ensure_future(rig.facade.kill("kill switch engaged"))
+    await rig.quiet()
+    rig.store.fail_next(StorageTierUnavailable("postgres unreachable"))
+    held.set()
+    with pytest.raises(OrderStepRefused):
+        await starting
+    assert await killing == ()
+    assert "oms_kill_not_recorded" not in rig.pager.calls
+    assert await rig.orders.get(ACCOUNT, order.id) is None
+
+
+async def test_a_kill_that_waited_out_a_final_orders_eviction_answers_nothing(rig: Rig) -> None:
+    """MUST-11, INV-B1-h: a KILL that waited on the lock of a filled order whose machine was then
+    evicted, its stop settled, finds no machine: the order is final, so nothing is left to kill,
+    and it is neither answered nor paged."""
+    order = await rig.submitted()
+    gate, rig.commands.on_attach = gated(READ_BACK)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("filled", "sl_pending")
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+        await asyncio.sleep(0)
+        await rig.facade._close(o, publish=True)
+    assert await kill == ()
+    assert "oms_kill_not_recorded" not in rig.pager.calls
+    gate.set()
+
+
+async def test_a_kill_that_finds_the_order_final_on_its_row_answers_nothing(rig: Rig) -> None:
+    """INV-B1-h: a KILL that waited out the close of an order's machine finds no machine, and a
+    row that some write already ended (a COMMIT the machine never saw): nothing is left to kill,
+    so the order is neither answered nor paged."""
+    order = await rig.submitted()
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+        await asyncio.sleep(0)
+        ended = NewOrderEvent(
+            kind="exchange_push", source="ws_private", event_ts=T0, payload={"updated_time": 5}
+        )
+        await rig.store.transition(
+            OrderTransition(
+                account_id=ACCOUNT,
+                order_id=order.id,
+                from_state="accepted",
+                to_state="cancelled",
+                event=ended,
+                lifecycle_state="cancelled",
+            )
+        )
+        await rig.facade._close(o, publish=False)
+    assert await kill == ()
+    assert "oms_kill_not_recorded" not in rig.pager.calls
 
 
 async def test_a_kill_reports_an_order_whose_machine_is_still_being_built(
@@ -2170,8 +2380,9 @@ async def test_a_fill_whose_holder_is_not_read_in_time_is_refused_without_a_resy
 ) -> None:
     """S4, C-2.18: the read of which order holds a stored `exec_id` is bounded on its own
     (`HOLDER_READ_TIMEOUT`), so one that stalls refuses the fill with nothing written
-    (`OrderStepRefused`), as another order's is: it never runs out the step's write budget into
-    an unknown outcome, which would page and rebuild the machine."""
+    (`OrderStepRefused`): it never runs out the step's write budget into an unknown outcome,
+    which would page and rebuild the machine, and it is no refusal of the fill's own data
+    (`HolderNotRead`, not `deterministic`), as a redelivery may meet a read that answers."""
     a, b = await rig.submitted(order_of(1)), await rig.submitted(order_of(2))
     await rig.facade.push(ACCOUNT, b.id, "EXEC", fill_of(b, "eB", "0.4"))
     await rig.quiet()
@@ -2183,8 +2394,9 @@ async def test_a_fill_whose_holder_is_not_read_in_time_is_refused_without_a_resy
 
     monkeypatch.setattr(rig.fills, "get", stalled)
     monkeypatch.setattr("candleviewer.oms.order_steps.HOLDER_READ_TIMEOUT", 0.0)
-    with pytest.raises(OrderStepRefused, match="ValueError"):
+    with pytest.raises(OrderStepRefused, match="HolderNotRead") as refused:
         await rig.facade.push(ACCOUNT, a.id, "EXEC", fill_of(a, "eB", "0.1"))
+    assert refused.value.deterministic is False
     await rig.quiet()
     assert rig.facade._orders[a.id] is machine
     assert rig.facade.state(a.id) == ("submitted", "not_required")

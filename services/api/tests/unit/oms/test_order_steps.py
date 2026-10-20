@@ -14,11 +14,13 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
+from jsonschema import Draft202012Validator
 
 from candleviewer.oms import ExecutionRepository, OrderRepository
 from candleviewer.oms import order_steps as steps
+from candleviewer.oms.errors import HolderNotRead
 from candleviewer.oms.execution import apply_fields
 from candleviewer.oms.fakes import InMemoryExecutionStore, InMemoryOrderStore
 from candleviewer.oms.order_steps import OrderStepWriter
@@ -263,8 +265,9 @@ async def test_an_exec_whose_holder_is_not_read_in_time_is_refused(
 ) -> None:
     """S4, C-2.18: the read of which order holds a stored `exec_id` has its own bound,
     `HOLDER_READ_TIMEOUT`, a quarter of the step's `CV_PERSIST_TIMEOUT`: a read that does not
-    answer in time refuses the step with nothing written (`ValueError`), never running out the
-    step's budget into an outcome in doubt."""
+    answer in time refuses the step with nothing written (`HolderNotRead`), never running out the
+    step's budget into an outcome in doubt, and never as a refusal of the fill's own data
+    (`ValueError`), which a later delivery, when the read answers, may pass."""
     assert steps.HOLDER_READ_TIMEOUT == CV_PERSIST_TIMEOUT / 4
     await _submitted(writer)
     other = NewExecution(
@@ -280,8 +283,9 @@ async def test_an_exec_whose_holder_is_not_read_in_time_is_refused(
 
     monkeypatch.setattr(writer._executions, "get", stalled)
     monkeypatch.setattr(steps, "HOLDER_READ_TIMEOUT", 0.0)
-    with pytest.raises(ValueError, match="its order was not read"):
+    with pytest.raises(HolderNotRead, match="its order was not read") as refused:
         await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    assert not isinstance(refused.value, ValueError)
     assert await _events(db) == before
 
 
@@ -313,8 +317,11 @@ def _plain(value: Decimal) -> str:
 
 #: An execution's money and time over what B1's closed schema takes (`_DECIMAL`: numeric(38,18)'s
 #: 20 and 18 digits; `ts_exec` up to the last instant a `datetime` holds), with a qty and price
-#: an order of `_ROOM` absorbs, so the guards admit enough of them.
+#: an order of `_ROOM` absorbs, so the guards admit enough of them; and its `exec_id` and fee
+#: currency as text the schema takes (1 to `MAX_TEXT` characters of any kind), control
+#: characters included, NUL among them, which no Postgres text column holds.
 _MONEY = st.from_regex(b01._DECIMAL, fullmatch=True)
+_TEXT = st.text(min_size=1, max_size=b01.MAX_TEXT)
 _ADMISSIBLE = st.fixed_dictionaries(
     {
         "qty": st.decimals(min_value=Decimal("0.001"), max_value=1000, places=3).map(_plain),
@@ -323,21 +330,29 @@ _ADMISSIBLE = st.fixed_dictionaries(
         "fee_rate": st.one_of(st.sampled_from(("0.0002", "-0.0001")), _MONEY),
         "closed_pnl": st.one_of(st.none(), _MONEY),
         "ts_exec": st.integers(min_value=0, max_value=b01.MAX_EXCHANGE_US),
+        "exec_id": st.one_of(st.just("e1"), _TEXT),
+        "fee_currency": st.one_of(st.just("USDT"), _TEXT),
     }
 )
 _ROOM = "1000000"
+_PLAIN: dict[str, Any] = {"qty": "0.4", "price": "63000", "fee": "0", "fee_rate": "0.0002"}
+_PLAIN |= {"closed_pnl": None}
+_PLAIN |= {"ts_exec": 1_000_000, "exec_id": "e1", "fee_currency": "USDT"}
+_EXEC_SCHEMA = Draft202012Validator(b01.SCHEMAS["EXEC"])
 
 
 @settings(max_examples=150, deadline=None, derandomize=True)
-@given(money=_ADMISSIBLE)
+@given(fields=_ADMISSIBLE)
+@example(fields=_PLAIN | {"exec_id": "e\x001"})
+@example(fields=_PLAIN | {"fee_currency": "US\x00DT"})
 async def test_every_fill_b1_admits_is_one_its_write_ahead_step_stores(
-    money: dict[str, Any],
+    fields: dict[str, Any],
 ) -> None:
     """OM-T04, C-2.19: B1's admission (its closed schema, then the EXEC guards over the OMS's
     `apply_execution`) bounds every field `_fill` writes at least as tightly as the `executions`
-    row does (`NewExecution`: numeric(38,18), and numeric(18,10) for `fee_rate`). So the store
-    never refuses an admitted fill for its own data, which the machine would roll back on every
-    delivery."""
+    row does (`NewExecution`: numeric(38,18), numeric(18,10) for `fee_rate`, and text with no
+    NUL). So the store never refuses an admitted fill for its own data, which the machine would
+    roll back on every delivery."""
     db = InMemoryOrderStore(clock=lambda: T0)
     executions = ExecutionRepository(InMemoryExecutionStore(db))
     writer = OrderStepWriter(OrderRepository(db), executions, clock=lambda: T0)
@@ -346,7 +361,8 @@ async def test_every_fill_b1_admits_is_one_its_write_ahead_step_stores(
     await writer(_step("validated", "submitting", "SEND", qty=_ROOM))
     ack = {"ok": True, "exchange_order_id": "x1"}
     await writer(_step("submitting", "submitted", "done.invoke.place", ack, qty=_ROOM))
-    payload = EXECUTION | money
+    payload = EXECUTION | fields
+    _EXEC_SCHEMA.validate(payload)
     context = CONTEXT | {"qty": _ROOM, "leaves_qty": _ROOM, "exchange_order_id": "x1"}
     context["seen_exec_ids"] = []
     event = SimpleNamespace(type="EXEC", payload=payload)

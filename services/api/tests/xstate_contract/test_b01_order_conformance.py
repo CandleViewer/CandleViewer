@@ -136,7 +136,7 @@ async def _resting(point: tuple[str, str]) -> AsyncIterator[tuple[Rig, NewOrder,
 
 
 async def _sealed(interp: Any, key: MachineKey, keys: Keys) -> SealedSnapshot:
-    repo = Repo()
+    repo, pager = Repo(), Pager()
     seal = hmac_sealer(keys, CHART)
     persister = Persister(
         repo=repo,
@@ -144,8 +144,10 @@ async def _sealed(interp: Any, key: MachineKey, keys: Keys) -> SealedSnapshot:
         audit=Audit(),
         seal=seal,
         machine_hash_of=REGISTRY.hash,
+        pager=pager,
     )
     await persister.persist(interp, key=key)
+    assert pager.pages == []  # the persist met no fault to page (24 Sec.17.6)
     envelope: SealedSnapshot = repo.rows[key]
     return envelope
 
@@ -158,7 +160,7 @@ def _restorer(keys: Keys, audit: Audit, pager: Pager) -> Restorer:
         audit=audit,
         pager=pager,
         latch=ChainTripLatch(),
-        plugins=lambda: [AuditTap()],
+        plugins=lambda _key: [AuditTap()],
         clock=SimulatedClock(),
         lane="order",
     )

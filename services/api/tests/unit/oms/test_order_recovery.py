@@ -718,6 +718,44 @@ async def test_a_history_that_does_not_rebuild_its_row_is_refused_and_pages(
         await again.facade.stop()
 
 
+async def test_a_kill_that_waited_on_a_refused_hydration_reports_the_order(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INV-B1-h, C-2.9, OM-T03: a KILL that waited on the lock of an order whose hydration then
+    refuses its history (a forged fill) finds no machine while the order's row is live: nothing
+    recorded the KILL, so `kill()` answers the order, paged, never as one evicted once final."""
+    order = await _partial(rig)
+    _state, _context, again = await _crashed(rig, order)
+    edit, why = _TAMPER["fill_forged"]
+    edit(again, order)
+    send, forged = again.facade._send_order, asyncio.Event()
+
+    async def held_at_the_fill(o: Any, event: str, payload: Mapping[str, Any]) -> None:
+        if event == "EXEC":  # the replay holds the order's lock here until the KILL waits on it
+            await forged.wait()
+        await send(o, event, payload)
+
+    monkeypatch.setattr(again.facade, "_send_order", held_at_the_fill)
+    try:
+        hydrating = asyncio.ensure_future(
+            again.facade.hydrate(ACCOUNT, order.id, environment="demo")
+        )
+        await again.quiet()
+        assert again.facade._orders[order.id].lock.locked()
+        killing = asyncio.ensure_future(again.facade.kill("kill switch engaged"))
+        await again.quiet()
+        forged.set()
+        with pytest.raises(OrderHistoryRefused, match=why):
+            await hydrating
+        assert await killing == (order.id,)
+        paged = sorted(again.pager.calls[-2:])
+        assert paged == ["oms_kill_not_recorded", "oms_order_history_refused"]
+        row = await again.orders.get(ACCOUNT, order.id)
+        assert row is not None and row.state == "partially_filled" and again.commands.sent == []
+    finally:
+        await again.facade.stop()
+
+
 async def test_a_replayed_step_writes_no_audit_record(rig: Rig) -> None:
     """A step the record holds was audited when it happened: during a replay B1's audit hook
     writes nothing (no arm into a state an order rests in audits today; this keeps it so)."""

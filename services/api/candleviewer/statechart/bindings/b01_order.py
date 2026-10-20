@@ -220,6 +220,10 @@ MAX_TEXT: Final = 64
 #: The last microsecond since the epoch a `datetime` holds (9999-12-31): no exchange time is later.
 MAX_EXCHANGE_US: Final = 253_402_300_799_999_999
 _MONEY: Final = re.compile(r"-?[0-9]{1,20}(\.[0-9]{1,18})?")
+#: Control characters (Unicode `Cc`: C0, DEL and C1), which no id, code or text B1 keeps holds:
+#: in an exchange id or code one is hostile or malformed data (OM-T04), and Postgres refuses NUL
+#: in a bound text column (22021), so B1 refuses it before the write-ahead store would.
+_CONTROL: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 #: Deadlines (A2), absolute microseconds the OMS's scheduler fires: the stop is confirmed within
 #: 2 s of the first fill (24 Sec.8.8 rule 2), and an order still `unknown` pages at 60 s (Sec.8.5).
 SL_DEADLINE_US: Final = 2_000_000
@@ -269,8 +273,15 @@ def _leaf(interp: Any, region: str = "lifecycle") -> str | None:
     return next((s[len(head) :] for s in ids if isinstance(s, str) and s.startswith(head)), None)
 
 
-def _id(raw: object) -> str | None:
-    return raw if isinstance(raw, str) and 0 < len(raw) <= MAX_TEXT else None
+def text_id(raw: object) -> str | None:
+    """*raw* as B1 keeps an id or a code: text of 1 to `MAX_TEXT` characters with no control
+    character (`_CONTROL`), else None. The OMS facade keeps an `exec_id` by the same rule."""
+    if isinstance(raw, str) and 0 < len(raw) <= MAX_TEXT and _CONTROL.search(raw) is None:
+        return raw
+    return None
+
+
+_id = text_id
 
 
 def _money(raw: object) -> Decimal:
@@ -371,6 +382,8 @@ def _admit(
         raise ValueError(UNBOUND)
     if not _pairs(context, p):
         raise ValueError("the execution is not a trade of this order's bound exchange order")
+    if p.get("fee_currency") is not None and _id(p.get("fee_currency")) is None:
+        raise ValueError("the execution's fee currency is not text an id holds")
     if len(seen) >= MAX_FILLS:
         raise ValueError("the order holds MAX_FILLS fills")
     if _core is None:
@@ -712,6 +725,30 @@ def _forget_link(link: str) -> None:
         del _ATTEMPTS[key]
 
 
+def _attempt_key(context: Mapping[str, Any], kind: CommandKind) -> tuple[str, str]:
+    """The attempt a *kind* command belongs to: the order and the `event_seq` of the step that
+    entered the invoking state; an attach is one attempt per machine (`begin_replay` forgets it)."""
+    attempt_of = "once" if kind == "attach_stop" else context.get("event_seq")
+    return (_id(context.get("order_link_id")) or "", f"{kind}:{attempt_of}")
+
+
+def fail_attempt(context: Mapping[str, Any], invoke: str, failure: str) -> None:
+    """S1: the write-ahead store refused, for its own data, the step a `place`, `cancel` or
+    `amend` result would commit (a place ack naming an exchange order id another order of the
+    account holds, say). The rollback re-arms the invoke, which would answer the same recorded
+    result into the same refusal until the runtime cuts the chain, leaving the order in its
+    invoking state with nothing running. The attempt is recorded as failed instead, so the
+    re-armed invoke raises `RecordedFailureError` and `onError` takes the order to `unknown` once,
+    where reconciliation decides (24 Sec.8.5). *invoke* is the id of `done.invoke.<id>`; another
+    invoke's attempt is left as it is. The OMS facade calls this from the failed step's report,
+    which comes before the rollback re-arms the invoke."""
+    kinds: dict[str, CommandKind] = {"place": "place", "cancel": "cancel", "amend": "amend"}
+    kind = kinds.get(invoke)
+    if kind is not None:
+        attempt = _remember(_attempt_key(context, kind))
+        attempt.result, attempt.failure = None, failure
+
+
 def _view(context: Mapping[str, Any]) -> dict[str, Any]:
     keys = (*FACTS, "exchange_order_id", "qty", "filled_qty", *TERMS, "reduce_only")
     return {key: context.get(key) for key in keys}
@@ -744,8 +781,7 @@ async def _command(
     port = _ports.commands
     if port is None:
         raise PortMissingError(f"no command port is wired for {kind}")
-    attempt_of = "once" if kind == "attach_stop" else context.get("event_seq")
-    key = (_id(context.get("order_link_id")) or "", f"{kind}:{attempt_of}")
+    key = _attempt_key(context, kind)
     attempt = _ATTEMPTS.get(key)
     if attempt is not None and attempt.failure is not None:
         raise RecordedFailureError(f"{kind} failed before ({attempt.failure}); nothing is resent")
