@@ -1460,8 +1460,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "requests",
         ("cap",),
-        "Server indicator requests refused by a cap: user, symbol or process instances "
-        "(SR-E13-03), the window or the recompute slots (SR-E13-04).",
+        "Server indicator requests refused by a cap: user instances (held, or held and released "
+        "in their grace: the IR-31 churn bound), symbol or process instances (SR-E13-03), the "
+        "window or the recompute slots (SR-E13-04).",
         "sustained = abuse or caps too low (SR-E13-03/04)",
         _L,
         "E13",

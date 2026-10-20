@@ -8,7 +8,8 @@ holds a user id (IR-21): `indicator_subscriptions` counts users by how many inst
 - `indicator` is a server kernel id (`kernels.KERNELS`, 10) and `where` is `server`;
 - `reason` (recomputes) is `amended`, `param_change` or `backfill`;
 - `bucket` is `1`, `2-4`, `5-7` or `8` (instances held; 8 is the SR-E13-03 per-user cap);
-- `cap` is `user`, `symbol` or `process` (SR-E13-03), `window` or `recompute` (SR-E13-04).
+- `cap` is `user`, `symbol` or `process` (SR-E13-03; `user` counts IR-31's churn bound too),
+  `window` or `recompute` (SR-E13-04).
 """
 
 from __future__ import annotations
@@ -64,8 +65,9 @@ indicator_subscriptions = Gauge(
 )
 indicator_cap_rejected_total = Counter(
     "indicator_cap_rejected_total",
-    "Server indicator requests refused by a cap: user, symbol or process instances "
-    "(SR-E13-03), the window or the recompute slots (SR-E13-04).",
+    "Server indicator requests refused by a cap: user instances (held, or held and released in "
+    "their grace: the IR-31 churn bound), symbol or process instances (SR-E13-03), the window or "
+    "the recompute slots (SR-E13-04).",
     labelnames=("cap",),
 )
 

@@ -42,8 +42,9 @@ def test_limits_every_fractional_range_starts_and_ends_on_its_step() -> None:
 #: SR-E13-03 (instances: 8 per user, 32 per symbol, 128 per process, 30 s grace, swept at most a
 #: second after it), IR-31 (24 held and released in their grace, per user), SR-E13-04 (a window of
 #: at most 250 000 bars, 2 recomputes at once, each read bounded), C-2.17 (a recompute's read pages
-#: and fold chunks, the most kernel updates a prime folds at once and an amended close replays)
-#: and an instance's own state (its points, checkpoint spacing, longest filled gap and staleness).
+#: and fold chunks, the most kernel updates a prime folds at once and an amended close replays in
+#: an instance and in its series, and what restoring and re-taking a checkpoint weigh by size) and
+#: an instance's own state (its points, checkpoint spacing, longest filled gap and staleness).
 CAPS = {
     "INSTANCE_CAP_PER_USER": 8,
     "INSTANCE_CAP_PER_SYMBOL": 32,
@@ -61,6 +62,9 @@ CAPS = {
     "CHECKPOINT_EVERY": 8,
     "MAX_FILL_SLOTS": 1_000,
     "MAX_AMEND_UPDATES": 1_008,
+    "MAX_AMEND_SERIES_UPDATES": 25_000,
+    "RESTORE_BYTES_PER_UPDATE": 24,
+    "SNAPSHOT_BYTES_PER_UPDATE": 192,
     "STALE_AFTER_BARS": 2,
 }
 

@@ -15,9 +15,11 @@ perf test is: GC disabled around the timed loops, fastest-of-N rounds, and:
   per bar except ZigZag's pivot test and the checkpoint snapshots, which read the window).
 
 These time the engine's update alone, with no listener: the WS fan-out after it is not in them.
-Priming is timed apart: the longest stretch an admission, a re-prime on the emit path, an amended
-close or a full recompute's read and fold holds the event loop without letting another task run
-stays under C-2.17's 50 ms, a sparse time series' fillers included.
+Priming and amended closes are timed apart, each row in the case it names: a task that only yields
+measures the longest stretch the event loop is held without another task running, which stays
+under C-2.17's 50 ms, during an admission, a re-prime on the emit path, a full recompute's read and
+fold, and an amended close, sparse time series (their fillers) and the 32 deeply windowed
+instances a symbol may run (their checkpoints) included.
 
 E13-Q03 owns the CI regression gate. The p95 measured on the dev laptop is in the PR body."""
 
@@ -46,8 +48,18 @@ from candleviewer.orderflow.indicators.engine import (
     resolve_instances,
 )
 from candleviewer.orderflow.indicators.kernels import compute
+from candleviewer.orderflow.indicators.metrics import RECOMPUTES
 from candleviewer.orderflow.indicators.types import BarInput, KernelContext, bar_input
-from tests.unit.orderflow.indicators._engine import M1, S1, SYM, wave
+from tests.unit.orderflow.indicators._engine import (
+    M1,
+    S1,
+    SYM,
+    Primed,
+    counter,
+    late,
+    primed,
+    wave,
+)
 
 pytestmark = pytest.mark.perf
 
@@ -336,6 +348,82 @@ async def test_an_amended_close_on_a_sparse_series_never_holds_the_loop_past_c_2
     for r in requested:
         batch = engine.snapshot(SYM, r.key, 1_000)
         assert batch is not None and [p.index for p in batch.points] == list(range(24))
+
+
+#: Deep instances on a dense one-second series (security review of the WS delivery, round 5):
+#: ZigZag (depth up to 5 000) or SMA (n up to 5 000), each with a full window, so each checkpoint
+#: is as large as its kernel keeps one (ZigZag about 65 KB, SMA about 31 KB).
+DEEP: Final[dict[str, list[dict[str, Any]]]] = {
+    "zigzag": [{"indicator": "zigzag", "params": {"depth": d}} for d in range(4_969, 5_001)],
+    "sma": [{"indicator": "sma", "params": {"n": n}} for n in range(4_969, 5_001)],
+}
+#: The closes of each kind's generation before the live ones: its deepest instance's warmup and
+#: the default history, so the read that primes them starts at index 0 and a checkpoint precedes
+#: every eighth index.
+DENSE: Final = {"zigzag": 10_501, "sma": 5_500}
+
+
+async def _amended_emit(p: Primed, age: int) -> tuple[float, float]:
+    """Re-close the bar `age` seconds before the newest (`late`): the amended emit's time, and the
+    longest stretch the loop was held until every task the engine started meanwhile ends."""
+    emission = _close_s1(late(p, age), amended=True)
+    try:
+        async with _LoopProbe() as probe:
+            await p.store.emit(emission)
+            started = time.perf_counter()
+            await p.engine.emit(emission)
+            emitted = time.perf_counter() - started
+            await asyncio.gather(*list(p.engine._tasks))
+    finally:
+        p.hold.release()
+    return emitted, probe.longest()
+
+
+def _recomputes() -> tuple[float, float]:
+    return counter(RECOMPUTES["amended"]), counter(RECOMPUTES["backfill"])
+
+
+@pytest.mark.parametrize(
+    ("kind", "age", "live"),
+    [("zigzag", 0, 3), ("zigzag", 60, 7), ("sma", 0, 4), ("sma", 60, 0)],
+    ids=["zigzag-newest", "zigzag-60s-old", "sma-newest", "sma-60s-old"],
+)
+async def test_an_amended_close_at_the_symbol_cap_never_holds_the_loop_past_c_2_17(
+    kind: str, age: int, live: int
+) -> None:
+    """C-2.17 (security review of the WS delivery, round 5): 32 deep instances, the SR-E13-03
+    cap of one symbol. Replaying an amended close in each restores 32 checkpoints of up to 65 KB
+    (up to 125 ms in all before the series bound), past `MAX_AMEND_SERIES_UPDATES`, so the series
+    re-primes before any instance replays, through its bounded path: a full recompute. Whether the
+    newest bar or the one 60 s old (the builder's window) is amended, each the seventh after its
+    checkpoint (`live` closes after the prime place it there), neither the amended emit nor any
+    stretch of the recompute holds the loop 50 ms, and every instance ends at the newest bar."""
+    p = await primed(DEEP[kind], stored=DENSE[kind], live=live)
+    before = _recomputes()
+    emitted, longest = await _amended_emit(p, age)
+    assert emitted < 0.050, f"the amended emit held the loop {emitted * 1e3:.1f} ms"
+    assert longest < 0.050, f"the loop was held {longest * 1e3:.1f} ms"
+    assert [a - b for a, b in zip(_recomputes(), before, strict=True)] == [0, 32]
+    for r in p.requested:
+        batch = p.engine.snapshot(SYM, r.key, 1)
+        assert batch is not None and [q.index for q in batch.points] == [p.bars[-1].index]
+
+
+@pytest.mark.parametrize(("count", "age", "live"), [(8, 0, 3), (4, 60, 7)], ids=["8", "4"])
+async def test_an_amended_close_within_the_series_budget_replays_under_c_2_17(
+    count: int, age: int, live: int
+) -> None:
+    """C-2.17 (security review of the WS delivery, round 5): deep ZigZag instances whose replays
+    fit `MAX_AMEND_SERIES_UPDATES` together replay an amended close at once, each counted
+    `amended`, without holding the loop 50 ms (about 15 ms here): eight (one user's cap) at the
+    newest bar, and four at the bar 60 s old, whose replays also re-take the eight checkpoints
+    after it."""
+    p = await primed(DEEP["zigzag"][-count:], stored=DENSE["zigzag"], live=live)
+    before = _recomputes()
+    emitted, longest = await _amended_emit(p, age)
+    assert emitted < 0.050, f"the amended emit held the loop {emitted * 1e3:.1f} ms"
+    assert longest < 0.050, f"the loop was held {longest * 1e3:.1f} ms"
+    assert [a - b for a, b in zip(_recomputes(), before, strict=True)] == [count, 0]
 
 
 async def test_a_session_read_of_sparse_bars_is_folded_in_short_chunks() -> None:

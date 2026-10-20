@@ -9,8 +9,9 @@ Rows: the `sub_ok` echo and the snapshot; one `d` per close, valued as the kerne
 densified series, keyed `(key, generation, index)`; an amended close (`amended: true`); a
 generation swap (`snap`, `generation_swap`); `history` and `meta.stale`; a `ctl` that retunes the
 instances (and one refused, which changes nothing); the refusals: `invalid_options` for a
-`client_worker` indicator, a bound, `compute`, `subscription_limit` naming the cap, and
-`internal_error` (retryable) when the recompute executor is busy; no `marketdata:read`."""
+`client_worker` indicator, a bound, `compute`, `subscription_limit` naming the cap or saying the
+churn bound's refusal ends with a grace (IR-31), and `internal_error` (retryable) when the
+recompute executor is busy; no `marketdata:read`."""
 
 from __future__ import annotations
 
@@ -227,6 +228,37 @@ def test_contract_indicators_past_a_cap_is_subscription_limit_naming_it() -> Non
         error = result["error"]
         assert (error["code"], error["retryable"]) == ("subscription_limit", True)
         assert error["message"] == "At most 8 server indicator instances per user."
+
+
+def test_contract_indicators_churn_past_its_bound_is_a_retryable_subscription_limit() -> None:
+    """IR-31 on the WS (review of the WS delivery, round 5): the instances a user holds and those
+    it released that are still in their grace are bounded together (24). Eight instances on each
+    of three series, subscribed and unsubscribed in turn, leave 24 in their grace; one more on a
+    fourth series is `subscription_limit`, retryable, and its message says the refusal ends with
+    a grace (it names no instance and no user)."""
+    rig = _Rig()
+    eight = [{"indicator": "ema", "params": {"n": n}} for n in range(2, 10)]
+    with h.connect(rig.w) as c:
+        for i, interval in enumerate(("1", "3", "5")):
+            ch = f"indicators.BTCUSDT.time.{interval}"
+            assert c.sub({"ch": ch, "opts": {"instances": eight}})["p"]["results"][0]["ok"]
+            c.next_of("snap")
+            c.send({"t": "unsub", "id": f"u-{i}", "p": {"topics": [ch]}})
+            c.next_of("unsub_ok")
+        frame = c.sub(
+            {"ch": "indicators.BTCUSDT.time.15", "opts": {"instances": [{"indicator": "cvd"}]}}
+        )
+        (result,) = frame["p"]["results"]
+        error = result["error"]
+        assert (result["ok"], error["code"], error["retryable"]) == (
+            False,
+            "subscription_limit",
+            True,
+        )
+        assert error["message"] == (
+            "Server indicator instances you released in the last 30 s still count; "
+            "retry once they expire."
+        )
 
 
 def test_contract_indicators_a_busy_recompute_executor_refuses_retryably() -> None:

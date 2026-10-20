@@ -14,10 +14,11 @@ holding one again, by anyone, ends its charge), with a message of its own that s
 ends with a grace. Joining a running instance counts toward the user's caps only. `user=None` (a
 system consumer) is exempt from the user caps only. A refusal is counted
 (`indicator_cap_rejected_total{cap}`; a churn refusal as `user`) and changes nothing. A consumer
-that replaces its instances (a WS `ctl`) is checked as holding the new set alone; the engine
-`drop`s each replaced instance it held alone (`sole`), so a retune leaves nothing in a grace. Pure
-bookkeeping: no I/O and no task; the engine acts on what it returns. Every instance of the
-process is one entry here, so the caps also bound the engine's memo (IR-36).
+that replaces its instances (a WS `ctl`) is checked as holding the new set alone, toward every
+cap: the engine `drop`s each replaced instance it held alone (`sole`), so a retune leaves nothing
+in a grace, and none of those counts toward the symbol or the process cap. Pure bookkeeping: no
+I/O and no task; the engine acts on what it returns. Every instance of the process is one entry
+here, so the caps also bound the engine's memo (IR-36).
 """
 
 from __future__ import annotations
@@ -92,8 +93,10 @@ class InstanceLeases:
         self, symbol: str, keys: Iterable[str], user: str | None, consumer: str | None = None
     ) -> None:
         """Raise the `InstanceCapError` (counted) that holding every key of `keys` on `symbol`
-        would meet; change nothing. `consumer`'s own leases are left out of the user's count: a
-        consumer that replaces its instances (a WS `ctl`) is checked as holding the new set alone.
+        would meet; change nothing. A `consumer` replaces its instances (a WS `ctl`) and is
+        checked as holding the new set alone: its own leases are left out of the user's count,
+        and the instances on `symbol` it alone holds that the new set leaves out (`_dropped`) out
+        of the symbol's and the process's.
         """
         wanted = {(symbol, k) for k in keys}
         if user is not None:
@@ -106,11 +109,23 @@ class InstanceLeases:
         new = wanted - self._held.keys()
         if not new:
             return
-        on_symbol = sum(1 for s, _ in self._held if s == symbol)
+        dropped = self._dropped(symbol, wanted, consumer)
+        on_symbol = sum(1 for s, _ in self._held if s == symbol) - dropped
         if on_symbol + len(new) > self._caps.per_symbol:
             raise self._refuse("symbol", self._caps.per_symbol)
-        if len(self._held) + len(new) > self._caps.process:
+        if len(self._held) - dropped + len(new) > self._caps.process:
             raise self._refuse("process", self._caps.process)
+
+    def _dropped(self, symbol: str, wanted: set[Key], consumer: str | None) -> int:
+        """The instances on `symbol` that a replacing `consumer` alone holds and `wanted` leaves
+        out: the engine forgets them once the new set is held (`IndicatorEngine._let_go`)."""
+        if consumer is None:
+            return 0
+        return sum(
+            1
+            for key in self._held
+            if key[0] == symbol and key not in wanted and self.sole(key, consumer)
+        )
 
     def acquire(self, key: Key, consumer: str, user: str | None) -> bool:
         """Add a lease (after `check`); True when `key` is a new instance the caller must build."""

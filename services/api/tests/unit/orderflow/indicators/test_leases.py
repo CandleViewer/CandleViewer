@@ -102,21 +102,39 @@ def test_the_subscription_gauge_buckets_users_by_instances_held_never_by_id() ->
     ]
 
 
-def test_a_user_holds_eight_and_runs_twenty_four_with_those_released_in_their_grace() -> None:
-    """IR-31 (reviews of the WS delivery): a user holds at most 8 instances and, with those the
-    user released that are still in their grace, runs at most 24. Two full flips (release 8, hold
-    8 others) are admitted within a grace; past 24 the refusal has its own message, saying it ends
-    with the grace, and counts as `user`. Another user is not charged, holding a released one
-    again ends its charge, and the grace's end ends the rest."""
+def _flipped_twice() -> InstanceLeases:
+    """IR-31 (reviews of the WS delivery): u1 held eight instances, then twice released all it
+    held (at `now_us` 1 000) and held eight others: it holds 8 (keys 16..23) and 16 it released
+    are in their grace (keys 0..15)."""
     leases = InstanceLeases(grace_us=30_000_000)
     _hold(leases, SYM, 8, "u1")
-    for start in (0, 8):  # two flips
+    for start in (0, 8):
         for i in range(start, start + 8):
             leases.release((SYM, _key(i)), f"u1-c{i}", now_us=1_000)
         _hold(leases, SYM, 8, "u1", start=start + 8)
-    assert _refused(leases, SYM, _key(99), "u1") == "user"  # a ninth held: the held cap
-    leases.release((SYM, _key(23)), "u1-c23", now_us=2_000)  # 7 held, 17 released
-    before = counter(CAP_REJECTED["user"])
+    return leases
+
+
+def _at_the_churn_bound() -> InstanceLeases:
+    """`_flipped_twice`, then u1 releases key 23 (at 2 000): 7 held and 17 released in their
+    grace, so one more instance makes 25, past the churn bound of 24."""
+    leases = _flipped_twice()
+    leases.release((SYM, _key(23)), "u1-c23", now_us=2_000)
+    return leases
+
+
+def test_two_flips_of_eight_are_admitted_and_a_ninth_held_meets_the_held_cap() -> None:
+    """IR-31: a user holds at most 8 instances and, with those it released that are still in
+    their grace, runs at most 24, so two full flips within a grace are admitted; holding a
+    ninth is the held cap's refusal, not the churn bound's."""
+    leases = _flipped_twice()
+    with pytest.raises(InstanceCapError) as caught:
+        leases.check(SYM, [_key(99)], "u1")
+    assert type(caught.value) is InstanceCapError and caught.value.cap == "user"
+
+
+def test_churn_past_twenty_four_is_refused_saying_it_ends_with_a_grace() -> None:
+    leases = _at_the_churn_bound()
     with pytest.raises(InstanceChurnError) as caught:
         leases.check(OTHER, [_key(50)], "u1")
     assert (caught.value.cap, caught.value.limit) == ("user", 24)
@@ -124,14 +142,76 @@ def test_a_user_holds_eight_and_runs_twenty_four_with_those_released_in_their_gr
         "Server indicator instances you released in the last 30 s still count; "
         "retry once they expire."
     )
+
+
+def test_a_churn_refusal_is_counted_as_the_user_cap() -> None:
+    leases = _at_the_churn_bound()
+    before = counter(CAP_REJECTED["user"])
+    with pytest.raises(InstanceChurnError):
+        leases.check(OTHER, [_key(50)], "u1")
     assert counter(CAP_REJECTED["user"]) - before == 1
-    leases.check(OTHER, [_key(50)], "u2")  # another user is not charged
-    leases.check(SYM, [_key(23)], "u1")  # holding one it released again adds none
-    leases.acquire((SYM, _key(0)), "u2-c0", "u2")  # held again, by anyone: no longer u1's
+
+
+def test_a_users_churn_is_not_charged_to_another_user() -> None:
+    _at_the_churn_bound().check(OTHER, [_key(50)], "u2")
+
+
+def test_holding_again_an_instance_the_user_released_adds_no_churn() -> None:
+    _at_the_churn_bound().check(SYM, [_key(23)], "u1")
+
+
+def test_an_instance_held_again_by_anyone_ends_its_releasers_charge() -> None:
+    leases = _at_the_churn_bound()
+    leases.acquire((SYM, _key(0)), "u2-c0", "u2")
     leases.check(OTHER, [_key(50)], "u1")  # 7 held, 16 released, 1 new: 24
-    assert len(leases.expired(30_001_000)) == 15  # the flips' grace ends (u2 holds the 16th)
-    _hold(leases, OTHER, 1, "u1", start=60)  # 8 held, 1 released
-    assert _refused(leases, OTHER, _key(70), "u1") == "user"
+
+
+def test_the_end_of_a_grace_ends_its_churn_charge() -> None:
+    leases = _at_the_churn_bound()
+    assert len(leases.expired(30_002_000)) == 17
+    leases.check(OTHER, [_key(50)], "u1")
+
+
+def _with_a_ctl_holding_eight(leases: InstanceLeases) -> list[str]:
+    """`ctl-sub` (u1's subscription) alone holds keys 0..7 on SYM; the eight it retunes to."""
+    for i in range(8):
+        leases.acquire((SYM, _key(i)), "ctl-sub", "u1")
+    return [_key(50 + i) for i in range(8)]
+
+
+def test_a_ctl_at_the_symbol_cap_counts_out_the_instances_it_alone_drops() -> None:
+    """A WS `ctl` drops the instances it alone held that its new set leaves out
+    (`IndicatorEngine._let_go`), so they do not count toward the symbol cap: on a symbol running
+    32, eight of them the `ctl`'s alone, a retune to eight others passes, while one more instance
+    from anyone else is refused `symbol`."""
+    leases = InstanceLeases()
+    retune = _with_a_ctl_holding_eight(leases)
+    for u in range(2, 5):
+        _hold(leases, SYM, 8, f"u{u}", start=u * 8)
+    assert _refused(leases, SYM, _key(99), "u9") == "symbol"
+    leases.check(SYM, retune, "u1", "ctl-sub")
+
+
+def test_a_ctl_at_the_process_cap_counts_out_the_instances_it_alone_drops() -> None:
+    leases = InstanceLeases(InstanceCaps(process=10))
+    retune = _with_a_ctl_holding_eight(leases)
+    _hold(leases, OTHER, 2, "u2", start=10)
+    assert _refused(leases, OTHER, _key(99), "u9") == "process"
+    leases.check(SYM, retune, "u1", "ctl-sub")
+
+
+def test_a_ctl_still_counts_an_instance_it_shares() -> None:
+    """An instance the `ctl` shares outlives the retune (another consumer holds it), so it still
+    counts: with one of its eight shared, a retune to eight others on a symbol running 32 would
+    make 33, refused `symbol`."""
+    leases = InstanceLeases()
+    retune = _with_a_ctl_holding_eight(leases)
+    leases.acquire((SYM, _key(0)), "other", "u9")
+    for u in range(2, 5):
+        _hold(leases, SYM, 8, f"u{u}", start=u * 8)
+    with pytest.raises(InstanceCapError) as caught:
+        leases.check(SYM, retune, "u1", "ctl-sub")
+    assert caught.value.cap == "symbol"
 
 
 def test_sole_names_the_instances_a_replacing_consumer_alone_holds() -> None:

@@ -1,15 +1,20 @@
 """Shared helpers for the indicator engine tests (E13-T02, #426): bars, emissions through the
-series store then the engine (the emit router's order), and a recording listener."""
+series store then the engine (the emit router's order), a recording listener, and deep instances
+primed on a dense one-second series."""
 
 from __future__ import annotations
 
+import asyncio
+from bisect import bisect_left
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
 
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.series_store import SeriesStore
+from candleviewer.bars.reader import BarTail
+from candleviewer.bars.series_store import Hold, SeriesStore
 from candleviewer.orderflow.indicators.engine import (
     Batch,
     IndicatorEngine,
@@ -18,6 +23,7 @@ from candleviewer.orderflow.indicators.engine import (
     resolve_instances,
 )
 from candleviewer.orderflow.indicators.leases import InstanceLeases
+from candleviewer.orderflow.indicators.types import BarInput, bar_input
 
 SYM: Final = "BTCUSDT"
 M1: Final = BarSpec(kind="time", interval_ms=60_000)
@@ -128,3 +134,53 @@ def holders(leases: InstanceLeases, key: tuple[str, str]) -> int:
     """Leases held on an instance (white box, as `instances`)."""
     entry = leases._held.get(key)
     return 0 if entry is None else len(entry.holders)
+
+
+@dataclass(frozen=True)
+class Primed:
+    store: SeriesStore
+    hold: Hold
+    engine: IndicatorEngine
+    requested: tuple[Requested, ...]
+    bars: list[Bar]
+
+
+async def primed(raw: Sequence[Mapping[str, Any]], *, stored: int, live: int = 0) -> Primed:
+    """`raw`, a system consumer's instances, on a dense one-second series (`wave` bars) whose
+    generation holds `stored` closes: the series store holds the newest 1 000, and a full
+    recompute reads the rest (a slice of the bars, converted once up front: a one-second series
+    has no stored rows, as `bar_row` persists wire intervals only). Then `live` more closes."""
+    bars = [wave(i, spec=S1) for i in range(stored + live)]
+    inputs = [(b.index, bar_input(b)) for b in bars[:stored]]
+    opens = [b.open_time for b in bars[:stored]]
+
+    async def read(
+        symbol: str, spec: BarSpec, generation: int, start_us: int, end_us: int
+    ) -> list[tuple[int, BarInput]]:
+        return inputs[bisect_left(opens, start_us) : bisect_left(opens, end_us)]
+
+    async def tail(symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        newest = bars[:stored][-limit:]
+        return BarTail([(0, b) for b in newest], since_us=0, fetched=len(newest))
+
+    store = SeriesStore(tail)
+    hold = await store.ensure(SYM, S1)
+    engine = IndicatorEngine(store, history=read)
+    requested = resolve_instances(raw, S1)
+    engine.admit(SYM, S1, requested, "c1", None, history=500)
+    await asyncio.gather(*list(engine._tasks))
+    for b in bars[stored:]:
+        await close(store, engine, b, spec=S1)
+    return Primed(store, hold, engine, requested, bars)
+
+
+def late(p: Primed, age: int) -> Bar:
+    """A late trade's re-close, with another close, of the bar `age` seconds before the newest.
+    White box: it is the seventh bar after a checkpoint in every instance's ring, the worst
+    offset: each replay starts seven bars before it."""
+    target = p.bars[-1 - age]
+    for r in p.requested:
+        ring = p.engine._instances[(SYM, r.key)].ring
+        near = [e for e in ring if target.index - 7 <= e.index <= target.index]
+        assert [e.checkpoint is not None for e in near] == [True] + [False] * 7
+    return target.model_copy(update={"close": target.close + 1})

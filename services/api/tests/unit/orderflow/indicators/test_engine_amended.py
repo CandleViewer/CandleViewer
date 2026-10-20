@@ -1,21 +1,26 @@
 """Scenario 5, "A bar is amended late" (E13-T02, #426; 24-internal-schemas §7.4; 23 §6.1, §8.2):
 a late trade re-closes a closed time bar with `amended=True`; each instance replays from its newest
 checkpoint at or before that bar, republishes every point that changed with `amended: true`, and
-ends equal, bit for bit, to a from-scratch fold of the corrected series."""
+ends equal, bit for bit, to a from-scratch fold of the corrected series. C-2.17 bounds the replays,
+in each instance and in the series' instances together, checkpoints weighed by size; past either
+bound the series re-primes and re-snapshots instead."""
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from candleviewer.bars.models import BarSpec
+from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.series import BarSeries
-from candleviewer.bars.series_store import SeriesStore
+from candleviewer.bars.series_store import Hold, SeriesStore
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, Point, Requested
 from candleviewer.orderflow.indicators.kernels import compute
 from candleviewer.orderflow.indicators.limits import (
     CHECKPOINT_EVERY,
+    MAX_AMEND_SERIES_UPDATES,
     MAX_AMEND_UPDATES,
     MAX_FILL_SLOTS,
 )
@@ -26,10 +31,13 @@ from tests.unit.orderflow.indicators._engine import (
     S1,
     SYM,
     Listener,
+    Primed,
     admit,
     bar,
     close,
     counter,
+    late,
+    primed,
     wave,
 )
 
@@ -216,37 +224,160 @@ async def test_a_replay_re_takes_each_checkpoint_after_the_amended_bar() -> None
     hold.release()
 
 
-@pytest.mark.parametrize("over", [0, 1], ids=["at-the-bound", "past-it"])
-async def test_a_replay_past_max_amend_updates_re_primes_the_series_instead(over: int) -> None:
-    """C-2.17 (security review of the WS delivery, round 4): an amended close replays the bars from
-    its checkpoint on, their fillers included, only within `MAX_AMEND_UPDATES` kernel updates. Bar 8
-    is a checkpoint after 1 000 empty slots and bars 9..15 follow it, so amending bar 15 replays
-    bar 8's fillers and eight bars: 1 008 updates, published as amended points. One more empty
-    slot, before bar 12, makes it 1 009: the series re-primes and re-snapshots instead
-    (`backfill`). Either way the instance ends as a from-scratch fold of the corrected series."""
-    assert MAX_FILL_SLOTS + CHECKPOINT_EVERY == MAX_AMEND_UPDATES  # the replay this test builds
+@dataclass(frozen=True)
+class _Gap:
+    store: SeriesStore
+    hold: Hold
+    engine: IndicatorEngine
+    listener: Listener
+    requested: tuple[Requested, ...]
+    late: Bar
+
+
+async def _after_a_long_gap(instances: list[dict[str, Any]], *, over: int = 0) -> _Gap:
+    """`instances` (a system consumer's: no user cap) on a one-second series: bars 0..7 a second
+    apart, then `MAX_FILL_SLOTS` empty slots, then bars 8..15, with `over` more empty slots before
+    bar 12. Bar 8 is a checkpoint after the gap, so `late`, a re-close of bar 15 with another
+    close, replays bar 8's fillers and the eight bars from it: `MAX_AMEND_UPDATES` kernel updates
+    in each instance, plus `over`."""
+    assert MAX_FILL_SLOTS + CHECKPOINT_EVERY == MAX_AMEND_UPDATES  # the replay this builds
     store, listener = SeriesStore(), Listener()
     hold = await store.ensure(SYM, S1)
     engine = IndicatorEngine(store)
     engine.listen(listener)
-    (r,) = admit(engine, [{"indicator": "sma", "params": {"n": 4}}], spec=S1)
+    requested = admit(engine, instances, spec=S1, user=None)
     after_gap = 7 + MAX_FILL_SLOTS + 1  # bar 8: every empty slot before it is a filler
     slots = [*range(8), *(after_gap + k + (over if k >= 4 else 0) for k in range(8))]
     for i, slot in enumerate(slots):
         await close(store, engine, bar(i, 100.0 + i % 3, spec=S1, slot=slot), spec=S1)
     listener.events.clear()
-    amended_runs, backfills = counter(RECOMPUTES["amended"]), counter(RECOMPUTES["backfill"])
     late = bar(15, 90.0, spec=S1, slot=slots[15])
-    await close(store, engine, late, spec=S1, amended=True)
-    if over:
-        assert listener.events == [("resnapshot", "history_repair")]
-    else:
-        ((kind, batches),) = listener.events
-        assert kind == "points" and [(p.index, p.amended) for p in batches[r.key].points] == [
-            (15, True)
-        ]
-    assert counter(RECOMPUTES["amended"]) - amended_runs == 1 - over
-    assert counter(RECOMPUTES["backfill"]) - backfills == over
-    after = engine.snapshot(SYM, r.key, 500)
-    assert after is not None and _values(after.points) == _densified(store, S1, r)
-    hold.release()
+    return _Gap(store, hold, engine, listener, requested, late)
+
+
+def _recomputes() -> tuple[float, float]:
+    return counter(RECOMPUTES["amended"]), counter(RECOMPUTES["backfill"])
+
+
+def _since(before: tuple[float, float]) -> list[float]:
+    """The `amended` and `backfill` recomputes counted since `before` (`_recomputes`)."""
+    return [a - b for a, b in zip(_recomputes(), before, strict=True)]
+
+
+SMA4: list[dict[str, Any]] = [{"indicator": "sma", "params": {"n": 4}}]
+
+
+async def test_a_replay_of_max_amend_updates_is_published_as_an_amended_point() -> None:
+    """C-2.17 (security review of the WS delivery, round 4): an amended close replays the bars
+    from its checkpoint on, their fillers included, within `MAX_AMEND_UPDATES` kernel updates. The
+    re-close of bar 15 replays 1 008: one amended point is published, the replay is counted
+    `amended`, and the instance ends as a from-scratch fold of the corrected series."""
+    gap = await _after_a_long_gap(SMA4)
+    (r,) = gap.requested
+    before = _recomputes()
+    await close(gap.store, gap.engine, gap.late, spec=S1, amended=True)
+    ((kind, batches),) = gap.listener.events
+    assert kind == "points" and [(p.index, p.amended) for p in batches[r.key].points] == [
+        (15, True)
+    ]
+    assert _since(before) == [1, 0]
+    after = gap.engine.snapshot(SYM, r.key, 500)
+    assert after is not None and _values(after.points) == _densified(gap.store, S1, r)
+    gap.hold.release()
+
+
+async def test_a_replay_past_max_amend_updates_re_primes_the_series_instead() -> None:
+    """C-2.17 (security review of the WS delivery, round 4): one more empty slot, before bar 12,
+    makes the re-close of bar 15 a replay of 1 009 kernel updates, past `MAX_AMEND_UPDATES`: the
+    series re-primes and re-snapshots instead (`history_repair`, counted `backfill`), and the
+    instance ends as a from-scratch fold of the corrected series."""
+    gap = await _after_a_long_gap(SMA4, over=1)
+    (r,) = gap.requested
+    before = _recomputes()
+    await close(gap.store, gap.engine, gap.late, spec=S1, amended=True)
+    assert gap.listener.events == [("resnapshot", "history_repair")]
+    assert _since(before) == [0, 1]
+    after = gap.engine.snapshot(SYM, r.key, 500)
+    assert after is not None and _values(after.points) == _densified(gap.store, S1, r)
+    gap.hold.release()
+
+
+#: Distinct instances whose checkpoints hold a few hundred bytes (a restore weight of at most 13,
+#: `RESTORE_BYTES_PER_UPDATE`): the SMA of 2 to 26 bars.
+SMAS: list[dict[str, Any]] = [{"indicator": "sma", "params": {"n": n}} for n in range(2, 27)]
+
+
+async def test_replays_within_the_series_budget_run_in_every_instance() -> None:
+    """C-2.17 (security review of the WS delivery, round 5): an amended close's replays in the
+    series' instances are added up before any runs (`MAX_AMEND_SERIES_UPDATES`). The re-close of
+    bar 15 replays 1 008 kernel updates in each and restores a checkpoint of at most 316 bytes:
+    24 instances take at most 24 576, within the budget, so each replays, publishes its amended
+    point and is counted `amended`."""
+    assert 24 * (MAX_AMEND_UPDATES + 16) <= MAX_AMEND_SERIES_UPDATES  # the replays this builds
+    gap = await _after_a_long_gap(SMAS[:24])
+    before = _recomputes()
+    await close(gap.store, gap.engine, gap.late, spec=S1, amended=True)
+    ((kind, batches),) = gap.listener.events
+    assert kind == "points" and set(batches) == {r.key for r in gap.requested}
+    assert all([(p.index, p.amended) for p in b.points] == [(15, True)] for b in batches.values())
+    assert _since(before) == [24, 0]
+    gap.hold.release()
+
+
+async def test_replays_past_the_series_budget_re_prime_it_before_any_instance_replays() -> None:
+    """C-2.17 (security review of the WS delivery, round 5): 25 such replays take at least 25 200
+    kernel updates, past `MAX_AMEND_SERIES_UPDATES`, so no instance replays (none is counted
+    `amended`): the series re-primes and re-snapshots (`history_repair`, counted `backfill` for
+    each instance), here by a full recompute, as folding the store's bars for 25 instances takes
+    more than `MAX_SYNC_PRIME_UPDATES`."""
+    assert 25 * MAX_AMEND_UPDATES > MAX_AMEND_SERIES_UPDATES  # the replays this builds
+    gap = await _after_a_long_gap(SMAS)
+    before = _recomputes()
+    await close(gap.store, gap.engine, gap.late, spec=S1, amended=True)
+    await asyncio.gather(*list(gap.engine._tasks))
+    assert gap.listener.events == [("resnapshot", "history_repair"), ("ready", S1.spec_hash)]
+    assert _since(before) == [0, 25]
+    gap.hold.release()
+
+
+#: SMA instances of 4 977..5 000 bars: a full window makes each checkpoint about 31 KB, which a
+#: restore takes about 1 ms to rebuild and weighs about 1 300 kernel updates
+#: (`RESTORE_BYTES_PER_UPDATE`); re-taking one weighs about 160 (`SNAPSHOT_BYTES_PER_UPDATE`).
+DEEP_SMAS: list[dict[str, Any]] = [
+    {"indicator": "sma", "params": {"n": n}} for n in range(4_977, 5_001)
+]
+
+
+async def _replayed_or_re_primed(p: Primed, age: int) -> tuple[list[Any], list[float]]:
+    """Re-close the bar `age` seconds before the newest (`late`) and let any re-prime end: what
+    the listener heard, and the `amended` and `backfill` recomputes counted meanwhile."""
+    listener = Listener()
+    p.engine.listen(listener)
+    before = _recomputes()
+    await close(p.store, p.engine, late(p, age), spec=S1, amended=True)
+    await asyncio.gather(*list(p.engine._tasks))
+    p.hold.release()
+    return listener.events, _since(before)
+
+
+async def test_restoring_the_checkpoints_counts_toward_the_series_budget() -> None:
+    """C-2.17 (security review of the WS delivery, round 5): a replay first restores its
+    checkpoint, which counts toward `MAX_AMEND_SERIES_UPDATES` by size. Re-closing the newest bar
+    replays eight bars in each of 24 deep SMA instances, 192 kernel updates, but their restores
+    weigh about 31 000 more: the series re-primes (a full recompute) and no instance replays."""
+    p = await primed(DEEP_SMAS, stored=5_500, live=4)
+    events, recomputes = await _replayed_or_re_primed(p, 0)
+    assert events == [("resnapshot", "history_repair"), ("ready", S1.spec_hash)]
+    assert recomputes == [0, 24]
+
+
+async def test_re_taking_the_checkpoints_after_the_bar_counts_toward_the_series_budget() -> None:
+    """C-2.17 (security review of the WS delivery, round 5): a replay re-takes each checkpoint
+    after the amended bar, which counts by size too. Re-closing the bar 60 s old replays 68 bars
+    in each of 14 deep SMA instances: with their restores that weighs about 19 200 kernel
+    updates, within the budget, but re-taking the eight checkpoints after it in each adds about
+    18 300: the series re-primes (a full recompute) and no instance replays."""
+    p = await primed(DEEP_SMAS[-14:], stored=5_500)
+    events, recomputes = await _replayed_or_re_primed(p, 60)
+    assert events == [("resnapshot", "history_repair"), ("ready", S1.spec_hash)]
+    assert recomputes == [0, 14]

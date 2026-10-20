@@ -268,6 +268,22 @@ async def test_retunes_at_the_user_cap_leave_nothing_in_a_grace() -> None:
         assert instances(engine) == 8
 
 
+async def test_a_retune_on_a_symbol_at_its_cap_is_admitted_and_keeps_it_there() -> None:
+    """SR-E13-03 (review of the WS delivery, round 5): the instances a `ctl` alone held and
+    replaces are forgotten once the new ones are held, so they do not count toward the symbol
+    cap: on a symbol running 32, eight of them one subscription's, it retunes to eight others,
+    and the symbol runs 32 after."""
+    _, engine, _hold = await _engine()
+    for u in range(3):
+        emas = [{"indicator": "ema", "params": {"n": n}} for n in range(2 + 8 * u, 10 + 8 * u)]
+        admit(engine, emas, consumer=f"c{u}", user=f"u{u}")
+    smas = [[{"indicator": "sma", "params": {"n": n}} for n in range(k, k + 8)] for k in (2, 20)]
+    mine = admit(engine, smas[0], consumer="ctl", user="u9")
+    new = resolve_instances(smas[1], M1)
+    engine.admit(SYM, M1, new, "ctl", "u9", history=500, replacing=tuple(r.key for r in mine))
+    assert instances(engine) == 32 and all(holders(engine._leases, (SYM, r.key)) for r in new)
+
+
 THREE = [{"indicator": name} for name in ("volume", "vwap", "cvd")]
 
 
@@ -347,6 +363,35 @@ async def test_an_update_that_raises_is_contained_counted_and_re_primes(
     ema_batch, atr_batch = engine.snapshot(SYM, ema.key, 500), engine.snapshot(SYM, atr.key, 500)
     assert ema_batch is not None and [p.index for p in ema_batch.points] == [0, 1, 2, 3, 4]
     assert atr_batch is not None and [p.index for p in atr_batch.points] == [4]
+
+
+async def test_a_close_stops_at_an_instance_that_fails_since_the_series_re_primes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of the WS delivery, round 5: once an instance cannot take a close (here ATR's
+    kernel raises on it), the series re-primes, so the instances after it do not fold the close
+    first, work the re-prime would discard: EMA's kernel folds bars 0..3 in its re-prime, and
+    nothing before it."""
+    store, engine, _hold = await _engine()
+    admit(engine, [*ATR14, *EMA3])  # ATR first: the series' first instance
+    for k in range(3):
+        await close(store, engine, wave(k))
+    real_atr, real_ema = AtrKernel.update, EmaKernel.update
+    folded: list[int] = []
+
+    def boom(self: AtrKernel, b: BarInput) -> Outputs:
+        if b.t == wave(3).open_time:
+            raise ZeroDivisionError
+        return real_atr(self, b)
+
+    def counting(self: EmaKernel, b: BarInput) -> Outputs:
+        folded.append(b.t)
+        return real_ema(self, b)
+
+    monkeypatch.setattr(AtrKernel, "update", boom)
+    monkeypatch.setattr(EmaKernel, "update", counting)
+    await close(store, engine, wave(3))
+    assert folded == [wave(k).open_time for k in range(4)]
 
 
 async def test_the_listener_is_set_once() -> None:

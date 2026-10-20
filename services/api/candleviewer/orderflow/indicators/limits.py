@@ -89,7 +89,8 @@ PRIME_CHUNK_UPDATES: Final = 512
 #: C-2.17: the most kernel updates (fillers included) a prime may fold synchronously, its
 #: instances together: a full dense series store for eight instances. A prime that needs more
 #: runs as a full recompute (a task on a slot, `PRIME_CHUNK_UPDATES` at a time); one that must
-#: run at once with no slot free folds only the newest bars within it, split evenly per instance.
+#: run at once folds only the newest bars within it: a re-prime with no slot free split evenly
+#: per instance, and the end of an interrupted recompute this much per instance, one at a time.
 MAX_SYNC_PRIME_UPDATES: Final = 8_000
 
 # --- Instance state (`engine`) ---------------------------------------------------------------
@@ -108,5 +109,20 @@ MAX_FILL_SLOTS: Final = 1_000
 #: checkpoint spacing of bars, about what a close costs. On a sparse series a checkpoint can lie
 #: several filled gaps back; a replay that needs more re-primes the series instead (`engine`).
 MAX_AMEND_UPDATES: Final = MAX_FILL_SLOTS + CHECKPOINT_EVERY
+#: C-2.17: what an amended close may cost its series' instances together, in kernel updates (about
+#: 1 µs each for the slowest kernels, ZigZag and VWAP, on the dev laptop): their replays' updates,
+#: plus each checkpoint a replay restores and each it re-takes after the amended bar, weighed by
+#: size (below). Sized for about 25 ms, half C-2.17's 50 ms, which the rest of the emission shares.
+#: An amended close past it re-primes the series before any instance replays (`engine`): replaying
+#: one in 32 deep instances of a series (a symbol's SR-E13-03 cap) took up to 125 ms.
+MAX_AMEND_SERIES_UPDATES: Final = 25_000
+#: The bytes of a checkpoint's state blob that restoring costs about one kernel update: `restore`
+#: parses the blob and rebuilds the state value by value, so short values cost the most a byte:
+#: about 34 bytes a microsecond on the dev laptop for prices of a few digits in the largest blobs
+#: (SMA and ZigZag at 5 000: 31 KB and 65 KB in about 1 ms and 2 ms).
+RESTORE_BYTES_PER_UPDATE: Final = 24
+#: The same for re-taking a checkpoint (`snapshot` serialises the state): about 276 bytes a
+#: microsecond for those blobs.
+SNAPSHOT_BYTES_PER_UPDATE: Final = 192
 #: A read of an instance more than this many closes behind its series is `stale`.
 STALE_AFTER_BARS: Final = 2

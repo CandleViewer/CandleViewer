@@ -38,9 +38,11 @@ named here is a constant of `limits.py`.
   checkpoint, which is no kernel update). A generation change or a store repair meanwhile, a
   close it cannot place, or more closes than that primes it from the store alone instead, at once
   and within `MAX_SYNC_PRIME_UPDATES`.
-- **Budgets.** A prime that must run at once but would pass its budget (a re-prime, or the end of
-  a recompute, with no slot free) folds only the newest bars within it: the kernel starts at the
-  oldest of those, as after a restart, and a new warmup follows.
+- **Budgets.** A prime that must run at once but would pass its budget folds only the newest bars
+  within it: a re-prime with no slot free, within `MAX_SYNC_PRIME_UPDATES` for the series'
+  instances together, split evenly; the end of a recompute that was interrupted (`Priming`),
+  within `MAX_SYNC_PRIME_UPDATES` for each instance, one instance at a time. The kernel starts at
+  the oldest of those bars, as after a restart, and a new warmup follows.
 - **Sessions.** A session-anchored instance (`vwap`, `cvd`: `Kernel.anchor_us`) restarts at each
   period start. Its read reaches back to the start of the period holding the oldest bar it needs,
   and it never serves a value of a period it did not fold from that period's start: such a value
@@ -61,7 +63,10 @@ named here is a constant of `limits.py`.
   not hold (older, or another bar at a held index), or one whose replay would take more than
   `MAX_AMEND_UPDATES` kernel updates, fillers included (C-2.17: on a sparse series the checkpoint
   can lie several filled gaps back), re-primes the series' instances, which then re-snapshot as
-  after a store repair (`history_repair`).
+  after a store repair (`history_repair`). So does one whose replays in the series' instances
+  together would pass `MAX_AMEND_SERIES_UPDATES`, each checkpoint a replay restores or re-takes
+  weighed by its size (C-2.17: restoring a deep instance's takes milliseconds); the series
+  decides that before any instance replays (`_amends_fit`).
 - **Generations and repairs.** A close in another generation than an instance's is a swap: every
   instance of the series re-primes from the store (which reset first), and the listener
   re-snapshots the series (`generation_swap`). A store repair re-primes it too (`history_repair`,
@@ -76,10 +81,11 @@ named here is a constant of `limits.py`.
 
 Bounds (C-2.18): instances by the caps, each with at most `MAX_POINTS` points, its ring and at most
 `MAX_POINTS` held-back closes; recompute tasks by the slots; each read by `RECOMPUTE_TIMEOUT_S`.
-C-2.17: a synchronous prime folds at most `MAX_SYNC_PRIME_UPDATES` kernel updates, an amended
-close replays at most `MAX_AMEND_UPDATES` in each instance, and a recompute holds the loop for one
-page, one chunk of `PRIME_CHUNK_UPDATES` and one bar's fillers, or one held-back amended close,
-at a time.
+C-2.17: a synchronous prime folds at most `MAX_SYNC_PRIME_UPDATES` kernel updates; an amended
+close replays at most `MAX_AMEND_UPDATES` in each instance and `MAX_AMEND_SERIES_UPDATES` in its
+series' instances together, its checkpoints weighed by size; and a recompute holds the loop for
+one page, one chunk of `PRIME_CHUNK_UPDATES` and one bar's fillers, or one held-back amended
+close, at a time. `test_engine_perf.py` measures the longest stretch in the cases it names.
 The emit path removes the instances whose grace has ended at most every `SWEEP_EVERY_US`, so an
 unheld one folds closes for at most that long past its grace. The state is in memory only: a
 restart re-primes (24 §7.4). An instance update that raises is counted
@@ -135,6 +141,7 @@ from candleviewer.orderflow.indicators.leases import InstanceLeases
 from candleviewer.orderflow.indicators.limits import (
     CHECKPOINT_EVERY,
     HISTORY_PAGE_ROWS,
+    MAX_AMEND_SERIES_UPDATES,
     MAX_AMEND_UPDATES,
     MAX_CONCURRENT_RECOMPUTES,
     MAX_FILL_SLOTS,
@@ -143,6 +150,8 @@ from candleviewer.orderflow.indicators.limits import (
     MAX_WINDOW_BARS,
     PRIME_CHUNK_UPDATES,
     RECOMPUTE_TIMEOUT_S,
+    RESTORE_BYTES_PER_UPDATE,
+    SNAPSHOT_BYTES_PER_UPDATE,
     STALE_AFTER_BARS,
     SWEEP_EVERY_US,
 )
@@ -487,6 +496,64 @@ def _consecutive(bars: Bars) -> bool:
         return True
     first = bars[0][0]
     return list(map(itemgetter(0), bars)) == list(range(first, first + len(bars)))
+
+
+@dataclass(frozen=True, slots=True)
+class _Replay:
+    """How an amended close replays in an instance's ring (`_amend`): from the checkpoint at
+    `start`, the newest at or before the amended bar at `pos`, folding `updates` kernel updates
+    (the bars from the checkpoint on, and their fillers). `cost` adds restoring that checkpoint
+    and re-taking each after the bar, weighed by size (C-2.17: `RESTORE_BYTES_PER_UPDATE`,
+    `SNAPSHOT_BYTES_PER_UPDATE`)."""
+
+    pos: int
+    start: int
+    updates: int
+    cost: int
+
+
+def _replay_of(inst: _Instance, index: int, t: int) -> _Replay | None:
+    """The replay of an amended close of bar `index`, opening at `t`, in `inst`'s ring; None
+    when the ring cannot place it: no such bar, another bar at that index, or no checkpoint at
+    or before it."""
+    ring = inst.ring
+    pos = next((q for q in range(len(ring) - 1, -1, -1) if ring[q].index == index), None)
+    if pos is None or ring[pos].input.t != t:
+        return None
+    start = next((q for q in range(pos, -1, -1) if ring[q].checkpoint is not None), None)
+    if start is None:
+        return None
+    base = ring[start]
+    times = [ring[q].input.t for q in range(start, len(ring))]  # the bar opens when its entry does
+    lead = 0 if base.prev is None else _fillers(base.prev.t, times[0], inst.step)
+    updates = lead + _updates(times, inst.step)
+    retaken = sum(len(ring[q].checkpoint or b"") for q in range(pos + 1, len(ring)))
+    restored = len(base.checkpoint or b"")
+    weight = restored // RESTORE_BYTES_PER_UPDATE + retaken // SNAPSHOT_BYTES_PER_UPDATE
+    return _Replay(pos, start, updates, updates + weight)
+
+
+def _amends_fit(insts: Sequence[_Instance], updates: Sequence[BarUpdate]) -> bool:
+    """C-2.17: True when the amended closes among `updates` replay in `insts` within
+    `MAX_AMEND_SERIES_UPDATES` together (each `_Replay.cost`, one that would change nothing
+    included), so `_closes` may replay them at once. False when one would take more than
+    `MAX_AMEND_UPDATES` in an instance, when an instance cannot place one, or when they would
+    take more together: the series re-primes instead, before any instance replays."""
+    total = 0
+    for inst in insts:
+        last = inst.last_index
+        for u in updates:
+            bar = u.bar
+            if last is None or bar.index > last:  # a new close: the plain path bounds it
+                last = bar.index
+                continue
+            replay = _replay_of(inst, bar.index, bar.open_time)
+            if replay is None or replay.updates > MAX_AMEND_UPDATES:
+                return False
+            total += replay.cost
+            if total > MAX_AMEND_SERIES_UPDATES:
+                return False
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -1052,6 +1119,9 @@ class IndicatorEngine:
         if any(i.generation is not None and i.generation != generation for i in insts):
             self._reprime_series(symbol, spec, "generation_swap")  # the store reset first
             return
+        if not _amends_fit(insts, updates):  # C-2.17: decided before any instance replays
+            self._reprime_series(symbol, spec, "history_repair")
+            return
         batches: dict[str, Batch] = {}
         reset = False
         for inst in insts:
@@ -1065,9 +1135,11 @@ class IndicatorEngine:
                     break
                 points.extend(got)
             COMPUTE[inst.req.kernel.indicator].observe(time.perf_counter() - started)
+            if reset:  # the series re-primes: no other instance need fold the close first
+                break
             if points:
                 batches[inst.req.key] = Batch(inst.info, tuple(points))
-        if reset:  # a bar the instance cannot place: the whole series re-primes, then snapshots
+        if reset:  # a close it cannot place, or one that raised: the series re-primes, re-snapshots
             self._reprime_series(symbol, spec, "history_repair")
             return
         self._bump(series)
@@ -1142,21 +1214,17 @@ class IndicatorEngine:
     def _amend(self, inst: _Instance, index: int, x: BarInput) -> list[Point] | None:
         """Replay from the newest checkpoint at or before the bar (module docstring): the points
         that changed, with `amended: true`; [] when the bar did not change; None to re-prime (a
-        bar the ring cannot place, or a replay past `MAX_AMEND_UPDATES` kernel updates, C-2.17)."""
-        ring = inst.ring
-        pos = next((q for q in range(len(ring) - 1, -1, -1) if ring[q].index == index), None)
-        if pos is None or ring[pos].input.t != x.t:
+        bar the ring cannot place, or a replay past `MAX_AMEND_UPDATES` kernel updates, C-2.17).
+        On the emit path `_amends_fit` has bounded the series' replays together first."""
+        replay = _replay_of(inst, index, x.t)
+        if replay is None:
             return None
-        start = next((q for q in range(pos, -1, -1) if ring[q].checkpoint is not None), None)
-        if start is None:
-            return None
+        ring, pos, start = inst.ring, replay.pos, replay.start
         if ring[pos].input == x:
             return []
-        base = ring[start]
-        times = [ring[q].input.t for q in range(start, len(ring))]  # x opens when its entry does
-        lead = 0 if base.prev is None else _fillers(base.prev.t, times[0], inst.step)
-        if lead + _updates(times, inst.step) > MAX_AMEND_UPDATES:
+        if replay.updates > MAX_AMEND_UPDATES:
             return None
+        base = ring[start]
         kernel = self._kernel(inst.req, inst.context)
         kernel.restore(base.checkpoint or b"")
         last, folded = base.prev, base.folded
