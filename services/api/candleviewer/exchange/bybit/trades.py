@@ -75,7 +75,8 @@ def _print(
 def parse_trade_frame(frame: str) -> list[TradePrint] | None:
     """`None` for non-trade frames; `ValueError` (a `FrameRejectedError` with a
     reason once the check is a plausibility one) for a malformed trade frame.
-    Past a valid topic the error names the symbol, so the stream marks a gap."""
+    Only the batch cap and the number, event-time, price and quantity checks
+    name the symbol, so only their refusals make the stream mark a gap."""
     try:
         msg = json.loads(frame)
     except ValueError:
