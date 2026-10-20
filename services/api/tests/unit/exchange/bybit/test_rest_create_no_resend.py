@@ -2,7 +2,8 @@
 
 24 §8.6 "Order creates", under any endpoint class. Bodies are the corpus 503
 (`rest/error_503.json`), the `retCode` envelope the REST tests already use and the unreadable
-bodies of `test_contract_errors.py`; failures are httpx's own errors from a `MockTransport`.
+bodies of `test_contract_errors.py`, plus bodies no venue sends (JSON null, a non-integer
+`retCode`, a corrupt gzip); failures are httpx's own errors from a `MockTransport`.
 """
 
 from __future__ import annotations
@@ -16,7 +17,12 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from candleviewer.exchange.base.boundary import exchange_errors_total
-from candleviewer.exchange.base.errors import AmbiguousResultError, ExchangeError, TransportError
+from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
+    ExchangeError,
+    TransportError,
+    UnknownStateError,
+)
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.metrics import bybit_rate_limited_total
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
@@ -40,7 +46,7 @@ def _raise(error: type[Exception]) -> Outcome:
     return outcome
 
 
-def _ret(code: int) -> Outcome:
+def _ret(code: object) -> Outcome:
     return lambda _: httpx.Response(200, json={"retCode": code, "retMsg": "x", "result": {}})
 
 
@@ -55,7 +61,16 @@ LEFT: dict[str, Outcome] = {
     "bare-timeout": _raise(TimeoutError),
     "5xx": lambda _: httpx.Response(http_status(ERR_503), json=rest(ERR_503)),
     "non-json": lambda _: httpx.Response(200, text='{"retCode":0,"res'),
+    "undecodable": lambda _: httpx.Response(
+        200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"not gzip")
+    ),
     "no-retcode": lambda _: httpx.Response(200, json={"result": {}}),
+    "json-null": lambda _: httpx.Response(200, content=b"null"),
+    "json-number": lambda _: httpx.Response(200, content=b"123"),
+    "retcode-text": _ret("abc"),
+    "retcode-null": _ret(None),
+    "retcode-float": _ret(0.5),
+    "retcode-false": _ret(False),
     "10016": _ret(10016),
     "10019": _ret(10019),
 }
@@ -111,10 +126,16 @@ async def _post(
 async def test_a_create_that_left_is_ambiguous_and_sent_once(
     path: str, outcome: Outcome, cls: EndpointClass
 ) -> None:
+    counters = [
+        exchange_errors_total.labels(**{"class": c}) for c in ("TRANSPORT_ERROR", "UNKNOWN_STATE")
+    ]
+    before = [counter._value.get() for counter in counters]  # test-only read, as below
+
     error, sent = await _post([outcome, OK], path, cls)
 
     assert isinstance(error, AmbiguousResultError) and len(sent) == 1
     assert error.order_link_id == "cv-1" and error.retryable is False
+    assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [1, 0]
 
 
 @pytest.mark.parametrize("code", [10016, 10019])
@@ -171,6 +192,28 @@ async def test_amend_cancel_and_trading_stop_keep_their_retry(
     error, sent = await _post([LEFT[outcome]], path, cls)
 
     assert error is not None and not isinstance(error, AmbiguousResultError) and len(sent) == 4
+
+
+@pytest.mark.parametrize("code", [110079, 999999])
+async def test_a_create_answered_with_an_open_outcome_code_is_never_retryable(code: int) -> None:
+    """110079, or a code the mapping lacks: polled and reconciled, never resent (24 §8.6)."""
+    error, sent = await _post([_ret(code), OK])
+    assert isinstance(error, UnknownStateError) and error.retryable is False and len(sent) == 1
+
+    error, sent = await _post([_ret(code), OK], "/v5/order/cancel")  # other paths: unchanged
+    assert isinstance(error, UnknownStateError) and error.retryable is True and len(sent) == 1
+
+
+@pytest.mark.parametrize("path", ["/v5/order/amend", "/v5/order/cancel"])
+@pytest.mark.parametrize("outcome", ["undecodable", "json-null", "retcode-text"])
+async def test_amend_and_cancel_skip_the_create_only_answer_checks(path: str, outcome: str) -> None:
+    sent: Sent = []
+    async with _client([LEFT[outcome]], sent, []) as client:
+        with pytest.raises((ExchangeError, TypeError, ValueError, httpx.DecodingError)) as caught:
+            body = {"symbol": "BTCUSDT", "orderLinkId": "cv-1"}
+            await client.signed_request("POST", path, body=body, endpoint_class=EndpointClass.ORDER)
+
+    assert not isinstance(caught.value, AmbiguousResultError) and len(sent) == 1
 
 
 @pytest.mark.parametrize("signed", [False, True], ids=["market-data", "account"])

@@ -181,19 +181,21 @@ class TransportError(ExchangeError):
 
 class AmbiguousResultError(TransportError):
     """An order create left the process and its outcome is unknown: a timeout, a
-    transport error, an HTTP 5xx, an answer the client cannot read, retCode 10016 or
-    10019 after the send (§8.6 "Order creates", SR-E29-15). The exchange may hold the
-    order or not, so it is **never retryable** as is: the REST client never resends it.
-    B1 takes it as the `place` invoke's `onError` (`error.platform.place`) into
-    `lifecycle.unknown`, running `record_transport_fault` (`28` §B1.4), and a later
-    re-send looks the id up first (`oms.order_link_resolution.adopt_or_resend`).
-    `order_link_id` is the create's id, `None` for a batch.
+    transport error, an HTTP 5xx, an answer the client cannot decode or read, retCode
+    10016 or 10019 after the send (§8.6 "Order creates", SR-E29-15). The exchange may hold
+    the order or not, so it is **never retryable** as is: the REST client never resends it.
+    B1 takes it through the `onError` of its `place` invoke (the runtime's
+    `error.platform.place`) into `lifecycle.unknown`, running `record_transport_fault`
+    (`28` §B1.4), and a later re-send looks the id up first
+    (`oms.order_link_resolution.adopt_or_resend`). `order_link_id` is the create's id,
+    `None` for a batch.
 
     For E29-T04, this is not the only error that leaves a create unknown: an oversized
-    answer (`RestBodyTooLarge`), a venue `UNKNOWN_STATE` code, and the caller's own
-    `asyncio.timeout` (a bare `TimeoutError`, which `translate_exchange_error` turns
-    into a retryable `UnknownStateError`) do too. Map them to `unknown` as well, and
-    never resend a create because an error says `retryable`."""
+    answer (`RestBodyTooLarge`), a venue `UNKNOWN_STATE` code (`retryable` false for a
+    create), and the caller's own `asyncio.timeout` (a bare `TimeoutError`, which
+    `translate_exchange_error` turns into a retryable `UnknownStateError`) or cancellation
+    do too. Map them to `unknown` as well, and never resend a create because an error
+    says `retryable`."""
 
     def __init__(self, message: str, *, order_link_id: str | None = None, **kwargs: object) -> None:
         kwargs["retryable"] = False

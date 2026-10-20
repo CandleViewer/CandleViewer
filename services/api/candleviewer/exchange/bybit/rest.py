@@ -180,7 +180,8 @@ class BybitRestClient:
     Public (unauthenticated) calls work with `signer=None`; the signed path
     (`signed_request`) requires a `BybitSigner`. Every request is shaped by
     the shared per-UID token bucket, retried per the taxonomy's `retryable`
-    flag with full jitter, and logged with secrets redacted.
+    flag with full jitter (never an order create that has left: 24 §8.6
+    "Order creates"), and logged with secrets redacted.
     """
 
     def __init__(
@@ -407,6 +408,10 @@ class BybitRestClient:
                     raise TransportError(f"transport error calling {path}: {exc}") from exc
                 await self._backoff(attempt)
                 continue
+            except httpx.DecodingError as exc:  # a corrupt Content-Encoding: not a TransportError
+                if not creates:
+                    raise
+                raise _answer_ambiguous(path, body, "an undecodable body") from exc
             finally:
                 bybit_rest_latency_seconds.labels(endpoint=path).observe(time.monotonic() - start)
 
@@ -467,6 +472,8 @@ class BybitRestClient:
                     f"{path} returned HTTP {response.status_code} with a non-JSON body: {exc}"
                 ) from exc
 
+            if creates and not _usable_ret_code(data, is_http_error):
+                raise _answer_ambiguous(path, body, "no usable retCode")
             # A missing `retCode`, or `retCode == 0` on an HTTP error status,
             # is never treated as success — the raw body defaulted `retCode`
             # to 0 previously, which failed open on a 4xx with an unusual
@@ -474,8 +481,6 @@ class BybitRestClient:
             has_ret_code = "retCode" in data
             ret_code = int(data["retCode"]) if has_ret_code else -1
             if not has_ret_code or (is_http_error and ret_code == 0):
-                if creates:
-                    raise _answer_ambiguous(path, body, "no usable retCode")
                 bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
                 exchange_errors_total.labels(**{"class": UnknownStateError.code.value}).inc()
                 raise UnknownStateError(
@@ -491,6 +496,8 @@ class BybitRestClient:
                 venue = {"exchange_ret_code": ret_code, "exchange_ret_msg": ret_msg}
                 raise _answer_ambiguous(path, body, f"retCode {ret_code}", **venue)
             error = map_ret_code(ret_code, ret_msg)
+            if creates and isinstance(error, UnknownStateError):
+                error.retryable = False  # its outcome is open: polled and reconciled, never resent
             exchange_errors_total.labels(**{"class": error.code.value}).inc()
 
             if isinstance(error, ClockDriftError) and not clock_retry_used:
@@ -589,9 +596,14 @@ def _ambiguous(
 ) -> AmbiguousResultError:
     """The create to `path` left and `cause` hides its outcome (24 §8.6 "Order creates")."""
     link = body.get("orderLinkId") if body else None
+    order_link_id = link if isinstance(link, str) else None
+    exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
+    logger().warning(
+        "bybit_rest_create_ambiguous", path=path, cause=cause, order_link_id=order_link_id
+    )
     return AmbiguousResultError(
         f"{path}: {cause} after the create left; its outcome is unknown",
-        order_link_id=link if isinstance(link, str) else None,
+        order_link_id=order_link_id,
         **detail,
     )
 
@@ -601,8 +613,14 @@ def _answer_ambiguous(
 ) -> AmbiguousResultError:
     """An answer to the create arrived but hides its outcome: counted as the error raised."""
     bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
-    exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
     return _ambiguous(path, body, cause, **detail)
+
+
+def _usable_ret_code(data: object, is_http_error: bool) -> bool:
+    """A create's answer is readable only with an integer `retCode` (a bool is not one) that is
+    non-zero on an HTTP error status (24 §8.6 "Order creates")."""
+    code = data.get("retCode") if isinstance(data, dict) else None
+    return type(code) is int and not (is_http_error and code == 0)
 
 
 def _json_dumps(body: Mapping[str, Any]) -> str:
