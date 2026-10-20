@@ -3,6 +3,7 @@ repositories, run on the in-memory stores (the Postgres twin is the write-ahead 
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from candleviewer.oms import order_steps as steps
 from candleviewer.oms.fakes import InMemoryExecutionStore, InMemoryOrderStore
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.statechart.bindings.b01_order import Step
+from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories.executions import NewExecution
 
@@ -247,6 +249,33 @@ async def test_an_exec_whose_id_another_execution_holds_rebuilds_nothing(
     assert await InMemoryExecutionStore(db).insert(other)
     before = await _events(db)
     with pytest.raises(ValueError, match="for another order"):
+        await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    assert await _events(db) == before
+
+
+async def test_an_exec_whose_holder_is_not_read_in_time_is_refused(
+    writer: OrderStepWriter, db: InMemoryOrderStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4, C-2.18: the read of which order holds a stored `exec_id` has its own bound,
+    `HOLDER_READ_TIMEOUT`, a quarter of the step's `CV_PERSIST_TIMEOUT`: a read that does not
+    answer in time refuses the step with nothing written (`ValueError`), never running out the
+    step's budget into an outcome in doubt."""
+    assert steps.HOLDER_READ_TIMEOUT == CV_PERSIST_TIMEOUT / 4
+    await _submitted(writer)
+    other = NewExecution(
+        exchange_account_id=ACCOUNT, exec_id="e1", symbol="BTCUSDT", side="Buy",
+        exec_qty=Decimal("0.4"), exec_price=Decimal(63000), exec_value=Decimal(25200),
+        exec_type="Trade", is_maker=False, exec_ts=T0,
+    )  # fmt: skip
+    assert await InMemoryExecutionStore(db).insert(other)
+    before = await _events(db)
+
+    async def stalled(_account_id: UUID, _exec_id: str) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(writer._executions, "get", stalled)
+    monkeypatch.setattr(steps, "HOLDER_READ_TIMEOUT", 0.0)
+    with pytest.raises(ValueError, match="its order was not read"):
         await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
     assert await _events(db) == before
 

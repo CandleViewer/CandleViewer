@@ -615,7 +615,7 @@ class OrderMachines:
         except OrderHistoryRefused as exc:
             link = row.order_link_id
             logger().critical("oms_order_history_refused", order_link_id=link, reason=str(exc))
-            self._pager.raise_alert("page", "oms_order_history_refused", machine_kind=MACHINE)
+            self._raise_alert("page", "oms_order_history_refused")
             raise
 
     async def command(
@@ -1033,7 +1033,7 @@ class OrderMachines:
         """S5 and S6 for one push to a live machine; True when the push is an S6 anomaly."""
         final = o.lifecycle in self.legality.finals
         if event in _PROTECTION:
-            await self._send_order(o, event, push)
+            await self._send_order(o, event, self._capped(push))
             return False
         if event == "EXEC":
             if final or o.lifecycle == "held":  # B1 audits it and starts the stop (INV-B1-o)
@@ -1063,6 +1063,17 @@ class OrderMachines:
             lead = self._now_us() // 1_000 + MAX_PUSH_LEAD_MS
             o.last_update_ms = max(o.last_update_ms, min(stamp, lead))
         return False
+
+    def _capped(self, push: dict[str, Any]) -> dict[str, Any]:
+        """A protection reading's exchange time, at most `MAX_PUSH_LEAD_MS` ahead of the clock, as
+        S5's watermark is (C-2.18): a reading stamped further ahead, from a skewed or hostile
+        stream, is taken at the lead, never dropped, so it decides the region for that long at
+        most (INV-B1-f). A time past what B1's closed schemas hold is left for them to refuse."""
+        stamp = push.get("updated_time")
+        lead = self._now_us() // 1_000 + MAX_PUSH_LEAD_MS
+        if type(stamp) is int and lead < stamp <= b01.MAX_EXCHANGE_US // 1_000:
+            return {**push, "updated_time": lead}
+        return push
 
     def _hold(self, o: _Order, event: str, push: dict[str, Any]) -> None:
         if len(o.held) >= MAX_HELD:
@@ -1407,15 +1418,16 @@ class OrderMachines:
         await self._record(o, name, detail)
 
     async def _record(self, o: _Order, name: str, detail: Mapping[str, str | None]) -> None:
+        """B1's record, written ahead (C-2.9); an S6 anomaly is alerted once it is written."""
         action, outcome, severity = B1_AUDITS[name]
-        if action == ANOMALY:
-            self._alert_anomaly()
         fields = {"order_link_id": o.view.get("order_link_id"), **detail}
         record = OrderAuditRecord(action, o.order_id, o.account_id, outcome, severity, name, fields)
         try:
             await self._bounded(self._ports.audit.write(record))
         except Exception as exc:  # B1's hook must not raise: the record is lost, so it pages
             self._page("oms_audit_record_lost", o, record=name, error=type(exc).__name__)
+        if action == ANOMALY:
+            self._alert_anomaly()
 
     async def _anomaly(
         self,
@@ -1425,11 +1437,11 @@ class OrderMachines:
         event: str,
         push: Mapping[str, Any],
     ) -> None:
-        """S6, the facade's own record: counted, logged and written ahead of the refusal; a record
-        that cannot be written raises (C-2.9). The push never met B1's closed schema, so its
-        `exec_id` is kept only as B1 keeps one (text of 1 to `MAX_TEXT` characters): the detail
-        holds ids and state names, never a caller's value (C-12.6)."""
-        self._alert_anomaly()
+        """S6, the facade's own record: logged and written ahead of the refusal, then counted and
+        alerted; a record that cannot be written raises (C-2.9), counted and alerted all the same.
+        The push never met B1's closed schema, so its `exec_id` is kept only as B1 keeps one (text
+        of 1 to `MAX_TEXT` characters): the detail holds ids and state names, never a caller's
+        value (C-12.6)."""
         exec_id = push.get("exec_id")
         detail = {
             "state": state,
@@ -1442,23 +1454,34 @@ class OrderMachines:
         record = OrderAuditRecord(
             ANOMALY, order_id, account_id, "denied", "error", POST_TERMINAL_PUSH, detail
         )
-        await self._bounded(self._ports.audit.write(record))
+        try:
+            await self._bounded(self._ports.audit.write(record))
+        finally:
+            self._alert_anomaly()
 
     def _alert_anomaly(self) -> None:
         """S6 (#847's "raised, audited and alerted"): each anomaly is counted in
         `oms_reconcile_anomaly_total` and raised to the pager as an alert, a ticket, not a page."""
         self._anomalies.inc()
-        self._pager.raise_alert("alert", "oms_reconcile_anomaly", machine_kind=MACHINE)
+        self._raise_alert("alert", "oms_reconcile_anomaly")
 
     async def _notify(self, notice: OrderNotice) -> None:
         try:
             await self._bounded(self._ports.notices.notify(notice))
         except Exception as exc:  # the step that posted it stands: a lost notice pages
             logger().critical("oms_notice_lost", kind=notice.kind, error=type(exc).__name__)
-            self._pager.raise_alert(
-                "page", f"order notice lost: {notice.kind}", machine_kind=MACHINE
-            )
+            self._raise_alert("page", f"order notice lost: {notice.kind}")
 
     def _page(self, event: str, o: _Order, **detail: str) -> None:
         logger().critical(event, order_link_id=o.view.get("order_link_id"), **detail)
-        self._pager.raise_alert("page", event, machine_kind=MACHINE)
+        self._raise_alert("page", event)
+
+    def _raise_alert(self, severity: Literal["page", "alert"], summary: str) -> None:
+        """The pager is a synchronous, non-blocking sink (`Pager`), called once the record it
+        alerts on is written. One that raises is contained and logged at CRITICAL, as
+        `CvErrorHooks` contains its hooks: a broken pager never loses a record, rolls back a
+        step or changes a caller's answer (C-2.9)."""
+        try:
+            self._pager.raise_alert(severity, summary, machine_kind=MACHINE)
+        except Exception as exc:  # the alert is lost, never the record or the answer
+            logger().critical("oms_pager_failed", summary=summary, error=type(exc).__name__)

@@ -122,8 +122,11 @@ class Notices:
 class Pager:
     calls: list[str] = field(default_factory=list)
     severities: list[str] = field(default_factory=list)
+    refuse: bool = False
 
     def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
+        if self.refuse:
+            raise RuntimeError("the pager is down")
         self.calls.append(summary)
         self.severities.append(severity)
 

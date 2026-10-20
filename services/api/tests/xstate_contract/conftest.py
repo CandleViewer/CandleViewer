@@ -9,10 +9,12 @@ silently outside it. The generated per-arm / per-quiescence-point suites
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 
 import pytest
 
+from candleviewer.statechart.bindings import b01_order as b01
 from tests.xstate_contract._harness import Charts
 from tests.xstate_contract.membership import missing_contract_modules
 
@@ -38,3 +40,12 @@ def pytest_collectstart(collector: pytest.Collector) -> None:
 @pytest.fixture(scope="session")
 def charts(tmp_path_factory: pytest.TempPathFactory) -> Charts:
     return Charts(tmp_path_factory.mktemp("xstate_contract_charts"))
+
+
+@pytest.fixture(autouse=True)
+def _b01_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B1's command attempts and replays are process memory (`b01_order._ATTEMPTS`, `_REPLAYS`):
+    each test starts with none, so no test reads an attempt another left (C-13.7). A Hypothesis
+    test resets them per example itself, as this runs once per test."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    monkeypatch.setattr(b01, "_REPLAYS", {})

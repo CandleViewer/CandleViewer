@@ -249,7 +249,6 @@ def _ctx(**over: object) -> dict[str, Any]:
 def commands(monkeypatch: pytest.MonkeyPatch) -> Commands:
     port = Commands()
     monkeypatch.setattr(b01, "_ports", b01.OrderPorts(persist=Store(), commands=port))
-    monkeypatch.setattr(b01, "_ATTEMPTS", type(b01._ATTEMPTS)())
     return port
 
 
@@ -577,16 +576,17 @@ SEEN = {"kind": "SL_OBSERVED", **READ}
         (READ, SEEN | {"updated_time": 101, "size": "0"}, False),  # of a flat position
         (READ, SEEN | {"stop_loss": "61000"}, True),  # a tie of two readings: the new one
         (READ, SEEN | {"updated_time": 99, "stop_loss": "61000"}, True),  # a stale one
-        (READ | {"stop_loss": "61000"}, SEEN | {"updated_time": 101}, True),  # the later decides
+        (READ | {"stop_loss": "61000"}, SEEN | {"updated_time": 101}, False),  # a kept one vetoes
         (READ | {"stop_loss": "61000"}, SEEN | {"updated_time": 99}, False),
     ],
 )
 def test_sl_attach_ok_needs_a_read_back_no_later_loss_superseded(
     position: object, last: object, ok: bool
 ) -> None:
-    """INV-B1-f (version 3): the last reading decides. The read-back of the open position shows
-    the stop the OMS requested, unless the reading recorded during the attach is later (or as
-    late and a loss), which then decides; an `SL_OBSERVED` counts exactly as a read-back does."""
+    """INV-B1-f (version 3): the read-back of the open position shows the stop the OMS requested,
+    and the reading recorded during the attach, if it is later (or as late and a loss), shows it
+    too: a kept reading only vetoes, it never confirms a read-back that does not show the stop.
+    An `SL_OBSERVED` counts exactly as a read-back does."""
     ctx = _ctx(sl_reading=last)
     assert b01.sl_attach_ok(ctx, _Done({"ok": True, "position": position})) is ok
     reading = position if isinstance(position, dict) else {}
@@ -673,6 +673,66 @@ async def test_a_reading_delivered_late_never_undoes_a_loss(charts: Charts) -> N
             assert f"order.protection.{leaf}" in interp.current_state_ids, when
         assert interp.context["sl_reading"]["kind"] == "SL_LOST"
         assert interp.deferred_count == 0
+
+
+#: An exchange time no clock reaches: the last millisecond B1's closed schemas take (9999-12-31).
+AHEAD = b01.MAX_EXCHANGE_US // 1_000
+
+
+async def test_a_reading_stamped_ahead_never_confirms_an_attach_without_the_stop(
+    charts: Charts,
+) -> None:
+    """INV-B1-f, C-2.6, on the library with the real guards: a sighting of the requested stop
+    stamped far ahead, kept during the attach, vetoes and never confirms, so a read-back that
+    shows no stop takes the region to `sl_missing`, never `protected`."""
+    gate, commands = asyncio.Event(), Commands()
+
+    async def _attached(_command: b01.Command) -> Mapping[str, Any]:
+        await gate.wait()
+        return {"ok": True, "position": READ | {"stop_loss": None}}
+
+    commands.on_attach = _attached
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(b01, "_ports", b01.OrderPorts(persist=Store(), commands=commands))
+        async with _machine(charts, "protection.not_required", AuditTap()) as interp:
+            interp.context.update(stop_loss="62000", order_link_id=LINK)
+            await _send(interp, "FIRST_FILL")
+            await _send(interp, "SL_OBSERVED", **_reading_of("SL_OBSERVED", AHEAD, True))
+            gate.set()
+            await settle()
+            assert "order.protection.sl_missing" in interp.current_state_ids
+            assert not interp.has_tag("protected")
+
+
+async def test_a_reading_stamped_ahead_never_confirms_a_later_one_without_the_stop(
+    charts: Charts,
+) -> None:
+    """INV-B1-f on the library with the real guards and actions: a sighting of the requested stop
+    stamped far ahead is kept in `sl_present`. After a real loss, a real reading of no stop leaves
+    `sl_missing` as it is; a real sighting of the requested stop returns it to `sl_present`."""
+    async with _machine(charts, "protection.sl_present", AuditTap()) as interp:
+        interp.context.update(stop_loss="62000", order_link_id=LINK)
+        await _send(interp, "SL_OBSERVED", **_reading_of("SL_OBSERVED", AHEAD, True))
+        await _send(interp, "SL_LOST", **_reading_of("SL_LOST", 200, True))
+        await _send(interp, "SL_OBSERVED", updated_time=300, stop_loss=None, size="1")
+        assert "order.protection.sl_missing" in interp.current_state_ids
+        await _send(interp, "SL_OBSERVED", **_reading_of("SL_OBSERVED", 400, True))
+        assert "order.protection.sl_present" in interp.current_state_ids
+
+
+async def test_a_loss_stamped_ahead_vetoes_every_reading_stamped_before_it(
+    charts: Charts,
+) -> None:
+    """INV-B1-f, C-2.6: B1 has no clock, so a loss stamped far ahead denies every sighting
+    stamped before it, or at its time, and the region stays `sl_missing`, whose alert paged and
+    whose request handed the position to B8. The OMS facade caps a reading's exchange time at its
+    clock's lead (`MAX_PUSH_LEAD_MS`), so in the OMS such a loss decides for that long at most."""
+    async with _machine(charts, "protection.sl_present", AuditTap()) as interp:
+        interp.context.update(stop_loss="62000", order_link_id=LINK)
+        await _send(interp, "SL_LOST", **_reading_of("SL_LOST", AHEAD, True))
+        for when in (200, AHEAD - 1, AHEAD):
+            await _send(interp, "SL_OBSERVED", **_reading_of("SL_OBSERVED", when, True))
+            assert "order.protection.sl_missing" in interp.current_state_ids, when
 
 
 _SEQUENCES = st.lists(
@@ -765,19 +825,16 @@ def test_set_ports_unwires_on_none(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_recorded_attempts_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     """C-2.18: the oldest recorded outcome goes first."""
-    monkeypatch.setattr(b01, "_ATTEMPTS", type(b01._ATTEMPTS)())
     monkeypatch.setattr(b01, "MAX_ATTEMPTS", 2)
     for n in range(3):
         b01._remember((LINK, f"place:{n}"))
     assert list(b01._ATTEMPTS) == [(LINK, "place:1"), (LINK, "place:2")]
 
 
-def test_a_replay_begins_with_none_of_the_orders_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_replay_begins_with_none_of_the_orders_attempts() -> None:
     """INV-B1-f, SR-E29-15: a replayed machine is a new one, so it
     holds only the outcomes its record holds. The order's attempts this process kept, the attach's
     read-back and a place cut off unanswered, are forgotten; another order's stay."""
-    monkeypatch.setattr(b01, "_ATTEMPTS", type(b01._ATTEMPTS)())
-    monkeypatch.setattr(b01, "_REPLAYS", {})
     b01._remember((LINK, "attach_stop:once")).result = {"ok": True, "position": READ}
     b01._remember((LINK, "place:1"))
     b01._remember(("cvl-other", "place:1"))
@@ -926,7 +983,6 @@ async def test_a_deadline_while_the_attach_hangs_leaves_the_position_naked(chart
     commands.on_attach = _attached
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(b01, "_ports", b01.OrderPorts(persist=Store(), commands=commands))
-        mp.setattr(b01, "_ATTEMPTS", type(b01._ATTEMPTS)())
         async with _machine(charts, "protection.not_required", AuditTap()) as interp:
             interp.context.update(stop_loss="62000", order_link_id=LINK)
             await _send(interp, "FIRST_FILL")

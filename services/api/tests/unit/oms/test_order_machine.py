@@ -270,6 +270,53 @@ async def test_a_fill_for_a_final_machine_still_alive_is_b1s_anomaly(rig: Rig) -
     assert rig.facade.state(order.id) is None
 
 
+async def test_a_pager_that_raises_loses_no_record_and_changes_no_answer(rig: Rig) -> None:
+    """C-2.9: the facade alerts once the record is written, and a pager that raises is contained
+    and logged at CRITICAL: B1's own S6 record and the facade's are still written, each anomaly
+    is counted, and the caller still gets `ReconcileAnomaly`."""
+    order = await rig.submitted()
+    gate, rig.commands.on_attach = gated(READ_BACK)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
+    rig.pager.refuse = True
+    with capture_logs() as logs:
+        with pytest.raises(ReconcileAnomaly):  # B1's record: the machine lives, its stop pending
+            await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.5"))
+        gate.set()
+        await rig.quiet()
+        assert rig.facade.state(order.id) is None
+        with pytest.raises(ReconcileAnomaly):  # the facade's record: the order is evicted
+            await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": 1})
+    reasons = ["reconcile_anomaly", "POST_TERMINAL_PUSH"]
+    assert rig.audit.reasons("oms.reconcile_anomaly") == reasons
+    assert rig.count("oms_reconcile_anomaly_total") == 2
+    failed = [(e["summary"], e["log_level"]) for e in logs if e["event"] == "oms_pager_failed"]
+    assert failed == [("oms_reconcile_anomaly", "critical")] * 2
+
+
+async def test_an_anomaly_is_alerted_once_its_record_is_written(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.9: the S6 record is written ahead, then the anomaly is alerted, B1's and the
+    facade's alike: when the pager is called, the anomaly's record is in the audit log."""
+    written: list[int] = []
+
+    def alert(severity: str, summary: str, *, machine_kind: str) -> None:
+        if summary == "oms_reconcile_anomaly":
+            written.append(len(rig.audit.reasons("oms.reconcile_anomaly")))
+
+    order = await rig.submitted()
+    gate, rig.commands.on_attach = gated(READ_BACK)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
+    monkeypatch.setattr(rig.pager, "raise_alert", alert)
+    with pytest.raises(ReconcileAnomaly):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.5"))
+    gate.set()
+    await rig.quiet()
+    with pytest.raises(ReconcileAnomaly):
+        await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": 1})
+    assert written == [1, 2]
+
+
 @pytest.mark.parametrize(("exchange_order_id", "attached"), [("x1", True), ("x-foreign", False)])
 async def test_a_fill_of_another_order_starts_no_stop_of_a_held_one(
     rig: Rig, exchange_order_id: str, attached: bool
@@ -336,6 +383,21 @@ async def test_s5_a_push_stamped_far_ahead_moves_the_watermark_only_to_the_clock
     await rig.quiet()
     row = await rig.orders.get(ACCOUNT, order.id)
     assert row is not None and row.lifecycle_state == "expired"
+
+
+async def test_s5_a_push_stamped_within_the_lead_moves_the_watermark_to_its_time(
+    rig: Rig,
+) -> None:
+    """S5: within the 60 s lead 24 Sec.8.2 states, a push's own time moves the watermark, so a
+    push stamped between the clock and it is older and ignored: ordinary exchange skew never lets
+    an out-of-order push through."""
+    assert MAX_PUSH_LEAD_MS == 60_000
+    order = await rig.submitted()
+    now_ms = NOW_US // 1_000
+    await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"updated_time": now_ms + 30_000})
+    await rig.facade.push(ACCOUNT, order.id, "EXPIRE", {"updated_time": now_ms + 10_000})
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("triggered", "not_required")
 
 
 async def _unknown(rig: Rig) -> NewOrder:
@@ -616,6 +678,34 @@ async def test_a_lost_stop_pages_and_hands_the_position_to_b8(rig: Rig) -> None:
     assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
     assert rig.notices.kinds() == ["alert", "request_fallback_sl"]
     assert rig.notices.got[0].detail == {"alert": "SL_ATTACH_FAILED"}
+
+
+async def test_a_protection_reading_stamped_far_ahead_decides_for_the_clocks_lead_at_most(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INV-B1-f, C-2.18: a reading stamped further ahead of the facade's clock than
+    `MAX_PUSH_LEAD_MS` is taken at the lead, never dropped. A loss stamped in 9999 denies the
+    sightings stamped before its lead; once the clock passes it, a sighting of the requested stop
+    returns the region to `sl_present`. A time past what B1's schemas hold is refused, as ever."""
+    clock = [NOW_US]
+    monkeypatch.setattr(rig.facade, "_now_us", lambda: clock[0])
+    order = await rig.submitted()
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
+    now_ms, last_ms = NOW_US // 1_000, b01.MAX_EXCHANGE_US // 1_000
+    lost = {"updated_time": last_ms, "stop_loss": None, "size": "0.4"}
+    await rig.facade.push(ACCOUNT, order.id, "SL_LOST", lost)
+    assert rig.context(order)["sl_reading"]["updated_time"] == now_ms + MAX_PUSH_LEAD_MS
+    seen = {"stop_loss": "62000", "size": "0.4"}
+    await rig.facade.push(ACCOUNT, order.id, "SL_OBSERVED", seen | {"updated_time": now_ms + 1})
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
+    clock[0] += 2 * MAX_PUSH_LEAD_MS * 1_000
+    later = now_ms + 2 * MAX_PUSH_LEAD_MS
+    await rig.facade.push(ACCOUNT, order.id, "SL_OBSERVED", seen | {"updated_time": later})
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    with pytest.raises(Exception, match="failed validation"):
+        await rig.facade.push(ACCOUNT, order.id, "SL_LOST", lost | {"updated_time": last_ms + 1})
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
 
 
 async def test_a_kill_that_does_not_commit_is_reported_and_pages(rig: Rig) -> None:
@@ -1878,6 +1968,33 @@ async def test_a_fill_under_another_orders_exec_id_rebuilds_nothing(rig: Rig) ->
     assert rig.commands.kinds() == sent and "oms_step_outcome_unknown" not in rig.pager.calls
     assert rig.facade.state(a.id) == ("partially_filled", "sl_present")
     assert rig.context(a)["seen_exec_ids"] == ["eA"]
+
+
+async def test_a_fill_whose_holder_is_not_read_in_time_is_refused_without_a_resync(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4, C-2.18: the read of which order holds a stored `exec_id` is bounded on its own
+    (`HOLDER_READ_TIMEOUT`), so one that stalls refuses the fill with nothing written
+    (`OrderStepRefused`), as another order's is: it never runs out the step's write budget into
+    an unknown outcome, which would page and rebuild the machine."""
+    a, b = await rig.submitted(order_of(1)), await rig.submitted(order_of(2))
+    await rig.facade.push(ACCOUNT, b.id, "EXEC", fill_of(b, "eB", "0.4"))
+    await rig.quiet()
+    machine, sent = rig.facade._orders[a.id], rig.commands.kinds()
+    history = await rig.events.list_for_order(ACCOUNT, a.id)
+
+    async def stalled(_account_id: UUID, _exec_id: str) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(rig.fills, "get", stalled)
+    monkeypatch.setattr("candleviewer.oms.order_steps.HOLDER_READ_TIMEOUT", 0.0)
+    with pytest.raises(OrderStepRefused, match="ValueError"):
+        await rig.facade.push(ACCOUNT, a.id, "EXEC", fill_of(a, "eB", "0.1"))
+    await rig.quiet()
+    assert rig.facade._orders[a.id] is machine
+    assert rig.facade.state(a.id) == ("submitted", "not_required")
+    assert rig.commands.kinds() == sent and "oms_step_outcome_unknown" not in rig.pager.calls
+    assert await rig.events.list_for_order(ACCOUNT, a.id) == history
 
 
 async def test_a_second_facade_is_refused_while_the_first_holds_the_ports(rig: Rig) -> None:

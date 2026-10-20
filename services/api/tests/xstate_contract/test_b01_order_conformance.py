@@ -126,15 +126,13 @@ POINTS: dict[tuple[str, str], Callable[[Rig], Awaitable[NewOrder]]] = {
 @asynccontextmanager
 async def _resting(point: tuple[str, str]) -> AsyncIterator[tuple[Rig, NewOrder, Any]]:
     """A real order at *point*, through the OMS facade (the in-memory stores), and its machine."""
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(b01, "_ATTEMPTS", OrderedDict())
-        rig = build_rig(registry=REGISTRY)
-        try:
-            order = await POINTS[point](rig)
-            assert rig.facade.state(order.id) == point
-            yield rig, order, rig.facade._orders[order.id].interp
-        finally:
-            await rig.facade.stop()
+    rig = build_rig(registry=REGISTRY)
+    try:
+        order = await POINTS[point](rig)
+        assert rig.facade.state(order.id) == point
+        yield rig, order, rig.facade._orders[order.id].interp
+    finally:
+        await rig.facade.stop()
 
 
 async def _sealed(interp: Any, key: MachineKey, keys: Keys) -> SealedSnapshot:

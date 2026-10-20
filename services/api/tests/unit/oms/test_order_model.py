@@ -48,6 +48,10 @@ async def _lost(_command: b01.Command) -> Mapping[str, Any]:
     raise TimeoutError  # an ambiguous outcome: the order waits in `unknown` (S1)
 
 
+def _without(context: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    return {key: value for key, value in context.items() if key not in keys}
+
+
 class OrderModel(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
@@ -136,22 +140,25 @@ class OrderModel(RuleBasedStateMachine):
     @precondition(lambda self: self.rig.facade.state(self.order.id) is not None)
     @rule()
     def crash_and_hydrate(self) -> None:
-        """A7: the machine hydrated after a crash is the one that crashed. One thing no event
-        holds (24 Sec.8.2 "Recovery"): a stop that only a fill a held order consumed (S6) started,
-        with no fill of the order's own; its position is B8's and reconciliation's after the
-        restart (Sec.8.5 step 5), so the hydrated region rests in `not_required`."""
+        """A7: the machine hydrated after a crash is the one that crashed, and sends no notice
+        again. What no event holds is not rebuilt (24 Sec.8.2 "Recovery"). The outbox: its newest
+        notice stays as the next one's `seq` anchor, and the hydrated one holds a replayed step's,
+        never an internal arm's. A fill a held order consumed (S6) with no fill of the order's
+        own: one that pairs with the order started its stop, which is B8's and reconciliation's
+        after the restart (Sec.8.5 step 5), so the hydrated region rests in `not_required`; one
+        that does not pair asked B8 for its fallback stop (`request_fallback_sl`), a notice in no
+        event either, and left the region as it was."""
         state, context = self.rig.facade.state(self.order.id), dict(self.rig.context(self.order))
         self.rig = self.run(self.rig.restart())
         self.run(self.rig.facade.hydrate(ACCOUNT, self.order.id, environment="demo"))
         self.run(self.rig.quiet())
         assert state is not None
         hydrated = self.rig.facade.state(self.order.id), self.rig.context(self.order)
-        if state[1] != "not_required" and Decimal(context["filled_qty"]) == 0:
-            assert hydrated[0] == (state[0], "not_required")
-            kept = {k: v for k, v in context.items() if k not in PROTECTION_KEYS}
-            assert {k: v for k, v in hydrated[1].items() if k not in PROTECTION_KEYS} == kept
-        else:
-            assert hydrated == (state, context)
+        moved = state[1] != "not_required" and Decimal(context["filled_qty"]) == 0
+        unheld = PROTECTION_KEYS if moved else ("outbox",)
+        assert hydrated[0] == ((state[0], "not_required") if moved else state)
+        assert _without(hydrated[1], unheld) == _without(context, unheld)
+        assert self.rig.notices.got == []  # a replayed step's notice went out when it happened
 
     def _stored(self) -> tuple[Any, ...]:
         events = self.run(self.rig.events.list_for_order(ACCOUNT, self.order.id))

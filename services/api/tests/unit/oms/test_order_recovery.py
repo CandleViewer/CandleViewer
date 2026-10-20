@@ -16,7 +16,12 @@ from uuid import UUID
 
 import pytest
 
-from candleviewer.oms.errors import IllegalTransition, OrderHistoryRefused, OrderNotLoaded
+from candleviewer.oms.errors import (
+    IllegalTransition,
+    OrderHistoryRefused,
+    OrderNotLoaded,
+    ReconcileAnomaly,
+)
 from candleviewer.oms.order_machine import Legality
 from candleviewer.oms.order_steps import event_kind
 from candleviewer.oms.recovery import (
@@ -376,6 +381,59 @@ async def test_a_hydrated_machine_equals_the_one_that_crashed(rig: Rig, path: st
         assert again.commands.kinds() == stop
         first = again.publish.calls[0][2]  # no replayed step is published, only where it ends
         assert (first["state"], first["regions"]["protection"]) == (state[0], "not_required")
+    finally:
+        await again.facade.stop()
+
+
+async def _held_foreign_fill(rig: Rig) -> NewOrder:
+    """A held order consumes a fill of another exchange order (S6), which does not pair."""
+    order = await _held(rig)
+    fill = fill_of(order, "e1", "0.1", exchange_order_id="x-foreign")
+    with pytest.raises(ReconcileAnomaly):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill)
+    await rig.quiet()
+    return order
+
+
+async def _held_released_fill(rig: Rig) -> NewOrder:
+    """A fill that came while the order was lost in transit waits for the bind (SR-E29-03); the
+    order is held instead, never bound, so it consumes the released fill unpaired."""
+    order = await _unknown(rig)
+    await _push(rig, order, "EXEC", fill_of(order, "e1", "0.1", exchange_order_id="x1"))
+    await _command(rig, order, "MISMATCH", {"exchange_order_id": "x1"})
+    return order
+
+
+HELD_UNPAIRED: dict[str, Path] = {"foreign": _held_foreign_fill, "released": _held_released_fill}
+
+
+@pytest.mark.parametrize("path", sorted(HELD_UNPAIRED))
+async def test_a_held_order_that_handed_an_unpaired_fill_to_b8_hydrates_as_it_crashed(
+    rig: Rig, path: str
+) -> None:
+    """A7, INV-B1-o, C-2.6: a held order consumes a fill that does not pair with it (S6), so it
+    starts no stop and hands the position to B8 (`request_fallback_sl`), once. No event holds
+    that notice: the hydrated machine is the one that crashed, both regions and the context but
+    the outbox, whose anchor is the replayed `held` step's alert, never the internal arm's
+    notice; and it sends nothing again, no attach and no notice, and writes and audits nothing."""
+    order = await HELD_UNPAIRED[path](rig)
+    assert rig.facade.state(order.id) == ("held", "not_required")
+    assert rig.notices.kinds().count("request_fallback_sl") == 1
+    assert "attach_stop" not in rig.commands.kinds()
+    history = await _history(rig, order)
+    state, context, again = await _crashed(rig, order)
+    assert context["outbox"][-1]["kind"] == "request_fallback_sl"
+    try:
+        assert await again.facade.hydrate(ACCOUNT, order.id, environment="demo") == "held"
+        await again.quiet()
+        hydrated = again.context(order)
+        assert again.facade.state(order.id) == state
+        kept = {key: value for key, value in context.items() if key != "outbox"}
+        assert {key: value for key, value in hydrated.items() if key != "outbox"} == kept
+        outbox = [(notice["kind"], notice.get("alert")) for notice in hydrated["outbox"]]
+        assert outbox == [("alert", "order_held")]
+        assert (again.commands.sent, again.notices.got, again.audit.records) == ([], [], [])
+        assert await _history(again, order) == history
     finally:
         await again.facade.stop()
 

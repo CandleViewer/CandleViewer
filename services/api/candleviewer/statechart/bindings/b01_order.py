@@ -573,28 +573,33 @@ def _latest(context: Mapping[str, Any], reading: Mapping[str, Any]) -> Mapping[s
 
 
 def _confirms(context: Mapping[str, Any], reading: Mapping[str, Any]) -> bool:
-    """The last reading, *reading* or the kept one (`_latest`), shows the requested stop on the
-    open position: a later or tied loss, or a later reading of another stop or of a flat
-    position, denies a reading delivered late."""
+    """*reading* shows the requested stop on the open position, and the last reading (`_latest`)
+    does too: a kept reading only vetoes. A later or tied loss, or a later reading of another stop
+    or of a flat position, denies a reading delivered late; a later reading of the stop never
+    confirms one that does not show it, so one stamped ahead of the exchange's clock cannot
+    decide every reading after it (INV-B1-f)."""
     latest = _latest(context, reading)
-    return latest.get("kind") != "SL_LOST" and _covers(context, latest)
+    return (
+        _covers(context, reading) and latest.get("kind") != "SL_LOST" and _covers(context, latest)
+    )
 
 
 def sl_attach_ok(context: dict[str, Any], event: Any) -> bool:
-    """The attach result's read-back is a reading (`_reading`), and the last reading, it or the
-    one recorded during the attach, shows the requested stop on the open position (INV-B1-f): an
-    `SL_LOST` the exchange stamped at or after the read-back denies it, as on a tie the loss wins.
-    The call's own acknowledgement is no evidence: a result without a read-back is a denial."""
+    """The attach result's read-back is a reading (`_reading`) that shows the requested stop on
+    the open position, and no reading recorded during the attach denies it (`_confirms`,
+    INV-B1-f): an `SL_LOST` the exchange stamped at or after the read-back does, as on a tie the
+    loss wins. The call's own acknowledgement is no evidence: a result without a read-back is a
+    denial."""
     return _total(
         "sl_attach_ok", lambda: _confirms(context, _reading(_fields(event).get("position")))
     )
 
 
 def sl_observed_ok(context: dict[str, Any], event: Any) -> bool:
-    """`SL_OBSERVED` counts as `sl_attach_ok`'s read-back does: the last reading shows the
-    requested stop on the open position (INV-B1-f). Another stop, a flat position, a discovered
-    order's stop, or a reading the exchange stamped at or before a recorded loss (or before a
-    later recorded reading) leaves `sl_missing` as it is."""
+    """`SL_OBSERVED` counts as `sl_attach_ok`'s read-back does: it shows the requested stop on the
+    open position, and no later kept reading denies it (INV-B1-f). Another stop, a flat position,
+    a discovered order's stop, or a reading the exchange stamped at or before a recorded loss (or
+    before a later recorded reading that does not show the stop) leaves `sl_missing` as it is."""
     return _total("sl_observed_ok", lambda: _confirms(context, _reading(_fields(event))))
 
 
