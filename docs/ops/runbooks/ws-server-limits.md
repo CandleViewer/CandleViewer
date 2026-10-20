@@ -70,10 +70,12 @@ rendered message through the same redaction as stdout. What that looks like:
   closes an enclosing string is taken as part of the value, to the line's end. A placeholder
   (`***`, `null`, `<omitted>`, a marker) is no value only as the whole value, or right before a
   `...[truncated:oversize]` marker. A dotted id is no label: a name after a `.`, then a `:` and
-  neither a space nor a quote, so a WS machine topic such as `machines.session:<id>.state` stays
-  readable. A dotted attribute and its value is a label: `self.password='…'`, `obj.api_secret=…`
-  and `cfg.token: …` show the key-name marker. A format string is left as it is, so `%` formatting
-  works; the line it renders is redacted.
+  neither a space (an escaped line break counts as one) nor a quote, so a WS machine topic such as
+  `machines.session:<id>.state` stays readable. The rule reads by form only, so a dotted name whose
+  `:` is followed at once by its value (`cfg.token:shortone`) reads as an id too, and only the shape
+  pass applies to it. A dotted attribute and its value is a label: `self.password='…'`,
+  `obj.api_secret=…` and `cfg.token: …` show the key-name marker. A format string is left as it is,
+  so `%` formatting works; the line it renders is redacted.
 - **Tracebacks.** A traceback or a stack is rendered first and redacted after (#415), on stdout and
   in the support bundle's buffer (on one line there), where each value stands: a labelled value
   shows the key-name marker, a backup download path (to the end of its token) shows
