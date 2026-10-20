@@ -16,7 +16,7 @@
   #732) and profiles research (E28-D01, #820); quantitative usability metrics (the population is one
   owner plus a few managers; this report is qualitative by necessity and says so).
 - **Deliverable form (closed at `971915d5`):** this file plus the four research boards on the ticket's
-  Penpot page `E42-D01` (page id `55e86c27-99d4-8006-8008-d1e37a887763`), as `docs/design/README.md`
+  Penpot page `E42-D01` (page id `0a41e3a8-e6a6-807a-8008-d223c9c49e37`), as `docs/design/README.md`
   requires of a UX-research deliverable ("not a markdown file alone"). The boards were drawn, exported
   and embedded (§1) by the orchestrator's batch builder from hpe-worker-1's build script once the Penpot
   bridge was back; the page link and the board table are on #830 (issuecomment-6301892059) and in the PR
@@ -47,7 +47,7 @@ are appended here as a dated addendum, §10) and the Penpot boards exist (§1, d
 | Accessibility note: at least one keyboard-only session                                                         | §10, keyboard-only pass on scenario 1                                                                                                                                                                                                    | substituted per the agent-delivery adaptation clause; protocol ready (§10) for the owner to run                              |
 | Security note: sanitised fixtures only; recording retention stated                                             | §10 "Data handling"                                                                                                                                                                                                                      | done (rules stated)                                                                                                          |
 | Observability: the list feeds the `empty_state_shown` and `admin.onboarding_abandoned` questions               | §8, "Post-launch signal" column                                                                                                                                                                                                          | done                                                                                                                         |
-| Research boards in Penpot (mandatory evidence per `docs/design/README.md`)                                     | §1: four boards on page `E42-D01` (`55e86c27-99d4-8006-8008-d1e37a887763`), drawn and exported at `971915d5`, PNGs committed under `docs/design/research/img/` and embedded; page link and board table on #830 (issuecomment-6301892059) | done                                                                                                                         |
+| Research boards in Penpot (mandatory evidence per `docs/design/README.md`)                                     | §1: four boards on page `E42-D01` (`0a41e3a8-e6a6-807a-8008-d223c9c49e37`), drawn and exported at `971915d5`, PNGs committed under `docs/design/research/img/` and embedded; page link and board table on #830 (issuecomment-6301892059) | done                                                                                                                         |
 
 ## Deviations
 
@@ -57,7 +57,7 @@ Recorded in one place so the PR can point here (`docs/design/README.md`; C-4.4; 
    in both fix rounds, so the four Penpot research boards were specified (§1) and scripted before they
    could be drawn. The orchestrator's batch builder then built them from hpe-worker-1's script, one board
    per `execute_code` call through a single writer (page `E42-D01`, id
-   `55e86c27-99d4-8006-8008-d1e37a887763`; boards `E42-D01 / 01..04`, ids in §1), exported them with
+   `0a41e3a8-e6a6-807a-8008-d223c9c49e37`; boards `E42-D01 / 01..04`, ids in §1), exported them with
    `docs/design/_tools/penpot_export.py` to `docs/design/research/img/` and embedded them in §1 and in
    the PR body at `971915d5`. No waiver was requested or needed. The §11 checklist was posted on #830 on
    2026-10-16, and the page link with the board table on 2026-10-20 (issuecomment-6301892059).
@@ -110,22 +110,24 @@ draws it (PR #3926, board 04 "overview").
 4. **Vocabulary board**: the §6 decisions as term → in-product line pairs, for the teach-back test, with
    the conditional rows (OQ-1, OQ-4, OQ-12, OQ-14) marked as such.
 
-Page **`E42-D01`**, page id `55e86c27-99d4-8006-8008-d1e37a887763`:
-`https://design.penpot.app/#/workspace?team-id=b564c72c-f31f-81ec-8008-b109a9175d0b&file-id=b564c72c-f31f-81ec-8008-b112c6fdc116&page-id=55e86c27-99d4-8006-8008-d1e37a887763`
+Page **`E42-D01`**, page id `0a41e3a8-e6a6-807a-8008-d223c9c49e37`. The first page, drawn at `971915d5`, was
+removed from the file on 2026-10-20 between 20:49Z and 21:20Z. The builder rebuilt it from the same r1 script,
+and the re-exports matched the committed PNGs, so the PNGs are unchanged. The link:
+`https://design.penpot.app/#/workspace?team-id=b564c72c-f31f-81ec-8008-b109a9175d0b&file-id=b564c72c-f31f-81ec-8008-b112c6fdc116&page-id=0a41e3a8-e6a6-807a-8008-d223c9c49e37`
 
-1. `E42-D01 / 01 journey` (board id `55e86c27-99d4-8006-8008-d1e37ac41e57`):
+1. `E42-D01 / 01 journey` (board id `0a41e3a8-e6a6-807a-8008-d223ca1d2bb5`):
 
    ![E42-D01 / 01 journey — three lanes (supervise, delegate, investigate): signal, screens, moves, gates, server truth, audit emissions, findings → decisions](img/E42-D01-01-journey.png)
 
-2. `E42-D01 / 02 card-sort` (board id `55e86c27-99d4-8006-8008-d1e3f5e9bee2`):
+2. `E42-D01 / 02 card-sort` (board id `0a41e3a8-e6a6-807a-8008-d22434ca5731`):
 
    ![E42-D01 / 02 card-sort — the 26 cards, the open-sort bands, the closed sort, the nine-tile result with the "Needs your action" strip](img/E42-D01-02-card-sort.png)
 
-3. `E42-D01 / 03 findings-matrix` (board id `bcc63b26-089e-80fa-8008-d207ac68a455`):
+3. `E42-D01 / 03 findings-matrix` (board id `0a41e3a8-e6a6-807a-8008-d224cfae358e`):
 
    ![E42-D01 / 03 findings-matrix — F-S1..F-I6 against the heuristic set with recommendation, decision, owner and confidence, plus the AD-11 ladder](img/E42-D01-03-findings-matrix.png)
 
-4. `E42-D01 / 04 vocabulary` (board id `bcc63b26-089e-80fa-8008-d20823b43fd5`):
+4. `E42-D01 / 04 vocabulary` (board id `0a41e3a8-e6a6-807a-8008-d225b8729e46`):
 
    ![E42-D01 / 04 vocabulary — the §6 term → in-product line pairs, conditional rows marked, with the teach-back and a11y rules](img/E42-D01-04-vocabulary.png)
 
