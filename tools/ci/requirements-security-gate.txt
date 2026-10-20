@@ -7,4 +7,4 @@
 # `pip download PyYAML==6.0.3 --only-binary=:all: --no-deps --platform manylinux_2_17_x86_64
 # --python-version 3.12 --implementation cp --abi cp312 -d <dir>`, then `sha256sum <dir>/*.whl`.
 PyYAML==6.0.3 \
-    --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc
