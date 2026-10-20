@@ -76,9 +76,7 @@ Recorded in one place so the PR can point here (`docs/design/README.md`; C-4.4; 
 
 ## 1. Research boards (Penpot) — specified, drawn when the bridge is back
 
-No Penpot page exists for this ticket yet: the plugin bridge was down in the delivering session and in
-both fix rounds (a read-only probe hung and reported "transport dropped mid-call" on 2026-10-20). The
-boards are built by one `execute_code` call from a ready script (`e42-d01-board.js`, kept with the
+The boards are built by one `execute_code` call from a ready script (`e42-d01-board.js`, kept with the
 lane's Penpot scripts; it follows the shared-plugin convention: file-id guard, page `E42-D01` found by
 name and created if missing, re-checked after `openPage`, then synchronous creates only, one writer,
 idempotent by normalised name, every shape prefixed `E42-D01 / ` and stamped `hpe1ver`). They are
@@ -100,9 +98,24 @@ here. Every word on a board comes from this report; nothing is drawn that the te
 4. **Vocabulary board**: the §6 decisions as term → in-product line pairs, for the teach-back test, with
    the conditional rows (OQ-1, OQ-4, OQ-12, OQ-14) marked as such.
 
-Until those PNGs are committed this report is incomplete as a design deliverable (README: "not a
-markdown file alone"); the AC table and Deviations above say so. When the boards are drawn they are
-embedded here under this section with their page link and ids, and the AC row is updated.
+Page **`E42-D01`**, page id `55e86c27-99d4-8006-8008-d1e37a887763`:
+`https://design.penpot.app/#/workspace?team-id=b564c72c-f31f-81ec-8008-b109a9175d0b&file-id=b564c72c-f31f-81ec-8008-b112c6fdc116&page-id=55e86c27-99d4-8006-8008-d1e37a887763`
+
+1. `E42-D01 / 01 journey` (board id `55e86c27-99d4-8006-8008-d1e37ac41e57`):
+
+   ![E42-D01 / 01 journey — three lanes (supervise, delegate, investigate): signal, screens, moves, gates, server truth, audit emissions, findings → decisions](img/E42-D01-01-journey.png)
+
+2. `E42-D01 / 02 card-sort` (board id `55e86c27-99d4-8006-8008-d1e3f5e9bee2`):
+
+   ![E42-D01 / 02 card-sort — the 26 cards, the open-sort bands, the closed sort, the nine-tile result with the "Needs your action" strip](img/E42-D01-02-card-sort.png)
+
+3. `E42-D01 / 03 findings-matrix` (board id `bcc63b26-089e-80fa-8008-d207ac68a455`):
+
+   ![E42-D01 / 03 findings-matrix — F-S1..F-I6 against the heuristic set with recommendation, decision, owner and confidence, plus the AD-11 ladder](img/E42-D01-03-findings-matrix.png)
+
+4. `E42-D01 / 04 vocabulary` (board id `bcc63b26-089e-80fa-8008-d20823b43fd5`):
+
+   ![E42-D01 / 04 vocabulary — the §6 term → in-product line pairs, conditional rows marked, with the teach-back and a11y rules](img/E42-D01-04-vocabulary.png)
 
 ## 2. Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
