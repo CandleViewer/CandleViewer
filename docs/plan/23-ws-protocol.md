@@ -368,6 +368,17 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
 }
 ```
 
+**`welcome.limits` (normative).** Every value below is what a `welcome` advertises and what the gateway enforces; `runtime_spec_parity` (§16.5) compares them with the running gateway.
+
+| Key                          | Value     | Unit                                             | Enforced as                                                                 |
+| ---------------------------- | --------- | ------------------------------------------------ | --------------------------------------------------------------------------- |
+| `max_subscriptions`          | 200       | subscriptions per connection                     | `sub_ok` result `subscription_limit` (§5.2)                                 |
+| `max_topics_per_request`     | 50        | topics in one `sub` or `unsub` frame             | `too_many_topics` on a `sub`, `invalid_options` on an `unsub` (§5.2, §5.3)  |
+| `max_inbound_frame_bytes`    | 262 144   | bytes (8 192 until `auth_ok`)                    | `bye frame_too_big` and `1009` (§3.6)                                       |
+| `max_outbound_frame_bytes`   | 4 194 304 | bytes                                            | snapshots chunked, bars `d` split (§3.6)                                    |
+| `min_throttle_ms`            | 50        | milliseconds (0 only for `orders`, `executions`) | a lower request is raised to it, and `effective.throttle_ms` says so (§5.1) |
+| `max_symbols_per_connection` | 40        | distinct symbols per connection                  | `sub_ok` result `subscription_limit` (§5.2)                                 |
+
 `limits.max_inbound_frame_bytes` applies once `auth_ok` is sent. Until then a frame may be at most 8 KiB, and a MessagePack frame at most 72 values (§3.6).
 
 `clock_skew_ms` = server time minus the client's `clock_ms`. The UI surfaces a warning above ±2 000 ms because a skewed client mis-renders "bar closes in N seconds" countdowns. A `clock_ms` that is not a §13 `epochMs` (an integer from 0 to 2^53 - 1) is ignored as if absent, so the `welcome` then has no `clock_skew_ms`; a `ping`'s `client_ms` likewise, and its `pong` then has no `rtt_hint_ms` (§9.1, #415).

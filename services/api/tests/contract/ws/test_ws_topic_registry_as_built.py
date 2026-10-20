@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from itertools import takewhile
 from typing import Any, Final
 
 from candleviewer.auth.generated_permissions import Permission
@@ -23,38 +22,18 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws import topics as registry
 from candleviewer.ws.permissions import ConnectionAuthz, auth_ok_payload
 from candleviewer.ws.topics import CTL_KEYS, FAMILIES, IDENTITY_OPTIONS, OPTION_NAMES, UNIVERSAL
-from tests.contract.ws._harness import PROTOCOL_DOC, SCHEMAS
+from tests.contract.ws import _spec_parity as sp
+from tests.contract.ws._doc import between as _between
+from tests.contract.ws._doc import paragraph as _paragraph
+from tests.contract.ws._doc import table as _table
+from tests.contract.ws._harness import SCHEMAS
 from tests.unit.ws.test_subscriptions import _services, _sub
 
-_DOC: Final = PROTOCOL_DOC.read_text(encoding="utf-8")
 _OPTS: Final = SCHEMAS["cv://ws/v1/sub.schema.json"]["$defs"]["options"]["properties"]  # §13.5
 #: §13.5 `indicatorOptions`: the closed option set of `indicators.*`, beside the union (§6.1).
 _INDICATOR_OPTS: Final = SCHEMAS["cv://ws/v1/sub.schema.json"]["$defs"]["indicatorOptions"]
 _PUBLIC: Final = ("### 6.1 Public market-data topics", "#### 6.1.1 ")
 _PRIVATE: Final = ("### 6.2 Private topics", "#### 6.2.1 ")
-
-
-def _between(start: str, end: str) -> str:
-    """The doc from the first `start` up to the next `end` after it."""
-    i = _DOC.find(start)
-    j = _DOC.find(end, i + len(start))
-    assert 0 <= i < j, f"23-ws-protocol.md no longer has {start!r} followed by {end!r}"
-    return _DOC[i:j]
-
-
-def _paragraph(section: str, needle: str) -> str:
-    """The one paragraph of `section` that holds `needle`."""
-    found = [p for p in section.split("\n\n") if needle in p]
-    assert len(found) == 1, f"{len(found)} paragraphs hold {needle!r}; this test reads exactly one"
-    return found[0]
-
-
-def _table(section: str) -> list[list[str]]:
-    """The cells of the first table in `section`, without its header and delimiter rows."""
-    lines = section.splitlines()
-    first = next(i for i, ln in enumerate(lines) if ln.startswith("|"))
-    rows = takewhile(lambda ln: ln.startswith("|"), lines[first:])
-    return [[cell.strip() for cell in ln.strip("|").split("|")] for ln in rows][2:]
 
 
 def _example(section: str, marker: str) -> dict[str, Any]:
@@ -154,38 +133,43 @@ def test_b_f_the_6_1_and_6_2_tables_match_the_registry_and_the_as_built_paragrap
     """Every row's topic, options, default throttle and binary form is the registry's; an option
     the registry takes and the row leaves out is one §6.1's "As built" paragraph names."""
     public = _between(*_PUBLIC)
-    by_pattern = {
-        pattern.replace("{profile_kind}", "{kind}"): fam
-        for fam in FAMILIES.values()
-        if fam.family != "machines"
-        for pattern in fam.patterns
-    }
-    rows = [(r, True) for r in _table(public)] + [(r, False) for r in _table(_between(*_PRIVATE))]
-    problems: list[str] = []
-    left_out: list[tuple[str, str]] = []  # (pattern, option) the registry takes, the row omits
-    for row, has_binary_column in rows:
-        pattern = row[0].strip("`")
-        fam = by_pattern.pop(pattern, None)
-        if fam is None:
-            problems.append(f"{pattern}: not in the registry")
-            continue
-        in_name = set(re.findall(r"\{([a-z_]+)\}", pattern))
-        shown = {o for o in re.findall(r"`([a-z_]+)`", row[1]) if o not in in_name | set(UNIVERSAL)}
-        if shown - set(fam.options):
-            problems.append(f"{pattern}: lists {sorted(shown - set(fam.options))}, not taken")
-        left_out += [(pattern, option) for option in sorted(set(fam.options) - shown)]
-        ms = re.match(r"(\d[\d ]*\d|\d) ms", row[3])  # "1 000 ms"; `heatmap` is "= bucket"
-        if ms is not None and int(ms.group(1).replace(" ", "")) != fam.default_throttle_ms:
-            problems.append(
-                f"{pattern}: default throttle {row[3]!r} is not {fam.default_throttle_ms}"
-            )
-        if has_binary_column and row[4].startswith("✔") != fam.binary:
-            problems.append(f"{pattern}: binary form doc={row[4]!r} registry={fam.binary}")
-    assert problems + [f"{p}: not in the doc tables" for p in sorted(by_pattern)] == []
-    paragraph = _paragraph(public, "**As built (#2823).**")
-    assert [
-        (p, o) for p, o in left_out if f"`{p}`" not in paragraph or f"`{o}`" not in paragraph
-    ] == []
+    problems = sp.topic_table_problems(
+        _table(public),
+        _table(_between(*_PRIVATE)),
+        FAMILIES,
+        _paragraph(public, "**As built (#2823).**"),
+    )
+    assert problems == []
+
+
+def test_h_6_3_names_each_familys_permission_and_scope_as_the_registry_has_them() -> None:
+    drifts = sp.permission_scope_drifts(FAMILIES)
+    assert not drifts, sp.render(drifts)
+
+
+def test_h_the_book_row_of_6_1_gives_the_default_throttle_of_each_depth() -> None:
+    drifts = sp.book_throttle_drifts()
+    assert not drifts, sp.render(drifts)
+
+
+def test_h_a_family_is_served_unless_the_document_marks_it_contract_only() -> None:
+    drifts = sp.contract_only_drifts(FAMILIES)
+    assert not drifts, sp.render(drifts)
+
+
+def test_h_13_5_gives_each_option_the_type_range_and_enum_the_registry_checks() -> None:
+    drifts = sp.option_drifts(FAMILIES)["scalar"]
+    assert not drifts, sp.render(drifts)
+
+
+def test_h_13_5_bounds_each_list_option_as_the_registry_does() -> None:
+    drifts = sp.option_drifts(FAMILIES)["items"]
+    assert not drifts, sp.render(drifts)
+
+
+def test_h_13_5_lets_no_option_be_null_that_the_registry_refuses_null_for() -> None:
+    drifts = sp.option_drifts(FAMILIES)["null"]
+    assert not drifts, sp.render(drifts)
 
 
 def test_g_the_6_2_metrics_paragraph_names_the_catalogues_series_and_labels() -> None:
