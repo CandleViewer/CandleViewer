@@ -13,13 +13,17 @@ reader's scan pool.
 
 E26-T03 adds the injection side (20 Sec.3.9): `build_replay_injector` wires one session's
 `ReplayInjector` to the bus, the live event models (M12 may not import M3) and `ReplayBooks`,
-the session's replay-scoped book engines, the hook the injector feeds book events through.
+the session's replay-scoped book engines, the hook the injector feeds book events through. And
+`build_replay_run` builds one session's `ReplayRun` (E26-T05 calls it for a session): that
+injector, a `ReplaySource` over the shared tiers for every position it opens at
+(`replay_source_factory`), paced on the event loop's clock.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -27,14 +31,22 @@ from candleviewer.book.resync import BookEngine
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic, replay_env
 from candleviewer.domain.events import MarketEvent
+from candleviewer.domain.sql_names import EPOCH
 from candleviewer.exchange.base.models import BookDelta, BookSnapshot, TradeEvent
 from candleviewer.replay import (
+    ClockConfig,
     LiveEventModels,
+    LoopTime,
+    MonotonicTime,
     ReadAheadConfig,
     ReplayEventRefused,
     ReplayInjector,
     ReplayRequest,
+    ReplayRun,
+    ReplayRunPort,
+    ReplaySource,
     ReplayTiers,
+    SourceFactory,
 )
 from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings
 from candleviewer.storage.cold.layout import DatasetRegistry
@@ -173,4 +185,60 @@ def build_replay_injector(
         books=ReplayBooks(bus, session_id),
         models=LIVE_EVENT_MODELS,
         loop_start_us=loop_start_us,
+    )
+
+
+def replay_source_factory(
+    request: ReplayRequest, tiers: ReplayTiers, *, readahead: ReadAheadConfig | None = None
+) -> SourceFactory:
+    """The `SourceFactory` of one session: a `ReplaySource` over `tiers` for `request` from a
+    replay position on (its own validated request, `start` moved there; the end, streams and
+    tier stay), bounded by `readahead`. A position outside the window is refused by that
+    request (`ReplayRequestInvalid`)."""
+
+    def open_source(at_us: int) -> ReplaySource:
+        moved = request
+        if at_us != request.start_us:
+            moved = request.model_copy(update={"start": EPOCH + timedelta(microseconds=at_us)})
+        return ReplaySource(moved, tiers, config=readahead)
+
+    return open_source
+
+
+def build_replay_run(
+    *,
+    session_id: UUID,
+    request: ReplayRequest,
+    tick_sizes: Mapping[str, Decimal],
+    tiers: ReplayTiers,
+    bus: Bus,
+    port: ReplayRunPort,
+    speed: float = 1.0,
+    loop: bool = False,
+    clock: ClockConfig | None = None,
+    readahead: ReadAheadConfig | None = None,
+    time: MonotonicTime | None = None,
+) -> ReplayRun:
+    """One session's `ReplayRun` (E26-T05 calls it for a session; the caller holds it in the
+    replay sessions' TaskGroup, `ReplayRun.serve()`): its injector over its own `ReplayBooks`,
+    its sources over `tiers` (`ReplayWiring.tiers`, shared by every session), paced on the event
+    loop's clock unless `time` says otherwise. `tick_sizes` is what the session pinned from the
+    instrument-info cache, `loop` its `loop_enabled` and `clock` carries its gap policy. A
+    request reading a stream the replay does not re-emit is refused before any source opens."""
+    injector = build_replay_injector(
+        session_id=session_id,
+        request=request,
+        tick_sizes=tick_sizes,
+        bus=bus,
+        loop_start_us=request.start_us,
+    )
+    return ReplayRun(
+        request=request,
+        open_source=replay_source_factory(request, tiers, readahead=readahead),
+        injector=injector,
+        port=port,
+        time=time or LoopTime(),
+        speed=speed,
+        loop=loop,
+        config=clock,
     )

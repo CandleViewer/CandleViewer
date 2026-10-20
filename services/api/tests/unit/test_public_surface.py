@@ -231,6 +231,11 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReplayLoopStartUnknown",
         "ReplayPriceOffGrid",
         "ReplayTickSizeMissing",
+        # E26-T03: one session's playback (the clock, its driver and the loop wrap in one
+        # structured scope), the session layer's port and the source factory it opens.
+        "ReplayRun",
+        "ReplayRunPort",
+        "SourceFactory",
     },
 }
 

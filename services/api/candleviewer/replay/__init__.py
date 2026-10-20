@@ -16,6 +16,9 @@ it reports gaps, backpressure and stops to, the `BarProbe` behind `step_bar`, an
 `ReplayInjector`, the clock's sink, re-emits each recorded event as its live type on the
 session's own bus namespace: trades on the bus, book events through a `ReplayBookHook` into the
 session's replay-scoped book, built from the `LiveEventModels` the composition root hands in.
+`ReplayRun` is one session's playback: it opens the session's sources (a `SourceFactory`), owns
+the clock and its driver in one structured scope, wraps the loop and reports to the session
+layer through a `ReplayRunPort`.
 """
 
 from __future__ import annotations
@@ -58,6 +61,7 @@ from candleviewer.replay.playback import (
     check_speed,
 )
 from candleviewer.replay.regroup import RegroupedStream
+from candleviewer.replay.runner import ReplayRun, ReplayRunPort, SourceFactory
 from candleviewer.replay.source import ReadAheadConfig, ReplaySource
 
 __all__ = [
@@ -89,6 +93,8 @@ __all__ = [
     "ReplayPriceOffGrid",
     "ReplayRequest",
     "ReplayRequestInvalid",
+    "ReplayRun",
+    "ReplayRunPort",
     "ReplaySink",
     "ReplaySource",
     "ReplaySourceUnavailable",
@@ -96,6 +102,7 @@ __all__ = [
     "ReplayTickSizeMissing",
     "ReplayTierStraddle",
     "ReplayTiers",
+    "SourceFactory",
     "SourceTier",
     "StopReason",
     "check_speed",
