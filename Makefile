@@ -1,4 +1,4 @@
-.PHONY: bench-journal audit-bench governance dev dev-down test gen gen-check contracts up down reset arch security audit-net ci-gate-fixture alert-drill alert-drill-stop
+.PHONY: bench-journal audit-bench governance dev dev-down test gen gen-check contracts up down reset arch security pr-gate audit-net ci-gate-fixture alert-drill alert-drill-stop
 
 # E02-T01: root convenience targets delegating to pnpm/uv (20-architecture.md
 # §5 Tooling). Thin wrappers only — the pnpm/turbo task graph and the uv/ruff
@@ -79,6 +79,12 @@ arch:
 # rather than being silently treated as clean (CI-SEC-005 semantics).
 security:
 	python tools/ci/run_security_local.py
+
+# #3882: the PR workflow's checks, run locally on what this branch changes against origin/main: one
+# table, exit 1 on any failure; `make pr-gate FAST=1` skips the tests of a docs-only change (FAST=0
+# does not). Wants a clean tree: its last step deletes and regenerates the tracked generated files.
+pr-gate:
+	uv run --frozen --project services/api python tools/ci/pr_gate.py $(if $(filter-out 0,$(FAST)),--fast,)
 
 # GOV-001 (CODEOWNERS coverage check) + GOV-002 (rule-reference link check) +
 # GOV-003 (single-source-of-truth duplication check). Stdlib-only Python; runs

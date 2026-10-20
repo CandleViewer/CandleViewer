@@ -43,6 +43,7 @@ import functools
 import json
 import posixpath
 import re
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,13 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+# The block's one reader and matcher, shared with the local gate (tools/ci/pr_gate.py, #3882).
+from tools.ci import path_filters  # noqa: E402 - the repo root must be importable first
+
+_filters, _matches = path_filters.load_filters, path_filters.matches
+
 PR_YML = ROOT / ".github" / "workflows" / "pr.yml"
 SEMGREP_PATHS = (
     ".semgrep/**",
@@ -137,17 +145,7 @@ def _single(matches: list[dict[str, Any]], what: str) -> dict[str, Any]:
 
 
 def _filter_step() -> dict[str, Any]:
-    steps = _jobs()["changed-paths"]["steps"]
-    return _single(
-        [s for s in steps if str(s.get("uses", "")).startswith("dorny/paths-filter@")],
-        "`dorny/paths-filter` step in `changed-paths`",
-    )
-
-
-def _filters() -> dict[str, list[str]]:
-    """The `dorny/paths-filter` rules of the `changed-paths` job (its `filters:` block is YAML)."""
-    filters: dict[str, list[str]] = yaml.safe_load(_filter_step()["with"]["filters"])
-    return filters
+    return path_filters.filter_step(yaml.safe_load(PR_YML.read_text(encoding="utf-8")))
 
 
 #: The `pr` output fails closed (#3433): a PR-metadata gate skips only where it is false.
@@ -425,14 +423,6 @@ _PY_IMPORT = re.compile(
     re.MULTILINE,
 )
 _JS_IMPORT = re.compile(r"""\bfrom\s+["'](\.{1,2}/[^"']+)["']""")
-_GLOB = {r"\*\*/": "(?:.*/)?", r"\*\*": ".*", r"\*": "[^/]*", r"\?": "[^/]"}
-
-
-def _matches(path: str, rule: str) -> bool:
-    """Whether `dorny/paths-filter` (picomatch, `dot: true`) matches `path` to `rule`, for the
-    glob syntax pr.yml uses: `**/`, `**`, `*` and `?`."""
-    regex = re.sub(r"\\\*\\\*/|\\\*\\\*|\\\*|\\\?", lambda m: _GLOB[m.group(0)], re.escape(rule))
-    return re.fullmatch(regex, path) is not None
 
 
 def _repo_file(cwd: str, path: str, *, from_root: bool = True) -> str | None:
