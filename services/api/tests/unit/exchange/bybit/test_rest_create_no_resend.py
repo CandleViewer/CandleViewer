@@ -71,6 +71,7 @@ LEFT: dict[str, Outcome] = {
     "retcode-null": _ret(None),
     "retcode-float": _ret(0.5),
     "retcode-false": _ret(False),
+    "4xx-retcode-0": lambda _: httpx.Response(422, json={"retCode": 0, "retMsg": "OK"}),
     "10016": _ret(10016),
     "10019": _ret(10019),
 }
