@@ -185,7 +185,7 @@
                 }
               },
               "sessionNotArmed": {
-                "summary": "SR-043 refusal of a live order mutation that opens or increases exposure",
+                "summary": "SR-043 refusal of a live order mutation that `ArmToken` names",
                 "value": {
                   "code": "session_not_armed",
                   "detail": "Arm the session for live trading, then send the request again.",

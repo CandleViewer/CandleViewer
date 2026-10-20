@@ -2539,7 +2539,7 @@ class TradeGroupLegInput(BaseModel):
     exchange_account_id: Annotated[
         UUID,
         Field(
-            description="A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any leg is sent; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13)."
+            description="A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any exchange call; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13)."
         ),
     ]
     overrides: Annotated[

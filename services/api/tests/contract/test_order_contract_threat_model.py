@@ -84,6 +84,11 @@ _RECORD_FIELDS = frozenset(
 )
 
 
+def _types(node: dict[str, Any]) -> set[str]:
+    kind = node.get("type", ())
+    return {kind} if isinstance(kind, str) else set(kind)
+
+
 def _words(text: str) -> str:
     """A description on one line: a YAML block keeps its line breaks, a phrase may span two."""
     return " ".join(text.split())
@@ -179,6 +184,12 @@ def test_place_order_takes_an_opening_order_as_an_entry_whatever_its_intent() ->
     assert "so `placeOrder` refuses them with `intent_mismatch` too" in text
 
 
+def test_a_trade_group_applies_the_intent_rule_to_every_leg() -> None:
+    text = _words(_OPS["createTradeGroup"]["description"])
+    assert "The request's `intent` applies to every leg under `placeOrder`'s rule" in text
+    assert "and so are the server-assigned `reverse` and `algo_child`" in text
+
+
 def test_an_open_position_stop_is_never_cleared_whatever_the_profile_says() -> None:
     text = _words(_OPS["setPositionTpSl"]["description"])
     assert "The stop-loss of an open position can never be cleared (C-2.6)" in text
@@ -213,8 +224,8 @@ def test_the_stored_exchange_records_have_closed_schemas_and_bounded_strings() -
             and not ({"maxLength", "enum", "format"} & set(node))
         ]
         assert unbounded == []
-        containers = [
-            f for f, node in schema["properties"].items() if node.get("type") in ("object", "array")
+        containers = [  # the nullable list form, ["object", "null"], too
+            f for f, node in schema["properties"].items() if {"object", "array"} & _types(node)
         ]
         assert containers == []
     assert set(_SCHEMAS["ExchangeCallRecord"]["properties"]) == _CALL_FIELDS
@@ -222,6 +233,8 @@ def test_the_stored_exchange_records_have_closed_schemas_and_bounded_strings() -
     codes = _SCHEMAS["ExchangeRecordFields"]["properties"]
     for code in ("order_status", "reject_reason"):  # exchange codes, never message text
         assert codes[code]["pattern"] == "^[A-Za-z0-9_]{1,64}$"
+    records = _words(_SCHEMAS["ExchangeRecordFields"]["description"])
+    assert "a value of any other shape is dropped, never stored" in records
 
 
 def test_the_exchange_text_reaches_no_order_route_but_diagnostics() -> None:
@@ -284,6 +297,8 @@ def test_an_id_parameter_answers_a_foreign_id_as_a_missing_one(name: str) -> Non
 def test_a_trade_group_with_an_ungranted_leg_is_answered_as_missing() -> None:
     text = _words(_PARAMS["TradeGroupId"]["description"])
     assert "is answered as a group that does not exist (SR-E28-21)" in text
+    assert "`404` `not_found`, with the same title and `detail` shape" in text
+    assert "it is never a scope answer" in text
 
 
 def test_forbidden_names_the_scope_and_arm_refusals() -> None:
@@ -299,8 +314,19 @@ def test_forbidden_names_the_scope_and_arm_refusals() -> None:
     account = _SCHEMAS["PlaceOrderRequest"]["properties"]["exchange_account_id"]["description"]
     assert "one that does not exist are refused alike (`403 account_scope_denied`)" in account
     assert "it may be `code: session_not_armed` (SR-043" in text
+    assert (
+        "order mutation that `ArmToken` names (one that opens or increases exposure, "
+        "`reversePosition`, or a leverage change)" in text
+    )
+    assert "decided after account scope like the gate" in text
+    scope = _words(_SPEC["components"]["responses"]["AccountScopeDenied"]["description"])
+    assert (
+        "an account that does not exist is answered with the same status, code and `detail` "
+        "shape (SR-E29-13)" in scope
+    )
     example = forbidden["content"]["application/problem+json"]["examples"]["sessionNotArmed"]
     assert (example["value"]["status"], example["value"]["code"]) == (403, "session_not_armed")
+    assert example["summary"] == "SR-043 refusal of a live order mutation that `ArmToken` names"
 
 
 def test_an_arm_refusal_binds_no_idempotency_key() -> None:
@@ -367,6 +393,10 @@ def test_the_arm_token_is_refused_with_a_registered_code_and_spares_the_carve_ou
         "section does not classify. One live account among a request's targets is enough" in text
     )
     assert "it is decided after authentication, RBAC and account-scope resolution" in text
+    assert (
+        "a foreign or missing id still answers `404` and a foreign or missing body account "
+        "`403 account_scope_denied`" in text
+    )
     assert "so is a token issued without the live step-up" in text
     entry = next(e for e in _SPEC["x-error-codes"] if e["code"] == "session_not_armed")
     assert (entry["status"], entry["retryable"]) == (403, False)

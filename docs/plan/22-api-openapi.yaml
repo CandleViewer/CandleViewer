@@ -351,8 +351,8 @@ info:
     `step_up_required` and the arm state's `session_not_armed` of SR-043). A request refused by
     any of them stores no idempotency record and executes nothing; only the refusal's own
     effects remain (such as its audit record, where that refusal is audited, and for
-    `step_up_required` the challenge it
-    issues). The identical request re-sent with the same key once the cause is cleared (after an
+    `step_up_required` the challenge it issues).
+    The identical request re-sent with the same key once the cause is cleared (after an
     unlock or a successful step-up) is therefore a first submission: it executes once and is not
     answered from the idempotency store (no `Idempotency-Replayed`). This is what lets a client
     hold a request refused with `step_up_required` and re-send it unchanged
@@ -5323,6 +5323,10 @@ paths:
         exist on `/v5/order/create`), `twap` (timed slices), `chase` (repeated cancel/replace to
         stay at the touch), `scaled` (ladder of N limits, equal/linear/geometric distribution).
         Child orders are created with `intent: "algo_child` and linked to the leg."
+
+        **Intent.** The request's `intent` applies to every leg under `placeOrder`'s rule: an
+        `intent` that disagrees with a leg's effect is refused with `validation_failed` /
+        `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -13001,8 +13005,8 @@ components:
         another session → `403 session_not_armed`, audited, before any exchange call; so is a
         token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
         gate, it is decided after authentication, RBAC and account-scope resolution, so a
-        foreign or missing id still answers `404` and a foreign body account
-        `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+        foreign or missing id still answers `404` and a foreign or missing body account
+        `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
         `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
         need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
         refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -13186,7 +13190,10 @@ components:
       required: true
       description: >
         A group with any leg on an account outside the caller's grants is answered as a group
-        that does not exist (SR-E28-21).
+        that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail`
+        shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these
+        routes refuses the caller's capability (permission, session state, the order-entry
+        gate, the arm token) or fails CSRF; it is never a scope answer.
       schema: { type: string, format: uuid }
     PositionId:
       name: positionId
@@ -13398,7 +13405,7 @@ components:
                   code: csrf_token_invalid,
                 }
             sessionNotArmed:
-              summary: SR-043 refusal of a live order mutation that opens or increases exposure
+              summary: SR-043 refusal of a live order mutation that `ArmToken` names
               value:
                 {
                   type: "https://candleviewer.local/errors/session_not_armed",
@@ -13514,7 +13521,7 @@ components:
                   code: csrf_token_invalid,
                 }
     AccountScopeDenied:
-      description: "The targeted exchange account is outside the caller's granted scope. An account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`)."
+      description: "The targeted exchange account is outside the caller's granted scope. On the order routes that name an account in their body (`placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions`; see `Forbidden`), an account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`)."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -16349,7 +16356,7 @@ components:
           {
             type: string,
             format: uuid,
-            description: "A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any leg is sent; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13).",
+            description: "A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any exchange call; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13).",
           }
         overrides:
           type: object

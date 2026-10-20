@@ -4706,6 +4706,10 @@ export interface paths {
      *     exist on `/v5/order/create`), `twap` (timed slices), `chase` (repeated cancel/replace to
      *     stay at the touch), `scaled` (ladder of N limits, equal/linear/geometric distribution).
      *     Child orders are created with `intent: "algo_child` and linked to the leg."
+     *
+     *     **Intent.** The request's `intent` applies to every leg under `placeOrder`'s rule: an
+     *     `intent` that disagrees with a leg's effect is refused with `validation_failed` /
+     *     `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`.
      */
     post: operations["createTradeGroup"];
     delete?: never;
@@ -4719,7 +4723,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21). */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -4739,7 +4743,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21). */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -4762,7 +4766,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21). */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -9547,7 +9551,7 @@ export interface components {
     TradeGroupLegInput: {
       /**
        * Format: uuid
-       * @description A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any leg is sent; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13).
+       * @description A leg on an account outside the caller's grants, or on one that does not exist, refuses the whole group alike with `403 account_scope_denied`, audited, before any exchange call; never a per-leg rejection (OM-E01, programme threat F1, E28 PF-E01; SR-E29-13).
        */
       exchange_account_id: string;
       /** @description Per-leg overrides layered on top of the account profile and request defaults. */
@@ -9851,7 +9855,7 @@ export interface components {
     };
   };
   responses: {
-    /** @description The targeted exchange account is outside the caller's granted scope. An account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`). */
+    /** @description The targeted exchange account is outside the caller's granted scope. On the order routes that name an account in their body (`placeOrder`, `createTradeGroup`, `cancelAllOrders` and `closeAllPositions`; see `Forbidden`), an account that does not exist is answered with the same status, code and `detail` shape (SR-E29-13), so the answer never tells whether the account exists. An enrolment-only session gets this status with `code: mfa_enrollment_required` instead (see `Forbidden`). */
     AccountScopeDenied: {
       headers: {
         [name: string]: unknown;
@@ -10151,8 +10155,8 @@ export interface components {
      *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
      *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
      *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-     *     foreign or missing id still answers `404` and a foreign body account
-     *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+     *     foreign or missing id still answers `404` and a foreign or missing body account
+     *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
      *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
      *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
      *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -10314,7 +10318,7 @@ export interface components {
     TemplateId: string;
     /** @description Exclusive end of the time window (RFC 3339 UTC). Defaults to now. */
     To: string;
-    /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21). */
+    /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     TradeGroupId: string;
     UserId: string;
     VersionId: string;
@@ -15885,8 +15889,8 @@ export interface operations {
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
          *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-         *     foreign or missing id still answers `404` and a foreign body account
-         *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
          *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -16022,8 +16026,8 @@ export interface operations {
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
          *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-         *     foreign or missing id still answers `404` and a foreign body account
-         *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
          *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -16282,8 +16286,8 @@ export interface operations {
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
          *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-         *     foreign or missing id still answers `404` and a foreign body account
-         *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
          *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -16351,8 +16355,8 @@ export interface operations {
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
          *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-         *     foreign or missing id still answers `404` and a foreign body account
-         *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
          *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -16417,8 +16421,8 @@ export interface operations {
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
          *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-         *     foreign or missing id still answers `404` and a foreign body account
-         *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
          *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -18282,8 +18286,8 @@ export interface operations {
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
          *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-         *     foreign or missing id still answers `404` and a foreign body account
-         *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
          *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -18332,7 +18336,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21). */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -18372,8 +18376,8 @@ export interface operations {
          *     another session → `403 session_not_armed`, audited, before any exchange call; so is a
          *     token issued without the live step-up (see `POST /settings/arm`). Like the order-entry
          *     gate, it is decided after authentication, RBAC and account-scope resolution, so a
-         *     foreign or missing id still answers `404` and a foreign body account
-         *     `account_scope_denied`; and before the idempotency lookup: a refused request binds no
+         *     foreign or missing id still answers `404` and a foreign or missing body account
+         *     `403 account_scope_denied`; and before the idempotency lookup: a refused request binds no
          *     `Idempotency-Key`, and a replay of a bound key needs a valid token too. Demo and paper
          *     need none (SR-043). The C-2.6 carve-out binds this refusal as it binds every synchronous
          *     refusal (see `Forbidden`): cancels, `closePosition`, `closeAllPositions`,
@@ -18393,7 +18397,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21). */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
@@ -18435,7 +18439,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21). */
+        /** @description A group with any leg on an account outside the caller's grants is answered as a group that does not exist (SR-E28-21): `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists (SR-E29-13). `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
         tradeGroupId: components["parameters"]["TradeGroupId"];
       };
       cookie?: never;
