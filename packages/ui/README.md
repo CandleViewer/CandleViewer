@@ -163,11 +163,14 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 Use an icon by importing the component an element draws: `import { CloseIcon } from
 "@candleviewer/ui"`. Each icon is its own module, so a bundle carries only the icons it imports
 (`test/icons/tree-shaking.test.ts`). An icon beside visible text stays decorative; an icon-only
-control carries its own `aria-label`. Three lint rules bind this (`eslint.config.mjs`):
+control carries its own `aria-label`. Lint binds this (`eslint.config.mjs`):
 
 - `candleviewer/no-raw-svg`: a raw `<svg>` or an SVG data URL anywhere but the grid,
   `src/icons/IconSvg.tsx`, fails, naming the file; `react/no-danger` fails markup strings (SR-127),
   and `test/eslint-rules/no-raw-svg.test.ts` checks the MDX docs pages, which ESLint does not read.
+- `no-restricted-imports`: only the generated modules import the grid's `IconSvg`, so no geometry
+  reaches a page without passing the generator and the tests; its types and sizes stay open.
+  `test/icons/registry.test.ts` also reads `import()` calls and the MDX pages.
 - `candleviewer/icon-only-control-label`: a control whose only content is icons needs an
   `aria-label` (or `aria-labelledby`; for IconButton, its `label`). Icons in text-free wrappers
   (`<span>`) or in conditionals (`{open ? <ChevronUpIcon /> : <ChevronDownIcon />}`) count as

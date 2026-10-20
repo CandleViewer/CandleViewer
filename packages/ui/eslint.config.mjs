@@ -2,6 +2,7 @@ import tseslint from "typescript-eslint";
 import reactPlugin from "eslint-plugin-react";
 import reactHooksPlugin from "eslint-plugin-react-hooks";
 import baseConfig from "@candleviewer/config/eslint";
+import { noRestrictedImportsRuleSet } from "@candleviewer/config/no-restricted-imports";
 import { iconBesideTextHidden, iconOnlyControlLabel } from "./eslint-rules/icon-a11y.mjs";
 import noRawDesignValues from "./eslint-rules/no-raw-design-values.mjs";
 import noRawSvg from "./eslint-rules/no-raw-svg.mjs";
@@ -20,6 +21,18 @@ const candleviewer = {
 /** Component code the icon rules bind; the a11y gate's fixtures break them on purpose. */
 const ICON_RULE_FILES = ["src/**/*.{ts,tsx}", ".storybook/**/*.{ts,tsx}"];
 const FIXTURES = ".storybook/__fixtures__/**";
+/**
+ * The grid's one door (16-design-system-brief.md §5): only the generated icon modules draw in
+ * `IconSvg`, so every glyph on a page passed the registry's generator and tests. Its types and
+ * sizes stay importable. ESLint reads static imports and re-exports only;
+ * test/icons/registry.test.ts covers an `import()` call and the MDX pages.
+ */
+const GRID_DOOR = {
+  group: ["**/IconSvg", "**/IconSvg.js", "**/IconSvg.jsx", "**/IconSvg.ts", "**/IconSvg.tsx"],
+  importNames: ["IconSvg"],
+  message:
+    'Only the generated icon modules draw in the grid. Render the icon\'s component (e.g. <CloseIcon />), or add the glyph to the icon registry, packages/ui/src/icons/registry.ts (packages/ui/README.md, "Icons").',
+};
 
 /** @type {import("eslint").Linter.Config[]} */
 export default tseslint.config(
@@ -88,6 +101,20 @@ export default tseslint.config(
     plugins: { candleviewer },
     rules: {
       "candleviewer/no-raw-svg": "error",
+    },
+  },
+  {
+    // GRID_DOOR, beside the shared rule set: a rule's options replace the base config's.
+    files: ICON_RULE_FILES,
+    ignores: ["src/icons/generated/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          ...noRestrictedImportsRuleSet,
+          patterns: [...(noRestrictedImportsRuleSet.patterns ?? []), GRID_DOOR],
+        },
+      ],
     },
   },
   {

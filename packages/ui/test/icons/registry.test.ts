@@ -23,6 +23,8 @@ const CATEGORIES = ["navigation", "action", "status", "chart", "trading", "rule-
 const componentsOf = (module: object) =>
   Object.entries(module).filter(([key]) => /^[A-Z]\w*Icon$/.test(key));
 const render = (name: IconName) => renderToStaticMarkup(createElement(ICON_COMPONENTS[name]));
+/** A module specifier naming the grid, `src/icons/IconSvg.tsx`: `"../icons/IconSvg.js"`. */
+const GRID_MODULE = /(["'`])[^"'`\s]*\/IconSvg(?:\.[jt]sx?)?\1/;
 
 describe("the icon registry (src/icons/registry.ts)", () => {
   it("gives every name exactly one component, and every component exactly one name", () => {
@@ -82,5 +84,21 @@ describe("the icon registry (src/icons/registry.ts)", () => {
         .map(([key]) => key)
         .sort(),
     ).toEqual(NAMES.map(componentName).sort());
+  });
+
+  it("keeps its grid behind it: only the generated modules reach IconSvg, by any route", () => {
+    // eslint.config.mjs fences static imports and re-exports; this reads what ESLint does not:
+    // an import() call, and the MDX docs pages. Apps never see the grid at all.
+    const reachers = ["src", ".storybook"].flatMap((root) =>
+      readdirSync(path.join(PACKAGE, root), { recursive: true, encoding: "utf-8" })
+        .filter((file) => /\.(?:tsx?|mdx)$/.test(file))
+        .map((file) => path.posix.join(root, file.split(path.sep).join("/")))
+        .filter((file) => GRID_MODULE.test(readFileSync(path.join(PACKAGE, file), "utf-8"))),
+    );
+    expect(reachers.filter((file) => !file.startsWith(`${OUTPUT_DIR}/`))).toEqual([
+      "src/icons/index.ts",
+    ]);
+    expect(ui).not.toHaveProperty("IconSvg");
+    expect(icons).not.toHaveProperty("IconSvg");
   });
 });
