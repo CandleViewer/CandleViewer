@@ -228,11 +228,14 @@ async def test_a_create_answered_with_an_open_outcome_code_is_never_retryable(co
 
 
 @pytest.mark.parametrize("path", ["/v5/order/amend", "/v5/order/cancel"])
-@pytest.mark.parametrize("outcome", ["undecodable", "json-null", "retcode-text", "oversized"])
+@pytest.mark.parametrize(
+    "outcome", ["undecodable", "json-null", "retcode-text", "oversized", "deep-nesting"]
+)
 async def test_amend_and_cancel_skip_the_create_only_answer_checks(path: str, outcome: str) -> None:
     sent: Sent = []
+    untyped = (TypeError, ValueError, RecursionError, httpx.DecodingError)  # as before #3866
     async with _client([LEFT[outcome]], sent, []) as client:
-        with pytest.raises((ExchangeError, TypeError, ValueError, httpx.DecodingError)) as caught:
+        with pytest.raises((ExchangeError, *untyped)) as caught:
             body = {"symbol": "BTCUSDT", "orderLinkId": "cv-1"}
             await client.signed_request("POST", path, body=body, endpoint_class=EndpointClass.ORDER)
 
