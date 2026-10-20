@@ -1319,17 +1319,45 @@ def test_an_indicators_series_below_ten_qty_steps_is_refused_naming_the_floor(
     assert bars.registered == [] and conn.by_id == {}
 
 
-def test_an_indicators_series_at_ten_qty_steps_is_admitted_leased_and_retuned() -> None:
-    """At the floor it is admitted and leased as `bars.*` is, and a `ctl` of its instances bounds
-    the series by the same floor (`_retune`), so it is retuned, not refused."""
+def test_an_indicators_series_at_ten_qty_steps_is_admitted_and_leased() -> None:
+    """At the floor it is admitted and leased as `bars.*` is."""
     bars = _Bars()
     conn = ConnectionAuthz(_mgr(A), _services(bars=bars, qty_step=_step))
     volume, delta = "indicators.BTCUSDT.volume.10", "indicators.BTCUSDT.delta.10"
     results = _sub(conn, {"ch": volume, "opts": _EMA}, {"ch": delta, "opts": _EMA})
     assert [r["ok"] for r in results] == [True, True] and len(bars.registered) == 2
-    ok = _ctl(conn, volume, {"instances": [{"indicator": "ema", "params": {"n": 8}}]})
+
+
+#: A `ctl` that retunes `_EMA`'s one instance to another `n`.
+_EMA_8 = {"instances": [{"indicator": "ema", "params": {"n": 8}}]}
+
+
+def test_an_indicators_series_admitted_at_ten_qty_steps_is_retuned_by_a_ctl() -> None:
+    """A `ctl` of the instances of one admitted at the floor retunes them (`_retune`)."""
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars(), qty_step=_step))
+    _sub(conn, {"ch": "indicators.BTCUSDT.volume.10", "opts": _EMA})
+    ok = _ctl(conn, "indicators.BTCUSDT.volume.10", _EMA_8)
     assert ok["t"] == "ctl_ok"
     assert [i["params"] for i in ok["p"]["effective"]["instances"]] == [{"n": 8}]
+
+
+@pytest.mark.parametrize(
+    "later", [Decimal(2), None], ids=["the-step-grew", "the-symbol-left-the-catalogue"]
+)
+def test_an_indicators_series_is_retuned_after_its_qty_step_changes(later: Decimal | None) -> None:
+    """The series `sub` admitted stays held, so a `ctl` of its instances does not bound it again
+    (`_retune`): a step that grew past its floor since, or a symbol gone from the catalogue,
+    cannot refuse the retune, though a new `sub` of that series is refused now."""
+    steps: dict[str, Decimal | None] = {"BTCUSDT": Decimal(1)}
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars(), qty_step=steps.get))
+    _sub(conn, {"ch": "indicators.BTCUSDT.volume.10", "opts": _EMA})
+    steps["BTCUSDT"] = later  # a floor of 20, or no step at all
+    ok = _ctl(conn, "indicators.BTCUSDT.volume.10", _EMA_8)
+    assert ok["t"] == "ctl_ok"
+    assert [i["params"] for i in ok["p"]["effective"]["instances"]] == [{"n": 8}]
+    fresh = ConnectionAuthz(_mgr(A), _services(bars=_Bars(), qty_step=steps.get))
+    (again,) = _sub(fresh, {"ch": "indicators.BTCUSDT.volume.10", "opts": _EMA})
+    assert again["error"]["code"] == "invalid_topic_format"  # control: the change took effect
 
 
 @pytest.mark.parametrize("topic", ["bars.BTCUSDT.volume.1", "footprint.BTCUSDT.delta.1"])

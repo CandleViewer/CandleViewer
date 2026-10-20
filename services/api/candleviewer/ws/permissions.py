@@ -1036,11 +1036,16 @@ class ConnectionAuthz:
     ) -> tuple[BarSpec, tuple[Requested, ...], list[dict[str, Any]]]:
         """A `ctl` of `instances` (§6.1), checked as a `sub` is and before anything changes:
         `invalid_options` (`resolve_instances`), then the engine's caps and executor
-        (`subscription_limit`, `internal_error`). Returns the series, the instances and their
-        echo."""
-        spec, refused = _bar_spec(sub, self.services.qty_step)
-        if spec is None or refused is not None:  # admitted, so its spec was fine: never here
-            raise TopicError("invalid_options", "This bar series is not available.", "instances")
+        (`subscription_limit`, `internal_error`). The series is the one `sub` admitted, built from
+        the topic alone and not bounded again (`_bar_spec`): a qty step the catalogue changed since
+        cannot refuse a retune of a series that stays subscribed. Returns the series, the
+        instances and their echo."""
+        try:
+            spec = from_wire(sub.topic.bar_type or "", sub.topic.param or "")
+        except BarsError:  # admitted, so its spec was built once from this topic: never here
+            raise TopicError(
+                "invalid_options", "This bar series is not available.", "instances"
+            ) from None
         try:
             requested = resolve_instances(raw, spec)
         except InstanceRefusedError as exc:
