@@ -49,7 +49,7 @@ def parse_fixtures(
 ) -> tuple[dict[str, set[tuple[Path, int]]], dict[str, set[tuple[Path, int]]]]:
     pos: dict[str, set[tuple[Path, int]]] = {}
     neg: dict[str, set[tuple[Path, int]]] = {}
-    for fx in sorted(p for p in fx_dir.iterdir() if p.is_file()):
+    for fx in sorted(p for p in fx_dir.rglob("*") if p.is_file()):  # nested: fixtures/api/csrf.py
         for n, line in enumerate(fx.read_text(encoding="utf-8").splitlines(), start=1):
             m = ANNOT_RE.search(line)
             if m:

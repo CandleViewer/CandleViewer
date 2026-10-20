@@ -156,3 +156,30 @@ Both decision and code remain as stated until the owner decides; this section do
   bootstrap invite is rejected `revoked` once another Owner exists, from `GET /invites/{token}`
   to `/confirm`, and nothing is activated.
 - **Threats.** `docs/security/threat-models/e09-auth-rbac.md` U46 to U50 and §3.6.1.
+
+## Amendment 2 (2026-10-20, #3947 and #3949; ADR-0038 S0: `SameSite` for the desktop shell's origin)
+
+Records decision D2 of ADR-0038, taken by the delivery orchestrator under the owner's delegation
+(#2701 comments 6284192190 and 6290430849) and approved by the owner on #3949. It mirrors C-12.9 as
+amended in Constitution 2.0.0, takes effect when #3949 merges, and adds no exception of its own
+(C-16.3). It refines decisions 2 and 3 for one origin. For every other origin they stand as written,
+and the status stays `decided` (`README.md`, "Writing a new ADR", item 3).
+
+- **Decision 2 (the session cookie).** A response to a request whose `Origin` is exactly
+  `app://candleviewer` (the desktop shell's page) and is on the SR-042 allow-list may set
+  `cv_refresh` with `SameSite=None` instead of `SameSite=Strict`; it stays `HttpOnly`, `Secure`,
+  host-only and path-scoped. When it does is the contract's: the "Cookie" text in the CSRF section
+  of `22-api-openapi.yaml` (behind the `desktop.backend_connection` flag, every expiry for that
+  origin whatever the flag, and with `Partitioned` added, ADR-0038 4b and 4c). Every other request
+  keeps `SameSite=Strict`.
+- **Decision 3 (CSRF).** The CSRF cookie `__Host-cv_csrf` (`Secure`, `Path=/`, host-only, not
+  `HttpOnly`) follows the same rule. For that origin `SameSite` is not a CSRF control: the
+  session-bound double-submit token stays mandatory on every state-changing request, and the SR-042
+  `Origin` check is the only additional control. The WS handshake's `Origin` check is unchanged.
+- **Why.** `app://candleviewer` and the loopback backend are different sites, so a browser engine
+  neither stores nor sends `Strict` cookies between them (ADR-0038 A2) and the desktop could hold no
+  session. Only the shell's own pages run in its cookie session (SR-113, the C-12.10 navigation
+  allow-lists), so no other site's page can send the `SameSite=None` cookies (ADR-0038 BC-I2), and
+  browser sessions keep `Strict` (BC-E2).
+- **When.** The code sets `Strict` for every origin until ADR-0038 S4 ships the attribute function
+  behind the flag. F-1 above describes browser sessions.

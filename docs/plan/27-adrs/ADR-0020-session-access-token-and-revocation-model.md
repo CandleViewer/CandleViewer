@@ -39,7 +39,8 @@ schema documents (`docs/plan/spikes/E09-K01-session-model.md`).
 
 **Chosen: option 1 — opaque access token, refresh in `HttpOnly` cookie, held in memory only.**
 
-1. **Storage split.** `cv_refresh` is `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth`, opaque,
+1. **Storage split.** `cv_refresh` is `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` (but
+   `SameSite=None` for the desktop shell's origin only: C-12.9, ADR-0010 Amendment 2), opaque,
    hashed at rest (`sessions.refresh_token_hash`, unchanged from `21-database-schema.md` §3.1.4). The
    **access token is a second opaque, server-issued handle**, returned in the `POST /auth/login` /
    `POST /auth/refresh` JSON body, held **only in an in-memory JS variable** (never `localStorage`,
