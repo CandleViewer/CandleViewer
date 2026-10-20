@@ -823,6 +823,239 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: cv_audit_writer_refused_total{domain="auth",env="live"}
+    values: 0+0x5 1+0x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditSinkRefusing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_sink
+        env: live
+      exp_annotations:
+        summary: 'The audit sink refused a record its caller waited on: an audited
+          action failed'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditsinkrefusing
+- interval: 1m
+  input_series:
+  - series: cv_audit_writer_refused_total{domain="auth",env="live"}
+    values: 0+0x25
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditSinkRefusing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_writer_refused_total{domain="auth",env="live"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h49m
+    alertname: AuditSinkRefusing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_sink
+        env: live
+      exp_annotations:
+        summary: 'The audit sink refused a record its caller waited on: an audited
+          action failed'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditsinkrefusing
+- interval: 1m
+  input_series:
+  - series: cv_audit_writer_refused_total{domain="auth",env="live"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h52m
+    alertname: AuditSinkRefusing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_oldest_age_seconds{env="live"}
+    values: 0+60x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuditLaneBacklogAged
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: Audit lane records have waited over 10 minutes for the audit sink
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlanebacklogaged
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_oldest_age_seconds{env="live"}
+    values: 30+0x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuditLaneBacklogAged
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_oldest_age_seconds{env="live"}
+    values: 0+60x14 0+0x700
+  alert_rule_test:
+  - eval_time: 9h44m
+    alertname: AuditLaneBacklogAged
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: Audit lane records have waited over 10 minutes for the audit sink
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlanebacklogaged
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_oldest_age_seconds{env="live"}
+    values: 0+60x14 0+0x700
+  alert_rule_test:
+  - eval_time: 9h47m
+    alertname: AuditLaneBacklogAged
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_state{env="live",state="held"}
+    values: 1+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditLaneDrainHeld
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: 'The audit lane holds: every lane record falls back to the audit
+          sink'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlanerefusing
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_state{env="live",state="held"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditLaneDrainHeld
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_last_seq{env="live"}
+    values: 10+1x10 3+1x10
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: AuditLaneSeqRegressed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: 'The audit lane''s head went back: frames were rolled back or deleted'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_last_seq{env="live"}
+    values: 10+1x20
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: AuditLaneSeqRegressed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_last_seq{env="live"}
+    values: 10+1x10 _x30 3+1x10
+  alert_rule_test:
+  - eval_time: 55m
+    alertname: AuditLaneSeqRegressed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: 'The audit lane''s head went back: frames were rolled back or deleted'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_boot_overshoot_frames_total{env="live"}
+    values: 2+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditLaneBootOvershoot
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: cv-api booted with the audit lane past a cap
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlanerefusing
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_boot_overshoot_frames_total{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditLaneBootOvershoot
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_quarantine_bytes{env="live"}
+    values: 100+0x10 400+0x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuditLaneQuarantineGrowing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane's quarantine grew
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_quarantine_bytes{env="live"}
+    values: 400+0x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuditLaneQuarantineGrowing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_quarantine_bytes{env="live"}
+    values: 400+0x10 0+0x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuditLaneQuarantineGrowing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_quarantine_bytes{env="live"}
+    values: 100+0x10 400+0x700
+  alert_rule_test:
+  - eval_time: 10h39m
+    alertname: AuditLaneQuarantineGrowing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane's quarantine grew
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_quarantine_bytes{env="live"}
+    values: 100+0x10 400+0x700
+  alert_rule_test:
+  - eval_time: 10h42m
+    alertname: AuditLaneQuarantineGrowing
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_audit_verify_last_ok_timestamp_seconds{env="live"}
     values: 300+0x1700
   alert_rule_test:
@@ -1457,6 +1690,324 @@ tests:
   alert_rule_test:
   - eval_time: 10m
     alertname: KeySelfCheckLatched
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_state{env="live",state="stopped"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneRefusing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane refuses records; they fall back to the audit sink
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlanerefusing
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_refused_total{class="shared",env="live",reason="full"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneRefusing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane refuses records; they fall back to the audit sink
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlanerefusing
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_state{env="live",state="held"}
+    values: 0+0x5 1+0x700
+  - series: cv_audit_lane_refused_total{class="shared",env="live",reason="held"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneRefusing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_state{env="live",state="stopped"}
+    values: 0+0x20
+  - series: cv_audit_lane_state{env="live",state="open"}
+    values: 1+0x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneRefusing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_refused_total{class="shared",env="live",reason="full"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneRefusing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_refused_total{class="shared",env="live",reason="full"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h49m
+    alertname: AuditLaneRefusing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane refuses records; they fall back to the audit sink
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlanerefusing
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_refused_total{class="shared",env="live",reason="full"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h52m
+    alertname: AuditLaneRefusing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="frame_rejected"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneAnomaly
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane recorded a critical anomaly (tampering or damage)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="torn_tail"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneAnomaly
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",instance="api:9108",job="candleviewer-api",reason="frame_rejected"}
+    values: 0+0x5 _x30 1+0x20
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x5 _x30 2160+0x20
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: AuditLaneAnomaly
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane recorded a critical anomaly (tampering or damage)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",instance="api:9108",job="candleviewer-api",reason="seq_gap"}
+    values: _x30 1+0x20
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: _x30 1800+0x20
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: AuditLaneAnomaly
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane recorded a critical anomaly (tampering or damage)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",instance="api:9108",job="candleviewer-api",reason="frame_rejected"}
+    values: 0+0x20
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneAnomaly
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",instance="api:9108",job="candleviewer-api",reason="torn_tail"}
+    values: 0+0x5 _x30 1+0x20
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x5 _x30 2160+0x20
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: AuditLaneAnomaly
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",instance="api:9108",job="candleviewer-api",reason="frame_rejected"}
+    values: 1+0x700
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x700
+  alert_rule_test:
+  - eval_time: 10h
+    alertname: AuditLaneAnomaly
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="frame_rejected"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h49m
+    alertname: AuditLaneAnomaly
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane recorded a critical anomaly (tampering or damage)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="frame_rejected"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h52m
+    alertname: AuditLaneAnomaly
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="torn_tail"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneTornTail
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane found a torn tail (an append cut short by a crash)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="frame_rejected"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneTornTail
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",instance="api:9108",job="candleviewer-api",reason="torn_tail"}
+    values: 0+0x5 _x30 1+0x20
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x5 _x30 2160+0x20
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: AuditLaneTornTail
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane found a torn tail (an append cut short by a crash)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",instance="api:9108",job="candleviewer-api",reason="torn_tail"}
+    values: 0+0x20
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneTornTail
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="torn_tail"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h49m
+    alertname: AuditLaneTornTail
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: The audit lane found a torn tail (an append cut short by a crash)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneanomaly
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_anomalies_total{env="live",reason="torn_tail"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 9h52m
+    alertname: AuditLaneTornTail
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_created_total{env="live",instance="api:9108",job="candleviewer-api"}
+    values: 1+0x700
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x700
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuditLaneCreated
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: A new audit lane was created (expected once, at the first boot)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_created_total{env="live",instance="api:9108",job="candleviewer-api"}
+    values: 1+0x600 _x4 1+0x30
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x600 _x4 36300+0x30
+  alert_rule_test:
+  - eval_time: 610m
+    alertname: AuditLaneCreated
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: audit_lane
+        env: live
+      exp_annotations:
+        summary: A new audit lane was created (expected once, at the first boot)
+        runbook_url: docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_created_total{env="live",instance="api:9108",job="candleviewer-api"}
+    values: 1+0x700
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x700
+  alert_rule_test:
+  - eval_time: 10h
+    alertname: AuditLaneCreated
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: cv_audit_lane_created_total{env="live",instance="api:9108",job="candleviewer-api"}
+    values: 0+0x30
+  - series: process_start_time_seconds{instance="api:9108",job="candleviewer-api"}
+    values: 0+0x30
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: AuditLaneCreated
     exp_alerts: []
 - interval: 1m
   input_series:

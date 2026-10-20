@@ -2,20 +2,26 @@
 rule: what the writer, the lane or its façade counts in memory, and what the scrape serves from it
 (`env` added, every closed label value from the start, the lane's gauges only with a lane). The
 sink is a real `AuditWriter` over the in-memory repository; files only in `tmp_path`; keys are test
-vectors; the journal's clock is a fake."""
+vectors; the journal's clock is a fake. Every async test runs on a `VirtualTimeLoop` (`audit_waits`,
+#3709, #3816): the drain's polls and backoffs, the lane's and the writer's budgets and `until()`'s
+bound are fake seconds, which pass only when nothing else can happen, so no wait depends on how
+fast the runner is."""
 
 from __future__ import annotations
 
 import asyncio
 import errno
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
-from prometheus_client import CollectorRegistry, generate_latest
+from audit_waits import TaskEnded, VirtualTimeLoop, virtual
+from prometheus_client import CollectorRegistry, Gauge, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
+from structlog.testing import capture_logs
 
 from candleviewer.app import create_app
 from candleviewer.audit import lane_journal as lj
@@ -29,9 +35,12 @@ from candleviewer.observability.metrics import MetricsError, ScrapeCollector, Sc
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 
-KEYS, RAW, WAIT_S = lj.LaneKeys(bytes(range(32))), (bytes(range(32)), None), 5.0
+#: WAIT_S is fake seconds: past every wait a test here makes, which takes a few fake milliseconds.
+KEYS, RAW, WAIT_S = lj.LaneKeys(bytes(range(32))), (bytes(range(32)), None), 600.0
 OTHER = lj.LaneKeys(bytes(range(32, 64)))  # a key the lane is not configured with
-FAST: dict[str, Any] = {"retry_s": (0.0, 0.0), "poll_s": 0.0}
+#: A fake millisecond: the drain parks between polls and retries instead of spinning.
+FAST: dict[str, Any] = {"retry_s": (0.001, 0.001), "poll_s": 0.001}
+WORKERS = ("audit-writer", "audit-lane-drain")  # the flusher's and the drain's task names
 GAUGES = {"depth", "bytes", "oldest_age_seconds", "quarantine_bytes", "state", "last_seq"}
 
 
@@ -55,6 +64,31 @@ class Broken(lj.LaneFiles):  # its marker write fails after the first (a new lan
         super().mark(body, *rest)
 
 
+class FailingAppend(lj.LaneFiles):  # once armed, a frame's write into its open segment fails
+    armed = False
+
+    def append(self, fd: int, frame: bytes, end: int) -> None:
+        if self.armed:
+            raise OSError(errno.EIO, "append failed")
+        super().append(fd, frame, end)
+
+
+class Parts:  # what `lane_families` reads of an `AuditService`: its parts and two boot counts
+    lane_lock_failures = lane_link_failures = 0
+
+    def __init__(self, writer: AuditWriter | None, lane: AuditLane) -> None:
+        self.parts = (writer, lane, None)
+
+    def lane_parts(self) -> tuple[Any, ...]:
+        return self.parts
+
+
+def families(parts: Parts) -> dict[str, dict[tuple[str, ...], float]]:
+    """`lane_families` over `parts`, by name: each sample's label values and value."""
+    read = lane_families(cast(AuditService, parts), lambda: False)
+    return {family.name: dict(family.samples) for family in read}
+
+
 async def sink(path: Path, repo: FakeAuditRepository, **kw: Any) -> AuditWriter:
     writer = AuditWriter(repo, str(path / "w.wal"), clock=FakeClock(), sleep=repo.retry_sleep, **kw)
     await writer.start()
@@ -71,10 +105,38 @@ async def boot(path: Path, writer: AuditWriter, now: list[float] | None = None) 
     return lane
 
 
-async def until(check: Any) -> None:
-    async with asyncio.timeout(WAIT_S):
-        while not check():  # noqa: ASYNC110 - polls state the drain task moves; no event for it
-            await asyncio.sleep(0)
+def workers() -> list[asyncio.Task[Any]]:
+    """The running flushers and drains, whose death `until()` watches."""
+    return [task for task in asyncio.all_tasks() if task.get_name() in WORKERS]
+
+
+def failed(task: asyncio.Task[Any]) -> bool:
+    return task.done() and not task.cancelled() and task.exception() is not None
+
+
+async def until(check: Callable[[], bool]) -> None:
+    """Wait until `check()` holds, looking again at each point where nothing is ready. A flusher
+    or drain that dies meanwhile fails it at once, unless its death is what `check()` waits for.
+    A stall fails it after `WAIT_S` fake seconds, naming the flushers and drains that had died by
+    then, before the wait too, with the last one's error as the cause (as `test_lane_drain`'s)."""
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, VirtualTimeLoop), "an async test here runs on a VirtualTimeLoop"
+    try:
+        async with asyncio.timeout(WAIT_S):
+            while not check():
+                watched = workers()
+                await loop.idle(*watched)
+                died = [task for task in watched if failed(task)]
+                if died and not check():
+                    cause = died[0].exception()
+                    raise TaskEnded(f"{died[0].get_name()} ended before the condition") from cause
+    except TimeoutError:
+        dead = [task for task in loop.made if task.get_name() in WORKERS and failed(task)]
+        stalled = f"stalled: still false after {WAIT_S:g} fake seconds"
+        if dead:
+            names = ", ".join(task.get_name() for task in dead)
+            raise TaskEnded(f"{stalled}; had died: {names}") from dead[-1].exception()
+        raise AssertionError(stalled) from None
 
 
 def served(registry: CollectorRegistry) -> dict[str, dict[tuple[str, ...], float]]:
@@ -90,6 +152,7 @@ def one(value: float, *labels: str) -> dict[tuple[str, ...], float]:
     return {("demo", *labels): value}
 
 
+@virtual
 async def test_journal_counts_frames_by_class_and_its_backlog_until_the_drain_confirms(
     tmp_path: Path, repo: FakeAuditRepository
 ) -> None:
@@ -123,6 +186,7 @@ def test_quarantine_size_counts_a_replaced_copy_once_and_no_link(tmp_path: Path)
     assert files.quarantined() == 7  # a link is not a copy
 
 
+@virtual
 async def test_a_linked_quarantine_holds_at_boot(tmp_path: Path, repo: FakeAuditRepository) -> None:
     (tmp_path / "lane").mkdir()
     (tmp_path / "elsewhere").mkdir()
@@ -133,6 +197,7 @@ async def test_a_linked_quarantine_holds_at_boot(tmp_path: Path, repo: FakeAudit
     assert raised.value.errno in (errno.ELOOP, errno.ENOTDIR) and lane.journal.refusal == "held"
 
 
+@virtual
 async def test_drain_counts_anomalies_by_reason(tmp_path: Path, repo: FakeAuditRepository) -> None:
     writer = await sink(tmp_path, repo)
     lane = await boot(tmp_path, writer)
@@ -146,6 +211,7 @@ async def test_drain_counts_anomalies_by_reason(tmp_path: Path, repo: FakeAuditR
     await lane.close()
 
 
+@virtual
 async def test_drain_counts_a_hold_it_meets(tmp_path: Path, repo: FakeAuditRepository) -> None:
     lane = await boot(tmp_path, await sink(tmp_path, repo))
     journal, (seq, prev) = lane.journal, lane.journal.head
@@ -159,6 +225,7 @@ async def test_drain_counts_a_hold_it_meets(tmp_path: Path, repo: FakeAuditRepos
     await lane.close()
 
 
+@virtual
 async def test_drain_counts_its_death(tmp_path: Path, repo: FakeAuditRepository) -> None:
     journal = lj.LaneJournal(Broken(tmp_path / "lane"), KEYS)
     lane = AuditLane(journal, await sink(tmp_path, repo), **FAST)
@@ -169,6 +236,7 @@ async def test_drain_counts_its_death(tmp_path: Path, repo: FakeAuditRepository)
 
 
 @pytest.mark.parametrize(("action", "cls"), [("auth.logout", "reserved"), ("auth.login", "shared")])
+@virtual
 async def test_facade_counts_each_fallback_by_class_and_reason(
     tmp_path: Path, repo: FakeAuditRepository, action: str, cls: str
 ) -> None:
@@ -180,6 +248,7 @@ async def test_facade_counts_each_fallback_by_class_and_reason(
         assert facade.refused == {key: int(key == (cls, reason)) for key in facade.refused}
 
 
+@virtual
 async def test_writer_counts_the_refusals_its_callers_see_by_the_actions_domain(
     tmp_path: Path, repo: FakeAuditRepository
 ) -> None:
@@ -197,6 +266,7 @@ async def test_writer_counts_the_refusals_its_callers_see_by_the_actions_domain(
     assert writer.refused_by_domain == dict.fromkeys(AUDIT_DOMAINS, 0) | counts
 
 
+@virtual
 async def test_writer_does_not_count_the_drains_own_refusals(
     tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -228,6 +298,7 @@ def test_catalogue_declares_every_served_family_and_bounds_it_by_its_closed_sets
     assert {name: specs[name].max_series for name in bounds} == bounds
 
 
+@virtual
 async def test_the_scrape_serves_each_family_with_env_and_the_lanes_gauges_once_it_runs(
     tmp_path: Path, repo: FakeAuditRepository
 ) -> None:
@@ -289,3 +360,103 @@ def test_a_scraped_family_must_be_a_counter_or_gauge_with_allowed_labels() -> No
         ScrapeCollector(CollectorRegistry(), env="demo", read=read(("user_id",), "counter"))
     with pytest.raises(MetricsError, match="counter or a gauge"):
         ScrapeCollector(CollectorRegistry(), env="demo", read=read((), "histogram"))
+
+
+def test_a_read_that_fails_at_the_scrape_drops_its_families_and_nothing_else() -> None:
+    """SR-S4A1-01: a read that raises serves none of its families, and logs the error's class once
+    until a read succeeds again; every other family on the registry is still served."""
+    registry, reads = CollectorRegistry(), iter([True, False, False, True, False])
+    Gauge("cv_other", "another family", ["env"], registry=registry).labels("demo").set(3)
+
+    def read() -> list[ScrapedFamily]:  # construction's read, then one per scrape
+        if not next(reads):
+            raise KeyError("a read that fails")
+        return [ScrapedFamily("cv_x_total", "counter", "h", (), (((), 1.0),))]
+
+    ScrapeCollector(registry, env="demo", read=read)
+    with capture_logs() as logs:
+        got = [served(registry) for _ in range(4)]
+    other, mine = {"cv_other": one(3.0)}, {"cv_x_total": one(1.0)}
+
+    assert got == [other, other, other | mine, other]
+    assert [entry for entry in logs if entry["event"] == "metrics.scrape_read_failed"] == [
+        {"event": "metrics.scrape_read_failed", "log_level": "error", "error": "KeyError"}
+    ] * 2
+
+
+def test_a_scraped_sample_has_one_value_per_label() -> None:
+    """S4a1-N5: prometheus_client zips a sample's values with the labels and drops the rest, so a
+    family whose sample does not match its labels is refused at construction."""
+    family = ScrapedFamily("cv_x_total", "counter", "h", ("class",), ((("a", "b"), 1.0),))
+    with pytest.raises(MetricsError, match="one value per label"):
+        ScrapeCollector(CollectorRegistry(), env="demo", read=lambda: [family])
+
+
+@virtual
+async def test_the_scrape_serves_a_lane_whose_drain_died_as_stopped(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """S4a1-M1 (X1, D2): a dead drain stops the lane; the state gauge serves `stopped` and the
+    drain-failure count serves the death under `stopped`, both of which AuditLaneRefusing reads."""
+    writer = await sink(tmp_path, repo)
+    lane = AuditLane(lj.LaneJournal(Broken(tmp_path / "lane"), KEYS), writer, **FAST)
+    await lane.start()
+    await until(lambda: lane.drain_failures["stopped"] == 1)
+    got = families(Parts(writer, lane))
+
+    assert got["cv_audit_lane_state"] == {("open",): 0, ("held",): 0, ("stopped",): 1}
+    assert got["cv_audit_lane_drain_failures_total"] == {("held",): 0, ("stopped",): 1}
+    await lane.close()
+
+
+@virtual
+async def test_the_scrape_serves_no_head_before_the_lane_opens(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """S4a1-M1 (X2): `last_seq` is absent until `open()` has read the lane (its id nil until then),
+    as its HELP says; the lane's other gauges are served."""
+    lane = await boot(tmp_path, await sink(tmp_path, repo), [])  # built, never started
+    got = families(Parts(None, lane))
+
+    assert "cv_audit_lane_last_seq" not in got and got["cv_audit_lane_depth"] == {(): 0}
+
+
+@virtual
+async def test_journal_counts_no_frame_whose_write_failed(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """S4a1-M2 (X3): `appended` counts frames written and fsynced; a write that fails stops the
+    lane and refuses the append, which counts nothing."""
+    writer, files = await sink(tmp_path, repo), FailingAppend(tmp_path / "lane")
+    lane = AuditLane(lj.LaneJournal(files, KEYS), writer, **FAST)
+    await lane.start()
+    before, files.armed = dict(lane.journal.appended), True
+    with pytest.raises(lj.LaneRefused):
+        await lane.append(writer.build("auth.login", actor_label="owner"))
+
+    assert lane.journal.appended == before and lane.journal.refusal == "stopped"
+    await lane.close()
+
+
+@virtual
+async def test_drain_counts_an_anomaly_once_though_the_sink_refused_its_row_first(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4a1-M2 (X5): the count follows the row's hand-over, so a row the sink refused, which the
+    drain hands over again, is counted once."""
+    writer, refused = await sink(tmp_path, repo), list[str]()
+    ingest = writer.ingest
+
+    async def once(record: Any) -> int:  # the first anomaly row is refused, then all is taken
+        if not refused and AuditEmission.model_validate(record).action == "audit.lane_anomaly":
+            refused.append("audit.lane_anomaly")
+            raise AuditUnavailable("the sink refuses once")
+        return await ingest(record)
+
+    monkeypatch.setattr(writer, "ingest", once)
+    lane = await boot(tmp_path, writer)
+    await lane.journal.append({"action": "auth.logout", "outcome": "success"})  # no AuditEmission
+    await lane.flush(WAIT_S)
+
+    assert refused and lane.anomalies["record_invalid"] == 1
+    await lane.close()

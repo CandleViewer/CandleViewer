@@ -3411,7 +3411,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "failures",
         (),
-        "Boots whose lane.lock failed but for another holder, so the audit lane holds.",
+        "Boots whose lane.lock failed for any reason but another holder, so the audit lane holds.",
         "AuditLaneDrainHeld reads the held state",
         _L,
         "E09",

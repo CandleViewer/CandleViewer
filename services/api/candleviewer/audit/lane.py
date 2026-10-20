@@ -94,8 +94,9 @@ class AuditLane:
             await self._boot_row(self._own("audit.lane_started", Severity.WARNING))
         (seq, mac), anchored = journal.head, result.state.anchored or result.lane is None
         head = {"head_seq": seq, "head_mac": mac, "anchored": anchored}  # a new lane is anchored
-        if held:
-            _log().critical("audit lane held at boot", hold=result.hold)
+        if held:  # a `released` note that did not apply is logged with it (§15.6 Release)
+            hold, ignored = result.hold, result.note_ignored
+            _log().critical("audit lane held at boot", hold=hold, note_ignored=ignored)
         else:
             await self._boot_row(self._own("audit.lane_resumed", Severity.INFO, head))
         self._task = spawn(self._drain(), name="audit-lane-drain")
@@ -225,6 +226,8 @@ class AuditLane:
             "prev_unverified": run.prev_unverified, "marker_behind": run.marker_behind,
             "marker_ahead": run.marker_ahead,
         }  # fmt: skip
+        if run.note is not None:  # Release: the operator's words, redacted by `build()`
+            after |= dict(zip(lj.NOTE_WORDS, run.note, strict=True))
         level = Severity.WARNING if run.reason == "torn_tail" else Severity.CRITICAL
         record_id = self.journal.run_id(self._lane, run)
         return aw._lane_anomaly(

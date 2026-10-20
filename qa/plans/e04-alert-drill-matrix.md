@@ -82,6 +82,16 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | KeyExpiringWithin7Days | ticket | 10m | `docs/plan/07-release-and-prr.md#alert-keyexpiring` | synthetic | | | | | | pending (promtool, #836: 3 days fires, 7 days silent: `infra/prometheus/tests/system_alerts.test.yml`) |
 | KeyExpiringWithin1Day | ticket | 10m | `docs/plan/07-release-and-prr.md#alert-keyexpiring` | synthetic | | | | | | pending (promtool, #836: 12 h fires, an unset 0 silent: `infra/prometheus/tests/system_alerts.test.yml`) |
 | RollOffStreamUnlisted | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-rolloffstreamunlisted` | synthetic | | | | | | pending (promtool, #3794: one increase in 25 h fires, none stays silent) |
+| AuditSinkRefusing | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditsinkrefusing` | synthetic | | | | | | pending |
+| AuditLaneBacklogAged | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlanebacklogaged` | synthetic | | | | | | pending |
+| AuditLaneRefusing | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlanerefusing` | synthetic | | | | | | pending |
+| AuditLaneDrainHeld | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlanerefusing` | synthetic | | | | | | pending |
+| AuditLaneBootOvershoot | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlanerefusing` | synthetic | | | | | | pending |
+| AuditLaneAnomaly | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneanomaly` | synthetic | | | | | | pending |
+| AuditLaneTornTail | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneanomaly` | synthetic | | | | | | pending |
+| AuditLaneQuarantineGrowing | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneanomaly` | synthetic | | | | | | pending |
+| AuditLaneSeqRegressed | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed` | synthetic | | | | | | pending |
+| AuditLaneCreated | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-auditlaneseqregressed` | synthetic | | | | | | pending |
 
 ## Execution status and exception request (2026-10-02)
 

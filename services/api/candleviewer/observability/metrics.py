@@ -524,7 +524,8 @@ class ScrapedFamily:
 class ScrapeCollector(Collector):
     """Serve on `target` the families `read()` returns at each scrape, with `env`: `read()` runs in
     the scrape's thread, so it reads in-memory values only. Its families are checked once here, as
-    the facade checks its own; construction registers it, `close()` unregisters it."""
+    the facade checks its own; construction registers it, `close()` unregisters it. A `read()` that
+    raises at a scrape serves none of its families and leaves the rest of the scrape whole."""
 
     def __init__(
         self, target: CollectorRegistry, *, env: str, read: Callable[[], Iterable[ScrapedFamily]]
@@ -533,7 +534,9 @@ class ScrapeCollector(Collector):
             check_label_names(family.name, family.labels)
             if family.kind not in ("counter", "gauge"):
                 raise MetricsError(f"{family.name}: a scraped family is a counter or a gauge")
-        self._env, self._read = env, read
+            if any(len(values) != len(family.labels) for values, _ in family.samples):
+                raise MetricsError(f"{family.name}: a sample has one value per label")
+        self._env, self._read, self._failing = env, read, False
         self._target: CollectorRegistry | None = target
         target.register(self)
 
@@ -541,7 +544,17 @@ class ScrapeCollector(Collector):
         return []  # as `ReexportCollector`: the families are read at the scrape
 
     def collect(self) -> Iterable[Metric]:
-        for family in self._read():
+        try:  # SR-S4A1-01: a failing read loses its own families, never every other alert's
+            families = list(self._read())
+        except Exception as exc:
+            if not self._failing:  # once until a read succeeds again; the error's class only
+                structlog.get_logger(_LOGGER_NAME).error(
+                    "metrics.scrape_read_failed", error=type(exc).__name__
+                )
+            self._failing = True
+            return
+        self._failing = False
+        for family in families:
             make = CounterMetricFamily if family.kind == "counter" else GaugeMetricFamily
             out = make(family.name, family.help, labels=[ENV_LABEL, *family.labels])
             for values, value in family.samples:

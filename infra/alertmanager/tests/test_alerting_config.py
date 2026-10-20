@@ -240,7 +240,7 @@ def test_postgres_inhibits_db_dependent_tickets() -> None:
 
 
 def test_postgres_does_not_inhibit_security_tickets() -> None:
-    for c in ("auth", "secrets", "network", "clock"):
+    for c in ("auth", "secrets", "network", "clock", "audit_lane", "audit_sink"):  # #3009 S4a
         assert not _inhibited(c), c
 
 

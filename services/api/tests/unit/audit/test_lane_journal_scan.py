@@ -386,6 +386,45 @@ def test_lane_scan_of_a_layout_matches_its_outline(
     assert outline(run_scan(segments, mark, note)) == expected
 
 
+@pytest.mark.parametrize(
+    ("segments", "hold", "gap", "next_seq"),
+    [
+        ({1: F[0] + F[1] + F[2], 6: P3}, (6, 0), [("seq_gap", 4, 6)], 7),
+        ({1: F[0] + F[1] + F[2], 4: P3}, (4, 0), [("seq_gap", 4, 4)], 5),
+        ({1: F[0] + F[1], 3: F[2] + P3}, (3, len(F[2])), [], 4),
+    ],
+    ids=["next_seq_below_the_name", "next_seq_at_the_name", "next_seq_one_past_the_name"],
+)
+def test_lane_release_at_the_end_of_the_data_leaves_the_next_segment_a_free_name(
+    segments: dict[int, bytes], hold: tuple[int, int], gap: list[object], next_seq: int
+) -> None:
+    """Row 13: when released bytes end the data in the newest segment and its name is at or past
+    `next_seq` (4), a `seq_gap` run covers `next_seq` to that name and `next_seq` moves one past
+    it, a free name for the next segment; a name below `next_seq` is free already: no run."""
+    end = (hold[0], hold[1] + len(P3))
+    result = run_scan(segments, START, note_of(hold, end, from_seq=4))
+
+    assert outline(result) == [1, 2, 3, ("released", 4, 3), *gap]
+    assert result.state == LaneState(next_seq, mac(F[2]), False) and result.units[-1].end == end
+
+
+def test_lane_release_rows_keep_their_ids_when_a_boot_appends_before_the_marker_moves() -> None:
+    """The boot after a release, its sink refusing the rows, leaves the marker where it was and
+    its own frame (`seq` 7, the free name) in a segment of its own. The next scan makes the same
+    two rows under the same ids (the `seq_gap` row now by row 8, at that frame): the sink takes
+    each once."""
+    held = {1: F[0] + F[1] + F[2], 6: P3}
+    note = note_of((6, 0), (6, len(P3)), from_seq=4)
+    first = run_scan(held, START, note)
+    second = run_scan(held | {7: odd(7, mac(F[2]))}, START, note)
+    (released, gap), (released_again, gap_again) = runs(first), runs(second)
+
+    assert outline(first) == [1, 2, 3, ("released", 4, 3), ("seq_gap", 4, 6)]
+    assert outline(second) == [*outline(first), 7]
+    assert released_again == released and gap_again == replace(gap, end=gap_again.end)
+    assert anomaly_id(KEYS, LANE, gap_again) == anomaly_id(KEYS, LANE, gap)
+
+
 _EDITS = st.tuples(
     st.integers(0, 2), st.integers(0, 4096), st.sampled_from("fid"), st.integers(1, 255)
 )
