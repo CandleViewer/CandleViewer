@@ -4,8 +4,10 @@ round-trip, verify-on-read quarantine (AC 3), dataset-id registry (AC 9)."""
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
+import pyarrow as pa
 import pytest
 
 from candleviewer.storage.cold.layout import DatasetNotRegistered, DatasetRegistry
@@ -53,6 +55,35 @@ async def test_export_then_query_round_trips_rows_in_ts_order(tmp_path: Path) ->
     ]
     assert all(r["ts"].utcoffset().total_seconds() == 0 for r in rows)
     assert await repo.query("ETHUSDT", StreamKind.TRADES, day_range()) == []
+
+
+async def test_a_query_across_a_schema_widening_reads_the_missing_column_as_null(
+    tmp_path: Path,
+) -> None:
+    """21 Sec.5.2: day 1's snapshot part predates QuestDB 0006 (no `ts_match`), day 2's has it.
+    Read together, the older row reads it as NULL: the read neither drops the column (the first
+    file's schema) nor refuses the file that lacks it."""
+    day_us = 86_400_000_000
+    first = TimeRange(start_us=DAY_START_US, end_us=DAY_START_US + day_us)
+    days = [first, TimeRange(start_us=first.end_us, end_us=first.end_us + day_us)]
+    match = datetime(2026, 10, 18, 0, 0, 0, 7)  # tz-naive UTC, as PGWire returns a TIMESTAMP
+    for rng, extra in ((days[0], {}), (days[1], {"ts_match": pa.array([match])})):
+        columns: dict[str, object] = {
+            "ts": pa.array([rng.start_us + 9], pa.int64()),
+            "symbol": ["BTCUSDT"],
+            "depth": [50],
+            "update_id": [7],
+            "bids": ["[]"],
+            "asks": ["[]"],
+        }
+        source = FakeHotSource(pa.table(columns | extra))
+        repo = ParquetColdTierRepository(DatasetRegistry(tmp_path), source)
+        await repo.export_partition("BTCUSDT", StreamKind.ORDERBOOK_SNAPSHOT, rng)
+    both = TimeRange(start_us=days[0].start_us, end_us=days[1].end_us)
+
+    rows = await repo.query("BTCUSDT", StreamKind.ORDERBOOK_SNAPSHOT, both)
+
+    assert [r["ts_match"] for r in rows] == [None, match.replace(tzinfo=UTC)]
 
 
 async def test_list_manifest_and_verify_checksums(tmp_path: Path) -> None:

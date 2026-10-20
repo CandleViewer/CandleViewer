@@ -257,3 +257,82 @@ def test_cold_modules_have_no_module_level_logger() -> None:
 
     for mod in (compactor_mod, exporter, scrub):
         assert not hasattr(mod, "logger"), mod.__name__
+
+
+# --- parts on both sides of a schema widening (21 Sec.5.2, E26-T03) ---
+
+BOOK_PART = Path("orderbook_deltas") / "symbol=BTCUSDT" / "dt=2026-10-17" / "hour=00"
+
+
+def _book_part(ts: list[int], **extra: pa.Array) -> pa.Table:
+    """A part as the exporter writes it: data columns, then provenance (`_source` stands in)."""
+    n = len(ts)
+    table = pa.table({"ts": pa.array(ts, pa.int64()), "symbol": ["BTCUSDT"] * n})
+    table = table.append_column("price", pa.array([float(t) for t in ts]))
+    for name, column in extra.items():
+        table = table.append_column(name, column)
+    return normalise_ts(table.append_column("_source", pa.array(["questdb"] * n)))
+
+
+def _seed_book(root: Path, tables: list[pa.Table], source_table: str) -> Path:
+    part = root / BOOK_PART
+    entries: list[ManifestEntry] = []
+    for i, table in enumerate(tables):
+        dest = part / f"part-{i:04d}.parquet"
+        write_parquet_file(table, dest)
+        entries.append(
+            ManifestEntry(
+                file=dest.name,
+                sha256=sha256_of(dest),
+                row_count=table.num_rows,
+                source_table=source_table,
+                export_run_id=f"r{i}",
+                exported_at_us=i,
+                range_start_us=i,
+                range_end_us=i + 1,
+            )
+        )
+    ManifestStore(root / "_manifests").write(part, root, entries)
+    return part
+
+
+async def test_a_part_written_before_the_widening_merges_with_one_written_after(
+    tmp_path: Path,
+) -> None:
+    """The older part lacks the 0006 book columns: it merges as NULLs of their declared types,
+    in the newer part's column order (the rows sort by `ts` across both)."""
+    old = _book_part([1, 3])
+    new = _book_part(
+        [2, 4],
+        prev_update_id=pa.array([7, 8], pa.int64()),
+        ts_match=pa.array([5, 6], pa.timestamp("us", tz="UTC")),
+    )
+    part = _seed_book(tmp_path, [old, new], "orderbook_delta")
+
+    result = await Compactor().compact_partition(part, tmp_path, tmp_path / "_manifests")
+
+    merged = pq.read_table(part / "part-0000.parquet")
+    assert result.row_count == 4 and merged.schema.names == new.schema.names
+    assert merged.schema.field("prev_update_id").type == pa.int64()
+    assert merged.schema.field("ts_match").type == pa.timestamp("us", tz="UTC")
+    assert merged.column("prev_update_id").to_pylist() == [None, 7, None, 8]
+    assert merged.column("ts_match").cast(pa.int64()).to_pylist() == [None, 5, None, 6]
+
+
+@pytest.mark.parametrize(
+    ("source_table", "extra"),
+    [
+        ("orderbook_delta", {"is_rpi": pa.array([True, False])}),
+        ("trades", {"ts_match": pa.array([5, 6], pa.timestamp("us", tz="UTC"))}),
+    ],
+    ids=["unlisted-column", "listed-for-another-dataset"],
+)
+async def test_parts_differing_by_any_other_column_still_refuse_to_merge(
+    tmp_path: Path, source_table: str, extra: dict[str, pa.Array]
+) -> None:
+    part = _seed_book(tmp_path, [_book_part([1, 3]), _book_part([2, 4], **extra)], source_table)
+
+    with pytest.raises(pa.ArrowInvalid):
+        await Compactor().compact_partition(part, tmp_path, tmp_path / "_manifests")
+
+    assert sorted(p.name for p in part.iterdir()) == ["part-0000.parquet", "part-0001.parquet"]

@@ -14,7 +14,7 @@ import asyncio
 import dataclasses
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +23,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import structlog
 
+from candleviewer.storage.cold.exporter import ALLOWED_ADDITIONS
 from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
 from candleviewer.storage.cold.observability import (
     LoggingSystemEventSink,
@@ -176,7 +177,8 @@ class Compactor:
 
         tables = [pq.read_table(partition_dir / e.file) for e in plan]
         expected_rows = sum(e.row_count for e in plan)
-        merged = pa.concat_tables(tables, promote_options="none")
+        additions = ALLOWED_ADDITIONS.get(plan[0].source_table, {})
+        merged = pa.concat_tables(_widen_parts(tables, additions), promote_options="none")
         keys = [("ts", "ascending")]
         if "price" in merged.column_names:
             keys.append(("price", "ascending"))
@@ -227,6 +229,28 @@ class Compactor:
             row_count=merged_rows,
             sha256=merged_sha,
         )
+
+
+def _widen_parts(tables: list[pa.Table], additions: Mapping[str, pa.DataType]) -> list[pa.Table]:
+    """A part written before its dataset's schema widened lacks the columns added since (21
+    Sec.5.2): when every column it lacks is an allowed addition of its declared type, it gains
+    them as typed NULLs, in the widest part's column order, so the strict concat merges it with
+    the parts written after. A part that differs in any other way is left as it is, and the
+    concat refuses it as before."""
+    widest = max(tables, key=lambda table: table.num_columns).schema
+    out: list[pa.Table] = []
+    for table in tables:
+        missing = [field for field in widest if field.name not in table.column_names]
+        if (
+            missing
+            and set(table.column_names) <= set(widest.names)
+            and all(f.name in additions and additions[f.name] == f.type for f in missing)
+        ):
+            for field in missing:
+                table = table.append_column(field, pa.nulls(table.num_rows, field.type))
+            table = table.select(widest.names)
+        out.append(table)
+    return out
 
 
 def _reconcile_orphans(partition_dir: Path, known: set[str]) -> None:

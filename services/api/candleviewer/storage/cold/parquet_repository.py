@@ -132,12 +132,14 @@ class ParquetColdTierRepository:
 def _read_rows(files: list[str], symbol: str, rng: TimeRange) -> list[dict[str, Any]]:
     """Blocking DuckDB read over an explicit, manifest-derived file list; all
     values are bind parameters. In-memory connection, external access to the
-    listed files only."""
+    listed files only. `union_by_name`: a part written before its dataset's schema
+    widened (21 Sec.5.2) reads the columns it lacks as NULL; without it DuckDB keeps the
+    first file's columns, dropping them, or refuses a later file that lacks them."""
     con = duckdb.connect(":memory:")
     try:
         con.execute("SET TimeZone = 'UTC'")
         table = con.execute(
-            "SELECT * FROM read_parquet($files, hive_partitioning = true) "
+            "SELECT * FROM read_parquet($files, hive_partitioning = true, union_by_name = true) "
             "WHERE symbol = $sym AND ts >= make_timestamptz($lo::BIGINT) "
             "AND ts < make_timestamptz($hi::BIGINT) ORDER BY ts",
             {"files": files, "sym": symbol, "lo": rng.start_us, "hi": rng.end_us},

@@ -12,11 +12,13 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+import threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from datetime import UTC, datetime
-from typing import Protocol
+from types import MappingProxyType
+from typing import Final, Protocol
 
 import pyarrow as pa
 import structlog
@@ -55,6 +57,27 @@ _PART_RE = re.compile(r"^part-(\d{4})\.parquet$")
 #: Default wall-clock bound for one partition export (C-2.18: every external
 #: await is bounded). A symbol-day of trades at >=200 MB/s is far below this.
 DEFAULT_EXPORT_TIMEOUT_S = 1800.0
+
+_UTC_MICROS: Final = pa.timestamp("us", tz="UTC")
+
+#: The columns a dataset's registered schema may gain (21 Sec.5.2, C-5.8), keyed by the dataset
+#: key the registry uses (`StreamKind.value`), each with the Arrow type every part writes it as,
+#: an all-NULL batch included. A column joins in the PR that ships its migration; an added column
+#: missing here still fails the drift check closed. E26-T03 (QuestDB 0006): the book columns a
+#: replay re-emits as recorded (24 Sec.13.7).
+ALLOWED_ADDITIONS: Final[Mapping[str, Mapping[str, pa.DataType]]] = MappingProxyType(
+    {
+        StreamKind.ORDERBOOK_DELTA.value: MappingProxyType(
+            {"prev_update_id": pa.int64(), "ts_match": _UTC_MICROS}
+        ),
+        StreamKind.ORDERBOOK_SNAPSHOT.value: MappingProxyType({"ts_match": _UTC_MICROS}),
+    }
+)
+_NO_ADDITIONS: Final[Mapping[str, pa.DataType]] = MappingProxyType({})
+
+#: `_check_drift` reads, decides and rewrites the one registry file every dataset shares; this
+#: keeps two exports in one process from losing each other's registration.
+_REGISTRY_LOCK = threading.Lock()
 
 
 AFTER_PARQUET_WRITE = "AFTER_PARQUET_WRITE"
@@ -232,10 +255,13 @@ class ColdExporter:
 
         writer: AtomicParquetWriter | None = None
         schema_registry = SchemaRegistry(paths.schema_registry_path)
+        additions = ALLOWED_ADDITIONS.get(stream.value, _NO_ADDITIONS)
         try:
             async for raw in self._source.iter_partition(
                 symbol, stream, rng, batch_rows=self._rows_per_group
             ):
+                # Typed first: a retyped column fails before the registry can be widened.
+                raw = _conform_additions(raw, stream.value, additions)
                 if writer is None:
                     await asyncio.to_thread(
                         _check_drift, schema_registry, stream.value, frozenset(raw.column_names)
@@ -330,16 +356,54 @@ def _reconcile_orphans(paths: ColdPaths, existing: list[ManifestEntry]) -> None:
 
 
 def _check_drift(registry: SchemaRegistry, dataset_key: str, incoming: frozenset[str]) -> None:
-    """Fail closed on any column-set difference against
-    `schema-registry.json` (Sec.5.2); the first export registers the schema."""
-    registered = registry.columns_for(dataset_key)
-    if registered is None:
+    """Fail closed on any column-set difference against `schema-registry.json` (Sec.5.2) but
+    one: a strict superset whose added columns are all listed for the dataset in
+    `ALLOWED_ADDITIONS` is registered as its new column set, and the export goes on. The first
+    export registers the schema."""
+    with _REGISTRY_LOCK:
+        registered = registry.columns_for(dataset_key)
+        if registered is None:
+            registry.register(dataset_key, incoming)
+            return
+        if incoming == registered:
+            return
+        added = incoming - registered
+        missing = registered - incoming
+        if missing or not added <= ALLOWED_ADDITIONS.get(dataset_key, _NO_ADDITIONS).keys():
+            raise StorageSchemaDrift(
+                f"{dataset_key}: schema drift vs schema-registry.json "
+                f"(added={sorted(added)}, missing={sorted(missing)})"
+            )
         registry.register(dataset_key, incoming)
-        return
-    if incoming != registered:
-        added = sorted(incoming - registered)
-        missing = sorted(registered - incoming)
-        raise StorageSchemaDrift(
-            f"{dataset_key}: schema drift vs schema-registry.json "
-            f"(added={added}, missing={missing})"
-        )
+    structlog.get_logger(__name__).info(
+        "cold_export_schema_widened", dataset=dataset_key, added=sorted(added)
+    )
+
+
+def _conformable(found: pa.DataType, declared: pa.DataType) -> bool:
+    """Arrow `null` (an all-NULL batch), or a timestamp of the declared unit in any zone."""
+    if pa.types.is_null(found):
+        return True
+    timestamps = pa.types.is_timestamp(found) and pa.types.is_timestamp(declared)
+    return bool(timestamps and found.unit == declared.unit)
+
+
+def _conform_additions(
+    table: pa.Table, dataset_key: str, additions: Mapping[str, pa.DataType]
+) -> pa.Table:
+    """Give every allowed-addition column `table` holds its declared type: a batch where the
+    column is all NULL arrives as Arrow `null`, and PGWire hands a QuestDB TIMESTAMP back tz-naive
+    (UTC). Any other type is a retype and fails closed (`StorageSchemaDrift`, naming no value)."""
+    for name, declared in additions.items():
+        if name not in table.column_names:
+            continue
+        column = table.column(name)
+        if column.type == declared:
+            continue
+        if not _conformable(column.type, declared):
+            raise StorageSchemaDrift(
+                f"{dataset_key}: column {name!r} is {column.type}, not {declared}"
+            )
+        index = table.column_names.index(name)
+        table = table.set_column(index, pa.field(name, declared), column.cast(declared))
+    return table
