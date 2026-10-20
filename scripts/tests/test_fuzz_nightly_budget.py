@@ -158,7 +158,8 @@ def _run(
 
 
 def test_the_python_job_selects_every_fuzz_marked_test_of_the_ws_folder() -> None:
-    assert set(_python_targets()) == {"test_cvwb_fuzz.py", "test_ws_parser_fuzz.py"}  # both suites
+    suites = {"test_cvwb_fuzz.py", "test_json_frame_dispatch_fuzz.py", "test_ws_parser_fuzz.py"}
+    assert set(_python_targets()) == suites  # the three suites
     # a fuzz test of another folder named `ws` would never run: it needs this job's path
     strays = [
         path.relative_to(ROOT).as_posix()
