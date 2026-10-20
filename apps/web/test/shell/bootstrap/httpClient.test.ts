@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { accessToken } from "../../../src/lib/auth/accessToken.js";
 import { fetchJson, HttpError, HttpTimeoutError } from "../../../src/shell/bootstrap/httpClient.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -20,6 +21,16 @@ describe("fetchJson", () => {
       "/api/v1/me",
       expect.objectContaining({ method: "GET", credentials: "include" }),
     );
+  });
+
+  it("sends the tab's access token to the same-origin API (#2712)", async () => {
+    const token = ["probe", "1", "x".repeat(20)].join("-");
+    accessToken.set({ access_token: token, token_type: "Bearer", expires_in: 600 });
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}));
+    await fetchJson("/api/v1/me", { timeoutMs: 1_000, fetchImpl });
+    accessToken.clear();
+    const init = fetchImpl.mock.calls[0]?.[1] as RequestInit; // what the client handed to fetch
+    expect(new Headers(init.headers).get("Authorization")).toBe(`Bearer ${token}`);
   });
 
   it("throws HttpError with the status on a non-2xx response", async () => {

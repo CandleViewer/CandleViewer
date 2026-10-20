@@ -5,6 +5,7 @@
  * tiny and dependency-free per `AGENTS.md` §5.1 (no new deps without
  * justification).
  */
+import { accessToken } from "../../lib/auth/accessToken.js";
 
 export class HttpError extends Error {
   constructor(
@@ -45,12 +46,17 @@ export async function fetchJson<T>(path: string, options: FetchJsonOptions): Pro
   signal?.addEventListener("abort", onExternalAbort);
 
   try {
-    const response = await fetchImpl(path, {
-      method: "GET",
-      credentials: "include",
-      signal: controller.signal,
-      headers: { accept: "application/json" },
-    });
+    // #2712: the tab's bearer, and one refresh then one more try on a 401
+    const response = await accessToken.send(
+      path,
+      {
+        method: "GET",
+        credentials: "include",
+        signal: controller.signal,
+        headers: { accept: "application/json" },
+      },
+      (init) => fetchImpl(path, init),
+    );
     if (!response.ok) {
       throw new HttpError(response.status, `${path} responded ${response.status}`);
     }

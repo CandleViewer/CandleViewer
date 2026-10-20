@@ -7,7 +7,8 @@ import { getActiveClient } from "../../src/lib/ws/client/activeClient.js";
 import type { WsState } from "../../src/lib/ws/state/types.js";
 import { INITIAL_WS_STATE } from "../../src/lib/ws/state/reducer.js";
 import { getShellState, resetShellState, setShellState } from "../../src/shell/bootstrap/store.js";
-import { startShell, toConnectionState, unavailableTokens } from "../../src/shell/startShell.js";
+import { accessToken, REFRESH_PATH } from "../../src/lib/auth/accessToken.js";
+import { startShell, toConnectionState } from "../../src/shell/startShell.js";
 import { tokenOf, URL } from "../lib/ws/support/connectionHarness";
 import { BOOK } from "../lib/ws/support/engineHarness";
 import { FakePort } from "../lib/ws/support/fakePort";
@@ -43,18 +44,26 @@ function stubWorkers(kind: "SharedWorker" | "Worker") {
   return { live, events };
 }
 
-beforeEach(() => resetShellState());
+// #2712: the page-load refresh finds no session unless a test says otherwise
+let refreshMock: ReturnType<typeof vi.fn>;
+beforeEach(() => {
+  resetShellState();
+  refreshMock = vi.fn(async () => new Response(null, { status: 401 }));
+  vi.stubGlobal("fetch", refreshMock);
+});
 afterEach(() => {
+  accessToken.clear();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(window, "cv");
 });
 
 describe("startShell", () => {
-  it("starts the WS client and the REST bootstrap concurrently", () => {
+  it("starts the WS client and the REST bootstrap concurrently", async () => {
     const { port, fetchImpl, handle } = started();
     expect(port.of("connect")).toEqual([
       expect.objectContaining({ t: "connect", wsUrl: WS_URL, shell: "browser" }),
     ]);
+    await handle.ready;
     expect(fetchImpl).toHaveBeenCalled();
     handle.stop();
   });
@@ -182,13 +191,37 @@ describe("startShell", () => {
     logged.mockRestore();
   });
 
-  it("has no access token until #2712: the worker's request is answered unavailable", async () => {
+  it("answers the worker from the tab's access token: unavailable without a session", async () => {
     const { port, handle } = started();
     port.say({ t: "tokenRequest", req: 3, invalidate: false });
     await vi.waitFor(() => expect(port.of("token")).toHaveLength(1));
     expect(port.of("token")).toEqual([{ t: "token", req: 3, result: { kind: "unavailable" } }]);
-    await expect(unavailableTokens.getToken()).resolves.toEqual({ kind: "unavailable" });
-    expect(unavailableTokens.invalidate()).toBeUndefined();
+    handle.stop();
+  });
+
+  it("re-derives the token from the refresh cookie once, before the bootstrap's first call (a reload)", async () => {
+    const order: string[] = [];
+    const token = ["probe", "7", "x".repeat(20)].join("-");
+    refreshMock.mockImplementation(async (path: string) => {
+      order.push(path);
+      const tokens = { access_token: token, token_type: "Bearer", expires_in: 600 };
+      return jsonResponse({ status: "authenticated", tokens, user: {} });
+    });
+    const sent: (string | null)[] = [];
+    const fetchImpl = vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      order.push(String(path));
+      sent.push(new Headers(init?.headers).get("Authorization"));
+      return jsonResponse({});
+    });
+    const port = new FakePort();
+    const handle = startShell({ wsUrl: WS_URL, fetchImpl, port });
+    await handle.ready;
+    port.say({ t: "tokenRequest", req: 1, invalidate: false });
+    await vi.waitFor(() => expect(port.of("token")).toHaveLength(1));
+    expect(order[0]).toBe(REFRESH_PATH);
+    expect(order.filter((path) => path === REFRESH_PATH)).toHaveLength(1);
+    expect(sent).toEqual([`Bearer ${token}`, `Bearer ${token}`, `Bearer ${token}`]);
+    expect(port.of("token")[0]).toMatchObject({ result: { kind: "ok", accessToken: token } });
     handle.stop();
   });
 
