@@ -39,6 +39,10 @@
     "$type": "color",
     "$value": "{palette.neutral.400}"
   },
+  "color.border.selected": {
+    "$type": "color",
+    "$value": "{palette.blue.400}"
+  },
   "color.text.primary": {
     "$type": "color",
     "$value": "{palette.neutral.900}"
@@ -86,6 +90,10 @@
   "color.action.secondary.hover": {
     "$type": "color",
     "$value": "{palette.neutral.400}"
+  },
+  "color.action.selected": {
+    "$type": "color",
+    "$value": "{palette.blue.900}"
   },
   "color.buy.default": {
     "$type": "color",

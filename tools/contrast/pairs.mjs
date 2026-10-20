@@ -34,6 +34,7 @@ export const PAIRS = [
   { fg: "color.text.tertiary", bg: "color.surface.app", threshold: THRESHOLD.TEXT },
   { fg: "color.text.link", bg: "color.surface.app", threshold: THRESHOLD.TEXT },
   { fg: "color.text.on-action", bg: "color.action.primary.default", threshold: THRESHOLD.TEXT },
+  { fg: "color.text.primary", bg: "color.action.selected", threshold: THRESHOLD.TEXT },
   { fg: "color.axis.text", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
 
   // --- Focus ring on every surface tier (3:1 non-text) ---------------
@@ -82,6 +83,7 @@ export const PAIRS = [
   // --- Borders (3:1 non-text) -----------------------------------------
   { fg: "color.border.default", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
   { fg: "color.border.strong", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
+  { fg: "color.border.selected", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
 
   // --- Status/severity tokens (text + strong variants at 4.5:1/3:1) --
   { fg: "color.status.success.default", bg: "color.surface.app", threshold: THRESHOLD.NON_TEXT },
