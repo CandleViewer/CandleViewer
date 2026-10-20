@@ -624,8 +624,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "bumps",
         (),
-        "Profile rows given a new version by a write; each bump also wrote a revision "
-        "(SR-E28-07).",
+        "Profile rows given a new version by a write; each bump also wrote a revision (SR-E28-07).",
         "dashboard only",
         _P,
         "E28",
