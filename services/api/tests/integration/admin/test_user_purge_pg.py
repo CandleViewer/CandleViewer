@@ -498,10 +498,9 @@ async def test_credentials_revoked(db: Any) -> None:
 
 
 async def test_poisoned_row_skipped(db: Any) -> None:
-    """Ruling 4 (UL4-D1): the oldest due user cannot be anonymised on any run, as its surrogate is
-    another user's username (the username pattern admits the prefix). The reaper rolls it back,
-    counts it by its class and anonymises every later due user in the same run; the poisoned row
-    is unchanged, and the next run retries it."""
+    """Ruling 4 (UL4-D1): the oldest due user's anonymisation violates a unique constraint on
+    every run. The reaper rolls it back, counts it by its class and anonymises every later due
+    user in the same run; the poisoned row is unchanged, and the next run retries it."""
     rel, engine = db
     await _user(engine, "owner")
     poisoned = await _scheduled(engine, _T0 - 3 * _DAY)

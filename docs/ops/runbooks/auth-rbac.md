@@ -517,8 +517,8 @@ the audit writer or the database refusing) is retried after 15 minutes, doubling
 socket close that fails is counted on that line too, and the session's B16 record is still written.
 To cancel a pending purge, re-enable the user before the date (`PATCH /users/{userId}` with
 `status: active`): its `users.enable` record names the cancelled date. Once the user is anonymised
-every `PATCH` of that user (a re-enable, a name, the MFA flag, a role) answers `409 conflict` and
-changes nothing, recorded as `rbac.denied` with reason `anonymised`. To find an overdue purge, list
+every `PATCH` of that user that would change it (a re-enable, a name, the MFA flag, a role)
+answers `409 conflict` and changes nothing, recorded as `rbac.denied` with reason `anonymised`. To find an overdue purge, list
 the disabled users whose date has passed and whom the reaper has not anonymised (`psql` runs inside
 the `postgres` container, in a read-only session):
 
