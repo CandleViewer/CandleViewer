@@ -317,7 +317,10 @@ async def test_an_id_the_generator_cannot_produce_is_refused_before_any_call(
 
 
 async def test_retry_reuses_the_id() -> None:
-    """Scenario: Retry reuses the id."""
+    """Scenario: Retry reuses the id.
+
+    The second `place_or_adopt` stands only for the C-2.10 id-reuse property. Any production
+    re-send after an `AmbiguousResultError` goes through `adopt_or_resend` (SR-E29-15)."""
     lookup = InMemoryOrderLinkLookup()
     allocated = await OrderLinkIdAllocator(lookup).allocate(CANDIDATE)
     lookup.add(allocated.order_link_id)  # persisted before the first send (rule 1)
@@ -421,6 +424,17 @@ async def test_an_unconfirmed_resend_is_unresolved_and_never_repeated(answer: st
     outcome = await _resolve(exchange)
 
     assert outcome == Unresolved(order_link_id=LINK, reason="resend_unconfirmed")
+    assert [call[0] for call in exchange.calls] == ["open_orders", "order_history", "place_order"]
+
+
+async def test_a_resend_met_by_another_rejection_is_returned_to_the_caller() -> None:
+    exchange = _FakeExchange()
+    rejection = _ack(ok=False, error_code=OmsErrorCode.INSUFFICIENT_MARGIN)
+    exchange.reply = rejection
+
+    outcome = await _resolve(exchange)
+
+    assert outcome == Sent(rejection)
     assert [call[0] for call in exchange.calls] == ["open_orders", "order_history", "place_order"]
 
 
