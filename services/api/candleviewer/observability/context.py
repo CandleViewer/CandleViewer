@@ -71,6 +71,14 @@ def spawn[T](coro: Coroutine[Any, Any, T], *, name: str) -> asyncio.Task[T]:
     return asyncio.get_running_loop().create_task(coro, name=name, context=ctx)
 
 
+def spawn_child[T](
+    group: asyncio.TaskGroup, coro: Coroutine[Any, Any, T], *, name: str
+) -> asyncio.Task[T]:
+    """`spawn` for a task a `TaskGroup` owns: it runs under a copy of the current context, and
+    the group awaits it and cancels it with its siblings."""
+    return group.create_task(coro, name=name, context=contextvars.copy_context())
+
+
 async def run_in_thread[T](func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     """Thread offload that carries the correlation context (unlike a raw executor)."""
     ctx = contextvars.copy_context()

@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import contextvars
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import AsyncExitStack
 from types import TracebackType
@@ -51,7 +50,7 @@ from typing import Any, Self
 
 import structlog
 
-from candleviewer.observability import spawn
+from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
 from candleviewer.replay.errors import ReplayClockStateError, ReplayRequestInvalid
 from candleviewer.replay.models import ReplayGap, ReplayItem
@@ -107,8 +106,7 @@ def _child(
 ) -> asyncio.Task[StopReason]:
     """A task of the session's TaskGroup, run under an explicit copy of the caller's context as
     `observability.spawn` does (E04-T02)."""
-    # nosemgrep: cv-bare-create-task reason=taskgroup owner=@CandleViewer/backend review=2027-04-12
-    return group.create_task(coro, name="replay-clock", context=contextvars.copy_context())
+    return spawn_child(group, coro, name="replay-clock")
 
 
 class ReplayClock:

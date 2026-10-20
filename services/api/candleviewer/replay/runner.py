@@ -47,7 +47,6 @@ It costs one clock read and one comparison per event.
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import math
 from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack
@@ -56,7 +55,7 @@ from typing import Any, Final, Protocol, Self
 
 import structlog
 
-from candleviewer.observability import spawn
+from candleviewer.observability import spawn, spawn_child
 from candleviewer.replay.clock import ReplayClock
 from candleviewer.replay.errors import (
     ReplayClockStateError,
@@ -130,8 +129,7 @@ def _child(
 ) -> asyncio.Task[StopReason]:
     """The driver: a task of the run's TaskGroup, under an explicit copy of the caller's context
     as `observability.spawn` runs one (E04-T02)."""
-    # nosemgrep: cv-bare-create-task reason=taskgroup owner=@CandleViewer/backend review=2027-04-12
-    return group.create_task(coro, name="replay-run", context=contextvars.copy_context())
+    return spawn_child(group, coro, name="replay-run")
 
 
 class _Playback:

@@ -92,6 +92,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         # E04-T02: correlation context.
         "bind_context",
         "spawn",
+        # E26-T03: `spawn` for a task a TaskGroup owns.
+        "spawn_child",
     },
     # E08-T03: the bus's public pub/sub surface — `Bus`/`Subscription` are
     # not `*Service`/`*Error` by name but are the module's documented public
