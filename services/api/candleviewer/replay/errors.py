@@ -42,6 +42,16 @@ class ReplayClockStateError(ReplayError):
     code = "REPLAY_CLOCK_STATE"
 
 
+class ReplayEventRefused(ReplayError):
+    """The injector (E26-T03) refused an item it does not re-emit: a gap marker, a stream whose
+    derivations 24 Sec.13.7 does not list, a book row the stream adapter did not regroup, a
+    symbol outside the session, or a recorded event that does not fit the live event model.
+    A bug or corrupt data, never skipped: playback stops at it. The message names the stream and
+    the fields at fault, never a recorded value."""
+
+    code = "REPLAY_EVENT_REFUSED"
+
+
 class ReplayMemoryCeilingExceeded(ReplayError):
     """A read cannot fit the replay's bounds, so the replay stops with this error instead of
     growing memory (ticket E26-T02): the per-session byte budget cannot hold even the smallest

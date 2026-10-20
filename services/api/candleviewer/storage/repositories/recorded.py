@@ -119,6 +119,25 @@ class RecordedBookSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordedBookUpdate:
+    """Every changed level of one book update, `(symbol, depth, update_id)`, as one payload.
+
+    Replay's regrouping, not a stored row: the readers never return it. The recorder stores one
+    `orderbook_deltas` row per level (21 Sec.4.2); `replay.regroup.RegroupedStream` folds the
+    rows of one update into this before the clock, so one clock step is one book update (24
+    Sec.13.7). `bids` and `asks` are `(price, size)` pairs, best first (bids descending, asks
+    ascending); a size of 0 removes the level. The other fields are the rows' shared values."""
+
+    depth: int
+    update_id: int
+    cross_seq: int | None
+    bids: tuple[Level, ...]
+    asks: tuple[Level, ...]
+    prev_update_id: int | None = None
+    ts_match: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RecordedTicker:
     """Every `tickers` column the recorder writes (`recorder/writer.py` `ticker_records`), so a
     replay re-emits the recorded ticker losslessly (24 Sec.13.7); `None` is a column the row
@@ -182,6 +201,7 @@ type RecordedPayload = (
     RecordedTrade
     | RecordedBookDelta
     | RecordedBookSnapshot
+    | RecordedBookUpdate
     | RecordedTicker
     | RecordedKline
     | RecordedLiquidation

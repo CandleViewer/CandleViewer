@@ -219,6 +219,9 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReplayStream",
         "StopReason",
         "check_speed",
+        # E26-T03: the stream adapter that makes one book update one replayed event (24 Sec.13.7).
+        "RegroupedStream",
+        "ReplayEventRefused",
     },
 }
 
