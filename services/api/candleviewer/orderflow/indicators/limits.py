@@ -18,6 +18,10 @@ reviewed diff (CODEOWNERS: the `orderflow/` owners).
   the step bounds how many distinct instances near-identical values can create (IR-36).
 
 Fractional bounds are `Decimal`, so the step check is exact (`catalogue.validate_params`).
+
+The second block holds the resource caps of the server instances (SR-E13-03) and of their full
+recomputes (SR-E13-04), which `leases.InstanceLeases` and `engine.IndicatorEngine` enforce before
+anything is allocated or computed.
 """
 
 from __future__ import annotations
@@ -42,3 +46,24 @@ DEVIATION_PCT_STEP: Final = Decimal("0.1")
 PSAR_ACCELERATION_MIN: Final = Decimal("0.001")
 PSAR_ACCELERATION_MAX: Final = Decimal("1")
 PSAR_ACCELERATION_STEP: Final = Decimal("0.001")
+
+# --- Server instances and full recomputes (SR-E13-03, SR-E13-04; `engine`, `leases`) ---------
+
+#: SR-E13-03: the most distinct server instances (`(symbol, spec_hash)`) one user may hold, one
+#: symbol may run and the process may run. An instance in its release grace still counts toward
+#: the symbol and process caps (it still costs CPU and memory); joining a running instance counts
+#: toward the user's cap only; a system consumer (`user=None`) is exempt from the user cap only.
+INSTANCE_CAP_PER_USER: Final = 8
+INSTANCE_CAP_PER_SYMBOL: Final = 32
+INSTANCE_CAP_PROCESS: Final = 128
+#: An instance whose last lease is released is kept this long (US-MKT-005's 30 s), so a quick
+#: resubscribe finds it computed.
+INSTANCE_GRACE_US: Final = 30_000_000
+#: SR-E13-04: the most bars one instance's window may span (its warmup plus the history a
+#: subscription asks for), refused beyond it, never truncated.
+MAX_WINDOW_BARS: Final = 250_000
+#: SR-E13-04: full recomputes that read stored bars at once; one more is refused, never queued.
+MAX_CONCURRENT_RECOMPUTES: Final = 2
+#: How long a full recompute's read of stored bars may take; past it the instance is primed from
+#: the series store's tail alone.
+RECOMPUTE_TIMEOUT_S: Final = 5.0

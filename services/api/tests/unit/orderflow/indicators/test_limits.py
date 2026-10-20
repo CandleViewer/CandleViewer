@@ -37,6 +37,25 @@ def test_limits_every_fractional_range_starts_and_ends_on_its_step() -> None:
         assert low % step == 0 and high % step == 0 and low < high, prefix
 
 
+#: SR-E13-03 (instances: 8 per user, 32 per symbol, 128 per process, 30 s grace) and SR-E13-04
+#: (a window of at most 250 000 bars, 2 recomputes at once, each read bounded).
+CAPS = {
+    "INSTANCE_CAP_PER_USER": 8,
+    "INSTANCE_CAP_PER_SYMBOL": 32,
+    "INSTANCE_CAP_PROCESS": 128,
+    "INSTANCE_GRACE_US": 30_000_000,
+    "MAX_WINDOW_BARS": 250_000,
+    "MAX_CONCURRENT_RECOMPUTES": 2,
+    "RECOMPUTE_TIMEOUT_S": 5.0,
+}
+
+
+def test_limits_instance_and_recompute_caps_are_pinned_per_sr_e13_03_and_04() -> None:
+    assert {name: getattr(limits, name) for name in CAPS} == CAPS
+    assert all(type(getattr(limits, n)) is type(v) for n, v in CAPS.items())
+
+
 def test_limits_module_holds_exactly_the_pinned_names() -> None:
     fractional = {f"{prefix}_{part}" for prefix in FRACTIONAL for part in ("MIN", "MAX", "STEP")}
-    assert {n for n in vars(limits) if n.isupper()} == {"PERIOD_MIN", "PERIOD_MAX", *fractional}
+    pinned = {"PERIOD_MIN", "PERIOD_MAX", *fractional, *CAPS}
+    assert {n for n in vars(limits) if n.isupper()} == pinned
