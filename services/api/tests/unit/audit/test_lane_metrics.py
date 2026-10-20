@@ -14,8 +14,9 @@ from typing import Any, cast
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
-from prometheus_client import CollectorRegistry, generate_latest
+from prometheus_client import CollectorRegistry, Gauge, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
+from structlog.testing import capture_logs
 
 from candleviewer.app import create_app
 from candleviewer.audit import lane_journal as lj
@@ -53,6 +54,31 @@ class Broken(lj.LaneFiles):  # its marker write fails after the first (a new lan
         if self.marks > 1:
             raise OSError(errno.EIO, "marker write failed")
         super().mark(body, *rest)
+
+
+class FailingAppend(lj.LaneFiles):  # once armed, a frame's write into its open segment fails
+    armed = False
+
+    def append(self, fd: int, frame: bytes, end: int) -> None:
+        if self.armed:
+            raise OSError(errno.EIO, "append failed")
+        super().append(fd, frame, end)
+
+
+class Parts:  # what `lane_families` reads of an `AuditService`: its parts and two boot counts
+    lane_lock_failures = lane_link_failures = 0
+
+    def __init__(self, writer: AuditWriter | None, lane: AuditLane) -> None:
+        self.parts = (writer, lane, None)
+
+    def lane_parts(self) -> tuple[Any, ...]:
+        return self.parts
+
+
+def families(parts: Parts) -> dict[str, dict[tuple[str, ...], float]]:
+    """`lane_families` over `parts`, by name: each sample's label values and value."""
+    read = lane_families(cast(AuditService, parts), lambda: False)
+    return {family.name: dict(family.samples) for family in read}
 
 
 async def sink(path: Path, repo: FakeAuditRepository, **kw: Any) -> AuditWriter:
@@ -289,3 +315,99 @@ def test_a_scraped_family_must_be_a_counter_or_gauge_with_allowed_labels() -> No
         ScrapeCollector(CollectorRegistry(), env="demo", read=read(("user_id",), "counter"))
     with pytest.raises(MetricsError, match="counter or a gauge"):
         ScrapeCollector(CollectorRegistry(), env="demo", read=read((), "histogram"))
+
+
+def test_a_read_that_fails_at_the_scrape_drops_its_families_and_nothing_else() -> None:
+    """SR-S4A1-01: a read that raises serves none of its families, and logs the error's class once
+    until a read succeeds again; every other family on the registry is still served."""
+    registry, reads = CollectorRegistry(), iter([True, False, False, True, False])
+    Gauge("cv_other", "another family", ["env"], registry=registry).labels("demo").set(3)
+
+    def read() -> list[ScrapedFamily]:  # construction's read, then one per scrape
+        if not next(reads):
+            raise KeyError("a read that fails")
+        return [ScrapedFamily("cv_x_total", "counter", "h", (), (((), 1.0),))]
+
+    ScrapeCollector(registry, env="demo", read=read)
+    with capture_logs() as logs:
+        got = [served(registry) for _ in range(4)]
+    other, mine = {"cv_other": one(3.0)}, {"cv_x_total": one(1.0)}
+
+    assert got == [other, other, other | mine, other]
+    assert [entry for entry in logs if entry["event"] == "metrics.scrape_read_failed"] == [
+        {"event": "metrics.scrape_read_failed", "log_level": "error", "error": "KeyError"}
+    ] * 2
+
+
+def test_a_scraped_sample_has_one_value_per_label() -> None:
+    """S4a1-N5: prometheus_client zips a sample's values with the labels and drops the rest, so a
+    family whose sample does not match its labels is refused at construction."""
+    family = ScrapedFamily("cv_x_total", "counter", "h", ("class",), ((("a", "b"), 1.0),))
+    with pytest.raises(MetricsError, match="one value per label"):
+        ScrapeCollector(CollectorRegistry(), env="demo", read=lambda: [family])
+
+
+async def test_the_scrape_serves_a_lane_whose_drain_died_as_stopped(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """S4a1-M1 (X1, D2): a dead drain stops the lane; the state gauge serves `stopped` and the
+    drain-failure count serves the death under `stopped`, both of which AuditLaneRefusing reads."""
+    writer = await sink(tmp_path, repo)
+    lane = AuditLane(lj.LaneJournal(Broken(tmp_path / "lane"), KEYS), writer, **FAST)
+    await lane.start()
+    await until(lambda: lane.drain_failures["stopped"] == 1)
+    got = families(Parts(writer, lane))
+
+    assert got["cv_audit_lane_state"] == {("open",): 0, ("held",): 0, ("stopped",): 1}
+    assert got["cv_audit_lane_drain_failures_total"] == {("held",): 0, ("stopped",): 1}
+    await lane.close()
+
+
+async def test_the_scrape_serves_no_head_before_the_lane_opens(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """S4a1-M1 (X2): `last_seq` is absent until `open()` has read the lane (its id nil until then),
+    as its HELP says; the lane's other gauges are served."""
+    lane = await boot(tmp_path, await sink(tmp_path, repo), [])  # built, never started
+    got = families(Parts(None, lane))
+
+    assert "cv_audit_lane_last_seq" not in got and got["cv_audit_lane_depth"] == {(): 0}
+
+
+async def test_journal_counts_no_frame_whose_write_failed(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    """S4a1-M2 (X3): `appended` counts frames written and fsynced; a write that fails stops the
+    lane and refuses the append, which counts nothing."""
+    writer, files = await sink(tmp_path, repo), FailingAppend(tmp_path / "lane")
+    lane = AuditLane(lj.LaneJournal(files, KEYS), writer, **FAST)
+    await lane.start()
+    before, files.armed = dict(lane.journal.appended), True
+    with pytest.raises(lj.LaneRefused):
+        await lane.append(writer.build("auth.login", actor_label="owner"))
+
+    assert lane.journal.appended == before and lane.journal.refusal == "stopped"
+    await lane.close()
+
+
+async def test_drain_counts_an_anomaly_once_though_the_sink_refused_its_row_first(
+    tmp_path: Path, repo: FakeAuditRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4a1-M2 (X5): the count follows the row's hand-over, so a row the sink refused, which the
+    drain hands over again, is counted once."""
+    writer, refused = await sink(tmp_path, repo), list[str]()
+    ingest = writer.ingest
+
+    async def once(record: Any) -> int:  # the first anomaly row is refused, then all is taken
+        if not refused and AuditEmission.model_validate(record).action == "audit.lane_anomaly":
+            refused.append("audit.lane_anomaly")
+            raise AuditUnavailable("the sink refuses once")
+        return await ingest(record)
+
+    monkeypatch.setattr(writer, "ingest", once)
+    lane = await boot(tmp_path, writer)
+    await lane.journal.append({"action": "auth.logout", "outcome": "success"})  # no AuditEmission
+    await lane.flush(WAIT_S)
+
+    assert refused and lane.anomalies["record_invalid"] == 1
+    await lane.close()

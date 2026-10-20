@@ -197,6 +197,16 @@ async def test_release_next_boot_records_one_released_row_and_the_held_seq_value
     assert gap is None or [after(rows[1])[k] for k in GAP_ROW] == gap
 
 
+async def test_release_next_boot_counts_the_released_row_under_its_reason(
+    audit: Path, settings: Settings
+) -> None:
+    """S4a1-M2 (D1): `released` is a label value of the lane's anomaly count, so the drain counts
+    the row a release leaves, and the `seq_gap` row after it, rather than dropping them."""
+    r = await released(audit, settings, "next_frame")
+
+    assert r.lane.anomalies == dict.fromkeys(lj.ANOMALY_REASONS, 0) | {"released": 1, "seq_gap": 1}
+
+
 async def test_release_logs_the_hold_and_the_outcome_and_never_the_words(
     audit: Path, settings: Settings
 ) -> None:

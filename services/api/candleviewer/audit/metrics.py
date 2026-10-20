@@ -6,8 +6,9 @@ no iteration over a dict the loop resizes. Names, kinds, labels and HELP are the
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
+from candleviewer.audit.actions import LaneClass
 from candleviewer.audit.lane import REFUSALS, AuditLane, LaneFacade
 from candleviewer.audit.lane_journal import ANOMALY_REASONS
 from candleviewer.audit.writer import AUDIT_DOMAINS, AuditWriter
@@ -17,7 +18,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 if TYPE_CHECKING:
     from candleviewer.audit.service import AuditService
 
-CLASSES, STATES = ("reserved", "shared"), ("open", "held", "stopped")
+CLASSES, STATES = get_args(LaneClass), ("open", "held", "stopped")  # the registry's classes
 DRAIN_FAILURES = ("held", "stopped")  # a hold a running scan met; the drain's death
 _SPECS = {s.name: s for s in CATALOGUE if s.name.startswith(("cv_audit_lane_", "cv_audit_writer_"))}
 EXPORTED_NAMES = frozenset(_SPECS)  # every family `lane_families` serves
