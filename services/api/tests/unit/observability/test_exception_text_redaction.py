@@ -11,9 +11,9 @@ exception text (`token = …`), so such a line passes the support bundle's scan.
 its start and its last lines, and a second pass changes nothing. A placeholder is no value only as
 the whole value or right before the cut's marker, a dotted id (`machines.session:<id>`) is no label
 where a dotted attribute and its value is one, a format string is left to format, and the buffer
-writes each record on one line, so a label and its value on two lines are refused. Each backup
-download path (E42-T05 BK-11) in a traceback or a stack shows its marker where it stood, as the
-whole of a message line that holds one does.
+writes each record on one line. The redaction filter and the bundle scan agree on whitespace
+between a label and its value. Each backup download path (E42-T05 BK-11) in a traceback or a stack
+shows its marker where it stood, as the whole of a message line that holds one does.
 
 Values are assembled at runtime, so no secret-shaped literal sits in the repo.
 """
@@ -53,7 +53,7 @@ from candleviewer.observability.logging import (
     reset_logging,
 )
 from candleviewer.observability.redaction import redact_text
-from candleviewer.observability.support_bundle import BundleError, BundleSources, build_bundle
+from candleviewer.observability.support_bundle import BundleSources, build_bundle
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
 from candleviewer.oms.order_link import OrderLinkIdParts
 
@@ -456,9 +456,23 @@ def test_each_key_name_ends_with_a_letter() -> None:
     assert all(name[-1].isalpha() for name in redaction._REDACT_KEY_FORMS)
 
 
+#: Of no value shape and long enough for the scan (6 characters or more): only its label masks it.
+_LABELLED_ONLY = "".join(("hun", "ter2x"))
+
+
 @pytest.mark.parametrize(
     ("text", "shown"),
     [
+        # a cut marker ends a placeholder only as a cut leaves it; a value right before it is one
+        (f"password='***{redaction._TRUNCATED}{_LABELLED_ONLY}'", f"password='{_KEY_MARK}'"),
+        (f"password='{_LABELLED_ONLY}{redaction._TRUNCATED}'", f"password='{_KEY_MARK}'"),
+        # unquoted, a value ends at `]`, the marker's too, as in `password=ab]cdefgh`: a value that
+        # follows the marker directly stays (a cut never writes one: it joins its parts at a line
+        # break)
+        (
+            f"password=***{redaction._TRUNCATED}{_LABELLED_ONLY}",
+            f"password={_KEY_MARK}]{_LABELLED_ONLY}",
+        ),
         *[(text, text) for text in ("token=***", "token=null, x=1", "password='***'")],
         *[
             (f"token={mark}", f"token={mark}")  # the last: a cut right after a marker
@@ -512,6 +526,22 @@ def test_the_scan_reads_an_escaped_line_break_after_a_dotted_label_as_a_space() 
     assert "labelled-secret" in set(scan_text("cfg.token:\\nshortone"))
 
 
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        (f"token=\\'{_LABELLED_ONLY}\\'", f"token={_KEY_MARK}"),
+        (f'token=\\"{_LABELLED_ONLY}\\"', f"token={_KEY_MARK}"),
+        (f"cfg.token:\\'{_LABELLED_ONLY}\\'", f"cfg.token:{_KEY_MARK}"),  # a label, not an id
+    ],
+)
+def test_the_scan_reads_an_escaped_quote_after_a_label_as_a_quote(text: str, shown: str) -> None:
+    # as the buffer writes a quote it escapes: the scan flags the value, which the filter masks
+    assert "labelled-secret" in set(scan_text(text))
+    assert redact_text(text) == shown
+    assert redaction._redact_runs(text) == shown
+    assert list(scan_text(shown)) == []
+
+
 def test_the_filter_leaves_a_format_string_of_a_value_shape_so_that_it_formats() -> None:
     msg, args = "ConnectionResetErrorX %s=%d", ("n", 3)  # the key shape takes the first word
     record = logging.LogRecord("t.lib", logging.WARNING, __file__, 1, msg, args, None)
@@ -562,16 +592,86 @@ def _two_line_message() -> None:
     [_two_line_message, _log_raised(f"config:\ntoken=\n{_SHORT_VALUE}")],
     ids=["message", "traceback"],
 )
-def test_a_label_and_its_value_on_two_lines_are_one_buffer_line_that_refuses_the_bundle(
+def test_the_filter_and_the_scan_agree_on_whitespace_between_a_label_and_its_value_in_the_buffer(
     emit: Callable[[], None], tmp_path: Path
 ) -> None:
-    _, ring = _capture(emit)  # the label pass reads a line: the value stays (stated)
+    lines, ring = _capture(emit)
 
     [entry] = ring
     assert "\n" not in entry  # logs.ndjson keeps one record per line
-    with pytest.raises(BundleError) as refused:
-        _build(ring, tmp_path)
-    assert refused.value.code == "BUNDLE_SECRET_DETECTED"
+    assert _SHORT_VALUE not in _logged(lines, ring)
+    assert _build(ring, tmp_path).is_file()
+
+
+_LABEL_KINDS = {
+    "name": ("password=", _LABELLED_ONLY, _KEY_MARK),
+    "quoted-name": ('{"token":', f'"{_LABELLED_ONLY}"}}', f'"{_KEY_MARK}"}}'),
+    "dotted-name": ("cfg.token:", _LABELLED_ONLY, _KEY_MARK),
+    "to-line-end": ("Cookie:", f"a={_LABELLED_ONLY}; b=1", _KEY_MARK),
+    "scheme": ("Authorization:", f"Bearer {_LABELLED_ONLY}", _KEY_MARK),
+}
+_SPACES = ["\t", "   ", "\n", "\r\n", " \t\\n\r\n \n", "\\t", "\\r"]
+
+
+@pytest.mark.parametrize("space", _SPACES, ids=list("abcdefg"))
+@pytest.mark.parametrize(("label", "value", "shown"), _LABEL_KINDS.values(), ids=_LABEL_KINDS)
+def test_the_redaction_filter_and_the_bundle_scan_agree_on_whitespace_between_a_label_and_its_value(
+    label: str, value: str, shown: str, space: str
+) -> None:
+    text, out = label + space + value, label + space + shown
+
+    assert "labelled-secret" in set(scan_text(text))
+    for redact in (redact_text, redaction._redact_runs):
+        assert redact(text) == out
+        assert redact(out) == out
+    assert list(scan_text(out)) == []
+
+
+@pytest.mark.parametrize("before", ["\\t", "\\n", "\\r"], ids=["a", "b", "c"])
+@pytest.mark.parametrize(("label", "value", "shown"), _LABEL_KINDS.values(), ids=_LABEL_KINDS)
+def test_the_redaction_filter_and_the_bundle_scan_agree_on_where_a_label_starts(
+    label: str, value: str, shown: str, before: str
+) -> None:
+    text, out = f"{before}{label} {value}", f"{before}{label} {shown}"
+
+    assert "labelled-secret" in set(scan_text(text))
+    for redact in (redact_text, redaction._redact_runs):
+        assert redact(text) == out
+        assert redact(out) == out
+    assert list(scan_text(out)) == []
+
+
+_WHITESPACE = [" ", "\t", "\n", "\r\n"]
+_SPACE_RUN = st.lists(st.sampled_from(_WHITESPACE), max_size=4).map("".join)
+_AROUND_PIECES = [*"ab9.,;:=()[]{}<>/-_*'\"", *_WHITESPACE, "\\t", "\\n", "\\r"]
+_AROUND = st.lists(st.sampled_from(_AROUND_PIECES), max_size=10).map("".join)
+_FLAGGED = st.builds(
+    lambda quote, value: quote + value + quote,
+    st.sampled_from(["", '"', "'"]),
+    st.text(_CHARS + ".+/=:", min_size=6, max_size=12),
+)
+_LABELLED_TEXT = st.builds(
+    lambda *parts: "".join(parts),
+    _AROUND,
+    st.sampled_from(sorted(redaction._REDACT_KEYS | redaction._REDACT_KEY_FORMS)),
+    st.sampled_from(["", '"', "'"]),
+    _SPACE_RUN,
+    st.sampled_from(":="),
+    _SPACE_RUN,
+    _FLAGGED,
+    _AROUND,
+)
+
+
+@given(_LABELLED_TEXT)
+@example(f"token\n={_LABELLED_ONLY}")
+@example(f'{{"password"\r\n:\r\n\t"{_LABELLED_ONLY}"}}')
+@example(f"x\\tpassword={_LABELLED_ONLY}")
+def test_the_filter_and_the_scan_agree_on_whitespace_between_a_label_and_its_value_in_any_text(
+    text: str,
+) -> None:
+    for redact in (redact_text, redaction._redact_runs):
+        assert list(scan_text(redact(text))) == []
 
 
 class _Login(pydantic.BaseModel):
@@ -662,10 +762,12 @@ def test_a_second_pass_changes_nothing_and_the_text_stays_within_the_cap(
 
 
 #: Key names (one as the last part of a dotted name), separators, quotes, placeholders, digits,
-#: spaces and line breaks; six digits are a TOTP shape, whose marker is longer: a pass grows a text.
+#: spaces and line breaks, and the quote and line break as the bundle's buffer writes them (`\'`,
+#: `\"`, `\n`); six digits are a TOTP shape, whose marker is longer: a pass grows a text.
 _PIECES = (
     *("token", "password", "Cookie", "input_value", "machines.session", "x"),
     *("=", ": ", " = ", '"', "'", ",", "}", "]", "123456", " ", "\n"),
+    *("\\'", '\\"', "\\n"),
     *(_KEY_MARK, redaction._TRUNCATED, "<omitted>", "***", "null", "None"),
 )
 #: Text of those pieces, where the run of TOTP shapes before them moves them across the cut.

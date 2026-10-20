@@ -1,7 +1,7 @@
 """#2176 (WS-D14, WS-D13): the request line and headers deadline, and the fragment cap, on a real
 uvicorn server built from the production `uvicorn_kwargs()` (`limit_concurrency` unchanged) and
 serving `create_app`, as `test_planned_shutdown_real_socket.py` does. Both protocol classes get a
-0.2 s deadline through their `header_timeout_s` parameter (one test keeps the production 10 s),
+0.2 s deadline through their `header_timeout_s` parameter (two tests keep the production 10 s),
 and where a test says so a 0.2 s drain bound through `drain_timeout_s`. A test waits for a
 deadline by waiting for the server to close a socket, and for the drain bound by waiting for the
 server's protocol to lose its connection: no sleeps, and every wait is bounded by
@@ -13,6 +13,7 @@ import asyncio
 import base64
 import functools
 import json
+import logging
 import socket
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
@@ -114,16 +115,19 @@ async def _serve(
 
 
 @asynccontextmanager
-async def _sent(port: int, requests: list[bytes]) -> AsyncIterator[asyncio.Future[list[bytes]]]:
+async def _sent(
+    port: int, requests: list[bytes], resets: bool = False
+) -> AsyncIterator[asyncio.Future[list[Any]]]:
     """A socket per request, the request sent as it connects (the server has read it long before
     the deadline, so its close is a FIN) and the socket left open: what each one reads until the
-    server closes it."""
+    server closes it. With `resets`, a socket's result is the exception that ended its read, a
+    reset included, in place of what it read."""
     conns = []
     for request in requests:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(request)
         conns.append((reader, writer))
-    reads = asyncio.gather(*(reader.read() for reader, _ in conns))
+    reads = asyncio.gather(*(reader.read() for reader, _ in conns), return_exceptions=resets)
     try:
         yield reads
     finally:
@@ -185,18 +189,29 @@ async def test_300_incomplete_requests_are_closed_at_the_deadline_and_rest_answe
         assert reads.result() == [b""] * SOCKETS
 
 
-async def test_300_upgrades_past_the_websocket_request_limits_are_refused_at_once() -> None:
-    """uvicorn's own WebSocket class neither answers nor closes these; REST then answers 503."""
+async def test_300_upgrades_past_the_websocket_request_limits_are_refused_at_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """uvicorn's own WebSocket class neither answers nor closes these; REST then answers 503. On
+    the production deadline, only the refusal at once closes them in time. A reset can discard an
+    answer before the client reads it, so a socket is refused when it read websockets' status or
+    was reset, and asyncio logs no transport error; the status of each request is asserted in
+    memory (`test_server_ws_frames.py`)."""
+    caplog.set_level(logging.ERROR, logger="asyncio")
     cases = [PAST_LIMITS[i % len(PAST_LIMITS)] for i in range(SOCKETS)]
     async with (
         asyncio.timeout(_BOUND_S),
-        _serve() as (port, _),
-        _sent(port, [request for request, _ in cases]) as reads,
+        _serve(header_timeout_s=SERVER_READ_HEADER_TIMEOUT_S) as (port, _),
+        _sent(port, [request for request, _ in cases], resets=True) as reads,
     ):
         await asyncio.wait({reads}, timeout=_CLOSE_WAIT_S)
         assert await _rest(port) == OK
-        statuses = [int(answer.split(b" ", 2)[1]) for answer in reads.result()]
-    assert statuses == [status for _, status in cases]  # websockets' refusal, then the close
+        ended = reads.result()
+    for (_, status), answer in zip(cases, ended, strict=True):
+        assert isinstance(answer, ConnectionResetError) or answer.startswith(
+            f"HTTP/1.1 {status} ".encode()
+        ), answer
+    assert [r.getMessage() for r in caplog.records if r.name == "asyncio"] == []
 
 
 async def test_a_kept_alive_connection_outlives_the_deadline_until_its_next_bytes() -> None:

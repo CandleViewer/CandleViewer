@@ -1974,9 +1974,10 @@ async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
     request's reply, by `handle_sub` and by the gateway after a `ctl` or `resync`. The window is
     marked here, as the write starts (`first_user_refusal`), so a request that ended first leaves
     it to the user's next refusal. Its object is named as `ws.subscribe.denied`'s (`_denial`),
-    never with the client's text. Best effort, bounded at `FANOUT_AUDIT_TIMEOUT_S`: a record not
-    confirmed is counted and logged, and a cancellation is counted and propagates; neither changes
-    the refusal, which already went out."""
+    never with the client's text, and it names the socket as that row does: its session in the
+    `session_id` column, its `connection_id` in `after_state` (#415, E17-R-16). Best effort,
+    bounded at `FANOUT_AUDIT_TIMEOUT_S`: a record not confirmed is counted and logged, and a
+    cancellation is counted and propagates; neither changes the refusal, which already went out."""
     key, authz.rebuilds.audit_due = authz.rebuilds.audit_due, None
     audit = authz.services.audit
     if key is None or audit is None or not authz.rebuilds.first_user_refusal():
@@ -1988,11 +1989,13 @@ async def audit_rebuild_refusal(authz: ConnectionAuthz) -> None:
             "ws.rebuild.refused",
             actor_label="ws",
             actor_user_id=authz.principal.user_id,
+            session_id=authz.session_id,
             object_kind="ws_topic",
             object_id=object_id,
             outcome=AuditOutcome.DENIED,
             severity=Severity.WARNING,
             reason=reason,
+            after_state={"connection_id": authz.connection_id},
         )
     except Exception:
         count_audit_failure()  # SR-E17-04: `timeout` (it may still land) or `error`

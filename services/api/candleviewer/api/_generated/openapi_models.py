@@ -5941,7 +5941,12 @@ class MfaEnrollConfirmResponse(AuthenticatedResponse):
 class SessionInfo(BaseModel):
     user: User
     permissions: list[str]
-    account_scope: list[UUID]
+    account_scope: Annotated[
+        list[UUID],
+        Field(
+            description="Accounts whose view grant is live and not frozen; an Owner holds no grant rows, so [] does not mean all."
+        ),
+    ]
     allowed_environments: list[Literal["live", "demo", "testnet"]] | None = None
     kill_switch: KillSwitch | None = None
     server_time: AwareDatetime

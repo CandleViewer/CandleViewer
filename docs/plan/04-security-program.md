@@ -539,8 +539,8 @@ authorisation (synchronous drop/narrow before any send; snapshot ordering requir
 exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 52 rows
 (WS-S01..E06, incl. WS-D15..D17, WS-I09 and WS-I10), two inherent Highs (slow consumer WG2; audit-store flooding WG9 =
 WS-D15); no residual High (WG9 re-scored Medium after SR-192 was built, #3123, and Low once its per-connection record
-budget was built, #3185; RR-08 in §16.1, closure proposed); residual Medium on WG3 and WG8. Controls SR-183..
-SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). Status Approved (2026-10-13).
+budget was built, #3185; RR-08 in §16.1, closure proposed); residual Medium on WG3 (WG8 Low* since #2176; * proposed, the owner confirms). Controls SR-183..
+SR-193 (§6.18); abuse cases AC-01..AC-31 go to E17-X02 (see RSK-063, RSK-064). Status Approved (2026-10-13).
 
 | T   | STRIDE                 | Threat                                                                                                                       | L   | I   | Risk     | Mitigations                                                                                                                                                 | Residual |
 | --- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
@@ -551,7 +551,7 @@ SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). 
 | WG5 | Tampering              | Hostile CVWB or inbound JSON body exhausts a decoder                                                                         | M   | M   | Medium   | SR-040, SR-128, SR-155; 256 KiB pre-decode cap; SR-184, SR-185                                                                                              | Low      |
 | WG6 | Information disclosure | Token in URL/log/metric/error; cross-account leak; account-existence oracle                                                  | M   | H   | Medium   | SR-122; first-frame token only; per-account `decide`; one generic `account_scope_denied`                                                                    | Low      |
 | WG7 | Repudiation            | Private-topic subscription or revocation leaves no record                                                                    | M   | M   | Medium   | `ws.subscribe.granted`, `ws.subscribe.denied`, `ws.subscription.revoked`, `cv_ws_audit_failures_total`; SR-186, SR-187 (#2174)                              | Low      |
-| WG8 | Denial of service      | Transport limits enforced by the ASGI server (message size, compression, fragmentation, handshake) not explicitly configured | M   | M   | Medium   | SR-191 explicit server WS limits (#2176)                                                                                                                    | Medium   |
+| WG8 | Denial of service      | Transport limits enforced by the ASGI server (message size, compression, fragmentation, handshake) configured (#2176, #3890) | M   | M   | Medium   | SR-191: `ws_max_size` 260 KiB, deflate per encoding, `limit_concurrency` 256, 1 024-message bound, handshake and keep-alive timeouts (#3890, #2176)         | Low*     |
 | WG9 | Denial of service      | Audit-store flooding: one oversized `sub` frame drives per-entry denial audit appends (WS-D15)                               | M   | H   | **High** | SR-192 (#2292): a `sub` over 50 topics is refused whole; one denial record per frame; 20 of those a minute per connection, the rest counted (#3185)         | Low      |
 
 ### 5.14 Area 13 — Accounts, sub-accounts and the API-key vault (E27, A-01, A-02, TB-5, TB-7)
@@ -657,8 +657,8 @@ approved.
 
 | Residual level  | Count                                                                                                                                                                                                                                                                                                                                                            |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Low             | 115 (adds S10–S12, S14, S16–S18, S20–S21 from E07-X01; WG1, WG2, WG4–WG7, WG9 from E17-X01; KV1–KV5, KV7, KV8, KV10–KV12, KV14 from E27-X01; AD1–AD3, AD5, AD7–AD9 from E42-X01)                                                                                                                                                                                 |
-| Medium          | 13 (K9 memory exposure under host compromise; N5 remote-access outage; G3 unsigned commits, accepted; S13, S15 from E07-X01; WG3, WG8 from E17-X01; KV9, KV13 from E27-X01; U34 from #2295; AD4, AD6, AD10 from E42-X01)                                                                                                                                         |
+| Low             | 116 (adds S10–S12, S14, S16–S18, S20–S21 from E07-X01; WG1, WG2, WG4–WG7, WG8*, WG9 from E17-X01; KV1–KV5, KV7, KV8, KV10–KV12, KV14 from E27-X01; AD1–AD3, AD5, AD7–AD9 from E42-X01)                                                                                                                                                                           |
+| Medium          | 12 (K9 memory exposure under host compromise; N5 remote-access outage; G3 unsigned commits, accepted; S13, S15 from E07-X01; WG3 from E17-X01; KV9, KV13 from E27-X01; U34 from #2295; AD4, AD6, AD10 from E42-X01)                                                                                                                                              |
 | High / Critical | 0 (WG9 audit-store flooding from E17-X01 was the one, High before SR-192 (#2292) was built; re-scored Medium in #3123, then Low in #3185, counted in the Low row; RR-08 in §16.1, closure proposed)                                                                                                                                                              |
 | Not accepted    | 6 open High/Critical residuals, excluded from the counts above (release blockers for R2; RR6 of E14-X01 blocks the release that ships the drawing tools): RR1-RR4 from E26-X01, recorded as RR-09..RR-12 in §16.1 (RSK-069..RSK-071; RR4 via G6 and G7), KV6 (F-27) from E27-X01, recorded as RR-13 (RSK-068), and RR6 from E14-X01, recorded as RR-24 (RSK-087) |
 
@@ -666,7 +666,8 @@ Any threat that remains High or Critical after mitigation is a release blocker a
 No open High residual is left in the counts above: WG9 (WS-D15, E17-X01) was the one, before SR-192 (#2292) was built.
 It was re-scored Medium (#3123) and is Low since #3185's per-connection budget for its denial records was built
 (E17 model §10); its register entry RR-08 in §16.1 has closure proposed, with owner sign-off pending
-(queued on #2701). The open Highs are all in the Not accepted row, outside those counts. S17/S19/S20 (E07-X01) are rated
+(queued on #2701). WG8* is counted in Low as the E17-X02 review proposes (since #2176, #3890; the owner confirms in
+`docs/security/reviews/e17-ws-review.md` §5). The open Highs are all in the Not accepted row, outside those counts. S17/S19/S20 (E07-X01) are rated
 Low contingent on E07-T02/E07-T05 shipping their named controls (`docs/security/threat-models/E07-storage.md`
 §7) — tracked, not silently accepted, and re-triaged at those PRs' security review if the control is missing.
 KV1, KV2 and KV3 (E27-X01) are rated Low now that #2338 and #2270 have merged (0026, the M2 allow-list), KV14 is
@@ -699,7 +700,7 @@ the render sinks, position-tool integrity and the production-handle check, which
 RR4 (DR32, DR33, no per-user quota or write rate limit, #2727; it blocks E14 epic sign-off; RR-25, RSK-088) and RR5
 (DR17, drawings outside the append-only audit scope; RR-26, RSK-089). Its Low residuals RR1, RR2, RR3 and RR7 are RR-26
 too (`docs/security/threat-models/E14-drawings.md` §7). The E14 Low and Medium residuals (RR1, RR2, RR3 and RR7; RR4 and
-RR5) are not added to the 115 Low and 13 Medium counts above, as the E28 rows are not.
+RR5) are not added to the 116 Low and 12 Medium counts above, as the E28 rows are not.
 The E39 rows (E39-X01, Area 15 RK1 to RK14, model RK-S01..RK-E09) are Draft and outside the counts above until the
 model is approved. RK1 (Critical until E39-S01, E39-S03 and E32-T01 ship) and the High rows whose controls are still
 requirements are R3 release blockers; at approval they go to §16.1 and `32-risk-register.md`.

@@ -133,6 +133,22 @@ async def test_a_sub_entry_s_record_is_written_after_its_frame_s_sub_ok() -> Non
     assert [(action, sent) for action, _, sent in rows.rows] == [("ws.rebuild.refused", ["sub_ok"])]
 
 
+async def test_the_record_names_the_socket_it_was_refused_on() -> None:
+    """#415 (E17-R-16): as a denial row's, the record carries its socket's session in `session_id`
+    and its `connection_id` in `after_state`: the socket refused, not another of the user's."""
+    a, b = _one_user(2, limit=1)
+    a.authz.session_id, b.authz.session_id = "session-of-a", "session-of-b"
+    a.authz.services.audit = rows = _Rows()  # one sink: the connections share their services
+    await _asub(a, BOOK)  # the user's one draw
+    await _asub(b, HEAT)  # refused for the user, on b
+    ((action, row, _),) = rows.rows
+    assert action == "ws.rebuild.refused"
+    assert (row["session_id"], row["after_state"]) == (
+        "session-of-b",
+        {"connection_id": b.authz.connection_id},
+    )
+
+
 async def test_two_sockets_of_one_user_racing_to_write_leave_one_record_a_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

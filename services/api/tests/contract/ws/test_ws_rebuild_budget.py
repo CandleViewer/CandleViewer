@@ -152,6 +152,7 @@ def test_ac31_a_user_s_first_refusal_in_each_window_is_audited_once(offer: list[
     w.registry.services.user_rebuilds.limit = 1
     w.registry.services.audit = sink
     with connect(w, offer) as c:
+        ((authz, _, _),) = w.registry._conns[USER]  # the socket the rows name (#415, E17-R-16)
         c.sub(BOOK)  # the user's one draw
         for i, paused in enumerate((True, False)):  # the resume is refused, the first
             c.send({"t": "ctl", "id": f"k{i}", "ch": BOOK, "p": {"paused": paused}})
@@ -183,6 +184,8 @@ def test_ac31_a_user_s_first_refusal_in_each_window_is_audited_once(offer: list[
         "outcome": AuditOutcome.DENIED,
         "severity": Severity.WARNING,
         "reason": "user",
+        "session_id": w.session,  # the socket's session and connection, as the denial row's
+        "after_state": {"connection_id": authz.connection_id},
     }
 
 

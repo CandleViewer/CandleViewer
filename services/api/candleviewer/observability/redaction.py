@@ -75,17 +75,18 @@ _KEY_NAMES: Final = "|".join(sorted(re.escape(k).replace("_", "[-_]") for k in _
 #: A name after a `.` is part of a dotted id, not a label, when a `:` follows it at once and then a
 #: character other than a space or a quote: a WS machine topic such as `machines.session:<id>.state`
 #: stays readable (#415). A dotted attribute and its value is a label (`self.password='…'`,
-#: `obj.api_secret=…`, `cfg.token: …`), and an escaped line break (`\n`, as the bundle's buffer
-#: writes one) reads as a space. The bundle scan's too.
-_NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr])[^\s"'])"""
+#: `obj.api_secret=…`, `cfg.token: …`), and an escaped line break or quote (`\n`, `\'`, as the
+#: bundle's buffer writes them) reads as a space or a quote. The bundle scan's too.
+_NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr"'])[^\s"'])"""
 #: A labelled value that holds nothing to redact: a marker, the end of a cut text or a placeholder,
 #: as the whole value, so `password=***x` holds a value (#415). What follows it ends a value: a
 #: space, a quote, a comma, a closing bracket, the end, a `\`, as the bundle's buffer writes a line
 #: break or a quote (`\n`, `\'`), or the end of a cut text, which a cut right after a marker leaves
-#: there. The bundle scan reads the same as no value.
+#: there, when a space, a quote, a `\` or the end follows it, as a cut leaves it (#415). The bundle
+#: scan reads the same as no value.
 _NO_VALUE: Final = (
     r"(?!(?:\[redacted:[a-z-]+\]|\.\.\.\[truncated:oversize\]|<omitted>|\*\*\*|null|none)"
-    r"""(?=[\s"',}\]\\]|\.\.\.\[truncated:oversize\]|\Z))"""
+    r"""(?=[\s"',}\]\\]|\.\.\.\[truncated:oversize\](?=[\s"'\\]|\Z)|\Z))"""
 )
 #: The first letters of the key names: most words fail this check before any name is tried.
 _KEY_FIRST: Final = "".join(sorted({k[0] for k in _REDACT_KEY_FORMS}))
@@ -95,21 +96,27 @@ _QUOTED: Final = r"""(?:"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)"""
 #: rest of its line (`Cookie: a=…; b=…`), and pydantic writes an input of any type (`{…}`, `[…]`).
 #: Read as the end of the name just matched, so the other names cost nothing more.
 _TO_LINE_END: Final = r"(?<=cookie)|(?<=input[-_]value)"
+#: Where a label starts, read as the bundle scan reads it: the redaction filter and the bundle scan
+#: agree on where a label starts.
+_LABEL_START: Final = r"(?:\b|(?<=\\[tnr]))"
+#: A label's `:` or `=` and the whitespace around it, read as the bundle scan reads them: the
+#: redaction filter and the bundle scan agree on whitespace between a label and its value.
+_LABEL_SPACE: Final = r"\s*[:=](?:\s|\\[tnr])*+"
 #: A value labelled with a key name in text (`token = …`, `"password": "…"`, `Authorization: Bearer
-#: …`): the bundle scan's labelled-secret rule as a substitution (#415). On the label's line, a
+#: …`): the bundle scan's labelled-secret rule as a substitution (#415). On its line, a
 #: quoted value runs to its closing quote, a `_TO_LINE_END` name's to the line's end, and any other
 #: bare one, after a `Bearer` or `Basic` scheme, to a space, comma or closing bracket, with any
 #: quoted part in it (`access_token="…"`).
 _LABELLED_VALUE: Final = re.compile(
-    rf"""(?ix)(?P<label>\b(?=[{_KEY_FIRST}]){_NOT_DOTTED}(?:{_KEY_NAMES})(?P<line>{_TO_LINE_END})?
-    ["']?[ \t]*[:=][ \t]*)
+    rf"""(?ix)(?P<label>{_LABEL_START}(?=[{_KEY_FIRST}]){_NOT_DOTTED}(?:{_KEY_NAMES})
+    (?P<line>{_TO_LINE_END})?["']?{_LABEL_SPACE})
     (?:(?P<quote>["']){_NO_VALUE}(?:\\.|(?!(?P=quote))[^\\\n])+
     |{_NO_VALUE}(?(line)[^\s"'][^\n]*
     |(?:(?:bearer|basic)[ \t]+)?[^\s"',}}\]](?:[^\s"',}}\]]|{_QUOTED})*))"""
 )
-#: A label's `:` or `=` follows a letter (each key name ends with one), a quote, a space or a tab:
+#: A label's `:` or `=` follows a letter (each key name ends with one), a quote or whitespace:
 #: text whose separators all follow something else (a timestamp, an address) is not scanned further.
-_LABEL_SEP: Final = re.compile(r"""[:=](?:(?<=[^\W\d_].)|(?<=["' \t].))""")
+_LABEL_SEP: Final = re.compile(r"""[:=](?:(?<=[^\W\d_].)|(?<=["'\s].))""")
 
 #: Maximum string length scanned for value-shape patterns. Longer values are
 #: truncated with a marker *before* scanning so one huge payload cannot stall
@@ -186,7 +193,7 @@ _TRUNCATED: Final[str] = "...[truncated:oversize]"
 #: The longest text that is not cut: a text cut once is not cut again.
 _CUT_LEN: Final = _MAX_SCAN_LEN + len(_TRUNCATED)
 #: The most of a long text's end that a cut keeps, as whole lines: a traceback names its exception
-#: last (#415). A labelled value sits on its label's line, so no cut parts it from its label.
+#: last (#415).
 _TAIL_MAX: Final = 3072
 
 #: A run of the characters the value shapes are made of: word characters, `.` and `-`. A match of
