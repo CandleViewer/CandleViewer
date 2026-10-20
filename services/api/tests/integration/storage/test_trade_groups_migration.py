@@ -389,8 +389,12 @@ def test_schema_matches_the_plan_doc(pg_dsn: str) -> None:
             "redacted before insert; never logged"
         )
         note = "PII: free text a user wrote (21 Sec.12, class P1); never logged"
+        algo = (
+            "PII: algo parameters that can repeat order prices and quantities (21 Sec.12, class "
+            "P1); never logged"
+        )
         assert {(row[0], row[1]): row[2] for row in tagged} == {
-            ("trade_groups", money): 5, ("trade_groups", note): 1,
+            ("trade_groups", money): 5, ("trade_groups", note): 1, ("trade_groups", algo): 1,
             ("trade_group_legs", money): 9, ("trade_group_legs", text): 2,
         }  # fmt: skip
 
@@ -1082,7 +1086,7 @@ _LEG_REWRITES: dict[str, Callable[[Conn, str], object]] = {
 @pytest.mark.parametrize("column", list(_LEG_REWRITES))
 def test_a_leg_identity_group_and_account_are_write_once(pg_dsn: str, column: str) -> None:
     """`trg_tgl_write_once` on SR-E28-16's re-point path: a leg never changes its id, its group
-    or its account, even to a live group or account of its own environment."""
+    or its account, even to an existing group or account of its own (demo) environment."""
     with _conn(_fresh(pg_dsn)) as c:
         user = _user(c)
         leg = _leg(c, _group(c, user), _account(c))
