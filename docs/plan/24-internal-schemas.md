@@ -3423,6 +3423,11 @@ rebuilds from, whatever its state; a live book takes a snapshot while LIVE for a
 | `seq`            | `TradeEvent`                | the recorded `trades.seq`, the recorder's ingest counter (§2.1); NULL (a row written before the recorder stored it) re-emits `0`, as the readers read it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `bids`, `asks`   | `BookDelta`, `BookSnapshot` | a delta: the update's recorded rows of that side, one per changed level (size `0` deletes it), best price first (bids descending, asks ascending); a snapshot: its stored sides, in their stored order                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
+The `reason` row is the event the injector hands the replay book, which the book's hook sees; on the
+book topic the replay book publishes each book it builds with its own `reason`, as the live book does:
+`subscribe`, then `resync` once replayed data desynced it, and `subscribe` again after a seek, a loop
+restart or a recording gap, each of which starts a fresh book.
+
 ```python
 class ReplaySession(BaseModel):
     session_id: UUID
