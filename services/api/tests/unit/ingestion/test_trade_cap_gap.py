@@ -149,12 +149,14 @@ async def test_a_frame_over_the_cap_before_any_published_print_marks_no_gap() ->
 
 async def test_the_recorded_public_trade_frames_replay_with_no_refusal_and_no_gap() -> None:
     corpus = [frame for rel in PUBLIC_TRADE for frame in frames(rel)]
+    over = json.loads(_oversized(RECORDED[1]))  # one print fewer is exactly the cap: accepted
+    corpus[corpus.index(RECORDED[1])] = json.dumps({**over, "data": over["data"][:-1]})
     ids = {(p.symbol, p.trade_id) for frame in corpus for p in parse_trade_frame(frame) or ()}
     tape = _Tape()
     before = _rejections()
     await tape.feed(*corpus)
 
-    assert max(len(_ts(frame)) for frame in corpus) <= MAX_PRINTS_PER_BATCH
+    assert max(len(_ts(frame)) for frame in corpus) == MAX_PRINTS_PER_BATCH
     assert _rejections() == before
     assert _drained(tape.gaps) == [] and tape.stream.open_gaps() == {}
     assert {(e.symbol, e.trade_id) for e in _drained(tape.prints)} == ids
