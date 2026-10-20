@@ -74,7 +74,8 @@ def _print(
 
 def parse_trade_frame(frame: str) -> list[TradePrint] | None:
     """`None` for non-trade frames; `ValueError` (a `FrameRejectedError` with a
-    reason once the check is a plausibility one) for a malformed trade frame."""
+    reason once the check is a plausibility one) for a malformed trade frame.
+    Past a valid topic the error names the symbol, so the stream marks a gap."""
     try:
         msg = json.loads(frame)
     except ValueError:
@@ -90,8 +91,8 @@ def parse_trade_frame(frame: str) -> list[TradePrint] | None:
     data = msg.get("data")
     if not _SYMBOL_RE.fullmatch(symbol) or not isinstance(data, list):
         raise ValueError("trade frame carries an invalid symbol or data")
-    if len(data) > MAX_PRINTS_PER_BATCH:
-        raise ValueError("trade frame exceeds batch cap")
+    if len(data) > MAX_PRINTS_PER_BATCH:  # E08-X02 cap: refused whole, its window marked (#3876)
+        raise FrameRejectedError("malformed", "trade frame exceeds batch cap", symbol=symbol)
     env_ts = msg.get("ts")
     envelope_ms = env_ts if isinstance(env_ts, int) and not isinstance(env_ts, bool) else None
     out = []
