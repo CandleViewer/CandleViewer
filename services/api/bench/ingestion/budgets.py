@@ -10,12 +10,14 @@ also run the bars path, bar builders and the WS series store (`soak_bars` at the
 D2-G4; `check_bars` says when the figure is a reading at that cap). Aggregation enters this figure
 when it enters the lanes. `rss_process_mb` is the whole-process RSS at each sample, imports
 included, reported beside it so that growth in what is imported is not read as per-symbol growth.
+The full `soak_bars` profile also judges the figure's slope over its last 12 h (`check_plateau`).
 """
 
 from __future__ import annotations
 
 import itertools
 import math
+import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -265,6 +267,73 @@ def check_bars(
             note=", ".join(unhealthy) or "no degraded reason from any lane's bar set",
         ),
     ]
+
+
+# --- budget #8's plateau: R4 of the bars soak (#399 D2-G4) --------------------------------------
+
+#: R4 was pre-registered on #399 before its 24 h reading (issuecomment-6297719530): over the last
+#: 12 h of scenario time, the Theil-Sen slope of the RSS the lanes add per symbol is at most
+#: `SLOPE_LIMIT_MB_PER_H`, over at least `PLATEAU_MIN_SAMPLES` samples. The limit is the growth that
+#: would use up budget #8's headroom over the horizon, (B8 - the 170 MB the 1.5 h leg measured,
+#: #3861) / 720 h = 0.18 MB/h; R2's 5 % band alone admits about 0.42 MB/h a symbol. "MB" is the
+#: harness's own, a MiB (`rss_per_symbol_mb` divides bytes by 2**20): the unit of R1's 300 and of
+#: the 170, so 0.18 here is 0.189 in decimal MB. The scenario sets the window (`plateau_window_s`);
+#: no scenario sets the limit.
+PLATEAU_LEVEL_MB = 170.0
+PLATEAU_HORIZON_H = 720.0  # 30 days: the horizon 06 §6.3 and §10.2 already use for retention, disk
+SLOPE_LIMIT_MB_PER_H = round((B8_RSS_MB_PER_SYMBOL - PLATEAU_LEVEL_MB) / PLATEAU_HORIZON_H, 2)
+PLATEAU_MIN_SAMPLES = 100
+
+
+def theil_sen_mb_per_h(points: Sequence[tuple[float, float]]) -> float:
+    """The Theil-Sen slope of `points`, (seconds, MB), in MB per hour: the median of the slopes
+    between every two points that differ in time. Noise and a few wild samples leave it where it
+    was. It reads growth that is sustained across the points: one step moves it only when the
+    step separates more than half of the pairs, which for equally spaced points is within about
+    1.7 % of the span of the middle (13 minutes of a 12 h window), and growth confined to the last
+    29 % of the points (3.5 h of 12) reads 0 at any rate. Quadratic in the points (259 560 pairs
+    for the 721 samples of a 12 h window at 60 s). Raises `statistics.StatisticsError` when no two
+    points differ in time."""
+    return statistics.median(
+        (y2 - y1) * 3600.0 / (t2 - t1)
+        for (t1, y1), (t2, y2) in itertools.combinations(points, 2)
+        if t1 != t2
+    )
+
+
+def check_plateau(
+    samples: Sequence[Sample], n_symbols: int, window_s: float, pre_lanes_bytes: int = 0
+) -> Check:
+    """R4: the Theil-Sen slope of budget #8's figure (`rss_per_symbol_mb`) over the samples of the
+    last `window_s` of scenario time (from the last sample's `t_s` less `window_s` on, both ends
+    in) is at most `SLOPE_LIMIT_MB_PER_H`, in the figure's unit: MB is a MiB, as for R1. It reads
+    sustained growth across the window, such as a creep inside R2's band that would use the
+    headroom up in days. A single step registers only within about 13 minutes of a 12 h window's
+    middle, and growth that starts in the last 3.5 h reads 0 (`theil_sen_mb_per_h`): R2's band
+    stays the guard for a large step, and a late leak is not seen. Fewer than
+    `PLATEAU_MIN_SAMPLES` samples in the window is no reading, and a hard FAIL."""
+    end = max((s.t_s for s in samples), default=0.0)
+    kept = [s for s in samples if s.t_s >= end - window_s]
+    if len(kept) < PLATEAU_MIN_SAMPLES:
+        note = (
+            f"no reading: {len(kept)} samples in the last {window_s:.0f} s, "
+            f"need {PLATEAU_MIN_SAMPLES}"
+        )
+        return Check(
+            "rss_plateau_slope", "#8", math.inf, SLOPE_LIMIT_MB_PER_H, "MB/h", False, note=note
+        )
+    per_symbol = rss_per_symbol_mb(kept, n_symbols, pre_lanes_bytes)
+    slope = theil_sen_mb_per_h([(s.t_s, mb) for s, mb in zip(kept, per_symbol, strict=True)])
+    return Check(
+        "rss_plateau_slope",
+        "#8",
+        slope,
+        SLOPE_LIMIT_MB_PER_H,
+        "MB/h",
+        slope <= SLOPE_LIMIT_MB_PER_H,
+        note=f"Theil-Sen slope of the RSS the lanes add per symbol, last {window_s:.0f} s, "
+        f"{len(kept)} samples",
+    )
 
 
 # --- scenario 2/3: per-symbol isolation ---------------------------------------------------------
