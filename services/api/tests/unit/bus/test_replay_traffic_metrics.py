@@ -1,0 +1,66 @@
+"""Replay traffic stays out of the bus's process-wide series (E26-T03, 24 Sec.2.9).
+
+`bus_published_total{topic_class}`, `bus_delivered_total{subscriber}`,
+`bus_subscriber_lag{subscriber}` and `ingest_queue_full_total{class}` name no env, and a replay
+lane reuses its live twin's subscriber name (`bars.{symbol}`). Counted, a slow replay consumer,
+which is replay's designed backpressure, would fire the live `IngestionNeverDropQueueFull` alert
+and overwrite the live lane's lag gauge. The replay clock's own `replay_*` series measure it."""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+
+from candleviewer.bus.bus import Bus
+from candleviewer.bus.metrics import (
+    bus_delivered_total,
+    bus_published_total,
+    bus_subscriber_lag,
+    ingest_queue_full_total,
+)
+from candleviewer.bus.models import QueuePolicy, Topic, replay_env
+
+REPLAY = replay_env(uuid.UUID("0b7c5e1a-3f2d-4c8e-9a61-5d0e7b2c4f18"))
+LANE = "bars.BTCUSDT"  # the live bars lane's name, which a replay session's lane reuses
+
+
+def series() -> tuple[float, float, float, float]:
+    """The four series a trade on `{env}.md.BTCUSDT.trade` to `LANE` can move."""
+    return (
+        bus_published_total.labels(topic_class="md.trade")._value.get(),
+        bus_delivered_total.labels(subscriber=LANE)._value.get(),
+        bus_subscriber_lag.labels(subscriber=LANE)._value.get(),
+        ingest_queue_full_total.labels(**{"class": "trade"})._value.get(),
+    )
+
+
+def trade_topic(env: str) -> Topic:
+    return Topic(env=env, domain="md", symbol="BTCUSDT", detail="trade")
+
+
+async def publish_two_through_a_full_queue(env: str) -> None:
+    """Two trades to a `NEVER_DROP` lane that holds one: the second waits for the reader (the
+    queue is full), then both arrive, in order."""
+    bus = Bus()
+    lane = bus.subscribe(LANE, f"{env}.md.BTCUSDT.trade", QueuePolicy.NEVER_DROP, maxsize=1)
+    await bus.publish(trade_topic(env), "t1")
+    held = asyncio.ensure_future(bus.publish(trade_topic(env), "t2"))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not held.done()  # backpressure: the publisher waits, nothing is dropped
+    assert await lane.get() == "t1"
+    await held
+    assert await lane.get() == "t2"
+
+
+async def test_replay_publishes_and_a_full_replay_queue_leave_the_live_series_unchanged() -> None:
+    bus_subscriber_lag.labels(subscriber=LANE).set(7)  # what the live lane last reported
+    before = series()
+    await publish_two_through_a_full_queue(REPLAY)
+    assert series() == before
+
+
+async def test_live_traffic_still_counts_in_every_series() -> None:
+    published, delivered, _, full = series()
+    await publish_two_through_a_full_queue("live")
+    assert series() == (published + 2, delivered + 2, 1, full + 1)
