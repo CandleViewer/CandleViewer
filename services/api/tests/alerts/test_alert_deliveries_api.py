@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.api import alert_deliveries
 from candleviewer.api.alert_deliveries import ACK_ALL_BATCH, ACK_ALL_MAX_BATCHES, DenialBudget
+from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 
 
 @pytest.fixture
@@ -189,7 +190,7 @@ def test_ack_that_loses_the_race_answers_with_the_row_as_it_now_is(env: Env) -> 
         env.store.rows[d.id] = won  # another session's conditional update landed first
         return None
 
-    env.store.ack = lost  # type: ignore[method-assign]
+    env.store.ack = lost  # type: ignore[method-assign]  # fault injection
     r = env.c.post(f"/alerts/deliveries/{d.id}/ack")
     assert r.status_code == 200 and r.json()["acked_at"] == T0.isoformat()
 
@@ -218,7 +219,7 @@ def test_ack_all_writes_its_record_before_any_batch_commits(env: Env) -> None:
     async def refuse(action: str, **kw: object) -> None:
         raise RuntimeError("audit writer down")
 
-    env.audit.emit = refuse  # type: ignore[method-assign]
+    env.audit.emit = refuse  # type: ignore[method-assign]  # fault injection
     with pytest.raises(RuntimeError, match="audit writer down"):
         env.c.post("/alerts/deliveries/ack-all")
     assert env.store.rows[d.id].status == "sent" and env.store.ack_all_calls == []
@@ -388,7 +389,7 @@ def test_ack_whose_row_vanished_after_losing_the_race_is_404(env: Env) -> None:
         del env.store.rows[d.id]  # gone (retention) between the update and the re-read
         return None
 
-    env.store.ack = lost  # type: ignore[method-assign]
+    env.store.ack = lost  # type: ignore[method-assign]  # fault injection
     assert env.c.post(f"/alerts/deliveries/{d.id}/ack").status_code == 404
     assert env.changes == []
 
@@ -399,7 +400,7 @@ def test_desktop_report_that_loses_the_race_is_204_with_no_metric_and_no_hook(en
     async def lost(*_a: object, **_kw: object) -> None:
         return None  # the dispatcher (or another report) settled it first
 
-    env.store.report_desktop = lost  # type: ignore[method-assign]
+    env.store.report_desktop = lost  # type: ignore[method-assign]  # fault injection
     r = env.c.post(f"/alerts/deliveries/{did}/desktop-outcome",
                    json={"outcome": "shown", "permission": "granted"})  # fmt: skip
     assert r.status_code == 204 and env.metrics.seen == [] and env.changes == []
@@ -515,7 +516,7 @@ def test_no_list_answer_carries_a_withheld_field(env: Env) -> None:
     assert _keys(r.json()["items"]) == declared  # field by field: exactly the contract's
 
 
-async def test_a_denial_whose_record_fails_keeps_its_slot_and_its_count() -> None:
+def test_a_denial_whose_record_fails_keeps_its_slot_and_its_count() -> None:
     """A failed write gives back what `admit` took: the next record still carries the count."""
     clock = _Clock()
     env = Env(denials=DenialBudget(per_window=1, window_s=60, clock=clock))
@@ -524,10 +525,10 @@ async def test_a_denial_whose_record_fails_keeps_its_slot_and_its_count() -> Non
     async def refuse(action: str, **kw: object) -> None:
         raise RuntimeError("audit writer down")
 
-    real, env.audit.emit = env.audit.emit, refuse  # type: ignore[method-assign]
+    real, env.audit.emit = env.audit.emit, refuse  # type: ignore[method-assign]  # fault injection
     with pytest.raises(RuntimeError, match="audit writer down"):
         env.c.post(f"/alerts/deliveries/{b.id}/ack")
-    env.audit.emit = real  # type: ignore[method-assign]
+    env.audit.emit = real  # type: ignore[method-assign]  # fault injection
     assert env.c.post(f"/alerts/deliveries/{b.id}/ack").status_code == 404
     (denial,) = env.denials()  # the slot came back: written, carrying the failed one
     assert denial["after_state"] == {"suppressed_before": 1}
@@ -547,4 +548,72 @@ def test_held_runs_are_logged_with_their_count_at_powers_of_ten() -> None:
 )
 def test_a_window_bound_without_a_utc_instant_is_422(env: Env, bound: dict[str, str]) -> None:
     r = env.c.get("/alerts/deliveries", params=bound)
-    assert r.status_code == 422 and r.json()["errors"][0]["rule"] == "datetime_range"
+    (error,) = r.json()["errors"]
+    assert r.status_code == 422 and error["rule"] == "datetime_range"
+    assert error["field"] == f"query.{next(iter(bound))}"  # as SR-026 and FastAPI name it
+
+
+@pytest.mark.parametrize("route", ["ack", "desktop-outcome"])
+def test_a_single_transition_writes_its_record_before_it_commits(env: Env, route: str) -> None:
+    """Write-ahead (C-2.9), as ack-all's: a failing writer leaves the row as it was, and no hook
+    or metric runs."""
+    did = env.store.add().id if route == "ack" else _desktop(env)
+    before = env.store.rows[did]
+
+    async def refuse(action: str, **kw: object) -> None:
+        raise RuntimeError("audit writer down")
+
+    env.audit.emit = refuse  # type: ignore[method-assign]  # fault injection
+    body = None if route == "ack" else {"outcome": "shown", "permission": "granted"}
+    with pytest.raises(RuntimeError, match="audit writer down"):
+        env.c.post(f"/alerts/deliveries/{did}/{route}", json=body)
+    assert env.store.rows[did] == before and env.changes == [] and env.metrics.seen == []
+
+
+@pytest.mark.parametrize("refusal", [AuditUnavailable("WAL full"), AuditWriterStopped()])
+def test_a_refused_audit_write_is_the_declared_503_and_changes_nothing(
+    env: Env, refusal: Exception
+) -> None:
+    d = env.store.add()
+
+    async def refuse(action: str, **kw: object) -> None:
+        raise refusal
+
+    env.audit.emit = refuse  # type: ignore[method-assign]  # fault injection
+    with capture_logs() as logs:
+        r = env.c.post(f"/alerts/deliveries/{d.id}/ack")
+    assert r.status_code == 503 and r.headers["content-type"] == "application/problem+json"
+    assert r.json()["code"] == "service_unavailable"
+    assert env.store.rows[d.id] == d and env.changes == []
+    assert [(e["event"], e["error"]) for e in logs] == [
+        ("alerts_audit_unavailable", type(refusal).__name__)
+    ]
+
+
+def test_a_restore_for_an_evicted_caller_logs_the_count() -> None:
+    budget = DenialBudget(per_window=1, window_s=60, clock=_Clock(), max_callers=1)
+    assert budget.admit("u1") == 0
+    assert budget.admit("u2") == 0  # u1 is evicted: one caller is tracked
+    with capture_logs() as logs:
+        budget.restore("u1", 2)
+    assert [(e["event"], e["held"]) for e in logs] == [("alert_denied_audit_held_evicted", 3)]
+
+
+class _Cut(BaseException):
+    """What a cancellation is to `_deny`: not an `Exception`."""
+
+
+def test_a_denial_cut_short_keeps_its_slot_and_its_count() -> None:
+    env = Env(denials=DenialBudget(per_window=1, window_s=60, clock=_Clock()))
+    b = env.store.add(user=USER_B, alert=ALERT_B)
+
+    async def cut(action: str, **kw: object) -> None:
+        raise _Cut
+
+    real, env.audit.emit = env.audit.emit, cut  # type: ignore[method-assign]  # fault injection
+    with pytest.raises(_Cut):
+        env.c.post(f"/alerts/deliveries/{b.id}/ack")
+    env.audit.emit = real  # type: ignore[method-assign]  # fault injection
+    assert env.c.post(f"/alerts/deliveries/{b.id}/ack").status_code == 404
+    (denial,) = env.denials()
+    assert denial["after_state"] == {"suppressed_before": 1}

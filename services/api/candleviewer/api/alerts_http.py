@@ -3,7 +3,9 @@
 
 * `Problem`: an RFC 9457 refusal (`application/problem+json`) raised from a dependency or a
   handler; `Refused` carries a ready response (the shared SR-026 query refusal) as is.
-* `ProblemRoute`: the route class that renders both.
+* `ProblemRoute`: the route class that renders both, and an audit store that refuses a
+  write-ahead record (`AuditUnavailable`, `AuditWriterStopped`) as the operations' declared 503,
+  as `api/drawings.py` does: the request fails closed (C-2.9), nothing having changed.
 * `caller()`: the one caller dependency, so the authorization order is written once:
   no resolver wired → 501 (fail closed); no verified session → 401; the operation's permission
   missing → 403 with `required_permissions`; then SR-026 - any query key the operation does not
@@ -21,11 +23,13 @@ import inspect
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, Protocol
 
+import structlog
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
 from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.rules.manager import Actor
 
 #: Session -> `Actor` (sync or async); None when the request carries no verified session.
@@ -70,7 +74,7 @@ class Refused(Exception):
 
 class ProblemRoute(APIRoute):
     """Turns `Problem` (or a ready `Refused`) raised in a dependency or handler into an RFC 9457
-    response."""
+    response, and a refused audit write into the declared 503 (see the module docstring)."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         inner = super().get_route_handler()
@@ -82,8 +86,17 @@ class ProblemRoute(APIRoute):
                 return p.response()
             except Refused as r:
                 return r.response
+            except (AuditUnavailable, AuditWriterStopped) as exc:  # fails closed: logged apart
+                _log().error("alerts_audit_unavailable", error=type(exc).__name__)
+                return Problem(503, "service_unavailable", "Unavailable",
+                               "The audit store is unavailable.").response()  # fmt: skip
 
         return handler
+
+
+def _log() -> Any:
+    """Resolved per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger("candleviewer.api.alerts_http")
 
 
 def caller(

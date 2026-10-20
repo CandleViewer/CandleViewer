@@ -85,7 +85,7 @@ class FakeDeliveryStore:
     async def list_page(
         self,
         *,
-        user_id: str | None = None,
+        user_id: str,
         alert_id: str | None = None,
         status: str | None = None,
         unacked_only: bool = False,
@@ -99,7 +99,7 @@ class FakeDeliveryStore:
             (
                 r
                 for r in self.rows.values()
-                if (user_id is None or r.user_id == user_id)
+                if r.user_id == user_id
                 and (alert_id is None or r.alert_id == alert_id)
                 and (status is None or r.status == status)
                 and (not unacked_only or (r.status == "sent" and r.acked_at is None))

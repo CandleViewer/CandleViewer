@@ -29,6 +29,7 @@ from candleviewer.api.notifications import (
     notification_scope,
     source_id,
 )
+from candleviewer.observability.redaction import redact_text
 from candleviewer.rules.manager import Actor
 from candleviewer.storage.repositories.notifications import (
     NotificationRow,
@@ -119,7 +120,8 @@ def test_viewer_scope_is_every_source_it_holds_on_its_granted_accounts(env: Env)
     assert s.rule_ids == {RULE} and s.accounts == {ACCT} and s.user_id == USER
 
 
-#: The seeded permissions of each role (migration 0002 / `auth/rbac_seed.json`), but `admin:*`.
+#: What a Viewer and a Manager hold of the sources' read and write permissions (`alerts`, `rules`,
+#: `orders`, `positions`), and nothing: none of these reaches a system row.
 _ROLE_PERMS = {
     "viewer": VIEWER,
     "manager": VIEWER | {"rules:write", "alerts:write", "orders:write", "positions:write"},
@@ -327,13 +329,14 @@ def test_system_row_has_no_route_but_a_source_id() -> None:
 
 
 def test_a_system_message_passes_the_shared_redaction_then_the_cut() -> None:
-    """The credential straddles the cut: cutting first would leave a stub the redaction rules no
-    longer match, so only redact-then-cut leaves nothing of it."""
-    secret = "token=" + "a1b2c3d4" * 6  # a credential-shaped value inside a free-text message
-    lead = "x" * (SYSTEM_TITLE_MAX - 20)
-    d = dump(_row("system", 4, 6, title=f"{lead} {secret} tail", event="health"))
-    assert len(d["title"]) <= SYSTEM_TITLE_MAX and d["title"].startswith(lead)
-    assert "a1b2c3d4" not in d["title"] and "token=a1b2" not in d["title"]
+    """A bare key-shaped run (the redaction's 18 to 36 alphanumerics) straddles the cut: cut
+    first, its 10-character stub would be too short for that shape and would survive; redacted
+    first, nothing of it does."""
+    key = "Zq" + "9x" * 14  # 30 alphanumerics, built here: no literal looks like a credential
+    message = f"{'x' * (SYSTEM_TITLE_MAX - 11)} {key} tail"
+    assert key[:10] in redact_text(message[:SYSTEM_TITLE_MAX])  # cut first, the stub would stay
+    d = dump(_row("system", 4, 6, title=message, event="health"))
+    assert len(d["title"]) <= SYSTEM_TITLE_MAX and key[:10] not in d["title"]
 
 
 def test_a_system_message_that_cannot_be_redacted_is_not_shown(

@@ -201,7 +201,9 @@ class DenialBudget:
 
     def restore(self, user_id: str, carried: int) -> None:
         """The record `admit` let through was not written: give its slot back and hold its count
-        again, this denial's own included, for the caller's next record."""
+        again, this denial's own included, for the caller's next record. A cancellation that
+        lands after the writer began its append (which it then still completes) makes the next
+        record over-report by one: an over-count, chosen over a denial lost."""
         entry = self._callers.get(user_id)
         if entry is None:  # evicted meanwhile: the count goes to the log, not nowhere
             _log().warning("alert_denied_audit_held_evicted", user_id=user_id, held=carried + 1)
@@ -237,7 +239,7 @@ def _utc(d: datetime | None, name: str) -> datetime | None:
         return (d if d.tzinfo is not None else d.replace(tzinfo=UTC)).astimezone(UTC)
     except OverflowError:
         raise Problem(422, "validation_failed", "Invalid query", f"{name} is out of range.",
-                      errors=[{"field": name, "rule": "datetime_range",
+                      errors=[{"field": f"query.{name}", "rule": "datetime_range",
                                "message": "no UTC instant"}]) from None  # fmt: skip
 
 

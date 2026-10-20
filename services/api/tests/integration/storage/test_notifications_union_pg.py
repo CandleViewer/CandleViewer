@@ -246,6 +246,42 @@ async def test_unread_only_is_what_can_still_be_acked(world: dict[str, Any], uni
     assert ("alert", world["d_acked"]) not in got
 
 
+async def test_the_inbox_list_is_the_callers_own_paged_and_filtered(
+    world: dict[str, Any], pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
+) -> None:
+    """`GET /alerts/deliveries`' statement on Postgres: one user's rows only, keyset pages
+    without gaps or repeats across an equal `queued_at`, `from` inclusive, `to` exclusive."""
+    user, at = world["user_a"], _TS + timedelta(days=30)  # a window of its own
+    end = at + timedelta(hours=1)
+    with _mig._conn(pg_dsn) as c:
+        tied = [_delivery(c, world["alert_a"], user, queued_at=at) for _ in range(3)]
+        acked = _delivery(c, world["alert_a"], user, queued_at=at - timedelta(seconds=1),
+                          status="acked", acked_at=at)  # fmt: skip
+        at_end = _delivery(c, world["alert_a"], user, queued_at=end)
+        other_alert = _mig._alert(c)
+        other_user = _owner_of(c, other_alert)
+        other = _delivery(c, other_alert, other_user, queued_at=at)
+    window: dict[str, Any] = {"from_ts": at - timedelta(seconds=1), "to_ts": end}
+    paged: list[int] = []
+    cursor: str | None = None
+    for _ in range(5):
+        page = await inbox.list_page(user_id=user, limit=2, cursor=cursor, **window)
+        paged += [d.id for d in page.items]
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+    assert paged == [*sorted(tied, reverse=True), acked]  # newest first, ties by id
+    assert at_end not in paged and other not in paged
+
+    async def ids(**kw: Any) -> list[int]:
+        return [d.id for d in (await inbox.list_page(**(window | kw))).items]
+
+    assert await ids(user_id=user, unacked_only=True) == sorted(tied, reverse=True)
+    assert await ids(user_id=user, status="acked") == [acked]
+    assert await ids(user_id=user, alert_id=other_alert) == []
+    assert await ids(user_id=other_user) == [other]
+
+
 async def test_ack_twice_keeps_the_first_acked_at(
     world: dict[str, Any], pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
 ) -> None:
