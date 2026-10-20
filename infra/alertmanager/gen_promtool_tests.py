@@ -216,6 +216,8 @@ _STRAY = 'auth_disabled_user_sessions_revoked_total{env="live"}'
 # the 15 m window is 21 m (3.x range selectors: 20 m), so `keep_firing_for: 9h30m` ends at 9 h 51 m
 # (3.x: 9 h 50 m): firing at 9 h 49 m, resolved at 9 h 52 m.
 _ONE_STRAY = {_STRAY: "0+0x5 1+0x700"}
+# #3635 (#3497): the one counter of a WebSocket close that failed, the hub's and the registry's.
+_CLOSE_FAILED = 'ws_session_revocation_close_failures_total{env="live"}'
 
 
 def _steps(step: str, outcome: str) -> str:
@@ -332,6 +334,15 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("10m", False, _closes(149, 0, 1)),
         ("10m", True, _closes(178, 0, 2)),
         ("10m", False, _closes(0, 0, 0)),
+    ),
+    # #3635 (#3497): the failed-close counter, one series for the hub's closes and the registry's. A
+    # ticket with no `for`: fires on the first evaluation after the step, is held as the tickets
+    # above are (firing at 9 h 49 m, resolved at 9 h 52 m), and a flat count is an old failure.
+    "WsRevocationCloseFailed": (
+        ("6m", True, {_CLOSE_FAILED: _RISE}),
+        ("9h49m", True, {_CLOSE_FAILED: _RISE}),
+        ("9h52m", False, {_CLOSE_FAILED: _RISE}),
+        ("30m", False, {_CLOSE_FAILED: _FLAT}),
     ),
     # #837. Pages: down after it was up, and still at 20 min, when the counter's 5 m window has
     # moved on; a down that recovered between two scrapes (the counter alone). Silent: back up and

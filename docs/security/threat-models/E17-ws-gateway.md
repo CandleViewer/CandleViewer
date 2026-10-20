@@ -490,7 +490,7 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Resync-rate-limit revocations       | `ws.subscription.revoked`            | `ws_revoked_total{reason="resync_rate_limited"}` | D03      | merged (#2174)                           |
 | Rebuild-budget refusals             | `ws.rebuild.refused`, 1/user/window  | `cv_ws_rebuild_refused_total{kind,cause}`        | D03, D16 | merged; one record a window (#3476)      |
 | Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged (within the 23 §4.3 budget)       |
-| Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)    | E02      | merged                                   |
+| Revocation close failures           | —                                    | `ws_session_revocation_close_failures_total`     | E02      | merged; ticket `WsRevocationCloseFailed` |
 | Refused stale snapshots (SR-E17-07) | `ws.permission_snapshot.refused`     | `cv_ws_permission_snapshots_refused_total`       | E02      | merged (#2318)                           |
 | Withheld `system` frames (SR-188)   | none, by design (no row per frame)   | `cv_ws_system_frames_withheld_total{reason}`     | I05      | merged (#3125)                           |
 | Audit write failures on the WS path | —                                    | `cv_ws_audit_failures_total{reason}`             | R04      | merged (#2174); `WsAuditWriteFailed`     |
@@ -513,6 +513,16 @@ A `system` frame left out for its kind or its socket (`cv_ws_system_frames_withh
 session fault, not a user action, so it writes no audit row: one per socket and frame would grow with both.
 `unknown_kind` or `invalid_body` above zero is a producer bug; a deny-all socket (the fake backend, or after a
 failed principal load) counts every other frame under `no_role` (`23-ws-protocol.md` §15.9).
+
+A close that fails when a session is revoked or a user is disabled (SR-029: the revocation hub's per-session closes
+and `ConnectionRegistry.user_disabled`'s per-user close; #3497, #3635) writes no audit row of its own. The counter and
+an ERROR line carry it: the hub's names the session, the registry's names the user and is written at most once a
+minute, so the counter is the count. The socket can stay open until its access token ends (12 minutes at most), and a
+closer that raised may leave it unsealed and still receiving its read-only streams, while REST refuses the session or
+the user and orders are REST only; its `ws.connection.closed` row (WS-R02) comes when it ends, `token_expired` at the
+latest. Any increase raises the `WsRevocationCloseFailed` ticket, held 9 h 30 m past the 22:00-07:00 UTC ticket mute,
+and an `absent()` guard watches the series. The deployed gateway's closer seals without waiting, so a failure is not
+expected: it would be a regression.
 
 The connect-rate limit (`CV_WS_MAX_AUTHS_PER_USER_PER_MIN`, 20 per user per sliding minute; `23-ws-protocol.md`
 §4.3) is the control behind the connect/close churn and per-user connect-rate refusal rows. A `ws.connection.closed` row needs a counted `auth` first, so
@@ -761,3 +771,4 @@ scope on the open tickets named above.
 | 2026-10-19 | author (agent; PR for #415 re-auth guard)         | WS-S04: two independent checks keep a re-auth on its user (the token's, the snapshot's, also at first auth); no rating or count changes      |
 | 2026-10-19 | author (agent; PR for #415 fair scheduling)       | §4, §6: slot bound 10 s plus the 2 s close flush bound (flag off too); §8: cap precedence (classification only); no rating or count changes  |
 | 2026-10-19 | author (agent; PR for #415 findings)              | WS-D11..D14, §1.1, §4, §6, §10: server limits as set; WS-D13 Medium until #2176; WS-T01, WS-T08, WS-R01, WS-R02, AC-18 as built              |
+| 2026-10-20 | author (agent; PR for #3635)                      | §8: revocation close failures name the real metric and the ticket (#3497, #3635); no rating or count changes                                 |

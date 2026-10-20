@@ -280,5 +280,6 @@
 ["ws_message_bytes_total", "counter", [], "live", "E04"]
 ["ws_messages_total", "counter", ["topic"], "live", "E04"]
 ["ws_resync_total", "counter", [], "planned", "E17"]
+["ws_session_revocation_close_failures_total", "counter", [], "live", "E09"]
 ["ws_slow_conn_total", "counter", [], "planned", "E17"]
 ["ws_topics_per_client", "gauge", [], "planned", "E17"]

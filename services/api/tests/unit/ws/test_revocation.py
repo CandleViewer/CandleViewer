@@ -1,9 +1,12 @@
 """Revoking a session closes its sockets with 4401 (US-ONB-009, QA #1634); a disabled user's
-sockets get `bye user_disabled` and close 4403, no reconnect (23-ws-protocol.md §9.5, #2493)."""
+sockets get `bye user_disabled` and close 4403, no reconnect (23-ws-protocol.md §9.5, #2493). A
+close that fails, in the hub or in the per-user close, is counted on one series and the closes
+after it still run (#3497, #3635)."""
 
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from typing import Any, cast, get_args
@@ -20,6 +23,7 @@ from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.ws.gateway import _Connection
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import (
+    CLOSE_FAILURE_LOG_EVERY_S,
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
     EVICTION_LOG_EVERY_S,
@@ -48,10 +52,12 @@ class _Socket:
 
 
 def _dead_log_sink(
-    monkeypatch: pytest.MonkeyPatch, exc: type[BaseException] = RuntimeError
+    monkeypatch: pytest.MonkeyPatch,
+    exc: type[BaseException] = RuntimeError,
+    module: str = "candleviewer.ws.revocation",
 ) -> None:
-    """Make every log call of the hub raise `exc`, as a broken processor chain would."""
-    import candleviewer.ws.revocation as revocation
+    """Make every log call of `module` (the hub's by default) raise `exc`, as a broken processor
+    chain would."""
 
     class _Dead:
         def warning(self, *args: object, **kwargs: object) -> None:
@@ -60,7 +66,7 @@ def _dead_log_sink(
         def error(self, *args: object, **kwargs: object) -> None:
             raise exc("log sink down")
 
-    monkeypatch.setattr(revocation, "_log", lambda: _Dead())
+    monkeypatch.setattr(f"{module}._log", lambda: _Dead())
 
 
 async def test_revoke_user_disabled_sends_user_disabled_bye_and_closes_4403() -> None:
@@ -620,25 +626,35 @@ async def test_a_close_cut_off_at_its_bound_is_still_one_scraped_latency_observa
 # -- the disable's per-user close, `ConnectionRegistry.user_disabled` (#965 slice 7, #3440) ------
 
 _USER = uuid.UUID(int=0x5701)
+_OTHER_USER = uuid.UUID(int=0x5702)
 
 
-def _user_registry(clock: Callable[[], float]) -> ConnectionRegistry:
-    """A registry whose services run on `clock`. Its per-user close reads no principal."""
+def _user_registry(
+    clock: Callable[[], float], *, monotonic: Callable[[], float] = time.monotonic
+) -> ConnectionRegistry:
+    """A registry whose services run on `clock` and whose memory and failure log run on
+    `monotonic`. Its per-user close reads no principal."""
 
     async def resolve(user_id: uuid.UUID) -> PrincipalSnapshot:
         raise AssertionError("the per-user close resolves no principal")
 
-    return ConnectionRegistry(resolve, lambda: _NOW_MS, SubscriptionServices(clock=clock))
+    return ConnectionRegistry(
+        resolve, lambda: _NOW_MS, SubscriptionServices(clock=clock), monotonic=monotonic
+    )
 
 
-def _connect(registry: ConnectionRegistry, closer: Closer) -> None:
-    """A live socket of `_USER` that the per-user close ends through `closer`."""
-    principal = PrincipalSnapshot(_USER, frozenset({"manager"}), frozenset())
+def _connect(
+    registry: ConnectionRegistry, closer: Closer, user: uuid.UUID = _USER
+) -> ConnectionAuthz:
+    """A live socket of `user` that the per-user close ends through `closer`."""
+    principal = PrincipalSnapshot(user, frozenset({"manager"}), frozenset())
 
     async def send(frame: dict[str, Any]) -> None:
         return None
 
-    registry.register(ConnectionAuthz(principal, registry.services), send, None, closer)
+    authz = ConnectionAuthz(principal, registry.services)
+    registry.register(authz, send, None, closer)
+    return authz
 
 
 async def test_the_per_user_close_is_one_scraped_latency_observation_for_all_its_sockets(
@@ -680,7 +696,8 @@ async def test_a_per_user_close_that_raises_is_still_one_scraped_latency_observa
     registry = _user_registry(clock)
     _connect(registry, fails)
     before = _observed(scraped)
-    assert await registry.user_disabled(_USER) == 1
+    with capture_logs():  # the failure is logged (#3635)
+        assert await registry.user_disabled(_USER) == 1
     assert _grew(scraped, before) == pytest.approx([1.0, 3.0])
 
 
@@ -699,8 +716,9 @@ async def test_a_per_user_close_cut_off_at_its_bound_is_still_one_scraped_latenc
     registry.send_timeout_s = 0.01
     _connect(registry, hung)
     before = _observed(scraped)
-    async with asyncio.timeout(5):  # fail fast, not hang, if the per-close bound regresses
-        assert await registry.user_disabled(_USER) == 1
+    with capture_logs():  # the cut-off is logged (#3635)
+        async with asyncio.timeout(5):  # fail fast, not hang, if the per-close bound regresses
+            assert await registry.user_disabled(_USER) == 1
     assert _grew(scraped, before) == pytest.approx([1.0, 2.0])
 
 
@@ -727,3 +745,215 @@ async def test_a_per_user_close_cut_off_by_its_caller_is_still_one_observation(
     with pytest.raises(asyncio.CancelledError):
         await caller
     assert _grew(scraped, before) == pytest.approx([1.0, 3.0])
+
+
+# -- a close that fails: one count, from the hub and from the per-user close (#3497, #3635) -----
+
+#: The error line of a failed per-user close; the runbook's `ws revocation close failed` search
+#: finds it beside the hub's own line.
+_USER_CLOSE_FAILED = "ws revocation close failed; disabled user's socket may remain open"
+_FAILURES = "ws_session_revocation_close_failures_total"
+
+
+@pytest.fixture
+def close_failures() -> Iterator[Callable[[], float]]:
+    """The failed-close count read where Prometheus reads it, with `env` as its only label: a
+    registry that serves `export_auth_metrics`. Before/after deltas: the counter is global."""
+    registry = CollectorRegistry()
+    collector = export_auth_metrics(registry, env="demo")
+
+    def read() -> float:
+        value = registry.get_sample_value(_FAILURES, {"env": "demo"})
+        assert value is not None, f"{_FAILURES} is not served"
+        return value
+
+    try:
+        yield read
+    finally:
+        collector.close()
+
+
+async def _gone(frame: dict[str, Any], code: int) -> None:
+    """A closer that raises, as one whose transport died under it would."""
+    raise ConnectionResetError("the peer is gone")
+
+
+def _record_releases(
+    monkeypatch: pytest.MonkeyPatch, *authzs: ConnectionAuthz
+) -> list[ConnectionAuthz]:
+    """Each of `authzs` as the per-user close releases it, in order: `release_all` still runs."""
+    released: list[ConnectionAuthz] = []
+
+    def watch(authz: ConnectionAuthz) -> None:
+        release_all = authz.release_all
+
+        def spy() -> None:
+            released.append(authz)
+            release_all()
+
+        monkeypatch.setattr(authz, "release_all", spy)
+
+    for authz in authzs:
+        watch(authz)
+    return released
+
+
+async def test_revoke_failed_and_cut_off_closes_each_count_one_failure(
+    close_failures: Callable[[], float],
+) -> None:
+    """The hub feeds the series the per-user close feeds: a closer that raised and one cut off at
+    `close_timeout_s` count one each, a close that went through counts none, and the closes after
+    a failure still run."""
+    hub = RevocationHub(close_timeout_s=0.01)
+    alive = _Socket()
+
+    async def hung(frame: dict[str, Any], code: int) -> None:
+        await asyncio.Event().wait()  # never set: only the bound ends it
+
+    hub.register("s1", _gone)
+    hub.register("s1", hung)
+    hub.register("s1", alive.close)
+    before = close_failures()
+    with capture_logs():  # each failure is logged
+        async with asyncio.timeout(5):  # fail fast, not hang, if the per-close bound regresses
+            assert await hub.revoke("s1") == 3
+    assert (close_failures(), len(alive.closes)) == (before + 2, 1)
+
+
+async def test_user_disabled_first_closer_raises_second_socket_closed_and_one_failure_counted(
+    close_failures: Callable[[], float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pin (#3635): a per-user close that raises goes on to the user's other sockets. The
+    second gets `bye user_disabled` and 4403, both connections are released, and the count rises
+    by exactly one. The hub's counterpart is `test_a_failing_socket_does_not_block_the_rest`."""
+    survivor = _Socket()
+    registry = _user_registry(_Clock())
+    first, second = _connect(registry, _gone), _connect(registry, survivor.close)
+    released = _record_releases(monkeypatch, first, second)
+    before = close_failures()
+    with capture_logs():  # the failure is logged: see the log tests below
+        assert await registry.user_disabled(_USER) == 2
+    assert survivor.closes == [(user_disabled_bye(_NOW_MS), CLOSE_USER_DISABLED)]
+    assert released == [first, second]
+    assert close_failures() == before + 1
+
+
+async def test_user_disabled_closer_cut_off_at_bound_counts_one_failure(
+    close_failures: Callable[[], float],
+) -> None:
+    """A close that never returns is ended by `send_timeout_s` and counts one failure, and the
+    user's next socket is still closed."""
+
+    async def hung(frame: dict[str, Any], code: int) -> None:
+        await asyncio.Event().wait()  # never set: only the bound ends it
+
+    survivor = _Socket()
+    registry = _user_registry(_Clock())
+    registry.send_timeout_s = 0.01
+    _connect(registry, hung)
+    _connect(registry, survivor.close)
+    before = close_failures()
+    with capture_logs():  # the cut-off is logged
+        async with asyncio.timeout(5):  # fail fast, not hang, if the per-close bound regresses
+            assert await registry.user_disabled(_USER) == 2
+    assert (close_failures(), len(survivor.closes)) == (before + 1, 1)
+
+
+async def test_user_disabled_all_closes_ok_counts_no_failure(
+    close_failures: Callable[[], float],
+) -> None:
+    registry = _user_registry(_Clock())
+    sockets = [_Socket(), _Socket()]
+    for socket in sockets:
+        _connect(registry, socket.close)
+    before = close_failures()
+    with capture_logs() as logs:
+        assert await registry.user_disabled(_USER) == 2
+    assert [len(socket.closes) for socket in sockets] == [1, 1]
+    assert (close_failures(), [e for e in logs if e["log_level"] == "error"]) == (before, [])
+
+
+async def test_user_disabled_failures_within_window_log_once(
+    close_failures: Callable[[], float],
+) -> None:
+    """A failed per-user close is logged at most once per `CLOSE_FAILURE_LOG_EVERY_S` on the
+    registry's monotonic clock, whichever user it was, with the registry's running total; every
+    failure is counted. The window runs from the last line logged, not from the last failure."""
+    clock = _Clock()
+    registry = _user_registry(_Clock(), monotonic=clock)
+    opened = clock.now
+    before = close_failures()
+    with capture_logs() as logs:
+        _connect(registry, _gone)
+        _connect(registry, _gone)
+        await registry.user_disabled(_USER)  # two failures: the first is logged
+        clock.now = opened + CLOSE_FAILURE_LOG_EVERY_S - 0.5
+        _connect(registry, _gone, _OTHER_USER)
+        await registry.user_disabled(_OTHER_USER)  # inside the window: counted, not logged
+        clock.now = opened + CLOSE_FAILURE_LOG_EVERY_S
+        _connect(registry, _gone, _OTHER_USER)
+        await registry.user_disabled(_OTHER_USER)  # a window after the first line: logged again
+    lines = [e for e in logs if e["event"] == _USER_CLOSE_FAILED]
+    assert [(e["user_id"], e["failed_total"]) for e in lines] == [
+        (str(_USER), 1),
+        (str(_OTHER_USER), 4),
+    ]
+    assert [(e["log_level"], e["exc_info"]) for e in lines] == [("error", True)] * 2
+    assert close_failures() == before + 4
+
+
+async def test_user_disabled_dead_log_sink_still_closes_remaining_sockets(
+    close_failures: Callable[[], float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.12: a double fault (a socket's close raises, then the log sink does too) must not leave
+    the disabled user's other sockets open. The failure is still counted."""
+    _dead_log_sink(monkeypatch, module="candleviewer.ws.permissions")
+    survivor = _Socket()
+    registry = _user_registry(_Clock())
+    _connect(registry, _gone)
+    _connect(registry, survivor.close)
+    before = close_failures()
+    assert await registry.user_disabled(_USER) == 2
+    assert survivor.closes == [(user_disabled_bye(_NOW_MS), CLOSE_USER_DISABLED)]
+    assert close_failures() == before + 1
+
+
+async def test_user_disabled_cancellation_from_the_log_sink_propagates_after_the_count(
+    close_failures: Callable[[], float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard around the failed-close log swallows a broken sink, never a cancellation: one the
+    log sink raises propagates, and the failure it was logging is already counted. The hub's twin
+    is `test_revoke_never_swallows_a_cancellation[failure_log]`."""
+    _dead_log_sink(monkeypatch, asyncio.CancelledError, module="candleviewer.ws.permissions")
+    registry = _user_registry(_Clock())
+    _connect(registry, _gone)
+    before = close_failures()
+    with pytest.raises(asyncio.CancelledError):
+        await registry.user_disabled(_USER)
+    assert close_failures() == before + 1
+
+
+async def test_user_disabled_cancelled_close_propagates_and_counts_nothing(
+    close_failures: Callable[[], float],
+) -> None:
+    """The disable cascade bounds this step at 2 s and does not shield it. That cut is a
+    cancellation, the step's failure and not a failed close: it propagates, uncounted and
+    unlogged."""
+    entered = asyncio.Event()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        entered.set()
+        await asyncio.Event().wait()  # never set: only the cancel ends it
+
+    registry = _user_registry(_Clock())
+    registry.send_timeout_s = 60.0
+    _connect(registry, stalled)
+    before = close_failures()
+    with capture_logs() as logs:
+        caller = asyncio.create_task(registry.user_disabled(_USER))
+        await entered.wait()
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+    assert close_failures() == before
+    assert [e for e in logs if e["event"] == _USER_CLOSE_FAILED] == []

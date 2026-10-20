@@ -3201,6 +3201,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "ws_session_revocation_close_failures_total",
+        "counter",
+        "failures",
+        (),
+        "WebSocket closes that failed during a session revocation or a user disable "
+        "(the socket may remain open).",
+        "WsRevocationCloseFailed (any in 15m, ticket); ERROR log ws revocation close failed; "
+        "runbook auth-rbac section 4",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "authz_denied_total",
         "counter",
         "denials",
