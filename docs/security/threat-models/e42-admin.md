@@ -1046,7 +1046,7 @@ this model filed.
 | E42-T07 (#1025) | Statechart inspector API: redacted summaries, an export of chart structure only `[ticket body]`; the contract, list and export `shipped in #2958, #3131` |
 | E42-T08 (#2648) | Grants: Owner-only, stepped up, never self, audited, the soft revoke, an unknown account rolling the change back `[ticket body]`; the store and the listing `shipped in #3028, #3161`. Required by this model: AD-T04's and AD-E05's route tests when the replacement mounts |
 | E42-T09 (#2649) | User read, PATCH, roles and admin sessions: Owner-only, stepped up, never self, no token material, a 404 across users `[ticket body]`. Required by this model: the ten-parallel-demotion test (AC-ADM-28) and the registry's 401 code on `api/users.py` (AD-F24), both `shipped in #2649` |
-| E42-T10 (#2650) | Deferred purge: a surrogate not reversible from PII, records written ahead, audit rows never updated `[ticket body]`. Required by this model: a restore replays the purges recorded after `covers_to` (AD-I11, with #3084) |
+| E42-T10 (#2650) | Deferred purge: a surrogate not reversible from PII, records written ahead, audit rows never updated `[ticket body]`. Required by this model: a restore replays the purges recorded after `covers_to` (AD-I11, with #3084). #2650 builds nothing for it: #3084 owns the replay, and `users.delete` and `users.anonymise` carry the user id and the dates a replay needs |
 | E42-X01 (#890) | This model |
 | E42-X02 (#1220) | White-box review of every admin route, the elevation model, the audit read side, append-only storage, the flag registry and the destructive paths `[ticket body]`. Required by this model: review against §12.1 and §13.1, and decide D2 (§5.2) before the R3 gate |
 | E42-X03 (#1026) | RBAC suite, abuse cases, Semgrep rules 1 to 4 and ZAP `[ticket body]`. Required by this model: AC-ADM-01 to AC-ADM-35 with UL-AC01 to UL-AC16; rule 2 widened to OMS, risk, secrets, exchange and `ws/permissions.py` (SR-E42-07); own-guard routes (AD-F22); the registry's error codes (AD-F24); UL-F2's `can_view` rule |
@@ -1180,9 +1180,9 @@ The annex's findings keep their ids and routes (annex §5). STRIDE and L x I are
 | UL-F2 | T | UL2-T2 | M x H, High | M | E42-X03 (#1026) | Met: `test_grant_readers_honour_can_view.py` reads every SQL text under `candleviewer/` that reads the table and requires `can_view`; its one listed exception, `_INHERIT`, copies a freeze from live and soft-revoked rows on purpose (#2648 Q1) and keeps its excuse only while its text sets the four freeze columns; the table's name is a string only in `db/models.py` and the migrations |
 | UL-F3 | T | UL3-T2 | M x H, High | M | E42-T09 (#2649) | Met for both directions by #2649 (`test_invited_or_locked_400`, `test_an_invited_or_locked_user_is_not_enabled`): no `PATCH` sets `invited` or `locked`, and only a `disabled` user is enabled. R6 still leaves a two-step path: `invited` -> `disabled` -> `active` and `locked` -> `disabled` -> `active` end `active` without redeeming the invite or clearing the lock, each step Owner-only and stepped up (a `DELETE` or `PATCH`, then a `PATCH`) and written ahead as `users.disable` then `users.enable`. An unredeemed invitee stays unable to sign in: the placeholder password hash never verifies, the disable revoked the open invite and no TOTP is enrolled. No code sets `locked` today (the login lockout is `locked_until`, which a re-enable leaves as it is), so a `locked` user re-enabled this way is unlocked outside SR-016's admin unlock, which still has no owning ticket. Owner decision on #2710: accept this as a residual, or refuse an enable whose disable started from `invited` or `locked` |
 | UL-F4 | S | UL4-S1 | L x M, Low | A, M | E42-T02 (#889), E42-S04 | Open; the residual awaits the Owner (annex §6) |
-| UL-F5 | T | UL4-T2 | L x H, Medium | M | E42-T10 (#2650) | Open |
+| UL-F5 | T | UL4-T2 | L x H, Medium | M | E42-T10 (#2650) | Met by #2650: the reaper locks the user row and re-checks `status='disabled'`, `purge_after <= now()` and `anonymised_at` before it writes (`test_reenable_racing_reaper_keeps_user`, Postgres and unit) |
 | UL-F6 | D | UL4-D1 | M x M, Medium | M | E42-T10 (#2650) | Open |
-| UL-F7 | T, I | UL4-T1, UL4-I1 | M x H and H x M, High | M | E42-T10 (#2650) | Open |
+| UL-F7 | T, I | UL4-T1, UL4-I1 | M x H and H x M, High | M | E42-T10 (#2650) | Met: #2658 (E42-T04) dropped the `actor_label` pseudonymisation from `21-database-schema.md` §12 and #2650 the `actor_ip` erase by key destruction; audit rows keep what they were written with (O6), residual UL4-I1 |
 | UL-F8 | — (residual O7) | O7 (annex §6) | Medium (the §6 level) | M | E40 (#3349) | Filed as #3349 by the QA of #890 (2026-10-18) |
 | UL-F9 | R, D | UL1-R2, UL2-D1 | M x M, Medium | M | E42-T04 (#965), E42-T08 (#2648) | Met for the disable (`test_open_orders_left_and_counted`, #3096); E42-T08 S9 owes the unbind |
 | UL-F10 | R, S | UL3-R1, UL3-S2 | M x M and L x H, Medium | M | E42-T09 (#2649) | Met by #2649: `users.enable` is written ahead with the status and roles before and after (`test_enable_audited_ahead`), and audit down is 503 `audit_unavailable` with nothing changed (`test_enable_audit_down_503`) |
@@ -1210,10 +1210,12 @@ sink-refusal residual, from #2914).
 | AD-D07 | A flag change can stop ingestion or recording, an operational choice shown on SCR-145 | Low | Owner/PO | 2027-03-25 (GA cut) |
 | A-13 (#966 BK-3) | A `backups` CHECK or NOT NULL violation's DETAIL (SQLSTATE 23514 / 23502) is the whole row, the class S `encryption_ref` alias included, and Postgres writes it to its server log; the store never surfaces it (BK-3) and the log is owner-only. #3514 sets `log_error_verbosity = terse` in production, which closes this row | Low until #3514 | Security engineer | When #3514 lands, and by 2027-02-25 (R4) |
 
-The annex's fourteen §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
+The annex's sixteen §6 residuals keep their owners and review dates, except UL1-E2: both of its conditions have landed
 (#2318; #2272, via #2690), so it is Low, and #3413 closes its race at registration, leaving the registry's cap
 (annex §6). Twelve were read at the anchor; S7
-adds two, UL1-R1 (guard) and UL1-R1 (R5), both Low, for the Owner's RR-17 sign-off on #2701. #3445 narrows UL1-R1 (R5)
+adds two, UL1-R1 (guard) and UL1-R1 (R5), both Low, for the Owner's RR-17 sign-off on #2701, and #2650 two more,
+UL4-R1 (a session's B16 record after an anonymisation is not retried) and UL4-E1 (a re-enable's record can name a
+cancel that rolled back), both Low, for the same sign-off. #3445 narrows UL1-R1 (R5)
 to a lost commit whose read-back fails or that a cancellation cuts off first, a recovered record that is not confirmed
 (`record_failed`), and a concurrent disable of a user with no session, which can pass for this call. AD-S05 stays Medium until
 D8 and #3085, and is not accepted. AD-R05,
