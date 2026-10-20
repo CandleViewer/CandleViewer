@@ -5110,6 +5110,6 @@ tracker).
 
 ### Security
 
-- **backend-platform**: a failed or cancelled first bars build keeps the other consumers' leases on its series, and a series whose saved state cannot be caught up starts afresh (#2762)
+- **backend-platform**: a failed or cancelled first bars build keeps the other consumers' leases on its series, and a series whose saved state cannot be caught up starts afresh (#2762) (#3880)
 - **rule-engine**: the rules-engine freeze scope is keyed by owner and account (#415) (#3847)
 - **backend-platform**: one print closes at most 1 000 volume bars, as it does for renko bricks; a larger print is refused and its series quarantined (#2770) (#3867)
