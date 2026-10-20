@@ -140,8 +140,10 @@ def test_place_order_takes_an_opening_order_as_an_entry_whatever_its_intent() ->
     )
     assert "No field, flag or profile setting waives it (C-4.14)." in text
     assert (
-        "The stop requirement is checked first. Then a reducing `intent` (`stop_loss`, "
-        "`take_profit`, `scale_out`, `flatten`) on an entry disagrees with its effect" in text
+        "The stop requirement is checked first. Then an `intent` that disagrees with the effect "
+        "is refused too (`validation_failed` / `intent_mismatch`): a reducing one (`stop_loss`, "
+        "`take_profit`, `scale_out`, `flatten`) on an entry, or an opening one (`entry`, "
+        "`scale_in`) on an order that is not an entry" in text
     )
     # AC-08: a mislabelled opening order with no stop is refused for both rules.
     assert "carries both `native_stop_required` and `intent_mismatch`" in text
@@ -300,6 +302,8 @@ def test_the_arm_token_is_refused_with_a_registered_code_and_spares_the_carve_ou
     assert "before the idempotency lookup" in text
     assert "cancels, `closePosition`, `closeAllPositions`, quantity-reducing amends" in text
     assert "The token is never logged (C-12.6)." in text
+    assert "reduce-only ones included" in text and "a leverage change in either direction" in text
+    assert "so is a token issued without the live step-up" in text
     entry = next(e for e in _SPEC["x-error-codes"] if e["code"] == "session_not_armed")
     assert (entry["status"], entry["retryable"]) == (403, False)
 
@@ -322,11 +326,22 @@ def test_the_cors_header_list_names_every_declared_header_parameter() -> None:
 def test_arming_for_live_needs_a_fresh_step_up() -> None:
     """N2: a client holding only the session and the CSRF token cannot arm itself (SR-025)."""
     text = _words(_OPS["armOneClickTrading"]["description"])
+    assert "Arming needs a fresh step-up while a live account is within the caller's reach" in text
     assert (
-        "arming needs a fresh step-up (SR-025): without one it answers `403 step_up_required` "
-        "with `action_class: live_enablement`" in text
+        "Without one it answers `403 step_up_required` with `action_class: live_enablement`" in text
     )
     assert "`one_click`" not in text  # no request field of that name exists
+    # The Owner holds no grants, so "within reach" names both principals (R2-M1).
+    assert "for the Owner whenever one exists, for a Manager through a trade grant" in text
+    assert "one issued without it never satisfies a live mutation" in text
+
+
+def test_the_kill_switch_reports_failures_as_closed_rows_without_exchange_text() -> None:
+    """SR-E29-09: the kill switch's cancel and flatten failures are closed rows (R2-m1)."""
+    actions = _SCHEMAS["KillSwitchResult"]["properties"]["actions"]["properties"]
+    row = actions["failures"]["items"]
+    assert row["additionalProperties"] is False
+    assert set(row["properties"]) == {"exchange_account_id", "ok", "affected", "error"}
 
 
 def test_the_kill_switch_claims_no_dead_mans_switch() -> None:

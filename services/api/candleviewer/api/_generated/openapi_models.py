@@ -2807,11 +2807,26 @@ class SetKillSwitchRequest(BaseModel):
     reason: Annotated[str, Field(max_length=280, min_length=3)]
 
 
+class Failure(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exchange_account_id: UUID | None = None
+    ok: bool | None = None
+    affected: int | None = None
+    error: LegError | None = None
+
+
 class Actions(BaseModel):
     orders_cancelled: int | None = None
     positions_flattened: int | None = None
     rules_disarmed: int | None = None
-    failures: list[dict[str, Any]] | None = None
+    failures: Annotated[
+        list[Failure] | None,
+        Field(
+            description="The accounts whose cancel or flatten failed at the exchange, shaped as `BulkAccountResult` rows; `error` is CandleViewer's code, never the exchange's text (SR-E29-09).\n"
+        ),
+    ] = None
 
 
 class KillSwitchResult(BaseModel):
