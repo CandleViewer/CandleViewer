@@ -374,7 +374,7 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | E2E (Electron)                                                      | `pnpm e2e:desktop`                                                                                            |
 | Accessibility scan                                                  | `pnpm test:a11y`                                                                                              |
 | Storybook play functions + axe (headless Chromium)                  | `pnpm --filter @candleviewer/ui storybook:test`                                                               |
-| Load test                                                           | `k6 run tests/load/api-ws.js`                                                                                 |
+| Load test (WS profiles A, B, C; also selfcheck, w5, judge, repro)   | `cd services/api && K6_BIN=<pinned k6 v2.3.0> uv run python -m bench.ws.runner run A`                         |
 | Ingestion soak                                                      | `locust -f tests/load/ingestion_soak.py`                                                                      |
 | Chaos suite                                                         | `pnpm chaos`                                                                                                  |
 | Secret scan on your diff                                            | `gitleaks protect --staged --redact`                                                                          |

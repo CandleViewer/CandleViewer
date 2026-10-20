@@ -65,17 +65,20 @@ def compare(
     profile: str,
     tolerances: dict[str, float] | None = None,
     run_profile: str = "smoke",
+    *,
+    harness_version: str = HARNESS_VERSION,
 ) -> GateResult:
-    """p95 of each baseline metric vs the run's p95. Missing baseline -> PASS, not gated."""
+    """p95 of each baseline metric vs the run's p95. Missing baseline -> PASS, not gated.
+    `harness_version` is the caller's own (E17-Q03 compares under `bench.ws.HARNESS_VERSION`)."""
     g = GateResult()
     if baseline is None:
         g.gated, g.reason = False, "no baseline recorded"
         return g
-    if baseline.get("harness_version", HARNESS_VERSION) != HARNESS_VERSION:
+    if baseline.get("harness_version", harness_version) != harness_version:
         g.gated = False
         g.reason = (
             f"baseline recorded by harness {baseline['harness_version']!r}, this is "
-            f"{HARNESS_VERSION!r}: a metric may be defined differently, so none is compared "
+            f"{harness_version!r}: a metric may be defined differently, so none is compared "
             "until a baseline is recorded again"
         )
         return g
@@ -126,15 +129,25 @@ def render_diff(g: GateResult) -> str:
 
 
 def record(
-    verdict: Verdict, profile: str, scaling: str, run_profile: str, root: Path = BASELINES_DIR
+    verdict: Verdict,
+    profile: str,
+    scaling: str,
+    run_profile: str,
+    root: Path = BASELINES_DIR,
+    *,
+    harness_version: str = HARNESS_VERSION,
+    extra: dict[str, Any] | None = None,
 ) -> Path:
-    """Write a baseline from this run. Refused under CI (never auto-updated by a run)."""
+    """Write a baseline from this run. Refused under CI (never auto-updated by a run). `extra`
+    adds a caller's own keys (E17-Q03: commit, k6 version, cgroup, flag); it never replaces one of
+    the keys written here."""
     if os.environ.get("CI"):
         raise RuntimeError("refused: baselines are never rewritten by CI (06-perf §7.4)")
     root.mkdir(parents=True, exist_ok=True)
     out = {
+        **(extra or {}),
         "scenario": verdict.scenario,
-        "harness_version": HARNESS_VERSION,
+        "harness_version": harness_version,
         "machine_profile": profile,
         "gate": "warn-only",
         "run_profile": run_profile,

@@ -1,0 +1,179 @@
+{
+  "schema": 1,
+  "reference_symbol": "BTCUSDT",
+  "origin": "http://127.0.0.1:5173",
+  "subprotocol": "cv.v1.json",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "SYN01USDT",
+    "SYN02USDT",
+    "SYN03USDT",
+    "SYN04USDT",
+    "SYN05USDT",
+    "SYN06USDT",
+    "SYN07USDT",
+    "SYN08USDT",
+    "SYN09USDT",
+    "SYN10USDT",
+    "SYN11USDT",
+    "SYN12USDT",
+    "SYN13USDT",
+    "SYN14USDT",
+    "SYN15USDT",
+    "SYN16USDT",
+    "SYN17USDT",
+    "SYN18USDT",
+    "SYN19USDT",
+    "SYN20USDT",
+    "SYN21USDT",
+    "SYN22USDT",
+    "SYN23USDT",
+    "SYN24USDT",
+    "SYN25USDT",
+    "SYN26USDT",
+    "SYN27USDT",
+    "SYN28USDT",
+    "SYN29USDT",
+    "SYN30USDT",
+    "SYN31USDT",
+    "SYN32USDT",
+    "SYN33USDT",
+    "SYN34USDT",
+    "SYN35USDT",
+    "SYN36USDT",
+    "SYN37USDT"
+  ],
+  "tiers": {
+    "hot": { "book_per_s": 50, "batches_per_s": 20, "prints_per_batch": 3 },
+    "warm": { "book_per_s": 10, "batches_per_s": 5, "prints_per_batch": 2 },
+    "cold": { "book_per_s": 2, "batches_per_s": 1, "prints_per_batch": 1 }
+  },
+  "feeds": {
+    "ten": { "symbols": 10, "hot": 1, "warm": 2, "book_depths": [50] },
+    "forty": { "symbols": 40, "hot": 4, "warm": 12, "book_depths": [50] }
+  },
+  "topics": {
+    "bars": { "ch": "bars.{s}.time.1", "opts": {} },
+    "footprint": { "ch": "footprint.{s}.time.5", "opts": {} },
+    "book": { "ch": "book.{s}.50", "opts": {} },
+    "trades": { "ch": "trades.{s}", "opts": {} },
+    "heatmap": { "ch": "heatmap.{s}", "opts": { "time_bucket_ms": 1000 } }
+  },
+  "workspaces": {
+    "rw": ["bars", "footprint", "book", "trades"],
+    "fw": ["bars", "footprint", "book", "trades", "heatmap"]
+  },
+  "thresholds": {
+    "tick_p95_ms": 100,
+    "tick_p99_ms": 250,
+    "local_tick_p95_ms": 40,
+    "bandwidth_kib_s": 350,
+    "resnapshot_kib": 700,
+    "resnapshot_ms": 400,
+    "client_lag_p95_ms": 20
+  },
+  "defaults": {
+    "warmup_s": 300,
+    "probe": false,
+    "probe_every_s": 300,
+    "rtt_delay_ms": 0,
+    "send_delay_ms": 0,
+    "gate_on": "excluding",
+    "ws_path": "/ws",
+    "families": ["bars", "footprint", "book", "trades", "heatmap"]
+  },
+  "profiles": {
+    "A": {
+      "title": "Roadmap 5.4 gate: 5 clients x 10 symbols, 1 h",
+      "feed": "ten",
+      "users": 5,
+      "connections": 1,
+      "symbols": 10,
+      "workspace": "rw",
+      "bars_symbols": 7,
+      "footprint_symbols": 1,
+      "duration_s": 3600,
+      "probe": true
+    },
+    "B": {
+      "title": "23 16.4 protocol gate: 8 connections x 40 symbols x full workspace, 1 h",
+      "feed": "forty",
+      "users": 1,
+      "connections": 8,
+      "symbols": 40,
+      "workspace": "fw",
+      "bars_symbols": 7,
+      "footprint_symbols": 1,
+      "duration_s": 3600,
+      "probe": true
+    },
+    "C": {
+      "title": "06 10.1 capacity driver: 5 users x 4 panes on 4 symbols, 30 min",
+      "feed": "ten",
+      "users": 5,
+      "connections": 1,
+      "symbols": 4,
+      "workspace": "rw",
+      "bars_symbols": 4,
+      "duration_s": 1800
+    },
+    "smoke": {
+      "base": "A",
+      "title": "A shape, short",
+      "duration_s": 120,
+      "warmup_s": 20,
+      "reauth_after_s": 45,
+      "probe_every_s": 30
+    },
+    "W5": {
+      "base": "A",
+      "title": "A shape without the probe: the W5 phases run on it",
+      "probe": false,
+      "judge_bandwidth": false
+    },
+    "selfcheck": {
+      "base": "A",
+      "title": "A shape with an ASGI send delay inside the fan-out span: budget 6 must fail",
+      "duration_s": 600,
+      "warmup_s": 60,
+      "send_delay_ms": 25,
+      "probe": false,
+      "expect_fail": "budget6.cv_ws_fanout_seconds.p95"
+    }
+  },
+  "w5": {
+    "base": "W5",
+    "phases": [
+      { "name": "idle", "families": [], "duration_s": 300, "warmup_s": 30 },
+      { "name": "mixed-healthy", "rtt_delay_ms": 0, "duration_s": 600, "warmup_s": 60 },
+      { "name": "mixed-lagging", "rtt_delay_ms": 300, "duration_s": 600, "warmup_s": 60 },
+      { "name": "mixed-saturated", "rtt_delay_ms": 700, "duration_s": 600, "warmup_s": 60 },
+      { "name": "book-healthy", "families": ["book"], "duration_s": 300, "warmup_s": 30 },
+      {
+        "name": "book-saturated",
+        "families": ["book"],
+        "rtt_delay_ms": 700,
+        "duration_s": 300,
+        "warmup_s": 30
+      },
+      { "name": "trades-healthy", "families": ["trades"], "duration_s": 300, "warmup_s": 30 },
+      {
+        "name": "trades-saturated",
+        "families": ["trades"],
+        "rtt_delay_ms": 700,
+        "duration_s": 300,
+        "warmup_s": 30
+      },
+      { "name": "bars-healthy", "families": ["bars"], "duration_s": 300, "warmup_s": 30 },
+      {
+        "name": "bars-saturated",
+        "families": ["bars"],
+        "rtt_delay_ms": 700,
+        "duration_s": 300,
+        "warmup_s": 30
+      }
+    ]
+  }
+}
