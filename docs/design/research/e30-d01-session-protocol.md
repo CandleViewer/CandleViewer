@@ -201,7 +201,8 @@ out was expected to fire. Then with the chart region focused press `3`, and with
 record whether the interval change and the size-preset change were each noticed, and whether the arm indicator's
 size line was read. **Step F-b — hold-to-confirm (F19; 05 §3.1 rule 4):** press the flatten key; record whether
 the hold progress was perceivable without sight of the ring, whether the discrete-press fallback (a second press
-within 5 s) completed it without holding, and whether `Esc` cancelled it.
+within 5 s) completed it without holding, and whether `Esc` cancelled it; `reverse` is not hold-confirmed — it opens
+SCR-114's `dialog` policy (report F19) — so record only that its confirm is reachable by keyboard.
 Record: Tab count to each field, any unreachable control, focus returning to the invoker after the modal closes
 (05 §3.4 item 4), no hotkey that switches environment (C-2.11; a hotkey that only opens the switch dialog is
 recorded, not scored, §2), whether the 20 s countdown and the 400 ms delay were perceivable without sight of the
