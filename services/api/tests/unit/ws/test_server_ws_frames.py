@@ -210,13 +210,21 @@ async def test_data_frames_after_the_servers_close_are_not_buffered(opcode: Opco
         assert transport.is_closing()
 
 
-async def test_a_request_past_the_websocket_request_limits_is_refused_at_once() -> None:
-    """uvicorn's own class sends nothing and keeps the socket open: no deadline is involved. Its
-    server shutdown then only closes (uvicorn's would answer 500 after the 431 and raise)."""
+@pytest.mark.parametrize(
+    ("request_bytes", "status"), PAST_LIMITS, ids=["header-line", "header-count", "request-line"]
+)
+async def test_a_request_past_the_websocket_request_limits_is_refused_at_once(
+    request_bytes: bytes, status: int
+) -> None:
+    """uvicorn's own class sends nothing and keeps the socket open: no deadline is involved. Each
+    request of `PAST_LIMITS` is answered with websockets' status and the transport is closed after
+    it; on a real socket the answer can be lost to a reset, so only here is each status asserted
+    (`test_request_header_deadline_real_socket.py`). Its server shutdown then only closes
+    (uvicorn's would answer 500 after the 431 and raise)."""
     proto, transport = _protocol(_App(), SERVER_WS_MAX_SIZE)
-    proto.data_received(PAST_LIMITS[0][0])
+    proto.data_received(request_bytes)
     assert transport.is_closing()
-    assert transport.written.startswith(b"HTTP/1.1 431 ")
+    assert transport.written.startswith(f"HTTP/1.1 {status} ".encode())
     proto.shutdown()
     proto.connection_lost(None)
 
