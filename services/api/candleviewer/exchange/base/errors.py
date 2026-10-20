@@ -168,14 +168,31 @@ class NotFoundError(ExchangeError):
 
 class TransportError(ExchangeError):
     """HTTP 5xx, connection reset, or `asyncio.TimeoutError` after send.
-    Retryable; an ambiguous timeout after send leaves the order state
-    `Unknown` pending reconciliation (§8.2, §8.6 "Transport-level" row)."""
+    Retryable, except for an order create that has left: that one raises
+    `AmbiguousResultError`, and the order goes `Unknown` pending reconciliation
+    (§8.2, §8.6 "Transport-level" row and "Order creates")."""
 
     code = OmsErrorCode.TRANSPORT_ERROR
 
     def __init__(self, message: str, **kwargs: object) -> None:
         kwargs.setdefault("retryable", True)
         super().__init__(message, **kwargs)  # type: ignore[arg-type]
+
+
+class AmbiguousResultError(TransportError):
+    """An order create left the process and its outcome is unknown: a timeout,
+    a transport error, an HTTP 5xx, retCode 10016 or 10019 after the send (§8.6
+    "Order creates", SR-E29-15). The exchange may hold the order or not, so it
+    is **never retryable** as is: the REST client never resends it. B1 takes it
+    as the `place` invoke's `onError` (`error.platform.place`) into
+    `lifecycle.unknown`, running `record_transport_fault` (`28` §B1.4), and a
+    later re-send looks the id up first (`oms.order_link_resolution.
+    adopt_or_resend`). `order_link_id` is the create's id, `None` for a batch."""
+
+    def __init__(self, message: str, *, order_link_id: str | None = None, **kwargs: object) -> None:
+        kwargs["retryable"] = False
+        super().__init__(message, **kwargs)
+        self.order_link_id = order_link_id
 
 
 class UnknownStateError(ExchangeError):

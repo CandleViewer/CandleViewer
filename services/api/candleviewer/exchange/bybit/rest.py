@@ -27,6 +27,7 @@ import structlog
 
 from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
     ClockDriftError,
     ExchangeError,
     RateLimitError,
@@ -71,6 +72,15 @@ _SIGNATURE_RESYNC_TIMEOUT_S = 5.0
 #: query/fragment or percent-escape can match, so httpx can never be steered
 #: to another host (it honours an absolute/scheme-relative URL over base_url).
 _SAFE_PATH = re.compile(r"/v5/[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)*\Z")
+
+#: 24 §8.6 "Order creates" (SR-E29-15): a create that has left is never sent again; amend,
+#: cancel and trading-stop keep their retries. 10016/10019 leave a create's outcome unknown.
+_CREATE_PATHS = frozenset({"/v5/order/create", "/v5/order/create-batch"})
+_AMBIGUOUS_RET_CODES = frozenset({10016, 10019})
+#: Raised while connecting or waiting for a pooled connection: nothing left. Any other failure
+#: may follow the send, a bare `TimeoutError` too (httpx maps its own; an unmapping transport
+#: raises it at a point this client cannot place).
+_NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 class RestPathRejected(ExchangeError, ValueError):
@@ -275,7 +285,8 @@ class BybitRestClient:
         duplicate is recognised as "already accepted" rather than
         resubmitted under a new id. This is enforced here, not merely
         documented, because a future OMS caller forgetting it would
-        silently double-submit orders on a retried timeout."""
+        silently double-submit orders on a retried timeout. An order create
+        is retried only if it never left (24 §8.6 "Order creates")."""
         if self._signer is None:
             raise TypeError("signed_request called without a configured BybitSigner")
         if (
@@ -334,6 +345,7 @@ class BybitRestClient:
     ) -> dict[str, Any]:
         validate_rest_path(path)
         self._assert_same_host(method, path)
+        creates = method.upper() == "POST" and path in _CREATE_PATHS
         attempt = 0
         clock_retry_used = False
         while True:
@@ -389,6 +401,8 @@ class BybitRestClient:
                     await response.aclose()
             except (TimeoutError, httpx.TransportError) as exc:
                 bybit_rest_requests_total.labels(endpoint=path, result="transport_error").inc()
+                if creates and not isinstance(exc, _NOT_SENT):
+                    raise _ambiguous(path, body, type(exc).__name__) from exc
                 if attempt > self._config.max_retries:
                     raise TransportError(f"transport error calling {path}: {exc}") from exc
                 await self._backoff(attempt)
@@ -412,6 +426,8 @@ class BybitRestClient:
 
             if response.status_code >= 500:
                 bybit_rest_requests_total.labels(endpoint=path, result="5xx").inc()
+                if creates:
+                    raise _ambiguous(path, body, f"HTTP {response.status_code}")
                 if attempt > self._config.max_retries:
                     raise TransportError(
                         f"{path} returned HTTP {response.status_code} after {attempt} attempts"
@@ -466,6 +482,12 @@ class BybitRestClient:
                 return dict(data)
 
             ret_msg = str(data.get("retMsg", ""))
+            if creates and ret_code in _AMBIGUOUS_RET_CODES:
+                # Not a rate limit (#2863): no bucket drain, counted as the error raised.
+                bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
+                exchange_errors_total.labels(**{"class": AmbiguousResultError.code.value}).inc()
+                venue = {"exchange_ret_code": ret_code, "exchange_ret_msg": ret_msg}
+                raise _ambiguous(path, body, f"retCode {ret_code}", **venue)
             error = map_ret_code(ret_code, ret_msg)
             exchange_errors_total.labels(**{"class": error.code.value}).inc()
 
@@ -558,6 +580,18 @@ class BybitRestClient:
 
     async def _backoff(self, attempt: int) -> None:
         await self._sleep(self._retry_after_default(attempt))
+
+
+def _ambiguous(
+    path: str, body: Mapping[str, Any] | None, cause: str, **detail: object
+) -> AmbiguousResultError:
+    """The create to `path` left and `cause` hides its outcome (24 §8.6 "Order creates")."""
+    link = body.get("orderLinkId") if body else None
+    return AmbiguousResultError(
+        f"{path}: {cause} after the create left; its outcome is unknown",
+        order_link_id=link if isinstance(link, str) else None,
+        **detail,
+    )
 
 
 def _json_dumps(body: Mapping[str, Any]) -> str:

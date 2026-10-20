@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from .boundary import translate_exchange_error
 from .errors import (
+    AmbiguousResultError,
     AuthError,
     ClockDriftError,
     DuplicateClientIdError,
@@ -32,6 +33,7 @@ from .models import ExchangeCapabilities, Ticker, Trade, TradeSide
 from .ports import MarketDataPort, TradingPort
 
 __all__ = [
+    "AmbiguousResultError",
     "AuthError",
     "ClockDriftError",
     "DuplicateClientIdError",
