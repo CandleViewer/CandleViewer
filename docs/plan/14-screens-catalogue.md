@@ -1509,7 +1509,7 @@ Drag preview                Drop zones
 ```
 
 - **Data:** WS `system`, `wallet`, `positions`; `GET /api/v1/risk/summary`, `POST /api/v1/trading/kill-switch`, `POST /api/v1/risk/lockouts/{accountId}/override` (step-up).
-- **Interactions:** FREEZE per account/manager/all (owner only; one blast-radius confirm whose button names the effect, no typed text, no hold, no step-up — architect ruling on #829, 2026-10-14); release and lockout override: step-up + typed reason that is audited; drill into an account.
+- **Interactions:** FREEZE per account/manager/all (owner; a manager only within their own grants, never `flatten_positions`, disarming only their own rules, the owner paged — decision D-1 on #2701, 2026-10-20; one blast-radius confirm whose button names the effect, no typed text, no hold, no step-up — architect ruling on #829, 2026-10-14); release and lockout override: owner-only, step-up + typed reason that is audited; drill into an account.
 - **States:** normal · warning (≥80 % of a cap) · locked (auto-flatten executed; shows what was flattened and when) · frozen · stale data · reconciling after reconnect.
 - **Validation:** override requires a reason ≥10 characters ("Explain why you're overriding this lockout — it is recorded in the audit log.").
 - **A11y:** every state is text-labelled (ok/WARN/LOCK); meters have numeric values; FREEZE has an explicit confirm dialog naming the affected accounts.
@@ -1530,7 +1530,7 @@ Drag preview                Drop zones
 - **Performance:** The freeze command is issued as one backend call that halts order acceptance server-side within 200 ms, independent of any client-side loop; the UI reports per-account completion as it arrives.
 - **Components:** CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-093 AuditActionTrigger, CMP-123 FlattenAllButton, CMP-211 PanicButtons.
 - **Stories:** US-RULE-014, US-SET-003, US-ORD-010.
-- **Design sign-off acceptance checklist:** [ ] scope selector (this account / all accounts / this symbol) drawn [ ] the exact effect (and non-effect on open positions) restated [ ] single blast-radius confirm with the effect in the button label; flatten opt-in changes the label [ ] hotkey opens the dialog, never engages [ ] partial-completion state drawn [ ] unfreeze path with its own confirmation and step-up [ ] LIVE vs DEMO variants
+- **Design sign-off acceptance checklist:** [ ] scope selector (this account / all accounts; per-symbol scope is not in the API — OD-7 in [E39-D01](../design/E39/E39-D01.md) §11 — and a mixed-environment account set is refused, D-3) drawn [ ] the exact effect (and non-effect on open positions) restated [ ] single blast-radius confirm with the effect in the button label; flatten opt-in changes the label [ ] hotkey opens the dialog, never engages [ ] partial-completion state drawn [ ] unfreeze path with its own confirmation and step-up [ ] LIVE vs DEMO variants (`scope: global` covers every environment and the per-account blast-radius rows carry their environment, D-3) [ ] manager variant per D-1 (within grants, flatten disabled with reason, owner paged, release owner-only)
 - **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.1 (kill-switch state inventory), §8.1 (copy deck), §12 (E39-D03 acceptance criteria); per-symbol scope is not in the API (OD-7).
 
 ### SCR-073 — Lockout notice (manager view)
@@ -2481,7 +2481,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-134 — Admin: risk policy (global)
 
 - **Type:** Page. **Route:** `/admin/risk-policy`. Portfolio-level caps across all accounts (total exposure, per-symbol exposure, correlated exposure), auto-flatten behaviour, lockout durations, override policy, freeze defaults, and the "block trading while the backend is degraded" switch.
-- **Validation:** portfolio caps must be ≥ the sum of the smallest per-account caps, otherwise an explanatory warning.
+- **Validation:** portfolio caps must be ≥ the sum of the smallest per-account caps, otherwise an explanatory warning. Policy floors are server rules (decision D-5 on #2701, 2026-10-20; SR-E39-07): `block_trading_when_degraded` cannot be switched off, `lockout_minutes_default` is 1..1440 and a removed limit is refused with a typed problem — the page shows the refusal verbatim. The override allowance bound `override_extra_loss_max_usd` (decision D-4, default 0) is edited here only.
 - **Audit:** `risk_policy.updated` (step-up). **Stories:** US-RISK-008, US-RISK-009.
 - **A11y:** Fieldsets per limit with units and the current measured value beside the limit; each limit has a description of what happens when it is breached; the enforcement-scope selector is a radio group.
 - **Performance:** Policy changes take effect on the next evaluation cycle (<=2 s) and are pushed to all sessions; the screen confirms only after the server acknowledges.

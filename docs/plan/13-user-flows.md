@@ -629,26 +629,29 @@ flowchart TD
 
 ## 20. Kill switch (global panic)
 
-**Actor:** P1 Owner (global); per-account FREEZE is scoped (owner; manager within granted scope pending OD-1 in [E39-D01](../design/E39/E39-D01.md) §11). **Route:** Safety control in the app chrome on every screen, hotkey `Ctrl+Shift+K`, SCR-071 row/footer actions, M-018.
-**Screens:** SCR-072, SCR-071, SCR-073, SCR-010 (see `14-screens-catalogue.md`). **Statechart:** B18 `kill_switch` (`28-statechart-catalogue.md`). **Research:** [E39-D01](../design/E39/E39-D01.md) §7.1 and board `E39-D01 / flow / F20-kill-switch`.
+**Actor:** P1 Owner (global, every environment); per-account FREEZE: owner, or a manager within their own grants only — never `flatten_positions`, own rules only, owner paged (decision D-1 on #2701, 2026-10-20); release is owner-only. **Route:** Safety control in the app chrome on every screen, hotkey `Ctrl+Shift+K`, SCR-071 row/footer actions, M-018.
+**Screens:** SCR-072, SCR-071, SCR-073, SCR-010 (see `14-screens-catalogue.md`). **Statechart:** B18 `kill_switch` (`28-statechart-catalogue.md`). **Security:** `docs/security/threat-models/E39-risk-killswitch.md` SR-E39-05/06/08/13, G-1. **Research:** [E39-D01](../design/E39/E39-D01.md) §7.1 and board `E39-D01 / flow / F20-kill-switch`.
 
 ```mermaid
 flowchart TD
-  A[Owner presses FREEZE or Ctrl+Shift+K - nothing is sent yet] --> B["M-018 / SCR-072: one blast-radius confirm - alertdialog, focus on Cancel, button names the effect, no typed word, no hold, no step-up; cancel working orders default ON, flatten default OFF (API defaults)"]
-  B --> C[Backend immediately blocks new orders in scope - synchronous flag read by the Validator, before any exchange call]
+  A[Owner presses FREEZE or Ctrl+Shift+K - nothing is sent yet] --> B["M-018 / SCR-072: one blast-radius confirm - alertdialog, focus on Cancel, button names the effect, no typed word, no hold, no step-up; cancel working orders default ON, flatten default OFF (API defaults, D-2); global = every environment, account scope = one environment (D-3)"]
+  B --> C[Backend immediately blocks new orders in scope - synchronous flag read by the Validator, before any exchange call; the response says whether the engagement is persisted yet]
   C --> D[Cancels working orders and flattens positions only per the request options; disarms armed rules in scope]
-  D --> E[All covered managers' terminals switch to read-only within 2s with an explicit banner: 'Trading frozen at <time> - only the owner can release it'; open positions NOT closed unless flatten was requested]
-  E --> F{All legs confirmed by the exchange?}
-  F -->|yes| G[B18 engaged: completion summary from KillSwitchResult.actions; audit per account]
-  F -->|no| H[B18 engaged_incomplete: shown as incomplete, owner paged, retry of the failed account only - never rounded up]
+  D --> E[All covered managers' terminals switch to read-only within 2s with an explicit banner: 'Trading frozen at <time> - only the owner can release it'; open positions NOT closed unless flatten was requested; native stops unaffected]
+  E --> F{Requested actions verified by an exchange read?}
+  F -->|yes| G[B18 engaged: completion summary from KillSwitchResult.actions with the verification time; audit per account]
+  F -->|flatten residue| H[B18 engaged_incomplete: shown as incomplete, owner paged, RETRY_FLATTEN - never rounded up]
+  F -->|cancel failure| H2["B18 today: engaged + critical alert (cancelling error arm); SR-E39-06 / G-1 make it engaged_incomplete in E39-S03"]
+  K[Automatic engagement: root KILL - clock drift, credential failure, chain mismatch, restore] --> H
   G --> I{Owner action to resume}
   H --> I
-  I -->|Release: step-up with a fresh code, typed reason, credential re-verification, residual acknowledgement after incomplete| J[Halt lifted per scope; rules stay disarmed until re-armed by hand; audited]
+  H2 --> I
+  I -->|Release: owner-only, step-up with a fresh code, typed reason, credential re-verification, residual acknowledgement after incomplete; refused until the engagement is durable| J[Halt lifted per scope after an authoritative re-read; rules stay disarmed until re-armed by hand; audited]
 ```
 
-**Distinction from per-manager FREEZE (Risk Dashboard, flow implicit in `10-personas.md` §3 scenario 5):** FREEZE targets one manager/account; the global kill switch covers every account and is Owner-only. Both use the same request (`setKillSwitch`, scope `accounts` vs `global`), the same single confirm and the same options; neither closes positions unless "also flatten" is ticked (`30-release-roadmap.md` §7.2 "stops new risk, does not force-close").
+**Distinction from per-manager FREEZE (Risk Dashboard, flow implicit in `10-personas.md` §3 scenario 5):** FREEZE targets one manager/account; the global kill switch covers every account in every environment and is Owner-only. Both use the same request (`setKillSwitch`, scope `accounts` vs `global`), the same single confirm and the same options; neither closes positions unless "also flatten" is ticked (`30-release-roadmap.md` §7.2 "stops new risk, does not force-close"). Whether a frozen manager may still send reduce-only closes during the engagement is open (OD-11 in E39-D01: SR-E39-02 vs the #249 ruling's engaged row vs SR-081(5)); until decided the manager's banner promises nothing beyond "ask the owner".
 
-**Breach → lockout → override (B20, per account; extends §18.7):** cap breach or manual lock → `locked` (new entries blocked, flatten only per the account policy, `until` server-computed; manual never expires by clock) → manager sees SCR-073 with the reason, threshold vs actual, what was flattened, what still works, until when, and "Ask the owner for an override" → owner clears it on SCR-071 with a typed reason (≥ 10 characters, server-enforced) and step-up, audited at high severity → or it expires at the day boundary / after the configured minutes. Board `E39-D01 / flow / breach-lockout-override`.
+**Breach → lockout → override (B20, per account; extends §18.7):** cap breach or manual lock → `locked` (new entries blocked, flatten only per the account policy, `until` server-computed at lock time; NULL = manual lock, never cleared by a clock) → manager sees SCR-073 with the reason, since/until, what still works, and "Ask the owner for an override" → owner clears it on SCR-071 with a typed reason (≥ 10 characters, server-enforced) and step-up, optionally granting a typed `extra_loss_usd` allowance bounded by `risk_policy.override_extra_loss_max_usd` (default 0; the lock re-arms at the bound or at the window end, decision D-4), audited at high severity → or it expires at the stored end. Board `E39-D01 / flow / breach-lockout-override`.
 
 ---
 
