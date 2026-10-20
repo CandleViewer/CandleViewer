@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Final
 
 from candleviewer.observability.metrics import (
@@ -112,7 +113,9 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
 
 def export_recorder_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
     """Serve the StreamWriter, disk-budget and roll-off series on `registry` (the scraped one)
-    with `env`."""
+    with `env`. The roll-off series are defined in `recorder.rolloff`; importing it here registers
+    them, so every exported name is served whatever the caller imported first."""
+    importlib.import_module("candleviewer.recorder.rolloff")
     return ReexportCollector(registry, names=EXPORTED_NAMES, const_labels={"env": env})
 
 
