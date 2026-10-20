@@ -93,7 +93,9 @@ class RecordedTrade:
 
 @dataclass(frozen=True, slots=True)
 class RecordedBookDelta:
-    """One changed level; `size == 0` removes it."""
+    """One changed level; `size == 0` removes it. `prev_update_id` and `ts_match` (µs, the
+    exchange's match time) are recorded from E26-T03 on; `None` on rows recorded before
+    (24 Sec.13.7)."""
 
     depth: int
     side: str
@@ -101,6 +103,8 @@ class RecordedBookDelta:
     size: Decimal
     update_id: int
     cross_seq: int | None
+    prev_update_id: int | None = None
+    ts_match: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +116,26 @@ class RecordedBookSnapshot:
     cross_seq: int | None
     bids: tuple[Level, ...]
     asks: tuple[Level, ...]
+    ts_match: int | None = None  # µs, the exchange's match time; from E26-T03 on (24 Sec.13.7)
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedBookUpdate:
+    """Every changed level of one book update, `(symbol, depth, update_id)`, as one payload.
+
+    Replay's regrouping, not a stored row: the readers never return it. The recorder stores one
+    `orderbook_deltas` row per level (21 Sec.4.2); `replay.regroup.RegroupedStream` folds the
+    rows of one update into this before the clock, so one clock step is one book update (24
+    Sec.13.7). `bids` and `asks` are `(price, size)` pairs, best first (bids descending, asks
+    ascending); a size of 0 removes the level. The other fields are the rows' shared values."""
+
+    depth: int
+    update_id: int
+    cross_seq: int | None
+    bids: tuple[Level, ...]
+    asks: tuple[Level, ...]
+    prev_update_id: int | None = None
+    ts_match: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +202,7 @@ type RecordedPayload = (
     RecordedTrade
     | RecordedBookDelta
     | RecordedBookSnapshot
+    | RecordedBookUpdate
     | RecordedTicker
     | RecordedKline
     | RecordedLiquidation
@@ -498,7 +523,17 @@ def _book_delta(row: _Row) -> _Mapped:
     depth, side = _req_int(row, "depth"), _req_member(row, "side", _BOOK_SIDES)
     price, update_id = _req_decimal(row, "price"), _req_int(row, "update_id")
     cross_seq = _opt_int(row, "cross_seq")
-    payload = RecordedBookDelta(depth, side, price, _req_decimal(row, "size"), update_id, cross_seq)
+    # Absent (a pre-0006 table or Parquet part) or NULL (a row recorded before 0006): `None`.
+    payload = RecordedBookDelta(
+        depth,
+        side,
+        price,
+        _req_decimal(row, "size"),
+        update_id,
+        cross_seq,
+        _opt_int(row, "prev_update_id"),
+        _opt_ts(row, "ts_match"),
+    )
     return _book_seq(update_id, cross_seq), (update_id, depth, side, price), payload
 
 
@@ -506,7 +541,12 @@ def _book_snapshot(row: _Row) -> _Mapped:
     depth, update_id = _req_int(row, "depth"), _req_int(row, "update_id")
     cross_seq, epoch_id = _opt_int(row, "cross_seq"), _opt_id(row, "epoch_id")
     payload = RecordedBookSnapshot(
-        depth, update_id, cross_seq, _levels(row, "bids"), _levels(row, "asks")
+        depth,
+        update_id,
+        cross_seq,
+        _levels(row, "bids"),
+        _levels(row, "asks"),
+        _opt_ts(row, "ts_match"),
     )
     epoch = -1 if epoch_id is None else epoch_id
     return _book_seq(update_id, cross_seq), (update_id, depth, epoch), payload

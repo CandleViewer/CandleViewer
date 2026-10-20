@@ -309,9 +309,22 @@ exempt_modules = ["candleviewer.observability"]
 [cross_cutting.hotpath_statechart]
 # C-2.20 / CV-LINT-HOTPATH: hot-path modules (book deltas, bar builders,
 # footprint aggregation) never import the statechart runtime, directly or
-# indirectly. B14 supervision is injected from a non-hot module.
+# indirectly. B14 supervision is injected from a non-hot module. The replay
+# modules on the per-event path (E26-T03: the run, the clock and its pacing,
+# the regrouping adapter, the injector) are listed one by one: the replay
+# session service beside them drives B12 and imports the runtime.
 rule = "C-2.20"
-source_modules = ["candleviewer.book", "candleviewer.bars", "candleviewer.orderflow", "candleviewer.orderbook_wiring"]
+source_modules = [
+    "candleviewer.book",
+    "candleviewer.bars",
+    "candleviewer.orderflow",
+    "candleviewer.orderbook_wiring",
+    "candleviewer.replay.clock",
+    "candleviewer.replay.injector",
+    "candleviewer.replay.pacing",
+    "candleviewer.replay.regroup",
+    "candleviewer.replay.runner",
+]
 forbidden_modules = ["candleviewer.statechart", "xstate_statemachine"]
 
 [cross_cutting.ws_statechart]

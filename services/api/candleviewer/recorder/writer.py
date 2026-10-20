@@ -127,6 +127,8 @@ class BookSnapshotLike(_Market, Protocol):
     def update_id(self) -> int: ...
     @property
     def cross_seq(self) -> int: ...
+    @property
+    def ts_match(self) -> int: ...
 
 
 class BookDeltaLike(BookSnapshotLike, Protocol):
@@ -259,6 +261,8 @@ def _levels(ev: BookSnapshotLike) -> list[tuple[str, LevelLike]]:
 
 
 def delta_records(ev: BookDeltaLike) -> list[WalRecord]:
+    """One row per level. `prev_update_id` and `ts_match` (µs, the exchange's match time) are
+    recorded so a replay re-emits them rather than deriving them (0006, 24 Sec.13.7)."""
     out: list[WalRecord] = []
     for sub, (side, lv) in enumerate(_levels(ev)):
         row: dict[str, object] = {
@@ -270,6 +274,8 @@ def delta_records(ev: BookDeltaLike) -> list[WalRecord]:
             "action": "delete" if lv.qty == 0 else "update",
             "update_id": ev.update_id,
             "cross_seq": ev.cross_seq,
+            "prev_update_id": ev.prev_update_id,
+            "ts_match": ev.ts_match,
         }
         out.append(_rec("orderbook_deltas", ev.symbol, ev.ts_event, ev.update_id, sub, row))
     return out
@@ -285,6 +291,7 @@ def snapshot_records(ev: BookSnapshotLike) -> list[WalRecord]:
         "depth": ev.depth,
         "update_id": ev.update_id,
         "cross_seq": ev.cross_seq,
+        "ts_match": ev.ts_match,
         "source": "exchange",
         "bids": orjson.dumps([[_num(lv.price), _num(lv.qty)] for lv in ev.bids]).decode(),
         "asks": orjson.dumps([[_num(lv.price), _num(lv.qty)] for lv in ev.asks]).decode(),

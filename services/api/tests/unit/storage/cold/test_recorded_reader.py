@@ -13,7 +13,7 @@ import sys
 import threading
 from collections.abc import Callable
 from concurrent.futures import Executor, Future
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -34,6 +34,7 @@ from candleviewer.storage.errors import ColdReplayReadError, ColdReplayReadTimeo
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     ManifestCoverage,
+    RecordedBookDelta,
     RecordedEvent,
     RecordedQueryRejected,
     RecordedStreamReader,
@@ -1918,6 +1919,49 @@ async def test_the_same_row_reads_the_same_whichever_window_reached_it(tmp_path:
     alone = await reader.read(SYMBOL, StreamKind.ORDERBOOK_DELTA, narrow, depth=200, limit=10_000)
 
     assert alone and [e for e in spanning if e.ts_us >= H0 + HOUR] == alone
+
+
+async def test_a_part_exported_before_the_book_replay_columns_reads_them_as_none(
+    tmp_path: Path,
+) -> None:
+    """E26-T03: hour 00 was exported before QuestDB 0006 added `prev_update_id` and `ts_match`,
+    hour 01 after it (the exporter widened the registered schema, 21 Sec.5.2). One read over both
+    reads the older rows' as `None` (`union_by_name`) and the newer rows' as recorded."""
+    rows = generated_rows()[StreamKind.ORDERBOOK_DELTA]
+    second = TimeRange(start_us=H0 + HOUR, end_us=H0 + 2 * HOUR)
+    naive_epoch = datetime(1970, 1, 1)  # PGWire's tz-naive (UTC) TIMESTAMP
+    recorded = [
+        r
+        | {
+            "prev_update_id": int(str(r["update_id"])) - 1,
+            "ts_match": naive_epoch + timedelta(microseconds=int(str(r["ts"])) - 5),
+        }
+        for r in rows_in(rows, second)
+    ]
+    registry = DatasetRegistry(tmp_path / "cold")
+    registry.ensure_tree()
+    parts = [("00", FIRST_HOUR, rows_in(rows, FIRST_HOUR)), ("01", second, recorded)]
+    for hour, rng, part_rows in parts:
+        source = MemHotSource({StreamKind.ORDERBOOK_DELTA: part_rows})
+        await ColdExporter(registry, source, rows_per_group=64).export_partition(
+            SYMBOL, StreamKind.ORDERBOOK_DELTA, rng, partition_extra={"hour": hour}
+        )
+    window = TimeRange(start_us=H0 + 30 * MINUTE, end_us=H0 + 90 * MINUTE)
+
+    events = await ParquetRecordedReader(registry).read(
+        SYMBOL, StreamKind.ORDERBOOK_DELTA, window, depth=200, limit=10_000
+    )
+
+    deltas = [(e.ts_us, e.payload) for e in events if isinstance(e.payload, RecordedBookDelta)]
+    assert len(deltas) == len(events)
+    before = {(p.prev_update_id, p.ts_match) for ts, p in deltas if ts < H0 + HOUR}
+    after = [
+        ((p.prev_update_id, p.ts_match), (p.update_id - 1, ts - 5))
+        for ts, p in deltas
+        if ts >= H0 + HOUR
+    ]
+    assert before == {(None, None)}
+    assert after and all(got == want for got, want in after)
 
 
 class _CountingCon:

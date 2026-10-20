@@ -187,6 +187,30 @@ async def test_rows_serialize_every_ddl_column_and_symbols_as_tags(tmp_path: Pat
                     assert f",{col}=" not in f",{fields}", (table, col)
 
 
+async def test_book_rows_record_prev_update_id_and_ts_match(tmp_path: Path) -> None:
+    """E26-T03 (QuestDB 0006): both are recorded so a replay re-emits them rather than deriving
+    them (24 Sec.13.7). `ts_match` is a TIMESTAMP column: its ILP field is µs with the `t`
+    suffix, as `next_funding_ts` is; `prev_update_id` is a LONG."""
+    w, sink, _, _, clock = await make_writer(tmp_path)
+    await w.on_book_delta(delta(9, prev=7).model_copy(update={"ts_match": T0 + 3}))
+    await w.on_book_snapshot(snapshot(4).model_copy(update={"ts_match": T0 + 2}))
+    clock.advance(0.2)
+    await w.pump("orderbook_deltas")
+    await w.pump("orderbook_snapshots")
+    deltas, (snap,) = sink.rows("orderbook_deltas"), sink.rows("orderbook_snapshots")
+    assert [(d["prev_update_id"], d["ts_match"]) for d in deltas] == [(7, T0 + 3)] * 2
+    assert snap["ts_match"] == T0 + 2 and "prev_update_id" not in snap
+    for table, row, want in (
+        ("orderbook_deltas", deltas[0], (f"ts_match={T0 + 3}t", "prev_update_id=7i")),
+        ("orderbook_snapshots", snap, (f"ts_match={T0 + 2}t",)),
+    ):
+        body = {k: v for k, v in row.items() if k != "ts"}
+        _, fields, _ = serialize_ilp_line(ALL_SCHEMAS[table], body, int(str(row["ts"]))).rsplit(
+            " ", 2
+        )
+        assert all(f",{field}," in f",{fields}," for field in want), (table, fields)
+
+
 async def test_delta_seq_jump_is_observed_not_healed(tmp_path: Path) -> None:
     w, *_ = await make_writer(tmp_path)
     await w.on_book_delta(delta(5))

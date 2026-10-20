@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pyarrow as pa
@@ -21,7 +22,7 @@ from candleviewer.storage.cold.exporter import ColdExporter, _off_loop
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore, SchemaRegistry
 from candleviewer.storage.errors import StorageExportVerifyFailed, StorageSchemaDrift
-from candleviewer.storage.models import StreamKind, TimeRange
+from candleviewer.storage.models import ExportRun, StreamKind, TimeRange
 from tests.unit.storage.cold._helpers import (
     DAY_START_US,
     FakeHotSource,
@@ -31,8 +32,14 @@ from tests.unit.storage.cold._helpers import (
     fixed_clock,
     trades_table,
 )
+from tests.unit.storage.cold._replay_rows import MemHotSource
 
 PART = Path("trades") / "symbol=BTCUSDT" / "dt=2026-10-17"
+DELTAS = Path("orderbook_deltas") / "symbol=BTCUSDT" / "dt=2026-10-17"
+HOUR_US = 3_600_000_000
+#: PGWire's shape of a QuestDB TIMESTAMP: a tz-naive datetime holding UTC.
+NAIVE_EPOCH = datetime(1970, 1, 1)
+REPLAY_COLUMNS = frozenset({"prev_update_id", "ts_match"})
 
 
 def _exporter(root: Path, source: FakeHotSource, **kw: object) -> ColdExporter:
@@ -157,6 +164,197 @@ async def test_schema_drift_on_missing_column_also_fails_closed(tmp_path: Path) 
         await _exporter(tmp_path, FakeHotSource(trades_table(3).drop(["side"]))).export_partition(
             "BTCUSDT", StreamKind.TRADES, day_range()
         )
+
+
+# --- schema widening (21 Sec.5.2): the book replay columns of QuestDB 0006 (E26-T03) ---
+
+
+def _hour(h: int) -> TimeRange:
+    return TimeRange(start_us=DAY_START_US + h * HOUR_US, end_us=DAY_START_US + (h + 1) * HOUR_US)
+
+
+def _deltas(n: int, h: int = 0, **extra: pa.Array) -> pa.Table:
+    """`orderbook_deltas` rows of hour `h` as the hot tier serves them; `extra` adds columns."""
+    start = _hour(h).start_us
+    table = pa.table(
+        {
+            "ts": pa.array([start + i for i in range(n)], type=pa.int64()),
+            "symbol": ["BTCUSDT"] * n,
+            "depth": pa.array([200] * n, type=pa.int32()),
+            "side": ["bid" if i % 2 else "ask" for i in range(n)],
+            "price": [65000.0 + i for i in range(n)],
+            "size": [1.5] * n,
+            "update_id": pa.array(range(100, 100 + n), type=pa.int64()),
+            "cross_seq": pa.array(range(1000, 1000 + n), type=pa.int64()),
+        }
+    )
+    for name, column in extra.items():
+        table = table.append_column(name, column)
+    return table
+
+
+def _replay_columns(n: int, h: int = 0) -> dict[str, pa.Array]:
+    """The 0006 columns as PGWire returns them: a LONG and a tz-naive TIMESTAMP (UTC)."""
+    start = _hour(h).start_us
+    return {
+        "prev_update_id": pa.array(range(99, 99 + n), type=pa.int64()),
+        "ts_match": pa.array(
+            [NAIVE_EPOCH + timedelta(microseconds=start + i - 3) for i in range(n)]
+        ),
+    }
+
+
+async def _export_deltas(root: Path, table: pa.Table, h: int = 0) -> ExportRun:
+    return await _exporter(root, FakeHotSource(table)).export_partition(
+        "BTCUSDT", StreamKind.ORDERBOOK_DELTA, _hour(h), partition_extra={"hour": f"{h:02d}"}
+    )
+
+
+def _registered(root: Path) -> frozenset[str] | None:
+    return SchemaRegistry(root / "_manifests" / "schema-registry.json").columns_for(
+        "orderbook_delta"
+    )
+
+
+def _written(root: Path, h: int) -> pa.Table:
+    return pq.read_table(root / DELTAS / f"hour={h:02d}" / "part-0000.parquet")
+
+
+async def test_listed_added_columns_widen_the_registry_and_the_export_goes_on(
+    tmp_path: Path,
+) -> None:
+    await _export_deltas(tmp_path, _deltas(4))
+    before = _registered(tmp_path)
+    assert before is not None and not before & REPLAY_COLUMNS
+
+    with capture_logs() as logs:
+        run = await _export_deltas(tmp_path, _deltas(4, 1, **_replay_columns(4, 1)), 1)
+
+    assert run.row_count == 4 and _registered(tmp_path) == before | REPLAY_COLUMNS
+    written = _written(tmp_path, 1)
+    assert written.schema.field("prev_update_id").type == pa.int64()
+    assert written.schema.field("ts_match").type == pa.timestamp("us", tz="UTC")
+    assert written.column("prev_update_id").to_pylist() == [99, 100, 101, 102]
+    start = _hour(1).start_us
+    assert written.column("ts_match").cast(pa.int64()).to_pylist() == [
+        start + i - 3 for i in range(4)
+    ]
+    widened = [e for e in logs if e["event"] == "cold_export_schema_widened"]
+    assert [(e["dataset"], e["added"]) for e in widened] == [
+        ("orderbook_delta", ["prev_update_id", "ts_match"])
+    ]
+
+
+async def test_a_second_export_after_the_widening_is_a_no_drift_export(tmp_path: Path) -> None:
+    await _export_deltas(tmp_path, _deltas(2))
+    await _export_deltas(tmp_path, _deltas(2, 1, **_replay_columns(2, 1)), 1)
+    widened = _registered(tmp_path)
+
+    with capture_logs() as logs:
+        run = await _export_deltas(tmp_path, _deltas(3, 2, **_replay_columns(3, 2)), 2)
+
+    assert run.row_count == 3 and _registered(tmp_path) == widened
+    assert not [e for e in logs if e["event"] == "cold_export_schema_widened"]
+
+
+async def test_an_unlisted_added_column_fails_closed_beside_listed_ones(tmp_path: Path) -> None:
+    await _export_deltas(tmp_path, _deltas(2))
+    before = _registered(tmp_path)
+    drifted = _deltas(2, 1, **_replay_columns(2, 1), is_rpi=pa.array([False, True]))
+
+    with pytest.raises(StorageSchemaDrift, match="is_rpi"):
+        await _export_deltas(tmp_path, drifted, 1)
+
+    assert _registered(tmp_path) == before
+    assert not list((tmp_path / DELTAS).glob("hour=01/*"))
+
+
+async def test_a_column_listed_for_another_dataset_fails_closed(tmp_path: Path) -> None:
+    """The table is per dataset: `ts_match` widens the book datasets, never `trades`."""
+    registry = SchemaRegistry(tmp_path / "_manifests" / "schema-registry.json")
+    registry.register("trades", frozenset(trades_table(1).column_names))
+    ts_match = pa.array([NAIVE_EPOCH + timedelta(microseconds=DAY_START_US + i) for i in range(3)])
+    source = FakeHotSource(trades_table(3).append_column("ts_match", ts_match))
+
+    with pytest.raises(StorageSchemaDrift, match="ts_match"):
+        await _exporter(tmp_path, source).export_partition(
+            "BTCUSDT", StreamKind.TRADES, day_range()
+        )
+
+    assert registry.columns_for("trades") == frozenset(trades_table(1).column_names)
+
+
+async def test_a_removed_column_fails_closed_even_with_listed_additions(tmp_path: Path) -> None:
+    await _export_deltas(tmp_path, _deltas(2))
+    before = _registered(tmp_path)
+    shrunk = _deltas(2, 1, **_replay_columns(2, 1)).drop_columns(["cross_seq"])
+
+    with pytest.raises(StorageSchemaDrift, match=r"missing=\['cross_seq'\]"):
+        await _export_deltas(tmp_path, shrunk, 1)
+
+    assert _registered(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("column", "values"),
+    [
+        ("prev_update_id", pa.array([1.5, 2.5])),
+        ("prev_update_id", pa.array(["99", "100"])),
+        ("ts_match", pa.array([5, 6], type=pa.int64())),
+        ("ts_match", pa.array([5, 6], type=pa.timestamp("ms"))),
+    ],
+    ids=["long-as-double", "long-as-text", "timestamp-as-long", "timestamp-in-ms"],
+)
+async def test_a_retyped_listed_column_fails_closed_before_the_registry_widens(
+    tmp_path: Path, column: str, values: pa.Array
+) -> None:
+    await _export_deltas(tmp_path, _deltas(2))
+    before = _registered(tmp_path)
+    retyped = _deltas(2, 1, **(_replay_columns(2, 1) | {column: values}))
+
+    with pytest.raises(StorageSchemaDrift, match=column):
+        await _export_deltas(tmp_path, retyped, 1)
+
+    assert _registered(tmp_path) == before
+    assert not list((tmp_path / DELTAS).glob("hour=01/*"))
+
+
+async def test_an_all_null_added_column_is_written_with_its_declared_type(tmp_path: Path) -> None:
+    """Rows recorded before 0006 hold NULL in both, which Arrow types `null`. The part must still
+    carry int64 and timestamp, or no later part could merge or union with it."""
+    await _export_deltas(tmp_path, _deltas(3, prev_update_id=pa.nulls(3), ts_match=pa.nulls(3)))
+
+    written = _written(tmp_path, 0)
+    assert written.schema.field("prev_update_id").type == pa.int64()
+    assert written.schema.field("ts_match").type == pa.timestamp("us", tz="UTC")
+    assert written.column("prev_update_id").null_count == written.column("ts_match").null_count == 3
+
+
+async def test_an_hour_straddling_the_migration_exports_as_one_typed_part(tmp_path: Path) -> None:
+    """The deploy hour: rows recorded before 0006 hold NULL, those after it hold values. Built per
+    batch as the QuestDB source builds them, the first batch types the columns `null` and the
+    second int64 and timestamp; both must write to the one part."""
+    rows = _deltas(4).to_pylist()
+    for i, row in enumerate(rows):
+        after = i >= 2
+        row["prev_update_id"] = 99 + i if after else None
+        ts_match = NAIVE_EPOCH + timedelta(microseconds=int(str(row["ts"])) - 3)
+        row["ts_match"] = ts_match if after else None
+    source = MemHotSource({StreamKind.ORDERBOOK_DELTA: rows})
+    exporter = ColdExporter(DatasetRegistry(tmp_path), source, clock=fixed_clock, rows_per_group=2)
+
+    run = await exporter.export_partition(
+        "BTCUSDT", StreamKind.ORDERBOOK_DELTA, _hour(0), partition_extra={"hour": "00"}
+    )
+
+    written = _written(tmp_path, 0)
+    assert run.row_count == 4
+    assert written.column("prev_update_id").to_pylist() == [None, None, 101, 102]
+    assert written.schema.field("ts_match").type == pa.timestamp("us", tz="UTC")
+    assert written.column("ts_match").cast(pa.int64()).to_pylist()[2:] == [
+        DAY_START_US + 2 - 3,
+        DAY_START_US + 3 - 3,
+    ]
 
 
 # --- crash-point resume (AC 4): after write, after checksum, after manifest ---

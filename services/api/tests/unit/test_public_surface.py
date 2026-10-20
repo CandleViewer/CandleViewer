@@ -92,6 +92,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         # E04-T02: correlation context.
         "bind_context",
         "spawn",
+        # E26-T03: `spawn` for a task a TaskGroup owns.
+        "spawn_child",
     },
     # E08-T03: the bus's public pub/sub surface — `Bus`/`Subscription` are
     # not `*Service`/`*Error` by name but are the module's documented public
@@ -204,6 +206,38 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReplayTierStraddle",
         "ReplayTiers",
         "SourceTier",
+        # E26-T03: the replay clock, its playback ports, config and speeds (24 Sec.13.7).
+        "ReplayClock",
+        "STEP",
+        "UNBOUNDED",
+        "BarProbe",
+        "ClockConfig",
+        "GapPolicy",
+        "LoopTime",
+        "MonotonicTime",
+        "PlaybackObserver",
+        "PlaybackStats",
+        "ReplaySink",
+        "ReplayStream",
+        "StopReason",
+        "check_speed",
+        # E26-T03: the injector (the clock's sink), its book hook port and injected live event
+        # models, the stream adapter that makes one book update one event, and their typed
+        # refusals (24 Sec.13.7).
+        "REEMITTED_STREAMS",
+        "LiveEventModels",
+        "RegroupedStream",
+        "ReplayBookHook",
+        "ReplayEventRefused",
+        "ReplayInjector",
+        "ReplayLoopStartUnknown",
+        "ReplayPriceOffGrid",
+        "ReplayTickSizeMissing",
+        # E26-T03: one session's playback (the clock, its driver and the loop wrap in one
+        # structured scope), the session layer's port and the source factory it opens.
+        "ReplayRun",
+        "ReplayRunPort",
+        "SourceFactory",
     },
 }
 

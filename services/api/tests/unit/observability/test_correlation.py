@@ -23,6 +23,7 @@ from candleviewer.observability.context import (
     get_context,
     run_in_thread,
     spawn,
+    spawn_child,
     thread_future,
 )
 from candleviewer.observability.correlation import (
@@ -114,6 +115,17 @@ async def test_spawn_inherits_context() -> None:
     with bind_context(request_id="r1", user_id="u1", account_id="a1"):
         got = await spawn(child(), name="c")
     assert got == {"request_id": "r1", "user_id": "u1", "account_id": "a1"}
+
+
+async def test_spawn_child_inherits_context_and_its_group_owns_it() -> None:
+    async def child() -> dict[str, Any]:
+        return get_context()
+
+    with bind_context(request_id="r2", user_id="u2"):
+        async with asyncio.TaskGroup() as group:
+            task = spawn_child(group, child(), name="c2")
+    assert task.done() and task.get_name() == "c2"
+    assert task.result() == {"request_id": "r2", "user_id": "u2"}
 
 
 async def test_executor_offload_inherits_context() -> None:

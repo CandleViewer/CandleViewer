@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pyarrow as pa
@@ -20,7 +20,7 @@ from candleviewer.storage.cold.compaction_run import compact_all
 from candleviewer.storage.cold.compactor import Compactor
 from candleviewer.storage.cold.exporter import ColdExporter
 from candleviewer.storage.cold.layout import DatasetNotRegistered, DatasetRegistry
-from candleviewer.storage.cold.manifest import ManifestStore
+from candleviewer.storage.cold.manifest import ManifestStore, SchemaRegistry
 from candleviewer.storage.cold.rolloff_ops import (
     DOWNSAMPLE_RUN_ID,
     CanonicalDigest,
@@ -40,6 +40,7 @@ from tests.unit.storage.cold._helpers import (
     fixed_clock,
     trades_table,
 )
+from tests.unit.storage.cold._replay_rows import MemHotSource
 
 T = StreamKind.TRADES
 D = StreamKind.ORDERBOOK_DELTA  # `PARTITION BY HOUR` in QuestDB (#3794)
@@ -129,6 +130,47 @@ async def test_archive_day_with_no_rows_is_trivially_verified(tmp_path: Path) ->
     src = FakeHotSource(trades_table(0))
     out = await _archiver(tmp_path, src, RecordingSink()).archive_day("BTCUSDT", T, day_range())
     assert out.verified and out.rows == 0
+
+
+async def test_the_first_roll_off_after_book_columns_were_added_widens_and_verifies(
+    tmp_path: Path,
+) -> None:
+    """E26-T03: the first roll-off after QuestDB 0006 reads deltas that hold the new columns,
+    NULL in the rows recorded before the migration. It widens the registered schema instead of
+    failing closed (which stalled roll-off), and the read-back digest verifies across batches
+    that type the columns `null` in one and int64 / timestamp in another."""
+    reg = DatasetRegistry(tmp_path)
+    old = ["ts", "symbol", "depth", "side", "price", "size", "update_id", "cross_seq"]
+    SchemaRegistry(tmp_path / "_manifests" / "schema-registry.json").register(
+        StreamKind.ORDERBOOK_DELTA.value, frozenset(old)
+    )
+    rows: list[dict[str, object]] = []
+    for i in range(6):
+        ts = DAY_START_US + i
+        after = i >= 3  # recorded after the migration
+        values = [ts, "BTCUSDT", 200, "bid", 65000.0 + i, 1.5, 100 + i, 1000 + i]
+        rows.append(
+            dict(zip(old, values, strict=True))
+            | {
+                "prev_update_id": 99 + i if after else None,
+                "ts_match": (
+                    datetime(1970, 1, 1) + timedelta(microseconds=ts - 3) if after else None
+                ),
+            }
+        )
+    source = MemHotSource({StreamKind.ORDERBOOK_DELTA: rows})
+    sink = RecordingSink()
+    exporter = ColdExporter(reg, source, clock=fixed_clock, events=sink, rows_per_group=3)
+    archiver = ColdArchiver(reg, source, exporter=exporter, events=sink, batch_rows=2)
+
+    out = await archiver.archive_day("BTCUSDT", StreamKind.ORDERBOOK_DELTA, day_range())
+
+    assert out.verified and out.rows == 6
+    registered = SchemaRegistry(tmp_path / "_manifests" / "schema-registry.json").columns_for(
+        StreamKind.ORDERBOOK_DELTA.value
+    )
+    assert registered == frozenset([*old, "prev_update_id", "ts_match"])
+    assert not any(code.startswith("archive.") for _, code, _ in sink.events)
 
 
 async def test_export_path_contained_for_hostile_symbol(tmp_path: Path) -> None:

@@ -71,6 +71,31 @@ def test_ast_rule_rejects_its_fixture(rule: str, fixture_name: str) -> None:
     assert matches[0].severity == lint.SEVERITY_ERROR
 
 
+def _statechart_importer(root: Path, relative: str) -> Path:
+    path = root / relative
+    path.parent.mkdir(parents=True)
+    path.write_text("from candleviewer.statechart import factory\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("module", ["clock", "injector", "pacing", "regroup", "runner"])
+def test_hotpath_rejects_a_statechart_import_in_a_replay_per_event_module(
+    tmp_path: Path, module: str
+) -> None:
+    """E26-T03: the replay run, its clock and pacing, the regrouping adapter and the injector
+    are on the per-event path, listed one by one as in the import-linter contract."""
+    path = _statechart_importer(tmp_path, f"candleviewer/replay/{module}.py")
+    assert [f.rule for f in lint.lint_python_file(path)] == ["CV-LINT-HOTPATH"]
+
+
+def test_hotpath_leaves_the_replay_session_service_free_to_drive_its_chart(
+    tmp_path: Path,
+) -> None:
+    """The replay session service beside them drives B12: it imports the statechart package."""
+    path = _statechart_importer(tmp_path, "candleviewer/replay/sessions_service.py")
+    assert lint.lint_python_file(path) == []
+
+
 def test_invoke_cycle_warning_does_not_fail() -> None:
     """CV-LINT-INVOKE-CYCLE (W): fires as a warning only, never an error."""
     path = JSON_FIXTURES / "CV-LINT-INVOKE-CYCLE_warn.machine.json"

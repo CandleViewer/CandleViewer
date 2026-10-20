@@ -34,8 +34,9 @@ from candleviewer.observability.metrics_runtime import (
 #: `_safe`: `net_binding_safe`, the 1/0 mesh-guard gauge named by E09-T04 (US-ONB-008).
 #: `_events`: `auth_break_glass_unresolved_events`, a gauge of unresolved system events (#2496).
 #: `_attempts`: `auth_break_glass_attempts`, a gauge of CLI runs on record in `audit_log` (#2496).
+#: `_ratio`: `replay_achieved_speed_ratio`, named by E26-T03 (Prometheus' base unit for ratios).
 _UNIT_SUFFIX = re.compile(
-    r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events|attempts)$"
+    r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events|attempts|ratio)$"
 )
 #: The samples a histogram serves beside its base name.
 _SAMPLES = ("_bucket", "_count", "_sum")
@@ -484,7 +485,8 @@ def test_exported_recorder_metrics_served_with_env() -> None:
 
 
 def test_exported_replay_metrics_served_with_env() -> None:
-    """E26-T02: the replay read-path series are `live`, served via `export_replay_metrics`."""
+    """E26-T02/T03: the replay read-path and playback series are `live`, served via
+    `export_replay_metrics`."""
     from candleviewer.replay.merge import replay_events_read_total
     from candleviewer.replay.metrics import EXPORTED_NAMES, export_replay_metrics
 

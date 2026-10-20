@@ -35,6 +35,60 @@ class ReplayConfigInvalid(ReplayError, ValueError):
     code = "REPLAY_CONFIG_INVALID"
 
 
+class ReplayClockStateError(ReplayError):
+    """A clock control call its current state does not allow: playing at speed 0, a step while
+    playing, playing while a stop is still in progress, or any call after the clock closed."""
+
+    code = "REPLAY_CLOCK_STATE"
+
+
+class ReplayEventRefused(ReplayError):
+    """The injector (E26-T03) refused an item it does not re-emit: a gap marker, a stream whose
+    derivations 24 Sec.13.7 does not list, a book row the stream adapter did not regroup, a
+    symbol outside the session, or a recorded event that does not fit the live event model.
+    A bug or corrupt data, never skipped: playback stops at it. The message names the stream and
+    the fields at fault, never a recorded value."""
+
+    code = "REPLAY_EVENT_REFUSED"
+
+
+class ReplayTickSizeMissing(ReplayError):
+    """A session symbol has no tick size pinned from the instrument-info cache, so its prices
+    cannot be put on a grid: the injector, and so the session, is refused at creation (24
+    Sec.13.7 `price_ticks`)."""
+
+    code = "REPLAY_TICK_SIZE_MISSING"
+
+    def __init__(self, *, symbols: Sequence[str]) -> None:
+        super().__init__(f"no pinned tick size for {', '.join(symbols)}: the replay is refused")
+        self.symbols = tuple(symbols)
+
+
+class ReplayPriceOffGrid(ReplayError):
+    """A recorded price is not a whole number of ticks of the session's pinned tick size (the
+    grid changed after the recording, #3806). The replay stops at that event, after every event
+    before it, and never rounds (24 Sec.13.7 `price_ticks`). Names the stream, not the price."""
+
+    code = "REPLAY_PRICE_OFF_GRID"
+
+    def __init__(self, *, symbol: str, stream: StreamKind) -> None:
+        super().__init__(
+            f"a recorded {stream.value} price of {symbol} is off the session's pinned tick grid"
+        )
+        self.symbol = symbol
+        self.stream = stream
+
+
+class ReplayLoopStartUnknown(ReplayError):
+    """A loop restart was asked before playback reached the loop start since it was configured,
+    so the injector does not know where the loop begins: seek there instead (E26-T04)."""
+
+    code = "REPLAY_LOOP_START_UNKNOWN"
+
+    def __init__(self) -> None:
+        super().__init__("playback has not reached the loop start: seek to it instead")
+
+
 class ReplayMemoryCeilingExceeded(ReplayError):
     """A read cannot fit the replay's bounds, so the replay stops with this error instead of
     growing memory (ticket E26-T02): the per-session byte budget cannot hold even the smallest

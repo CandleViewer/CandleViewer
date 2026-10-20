@@ -10,13 +10,19 @@ Security note (E08-T03 body): `Topic` construction rejects any segment
 containing a wildcard character so a future client-facing subscription
 (E17) cannot widen its scope by injecting `*`/`#` through a user-controlled
 string — topics are built from validated symbol/domain enums only.
+
+E26-T03 (`24-internal-schemas.md` §2.9): a topic's `env` is one of the live
+pipelines' `live`, `demo`, `testnet`, or one replay session's namespace,
+`replay-` plus the session's UUID in lower-case canonical form
+(`replay_env`), so a replay topic never equals a live one (C-2.11).
 """
 
 from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Literal
+from typing import Final, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -27,6 +33,20 @@ WILDCARD = "*"
 inside a concrete published `Topic`."""
 
 _SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+#: The live pipelines' `env` values (`Environment`, 24 §1.2).
+LIVE_ENVS: Final = frozenset({"live", "demo", "testnet"})
+_REPLAY_ENV_RE = re.compile(r"replay-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def replay_env(session_id: UUID) -> str:
+    """The `env` of one replay session's re-emitted events: `replay-{session_id}` (24 §2.9)."""
+    return f"replay-{session_id}"
+
+
+def is_replay_env(env: str) -> bool:
+    """`env` is a replay session's namespace, never a live pipeline's."""
+    return _REPLAY_ENV_RE.fullmatch(env) is not None
 
 
 class QueuePolicy(StrEnum):
@@ -87,6 +107,18 @@ class Topic(BaseModel):
                 "(no wildcards, no empty segments)"
             )
         return value
+
+    @field_validator("env")
+    @classmethod
+    def _known_env(cls, value: str) -> str:
+        """`live`, `demo`, `testnet` or `replay-<session uuid>`, nothing else (24 §2.9)."""
+        if value in LIVE_ENVS or _REPLAY_ENV_RE.fullmatch(value):
+            return value
+        from candleviewer.bus.errors import InvalidTopicError
+
+        raise InvalidTopicError(
+            f"topic env {value!r} must be live, demo, testnet or replay-<lower-case session uuid>"
+        )
 
     @property
     def key(self) -> str:

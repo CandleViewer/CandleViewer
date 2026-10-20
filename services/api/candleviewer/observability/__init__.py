@@ -12,7 +12,7 @@ Metrics/tracing land in later E04 tickets.
 from __future__ import annotations
 
 from candleviewer.observability.body_logging import BodyLoggingGate
-from candleviewer.observability.context import bind_context, spawn
+from candleviewer.observability.context import bind_context, spawn, spawn_child
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.logging import RedactionFilter, configure_logging
 from candleviewer.observability.secret_type import Secret
@@ -26,4 +26,5 @@ __all__ = [
     "bind_context",
     "configure_logging",
     "spawn",
+    "spawn_child",
 ]
