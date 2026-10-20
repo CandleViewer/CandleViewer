@@ -117,7 +117,9 @@ CLOSE_REASONS: Final[dict[str, tuple[CloseCode, bool]]] = {
     "auth_failed": (CloseCode.UNAUTHENTICATED, True),
     "not_authenticated": (CloseCode.UNAUTHENTICATED, True),
     "token_expired": (CloseCode.UNAUTHENTICATED, True),
-    "session_revoked": (CloseCode.UNAUTHENTICATED, True),
+    # The revocation hub sends this `bye` with `reconnect: false` (`revocation.bye_frame`); this
+    # builder says the same, so one reason has one answer (#572).
+    "session_revoked": (CloseCode.UNAUTHENTICATED, False),
     "user_disabled": (CloseCode.FORBIDDEN, False),
     # §4.3 (#2295): enrolment-only session; enrol over REST, then connect again.
     "mfa_enrollment_required": (CloseCode.FORBIDDEN, False),

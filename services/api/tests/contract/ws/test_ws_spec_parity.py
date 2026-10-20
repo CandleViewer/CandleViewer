@@ -174,11 +174,6 @@ def test_every_close_reason_maps_to_a_close_code_of_4_4() -> None:
     assert codes <= {int(c) for c in lifecycle.CloseCode}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F-05: lifecycle.bye_frame says session_revoked reconnects, the frame the "
-    "revocation hub sends says it does not (#572)",
-)
 def test_every_bye_builder_answers_a_reason_alike() -> None:
     hub, disagreements = RevocationHub(), []
     for reason in ("session_revoked", "user_disabled"):
