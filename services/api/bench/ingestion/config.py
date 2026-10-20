@@ -20,6 +20,7 @@ BASELINES_DIR = HERE.parent / "baselines" / "e08"
 REPORTS_DIR = HERE.parent / "reports"
 SCENARIOS: tuple[str, ...] = (
     "soak_steady",
+    "soak_bars",
     "aggregate_10sym",
     "burst_5x",
     "rest_k6",

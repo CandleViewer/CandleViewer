@@ -1,0 +1,39 @@
+{
+  "title": "Steady-state soak with the bars path at the cap: bar builders and the WS series store holding 32 specs x 1 000 bars per symbol (budget #8, #399 D2-G4)",
+  "kind": "soak",
+  "common": {
+    "symbols": 3,
+    "trades_per_s": 50,
+    "book_deltas_per_s": 10,
+    "tick_s": 0.1,
+    "capacity_factor": 4,
+    "inbound_queue": 64,
+    "seed": 7,
+    "flatness_baseline_fraction": 0.0833,
+    "flatness_tolerance": 0.05,
+    "bars_specs": 32,
+    "bars_per_series": 1000
+  },
+  "full": {
+    "duration_s": 86400,
+    "sample_every_s": 60,
+    "realtime": false,
+    "scaling": "none: 24 h of scenario time at 1x fixture cadence, 3 symbols, 32 specs x 1 000 bars each, sample every 60 s, memory baseline = hour 2 (fraction 0.0833); on the virtual clock, as memory follows the trades and closes, not the wall clock (soak_steady keeps the 1x wall-clock leg)"
+  },
+  "smoke": {
+    "duration_s": 90,
+    "sample_every_s": 5,
+    "realtime": false,
+    "warmup_s": 120,
+    "warmup_wall_s": 2,
+    "scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s). Each lane's ring of 8 192 recent trades fills 164 s into the run, 44 s into the sampled window, so that fill is inside it and uses part of the 5 % flatness margin (1.9 % measured)"
+  },
+  "tolerances": {
+    "ingest_lag_ms": 0.25,
+    "rss_mb_per_symbol": 0.1,
+    "rss_mb_process": 0.5,
+    "vcpu_per_symbol": 0.5,
+    "bars_setup_mb_per_symbol": 0.1,
+    "event_loop_lag_ms": 2.0
+  }
+}

@@ -5,10 +5,11 @@ beside the budget so the report can print both (AC 1). Hard vs soft follows the 
 
 Budget #8 is per symbol (06 §2: book state, bar builders, rolling aggregation buffers):
 `rss_per_symbol_mb` is the RSS the lanes add, i.e. the sample minus the RSS taken before they were
-built, per symbol. The soak lanes run the trade stream and the book state; bar builders and
-aggregation enter this figure when they enter the lanes. `rss_process_mb` is the whole-process RSS
-at each sample, imports included, reported beside it so that growth in what is imported is not
-read as per-symbol growth.
+built, per symbol. The soak lanes run the trade stream and the book state; with `bars_specs` they
+also run the bars path, bar builders and the WS series store (`soak_bars` at the 32-spec cap, #399
+D2-G4; `check_bars` says when the figure is a reading at that cap). Aggregation enters this figure
+when it enters the lanes. `rss_process_mb` is the whole-process RSS at each sample, imports
+included, reported beside it so that growth in what is imported is not read as per-symbol growth.
 """
 
 from __future__ import annotations
@@ -216,6 +217,52 @@ def check_soak(
             "ratio",
             dev <= tolerance,
             note=f"max deviation from the t={at:.0f}s baseline sample",
+        ),
+    ]
+
+
+def check_bars(
+    fewest: Sequence[int], per_series: int, folded: Sequence[int], unhealthy: Sequence[str]
+) -> list[Check]:
+    """#399 D2-G4: budget #8's figure is a reading at the bars cap only while every series stays
+    full and its builders are live.
+
+    `fewest`: at each sample, the fewest closed bars any series held. A series only grows from the
+    `per_series` it was hydrated with, so one below that was reset or never hydrated; a sum over
+    the series would hide it unless `per_series` is the store's own cap (`MAX_HISTORY`), where no
+    series can outgrow another. `folded`: each lane's live closes past its stored tail (one live
+    builder passes it). `unhealthy`: the sticky degraded reasons each lane's bar set reported at
+    its stop (`BarsHealthReason`: a quarantined builder, a dead lane or ticker task, a cold-started
+    state blob, a restore gap, an emit-sink timeout), which the other two cannot see."""
+    low = float(min(fewest, default=0))
+    fold = float(min(folded, default=0))
+    return [
+        Check(
+            "bars_store_at_cap",
+            "#8",
+            low,
+            float(per_series),
+            "bars",
+            low >= per_series,
+            note="closed bars the fewest-held series had, lowest sample",
+        ),
+        Check(
+            "bars_closes_folded",
+            "#8",
+            fold,
+            1.0,
+            "closes",
+            fold >= 1.0,
+            note="live closes folded past the stored tail, lowest lane",
+        ),
+        Check(
+            "bars_builders_healthy",
+            "#8",
+            float(len(unhealthy)),
+            0.0,
+            "reasons",
+            not unhealthy,
+            note=", ".join(unhealthy) or "no degraded reason from any lane's bar set",
         ),
     ]
 
