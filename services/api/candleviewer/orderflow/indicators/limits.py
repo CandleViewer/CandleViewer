@@ -23,6 +23,10 @@ The second block holds the resource caps of the server instances (SR-E13-03) and
 recomputes (SR-E13-04), which `leases.InstanceLeases` and `engine.IndicatorEngine` enforce before
 anything is allocated or computed, and the third the bounds of an instance's own state. Every
 constant the engine and the leases use is here, and pinned.
+
+The presets block holds the bounds of a saved indicator preset (E13-T03, SR-E13-06, SR-E13-07),
+which `api/indicator_presets*` enforce before anything is stored; the contract test pins each to
+its 22-api-openapi.yaml counterpart, and the storage copies are pinned equal to them.
 """
 
 from __future__ import annotations
@@ -126,3 +130,22 @@ RESTORE_BYTES_PER_UPDATE: Final = 24
 SNAPSHOT_BYTES_PER_UPDATE: Final = 192
 #: A read of an instance more than this many closes behind its series is `stale`.
 STALE_AFTER_BARS: Final = 2
+
+# --- Indicator presets (E13-T03, SR-E13-06, SR-E13-07; `api/indicator_presets*`) -------------
+
+#: SR-E13-06: a preset's `params` and `style` each, at most this many bytes as Postgres prints
+#: jsonb (`", "` and `": "` separators: the CHECKs `ip_params_shape` / `ip_style_shape` measure
+#: that text), nested at most this deep (the object itself is depth 1), with at most this many
+#: keys (OpenAPI `maxProperties`).
+PRESET_JSON_MAX_BYTES: Final = 4096
+PRESET_JSON_MAX_DEPTH: Final = 4
+PRESET_JSON_MAX_KEYS: Final = 64
+#: A preset `name`, as sent (OpenAPI `maxLength`; the CHECK `ip_name_len`).
+PRESET_NAME_MAX: Final = 80
+#: A create or replace body past this many bytes is refused (413) before it is parsed.
+PRESET_BODY_MAX_BYTES: Final = 16 * 1024
+#: SR-E13-07: live (not deleted) presets per user (409 `limit_reached`).
+PRESETS_PER_USER_MAX: Final = 500
+#: SR-E13-07: a bundle import is refused whole beyond this many presets or bytes of preset JSON.
+BUNDLE_IMPORT_PRESETS_MAX: Final = 200
+BUNDLE_IMPORT_MAX_BYTES: Final = 1024 * 1024

@@ -177,6 +177,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "alert.delivery_acked",
         "alert.deliveries_acked",
         "alert.desktop_outcome",
+        # E13-T03: indicator-preset writes, written ahead of the row (IR-19); a write aimed at a
+        # built-in or another user's preset is `rbac.denied`. `.imported` is the bundle import.
+        "indicator_preset.created",
+        "indicator_preset.updated",
+        "indicator_preset.deleted",
+        "indicator_preset.imported",
         "recorder.start",
         "recorder.stop",
         "recorder.compact",

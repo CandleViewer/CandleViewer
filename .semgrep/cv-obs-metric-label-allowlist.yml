@@ -74,7 +74,7 @@ rules:
       # reason, also (E42-T05, #966, cv_backup_verify_failures_total): the seven `Backup.error`
       #   codes, each bound at import (`storage/repositories/backups.BACKUP_ERROR_CODES`); max_series=7.
       # class, domain, reason, state (ADR-0037 S4a): {reserved, shared}; a registered audit
-      #   action's first segment or `other` (35); section 15.6's refusals and `timeout` (14 with
+      #   action's first segment or `other` (36); section 15.6's refusals and `timeout` (14 with
       #   `class`), its anomaly reasons, or {held, stopped}; {open, held, stopped}.
       # tier (E26-T02, #625): a storage tier, never an identifier: the replay read-path series'
       #   {questdb, parquet} (max_series<=16 in the catalogue), and the router's `ServedBy`
