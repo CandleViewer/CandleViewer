@@ -9,7 +9,7 @@ the single firing transaction (21-database-schema.md §3.10.4): the
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -77,6 +77,44 @@ class FiringStore(Protocol):
         get an `alert.deliver` outbox row; `suppressed` rows are history only.
         Returns the delivery ids."""
         ...
+
+
+class WakingFiringStore:
+    """A `FiringStore` that wakes the delivery dispatcher once a firing with queued deliveries
+    commits (E40-T04: its in-app row is visible over the `alerts` topic within 250 ms, not at the
+    dispatcher's next poll). *wake* must not raise and must not block (`AlertDispatcher.notify`)."""
+
+    def __init__(self, inner: FiringStore, wake: Callable[[], None]) -> None:
+        self._inner, self._wake = inner, wake
+
+    async def load_live(self) -> Sequence[AlertRecord]:
+        return await self._inner.load_live()
+
+    async def get(self, alert_id: str) -> AlertRecord | None:
+        return await self._inner.get(alert_id)
+
+    async def record_firing(
+        self,
+        *,
+        alert_id: str,
+        user_id: str,
+        channels: Sequence[str],
+        status: str,
+        title: str,
+        body: str,
+        context: dict[str, Any],
+        fired_at: datetime,
+        once: bool,
+        bump: bool,
+        disable: bool = False,
+    ) -> list[int] | None:
+        ids = await self._inner.record_firing(
+            alert_id=alert_id, user_id=user_id, channels=channels, status=status, title=title,
+            body=body, context=context, fired_at=fired_at, once=once, bump=bump, disable=disable,
+        )  # fmt: skip
+        if ids and status == "queued":  # committed with outbox rows: deliver them now
+            self._wake()
+        return ids
 
 
 class AuditSink(Protocol):

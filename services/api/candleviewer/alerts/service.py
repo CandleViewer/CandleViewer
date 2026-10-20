@@ -1,18 +1,21 @@
-"""Lifecycle for the alerts module (M22): starts/stops the `AlertEvaluator` (E40-T03).
+"""Lifecycle for the alerts module (M22): starts/stops the `AlertEvaluator` (E40-T03), the
+delivery dispatcher and the `alerts` WS topic (E40-T04).
 
 The composition root `bind()`s a factory; `start()` warms the evaluator up (one
 subscription per distinct `condition_hash`) and runs it in its own tracked task;
 `stop()` drains so an in-flight firing completes or rolls back whole. Without a bound
-factory (or with `alerts_evaluator_enabled` off, C-4.13) the module stays idle.
+factory (or with `alerts_evaluator_enabled` off, C-4.13) the evaluator stays idle; the topic
+(`bind_topic`) runs either way, since the inbox routes change deliveries too.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from candleviewer.alerts.dispatcher import AlertDispatcher
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertTick
+from candleviewer.alerts.ws_topic import AlertsTopic
 from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
@@ -27,6 +30,7 @@ class AlertsService:
         self._factory: EvaluatorFactory | None = None
         self.evaluator: AlertEvaluator | None = None
         self.dispatcher: AlertDispatcher | None = None
+        self.topic: AlertsTopic[Any] | None = None
 
     def bind(self, factory: EvaluatorFactory, dispatcher: AlertDispatcher | None = None) -> None:
         """`dispatcher` (E40-T04) drains `alert.deliver`; it starts before the evaluator so
@@ -34,8 +38,14 @@ class AlertsService:
         self._factory = factory
         self.dispatcher = dispatcher
 
+    def bind_topic(self, topic: AlertsTopic[Any]) -> None:
+        """The `alerts` WS topic (E40-T04): its worker starts with the module and stops last."""
+        self.topic = topic
+
     async def start(self, ctx: AppContext) -> None:
         self._started = True
+        if self.topic is not None:
+            self.topic.start()
         if self._factory is None:
             return
         if self.dispatcher is not None:
@@ -63,6 +73,8 @@ class AlertsService:
             await ev.stop(grace_s)
         if self.dispatcher is not None:
             await self.dispatcher.stop()
+        if self.topic is not None:  # last: the dispatcher's final settles may still tell it
+            await self.topic.stop()
         self._started = False
 
     def health(self) -> HealthReport:

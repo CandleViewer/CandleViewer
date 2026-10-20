@@ -8,6 +8,7 @@ module therefore exposes no delete. Keyset pagination on `(queued_at, id)`.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -92,6 +93,16 @@ CHANNEL_FAILURE_NOTICE = sa.text(
     "'', CAST(:context AS jsonb), now())"
 )
 
+#: E40-T04 `alerts` topic: the rows a change named, and the channel-failure notice each failed one
+#: raised (written `sent`, so `ix_ad_user_unack` serves it while it is unacknowledged).
+_GET_MANY = _sql(
+    "SELECT @C@ FROM alert_deliveries WHERE id = ANY(CAST(:ids AS bigint[])) ORDER BY id"
+)
+_NOTICES = _sql(
+    "SELECT @C@ FROM alert_deliveries WHERE user_id = ANY(CAST(:users AS uuid[])) "
+    "AND status = 'sent' AND acked_at IS NULL AND channel = 'in_app' "
+    "AND context->>'failed_delivery_id' = ANY(CAST(:failed AS text[])) ORDER BY id"
+)
 _UNACKED = _sql(
     "SELECT count(*) FROM alert_deliveries WHERE user_id = CAST(:user AS uuid) "
     "AND status = 'sent' AND acked_at IS NULL"
@@ -259,6 +270,26 @@ class SqlAlchemyAlertDeliveryRepository:
             res = await uow.session.execute(_DELETE_IDS, {"ids": ids})
             await uow.commit()
         return int(getattr(res, "rowcount", 0) or 0)
+
+    async def get_many(self, delivery_ids: Sequence[int]) -> list[DeliveryRow]:
+        """The rows of *delivery_ids* that exist, by id (the `alerts` topic's deltas)."""
+        if not delivery_ids:
+            return []
+        params = {"ids": sorted(set(delivery_ids))}
+        async with self._relational.unit_of_work() as uow:
+            return [_row(m) for m in (await uow.session.execute(_GET_MANY, params)).mappings()]
+
+    async def failure_notices(
+        self, user_ids: Sequence[str], failed_ids: Sequence[int]
+    ) -> list[DeliveryRow]:
+        """The unacknowledged channel-failure notices raised for *failed_ids* (the dispatcher's
+        terminal failure and the desktop report-back write one each, in the failure's own
+        transaction)."""
+        if not user_ids or not failed_ids:
+            return []
+        params = {"users": sorted(set(user_ids)), "failed": sorted({str(i) for i in failed_ids})}
+        async with self._relational.unit_of_work() as uow:
+            return [_row(m) for m in (await uow.session.execute(_NOTICES, params)).mappings()]
 
     async def unacked_count(self, user_id: str) -> int:
         async with self._relational.unit_of_work() as uow:

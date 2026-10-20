@@ -2139,6 +2139,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_alerts_subscriptions_in_use",
+        "gauge",
+        "subscriptions",
+        (),
+        "Live WS subscriptions of the alerts topic (each its user's own deliveries).",
+        "capacity",
+        _L,
+        "E40",
+        exported=True,
+    ),
+    _s(
         "cv_ws_revoked_total",
         "counter",
         "subscriptions",

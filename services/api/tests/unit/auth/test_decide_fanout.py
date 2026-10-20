@@ -86,7 +86,8 @@ def test_in_scope_reaches_every_private_family_as_decide_allows_it(
     for name, (family, permission, scope) in _PRIVATE.items():
         account = _ACCOUNT if family.account_scoped else None
         accounts = frozenset({account}) if account is not None else frozenset()
-        sub = Subscription("s1", ParsedTopic(name, family), {}, {}, accounts)
+        owner = principal.user_id if scope == Scope.SELF else None  # #2521: recorded at admit
+        sub = Subscription("s1", ParsedTopic(name, family), {}, {}, accounts, owner=owner)
         reached = in_scope(authz, sub, account, principal.user_id)
         asked = Scope.NONE if family.account_scoped else scope  # `sub` asks those at NONE too
         allowed = isinstance(decide(principal, permission, scope=asked), Allow)
