@@ -201,12 +201,12 @@ class _World:
 
 def _revoked_rows(world: _World) -> list[dict[str, Any]]:
     """The `ws.subscription.revoked` row each `revoked` frame needs: socket, then frame order."""
-    sockets = [_socket(authz) for authz in world.sockets]
     return [
         {
             "action": "ws.subscription.revoked",
             "actor_label": "ws",
             "actor_user_id": USER,
+            "session_id": authz.session_id,  # #415 (E17-R-16): the socket's, in its column
             "object_kind": "ws_topic",
             "object_id": f["ch"],
             "reason": f["p"]["reason"],
@@ -214,16 +214,16 @@ def _revoked_rows(world: _World) -> list[dict[str, Any]]:
                 "removed_accounts": f["p"].get("removed_accounts", []),
                 "sub_id": f["p"]["sub_id"],
                 **({"rs": f["rs"]} if "rs" in f else {}),
-                **socket,  # #415 (E17-R-16): and the socket
+                **_socket(authz),  # #415 (E17-R-16): and the socket's connection
             },
         }
-        for socket, frames in zip(sockets, world.revoked(), strict=True)
+        for authz, frames in zip(world.sockets, world.revoked(), strict=True)
         for f in frames
     ]
 
 
 def _socket(authz: ConnectionAuthz) -> dict[str, Any]:
-    return {"connection_id": authz.connection_id, "session_id": authz.session_id}
+    return {"connection_id": authz.connection_id}
 
 
 # -- ordering: frames first, rows after (the defect) -----------------------------------------------

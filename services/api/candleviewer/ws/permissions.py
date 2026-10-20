@@ -405,7 +405,7 @@ class ConnectionAuthz:
         self.principal = principal
         self.version = version  # SR-189: the applied snapshot's; 0 = not from the registry
         #: The session the socket is authenticated on (`do_auth` sets it at each accepted `auth`):
-        #: the revocation and denial rows name it beside `connection_id` (#415, E17-R-16).
+        #: the revocation and denial rows carry it in their `session_id` column (#415, E17-R-16).
         self.session_id: str | None = None
         self.services = services if services is not None else SubscriptionServices()
         self.connection_id = connection_id or f"c-{uuid.uuid4().hex[:12]}"
@@ -1720,8 +1720,10 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
     never one per entry (SR-192, #2292), written in `handle_sub`'s `finally`, so a frame that
     raises or is cancelled part way still records those before the fault. Its `object_id` and
     `reason` are the first one's, so a frame with one writes the row that refusal writes alone.
-    Its `after_state` names the socket (`connection_id`, `session_id`; #415, E17-R-16) and, with
-    more than one, holds the `count` of them all, every code among them (`codes`, sorted) and the
+    It names the socket: its session in the `session_id` column, as the close row's; its
+    `connection_id` in `after_state` (#415, E17-R-16), since the row's `object_id` is the topic.
+    With more than one refusal, `after_state` also
+    holds the `count` of them all, every code among them (`codes`, sorted) and the
     `[object_id, reason]` of the first `MAX_DENIALS_LISTED` in request order (`refusals`). An
     entry narrowed to fewer accounts than it named is one, with code `account_scope_denied` and
     reason `narrowed` (§6.2, E17-R-15). An internal reason goes only in `reason` and
@@ -1741,7 +1743,7 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
         _kept_back(authz)
         return
     object_id, _, reason = denials[0]
-    after: dict[str, Any] = {"connection_id": authz.connection_id, "session_id": authz.session_id}
+    after: dict[str, Any] = {"connection_id": authz.connection_id}
     if len(denials) > 1:
         after["count"] = len(denials)
         after["codes"] = sorted({c for _, c, _ in denials})
@@ -1752,6 +1754,7 @@ async def _audit_denials(authz: ConnectionAuthz, denials: list[tuple[str, str, s
             "ws.subscribe.denied",
             actor_label="ws",
             actor_user_id=authz.principal.user_id,
+            session_id=authz.session_id,
             object_kind="ws_topic",
             object_id=object_id,
             outcome=AuditOutcome.DENIED,
@@ -1821,9 +1824,10 @@ _MACHINE_REVOKED: Final = {"permission_revoked": "role", "account_scope_changed"
 
 def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> list[_AuditRow]:
     """`ws.subscription.revoked`: one row per `revoked` frame, in frame order (WS-R02), naming the
-    socket in `after_state` (`connection_id`, `session_id`; #415, E17-R-16). A `machines` row names
-    the full `ch` and its internal §6.4 reason, in `reason` only (SR-067), as a refusal's row
-    does."""
+    socket: its session in the `session_id` column, as the close row's; its `connection_id` in
+    `after_state` (#415, E17-R-16), since the row's `object_id` is the topic. A `machines` row
+    names the full `ch` and its internal §6.4 reason, in `reason` only (SR-067), as a refusal's
+    row does."""
     audit = authz.services.audit
     if audit is None:
         return []
@@ -1840,6 +1844,7 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
                 {
                     "actor_label": "ws",
                     "actor_user_id": authz.principal.user_id,
+                    "session_id": authz.session_id,
                     "object_kind": "ws_topic",
                     "object_id": ch if machines else ch[:40],
                     "reason": _MACHINE_REVOKED.get(reason, reason) if machines else reason,
@@ -1848,7 +1853,6 @@ def _revocation_rows(authz: ConnectionAuthz, frames: list[dict[str, Any]]) -> li
                         "sub_id": f["p"]["sub_id"],
                         **({"rs": f["rs"]} if "rs" in f else {}),
                         "connection_id": authz.connection_id,
-                        "session_id": authz.session_id,
                     },
                 },
             )

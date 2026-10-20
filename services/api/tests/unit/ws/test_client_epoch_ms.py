@@ -1,7 +1,8 @@
 """E17-R-10 (#415): a client's §13 `epochMs` fields, `hello.clock_ms` and `ping.client_ms`, count
 only as an int, not a bool, from 0 to 2**53 - 1 (`MAX_EPOCH_MS`), on both subprotocols. Any other
 value is ignored as if absent: the `welcome` has no `clock_skew_ms`, the `pong` no `rtt_hint_ms`,
-nothing is observed, and the socket goes on, never closed `internal_error`."""
+nothing is observed, and the socket goes on, never closed `internal_error`. A `sub` entry's
+`from_ts_ms`, an `epochMs` as well, is refused `invalid_options` past the same range."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import pytest
 
 from candleviewer.ws.lifecycle import MAX_EPOCH_MS, clamp_ms, client_epoch_ms
 from candleviewer.ws.metrics import cv_ws_clock_skew_ms
+from candleviewer.ws.topics import FAMILIES, TopicError, validate_options
 from tests.unit.ws.test_lifecycle_socket import BASE_MS, JSON, MSGPACK, _hello, _recv, _send, _World
 
 REPO: Final = Path(__file__).resolve().parents[5]
@@ -103,3 +105,16 @@ def test_the_contract_states_the_maximum_the_gateway_reads() -> None:
     bundle = json.loads((REPO / "docs/plan/ws-schema.json").read_text(encoding="utf-8"))
     common = bundle["schemas"]["cv://ws/v1/common.schema.json"]["$defs"]["epochMs"]
     assert (common["minimum"], common["maximum"]) == (0, MAX_EPOCH_MS)
+
+
+@pytest.mark.parametrize("value", [-1, MAX_EPOCH_MS + 1, 2**64 - 1])
+def test_a_from_ts_ms_past_the_epoch_ms_range_is_refused_as_any_option_out_of_range(
+    value: int,
+) -> None:
+    """§13 `options.from_ts_ms` is an `epochMs` too: past either end a `sub` entry is refused
+    `invalid_options`, naming it, as below 0 it always was; both ends are read."""
+    with pytest.raises(TopicError) as refused:
+        validate_options(FAMILIES["book"], {"from_ts_ms": value})
+    assert (refused.value.code, refused.value.field) == ("invalid_options", "from_ts_ms")
+    for read in (0, MAX_EPOCH_MS):
+        assert validate_options(FAMILIES["book"], {"from_ts_ms": read}) == {"from_ts_ms": read}

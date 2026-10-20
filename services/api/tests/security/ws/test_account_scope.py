@@ -44,13 +44,11 @@ from tests.unit.ws._seq_support import ACC_A, ACC_B
 _SCOPE = "None of the requested accounts are in scope."  # §6.2's one message, whatever the cause
 
 
-def _socket(c: Any, auth_ok: dict[str, Any]) -> dict[str, Any]:
-    """The socket a denial record names (#415, E17-R-16): its connection id and session."""
+def _socket(c: Any, auth_ok: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """The socket a denial record names (#415, E17-R-16): its session, in the `session_id` column,
+    and its connection id, in `after_state`."""
     (welcome,) = [f for f in c.seen if f["t"] == "welcome"]
-    return {
-        "connection_id": welcome["p"]["connection_id"],
-        "session_id": auth_ok["p"]["session_id"],
-    }
+    return auth_ok["p"]["session_id"], {"connection_id": welcome["p"]["connection_id"]}
 
 
 def _error(code: ErrorCode, message: str, **extra: str) -> dict[str, Any]:
@@ -89,13 +87,14 @@ def test_x02_ac_05_one_frame_naming_b_on_every_scoped_family_is_one_denial_recor
     asserts their codes and its one record (SR-192)."""
     m1 = world.login("m1", ACC_A)
     with raw_connect(world) as c:
-        socket = _socket(c, authenticated(c, m1))
+        session, socket = _socket(c, authenticated(c, m1))
         results = answers(c, *[topic(f, ACC_B) for f in SCOPED])
     assert [(r["ch"], r["error"]["code"]) for r in results] == [
         (f, "account_scope_denied") for f in SCOPED
     ]
     (row,) = world.audit.of("ws.subscribe.denied")  # never one record per entry (SR-192)
     assert (row["object_id"], row["reason"]) == (SCOPED[0], "account_scope_denied")
+    assert row["session_id"] == session
     assert row["after_state"] == {
         **socket,
         "count": len(SCOPED),
@@ -110,7 +109,7 @@ def test_x02_ac_05_a_sub_naming_a_and_b_is_narrowed_to_a_and_b_data_never_reache
     m1, n = world.login("m1", ACC_A), len(SCOPED)
     narrowed = delta("cv_ws_subscribe_narrowed_total")
     with raw_connect(world) as c:
-        socket = _socket(c, authenticated(c, m1))
+        session, socket = _socket(c, authenticated(c, m1))
         results = answers(c, *[topic(f, ACC_B, ACC_A) for f in SCOPED])  # B named first
         assert [r["effective"]["exchange_account_ids"] for r in results] == [[str(ACC_A)]] * n
         assert [f["ch"] for f in sorted(drained(c), key=lambda f: f["ch"])] == list(SCOPED)
@@ -123,6 +122,7 @@ def test_x02_ac_05_a_sub_naming_a_and_b_is_narrowed_to_a_and_b_data_never_reache
     # the frame's one denial record lists each narrowing, ...
     (row,) = world.audit.of("ws.subscribe.denied")
     assert (narrowed(), row["object_id"], row["reason"]) == (n, SCOPED[0], "narrowed")
+    assert row["session_id"] == session
     assert row["after_state"] == {
         **socket,
         "count": n,

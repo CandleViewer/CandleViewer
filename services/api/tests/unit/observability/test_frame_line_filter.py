@@ -16,6 +16,7 @@ import itertools
 import json
 import logging
 import secrets
+import warnings
 from typing import Any, Final
 
 import msgpack
@@ -50,7 +51,18 @@ def _auth(token: str) -> dict[str, Any]:
     return {"t": "auth", "id": "c-2", "p": {"access_token": token}}
 
 
-def _record(msg: str, args: object) -> logging.LogRecord:
+def _legacy(frame: Frame) -> object:
+    """`frame` as the legacy websockets implementation builds it (uvicorn's `--ws websockets`): a
+    named tuple, not a `websockets.frames.Frame`, whose `str` also renders the payload."""
+    with warnings.catch_warnings():  # importing the legacy package warns that it is deprecated
+        warnings.simplefilter("ignore", DeprecationWarning)
+        from websockets.legacy.framing import Frame as LegacyFrame
+    legacy = LegacyFrame(frame.fin, frame.opcode, frame.data)
+    assert not isinstance(legacy, Frame) and str(legacy) == str(frame)
+    return legacy
+
+
+def _record(msg: object, args: object) -> logging.LogRecord:
     return logging.makeLogRecord({"name": "uvicorn.error", "msg": msg, "args": args})
 
 
@@ -59,17 +71,28 @@ def test_the_draws_have_the_shape_of_token_urlsafe_32() -> None:
     assert all({"-", "_"} <= set(t) for t in TOKENS)
 
 
+@pytest.mark.parametrize("legacy", [False, True], ids=["sans-io", "legacy"])
 @pytest.mark.parametrize("msg", ["< %s", "> %s"])
 @pytest.mark.parametrize("encoding", sorted(_FRAMES))
-def test_a_frame_argument_becomes_its_opcode_and_length(msg: str, encoding: str) -> None:
+def test_a_frame_argument_becomes_its_opcode_and_length(
+    msg: str, encoding: str, legacy: bool
+) -> None:
     frame = _FRAMES[encoding](TOKENS[0])
-    record = _record(msg, (frame,))
+    record = _record(msg, (_legacy(frame) if legacy else frame,))
     assert FrameLineFilter().filter(record) is True
     assert record.getMessage() == f"{msg[0]} {frame.opcode.name} [{len(frame.data)} bytes]"
 
 
 def test_a_summary_names_a_fragment_and_a_single_byte() -> None:
     assert frame_summary(Frame(Opcode.CONT, b"x", fin=False)) == "CONT [1 byte, continued]"
+
+
+@pytest.mark.parametrize("msg", [{"t": "auth"}, ["< %s"]], ids=["dict", "list"])
+def test_a_message_that_is_not_text_is_left_as_it_is(msg: object) -> None:
+    """`logger.warning({...})`: a message with no hash is never looked up, so nothing raises."""
+    args = (Frame(Opcode.TEXT, b"x"),)
+    record = _record(msg, args)
+    assert FrameLineFilter().filter(record) is True and record.args is args
 
 
 @pytest.mark.parametrize(

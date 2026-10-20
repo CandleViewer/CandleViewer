@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,8 @@ import candleviewer.ws.gateway as gateway
 import tests.unit.ws.test_lifecycle_socket as ls
 from candleviewer.api.csrf import RefusalAuditTracker
 from candleviewer.audit.actions import validate_action
-from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.models import AuditEmission, AuditOutcome, Severity
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws import permissions
@@ -236,6 +238,49 @@ async def test_each_account_a_narrowing_takes_away_is_counted_and_its_entry_reco
     assert (sink.rows[0]["object_id"], sink.rows[0]["reason"]) == ("positions", "narrowed")
 
 
+class _Built:
+    """The production writer's `build` as the sink (its checks, its redaction, its typed columns)
+    with no WAL: an `AuditWriter` made without `__init__`, on a fixed clock, so nothing is written.
+    Each emit keeps what it was given beside what `build` made of it."""
+
+    def __init__(self) -> None:
+        self.writer = AuditWriter.__new__(AuditWriter)
+        self.writer._clock = lambda: datetime(2026, 10, 19, tzinfo=UTC)
+        self.rows: list[tuple[dict[str, Any], AuditEmission]] = []
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        self.rows.append((kw, self.writer.build(action, **kw)))
+
+
+async def test_through_the_real_writer_the_rows_keep_their_session_and_after_state() -> None:
+    """#415 (E17-R-16): `AuditWriter.build` redacts a `session_id` key in a state (a session id is
+    a token to it), so the denied and revoked rows put the socket's session in their `session_id`
+    column, as the close row does, and their `after_state` leaves the writer as written: the
+    denial of one refusal, that of two (`count`, `codes` and `refusals` too) and the revocation."""
+    sink, sent = _Built(), list[dict[str, Any]]()
+    principal = PrincipalSnapshot(MGR, frozenset({"manager"}), PERMS, GRANTS)
+    authz = ConnectionAuthz(principal, SubscriptionServices(audit=sink))
+    authz.session_id = ls.SESSION
+
+    async def resolve(_user: uuid.UUID) -> PrincipalSnapshot:  # B withdrawn
+        return PrincipalSnapshot(MGR, frozenset({"manager"}), PERMS, GRANTS[:1])
+
+    async def send(frame: dict[str, Any]) -> None:
+        sent.append(frame)
+
+    registry = permissions.ConnectionRegistry(resolve, lambda: 1, authz.services)
+    registry.register(authz, send)
+    await _sub(authz, sent, _acc("positions", A, B), _acc("orders", C))  # C is never granted
+    await _sub(authz, sent, _acc("orders", C), _acc("wallet", C))  # two refusals, none granted
+    await registry.grants_changed(MGR)
+    assert [row.action for _, row in sink.rows] == [DENIED, GRANTED, DENIED, REVOKED]
+    for kw, row in [built for built in sink.rows if built[1].action != GRANTED]:
+        assert (row.session_id, row.after_state) == (uuid.UUID(ls.SESSION), kw["after_state"])
+        assert kw["after_state"]["connection_id"] == authz.connection_id
+    two = sink.rows[2][0]["after_state"]  # and the loop was not vacuous: this frame had two
+    assert set(two) == {"connection_id", "count", "codes", "refusals"} and two["count"] == 2
+
+
 def test_the_contract_and_the_threat_model_state_how_many_grants_are_listed() -> None:
     """§5.2 and WS-R01 give the bound in prose: a change to the constant must change both."""
     n, docs = permissions.MAX_GRANTS_LISTED, Path(__file__).resolve().parents[5] / "docs"
@@ -305,10 +350,11 @@ def test_a_resync_rate_limited_revocation_writes_its_revoked_row(
     world: ls._World, rs: str | None
 ) -> None:
     """The row names the subscription (§7.5, #3218): its `sub_id`, and `rs` on replay; and the
-    socket (#415, E17-R-16): the `connection_id` of its `welcome` and its session."""
+    socket (#415, E17-R-16): the `connection_id` of its `welcome`, and its session in the
+    `session_id` column."""
     ch, named = "book.BTCUSDT.50", {"rs": rs} if rs else {}
     with world.client.websocket_connect("/ws", subprotocols=ls.JSON) as ws:
-        socket = {"connection_id": ls._hello(ws)["p"]["connection_id"], "session_id": ls.SESSION}
+        socket = {"connection_id": ls._hello(ws)["p"]["connection_id"]}
         ls._auth(ws)
         ws.send_json({"t": "sub", "id": "s", "p": {"topics": [ch], "replay_session_id": rs}})
         assert ls._recv_type(ws, "sub_ok")["p"]["results"][0]["ok"] is True
@@ -322,6 +368,7 @@ def test_a_resync_rate_limited_revocation_writes_its_revoked_row(
     assert (row["object_id"], row["reason"]) == (ch, "resync_rate_limited")
     named_by = {"removed_accounts": [], "sub_id": "s_01", **named, **socket}
     assert (row["actor_user_id"], row["after_state"]) == (ls.USER, named_by)
+    assert row["session_id"] == ls.SESSION
 
 
 def test_the_third_failed_auth_row_names_the_source_address_and_the_request(

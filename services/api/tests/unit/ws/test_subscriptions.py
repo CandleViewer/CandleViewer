@@ -789,7 +789,7 @@ def test_registry_grants_changed_pushes_revoked_and_audits() -> None:
     assert [f["t"] for f in sent] == ["sub_ok", "permission_change", "revoked"]
     actions = [r["action"] for r in audit.records]  # the sub's grant record first (SR-186)
     assert actions == ["ws.subscribe.granted", "ws.subscription.revoked"]
-    named = {"connection_id": conn_id[0], "session_id": None}  # #415 (E17-R-16): the socket
+    named = {"connection_id": conn_id[0]}  # #415 (E17-R-16): the socket's connection
     assert audit.records[1]["after_state"] == {
         "removed_accounts": [str(B)],
         "sub_id": "s_01",
@@ -987,7 +987,6 @@ def test_denials_are_audited_and_audit_failure_is_not_fatal() -> None:
     assert (action, reason) == ("ws.subscribe.denied", "account_scope_denied")
     assert detail == {
         "connection_id": conn.connection_id,  # #415 (E17-R-16): the socket
-        "session_id": None,
         "count": 2,
         "codes": ["account_scope_denied", "invalid_options"],
         "refusals": [["positions", "account_scope_denied"], ["orders", "invalid_options"]],

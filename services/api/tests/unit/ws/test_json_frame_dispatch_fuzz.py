@@ -6,7 +6,8 @@ test's loop) by a fresh socket in one of three states: before `hello`, after `we
 delivers only UTF-8), huge and negative integers, NaN and the infinities, duplicate keys, and sizes
 up to and just past the cap. Whatever one holds, the socket answers it with a reply, an `err` of
 the §10.2 catalogue or a strike, or ends it with a `bye` whose reason §4.4 lists: never
-`internal_error`, never `1011`, no `ws connection fault` line, and the handler ends cleanly.
+`internal_error` (in a `bye` or a top-level `err`), never `1011`, no `ws connection fault` line,
+and the handler ends cleanly.
 
 A failure names only its target and a sha256 digest of (seed, input). Hypothesis reports nothing
 (no example, blob or explanation) and nothing writes the input: `CV_FUZZ_SEED` and
@@ -237,12 +238,16 @@ async def _until(sock: Sock, kind: str) -> None:
 
 async def _answer(sock: Sock) -> str:
     """Reads what the socket sent until the `ping` after the frame is answered or a `bye` comes:
-    why that is a fault, or ""."""
+    why that is a fault, or "". A top-level `err` of `internal_error` is one, as a `bye` of it is:
+    the catalogue lists the code, but this rig never sends it at the top level."""
     while True:
         frame = await sock.sent.get()
         kind, p = frame.get("t"), frame.get("p")
-        if kind == "err" and isinstance(p, dict) and p.get("code") not in WS_ERROR_CODES:
-            return "err outside the catalogue"
+        if kind == "err" and isinstance(p, dict):
+            if p.get("code") == "internal_error":
+                return "internal_error"
+            if p.get("code") not in WS_ERROR_CODES:
+                return "err outside the catalogue"
         if kind == "bye" and isinstance(p, dict):
             reason = p.get("reason")
             if reason == "internal_error":
@@ -345,3 +350,15 @@ def test_each_named_frame_gets_an_answer_and_no_fault(state: str, text: str) -> 
         assert _faults(Rig(), loop, state, text, 1) == ""
     finally:
         loop.close()
+
+
+@pytest.mark.parametrize(
+    ("code", "fault"), [("internal_error", "internal_error"), ("forbidden", "")]
+)
+def test_the_check_takes_a_top_level_internal_error_for_a_fault(code: str, fault: str) -> None:
+    """What the socket sent, then the `pong`: an `err` of `internal_error` is a fault, as its `bye`
+    is; one of another catalogue code is an answer."""
+    sock = Sock()
+    for frame in ({"t": "err", "id": "x", "p": {"code": code}}, {"t": "pong", "id": _END}):
+        sock.sent.put_nowait(frame)
+    assert asyncio.run(_answer(sock)) == fault

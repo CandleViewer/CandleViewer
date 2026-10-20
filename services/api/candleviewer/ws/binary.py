@@ -286,10 +286,12 @@ def decode(data: bytes | bytearray | memoryview) -> Frame:
         )
     off = HEADER.size
     avail = n - off
+    # E17-R-21 (§3.4): a heatmap frame is one column, and its header counts it. The rule is kind
+    # 6's, as `decodeHeatmapColumn` keys it in TypeScript, not that of every prefixed layout.
+    if kind.id == HEATMAP_COLUMN and count != 1:
+        raise FrameMalformedError(f"{kind.name}: record_count={count}, expected 1")
     # SR-128: every wire count is checked against `avail` before it sizes anything.
     if kind.body_prefix is not None:
-        if count != 1:  # E17-R-21: a heatmap frame is one column, and its header counts it (§3.4)
-            raise FrameMalformedError(f"{kind.name}: record_count={count}, expected 1")
         _fits(1, kind.body_prefix.size, avail, kind.name)
         *prefix, row_count = _st(kind.body_prefix).unpack_from(view, off)
         off += kind.body_prefix.size

@@ -37,8 +37,10 @@ B = uuid.UUID(int=0xB)
 VIEWER = uuid.UUID(int=0x300)
 MANAGER = uuid.UUID(int=0x100)
 _CAP = MAX_TOPICS_PER_SUB
-#: The socket every record names in its `after_state` (#415, E17-R-16).
-_SOCKET: dict[str, Any] = {"connection_id": "c-sub-cap", "session_id": "sess-sub-cap"}
+#: The socket every record names (#415, E17-R-16): its session in the `session_id` column, as the
+#: close row's; its connection in `after_state`, since the row's `object_id` is the topic.
+_SESSION = "5e550000-0000-4000-8000-00000000ca90"
+_SOCKET: dict[str, Any] = {"connection_id": "c-sub-cap"}
 _PROTOCOL = Path(__file__).resolve().parents[5] / "docs" / "plan" / "23-ws-protocol.md"
 #: Private families a market-data-only principal is refused (`forbidden`) by their bare name.
 PRIVATE = ["orders", "positions", "executions", "wallet", "trade_groups", "rules", "alerts"]
@@ -85,7 +87,7 @@ class _Entries:
 def _conn(principal: PrincipalSnapshot, audit: _Audit) -> ConnectionAuthz:
     services = SubscriptionServices(audit=audit, clock=lambda: 0.0, machines=_Entries())
     conn = ConnectionAuthz(principal, services, connection_id=_SOCKET["connection_id"])
-    conn.session_id = _SOCKET["session_id"]
+    conn.session_id = _SESSION
     return conn
 
 
@@ -237,6 +239,7 @@ def _record(audit: _Audit) -> dict[str, Any]:
 _ROW = {
     "action": "ws.subscribe.denied",
     "actor_label": "ws",
+    "session_id": _SESSION,
     "object_kind": "ws_topic",
     "outcome": AuditOutcome.DENIED,
     "severity": Severity.WARNING,
@@ -317,8 +320,8 @@ def test_the_contract_states_how_many_refusals_the_record_lists() -> None:
 
 
 def test_a_frame_with_one_kept_refusal_writes_its_row_naming_only_its_socket() -> None:
-    """The row a lone refusal wrote before #2292, with its socket in `after_state` (#415, E17-R-16)
-    and nothing more. Here the `forbidden` of a
+    """The row a lone refusal wrote before #2292, naming its socket (#415, E17-R-16) and nothing
+    more: the session in its column, the connection in `after_state`. Here the `forbidden` of a
     public topic (kept whatever the family) for a principal without `marketdata:read`; the unknown
     name beside it is refused before any permission is read, and is not kept. `test_machines.py`
     pins the same row for a lone `machines` refusal (#3057)."""

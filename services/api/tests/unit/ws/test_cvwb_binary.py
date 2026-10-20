@@ -249,6 +249,17 @@ def test_decode_heatmap_column_with_a_record_count_other_than_one_is_malformed(c
         decode(bytes(raw))
 
 
+def test_the_one_column_rule_is_kind_6s_not_its_layouts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E17-R-21: keyed to the heatmap kind, as `decodeHeatmapColumn` keys it in TypeScript. A kind
+    of the same layout under another id reads its rows from its prefix, whatever the count."""
+    heatmap = cvwb_layout.KINDS[HEATMAP_COLUMN]
+    monkeypatch.setitem(cvwb_layout.KINDS, 99, heatmap._replace(id=99, name="prefixed"))
+    raw = bytearray(encode(Frame(HEATMAP_COLUMN, ((1, 2),), prefix=(0, 0, 1))))
+    raw[5] = 99  # body_kind
+    struct.pack_into("<I", raw, 12, 2)
+    assert decode(bytes(raw)) == Frame(99, ((1, 2),), prefix=(0, 0, 1))
+
+
 # --- body_kind 5 v2: the bar key on every footprint group (#2529) ------------------------
 
 _CELL = (6_500_000, 10, 20, 3, 0b1001)
