@@ -49,7 +49,10 @@ from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifec
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
-from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
+from candleviewer.storage.repositories.users_sqlalchemy import (
+    SqlAlchemyUserAdminStore,
+    SqlAlchemyUserRepository,
+)
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED
 from tests.contract.rbac.rbac_harness import _AuditSink, load_contract, role_permissions
@@ -186,6 +189,18 @@ def _delegate(target: Any, name: str) -> Callable[..., Any]:
     return lambda _self, *args, **kwargs: getattr(target, name)(*args, **kwargs)
 
 
+def _admin_read(rows: _Rows) -> Callable[..., Awaitable[dict[str, Any] | None]]:
+    """`SqlAlchemyUserAdminStore.get_user` over these rows: the identity read, `None` if absent."""
+
+    async def get_user(_self: object, user_id: uuid.UUID) -> dict[str, Any] | None:
+        try:
+            return await rows.user(str(user_id))
+        except LookupError:
+            return None
+
+    return get_user
+
+
 def _settings() -> Settings:
     return Settings(
         storage_backend="real",
@@ -236,10 +251,25 @@ def _owner_headers(app: Any, run: Any, w: SimpleNamespace, owner: str) -> dict[s
     return bearer | csrf_headers(app.state.csrf_codec, mine.session_id)
 
 
-def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: str) -> None:
+def delete_disable(client: TestClient, m: str, headers: dict[str, str], *, ack: bool) -> Any:
+    """The disable as `DELETE /users/{userId}` (E42-T04); `ack` acknowledges unknown positions."""
+    path = f"/users/{m}" + ("?acknowledge_unknown_positions=true" if ack else "")
+    return client.delete(path, headers=headers)
+
+
+def scenario(
+    app: Any,
+    client: TestClient,
+    w: SimpleNamespace,
+    owner: str,
+    m: str,
+    *,
+    disable: Callable[..., Any] = delete_disable,
+) -> None:
     """AC1's actions on the deployed app, then what each actor saw, on `w`: `w.repo` is the
     session repository (its mint parks while `w.repo.park` is set) and `w.rules` the rule store
-    the app's engine is bound to. Shared with the Postgres variant."""
+    the app's engine is bound to. Shared with the Postgres variant and, with `disable` a PATCH to
+    `disabled`, with E42-T09's (#2649)."""
     portal, ctx = client.portal, app.state.app_context
     assert portal is not None  # inside the client's `with`
     run, sessions = portal.call, ctx.auth.sessions
@@ -267,11 +297,10 @@ def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: st
         refresh = portal.start_task_soon(sessions.refresh, w.c.refresh_token)
         try:
             run(functools.partial(asyncio.wait_for, w.repo.parked.wait(), _GUARD_S))  # claimed
-            w.unacked = client.delete(f"/users/{m}", headers=headers)
+            w.unacked = disable(client, m, headers, ack=False)
             w.action_at = w.clock.now
-            path = f"/users/{m}?acknowledge_unknown_positions=true"
             w.latency_counts = [_latency_count(ctx)]
-            w.disabled = client.delete(path, headers=headers)
+            w.disabled = disable(client, m, headers, ack=True)
             w.latency_counts.append(_latency_count(ctx))
             w.ended = [_ended(ws) for ws in (ws_a, ws_b, ws_c, ws_p)]
         finally:
@@ -286,7 +315,7 @@ def scenario(app: Any, client: TestClient, w: SimpleNamespace, owner: str, m: st
     w.records = list(ctx.audit.writer.records)
 
 
-def sessions_ended(w: SimpleNamespace) -> None:
+def sessions_ended(w: SimpleNamespace, *, answer: int = 204) -> None:
     """AC1 on the sessions, whatever the store under them: within 5 s on the test clock (0 s: no
     timer, no poll) each of M's two live sessions is revoked `user_disabled` and refused on its
     next REST call, and each of M's four sockets gets one `bye user_disabled` (`reconnect:
@@ -295,7 +324,7 @@ def sessions_ended(w: SimpleNamespace) -> None:
     completed refresh (both `rotated`, S7). A second `bye` would fail `_ended`. The refresh that
     claimed M's third session before the disable mints no successor after it (#2911), so M has
     no live session."""
-    assert (w.before, w.auth, w.disabled.status_code) == ([200] * 3, ["auth_ok"] * 4, 204)
+    assert (w.before, w.auth, w.disabled.status_code) == ([200] * 3, ["auth_ok"] * 4, answer)
     for bye, code in w.ended:
         p = bye["p"]
         assert (bye["t"], p["reason"], p["reconnect"], p["code"], code) == _BYE
@@ -333,6 +362,7 @@ def _world() -> Iterator[tuple[SimpleNamespace, Any, TestClient]]:
             mp.setattr(SqlAlchemyScopeSource, name, _delegate(w.repo, name))
         mp.setattr(SqlAlchemySessionRepository, "find_by_id", _delegate(w.repo, "find_by_id"))
         users = _Users(w.repo)  # #2295: the `users` read the enrolment-only guard classifies with
+        mp.setattr(SqlAlchemyUserAdminStore, "get_user", _admin_read(w.repo))  # #2649's `User`
         mp.setattr(SqlAlchemyUserRepository, "find_by_id", _delegate(users, "find_by_id"))
         relational = "candleviewer.user_cascade_wiring.SqlAlchemyRelationalRepository"
         mp.setattr(relational, lambda *_: w.repo)  # the S3 store's unit of work

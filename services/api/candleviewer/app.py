@@ -149,6 +149,7 @@ from candleviewer.api.users import (
     SnapshotResolver,
     UserDisable,
     UserRoleStore,
+    make_user_admin_router,
     make_users_router,
 )
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
@@ -349,7 +350,10 @@ from candleviewer.storage.repositories.sessions_sqlalchemy import (
     SqlAlchemySessionRepository,
 )
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
-from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
+from candleviewer.storage.repositories.users_sqlalchemy import (
+    SqlAlchemyUserAdminStore,
+    SqlAlchemyUserRepository,
+)
 from candleviewer.storage.repositories.workspaces_sqlalchemy import SqlAlchemyWorkspaceRepository
 from candleviewer.storage.retention.alert_tasks import AlertDeliveriesPurgeTask, AlertGaugeTask
 from candleviewer.storage.retention.drawings_tasks import DrawingsMetrics, DrawingsPurgeTask
@@ -645,6 +649,20 @@ def build_user_role_store(settings: Settings) -> SqlAlchemyUserRoleStore | None:
         return None
     return SqlAlchemyUserRoleStore(
         SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "user-roles"),
+        owner_floor=lambda current, new, owners: assert_owner_floor(
+            current_roles=current, new_roles=new, active_owner_count=owners
+        ),
+    )
+
+
+def build_user_admin_store(settings: Settings) -> SqlAlchemyUserAdminStore | None:
+    """E42-T09 (#2649): the Postgres `UserAdminStore` behind `GET`/`PATCH /users/{userId}` and the
+    admin session routes, with the M18 owner floor injected; `None` on the fake backend, where
+    those routes fail closed (501). No I/O at construction: the engine connects lazily."""
+    if settings.storage_backend != "real":
+        return None
+    return SqlAlchemyUserAdminStore(
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "user-admin"),
         owner_floor=lambda current, new, owners: assert_owner_floor(
             current_roles=current, new_roles=new, active_owner_count=owners
         ),
@@ -1616,6 +1634,19 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             owner_resolver,
             audit_ready=_audit_ready(ctx.audit),
+        )
+    )
+    # E42-T09 (#2649): `GET`/`PATCH /users/{userId}` and the admin view of a user's sessions; a
+    # PATCH to `disabled` runs `user_disable`'s cascade. No store (fake backend): 501 after RBAC.
+    # After the invites router: `GET /users/invites` must match before `GET /users/{userId}`.
+    app.include_router(
+        make_user_admin_router(
+            build_user_admin_store(resolved),
+            _LazyAuditEmitter(ctx.audit),
+            owner_resolver,
+            ws_registry,
+            auth=ctx.auth,
+            user_disable=user_disable,
         )
     )
     # #2266 D2: `rewrapKek`, the KEK re-wrap entry point. Owner only; step-up `keys` is path-gated

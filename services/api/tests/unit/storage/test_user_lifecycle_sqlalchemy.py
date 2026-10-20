@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.repositories import identity_sqlalchemy as identity
 from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as m
 from candleviewer.storage.repositories.user_lifecycle import (
@@ -117,6 +118,69 @@ async def _disable(rel: _Rel, error: BaseException | None = None) -> UserStatusC
 
 _LOCKED = [f.LOCK_USER, f.ROLES, f.LOCK_OWNERS, f.COUNT_OWNERS]
 _CASCADE = [m._DISABLE, m._REVOKE_SESSIONS, m._LIVE_GRANTS, m._REVOKE_GRANTS]
+#: The user as `identity_sqlalchemy.read_user` reads it under the lock (E42-T09's precondition).
+_USER_ROW = {
+    "id": str(_UID),
+    "username": "m",
+    "email": "m@example.invalid",
+    "display_name": None,
+    "roles": ["manager"],
+    "status": "active",
+    "mfa_enabled": True,
+    "mfa_required": True,
+    "last_login_at": None,
+    "created_at": None,
+    "updated_at": None,
+}
+
+
+def _readable(rel: _Rel) -> _Rel:
+    rel.rows[identity._USER_SQL] = [SimpleNamespace(_mapping=_USER_ROW)]
+    return rel
+
+
+async def test_disable_judges_its_precondition_on_the_user_read_under_the_lock() -> None:
+    """E42-T09 (#2649, UL3-T1): a caller's precondition (the PATCH's `If-Match`)
+    gets the user read in the transaction right after the user-row lock, before the owner lock or
+    any write; a change committed before that lock is what it sees."""
+    rel, seen = _readable(_Rel()), list[dict[str, object]]()
+    change = await _store(rel).disable(
+        _UID, actor=_ACTOR, now=_NOW, audit=_hook(rel), check=lambda u: seen.append(dict(u))
+    )
+    assert change is not None and change.after == "disabled" and rel.committed
+    assert seen == [_USER_ROW]
+    assert rel.order() == [
+        f.LOCK_USER,
+        identity._USER_SQL,
+        *_LOCKED[1:],
+        *_CASCADE,
+        f.CONSTRAINTS_NOW,
+        "AUDIT",
+    ]
+
+
+@pytest.mark.parametrize("status", ["active", "disabled"])
+async def test_a_refused_precondition_writes_nothing_even_for_a_repeat(status: str) -> None:
+    """Refused, the transaction rolls back before any write or audit, a repeat (AC5's no-op)
+    included: a stale tag is stale whatever the status."""
+    rel = _readable(_Rel(status=status))
+
+    def stale(_: object) -> None:
+        raise LookupError("stale")
+
+    with pytest.raises(LookupError):
+        await _store(rel).disable(_UID, actor=_ACTOR, now=_NOW, audit=_hook(rel), check=stale)
+    assert rel.order() == [f.LOCK_USER, identity._USER_SQL] and not rel.committed
+
+
+async def test_a_user_gone_by_the_precondition_read_is_none() -> None:
+    rel = _Rel()  # the user row locks, but no undeleted user reads back
+    checked = list[object]()
+    got = await _store(rel).disable(
+        _UID, actor=_ACTOR, now=_NOW, audit=_hook(rel), check=checked.append
+    )
+    assert got is None and checked == [] and not rel.committed
+    assert rel.order() == [f.LOCK_USER, identity._USER_SQL]
 
 
 async def test_disable_statement_order_lock_user_lock_owners_dml_constraints_audit_commit() -> None:

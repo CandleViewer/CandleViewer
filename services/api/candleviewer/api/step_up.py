@@ -524,6 +524,8 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # #2751 (SR-025, 04 §7.2.2 rows 38, 40, 50, 52). Mounted today: the export and deleteUser.
     ("PATCH", re.compile(r"^/users/[^/]+$"), "users"),  # updateUser
     ("DELETE", re.compile(r"^/users/[^/]+$"), "users"),  # deleteUser
+    # E42-T09 (#2649, 04 §7.2.2 row 40a): revokeUserSession; listing a user's sessions is a read.
+    ("DELETE", re.compile(r"^/users/[^/]+/sessions/[^/]+$"), "users"),
     ("PUT", re.compile(r"^/users/[^/]+/account-access$"), "users"),  # setUserAccountAccess
     ("POST", re.compile(r"^/admin/audit/export$"), "audit"),  # exportAuditLog
     # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.

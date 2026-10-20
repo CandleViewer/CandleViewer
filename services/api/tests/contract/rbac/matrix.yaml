@@ -1506,8 +1506,7 @@ operations:
     permissions: ['users:read']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   DELETE /users/{userId}:
     permissions: ['users:write']
@@ -1519,8 +1518,7 @@ operations:
     permissions: ['users:write']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /users/{userId}/account-access:
     permissions: ['users:read']
@@ -1568,15 +1566,13 @@ operations:
     permissions: ['users:read']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml (E42-T04 S1); E42-T09 S12 (admin sessions) mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   DELETE /users/{userId}/sessions/{sessionId}:
     permissions: ['users:write']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml (E42-T04 S1); E42-T09 S12 (admin sessions) mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /watchlists:
     permissions: ['workspaces:read']

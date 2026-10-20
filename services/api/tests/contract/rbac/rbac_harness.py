@@ -394,6 +394,9 @@ class UserStore:
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None:
         return self.roles.get(user_id)
 
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        return "active" if user_id in self.roles else None
+
     async def count_active_owners(self) -> int:
         return sum("owner" in r for r in self.roles.values())
 
@@ -432,7 +435,13 @@ class LifecycleStore:
     """The S3 disable store's seam: it finds no user, so an authorised disable is a 404."""
 
     async def disable(
-        self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: Any
+        self,
+        user_id: uuid.UUID,
+        *,
+        actor: uuid.UUID,
+        now: datetime,
+        audit: Any,
+        check: Any = None,  # E42-T09: a PATCH's `If-Match`, judged under the lock
     ) -> UserStatusChange | None:
         return None
 

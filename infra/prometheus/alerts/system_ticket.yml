@@ -276,8 +276,11 @@ groups:
         # closing record of a disable that did not commit could not be written. Counted, logged
         # at error (`users.disable.step`) and never rolled back. A ticket, not a page: the
         # committed transaction already disabled the user and revoked their sessions and grants,
-        # and the permission readers refuse a user who is not active (O5). The grants push has
-        # its own ticket below. Held past the quiet-hours mute as the WS any-event tickets are
+        # and the permission readers refuse a user who is not active (O5). E42-T09 (#2649): or
+        # the live-socket push of a committed role change failed (`roles_push`, logged
+        # `users.update.step`): the new roles hold for every new request, but the user's open
+        # sockets may keep their earlier permissions. The grants push has its own ticket below.
+        # Held past the quiet-hours mute as the WS any-event tickets are
         # (ws_gateway.yml header, with its two preconditions); every series is bound at import
         # (admin/lifecycle_metrics.py), so the first failure after a restart is an increase.
         expr: >-

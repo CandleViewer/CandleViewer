@@ -57,6 +57,9 @@ class _World:
     async def get_roles(self, uid: uuid.UUID) -> frozenset[str] | None:
         return self.roles.get(uid)
 
+    async def get_status(self, uid: uuid.UUID) -> str | None:
+        return "active" if uid in self.roles else None
+
     async def count_active_owners(self) -> int:
         return sum("owner" in r for r in self.roles.values())
 

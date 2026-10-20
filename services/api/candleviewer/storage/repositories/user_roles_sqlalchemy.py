@@ -47,15 +47,20 @@ AuditHook = Callable[[frozenset[str]], Awaitable[None]]
 WRITE_AHEAD_TIMEOUT_S = 5.0
 
 # Dropped: roles outside the new set, and expired grants (re-granted fresh below).
-_DROP = sa.text(
+DROP_ROLES = sa.text(
     "DELETE FROM user_roles ur USING roles r WHERE ur.user_id = CAST(:id AS uuid) "
     "AND r.id = ur.role_id AND (r.name::text <> ALL(CAST(:roles AS text[])) "
     "OR (ur.expires_at IS NOT NULL AND ur.expires_at <= now()))"
 )
-_GRANT = sa.text(
+GRANT_ROLES = sa.text(
     "INSERT INTO user_roles (user_id, role_id, granted_by) SELECT CAST(:id AS uuid), r.id, "
     "CAST(:by AS uuid) FROM roles r WHERE r.name::text = ANY(CAST(:roles AS text[])) "
     "ON CONFLICT (user_id, role_id) DO NOTHING"
+)
+#: E42-T09 (#2649): the user's status, read without a lock for the route's owner-floor pre-check,
+#: which counts a target's owner grant only while the target is `active` (`counted_roles`).
+_STATUS = sa.text(
+    "SELECT status::text FROM users WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL"
 )
 
 
@@ -90,6 +95,12 @@ class SqlAlchemyUserRoleStore:
         async with self._relational.unit_of_work() as uow:
             return await effective_roles(uow.session, str(user_id))
 
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        """The user's status; `None` when the user does not exist (or is deleted)."""
+        async with self._relational.unit_of_work() as uow:
+            row = (await uow.session.execute(_STATUS, {"id": str(user_id)})).first()
+        return None if row is None else str(row[0])
+
     async def count_active_owners(self) -> int:
         """Active, undeleted users holding an unexpired owner grant (the trigger's count)."""
         async with self._relational.unit_of_work() as uow:
@@ -114,8 +125,8 @@ class SqlAlchemyUserRoleStore:
                 current = await effective_roles(s, uid) or current
                 counted = counted_roles(str(row[0]), current)
                 self._owner_floor(counted, roles, owners)
-                await s.execute(_DROP, {"id": uid, "roles": wanted})
-                await s.execute(_GRANT, {"id": uid, "roles": wanted, "by": str(actor)})
+                await s.execute(DROP_ROLES, {"id": uid, "roles": wanted})
+                await s.execute(GRANT_ROLES, {"id": uid, "roles": wanted, "by": str(actor)})
                 await s.execute(CONSTRAINTS_NOW)  # the floor trigger fires before the audit
                 await bounded_write_ahead(audit(current), self._audit_timeout_s)
                 await uow.commit()

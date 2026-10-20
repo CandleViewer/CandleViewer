@@ -1,10 +1,12 @@
 """`UserDisableService`: the disable cascade of `DELETE /users/{userId}` and E42-T09's `PATCH`
 (E42-T04 S4, #965, SR-029). In order (R7): `users:write`, then a self-target (SR-055), each refusal
 audited before any read (U25); the open-position and -order counts (O2: read only); the store's
-transaction (S3), whose hook refuses an unacknowledged unknown count (AC7) and writes
-`users.disable` ahead (O6). A change that did not commit closes that record with a `failure` one
-(C-2.9): `not_applied` if the store never reached its commit, `outcome_unknown` (no after state)
-if the commit itself failed, since a driver timeout or a cancellation there may have gone through.
+transaction (S3), which judges a caller's precondition (the PATCH's `If-Match`, E42-T09) on the
+user read under the user-row lock before any write, and whose hook refuses an unacknowledged
+unknown count (AC7) and writes `users.disable` ahead (O6). A change that did not commit closes
+that record with a `failure` one (C-2.9): `not_applied` if the store never reached its commit,
+`outcome_unknown` (no after state) if the commit itself failed, since a driver timeout or a
+cancellation there may have gone through.
 After such an error (not a cancellation) one read-back, in a new transaction the store bounds,
 settles it (#3445): a user read back as disabled, with the very sessions the hook saw revoked at
 the disable's instant, is taken as this change (with no session, a concurrent disable can pass for
@@ -46,6 +48,7 @@ from candleviewer.admin.errors import (
     PositionsUnknownError,
     UserLifecycleError,
     UserNotFoundError,
+    UserVersionConflictError,
 )
 from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total, user_lifecycle_total
 from candleviewer.audit.errors import AuditError
@@ -63,6 +66,7 @@ from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.user_lifecycle import (
     REVOKED_REASON,
     LifecycleAuditHook,
+    UserPrecondition,
     UserSelfTargetError,
     UserStatusChange,
 )
@@ -81,7 +85,13 @@ _AUDIT_DOWN = (AuditError, RuntimeError)  # `AuditWriter` refusals; RuntimeError
 
 class LifecycleStore(Protocol):  # `SqlAlchemyUserLifecycleStore` (S3): commits once `audit` returns
     async def disable(
-        self, user_id: uuid.UUID, *, actor: uuid.UUID, now: datetime, audit: LifecycleAuditHook
+        self,
+        user_id: uuid.UUID,
+        *,
+        actor: uuid.UUID,
+        now: datetime,
+        audit: LifecycleAuditHook,
+        check: UserPrecondition | None = None,  # E42-T09: judged under the user-row lock
     ) -> UserStatusChange | None: ...
 
     async def read_back_disable(  # #3445: in a new transaction, bounded; `None`: not disabled
@@ -262,8 +272,12 @@ class UserDisableService:
         *,
         actor: PrincipalSnapshot,
         acknowledge_unknown_positions: bool = False,
+        precondition: UserPrecondition | None = None,
     ) -> DisableResult:
-        """Raises a `UserLifecycleError` with nothing changed, or a store failure: rolled back,
+        """`precondition` (E42-T09: a PATCH's `If-Match`) is judged by the store on the user read
+        under its user-row lock, before any write; it refuses with `UserVersionConflictError`.
+
+        Raises a `UserLifecycleError` with nothing changed, or a store failure: rolled back,
         unless the commit itself failed and its read-back did not find the change (#3445), whose
         outcome is unknown: if it landed, a retry closes the user's sockets but records no B16
         REVOKE, since AC5's no-op returns no session ids. A caller cancelled after the commit, or
@@ -280,7 +294,9 @@ class UserDisableService:
             "open_order_count": orders,
             "acknowledged_unknown_positions": acknowledge_unknown_positions,
         }
-        change, recovered = await self._commit(user_id, actor.user_id, counts, rid, now, unknown)
+        change, recovered = await self._commit(
+            user_id, actor.user_id, counts, rid, now, unknown, precondition
+        )
         if change is None:
             raise self._refused("not_found", UserNotFoundError(uid))
         result = "disabled" if change.changed else "noop"  # a no-op writes no record (AC5)
@@ -346,6 +362,7 @@ class UserDisableService:
         rid: uuid.UUID | None,
         now: datetime,
         unknown: bool,
+        precondition: UserPrecondition | None,
     ) -> tuple[UserStatusChange | None, str | None]:
         """The store's change, and the error of a commit that raised if a read-back then found the
         change (#3445), else `None`."""
@@ -374,7 +391,12 @@ class UserDisableService:
             ahead.returned = True  # the store commits next (S3): a raise from here on is unknown
 
         try:
-            return await self._store.disable(user_id, actor=actor, now=now, audit=write_ahead), None
+            change = await self._store.disable(
+                user_id, actor=actor, now=now, audit=write_ahead, check=precondition
+            )
+            return change, None
+        except UserVersionConflictError as exc:  # the precondition, refused before any write
+            raise self._refused("version_conflict", exc) from None
         except OwnerFloorError as exc:  # refused under the lock, unaudited (UL1-D1)
             raise self._refused("last_owner", LastOwnerError(str(user_id))) from exc
         except UserSelfTargetError:  # the store's own SR-055 check: the same audited 403
