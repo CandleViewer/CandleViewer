@@ -126,6 +126,7 @@ E08_MODULES: Final = ("ingestion/", "book/", "orderbook_wiring.py")
 E08_FED_FAMILIES: Final = {
     "trades": "trades",
     "bars": "trades",
+    "indicators": "trades",  # E13-T02 (#426): its series' builder feeds on the tape, as `bars` does
     "book": "books",
     "ticker": "tickers",
 }
