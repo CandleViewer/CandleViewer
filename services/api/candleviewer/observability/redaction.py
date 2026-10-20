@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from typing import Any, Final
 
+from candleviewer.domain.order_link import EXT_ID, OUR_ID
 from candleviewer.observability.secret_type import Secret
 
 #: Exact key names redacted regardless of value shape (case-insensitive).
@@ -237,6 +238,24 @@ def _cut(text: str) -> str:
     return text[:end] + _TRUNCATED + tail
 
 
+#: #3865 (SR-E29-16): the correlation key (ADR-0006 rule 1). Both §8.3 forms hold a key-shape
+#: word (the 22-character group, the 32 hex digits), so the scan alone would mask every id.
+_ORDER_LINK_KEY: Final[str] = "order_link_id"
+
+
+def _is_order_link_id(key: object, value: object) -> bool:
+    """The typed pass, never a field exemption: an exact `str` under the exact key
+    `order_link_id` that fully matches a §8.3 form (`OUR_ID`, `EXT_ID`;
+    `docs/plan/24-internal-schemas.md`). `fullmatch`, as `$` also matches before a trailing
+    newline; a `str` subclass renders as it likes. Every other value is scanned as before."""
+    return (
+        type(key) is str
+        and key == _ORDER_LINK_KEY
+        and type(value) is str
+        and (OUR_ID.fullmatch(value) is not None or EXT_ID.fullmatch(value) is not None)
+    )
+
+
 def _redact_str_value(value: str) -> str:
     """Redact a string: each value labelled with a key name shows the key-name marker, and the
     whole string is a shape's marker when a value shape matches in it (#415). A long string is cut
@@ -325,6 +344,8 @@ def _redact_mapping(mapping: dict[Any, Any], depth: int = 0) -> dict[Any, Any]:
     for key, value in mapping.items():
         if _is_redact_key(key):
             out[key] = _KEY_NAME_MARKER
+        elif _is_order_link_id(key, value):
+            out[key] = value
         else:
             out[key] = _redact_value(value, depth)
     return out
