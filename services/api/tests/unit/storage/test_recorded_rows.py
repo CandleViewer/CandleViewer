@@ -10,6 +10,7 @@ replay's stream ordinal, never by comparing their `seq`.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -190,6 +191,8 @@ _ROWS: dict[StreamKind, dict[str, object]] = {
         "size": 1.5,
         "update_id": 7,
         "cross_seq": 9001,
+        "prev_update_id": 6,
+        "ts_match": NAIVE - timedelta(milliseconds=3),
     },
     StreamKind.ORDERBOOK_SNAPSHOT: {
         "depth": 50,
@@ -198,6 +201,7 @@ _ROWS: dict[StreamKind, dict[str, object]] = {
         "epoch_id": 3,
         "bids": '[["65000.5","1.25"]]',
         "asks": "[[65000.6, 2]]",
+        "ts_match": NAIVE - timedelta(milliseconds=2),
     },
     StreamKind.TICKERS: {
         "last_price": 65000.5,
@@ -258,12 +262,14 @@ _MAPPED: dict[StreamKind, tuple[int, Tiebreak, RecordedPayload]] = {
     StreamKind.ORDERBOOK_DELTA: (
         9001,
         (7, 200, "ask", D("64999.9")),
-        RecordedBookDelta(200, "ask", D("64999.9"), D("1.5"), 7, 9001),
+        RecordedBookDelta(200, "ask", D("64999.9"), D("1.5"), 7, 9001, 6, TS_US - 3_000),
     ),
     StreamKind.ORDERBOOK_SNAPSHOT: (
         12,
         (11, 50, 3),
-        RecordedBookSnapshot(50, 11, 12, ((D("65000.5"), D("1.25")),), ((D("65000.6"), D(2)),)),
+        RecordedBookSnapshot(
+            50, 11, 12, ((D("65000.5"), D("1.25")),), ((D("65000.6"), D(2)),), TS_US - 2_000
+        ),
     ),
     StreamKind.TICKERS: (0, (), _TICKER),
     StreamKind.KLINES: (
@@ -296,6 +302,47 @@ def test_each_stream_maps_its_row_to_the_whole_expected_event(stream: StreamKind
     event = event_from_row(stream, _stored(stream))
 
     assert event == RecordedEvent(TS_US, seq, "BTCUSDT", stream, tiebreak, payload)
+
+
+@pytest.mark.parametrize("stored", ["absent", "null"])
+@pytest.mark.parametrize("stream", [StreamKind.ORDERBOOK_DELTA, StreamKind.ORDERBOOK_SNAPSHOT])
+def test_a_book_row_recorded_before_0006_reads_its_replay_columns_as_none(
+    stream: StreamKind, stored: str
+) -> None:
+    """E26-T03: a table or Parquet part from before QuestDB 0006 has no `prev_update_id` /
+    `ts_match`, and a row recorded before it holds NULL. Both read `None`, never a guess (the
+    replay derives them, 24 Sec.13.7); every other field maps as before."""
+    seq, tiebreak, payload = _MAPPED[stream]
+    expected: RecordedPayload
+    if isinstance(payload, RecordedBookDelta):
+        expected = dataclasses.replace(payload, prev_update_id=None, ts_match=None)
+    else:
+        assert isinstance(payload, RecordedBookSnapshot)
+        expected = dataclasses.replace(payload, ts_match=None)
+    row = _stored(stream)
+    for column in {"prev_update_id", "ts_match"} & set(_ROWS[stream]):
+        if stored == "absent":
+            del row[column]
+        else:
+            row[column] = None
+
+    event = event_from_row(stream, row)
+
+    assert event == RecordedEvent(TS_US, seq, "BTCUSDT", stream, tiebreak, expected)
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [NAIVE, AWARE, AWARE.astimezone(timezone(timedelta(hours=-3))), TS_US],
+    ids=["pgwire-naive", "parquet-aware", "other-offset", "ilp-int"],
+)
+def test_ts_match_reads_as_epoch_us_whichever_tier_shape_it_has(shape: object) -> None:
+    delta = event_from_row(StreamKind.ORDERBOOK_DELTA, _delta(ts_match=shape))
+    snapshot = event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, _snapshot(ts_match=shape))
+
+    assert isinstance(delta.payload, RecordedBookDelta)
+    assert isinstance(snapshot.payload, RecordedBookSnapshot)
+    assert delta.payload.ts_match == snapshot.payload.ts_match == TS_US
 
 
 @pytest.mark.parametrize("confirmed", [None, False])
@@ -376,6 +423,9 @@ def test_unusable_required_price_fails_closed(bad: object) -> None:
         (StreamKind.TRADES, _trade(ts="yesterday"), "ts"),
         (StreamKind.TRADES, _trade(ts=True), "ts"),  # a bool is not epoch µs: no int fast path
         (StreamKind.ORDERBOOK_DELTA, _delta(update_id=None), "update_id"),
+        (StreamKind.ORDERBOOK_DELTA, _delta(prev_update_id="u7"), "prev_update_id"),
+        (StreamKind.ORDERBOOK_DELTA, _delta(ts_match="soon"), "ts_match"),
+        (StreamKind.ORDERBOOK_SNAPSHOT, _snapshot(ts_match=True), "ts_match"),
         (StreamKind.ORDERBOOK_SNAPSHOT, _snapshot(bids=None), "bids"),
         (StreamKind.ORDERBOOK_SNAPSHOT, _snapshot(asks='[["NaN","1"]]'), "asks"),
         (
@@ -638,6 +688,7 @@ def test_recorded_book_frames_map_back_to_their_exact_levels() -> None:
             assert snap.payload.bids == tuple((lv.price, lv.qty) for lv in ev.bids)
             assert snap.payload.asks == tuple((lv.price, lv.qty) for lv in ev.asks)
             assert snap.seq == ev.cross_seq
+            assert snap.payload.ts_match == ev.ts_match  # E26-T03: recorded, never derived
             continue
         levels = [(lv.price, lv.qty) for lv in (*ev.bids, *ev.asks)]
         for (price, qty), record in zip(levels, delta_records(ev), strict=True):
@@ -645,3 +696,7 @@ def test_recorded_book_frames_map_back_to_their_exact_levels() -> None:
             assert isinstance(got.payload, RecordedBookDelta)
             assert (got.payload.price, got.payload.size) == (price, qty)
             assert (got.seq, got.payload.update_id) == (ev.cross_seq, ev.update_id)
+            assert (got.payload.prev_update_id, got.payload.ts_match) == (
+                ev.prev_update_id,
+                ev.ts_match,
+            )

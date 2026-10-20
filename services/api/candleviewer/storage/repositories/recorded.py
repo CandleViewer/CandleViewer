@@ -502,7 +502,17 @@ def _book_delta(row: _Row) -> _Mapped:
     depth, side = _req_int(row, "depth"), _req_member(row, "side", _BOOK_SIDES)
     price, update_id = _req_decimal(row, "price"), _req_int(row, "update_id")
     cross_seq = _opt_int(row, "cross_seq")
-    payload = RecordedBookDelta(depth, side, price, _req_decimal(row, "size"), update_id, cross_seq)
+    # Absent (a pre-0006 table or Parquet part) or NULL (a row recorded before 0006): `None`.
+    payload = RecordedBookDelta(
+        depth,
+        side,
+        price,
+        _req_decimal(row, "size"),
+        update_id,
+        cross_seq,
+        _opt_int(row, "prev_update_id"),
+        _opt_ts(row, "ts_match"),
+    )
     return _book_seq(update_id, cross_seq), (update_id, depth, side, price), payload
 
 
@@ -510,7 +520,12 @@ def _book_snapshot(row: _Row) -> _Mapped:
     depth, update_id = _req_int(row, "depth"), _req_int(row, "update_id")
     cross_seq, epoch_id = _opt_int(row, "cross_seq"), _opt_id(row, "epoch_id")
     payload = RecordedBookSnapshot(
-        depth, update_id, cross_seq, _levels(row, "bids"), _levels(row, "asks")
+        depth,
+        update_id,
+        cross_seq,
+        _levels(row, "bids"),
+        _levels(row, "asks"),
+        _opt_ts(row, "ts_match"),
     )
     epoch = -1 if epoch_id is None else epoch_id
     return _book_seq(update_id, cross_seq), (update_id, depth, epoch), payload
