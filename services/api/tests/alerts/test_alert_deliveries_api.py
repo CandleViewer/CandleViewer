@@ -212,7 +212,7 @@ def test_ack_all_acknowledges_only_the_callers_sent_rows(env: Env) -> None:
 
 
 def test_ack_all_writes_its_record_before_any_batch_commits(env: Env) -> None:
-    """CR-03: write-ahead (C-2.9) - a failing audit writer leaves every row unacknowledged."""
+    """#3917 review CR-03: write-ahead (C-2.9); a failing writer leaves every row unacked."""
     d = env.store.add()
 
     async def refuse(action: str, **kw: object) -> None:
@@ -369,7 +369,7 @@ def test_a_failing_hook_never_fails_the_committed_request(env: Env) -> None:
 def test_a_hook_that_outlives_its_bound_is_dropped_not_waited_on(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """CR-08: the committed request answers; the topic repairs a lost delta itself."""
+    """#3917 review CR-08: the committed request answers; the topic repairs a lost delta."""
     monkeypatch.setattr(alert_deliveries, "CHANGE_HOOK_TIMEOUT_S", 0.01)
     env.change_hangs = True
     d = env.store.add()
@@ -378,7 +378,7 @@ def test_a_hook_that_outlives_its_bound_is_dropped_not_waited_on(
     assert env.changes == [[d.id]]
 
 
-# --- lost races (CR-07) --------------------------------------------------------------------
+# --- lost races (#3917 review CR-07) ------------------------------------------------------
 
 
 def test_ack_whose_row_vanished_after_losing_the_race_is_404(env: Env) -> None:
@@ -406,15 +406,16 @@ def test_desktop_report_that_loses_the_race_is_204_with_no_metric_and_no_hook(en
     assert env.audit.actions() == ["alert.desktop_outcome"]  # the attempt stays recorded
 
 
-def test_desktop_report_is_settled_for_the_caller_only(env: Env) -> None:
-    """SR-E40T04A-03: the store re-checks the owner in the update itself."""
+def test_desktop_report_passes_the_callers_id_to_the_store(env: Env) -> None:
+    """The store's update re-checks it (#3917 review SR-E40T04A-03; the SQL is pinned in
+    `test_alert_inbox_store.py` and on Postgres in `test_notifications_union_pg.py`)."""
     did = _desktop(env)
     env.c.post(f"/alerts/deliveries/{did}/desktop-outcome",
                json={"outcome": "shown", "permission": "granted"})  # fmt: skip
     assert env.store.desktop_reports == [(did, USER_A)]
 
 
-# --- the denial budget (SR-E40T04A-02) ------------------------------------------------------
+# --- the denial budget (#3917 review SR-E40T04A-02) --------------------------------------
 
 
 class _Clock:
@@ -470,7 +471,7 @@ def test_the_budget_is_bounded_and_logs_an_evicted_held_count() -> None:
         budget.admit("u3")  # u1 is the least recently used: evicted with its held count
     assert len(budget) == 2
     assert [(e["event"], e.get("held")) for e in logs] == [
-        ("alert_denied_audit_held", None),
+        ("alert_denied_audit_held", 1),
         ("alert_denied_audit_held_evicted", 1),
     ]
     assert budget.admit("u1") == 0  # a fresh entry: the evicted count was logged, not carried
@@ -486,17 +487,64 @@ def test_the_budget_refuses_bounds_that_are_not_positive(
         DenialBudget(per_window=per_window, window_s=window_s, max_callers=max_callers)
 
 
-# --- what an answer never carries (SR-E40T04A-06) --------------------------------------------
+# --- what an answer never carries (#3917 review SR-E40T04A-06) ---------------------------
 
-#: Delivery and source columns that are never served: the firing `context`, the alert's SECRET
-#: webhook columns, who acked, and the raw source payloads of the union's other branches.
-NEVER_SERVED = ("context", "webhook_url", "webhook_secret", "_enc", "acked_by", "payload",
-                "details", "ret_msg", "http_status", "attempt")  # fmt: skip
+#: A value the rows hold in fields that are never served (the firing `context`, the alert's
+#: SECRET webhook columns under any key, who acked): it must not reach the wire anywhere.
+_MARKER = "never-served-7f3a"
+
+
+def _keys(doc: object) -> set[str]:
+    if isinstance(doc, dict):
+        return set(doc) | {k for v in doc.values() for k in _keys(v)}
+    if isinstance(doc, list):
+        return {k for v in doc for k in _keys(v)}
+    return set()
 
 
 def test_no_list_answer_carries_a_withheld_field(env: Env) -> None:
-    env.store.add(context={"symbol": "BTCUSDT", "webhook_url_enc": "x", "payload": {"a": 1}})
-    env.store.add(status="acked", acked_at=T0, acked_by=USER_A)
-    body = env.c.get("/alerts/deliveries").text
-    for name in NEVER_SERVED:
-        assert f'"{name}' not in body, name
+    from candleviewer.api.contract_conformance import load_openapi_spec
+
+    held = {"symbol": "BTCUSDT", "webhook_url_enc": _MARKER, "webhook_secret_enc": _MARKER,
+            "payload": {"a": _MARKER}}  # fmt: skip
+    env.store.add(context=held)
+    env.store.add(status="acked", acked_at=T0, acked_by=_MARKER)
+    r = env.c.get("/alerts/deliveries")
+    assert _MARKER not in r.text
+    declared = set(load_openapi_spec()["components"]["schemas"]["AlertDelivery"]["properties"])
+    assert _keys(r.json()["items"]) == declared  # field by field: exactly the contract's
+
+
+async def test_a_denial_whose_record_fails_keeps_its_slot_and_its_count() -> None:
+    """A failed write gives back what `admit` took: the next record still carries the count."""
+    clock = _Clock()
+    env = Env(denials=DenialBudget(per_window=1, window_s=60, clock=clock))
+    b = env.store.add(user=USER_B, alert=ALERT_B)
+
+    async def refuse(action: str, **kw: object) -> None:
+        raise RuntimeError("audit writer down")
+
+    real, env.audit.emit = env.audit.emit, refuse  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="audit writer down"):
+        env.c.post(f"/alerts/deliveries/{b.id}/ack")
+    env.audit.emit = real  # type: ignore[method-assign]
+    assert env.c.post(f"/alerts/deliveries/{b.id}/ack").status_code == 404
+    (denial,) = env.denials()  # the slot came back: written, carrying the failed one
+    assert denial["after_state"] == {"suppressed_before": 1}
+
+
+def test_held_runs_are_logged_with_their_count_at_powers_of_ten() -> None:
+    budget = DenialBudget(per_window=1, window_s=60, clock=_Clock())
+    budget.admit("u1")
+    with capture_logs() as logs:
+        for _ in range(100):
+            budget.admit("u1")
+    assert [e["held"] for e in logs if e["event"] == "alert_denied_audit_held"] == [1, 10, 100]
+
+
+@pytest.mark.parametrize(
+    "bound", [{"from": "0001-01-01T00:00:00+14:00"}, {"to": "9999-12-31T23:59:59-14:00"}]
+)
+def test_a_window_bound_without_a_utc_instant_is_422(env: Env, bound: dict[str, str]) -> None:
+    r = env.c.get("/alerts/deliveries", params=bound)
+    assert r.status_code == 422 and r.json()["errors"][0]["rule"] == "datetime_range"

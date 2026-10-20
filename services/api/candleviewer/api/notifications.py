@@ -8,9 +8,11 @@ the union is merged (`storage/repositories/notifications_sqlalchemy.py`). A sour
 no permission for is simply absent - never a 403, never a partial row. Rules are filtered by the
 rules module's own visibility predicate (`RulesManager.visible_rule_ids`), so a rule's history is
 visible here exactly when the rule itself is. `system_events` is the Owner's alone
-(SR-E40T04A-01): the role-neutral view `23-ws-protocol.md` §15.9 gives Managers and Viewers on the
-`system` topic is not defined for these rows, so nothing of it is served to them; the Owner's
-`message` passes the shared redaction first, as `admin/ops/incidents.py` does.
+(04-security-program.md §7.2.2 row 34b, C-12.4): the role-neutral view row 48 and SR-188 give
+Managers and Viewers on the `system` topic is not defined for these rows, so nothing of it is
+served to them. The Owner's `message` passes the shared redaction first, as
+`admin/ops/incidents.py` does, off the event loop once a page holds more than
+`OFFLOAD_SYSTEM_ROWS` of them (C-2.17).
 
 `Notification.id` is `uuid5(namespace, source_table + source_id)` (24-internal-schemas.md §1.6),
 so one source row always maps to one id. `source_id` stays contract-typed (a uuid, C-6.1): the
@@ -22,6 +24,7 @@ other sources until their owners define read state.
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
 # handler signatures at definition time (string annotations cannot see the closures).
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, Final, Literal
@@ -54,6 +57,9 @@ VisibleRules = Callable[[Actor], Awaitable[frozenset[str]]]
 #: A redacted system message is cut to this many characters (the incident title's cut is 200;
 #: a notification's title is the whole message, so the bound is wider).
 SYSTEM_TITLE_MAX = 500
+#: Past this many system rows a page is shaped in a worker thread, as `admin/ops/incidents.py`
+#: redacts past `OFFLOAD_ROWS`: redaction is ~0.1 ms per 2 kB, too much for the loop at 500 rows.
+OFFLOAD_SYSTEM_ROWS = 50
 
 _RULE_EVENT: Final = {"action_ok": "action done", "action_fail": "action failed",
                       "throttled": "throttled"}  # fmt: skip
@@ -80,7 +86,7 @@ def notification_scope(
     actor: Actor, kinds: Sequence[str], rule_ids: frozenset[str]
 ) -> NotificationScope:
     """The caller's view per source: its permission, then its grants (Owner: all accounts).
-    `system` is the Owner's alone (SR-E40T04A-01); no role is a way around it."""
+    `system` is the Owner's alone (04 §7.2.2 row 34b, C-12.4); no role is a way around it."""
     want = frozenset(kinds or KINDS)
     perms, owner = actor.perms, actor.is_owner
     return NotificationScope(
@@ -141,6 +147,10 @@ def dump(r: NotificationRow) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _dump_page(rows: Sequence[NotificationRow]) -> list[dict[str, Any]]:
+    return [dump(r) for r in rows]
+
+
 def make_notifications_router(
     store_provider: Callable[[], NotificationStore | None],
     actor_resolver: Resolver | None,
@@ -174,7 +184,10 @@ def make_notifications_router(
             )
         except ValueError:
             raise Problem(400, "validation_failed", "Bad request", "invalid cursor") from None
-        items = [dump(r) for r in rows]
+        if sum(r.nkind == "system" for r in rows) > OFFLOAD_SYSTEM_ROWS:
+            items = await asyncio.to_thread(_dump_page, rows)  # redaction off the loop
+        else:
+            items = _dump_page(rows)
         nxt = None if last is None else encode_cursor(last)
         meta = {"next_cursor": nxt, "has_more": nxt is not None, "count": len(items)}
         return JSONResponse({"items": items, "meta": meta})
@@ -186,6 +199,7 @@ __all__ = [
     "KINDS",
     "LIST_NOTIFICATIONS_QUERY",
     "NOTIFICATION_NAMESPACE",
+    "OFFLOAD_SYSTEM_ROWS",
     "SYSTEM_TITLE_MAX",
     "VisibleRules",
     "dump",

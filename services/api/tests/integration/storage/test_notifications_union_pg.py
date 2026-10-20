@@ -4,19 +4,20 @@ Covers what a fake unit of work cannot:
 
 - each source's own visibility filter applied in SQL: the caller's in-app record only (no other
   channel, nothing undelivered, no other user's); readable rules; granted accounts' orders - none
-  at all without `orders:read`; `system_events` the Owner's alone (SR-E40T04A-01);
+  at all without `orders:read`; `system_events` the Owner's alone (04 §7.2.2 row 34b);
 - the process's exchange environment on every account-bound row (C-2.11);
 - one total order across sources when timestamps tie, keyset paging without gaps or repeats;
 - the inbox's conditional updates: idempotent ack, a bounded ack-all that returns its ids and
   touches nothing else, the desktop transitions for the owner only, failure + one notice.
 
-Not run locally (no docker); exercised by the integration CI job.
+Needs docker (testcontainers); in CI it runs in the merge-group integration lane.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -128,18 +129,26 @@ def world(pg_dsn: str) -> dict[str, Any]:
         w["se_acc1"] = _system(c, "exchange", acc1)
         w["se_acc2"] = _system(c, "exchange", acc2)
         w["se_live"] = _system(c, "exchange", live)
-    w["dsn"] = pg_dsn
     return w
 
 
-def _union(w: dict[str, Any]) -> SqlAlchemyNotificationRepository:
-    """Per test: an async engine belongs to the event loop of the test that first used it."""
-    rel = SqlAlchemyRelationalRepository(w["dsn"], "n-it")
+@pytest.fixture
+async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
+    """One engine per test, disposed after it: an async engine belongs to the event loop of the
+    test that first used it."""
+    repo = SqlAlchemyRelationalRepository(pg_dsn, "n-it")
+    yield repo
+    await repo.dispose()
+
+
+@pytest.fixture
+def union(rel: SqlAlchemyRelationalRepository) -> SqlAlchemyNotificationRepository:
     return SqlAlchemyNotificationRepository(rel, env=_ENV)
 
 
-def _inbox(w: dict[str, Any]) -> SqlAlchemyAlertDeliveryRepository:
-    return SqlAlchemyAlertDeliveryRepository(SqlAlchemyRelationalRepository(w["dsn"], "i-it"))
+@pytest.fixture
+def inbox(rel: SqlAlchemyRelationalRepository) -> SqlAlchemyAlertDeliveryRepository:
+    return SqlAlchemyAlertDeliveryRepository(rel)
 
 
 def _manager(w: dict[str, Any], **over: Any) -> NotificationScope:
@@ -155,13 +164,18 @@ def _owner(w: dict[str, Any]) -> NotificationScope:
     return _manager(w, rule_ids=rules, accounts=None, system=True)
 
 
-async def _all(w: dict[str, Any], scope: NotificationScope, **kw: Any) -> set[tuple[str, int]]:
-    rows, _ = await _union(w).list_page(scope, limit=500, **kw)
+Union = SqlAlchemyNotificationRepository
+
+
+async def _all(union: Union, scope: NotificationScope, **kw: Any) -> set[tuple[str, int]]:
+    rows, _ = await union.list_page(scope, limit=500, **kw)
     return {(r.nkind, r.src_id) for r in rows}
 
 
-async def test_a_manager_sees_each_source_through_its_own_filter(world: dict[str, Any]) -> None:
-    got = await _all(world, _manager(world))
+async def test_a_manager_sees_each_source_through_its_own_filter(
+    world: dict[str, Any], union: Union
+) -> None:
+    got = await _all(union, _manager(world))
     w = world
     assert {
         ("alert", w["d_sent"]), ("alert", w["d_acked"]), ("alert", w["d_notice"]),
@@ -180,18 +194,20 @@ async def test_a_manager_sees_each_source_through_its_own_filter(world: dict[str
         ("order", w["oe_acc2"]),  # an account not granted
         ("order", w["oe_live"]),  # granted, but another environment's account (C-2.11)
     }  # fmt: skip
-    assert not {k for k, _ in got} & {"system"}  # SR-E40T04A-01: the Owner's alone
+    assert not {k for k, _ in got} & {"system"}  # the Owner's alone (04 §7.2.2 row 34b)
 
 
-async def test_without_orders_read_no_order_event_is_served(world: dict[str, Any]) -> None:
-    got = await _all(world, _manager(world, orders=False))
+async def test_without_orders_read_no_order_event_is_served(
+    world: dict[str, Any], union: Union
+) -> None:
+    got = await _all(union, _manager(world, orders=False))
     assert not {k for k, _ in got} & {"order"}
 
 
 async def test_the_owner_sees_the_system_stream_and_every_account_of_its_environment(
-    world: dict[str, Any],
+    world: dict[str, Any], union: Union
 ) -> None:
-    got = await _all(world, _owner(world))
+    got = await _all(union, _owner(world))
     w = world
     assert {
         ("rule", w["re_b"][0]), ("order", w["oe_acc2"]), ("system", w["se_auth"]),
@@ -206,17 +222,17 @@ async def test_the_owner_sees_the_system_stream_and_every_account_of_its_environ
 
 
 async def test_ties_keep_one_total_order_and_pages_neither_skip_nor_repeat(
-    world: dict[str, Any],
+    world: dict[str, Any], union: Union
 ) -> None:
     scope = _owner(world)
-    rows, _ = await _union(world).list_page(scope, limit=500)
+    rows, _ = await union.list_page(scope, limit=500)
     keys = [(r.ts, r.src, r.src_id) for r in rows]
     assert keys == sorted(keys, reverse=True)
     assert len({src for ts, src, _ in keys if ts == _TS}) == 4  # all four sources tie at _TS
     paged: list[tuple[datetime, int, int]] = []
     cursor: str | None = None
     for _ in range(len(keys)):
-        page, last = await _union(world).list_page(scope, limit=2, cursor=cursor)
+        page, last = await union.list_page(scope, limit=2, cursor=cursor)
         paged += [(r.ts, r.src, r.src_id) for r in page]
         if last is None:
             break
@@ -224,16 +240,17 @@ async def test_ties_keep_one_total_order_and_pages_neither_skip_nor_repeat(
     assert paged == keys
 
 
-async def test_unread_only_is_what_can_still_be_acked(world: dict[str, Any]) -> None:
-    got = await _all(world, _manager(world), unread_only=True)
+async def test_unread_only_is_what_can_still_be_acked(world: dict[str, Any], union: Union) -> None:
+    got = await _all(union, _manager(world), unread_only=True)
     assert {("alert", world["d_sent"]), ("alert", world["d_notice"])} <= got
     assert ("alert", world["d_acked"]) not in got
 
 
-async def test_ack_twice_keeps_the_first_acked_at(world: dict[str, Any], pg_dsn: str) -> None:
+async def test_ack_twice_keeps_the_first_acked_at(
+    world: dict[str, Any], pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
+) -> None:
     with _mig._conn(pg_dsn) as c:
         did = _delivery(c, world["alert_a"], world["user_a"], queued_at=_TS + timedelta(days=1))
-    inbox = _inbox(world)
     first = await inbox.ack(did, world["user_a"])
     assert first is not None and first.status == "acked"
     assert await inbox.ack(did, world["user_a"]) is None  # the conditional update loses
@@ -242,7 +259,9 @@ async def test_ack_twice_keeps_the_first_acked_at(world: dict[str, Any], pg_dsn:
     assert await inbox.ack(did, world["user_b"]) is None
 
 
-async def test_ack_all_is_bounded_returns_its_ids_and_touches_nothing_else(pg_dsn: str) -> None:
+async def test_ack_all_is_bounded_returns_its_ids_and_touches_nothing_else(
+    pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
+) -> None:
     with _mig._conn(pg_dsn) as c:
         alert = _mig._alert(c)
         user = _owner_of(c, alert)
@@ -251,10 +270,9 @@ async def test_ack_all_is_bounded_returns_its_ids_and_touches_nothing_else(pg_ds
         failed = _delivery(c, alert, user, status="failed")
         other_alert = _mig._alert(c)
         other = _delivery(c, other_alert, _owner_of(c, other_alert))
-    inbox = SqlAlchemyAlertDeliveryRepository(SqlAlchemyRelationalRepository(pg_dsn, "ack-it"))
     assert await inbox.unacked_count(user) == 3
     first = await inbox.ack_all(user, cap=2)
-    assert first == [sent[2], sent[1]]  # newest first, at most `cap`
+    assert sorted(first) == [sent[1], sent[2]]  # the newest `cap`; RETURNING has no order
     assert await inbox.ack_all(user, cap=2) == [sent[0]]
     assert await inbox.ack_all(user, cap=2) == []
     assert await inbox.unacked_count(user) == 0
@@ -269,11 +287,10 @@ async def test_ack_all_is_bounded_returns_its_ids_and_touches_nothing_else(pg_ds
 
 
 async def test_desktop_shown_moves_only_the_owners_queued_row(
-    world: dict[str, Any], pg_dsn: str
+    world: dict[str, Any], pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
 ) -> None:
     with _mig._conn(pg_dsn) as c:
         did = _delivery(c, world["alert_a"], world["user_a"], channel="desktop", status="queued")
-    inbox = _inbox(world)
     assert await inbox.report_desktop(did, user_id=world["user_b"], error=None,
                                       notice_title="n") is None  # fmt: skip
     got = await inbox.report_desktop(did, user_id=world["user_a"], error=None, notice_title="n")
@@ -285,11 +302,10 @@ async def test_desktop_shown_moves_only_the_owners_queued_row(
 
 
 async def test_desktop_failure_fails_the_row_and_adds_one_notice(
-    world: dict[str, Any], pg_dsn: str
+    world: dict[str, Any], pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
 ) -> None:
     with _mig._conn(pg_dsn) as c:
         did = _delivery(c, world["alert_a"], world["user_a"], channel="desktop", status="queued")
-    inbox = _inbox(world)
     user = world["user_a"]
     got = await inbox.report_desktop(
         did, user_id=user, error="desktop notification blocked", notice_title="n"
@@ -305,11 +321,12 @@ async def test_desktop_failure_fails_the_row_and_adds_one_notice(
     assert notices == (1,)
 
 
-async def test_alert_owner_survives_a_soft_delete(pg_dsn: str) -> None:
+async def test_alert_owner_survives_a_soft_delete(
+    pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
+) -> None:
     with _mig._conn(pg_dsn) as c:
         alert = _mig._alert(c)  # its own alert: the shared world's stay untouched
         owner = _owner_of(c, alert)
         c.execute("UPDATE alerts SET deleted_at = now() WHERE id = %s", (alert,))
-    inbox = SqlAlchemyAlertDeliveryRepository(SqlAlchemyRelationalRepository(pg_dsn, "own-it"))
     assert await inbox.alert_owner(alert) == owner
     assert await inbox.alert_owner(str(uuid.uuid4())) is None

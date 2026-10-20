@@ -43,8 +43,8 @@ class NotificationScope:
       visibility predicate); an empty set is none;
     - `orders` / `accounts`: order events on these accounts (`orders:read`); `accounts` None is
       every account (the Owner), an empty set none;
-    - `system`: the whole `system_events` stream, the Owner's alone (SR-E40T04A-01: no
-      role-neutral view of it is approved for Managers or Viewers yet).
+    - `system`: the whole `system_events` stream, the Owner's alone (04 §7.2.2 row 34b: no
+      role-neutral view of these rows is approved for Managers or Viewers, C-12.4).
     """
 
     user_id: str
@@ -87,7 +87,7 @@ def encode_cursor(row: NotificationRow) -> str:
 def decode_cursor(cursor: str) -> tuple[datetime, int, int]:
     """Malformed or foreign cursors raise `ValueError` (the router's 400), never a value the
     driver would refuse at bind time: the source rank must be one of `SOURCES`, the id a bigint,
-    the timestamp offset-aware and representable in UTC (SR-E40T04A-04, CR-06)."""
+    the timestamp offset-aware and representable in UTC (#3917)."""
     try:
         ts, src, src_id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
         when = datetime.fromisoformat(ts)

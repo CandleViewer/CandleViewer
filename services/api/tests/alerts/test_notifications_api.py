@@ -8,6 +8,7 @@ fake that records the scope it was given.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -118,11 +119,19 @@ def test_viewer_scope_is_every_source_it_holds_on_its_granted_accounts(env: Env)
     assert s.rule_ids == {RULE} and s.accounts == {ACCT} and s.user_id == USER
 
 
-@pytest.mark.parametrize("roles", ["viewer", "manager", "no permission at all"])
+#: The seeded permissions of each role (migration 0002 / `auth/rbac_seed.json`), but `admin:*`.
+_ROLE_PERMS = {
+    "viewer": VIEWER,
+    "manager": VIEWER | {"rules:write", "alerts:write", "orders:write", "positions:write"},
+    "no permission at all": frozenset(),
+}
+
+
+@pytest.mark.parametrize("roles", sorted(_ROLE_PERMS))
 def test_no_one_but_the_owner_gets_system_rows(env: Env, roles: str) -> None:
-    """SR-E40T04A-01: fail closed - no role-neutral view of `system_events` is approved."""
-    perms = frozenset() if roles == "no permission at all" else VIEWER | {"rules:write"}
-    env.actor = Actor(USER, "s", perms, frozenset({ACCT}))
+    """Fail closed (04 §7.2.2 row 34b; #3917 review SR-E40T04A-01): no role-neutral view of
+    `system_events` is approved, whatever a non-Owner holds."""
+    env.actor = Actor(USER, "s", _ROLE_PERMS[roles], frozenset({ACCT}))
     assert env.scope().system is False
     assert env.scope(kind=["system"]).system is False
 
@@ -171,7 +180,7 @@ def test_a_manager_without_grants_sees_no_account_rows(env: Env) -> None:
     [
         (["alert"], (True, False, False, False)),
         (["rule", "order"], (False, True, True, False)),
-        (["system"], (False, False, False, False)),  # not the Owner (SR-E40T04A-01)
+        (["system"], (False, False, False, False)),  # not the Owner (04 §7.2.2 row 34b)
         (["risk"], (False, False, False, False)),
     ],
 )
@@ -242,7 +251,12 @@ def test_store_down_is_503(env: Env) -> None:
 
 
 def test_declared_query_set_matches_the_contract() -> None:
-    assert LIST_NOTIFICATIONS_QUERY == {"limit", "cursor", "kind", "unread_only"}
+    """Read from the spec (SR-026); see `test_alert_deliveries_rbac.py` for why not the table."""
+    from candleviewer.api.contract_conformance import load_openapi_spec
+    from tests.unit.api.test_query_allowlist import _declared_query
+
+    declared = _declared_query(load_openapi_spec(), "/notifications", "get")
+    assert declared == LIST_NOTIFICATIONS_QUERY
 
 
 # --- Notification shape ------------------------------------------------------------------
@@ -313,10 +327,13 @@ def test_system_row_has_no_route_but_a_source_id() -> None:
 
 
 def test_a_system_message_passes_the_shared_redaction_then_the_cut() -> None:
+    """The credential straddles the cut: cutting first would leave a stub the redaction rules no
+    longer match, so only redact-then-cut leaves nothing of it."""
     secret = "token=" + "a1b2c3d4" * 6  # a credential-shaped value inside a free-text message
-    d = dump(_row("system", 4, 6, title=f"probe failed: {secret} " + "x" * 900, event="health"))
-    assert secret not in d["title"] and len(d["title"]) <= SYSTEM_TITLE_MAX
-    assert d["title"].startswith("probe failed: ")
+    lead = "x" * (SYSTEM_TITLE_MAX - 20)
+    d = dump(_row("system", 4, 6, title=f"{lead} {secret} tail", event="health"))
+    assert len(d["title"]) <= SYSTEM_TITLE_MAX and d["title"].startswith(lead)
+    assert "a1b2c3d4" not in d["title"] and "token=a1b2" not in d["title"]
 
 
 def test_a_system_message_that_cannot_be_redacted_is_not_shown(
@@ -334,12 +351,34 @@ def test_a_malformed_symbol_is_never_echoed() -> None:
     assert dump(_row("alert", 1, 1, symbol="<script>"))["symbol"] is None
 
 
-def test_no_answer_carries_a_withheld_source_field(env: Env) -> None:
-    """SR-E40T04A-06: the union's `payload`, `details`, `ret_msg` and the delivery `context`
-    never reach the wire, whatever a row holds."""
+def test_every_answer_is_exactly_the_contracts_notification(env: Env) -> None:
+    """Built field by field (#3917 review SR-E40T04A-06): the SQL selects no `payload`,
+    `details`, `ret_msg` or `context` (pinned in `test_alert_inbox_store.py`), and the answer's
+    keys are exactly `Notification`'s, so no source field can be added on the way out."""
+    from candleviewer.api.contract_conformance import load_openapi_spec
+
     env.actor = Actor(USER, "s", VIEWER, frozenset(), is_owner=True)
     env.store.rows = [_row(k, src, 9) for k, src in (("alert", 1), ("rule", 2), ("order", 3),
                                                       ("system", 4))]  # fmt: skip
-    body = env.c.get("/notifications").text
-    for name in ("context", "payload", "details", "ret_msg", "_enc", "acked_by", "event", "code"):
-        assert f'"{name}' not in body, name
+    items = env.c.get("/notifications").json()["items"]
+    declared = set(load_openapi_spec()["components"]["schemas"]["Notification"]["properties"])
+    assert len(items) == 4 and all(set(i) == declared for i in items)
+
+
+@pytest.mark.parametrize(("system_rows", "offloaded"), [(50, False), (51, True)])
+def test_a_page_of_many_system_rows_is_redacted_off_the_loop(
+    env: Env, monkeypatch: pytest.MonkeyPatch, system_rows: int, offloaded: bool
+) -> None:
+    calls: list[int] = []
+    real = asyncio.to_thread
+
+    async def spy(fn: Any, *a: Any) -> Any:
+        calls.append(len(a[0]))
+        return await real(fn, *a)
+
+    monkeypatch.setattr(notifications.asyncio, "to_thread", spy)
+    env.actor = Actor(USER, "s", VIEWER, frozenset(), is_owner=True)
+    env.store.rows = [_row("system", 4, n + 1, title=f"m{n}") for n in range(system_rows)]
+    assert len(env.c.get("/notifications", params={"limit": 500}).json()["items"]) == system_rows
+    assert calls == ([system_rows] if offloaded else [])
+    assert notifications.OFFLOAD_SYSTEM_ROWS == 50

@@ -73,7 +73,7 @@ _GET = _sql("SELECT @C@ FROM alert_deliveries WHERE id = :id")
 #: The owner of an alert, soft-deleted or not: its delivery history outlives the alert.
 _ALERT_OWNER = sa.text("SELECT owner_user_id::text FROM alerts WHERE id = CAST(:id AS uuid)")
 #: E40-T04 desktop report-back: only the caller's own `desktop` row still `queued` moves (a
-#: conditional update that re-checks the owner, as `_ACK_ONE` does: SR-E40T04A-03).
+#: conditional update that re-checks the owner, as `_ACK_ONE` does: C-12.4).
 _DESKTOP_SENT = _sql(
     "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), error_message = NULL "
     "WHERE id = :id AND user_id = CAST(:by AS uuid) AND channel = 'desktop' "
@@ -102,8 +102,7 @@ _EXPIRED = _sql(
 )
 _DELETE_IDS = sa.text("DELETE FROM alert_deliveries WHERE id = ANY(:ids)")
 _LIST = _sql(
-    "SELECT @C@ FROM alert_deliveries WHERE "
-    "(CAST(:user AS uuid) IS NULL OR user_id = CAST(:user AS uuid)) "
+    "SELECT @C@ FROM alert_deliveries WHERE user_id = CAST(:user AS uuid) "
     "AND (CAST(:alert_id AS uuid) IS NULL OR alert_id = CAST(:alert_id AS uuid)) "
     "AND (CAST(:status AS text) IS NULL OR status::text = :status) "
     "AND (NOT :unacked_only OR (status = 'sent' AND acked_at IS NULL)) "
@@ -268,7 +267,7 @@ class SqlAlchemyAlertDeliveryRepository:
     async def list_page(
         self,
         *,
-        user_id: str | None = None,
+        user_id: str,
         alert_id: str | None = None,
         status: str | None = None,
         unacked_only: bool = False,
@@ -305,7 +304,7 @@ class SqlAlchemyAlertDeliveryRepository:
 
 def _delivery_cursor(cursor: str) -> tuple[datetime, int]:
     """The keyset of `list_page`: a forged id that is no bigint is a `ValueError` (the route's
-    400), never a driver error at bind time (SR-E40T04A-04)."""
+    400), never a driver error at bind time (#3917)."""
     ts, raw = decode_cursor(cursor)
     try:
         row_id = int(raw)

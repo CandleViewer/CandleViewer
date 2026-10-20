@@ -82,6 +82,11 @@ def test_list_refuses_an_undeclared_query_parameter(env: Env, key: str) -> None:
 
 
 def test_list_declares_exactly_the_contract_parameters() -> None:
-    assert LIST_DELIVERIES_QUERY == {
-        "cursor", "limit", "status", "alert_id", "unacked_only", "from", "to",
-    }  # fmt: skip
+    """Read from the spec (SR-026), as `tests/unit/api/test_query_allowlist.py` does; that table
+    also requires a declared 422, which this operation's status list lacks until #1131."""
+    from candleviewer.api.contract_conformance import load_openapi_spec
+    from tests.unit.api.test_query_allowlist import _declared_query
+
+    assert _declared_query(load_openapi_spec(), "/alerts/deliveries", "get") == (
+        LIST_DELIVERIES_QUERY
+    )

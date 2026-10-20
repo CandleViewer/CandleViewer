@@ -128,6 +128,18 @@ async def test_the_list_refuses_a_cursor_it_cannot_have_issued_before_any_read(
     assert rel.calls == []
 
 
+async def test_the_list_is_only_ever_the_callers_own() -> None:
+    """The inbox is `scope: self` and the store re-checks it (C-12.4): no statement branch lists
+    every user's deliveries, and the port has no call without a user."""
+    repo, rel = _deliveries(_Result([]))
+    await repo.list_page(user_id="u1")
+    sql, params = rel.calls[0]
+    assert "WHERE user_id = CAST(:user AS uuid) " in sql and "IS NULL OR user_id" not in sql
+    assert params["user"] == "u1"
+    with pytest.raises(TypeError):
+        await repo.list_page()  # type: ignore[call-arg]  # the port requires the caller
+
+
 async def test_the_list_keyset_round_trips() -> None:
     repo, rel = _deliveries(_Result([]))
     await repo.list_page(user_id="u1", cursor=encode_alert_cursor(_T0, 41))
@@ -140,13 +152,18 @@ async def test_the_list_keyset_round_trips() -> None:
         b'["2026-10-20T09:00:00", "x"]',
         b'["2026-10-20T09:00:00+00:00", [1]]',
         b'["2026-10-20T09:00:00+00:00", {"a": 1}]',
+        b'["2026-10-20T09:00:00+00:00", 7]',  # `encode_cursor` always writes the id as text
+        b'["2026-10-20T09:00:00+00:00", "a\\u0000b"]',  # Postgres text holds no NUL
+        b'["2026-10-20T09:00:00+00:00", "\\ud800"]',  # a lone surrogate has no UTF-8 form
     ],
 )
-def test_the_shared_alert_cursor_requires_an_offset_and_a_scalar_id(payload: bytes) -> None:
-    """The `/alerts` list shares this decoder: it gains the same refusals (SR-E40T04A-04)."""
+def test_the_shared_alert_cursor_refuses_what_it_cannot_have_issued(payload: bytes) -> None:
+    """The `/alerts` list shares this decoder and binds the id as text: each of these would
+    fail in the driver, a 500 instead of the 400 (#3917)."""
     with pytest.raises(ValueError, match="invalid cursor"):
         decode_alert_cursor(base64.urlsafe_b64encode(payload).decode())
     assert decode_alert_cursor(encode_alert_cursor(_T0, "id-1")) == (_T0, "id-1")
+    assert decode_alert_cursor(encode_alert_cursor(_T0, 41)) == (_T0, "41")
 
 
 # --- notifications union -----------------------------------------------------------------

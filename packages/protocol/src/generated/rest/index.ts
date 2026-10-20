@@ -1251,7 +1251,9 @@ export interface paths {
      *     `sent` (`queued`, `failed`, `suppressed`) has nothing to acknowledge and is also returned
      *     **unchanged with 200** - the client reads `status` from the body, never the 200 alone, to
      *     know whether the delivery is `acked`. A delivery that is unknown or not owned by the
-     *     caller is **404** (never 403), and the refusal is audited.
+     *     caller is **404** (never 403), and the refusal is audited (`alert.denied`): up to 20
+     *     records per caller per hour, past which refusals are counted and the count is carried on
+     *     the caller's next written record (`after_state.suppressed_before`).
      */
     post: operations["ackAlertDelivery"];
     delete?: never;
@@ -3368,7 +3370,7 @@ export interface paths {
     };
     /**
      * Unified notification history (alerts, rule fires, order events, system)
-     * @description Read-model union over `alert_deliveries`, `rule_events`, `order_events` and `system_events`, filtered to what the caller may see. Live equivalents arrive on the `alerts`, `rules`, `orders` and `system` WS topics; this endpoint is the scroll-back history behind them.
+     * @description Read-model union over `alert_deliveries`, `rule_events`, `order_events` and `system_events`, filtered to what the caller may see. Live equivalents arrive on the `alerts`, `rules`, `orders` and `system` WS topics; this endpoint is the scroll-back history behind them. Each source is filtered server-side by its own read: the caller's own in-app alert records once delivered (`sent` or `acked`; `alerts:read`; every channel's record stays in `listAlertDeliveries`); the action outcomes of the rules the caller may read (`rules:read`); order outcomes on the caller's granted accounts (`orders:read`); `system_events` for the Owner only. Order outcomes, and rule runs and system events that name an account, are limited to the server's exchange environment. `unread_only` drops acknowledged alert rows and keeps the rest, which have no read state yet.
      */
     get: operations["listNotifications"];
     put?: never;
@@ -7605,7 +7607,7 @@ export interface components {
       severity: components["schemas"]["Severity"];
       /**
        * Format: uuid
-       * @description Deterministic id of the originating alert delivery, rule event, order event or system event: uuid5(namespace, source_table + ":" + source_id), the 24-internal-schemas.md §1.6 scheme, never a raw database id. Raw ids of the parent alert, rule or order travel only in `route`.
+       * @description Deterministic id of the originating alert delivery, rule event, order event or system event: uuid5 in the 24-internal-schemas.md §1.6 namespace over source_table + ":" + source_id (the separator keeps it distinct from `id`), never a raw database id. Raw ids of the parent alert, rule or order travel only in `route`.
        */
       source_id?: string | null;
       symbol?: string | null;

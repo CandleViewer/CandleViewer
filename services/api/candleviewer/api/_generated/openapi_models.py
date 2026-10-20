@@ -4942,7 +4942,7 @@ class Notification(BaseModel):
     source_id: Annotated[
         UUID | None,
         Field(
-            description='Deterministic id of the originating alert delivery, rule event, order event or system event: uuid5(namespace, source_table + ":" + source_id), the 24-internal-schemas.md §1.6 scheme, never a raw database id. Raw ids of the parent alert, rule or order travel only in `route`.\n'
+            description='Deterministic id of the originating alert delivery, rule event, order event or system event: uuid5 in the 24-internal-schemas.md §1.6 namespace over source_table + ":" + source_id (the separator keeps it distinct from `id`), never a raw database id. Raw ids of the parent alert, rule or order travel only in `route`.\n'
         ),
     ] = None
     route: Annotated[

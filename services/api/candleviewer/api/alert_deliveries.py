@@ -23,9 +23,9 @@ the caller's next denial record.
   audit record carries the outcome and the OS permission the shell observed.
 
 `on_change` receives the ids of the deliveries a request changed, after the change is committed
-(the `alerts` WS topic publishes them as deltas). It is told, never asked: bounded by
-`CHANGE_HOOK_TIMEOUT_S`, and its failure is logged and never fails the request, whose change is
-already durable.
+(the `alerts` WS topic publishes them as deltas). It is told, never asked: each call is bounded by
+`CHANGE_HOOK_TIMEOUT_S` (an ack-all calls it once per batch), and its failure is logged and never
+fails the request, whose change is already durable.
 
 The response never carries the delivery `context` or anything from the alert's SECRET webhook
 columns: `AlertDelivery` is built field by field (`dump`).
@@ -62,9 +62,10 @@ LIST_DELIVERIES_QUERY = frozenset(
 #: ack-all bounds (ticket DoS note): rows per UPDATE, UPDATEs per request.
 ACK_ALL_BATCH = 500
 ACK_ALL_MAX_BATCHES = 10
-#: How long a request waits on `on_change` once its change is committed (CR-08).
+#: How long a request waits on one `on_change` call once its change is committed.
 CHANGE_HOOK_TIMEOUT_S = 2.0
-#: SR-E40T04A-02: `alert.denied` records per caller per window, and the callers tracked.
+#: `alert.denied` records per caller per window, and the callers tracked: delivery ids are
+#: sequential, so probing them must not flood the audit log (C-2.9, C-12.8; #3917 review).
 DENIALS_PER_WINDOW = 20
 DENIAL_WINDOW_S = 3600.0
 MAX_TRACKED_CALLERS = 1024
@@ -128,7 +129,7 @@ class AlertDeliveryStore(Protocol):
     async def list_page(
         self,
         *,
-        user_id: str | None = None,
+        user_id: str,
         alert_id: str | None = None,
         status: str | None = None,
         unacked_only: bool = False,
@@ -151,13 +152,15 @@ class _Caller:
 
 
 class DenialBudget:
-    """At most `per_window` `alert.denied` records per caller in any `window_s` (SR-E40T04A-02).
+    """At most `per_window` `alert.denied` records per caller in any `window_s`.
 
     Past it a denial is counted, not written, and the caller's next record carries the count
-    (`after_state.suppressed_before`), so nothing is dropped while the caller keeps probing; the
-    first denial held in a run is logged at once. State is bounded (C-2.18): `max_callers`
-    entries, least recently used evicted first; an evicted caller's held count is logged rather
-    than lost silently. Process-local, single event loop (no lock needed).
+    (`after_state.suppressed_before`), so nothing is dropped while the caller keeps probing; a run
+    of held denials is logged with its running count at 1, 10, 100, ... (never one line per
+    denial). A record whose write fails gives its slot and its count back (`restore`). State is
+    bounded (C-2.18): `max_callers` entries, least recently used evicted first; an evicted
+    caller's held count is logged rather than lost silently. Process-local, single event loop
+    (no lock needed).
     """
 
     def __init__(
@@ -191,9 +194,21 @@ class DenialBudget:
             carried, entry.held = entry.held, 0
             return carried
         entry.held += 1
-        if entry.held == 1:
-            _log().warning("alert_denied_audit_held", user_id=user_id, per_window=self._per)
+        if _is_power_of_ten(entry.held):
+            _log().warning("alert_denied_audit_held", user_id=user_id, held=entry.held,
+                           per_window=self._per)  # fmt: skip
         return None
+
+    def restore(self, user_id: str, carried: int) -> None:
+        """The record `admit` let through was not written: give its slot back and hold its count
+        again, this denial's own included, for the caller's next record."""
+        entry = self._callers.get(user_id)
+        if entry is None:  # evicted meanwhile: the count goes to the log, not nowhere
+            _log().warning("alert_denied_audit_held_evicted", user_id=user_id, held=carried + 1)
+            return
+        if entry.written:
+            entry.written.pop()
+        entry.held += carried + 1
 
     def _evict(self) -> None:
         while len(self._callers) > self._max:
@@ -202,13 +217,28 @@ class DenialBudget:
                 _log().warning("alert_denied_audit_held_evicted", user_id=user_id, held=gone.held)
 
 
+def _is_power_of_ten(n: int) -> bool:
+    while n >= 10 and n % 10 == 0:
+        n //= 10
+    return n == 1
+
+
 def _iso(d: datetime | None) -> str | None:
     return None if d is None else d.isoformat()
 
 
-def _utc(d: datetime | None) -> datetime | None:
-    """A window bound without an offset is read as UTC (RFC 3339 UTC, `From`/`To`)."""
-    return d if d is None or d.tzinfo is not None else d.replace(tzinfo=UTC)
+def _utc(d: datetime | None, name: str) -> datetime | None:
+    """A window bound in UTC: one without an offset is read as UTC (RFC 3339 UTC, `From`/`To`);
+    one whose offset has no UTC instant (year 1 at +14:00) is the shared 422, never a bind error
+    in the driver."""
+    if d is None:
+        return None
+    try:
+        return (d if d.tzinfo is not None else d.replace(tzinfo=UTC)).astimezone(UTC)
+    except OverflowError:
+        raise Problem(422, "validation_failed", "Invalid query", f"{name} is out of range.",
+                      errors=[{"field": name, "rule": "datetime_range",
+                               "message": "no UTC instant"}]) from None  # fmt: skip
 
 
 def dump(row: DeliveryView) -> dict[str, Any]:
@@ -282,13 +312,17 @@ def make_alert_deliveries_router(
         )  # fmt: skip
 
     async def _deny(actor: Actor, kind: str, object_id: str, reason: str) -> None:
-        """A foreign id: audited within the caller's denial budget (SR-E40T04A-02)."""
+        """A foreign id: audited within the caller's denial budget (`DenialBudget`)."""
         carried = budget.admit(actor.user_id)
         if carried is None:
             return
         extra = {"after_state": {"suppressed_before": carried}} if carried else {}
-        await _audit("alert.denied", actor, kind, object_id, outcome=AuditOutcome.DENIED,
-                     reason=reason, **extra)  # fmt: skip
+        try:
+            await _audit("alert.denied", actor, kind, object_id, outcome=AuditOutcome.DENIED,
+                         reason=reason, **extra)  # fmt: skip
+        except BaseException:  # not written: its slot and its count go back to the budget
+            budget.restore(actor.user_id, carried)
+            raise
 
     reader = caller(actor_resolver, READ, LIST_DELIVERIES_QUERY)
     writer = caller(actor_resolver, WRITE)
@@ -329,7 +363,7 @@ def make_alert_deliveries_router(
         try:
             page = await s.list_page(
                 user_id=actor.user_id, alert_id=aid, status=status,
-                unacked_only=unacked_only, from_ts=_utc(from_ts), to_ts=_utc(to),
+                unacked_only=unacked_only, from_ts=_utc(from_ts, "from"), to_ts=_utc(to, "to"),
                 cursor=cursor, limit=limit,
             )  # fmt: skip
         except ValueError:

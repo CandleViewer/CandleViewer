@@ -8,20 +8,24 @@ carries the caller's view, already resolved from the caller's permissions and gr
 - alert: the caller's own **in-app record** (`alerts:read`) - the `in_app` delivery of each
   firing, the storm summaries and the channel-failure notices, once delivered (`sent`/`acked`).
   The notification centre (SCR-014) mirrors the in-app toasts (US-ALRT-005); every channel's row
-  stays in `GET /alerts/deliveries`, the alert centre's record. `unread_only` is the unacked
-  predicate of `unacked_count` (`status = 'sent' AND acked_at IS NULL`), so whatever is unread can
-  be acked;
+  stays in `GET /alerts/deliveries`, the alert centre's record, so an alert whose channels omit
+  `in_app` has no history here beyond its channel-failure notices. Under `unread_only` an alert
+  row is unread while `status = 'sent' AND acked_at IS NULL` (the in-app half of
+  `unacked_count`), so an unread alert row can be acked; rule, order and system rows have no read
+  state yet (`read_at` null), so `unread_only` keeps them all;
 - rule: `rule_events` of exactly the rules the caller may read (`rules:read`; `rule_ids`, from the
   rules module's one visibility predicate) - the outcomes in `RULE_EVENT_KINDS`; never `payload`;
 - order: `order_events` of orders on the caller's accounts (`orders:read`; `accounts`, None for
   the Owner) - the outcomes in `ORDER_EVENT_KINDS`; `ret_code` only, never `ret_msg`
   (SR-E29-09) or `payload`;
-- system: the Owner's alone (SR-E40T04A-01), `message` only, never `details`;
+- system: the Owner's alone (04 §7.2.2 row 34b), `message` only, never `details`;
 - risk: no source table yet (`risk_lockouts`, E39), so a `risk` filter matches nothing.
 
-Rows tied to an exchange account are the process's own exchange environment only (C-2.11, as
-`dms_episodes_sqlalchemy.py` reads `system_events`): an order through its account, a rule run or a
-system row through the account it names (a row naming an unknown account is left out).
+Order rows, rule-run rows and account-scoped system rows are the process's own exchange
+environment only (C-2.11, as `dms_episodes_sqlalchemy.py` reads `system_events`): an order through
+its account, a rule run or a system row through the account it names (a row naming an unknown
+account is left out). Alert rows are the caller's own and carry no environment: an alert's
+`scope_account_id` is served as its `exchange_account_id` unfiltered.
 
 Ordering and the keyset are `(ts, src, src_id)` descending, `src` being the branch's rank, so
 rows with identical timestamps from different sources keep one total order. Each branch is

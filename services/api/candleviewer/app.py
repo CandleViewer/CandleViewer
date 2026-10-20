@@ -2329,10 +2329,12 @@ def create_app(
         mgr = ctx.rules.manager()  # the rules module stopped: no rule rows, never every rule
         return frozenset() if mgr is None else await mgr.visible_rule_ids(actor)
 
+    # C-2.11: account-bound rows are this process's exchange environment only. Built once, so an
+    # environment the read model does not know fails the boot, not the first request.
+    _notifications = SqlAlchemyNotificationRepository(_alert_pg, env=resolved.environment.value)
     app.include_router(
         make_notifications_router(
-            # C-2.11: account-bound rows are this process's exchange environment only.
-            lambda: SqlAlchemyNotificationRepository(_alert_pg, env=resolved.environment.value),
+            lambda: _notifications,
             rules_actor.resolve if rules_actor else None,
             _visible_rules,
         )
