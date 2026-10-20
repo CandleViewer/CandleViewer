@@ -247,7 +247,7 @@ and cued-review answers · debrief verbatims · moderator notes. Single-particip
 
 **Now, before E30-D02 starts:**
 
-- [ ] Decide OQ-1..OQ-4, OQ-6 and OQ-9 (SC-8 stop units, SC-9 component placement, the sizing-control default) and give provisional copy for OQ-12; OQ-5 is due before E30-T02 (report §10)
+- [ ] Decide OQ-1..OQ-4, OQ-6 and OQ-9 (SC-8 stop units, SC-9 component placement, the sizing-control default) and give provisional copy for OQ-12; OQ-5 and OQ-13 (SC-10 correction offers) are due before E30-T02 (report §10)
 - [ ] Confirm or override the report's concept-probe verdicts: §5a (badge first, optional short banner line, never tint alone) and §5b (segmented control kept as the status quo; heuristic preference mode-per-field)
 - [ ] Confirm or override the proposed pass bars (DJ-5) and the Probe C flip rule (DJ-8)
 - [ ] Hands-on walkthroughs the documentation review could not settle (report §6): place one paper order in TradingView, arm one-click in Bookmap, open Bybit Demo; record the armed indicator (if any), how a rejection is displayed and how the Demo label is styled
