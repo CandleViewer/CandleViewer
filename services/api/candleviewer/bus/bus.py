@@ -11,12 +11,13 @@ same topic concurrently from two tasks) plus FIFO delivery per subscriber
 queue gives deterministic per-topic, per-subscriber ordering.
 
 Replay traffic (E26-T03, 24 §2.9): a replay session's topics (`is_replay_env`)
-move none of `bus_published_total`, `bus_delivered_total`, `bus_subscriber_lag`
-or `ingest_queue_full_total`, and log no "bus subscriber lagging" warning. Their
+move none of the six bus series, `bus_published_total`, `bus_delivered_total`,
+`bus_subscriber_lag`, `ingest_queue_full_total`, `bus_stream_invalidated_total`
+and `bus_conflated_total`, and log no "bus subscriber lagging" warning. Their
 labels name no env and a replay lane reuses its live twin's subscriber name, so
 replay's designed backpressure would fire the live ingest alert, overwrite live
-lag gauges and log a warning per event into the live logs; the replay clock's own
-`replay_*` series measure it.
+lag gauges, add replay noise to both drop counters and log a warning per event
+into the live logs; the replay clock's own `replay_*` series measure it.
 """
 
 from __future__ import annotations
@@ -177,7 +178,8 @@ class Bus:
                 self._drain_queue_nowait(sub.queue)
                 marker = StreamInvalidated(topic=topic.key, ts_event=getattr(event, "ts_event", 0))
                 sub.queue.put_nowait(marker)
-                bus_stream_invalidated_total.labels(topic_class=topic.topic_class).inc()
+                if counted:
+                    bus_stream_invalidated_total.labels(topic_class=topic.topic_class).inc()
             else:
                 sub.queue.put_nowait(event)
         elif sub.policy is QueuePolicy.CONFLATE_LATEST:
@@ -185,7 +187,7 @@ class Bus:
             # items), regardless of whether the queue happens to be full,
             # so a paused subscriber never accumulates stale backlog.
             drained = self._drain_queue_nowait(sub.queue)
-            if drained:
+            if drained and counted:
                 bus_conflated_total.labels(topic_class=topic.topic_class).inc()
             sub.queue.put_nowait(event)
         else:  # pragma: no cover - exhaustive enum guarded by mypy

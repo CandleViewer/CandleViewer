@@ -476,10 +476,12 @@ lower-case hex digits), e.g. `replay-0b7c5e1a-3f2d-4c8e-9a61-5d0e7b2c4f18.md.BTC
 a wildcard `env` (a `TopicPattern` `env` wildcard would match every replay; none exists, and
 `tests/unit/architecture/test_no_wildcard_env_subscriber.py` keeps it so), so live consumers never see
 replayed events and a replay's consumers subscribe to their own session's namespace only (C-2.11).
-Replay traffic is not counted in the bus series `bus_published_total`, `bus_delivered_total`,
-`bus_subscriber_lag` and `ingest_queue_full_total`, whose labels name no `env` (a replay lane reuses its
-live twin's subscriber name): a slow replay consumer is replay's designed backpressure, measured by the
-replay clock's own `replay_*` series, and never fires the live `IngestionNeverDropQueueFull` alert.
+Replay traffic is not counted in the six bus series `bus_published_total`, `bus_delivered_total`,
+`bus_subscriber_lag`, `ingest_queue_full_total`, `bus_stream_invalidated_total` and
+`bus_conflated_total`, whose labels name no `env` (a replay lane reuses its live twin's subscriber name),
+and logs no "bus subscriber lagging" warning: a slow replay consumer is replay's designed backpressure,
+measured by the replay clock's own `replay_*` series, and never fires the live
+`IngestionNeverDropQueueFull` alert.
 
 Queue policy is chosen **per subscriber** at `Bus.subscribe` (not per topic):
 trade consumers must subscribe NEVER_DROP (a full queue awaits and counts
