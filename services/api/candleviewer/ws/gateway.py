@@ -1128,7 +1128,13 @@ def include_ws_router(app: FastAPI, router: APIRouter) -> None:
     """#3907: serve the gateway's route at `WS_PATH` and under `WS_SERVER_BASE`.
 
     One router, one endpoint and one hub: the second include copies the route under the prefix,
-    so both paths run the same handler with the same guards, limits and audit."""
+    so both paths run the same handler with the same guards, limits and audit. FastAPI replays a
+    router's startup and shutdown hooks once per include, so this router may carry none
+    (`make_ws_router` adds none): a hook would run twice."""
+    if router.on_startup or router.on_shutdown:
+        raise ValueError(
+            "the WS router may carry no startup or shutdown hook: each include replays it"
+        )
     app.include_router(router)
     app.include_router(router, prefix=WS_SERVER_BASE)
 
@@ -1162,7 +1168,9 @@ def make_ws_router(
     backpressure: BackpressureConfig | None = None,
     close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
 ) -> APIRouter:
-    """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline but one, so tests
+    """The gateway endpoint, served at `/ws` and `/api/v1/ws` (`include_ws_router`).
+
+    `clock` (monotonic seconds) drives every deadline but one, so tests
     inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
     deadline with the flag on, which runs on the event loop's clock: only an `asyncio.Timeout`
     can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`). So does

@@ -15,17 +15,17 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import route_path
-from candleviewer.api.deny_by_default import DECLARED_WS_ROUTES
 from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.settings import Environment, Settings
-from candleviewer.ws.gateway import WS_SERVER_BASE
+from candleviewer.ws.gateway import WS_SERVER_BASE, include_ws_router
 
 USER = uuid.uuid4()
 JSON = ["cv.v1.json"]
@@ -75,15 +75,22 @@ def test_both_paths_are_one_gateway(client: TestClient) -> None:
         with client.websocket_connect("/api/v1/ws", subprotocols=JSON) as other:
             assert _handshake(other) == ("welcome", "auth_ok")
             assert len(hub) == 2
-    assert DECLARED_WS_ROUTES == {"/ws", "/api/v1/ws"}
 
 
 @pytest.mark.parametrize(
     "path", ["/api/v2/ws", "/api/v1/ws/x", "/api/ws", "/ws/", "/api/v1/ws/", "/API/V1/WS"]
 )
 def test_any_other_websocket_path_is_refused(client: TestClient, path: str) -> None:
-    with pytest.raises(WebSocketDisconnect), client.websocket_connect(path, subprotocols=JSON):
-        pass  # the upgrade is refused before `accept`
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with client.websocket_connect(path, subprotocols=JSON):
+            pass
+    assert refused.value.code == 1000  # Starlette's not-found close, before `accept`
+
+
+def test_include_ws_router_refuses_a_router_with_lifecycle_hooks() -> None:
+    """FastAPI replays a router's hooks once per include, so the alias must not carry any."""
+    with pytest.raises(ValueError, match="no startup or shutdown hook"):
+        include_ws_router(FastAPI(), APIRouter(on_shutdown=[lambda: None]))
 
 
 def test_the_ws_server_base_is_the_rest_contracts_base() -> None:
