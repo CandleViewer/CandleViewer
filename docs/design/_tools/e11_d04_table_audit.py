@@ -604,6 +604,7 @@ def fit_table() -> list[str]:
     header = "| density | text scale | font px | cell pad | primary 8 cols | + CVD "
     header += "| 640 CSS px | 320 CSS px |"
     out = [header, "|---|---|---|---|---|---|---|---|"]
+    derived: dict[str, float] = {}
     for dens, (_type_tok, size_tok, pad_tok, inset_tok) in DENSITY.items():
         size = _dim(size_tok)
         pad = _dim(pad_tok)
@@ -620,10 +621,21 @@ def fit_table() -> list[str]:
                 else ("primary fits, CVD extended" if primary <= 640 else "REFLOW (stacked)")
             )
             v320 = "fits" if primary <= 320 else "REFLOW (stacked)"
+            if sc == 1.0:
+                derived[dens] = primary
+                if dens == "compact":
+                    derived["sub-minute"] = primary + 3 * per_char  # hh:mm:ss is 8 characters
             out.append(
                 f"| {dens} | {int(sc * 100)} % | {px:.2f} | {pad:.0f} | {primary:.0f} px "
                 f"({primary * 2:.0f} at 200 %) | {with_cvd:.0f} px | {v640} | {v320} |"
             )
+    out.append("")
+    sub, comf = derived["sub-minute"], derived["comfortable"]
+    out.append(
+        "Derived from the same arithmetic (the spec's 5.2 fit ladder): the sub-minute time cell "
+        f"`hh:mm:ss` (8 characters) at compact / 100 % would make the set {sub:.0f} px "
+        f"(does not fit 640); the comfortable fit width at 100 % is {comf:.0f} px."
+    )
     return out
 
 
