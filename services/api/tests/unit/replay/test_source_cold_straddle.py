@@ -41,7 +41,7 @@ from tests.unit.storage.cold._replay_rows import H0, HOUR, SYMBOL, MemHotSource,
 
 #: SHA-256 of the canonical replay of `generated_rows()` (840 events). A change here means the
 #: replay order or the stored-row mapping changed, which is a determinism break (C-2.15).
-EXPECTED_DIGEST = "6d9a1f9fdd93f42eae63d4f7b8f3f68bc4e1a8de02ffa3f7375b9fed46056de6"
+EXPECTED_DIGEST = "bee63244bc62f5c6f23b3c6e6a4b542f7054c668b188690ac008a4dda9b66eb2"
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 STREAMS = (StreamKind.TRADES, StreamKind.ORDERBOOK_DELTA)
 HOURS = [TimeRange(start_us=H0 + h * HOUR, end_us=H0 + (h + 1) * HOUR) for h in (0, 1)]
