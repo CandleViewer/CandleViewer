@@ -136,6 +136,8 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("field border — REJECTED color.border.default", "b.default", "overlay", "rejected-non-text"),
     ("field border — REJECTED color.border.strong", "b.strong", "overlay", "rejected-non-text"),
     ("tree selection outline, bulk bar edge", "t.tertiary", "overlay", "non-text"),
+    ("tree selection outline vs the selected fill", "t.tertiary", "selected", "non-text"),
+    ("bulk bar edge vs the bar fill", "t.tertiary", "hover", "non-text"),
     # --- non-text: icon-only controls (eye, lock, rename, menu, delete, star, clear, close) ---
     ("icon glyph on the dialog / drawer surface", "t.secondary", "overlay", "non-text"),
     ("icon glyph on a raised row", "t.secondary", "raised", "non-text"),
