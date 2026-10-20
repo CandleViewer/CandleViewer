@@ -325,12 +325,12 @@ def test_seeder_main_default_seeds_with_mfa_required(monkeypatch: pytest.MonkeyP
         monkeypatch.setenv(k, v)
     seen: dict[str, object] = {}
 
-    async def fake_seed(*args: object, allow_no_mfa: bool = False) -> None:
-        seen["allow_no_mfa"] = allow_no_mfa
+    async def fake_seed(*args: object, allow_no_mfa: bool = False, **rest: object) -> None:
+        seen.update(allow_no_mfa=allow_no_mfa, **rest)
 
     monkeypatch.setattr(seed_fixture_user, "seed", fake_seed)
     assert seed_fixture_user.main([]) == 0
-    assert seen == {"allow_no_mfa": False}
+    assert seen == {"allow_no_mfa": False, "role": "owner", "totp": None, "totp_out": None}
 
 
 @pytest.mark.parametrize("env", [Environment.DEMO, Environment.TESTNET])

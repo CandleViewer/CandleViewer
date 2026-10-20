@@ -1,0 +1,217 @@
+name: dast-admin-nightly
+
+# E42-X03 (#1026, AC5): the ZAP admin profile, on dispatch only for now, never on a pull request.
+# No cron until the real storage tier boots: a synthetic user can sign in only with
+# CV_STORAGE_BACKEND=real (app.build_auth_service), and storage/service.py refuses that backend at
+# start ("no client implementation yet"), naming E07-T02, T03 and T04 (#168, #169, #170), all
+# three closed without composing the real clients into StorageService. #3874 owns that boot; its
+# fix brings the cron back. Until then this workflow stops at "Start the API".
+# It scans the admin surface authenticated as a synthetic Manager and a synthetic Viewer, each
+# with a real TOTP method and no MFA exception, against a throwaway stack on this runner (a run
+# against real staging needs the owner's runner, environment and users: the PR's Deviations).
+# Phase A sends each role one request per /admin* and /users* operation matrix.yaml refuses it;
+# "Every refusal planned and in the audit log" (check_admin_denials.py) requires the planned
+# status and the request's own denial record, and fails on any CSRF refusal. Phase B is the
+# passive and active scan; "The scans stayed signed in, and no new medium+ alert" requires the
+# session to stay authenticated (check_liveness.py) and no alert outside the baseline
+# (baseline_gate.py). Both roles run before a phase fails. The zap-admin-surface artefact holds
+# the plans, ZAP's logs and reports and the API's log, uploaded only if no session value of the
+# run reached them (check_artefact_secrets.py).
+# Every credential is made here, per run, masked and never echoed: no repository secret is read,
+# and the target is loopback, never an input (admin_requests.py and mint_sessions.py refuse any
+# other). A red run comments on, or opens, the signal's issue (_nightly-issue.yml, #1849).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# No workflow-level concurrency group (#3449): the report job's per-signal group serialises filing.
+jobs:
+  zap-admin:
+    name: zap-admin
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      ZAP_TARGET: http://127.0.0.1:8000
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef
+      WORK: zap-work
+      # Compose checks every service's variables on each command; these stores never start here.
+      GF_SECURITY_ADMIN_PASSWORD: unused-ci
+      MINIO_ROOT_PASSWORD: unused-ci
+      CV_ALERT_PAGE_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: Make this run's synthetic credentials (masked, never echoed)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$WORK" "$RUNNER_TEMP/cv"
+          secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
+          for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
+            CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX ZAP_OWNER_PASSWORD \
+            ZAP_MANAGER_PASSWORD ZAP_VIEWER_PASSWORD; do secret "$name"; done
+          suffix=$(openssl rand -hex 4)
+          for role in owner manager viewer; do echo "ZAP_${role^^}_USER=zap-$role-$suffix" >> "$GITHUB_ENV"; done
+          # The audit lane key (ADR-0037 decision 6): 64 hex digits in a file of mode 0400.
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv/lane.key")
+
+      - name: Start Postgres and QuestDB (the compose data stores, loopback only)
+        run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
+
+      - name: Migrate, then seed the Owner the owner floor needs and the two synthetic users (testnet)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          uv sync --frozen
+          uv run --frozen alembic upgrade head
+          # The owner floor refuses a user while no active Owner exists; this one never signs in.
+          CV_SEED_USERNAME="$ZAP_OWNER_USER" CV_SEED_PASSWORD="$ZAP_OWNER_PASSWORD" \
+            uv run --frozen python scripts/seed_fixture_user.py
+          for role in manager viewer; do
+            user="ZAP_${role^^}_USER" password="ZAP_${role^^}_PASSWORD"
+            CV_SEED_USERNAME="${!user}" CV_SEED_PASSWORD="${!password}" \
+              uv run --frozen python scripts/seed_fixture_user.py --role "$role" \
+              --totp-secret-out "$RUNNER_TEMP/cv/$role.totp"
+          done
+
+      - name: Start the API (testnet, real storage backend, loopback)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+          CV_STORAGE_BACKEND: real
+          CV_FEED: synthetic
+          CV_BIND_HOST: 127.0.0.1
+          CV_BIND_PORT: "8000"
+          CV_METRICS_BIND: 127.0.0.1:9108
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv/lane.key"
+          export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
+          export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data"
+          nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          api=$!
+          for _ in $(seq 60); do
+            if curl -fsS -o /dev/null "$ZAP_TARGET/healthz"; then exit 0; fi
+            kill -0 "$api" 2>/dev/null || break # it exited (the storage refusal): stop waiting
+            sleep 2
+          done
+          echo "::error title=zap-admin::the API did not answer /healthz; the last of its log follows"
+          tail -n 40 "$RUNNER_TEMP/cv/api.log"
+          exit 1
+
+      - name: Plan each role's denials and scan (admin_requests.py, from matrix.yaml)
+        run: uv run --frozen --project services/api python security/zap/admin_requests.py --target "$ZAP_TARGET" --out "$WORK"
+
+      - name: Phase A, the denials, as each role
+        run: |
+          set -uo pipefail
+          mkdir -p zap-reports && chmod a+rwx zap-reports "$WORK" # the image runs as its own user
+          rc=0
+          for role in manager viewer; do # both roles run, then the step fails
+            user="ZAP_${role^^}_USER" envfile="$RUNNER_TEMP/cv/$role-denials.env"
+            { python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "${!user}" \
+                --password-env "ZAP_${role^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$role.totp" \
+                --out "$envfile" &&
+              docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET \
+                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$role-denials.yaml" \
+                2>&1 | tee "$WORK/$role-denials.log"; } || rc=1
+          done
+          exit "$rc"
+
+      - name: Every refusal planned and in the audit log (check_admin_denials.py)
+        run: |
+          set -euo pipefail
+          query="SELECT coalesce(json_agg(json_build_object('username', u.username,
+            'request_id', a.request_id, 'action', a.action, 'outcome', a.outcome)), '[]')
+            FROM audit_log a JOIN users u ON u.id = a.actor_user_id
+            WHERE u.username IN ('$ZAP_MANAGER_USER', '$ZAP_VIEWER_USER')"
+          docker compose -f infra/compose/docker-compose.yml --profile core exec -T postgres \
+            psql -U cv -d candleviewer -v ON_ERROR_STOP=1 -qAt \
+            -c "SET default_transaction_read_only = on" -c "$query" > "$WORK/audit-rows.json"
+          python3 security/zap/check_admin_denials.py --dir "$WORK" --audit "$WORK/audit-rows.json" \
+            --user "manager=$ZAP_MANAGER_USER" --user "viewer=$ZAP_VIEWER_USER" \
+            --api-log "$RUNNER_TEMP/cv/api.log"
+
+      - name: Phase B, the passive and active scan, as each role
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          rc=0
+          for role in manager viewer; do # a fresh session each: a bearer lives 12 minutes
+            user="ZAP_${role^^}_USER" envfile="$RUNNER_TEMP/cv/$role-scan.env"
+            { python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "${!user}" \
+                --password-env "ZAP_${role^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$role.totp" \
+                --out "$envfile" &&
+              docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET \
+                -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -autorun "/zap/wrk/$WORK/$role-scan.yaml" \
+                2>&1 | tee "$WORK/$role-scan.log"; } || rc=1
+          done
+          exit "$rc"
+
+      - name: The scans stayed signed in, and no new medium+ alert
+        if: ${{ !cancelled() }}
+        run: |
+          set -uo pipefail
+          rc=0
+          for role in manager viewer; do # both roles are checked, then the step fails
+            # Both GET /me requestors of the scan plan ran and answered 200 (no "lost authentication").
+            python3 security/zap/check_liveness.py "$WORK/$role-scan.log" "zap-reports/admin-surface-$role.json" || rc=1
+            python3 security/zap/baseline_gate.py "zap-reports/admin-surface-$role.json" .zap/admin-surface-baseline.json || rc=1
+          done
+          exit "$rc"
+
+      - name: Keep the API's log with the plans and reports
+        if: always()
+        run: |
+          mkdir -p "$WORK"
+          if [ -f "$RUNNER_TEMP/cv/api.log" ]; then cp "$RUNNER_TEMP/cv/api.log" "$WORK/api.log"; fi
+
+      - name: No session value in the plans, logs or reports (else nothing is uploaded)
+        id: scrub
+        if: always()
+        run: python3 security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv" "$WORK" zap-reports
+
+      - name: Upload the plans, logs and reports (the sessions in them died with the stack)
+        if: ${{ always() && steps.scrub.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-admin-surface
+          path: |
+            zap-work/
+            zap-reports/
+          retention-days: 14
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+
+  report:
+    needs: zap-admin
+    if: ${{ always() && needs.zap-admin.result == 'failure' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: dast-admin
+      title-prefix: "security: dast-admin-nightly failed"
+      labels: security,area/accounts-admin
+      body: "dast-admin-nightly (E42-X03, the ZAP admin profile) failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: zap-admin-surface. Triage each finding like any security finding: severity, disposition, remediation."

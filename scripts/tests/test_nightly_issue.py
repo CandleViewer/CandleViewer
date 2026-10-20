@@ -27,7 +27,12 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 REUSABLE = "_nightly-issue.yml"
 USES = f"./.github/workflows/{REUSABLE}"
-NIGHTLIES = ("fixture-drift.yml", "perf-storage-nightly.yml", "perf-ingestion-nightly.yml")
+NIGHTLIES = (
+    "fixture-drift.yml",
+    "perf-storage-nightly.yml",
+    "perf-ingestion-nightly.yml",
+    "dast-admin-nightly.yml",
+)
 BOT = "github-actions[bot]"
 RUN_URL = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 #: (workflow, caller job) -> (measuring job, `if:`, signal, title prefix, labels). The prefixes are
@@ -67,6 +72,14 @@ SIGNALS = {
         "perf-e08-q04-full",
         "perf: E08-Q04 full perf pack failed",
         "perf,area/ingestion,type/bug",
+    ),
+    # E42-X03: the ZAP admin profile; any failed step of its one job is the verdict.
+    ("dast-admin-nightly.yml", "report"): (
+        "zap-admin",
+        "${{ always() && needs.zap-admin.result == 'failure' }}",
+        "dast-admin",
+        "security: dast-admin-nightly failed",
+        "security,area/accounts-admin",
     ),
 }
 #: The verdicts the measuring jobs hand over: the conditions of the issue steps they replace, less
