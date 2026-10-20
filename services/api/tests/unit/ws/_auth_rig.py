@@ -31,6 +31,9 @@ from candleviewer.ws.sequencing import SequencingHub
 
 BASE_MS = 1_789_132_262_000
 ORIGIN = "http://testserver"  # §2.5: allow-listed and sent on every upgrade
+#: A test's bound, in fake seconds: each test that uses it runs on a `VirtualTimeLoop` (`@virtual`,
+#: `tests/unit/audit/audit_waits.py`), whose clock moves only when nothing else can happen, so a
+#: slow host never spends it (#3938).
 DEADLINE_S = 5.0
 #: `Rig.leftovers()` once every handler has ended.
 NOTHING_LEFT: tuple[int, int, int, int, dict[str, int]] = (0, 0, 0, 0, {})

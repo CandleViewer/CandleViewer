@@ -4,6 +4,8 @@ A socket counts from `accept` to its first `auth_ok`, is released however else i
 re-`auth` never counts. Past the cap a socket is accepted and closed at once, `bye
 server_shedding_load` + `1013`, before any frame is read; it never counts, `cv_ws_closes_total`
 counts it and a capped `warning` with no identity logs it. Fake socket, event-driven waits.
+Every async test runs on a `VirtualTimeLoop` (`@virtual`, #3938): `DEADLINE_S` and the
+gateway's loop timers are fake seconds, which a slow host cannot spend.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.lifecycle import REFUSAL_LOG_LIMIT, Lifecycle
 from candleviewer.ws.limits import AUTH_TIMEOUT_S, MAX_UNAUTHENTICATED_SOCKETS
 from candleviewer.ws.metrics import cv_ws_closes_total
+from tests.unit.audit.audit_waits import virtual
 from tests.unit.ws._auth_rig import (
     DEADLINE_S,
     EXITS,
@@ -62,6 +65,7 @@ async def _spend_good_dup(rig: Rig) -> None:
     await _close_all([sock], [handler])
 
 
+@virtual
 async def test_the_65th_socket_awaiting_auth_is_shed_with_1013_and_counted_once() -> None:
     """Default cap: 64 sockets await auth, the 65th gets the shedding `bye` (retry after the auth
     window, reconnect) and `1013` and is never counted or served. One `warning` names the cap and
@@ -82,6 +86,7 @@ async def test_the_65th_socket_awaiting_auth_is_shed_with_1013_and_counted_once(
     assert rig.leftovers() == NOTHING_LEFT
 
 
+@virtual
 async def test_sheds_past_the_log_cap_are_all_counted_and_summarised_once() -> None:
     """Every shed counts; a window logs the first `REFUSAL_LOG_LIMIT`, then one summary (§2.5)."""
     rig, first, before = Rig(max_unauthenticated=1), Sock(), _sheds()
@@ -96,6 +101,7 @@ async def test_sheds_past_the_log_cap_are_all_counted_and_summarised_once() -> N
     assert (_sheds(), rig.leftovers()) == (before + REFUSAL_LOG_LIMIT + 5, NOTHING_LEFT)
 
 
+@virtual
 async def test_a_setup_raise_leaves_nothing_counted(monkeypatch: pytest.MonkeyPatch) -> None:
     """A raise injected in the setup before the `try` that frees the slot leaves nothing counted."""
     rig = Rig(max_unauthenticated=1)
@@ -106,6 +112,7 @@ async def test_a_setup_raise_leaves_nothing_counted(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize("how", [*EXITS, "enrolment_refused"])
+@virtual
 async def test_the_count_drops_however_the_socket_ends(how: str) -> None:
     """Released at `auth_ok` and on every other exit: a close by either side, a fault (`1011`),
     an auth call past its bound, a connect-rate refusal, a cancellation, an enrolment-only
@@ -121,6 +128,7 @@ async def test_the_count_drops_however_the_socket_ends(how: str) -> None:
     assert rig.leftovers() == NOTHING_LEFT
 
 
+@virtual
 async def test_an_authenticated_socket_and_its_reauth_do_not_count() -> None:
     """Once a socket has `auth_ok` it stops counting, and an in-place re-`auth` in flight takes no
     slot: a new socket gets in meanwhile, and only it counts."""
@@ -140,6 +148,7 @@ async def test_an_authenticated_socket_and_its_reauth_do_not_count() -> None:
     assert rig.leftovers() == NOTHING_LEFT
 
 
+@virtual
 async def test_many_sockets_through_mixed_ends_leave_nothing_counted() -> None:
     """Six waves of four sockets at a cap of four, each shedding a fifth and taking every exit
     three times in all, then a wave the auth window closes: nothing is left counted, live or
@@ -164,6 +173,7 @@ async def test_many_sockets_through_mixed_ends_leave_nothing_counted() -> None:
 
 
 @pytest.mark.parametrize("peer", ["stops_reading", "vanished"])
+@virtual
 async def test_a_shed_whose_peer_cannot_take_the_bye_still_ends(
     peer: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -180,6 +190,7 @@ async def test_a_shed_whose_peer_cannot_take_the_bye_still_ends(
     assert _sheds() == before + 1
 
 
+@virtual
 async def test_a_cancellation_during_a_shed_propagates() -> None:
     """A cancellation while the shed `bye` is parked is honoured, never swallowed."""
     rig, first, shed = Rig(max_unauthenticated=1), Sock(), Sock()
