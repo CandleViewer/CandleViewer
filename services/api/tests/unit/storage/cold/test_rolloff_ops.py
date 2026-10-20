@@ -194,8 +194,10 @@ HOURS = ["2026-10-17T00", "2026-10-17T01", "2026-10-17T23"]
 
 async def test_hot_partitions_closed_days_lists_a_day_once_from_its_hour_partitions() -> None:
     """#3794: `orderbook_deltas` is `PARTITION BY HOUR`; its hours were never a closed day."""
-    # Malformed hour names of other closed days must list nothing: QuestDB writes `THH`.
+    # Malformed hour names of other closed days must list nothing: QuestDB writes `THH`, in ASCII
+    # digits (`\d` would also take the fullwidth hour appended below).
     names = [*HOURS, "2026-10-18T00", "2026-10", "2026-10-15T1", "2026-10-14T001", "default"]
+    names.append("2026-10-16T\uff10\uff15")
     pg = FakePg([{"name": n} for n in names])
 
     days = await QuestDbHotPartitions(pg).closed_days(D, DAY_START_US + 86_400_000_000)
