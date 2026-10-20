@@ -167,9 +167,11 @@ the red job by its code (§4, CI-A11Y-002..004). Cost: one job a night, within i
 capped by its 15-minute timeout.
 
 **Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
-`perf-storage-nightly.yml` (`perf-storage`) and `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
-`perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full`) report a red signal
-through `_nightly-issue.yml`, from scheduled and manual runs alike. Its `report` job comments on the
+`perf-storage-nightly.yml` (`perf-storage`), `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
+`perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full`) and
+`dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; dispatch only
+until #3874 boots the real storage tier) report a red signal through `_nightly-issue.yml`, from
+scheduled and manual runs alike. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
 labels, or opens one titled `<prefix> (YYYY-MM-DD)`, so a lasting drift or regression keeps one
 issue with a comment per red night. Close the issue when the cause is fixed: the next red night
@@ -179,6 +181,17 @@ concurrency group, so the second comments on the issue the first opened. The wor
 workflow-level group, which would let a manual run replace a pending scheduled run (#3449). Only
 the report jobs can write (`issues: write`, no checkout, no action), and a malformed input fails the
 job and files nothing.
+
+To triage a red `dast-admin` run (E42-X03's ZAP admin profile), find the step that failed:
+"Start the API" means the stack never came up (until #3874, the expected stop); "Every refusal
+planned and in the audit log" is the denial gate (`check_admin_denials.py`: a status other than
+the planned one, a refusal with no record, or a CSRF refusal); "The scans stayed signed in, and no
+new medium+ alert" is the scan gate (`check_liveness.py`, then `baseline_gate.py` against
+`.zap/admin-surface-baseline.json`); "No session value in the plans, logs or reports" means a
+token reached the artefact, which is then not uploaded. The `zap-admin-surface` artefact holds
+each role's plans, ZAP's logs and reports, the exported audit rows and the API's log. Triage each
+alert like any security finding: severity, disposition, remediation; an accepted one goes into the
+baseline by a reviewed PR.
 
 ## 3. Reading the `ci-required` resolver summary
 

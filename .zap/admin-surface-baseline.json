@@ -1,0 +1,4 @@
+{
+  "$comment": "E42-X03: accepted ZAP alerts for the admin surface scanned as the synthetic Manager and Viewer (.zap/admin-surface.yaml). The nightly fails on any High or Medium alert NOT listed here (key = pluginId + method + path without the query; security/zap/baseline_gate.py). Every entry needs reason, owner and review, an ISO date not in the past (baseline_gate.py: an expired entry no longer protects). Empty at merge: the first run is triaged, and an addition is a reviewed PR, never a workflow edit.",
+  "accepted": []
+}

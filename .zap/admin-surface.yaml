@@ -1,0 +1,94 @@
+# E42-X03 (#1026, AC5): the ZAP admin profile. Authenticated as the synthetic Manager and Viewer,
+# each with a real TOTP method and no MFA exception, never the Owner, against the throwaway CI
+# stack of .github/workflows/dast-admin-nightly.yml (a run against real staging is the owner's
+# call), never a live exchange. Never run as it is: security/zap/admin_requests.py writes each
+# role's plans from it, a denial plan (phase A: one request per operation matrix.yaml refuses
+# the role) and this scan plan (phase B). The role's bearer and SR-041 CSRF pair come from
+# ZAP_AUTH_TOKEN and ZAP_CSRF_TOKEN at run time (security/zap/mint_sessions.py); no credential is
+# committed. They go only on requests to the admin surface and to /me, the liveness check: an
+# operation the OpenAPI import sends anywhere else, such as a logout, carries no session to end.
+env:
+  contexts:
+    - name: cv-admin
+      urls: ["${ZAP_TARGET}"]
+      includePaths:
+        - "${ZAP_TARGET}/admin(/.*)?"
+        - "${ZAP_TARGET}/users(/.*)?"
+      excludePaths:
+        # reason: logout ends the scanner's own session, so the scan would go on signed out
+        - "${ZAP_TARGET}/auth/logout.*"
+        # reason: ending one's own sessions can end the scanner's
+        - "${ZAP_TARGET}/me/sessions.*"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+jobs:
+  - type: replacer
+    rules:
+      - description: the role's bearer
+        url: "^${ZAP_TARGET}/((admin|users)(/[^?]*)?|me)([?].*)?$"
+        matchType: req_header
+        matchString: Authorization
+        replacementString: "Bearer ${ZAP_AUTH_TOKEN}"
+        initiators: []
+      - description: the SR-041 CSRF header, so an unsafe request reaches RBAC
+        url: "^${ZAP_TARGET}/((admin|users)(/[^?]*)?|me)([?].*)?$"
+        matchType: req_header
+        matchString: X-CSRF-Token
+        replacementString: "${ZAP_CSRF_TOKEN}"
+        initiators: []
+      - description: the SR-041 CSRF cookie the header must match
+        url: "^${ZAP_TARGET}/((admin|users)(/[^?]*)?|me)([?].*)?$"
+        matchType: req_header
+        matchString: Cookie
+        replacementString: "__Host-cv_csrf=${ZAP_CSRF_TOKEN}"
+        initiators: []
+  - type: requestor
+    name: session-live-before-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200 # a 401 here aborts the gate: an unauthenticated scan is no clean scan
+  - type: openapi
+    parameters:
+      apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # the checkout, mounted at /zap/wrk
+      context: cv-admin
+      targetUrl: "${ZAP_TARGET}"
+  - type: passiveScan-config
+    parameters: { maxAlertsPerRule: 10, scanOnlyInScope: true }
+    rules:
+      - { id: 10020, name: Anti-clickjacking header, threshold: Low }
+      - { id: 10021, name: X-Content-Type-Options header missing, threshold: Low }
+      - { id: 10038, name: CSP header not set, threshold: Low }
+      - { id: 10055, name: CSP, threshold: Low }
+      - { id: 10049, name: Storable and cacheable content, threshold: Low }
+  # The import, at most 2 minutes of passive wait and at most 8 of active scan stay inside the
+  # 12-minute access token (ADR-0020), so the after-scan /me still holds the scan's live bearer.
+  - type: passiveScan-wait
+    parameters: { maxDuration: 2 }
+  - type: activeScan
+    parameters:
+      context: cv-admin
+      policy: admin-surface
+      maxScanDurationInMins: 8 # with the passive wait, within the 12-minute bearer (ADR-0020)
+    policyDefinition:
+      defaultStrength: Medium
+      defaultThreshold: "Off"
+      rules:
+        - { id: 40018, name: SQL injection, strength: High, threshold: Low }
+        - { id: 40012, name: Cross-site scripting (reflected), strength: Medium, threshold: Low }
+        - { id: 40014, name: Cross-site scripting (persistent), strength: Medium, threshold: Low }
+        - { id: 90020, name: Remote OS command injection, strength: Medium, threshold: Low }
+        - { id: 6, name: Path traversal, strength: Medium, threshold: Low }
+        - { id: 90035, name: Server-side template injection, strength: Medium, threshold: Low }
+  - type: requestor
+    name: session-live-after-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200
+  - type: report
+    parameters:
+      { template: traditional-json, reportDir: /zap/wrk/zap-reports, reportFile: admin-surface }
+    risks: [high, medium, low, info]
