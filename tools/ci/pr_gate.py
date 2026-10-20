@@ -7,8 +7,9 @@ against the merge base with origin/main and runs, one process at a time, CI's go
 the lane scripts the changed paths switch on, backend lint, types and tests, Semgrep and gitleaks
 when installed, and a pattern check for the CodeQL miss. One table; exit 1 on any failure. The
 lanes that apply are pr.yml's own `changed-paths` selection (tools/ci/path_filters.py reads it, so
-no rule is copied here). No network. Windows and Linux: pathlib, no fcntl; what Windows cannot
-import (fcntl, parts of os) is reported, not failed.
+no rule is copied here). No network. Windows and Linux: pathlib, no fcntl. What a machine cannot
+run is no pass: a missing tool is SKIP, tests Windows cannot import (fcntl, parts of os) are
+PARTIAL, and the verdict line counts both. LEFT_TO_CI says what only CI runs.
 """
 
 from __future__ import annotations
@@ -27,15 +28,19 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
+import yaml
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+# E402: the repo root is put on sys.path just above, which this package import needs.
 from tools.ci import path_filters  # noqa: E402
 
 API = "services/api"
 UNIT = f"{API}/tests/unit"
 BASE_REF = "origin/main"
+STEP_TIMEOUT = 1500  # seconds a step may take: CI's py lane is cut off at 30 minutes
 RUN: dict[str, Any] = {
     "capture_output": True,
     "text": True,
@@ -47,8 +52,11 @@ PYTEST_MARKERS = (
     "not exchange_smoke and not (chaos and integration) and not roundtrip and not fuzz "
     "and not harness and not perf and not flaky"
 )
+#: What runs here: CI's selection, less the integration and chaos tests, which need Docker.
+LOCAL_MARKERS = f"{PYTEST_MARKERS} and not integration and not chaos"
 #: Tests that pin a module from outside its own tests/unit directory: path prefix -> test paths.
-#: #3868: the bench lane's tests import the bars modules and pin their limits and budgets.
+#: #3868: the bench lane's tests import the bars modules and pin their limits and budgets. The
+#: unit tests that import the module (15 files of unit/ws import candleviewer.bars) run too.
 PINNED_TESTS = (
     (f"{API}/candleviewer/bars/", (f"{UNIT}/bench",)),
     (f"{API}/bench/", (f"{UNIT}/bench",)),
@@ -61,8 +69,21 @@ LOG_METHODS = frozenset("debug info warning warn error exception critical log".s
 GEN_CHECK = "tools/ci/check_gen_freshness.py"
 CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".mjs", ".yml", ".yaml")
 SEMGREP_FLAGS = ("--error", "--metrics=off", "--disable-version-check", "--quiet")
-LEFT_TO_CI = "Left to CI: CodeQL, the js/e2e/contract/integration/migrations lanes, the PR body."
-POSIX_ONLY = re.compile(r"No module named '(?:fcntl|termios)'|module 'os' has no attribute")
+#: Results that are no failure but no pass either: the verdict line counts them.
+CAVEATS = (("SKIP", "skipped"), ("PARTIAL", "partial"))
+LEFT_TO_CI = (
+    "Left to CI: CodeQL, the js/e2e/contract/integration/migrations lanes, the integration and "
+    "chaos tests (Docker), xstate-contract and tests/lint_statecharts, the PR title and body, and "
+    "the PR size (over 800 counted LOC fails PR-SIZE-001)."
+)
+#: Files so many tests name that a name says nothing about which test reads them.
+GENERIC_NAMES = frozenset({"README.md", "package.json", "__init__.py"})
+#: The lint targets outside services/api that _job-py.yml's ruff and mypy steps also check.
+PY_LANE_LINT = re.compile(r"uv run (?:ruff|mypy) .*")  # the lines of _job-py.yml that lint
+PY_LANE_EXTRAS = re.compile(r"\.\./\.\./[\w./-]+\.py")  # the targets such a line adds
+POSIX_ONLY = re.compile(
+    r"No module named '(?:fcntl|termios|resource|pwd|grp)'|module 'os' has no attribute"
+)
 PASSWORD_NAME = re.compile(r"pass(?:word|wd|code|phrase)", re.IGNORECASE)
 # CI's scripts as its workflows write them, run as `python <script>`: ALWAYS on every change (as
 # CI's governance does), ON_FILTER on a `changed-paths` filter. The tests pin both to the workflows.
@@ -90,19 +111,25 @@ ALWAYS = {
 ON_FILTER = {  # filter: {gate: script}
     "infra": {
         "pin-check": "tools/ci/check_action_pins.py",
-        "pin-digests": "tools/ci/resolve_image_digests.py --check --offline",  # CI: online
+        "pin-digests-offline": "tools/ci/resolve_image_digests.py --check --offline",  # CI: online
     },
     "py": {
         "statechart-lint": "tools/lint_statecharts.py",
         "event-coverage": "tools/statechart/event_coverage.py",
+        "alert-rules": "infra/alertmanager/check_alert_rules.py",  # _job-py.yml, E04-T05
+        "dashboard-lint": "infra/grafana/lint_dashboards.py --strict",  # _job-py.yml
+        "machine-hash-lock": "tools/statechart/check_machine_hash_lock.py",  # CI adds a test
+        "rule-ir-schema": "services/api/scripts/generate_rule_ir_schema.py --check",  # _job-py.yml
     },
 }
+BACKEND_GATES = frozenset({"machine-hash-lock", "rule-ir-schema"})  # run in the services/api env
 
 
 class Step(NamedTuple):
     gate: str
     scope: str
-    run: Callable[[], tuple[str, str]]  # -> (PASS | FAIL | SKIP, a FAIL's output or a note)
+    # -> (PASS | PARTIAL | FAIL | SKIP, a FAIL's output or a note)
+    run: Callable[[], tuple[str, str]]
 
 
 class Result(NamedTuple):
@@ -152,8 +179,13 @@ def run_command(argv: Sequence[str], cwd: Path) -> tuple[int, str]:
     exe = shutil.which(argv[0])
     if exe is None:
         return 127, f"{argv[0]} is not installed"
-    env = {**os.environ, "PYTHONUTF8": "1", "HYPOTHESIS_PROFILE": "ci"}  # as CI's py lane
-    done = subprocess.run([exe, *argv[1:]], cwd=cwd, env=env, **RUN)  # noqa: S603 - fixed argv
+    # CI's py lane (HYPOTHESIS_PROFILE); pytest keeps the reason on each summary line (COLUMNS)
+    env = {**os.environ, "PYTHONUTF8": "1", "HYPOTHESIS_PROFILE": "ci", "COLUMNS": "240"}
+    cmd = [exe, *argv[1:]]  # a fixed argv, no shell
+    try:
+        done = subprocess.run(cmd, cwd=cwd, env=env, timeout=STEP_TIMEOUT, **RUN)  # noqa: S603
+    except subprocess.TimeoutExpired:
+        return 124, f"{argv[0]} timed out after {STEP_TIMEOUT // 60} minutes"
     return done.returncode, done.stdout + done.stderr
 
 
@@ -182,18 +214,25 @@ def select_tests(root: Path, paths: Iterable[str]) -> tuple[list[str], list[str]
     """The tests a change affects: (paths for pytest inside services/api, files for scripts/tests).
 
     A backend module runs its tests/unit directory, a changed test itself (a helper or conftest,
-    its directory), PINNED_TESTS what pins a module from elsewhere, any other file below the root
-    (root files are named by too many tests to signal) the governance tests that name it.
+    its directory), PINNED_TESTS what pins a module from elsewhere, any other file, root files
+    such as AGENTS.md and Makefile too, the governance tests that read it by name (the name in
+    quotes: a test that only mentions it reads nothing) and a script the tests that import it.
+    GENERIC_NAMES, which too many tests name, select nothing.
     """
     api: set[str] = set()
     gov: set[str] = set()
-    named: set[str] = set()
+    modules: set[str] = set()
+    files: set[str] = set()
+    importers: set[str] = set()
     unit = root / UNIT
     for path in paths:
         pure = PurePosixPath(path)
         if not (root / path).is_file():
             continue
-        api.update(t for prefix, pinned in PINNED_TESTS if path.startswith(prefix) for t in pinned)
+        for prefix, pinned in PINNED_TESTS:
+            if path.startswith(prefix):
+                api.update(pinned)
+                importers.add(prefix.removeprefix(f"{API}/").strip("/").replace("/", "."))
         if path.startswith(f"{API}/candleviewer/"):
             module, _, rest = path.removeprefix(f"{API}/candleviewer/").partition("/")
             if rest and (unit / module).is_dir():
@@ -204,17 +243,24 @@ def select_tests(root: Path, paths: Iterable[str]) -> tuple[list[str], list[str]
                 )
         elif path.startswith(f"{API}/tests/") and is_test_file(path):
             where = path if pure.name.startswith("test_") else pure.parent.as_posix()
-            if where != f"{API}/tests" and "/chaos/" not in path:  # never the whole suite
-                api.add(where)
+            if where != f"{API}/tests" and not re.search(r"/(chaos|integration)/", path):
+                api.add(where)  # never the whole suite, never the tests that need Docker
         elif path.startswith("scripts/tests/test_"):
             gov.add(path)
-        elif (
-            "/" in path and not path.startswith(API) and pure.name != "__init__.py"
-        ):  # not root files
+        elif not path.startswith(API) and pure.name not in GENERIC_NAMES:
             script = pure.suffix == ".py" and re.search("[_-]", pure.stem)
-            named.add(pure.stem if script else pure.name)
-    if named:
-        names = re.compile("|".join(rf"(?<![\w-]){re.escape(n)}(?![\w-])" for n in sorted(named)))
+            (modules if script else files).add(pure.stem if script else pure.name)
+    for module in importers:  # the unit tests that import a pinned module, wherever they sit
+        imports = re.compile(rf"^\s*(?:from|import)\s+{re.escape(module)}\b", re.MULTILINE)
+        api.update(
+            t.relative_to(root).as_posix()
+            for t in unit.rglob("test_*.py")
+            if imports.search(t.read_text(encoding="utf-8", errors="replace"))
+        )
+    if modules or files:
+        imported = [rf"(?<![\w-]){re.escape(m)}(?![\w-])" for m in sorted(modules)]
+        read = [rf"""["'](?:[^"'\s]*/)?{re.escape(f)}["']""" for f in sorted(files)]
+        names = re.compile("|".join([*imported, *read]))
         for test in sorted((root / "scripts" / "tests").glob("test_*.py")):
             if names.search(test.read_text(encoding="utf-8", errors="replace")):
                 gov.add(test.relative_to(root).as_posix())
@@ -224,24 +270,44 @@ def select_tests(root: Path, paths: Iterable[str]) -> tuple[list[str], list[str]
 
 def pytest_status(code: int, output: str, windows: bool) -> tuple[str, str]:
     """A pytest run's verdict. Exit 5 (nothing selected) passes. Windows lacks fcntl and parts of
-    os: when every failure section of the report is that, the run passes and says so."""
+    os: when that is every failure, the run is PARTIAL, naming what did not run, never a PASS.
+
+    The failures are judged before the summary, which repeats them all: the error blocks of the
+    report (collection and setup errors) and one `FAILED` or `ERROR` summary line per test, whose
+    reason COLUMNS keeps whole. A conftest that cannot import aborts the whole run.
+    """
     if code in (0, 5):
         return "PASS", ""
-    sections = re.split(r"^_{3,} .+? _{3,}$", output, flags=re.MULTILINE)[1:]
+    report, _, summary = output.partition("short test summary info")
+    lines = summary.splitlines()
+    failed = [ln for ln in lines if ln.startswith("FAILED ") or re.match(r"ERROR \S+::", ln)]
+    blocks = re.split(r"^_{3,} .+? _{3,}$", report.partition(" FAILURES ")[0], flags=re.MULTILINE)
+    sections = blocks[1:] + failed
+    sections = sections or re.findall(r"ImportError while loading conftest.*", report, re.DOTALL)
     if windows and sections and all(POSIX_ONLY.search(section) for section in sections):
-        return (
-            "PASS",
-            f"{len(sections)} failure(s) only from POSIX modules Windows lacks: run in WSL or CI",
+        names = [ln[6:].split(" - ")[0] for ln in lines if re.match(r"ERROR [^:]*( - |$)", ln)]
+        names += [ln.split(" ", 1)[1].split("::")[0] for ln in failed if "::" in ln]
+        names += re.findall(r"loading conftest '([^']+)'", report)
+        shown = ", ".join(sorted(set(names))) or f"{len(sections)} section(s)"
+        return "PARTIAL", f"not run on Windows (POSIX-only imports): {shown}; run them in WSL or CI"
+    notes = []
+    if windows:
+        notes.append(
+            "Windows: tests that need fcntl, resource, POSIX paths or symlinks fail here whatever "
+            "the change; confirm such a failure in WSL or CI"
         )
-    return "FAIL", output
+    if "WinError 1314" in output:
+        notes.append("WinError 1314: this account may not create symlinks (Developer Mode, or WSL)")
+    return "FAIL", "\n".join([output, *notes])
 
 
 def logged_passwords(source: str) -> list[tuple[int, str]]:
     """(line, name) of each password-named value a logging call receives.
 
     CodeQL reads such a name as sensitive data whatever it holds: #3875 logged `_PASSWORD`, a
-    fixed test string, on purpose, to prove that a filter hides it. No test file in the repo
-    does today, so a changed one is judged whole.
+    fixed test string, on purpose, to prove that a filter hides it. A test file is judged whole;
+    what CodeQL's config ignores is left out by `check_steps`: .semgrep/tests/ holds fixtures
+    that log credentials on purpose, for the rules that must catch them.
     """
     found: set[tuple[int, str]] = set()
     for call in ast.walk(ast.parse(source)):
@@ -261,10 +327,21 @@ def script_steps(change: Change) -> list[Step]:
     for name, scripts in ON_FILTER.items():
         if change.selected[name]:
             due.update({gate: (script, name) for gate, script in scripts.items()})
-    return [
-        command(g, scope, [sys.executable, *shlex.split(s)], change.root)
-        for g, (s, scope) in due.items()
-    ]
+    in_backend = ["uv", "run", "--frozen", "--project", API, "python"]
+    steps = []
+    for gate, (script, scope) in due.items():
+        python = in_backend if gate in BACKEND_GATES and shutil.which("uv") else [sys.executable]
+        steps.append(command(gate, scope, [*python, *shlex.split(script)], change.root))
+    return steps
+
+
+def py_lane_extras(root: Path) -> list[str]:
+    """The files outside services/api that _job-py.yml's ruff and mypy steps also check, as that
+    workflow writes them (relative to services/api)."""
+    job = root / ".github" / "workflows" / "_job-py.yml"
+    text = job.read_text(encoding="utf-8") if job.is_file() else ""
+    found = PY_LANE_EXTRAS.findall(" ".join(PY_LANE_LINT.findall(text)))
+    return list(dict.fromkeys(found))
 
 
 def tool_steps(change: Change) -> list[Step]:
@@ -272,6 +349,8 @@ def tool_steps(change: Change) -> list[Step]:
     root, api = change.root, change.root / API
     backend_files = [p for p in change.present if p.startswith(f"{API}/")]
     py = [p.removeprefix(f"{API}/") for p in backend_files if p.endswith(".py")]
+    extras = py_lane_extras(root)
+    lint = py + [e for e in extras if e.removeprefix("../../") in change.present]
     steps = []
     if change.selected["protocol"]:  # CI runs `gen` on every PR; here its inputs start it
         gen = command("gen-freshness", "protocol", [sys.executable, GEN_CHECK], root)
@@ -282,11 +361,15 @@ def tool_steps(change: Change) -> list[Step]:
             gen if (root / "node_modules").is_dir() else skip
         )  # it rewrites generated files
     for gate, args in (("ruff", ("check",)), ("ruff-format", ("format", "--check"))):
-        steps += [command(gate, f"{len(py)} file(s)", backend("ruff", *args, *py), api)] * bool(py)
+        steps += [command(gate, f"{len(lint)} file(s)", backend("ruff", *args, *lint), api)] * bool(
+            lint
+        )
     contracts = {f"{API}/.importlinter", "docs/plan/module-contracts.toml"} & set(change.paths)
-    if contracts or any(p.startswith(("candleviewer/", "cvdev/")) for p in py):
+    package = bool(contracts) or any(p.startswith(("candleviewer/", "cvdev/")) for p in py)
+    if package or len(lint) > len(py):
         mypy = backend("mypy", "--strict", "--platform", "linux", "candleviewer", "cvdev")
-        steps.append(command("mypy", "candleviewer cvdev", mypy, api))
+        steps.append(command("mypy", "candleviewer cvdev", mypy + extras, api))
+    if package:
         steps.append(command("import-linter", "contracts", backend("lint-imports"), api))
     code = [p for p in change.present if p.endswith(CODE_SUFFIXES)]
     rules = [p.relative_to(root).as_posix() for p in sorted((root / ".semgrep").glob("cv-*.yml"))]
@@ -295,15 +378,26 @@ def tool_steps(change: Change) -> list[Step]:
         argv = ["semgrep", "scan", *SEMGREP_FLAGS, *configs, *code]
         steps.append(command("semgrep", f"{len(code)} file(s)", argv, root))
     leaks = ["--redact", "--no-banner", "--config", ".gitleaks.toml"]
-    staged = ["gitleaks", "protect", "--staged", *leaks]
-    steps.append(command("gitleaks-staged", "staged", staged, root))
+    commits = ["gitleaks", "git", "--log-opts", f"{change.base}..HEAD", *leaks, "."]
+    steps.append(command("gitleaks", "branch commits", commits, root))  # the commits are made
     return steps
 
 
+def codeql_ignored(root: Path) -> list[str]:
+    """The `paths-ignore` globs of CodeQL's config: what CodeQL skips, the pattern check skips."""
+    config = root / ".github" / "codeql" / "codeql-config.yml"
+    loaded = yaml.safe_load(config.read_text(encoding="utf-8")) if config.is_file() else None
+    return [str(glob) for glob in (loaded or {}).get("paths-ignore", [])]
+
+
 def check_steps(change: Change) -> list[Step]:
-    """The CodeQL pattern check (#3875), when a test file changed."""
-    root = change.root
-    tests = [p for p in change.present if is_test_file(p)]
+    """The CodeQL pattern check (#3875), on the changed test files CodeQL does not ignore."""
+    root, ignored = change.root, codeql_ignored(change.root)
+    tests = [
+        p
+        for p in change.present
+        if is_test_file(p) and not any(path_filters.matches(p, glob) for glob in ignored)
+    ]
 
     def run_codeql() -> tuple[str, str]:
         hits = []
@@ -324,7 +418,8 @@ def test_steps(change: Change, fast: bool) -> list[Step]:
         return []
     api, gov = select_tests(change.root, change.present)
     windows = os.name == "nt"
-    flags = ["-q", "-p", "no:cacheprovider", *(["--continue-on-collection-errors"] * windows)]
+    flags = ["-q", "-p", "no:cacheprovider", "--tb=line"]
+    flags += ["--continue-on-collection-errors"] * windows
 
     def pytest_step(gate: str, scope: str, argv: list[str], cwd: Path) -> Step:
         def run() -> tuple[str, str]:
@@ -340,7 +435,7 @@ def test_steps(change: Change, fast: bool) -> list[Step]:
         steps.append(pytest_step("pytest-scripts", f"{len(gov)} file(s)", argv, change.root))
     if api:
         paths = [p.removeprefix(f"{API}/") for p in api]
-        argv = backend("pytest", *flags, "--no-cov", "-m", PYTEST_MARKERS, *paths)
+        argv = backend("pytest", *flags, "--no-cov", "-m", LOCAL_MARKERS, *paths)
         steps.append(pytest_step("pytest-api", f"{len(api)} path(s)", argv, change.root / API))
     return steps
 
@@ -366,6 +461,12 @@ def table(results: Sequence[Result]) -> str:
     return "\n".join(line.rstrip() for line in lines)
 
 
+def header(change: Change, base_ref: str) -> str:
+    lanes = ", ".join(name for name, on in change.selected.items() if on) or "none"
+    where = f"{len(change.paths)} changed path(s) vs {base_ref} ({change.base[:9]})"
+    return f"pr-gate: {where}; lanes: {lanes}"
+
+
 def report(change: Change, results: Sequence[Result]) -> str:
     failed = [r for r in results if r.status == "FAIL"]
     notes = [
@@ -375,8 +476,13 @@ def report(change: Change, results: Sequence[Result]) -> str:
     for r in failed:
         out += ["", f"--- {r.gate} failed ---", *r.detail.strip().splitlines()[-40:]]
     out += ["", CODEQL_NOTE] if any(is_test_file(p) for p in change.present) else []
-    verdict = f"pr-gate: {'FAIL' if failed else 'PASS'} ({sum(r.seconds for r in results):.0f} s)"
-    return "\n".join([*out, "", LEFT_TO_CI, verdict])
+    counts = [(sum(r.status == status for r in results), word) for status, word in CAVEATS]
+    caveat = ", ".join(f"{n} {word}" for n, word in counts if n)
+    note = f" ({caveat})" if caveat else ""
+    verdict = f"pr-gate: {'FAIL' if failed else 'PASS'}{note}"
+    return "\n".join(
+        [*out, "", LEFT_TO_CI, f"{verdict} in {sum(r.seconds for r in results):.0f} s"]
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -396,6 +502,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not change.paths:
         print(f"pr-gate: no change against {args.base}")
         return 0
+    print(header(change, args.base), flush=True)
     results = [execute(step) for step in steps]
     print(report(change, results))
     return 1 if any(r.status == "FAIL" for r in results) else 0
