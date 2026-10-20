@@ -71,6 +71,33 @@ raw `px` length — use a token from `build/ts/tokens.ts` instead
 (`eslint.config.mjs`'s `candleviewer/no-raw-design-values` rule; the token
 source files themselves are exempt).
 
+## Changing a token (contributing)
+
+Every token change, in either direction, follows the runbook in
+[`docs/plan/16-design-system-brief.md` §11](../../docs/plan/16-design-system-brief.md#11-handoff-spec-tokens-json--code-via-style-dictionary)
+(E05-D06): §11.2 design → code (Penpot token sets → `tokens/*.tokens.json` → PR → gates →
+`tokens/CHANGELOG.md` version bump), §11.3 code → design (a token an engineer discovers during
+implementation, and how it is re-imported into Penpot), §11.4 the per-component handoff
+checklist, §11.5 change control and arbitration, §11.6 secrets. The short form for an engineer:
+
+1. Edit `tokens/primitives.tokens.json` (a value) or `tokens/semantic-dark.tokens.json` (a new
+   alias, `category.subcategory.variant.state`, leaf `.default` when the path has children). A new
+   name needs no light/high-contrast line unless those themes want a different value
+   (`TOKENS-E001` names a missing one).
+2. A new `color.*` token needs a pair in `tools/contrast/pairs.mjs` or an exemption with `reason`
+   and `owner` in `tools/contrast/exemptions.json` (`A11Y-C002` otherwise); a new directional or
+   status encoding needs its surfaces in `tools/contrast/encodings.json` (`A11Y-C008`).
+3. Run `pnpm --filter @candleviewer/ui build:tokens`, then
+   `pnpm --filter @candleviewer/ui contrast:gate`. On `A11Y-C007` run
+   `pnpm --filter @candleviewer/ui contrast:data-ink` and commit `contrast/data-ink-matrix.{json,md}`.
+   Then `python3 tokens/tests/verify_tokens.py` and `pnpm --filter @candleviewer/ui test`: a value
+   pinned in `test/tokens-build/build-integration.test.ts` moves with the token, never the reverse.
+4. Add a `## [x.y.z] - <date>` entry to `tokens/CHANGELOG.md` (patch = retune, minor = new name,
+   major = rename or removal, with `!`), commit `feat(design-system): …` and open the PR with the
+   contrast report and the Penpot page link (§11.2 steps 7–9).
+5. Never commit `build/`, never add to `tools/contrast/data-ink-baseline.json`, never lower a
+   threshold, and never put a credential in a token file (§11.6).
+
 ## Theme runtime (E05-T02)
 
 `src/theme/` owns the `data-theme`, `data-density`, `data-motion` and `data-text-scale` root attributes
