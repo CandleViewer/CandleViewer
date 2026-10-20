@@ -45,69 +45,69 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States
 
-| State (Storybook)      | Penpot variant                                        | Condition                               | Notes                                                |
-| ---------------------- | ----------------------------------------------------- | --------------------------------------- | ---------------------------------------------------- |
-| `Recording`            | CMP-177 · RecorderStatusRow / State=recording          | manual, recording                       | catalogue name                                       |
-| `Stopped`              | State=stopped                                          | stopped, data kept per retention        | catalogue name; "Record again"                       |
-| `Pinned`               | State=recording, Pinned=true                           | keep forever                            | catalogue name; Retention "Forever"                  |
-| `NearDiskBudget`       | State=recording, Disk=near                             | disk level ≥ 1                          | catalogue name; "· N % of budget" in words           |
-| `AutoChartOpen`        | State=recording, Reason=chart_open                     | auto, chart open                        | Stop disabled with its reason                        |
-| `AutoPositionOpen`     | State=recording, Reason=position_open                  | auto, open position                     | Stop disabled with its reason (INV-B11-a)            |
-| `Lingering`            | State=lingering                                        | amendment `lingering`                   | "stops in N min"; "Keep recording"                   |
-| `Starting`             | State=starting                                         | initial snapshot                        | spinner; Stop disabled                               |
-| `Degraded`             | State=degraded                                         | a stream unhealthy                      | gap count secondary                                  |
-| `Gated`                | State=gated                                            | write gate closed, no position          | "Gated · data dropped"                               |
-| `RefusedSymbolCap`     | State=refused, Refusal=symbol_cap                      | 20-symbol limit                         | no action                                            |
-| `RefusedDiskPressure`  | State=refused, Refusal=disk_pressure                   | level 2 refusal                         | no action                                            |
-| `Silent`               | State=silent                                           | no writes for ≥ 60 s                    | "No writes since …"                                  |
-| `Error`                | State=error                                            | error                                   | error text in the row detail                         |
-| `Stopping`             | State=stopping                                         | flushing                                | no action                                            |
-| `ReadOnly`             | State=recording, CanWrite=false                        | no `recording:write` (SCR-103)          | controls disabled with the Owner reason              |
-| `Standalone`           | State=recording, Variant=standalone                    | outside a table (SCR-103 drawer)        | group role, tab stops (tables 2–3)                   |
+| State (Storybook)     | Penpot variant                                | Condition                        | Notes                                      |
+| --------------------- | --------------------------------------------- | -------------------------------- | ------------------------------------------ |
+| `Recording`           | CMP-177 · RecorderStatusRow / State=recording | manual, recording                | catalogue name                             |
+| `Stopped`             | State=stopped                                 | stopped, data kept per retention | catalogue name; "Record again"             |
+| `Pinned`              | State=recording, Pinned=true                  | keep forever                     | catalogue name; Retention "Forever"        |
+| `NearDiskBudget`      | State=recording, Disk=near                    | disk level ≥ 1                   | catalogue name; "· N % of budget" in words |
+| `AutoChartOpen`       | State=recording, Reason=chart_open            | auto, chart open                 | Stop disabled with its reason              |
+| `AutoPositionOpen`    | State=recording, Reason=position_open         | auto, open position              | Stop disabled with its reason (INV-B11-a)  |
+| `Lingering`           | State=lingering                               | amendment `lingering`            | "stops in N min"; "Keep recording"         |
+| `Starting`            | State=starting                                | initial snapshot                 | spinner; Stop disabled                     |
+| `Degraded`            | State=degraded                                | a stream unhealthy               | gap count secondary                        |
+| `Gated`               | State=gated                                   | write gate closed, no position   | "Gated · data dropped"                     |
+| `RefusedSymbolCap`    | State=refused, Refusal=symbol_cap             | 20-symbol limit                  | no action                                  |
+| `RefusedDiskPressure` | State=refused, Refusal=disk_pressure          | level 2 refusal                  | no action                                  |
+| `Silent`              | State=silent                                  | no writes for ≥ 60 s             | "No writes since …"                        |
+| `Error`               | State=error                                   | error                            | error text in the row detail               |
+| `Stopping`            | State=stopping                                | flushing                         | no action                                  |
+| `ReadOnly`            | State=recording, CanWrite=false               | no `recording:write` (SCR-103)   | controls disabled with the Owner reason    |
+| `Standalone`          | State=recording, Variant=standalone           | outside a table (SCR-103 drawer) | group role, tab stops (tables 2–3)         |
 
 ### Table 2 — Keyboard
 
-| Key                | Variant     | Action                                                              | Focus after                     | Global conflict?                     |
-| ------------------ | ----------- | ------------------------------------------------------------------- | ------------------------------- | ------------------------------------ |
-| ↑ / ↓              | table       | previous / next row (CMP-049 row navigation)                        | the row                         | none (table-local)                   |
-| Tab / Shift+Tab    | both        | the row's controls in order: Why? → Keep forever → action button    | the control                     | none                                 |
-| Enter              | table       | on the row: open the row detail; on a button: activate              | drawer heading / dialog         | none                                 |
-| Space              | both        | on Keep forever: start step-up and confirmation                     | the dialog                      | none                                 |
-| Esc                | both        | close a popover, dialog or the row detail                           | the control that opened it      | keeps its global meaning (close)     |
+| Key             | Variant | Action                                                           | Focus after                | Global conflict?                 |
+| --------------- | ------- | ---------------------------------------------------------------- | -------------------------- | -------------------------------- |
+| ↑ / ↓           | table   | previous / next row (CMP-049 row navigation)                     | the row                    | none (table-local)               |
+| Tab / Shift+Tab | both    | the row's controls in order: Why? → Keep forever → action button | the control                | none                             |
+| Enter           | table   | on the row: open the row detail; on a button: activate           | drawer heading / dialog    | none                             |
+| Space           | both    | on Keep forever: start step-up and confirmation                  | the dialog                 | none                             |
+| Esc             | both    | close a popover, dialog or the row detail                        | the control that opened it | keeps its global meaning (close) |
 
 ### Table 3 — Accessible name / role
 
-| Element        | Variant     | Role                       | Accessible name (source)                                                        | States / properties                                |
-| -------------- | ----------- | -------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Row            | table       | `row`                      | "BTCUSDT, manual, recording since 1 Sep 2026, 34.8 GB, keep forever on"          | `aria-rowindex`                                    |
-| Row            | standalone  | `group`                    | "BTCUSDT recording" + the same summary as its description                       | —                                                  |
-| Reason tag     | both        | text                       | "Manual" / "Auto: chart" / "Auto: position" / "Auto: rule" / "Auto: alert"       | —                                                  |
-| Why? button    | both        | `button`                   | "Why is SOLUSDT recorded?"                                                      | `aria-expanded`, `aria-controls`                   |
-| State          | both        | text                       | the state words ("Recording, stops in 24 minutes")                              | the icon is `aria-hidden`                          |
-| Keep forever   | both        | `switch`                   | "Keep BTCUSDT data forever"                                                     | `aria-checked`                                     |
-| Action button  | both        | `button`                   | "Stop recording BTCUSDT" / "Keep recording BTCUSDT" / "Record BTCUSDT again"     | `aria-disabled` + `aria-describedby` → the reason  |
+| Element       | Variant    | Role     | Accessible name (source)                                                     | States / properties                               |
+| ------------- | ---------- | -------- | ---------------------------------------------------------------------------- | ------------------------------------------------- |
+| Row           | table      | `row`    | "BTCUSDT, manual, recording since 1 Sep 2026, 34.8 GB, keep forever on"      | `aria-rowindex`                                   |
+| Row           | standalone | `group`  | "BTCUSDT recording" + the same summary as its description                    | —                                                 |
+| Reason tag    | both       | text     | "Manual" / "Auto: chart" / "Auto: position" / "Auto: rule" / "Auto: alert"   | —                                                 |
+| Why? button   | both       | `button` | "Why is SOLUSDT recorded?"                                                   | `aria-expanded`, `aria-controls`                  |
+| State         | both       | text     | the state words ("Recording, stops in 24 minutes")                           | the icon is `aria-hidden`                         |
+| Keep forever  | both       | `switch` | "Keep BTCUSDT data forever"                                                  | `aria-checked`                                    |
+| Action button | both       | `button` | "Stop recording BTCUSDT" / "Keep recording BTCUSDT" / "Record BTCUSDT again" | `aria-disabled` + `aria-describedby` → the reason |
 
 ### Table 4 — Motion pair
 
-| Property                  | motion-safe          | motion-reduce             | Duration / easing tokens |
-| ------------------------- | -------------------- | ------------------------- | ------------------------ |
-| Starting spinner (CMP-014)| CMP-014 rotation     | CMP-014 opacity pulse     | CMP-014's own            |
-| everything else           | none animated        | none animated             | —                        |
+| Property                   | motion-safe      | motion-reduce         | Duration / easing tokens |
+| -------------------------- | ---------------- | --------------------- | ------------------------ |
+| Starting spinner (CMP-014) | CMP-014 rotation | CMP-014 opacity pulse | CMP-014's own            |
+| everything else            | none animated    | none animated         | —                        |
 
 ### Table 5 — Live data
 
-| Field                         | Politeness                    | Cadence               | Coalescing                | Notes                               |
-| ----------------------------- | ----------------------------- | --------------------- | ------------------------- | ----------------------------------- |
-| size, rate, share, since      | none (visual only)            | 1 Hz from `recorder`  | latest value              | never announced                     |
-| state words                   | polite, via the page's region | ≤ 1 per 10 s          | latest state per symbol   | E16-D02 §9.3                        |
-| lingering countdown           | none                          | per minute            | latest                    | "stops in N min", whole minutes     |
+| Field                    | Politeness                    | Cadence              | Coalescing              | Notes                           |
+| ------------------------ | ----------------------------- | -------------------- | ----------------------- | ------------------------------- |
+| size, rate, share, since | none (visual only)            | 1 Hz from `recorder` | latest value            | never announced                 |
+| state words              | polite, via the page's region | ≤ 1 per 10 s         | latest state per symbol | E16-D02 §9.3                    |
+| lingering countdown      | none                          | per minute           | latest                  | "stops in N min", whole minutes |
 
 ### Density
 
-| Mode                    | Row / control height                                  | Padding tokens            | Smallest target |
-| ----------------------- | ----------------------------------------------------- | ------------------------- | --------------- |
-| comfortable (default)   | `size.row.comfortable` / `size.control.comfortable`   | cells `space.inset.md`    | 32 × 32 px      |
-| compact                 | `size.row.compact` / `size.control.compact`           | cells `space.inset.sm`    | 24 × 24 px      |
+| Mode                  | Row / control height                                | Padding tokens         | Smallest target |
+| --------------------- | --------------------------------------------------- | ---------------------- | --------------- |
+| comfortable (default) | `size.row.comfortable` / `size.control.comfortable` | cells `space.inset.md` | 32 × 32 px      |
+| compact               | `size.row.compact` / `size.control.compact`         | cells `space.inset.sm` | 24 × 24 px      |
 
 ### Essential exceptions
 
