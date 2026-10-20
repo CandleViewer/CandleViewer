@@ -102,6 +102,19 @@ def book_of(
     return [(lv.price, lv.qty) for lv in view.bids], [(lv.price, lv.qty) for lv in view.asks]
 
 
+async def test_the_replay_books_own_status_events_carry_source_replay() -> None:
+    """The engine stamps its `BookStatus` events `live` (`book/resync.py`); on the replay topic
+    they must read `replay`, as every other replayed event does (24 Sec.2.9)."""
+    bus = LoggingBus()
+    books = ReplayBooks(bus, SESSION)
+    await books.apply(rsnap(500, [lvl(990, 1)], [lvl(1010, 1)]))
+    await books.reset("replay_restart")
+    await books.apply(rsnap(600, [lvl(980, 4)], [lvl(1020, 5)]))
+    statuses = bus.statuses()
+    assert statuses and all(status.source == "replay" for status in statuses)
+    assert all(getattr(event, "source", "replay") == "replay" for _, event in bus.log)
+
+
 async def test_a_recorded_snapshot_while_live_rebuilds_the_book_without_a_desync() -> None:
     bus = LoggingBus()
     books = ReplayBooks(bus, SESSION)

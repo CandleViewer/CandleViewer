@@ -30,7 +30,7 @@ from uuid import UUID
 from candleviewer.book.resync import BookEngine
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import Topic, replay_env
-from candleviewer.domain.events import MarketEvent
+from candleviewer.domain.events import DomainEvent, MarketEvent
 from candleviewer.domain.sql_names import EPOCH
 from candleviewer.exchange.base.models import BookDelta, BookSnapshot, TradeEvent
 from candleviewer.replay import (
@@ -157,6 +157,10 @@ class ReplayBooks:
         topic = Topic(env=self._env, domain="md", symbol=symbol, detail="book")
 
         async def publish(obj: object) -> None:
+            # The engine stamps its own status events `source="live"` (`book/resync.py`); on a
+            # replay topic every event carries `source="replay"` (24 Sec.2.9, Sec.13.7).
+            if isinstance(obj, DomainEvent) and obj.source != "replay":
+                obj = obj.model_copy(update={"source": "replay"})
             await self._bus.publish(topic, obj)
 
         async def resubscribe() -> None:

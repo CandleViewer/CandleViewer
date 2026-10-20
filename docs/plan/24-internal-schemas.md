@@ -476,6 +476,9 @@ lower-case hex digits), e.g. `replay-0b7c5e1a-3f2d-4c8e-9a61-5d0e7b2c4f18.md.BTC
 a wildcard `env` (a `TopicPattern` `env` wildcard would match every replay; none exists, and
 `tests/unit/architecture/test_no_wildcard_env_subscriber.py` keeps it so), so live consumers never see
 replayed events and a replay's consumers subscribe to their own session's namespace only (C-2.11).
+The replay book's own `BookStatus` events, which the engine stamps `source = "live"` (above), reach
+the session's topic re-stamped `source = "replay"` (`ReplayBooks`, `replay_wiring.py`), so every event
+on a replay topic reads `"replay"` (§13.7).
 Replay traffic is not counted in the six bus series `bus_published_total`, `bus_delivered_total`,
 `bus_subscriber_lag`, `ingest_queue_full_total`, `bus_stream_invalidated_total` and
 `bus_conflated_total`, whose labels name no `env` (a replay lane reuses its live twin's subscriber name),

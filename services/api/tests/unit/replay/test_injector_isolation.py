@@ -177,9 +177,10 @@ async def test_replay_traffic_never_reaches_the_live_book_its_topics_or_live_con
         f"{replay_env(SESSION)}.md.{SYM}.trade",
         f"{replay_env(SESSION)}.md.{SYM}.book",
     }
-    # Every replayed event is stamped; the replay book's statuses are its only other output.
+    # Every replayed event is stamped, the replay book's own status events included (the engine
+    # stamps those `live`; the replay book re-stamps them before they reach its topic).
     events = [event for _, event in replayed if isinstance(event, DomainEvent)]
-    assert {type(e) for e in events} == {TradeEvent, BookSnapshot, BookDelta}
+    assert {type(e) for e in events} == {TradeEvent, BookSnapshot, BookDelta, BookStatus}
     assert all(e.source == "replay" for e in events)
     assert all(isinstance(e, DomainEvent | BookStatus) for _, e in replayed)
     # Live consumers saw nothing; the same bars code on the replay namespace built a bar.
@@ -263,7 +264,7 @@ async def test_nothing_on_a_live_topic_ever_carries_source_replay() -> None:
     for topic, event in bus.log:
         source = getattr(event, "source", None)
         if is_replay_env(topic.env):
-            assert source == "replay" or isinstance(event, BookStatus)
+            assert source == "replay"
         else:
             assert source != "replay"
 
