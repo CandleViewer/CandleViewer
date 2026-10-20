@@ -155,7 +155,9 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 - `IconSvg.tsx`: the grid each icon draws in, which no prop can change: the 24-unit `viewBox`,
   `currentColor` (an icon takes its context's semantic colour), a 1.5px stroke at every size
   (`vector-effect: non-scaling-stroke`) and the optical `size`: `sm`, `md` or `lg` reads
-  `--size-icon-sm|md|lg`, and no size reads the semantic `--size-icon`. An icon is decorative
+  `--size-icon-sm|md|lg`, and no size reads the semantic `--size-icon`. Those tokens ship as 12, 16
+  and 20px (`--size-icon` is md's 16px), where brief §5 says 16/20/24px: that is an open decision
+  for the owner and E05-D01, and the icons follow the tokens either way. An icon is decorative
   (`aria-hidden`) unless named with a non-blank `aria-label` or `aria-labelledby`, which makes it
   `role="img"`. Both resolve after the forwarded props, so a wrapper's `undefined` cannot undo
   them: an unnamed icon is always hidden.
@@ -202,7 +204,8 @@ To add an icon:
 2. Add its entry to `registry.ts`, in name order: `category`, `source` (`lucide/<glyph>` or
    `custom/<ticket>`) and a one-sentence `description`.
 3. In `packages/ui`, run `node scripts/build-icons.mjs`, then `test`: it writes the new icon's
-   snapshots, which are reviewed and committed with it.
+   snapshots, which are reviewed and committed with it. GitHub collapses the snapshot file
+   (`linguist-generated`): expand it in review, as it shows each glyph renders as geometry only.
 4. Update the Penpot icon page and the list in `16-design-system-brief.md` §5. A new `lucide-static`
    version also updates the vendored-code register.
 
