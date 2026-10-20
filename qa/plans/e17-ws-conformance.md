@@ -119,7 +119,15 @@ and close codes, never an internal class. The automated half lives in `services/
 | E17-TC-D04 | authenticated                           | 51 topics in one `sub`                                   | The whole frame refused: one `err too_many_topics` (`field: topics`); nothing subscribed (#2292)          | S1      | `test_s1_a_sub_over_the_cap_is_refused_whole_and_is_no_strike`; behaviour: `test_gateway_limits::test_sub_frame_with_too_many_topics_is_refused_whole`     |
 | E17-TC-D05 | authenticated                           | A queued backlog, then session revocation                | Queued frames dropped, `bye` still delivered                                                              | S11     | `test_s11_a_sealed_close_drops_queued_frames_but_still_delivers_bye`                                                                                       |
 
-Chaos (60 s non-reading client, 5 000 msg/s burst, upstream kill) is E17-Q02; load is E17-Q03.
+Chaos (60 s non-reading client, 5 000 msg/s burst, upstream kill) is E17-Q02. Load is E17-Q03 (#568):
+
+- **Harness.** `services/api/bench/ws/` (loopback backend, feeder, verdict, runner) and `tests/load/ws/` (the k6
+  client and `profiles.json`). Profile A is the roadmap 5.4 gate (5 clients x 10 symbols, 1 h), B the §16.4
+  protocol gate (8 connections x 40 symbols x full workspace), C the 06 §10.1 capacity driver.
+- **Relation to this group.** D01 and D05 assert the ladder on one socket; the load runs assert that the same
+  ladder stays silent at the stated load (zero resyncs from backpressure, zero gaps), and that a forced overload
+  (`runner selfcheck`) fails by name.
+- **Results and W5** are written to `docs/qa/perf/e17-ws-load-report.md`.
 
 ## 5. Group E — Client frames the server must reject (§4.4, §10; E17-S01)
 
