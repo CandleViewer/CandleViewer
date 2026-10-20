@@ -1064,7 +1064,8 @@ def test_a_group_stores_its_policy_and_defaults_to_best_effort(pg_dsn: str, poli
 def test_a_group_holds_one_leg_per_account_so_an_exit_is_never_a_leg(pg_dsn: str) -> None:
     """Groups are entry fan-outs: `ux_tgl_group_account` admits one leg per account, so a
     take-profit or an unwind for that account is a reduce-only order on the entry leg, never a
-    second leg row: `tgl_sl_px` binds every leg, and every leg opens a position (C-2.6)."""
+    second leg row: `tgl_sl_px` binds every leg that has not ended rejected, cancelled or error,
+    and every leg is an entry (C-2.6)."""
     with _conn(_fresh(pg_dsn)) as c:
         account = _account(c)
         group = _group(c, _user(c))
