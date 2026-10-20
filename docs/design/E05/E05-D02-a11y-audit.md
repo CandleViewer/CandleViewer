@@ -136,8 +136,8 @@ Not simulated in this pre-review: the PR adds no CVD exports, and the formal CVD
    (§6 D5).
 10. The critical toggle's confirm-gate variant is not decided yet (§6 D3), and no thick focus ring is defined (§6 A9).
 11. A slider on `color.surface.selected` falls to 2.58:1 in dark: a usage rule for screens.
-12. Build gaps (`E05-D02.md` §5.3): CMP-006's disabled-with-reason variant comes with its rework (drawn, not yet
-    verified), and five sections still show the reason as a caption until the CMP-016 Tooltip is placed.
+12. Build gaps (`E05-D02.md` §5.3): CMP-010's rework is still running, and four sections (CMP-002, 003, 004, 031)
+    still show the reason as a caption until the polish pass places the CMP-016 Tooltip.
 
 ## 7. References
 
