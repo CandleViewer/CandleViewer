@@ -56,6 +56,7 @@ _BOOT = (
     "drawings_purge_task.start",
     "workspaces_purge_task.start",
     "incidents_purge_task.start",
+    "incidents_open_gauge.start",
     "audit_budget_flush.start",
     "log_level_overrides.start",
     "health_registry.start",

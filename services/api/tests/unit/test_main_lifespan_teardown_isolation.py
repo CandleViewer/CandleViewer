@@ -30,7 +30,7 @@ from candleviewer.settings import TEARDOWN_BUDGET_S
 
 #: Every step the teardown runs before `stop_all`, in that order, by its `app.state` attribute,
 #: or the lifespan's own name for the metrics runtime and the mesh self-check. A failure is logged
-#: under that name, except for the five tasks in `_ALERT_TASKS`.
+#: under that name, except for the six tasks in `_ALERT_TASKS`.
 _STEPS = (
     "ws_runtime",
     "user_disable",
@@ -50,6 +50,7 @@ _STEPS = (
     "drawings_purge_task",
     "workspaces_purge_task",
     "incidents_purge_task",
+    "incidents_open_gauge",
     "scrub_task",
     "audit_verify_job",
     "admin_jobs",
@@ -62,7 +63,7 @@ _STEPS = (
 )
 #: The steps whose `start()` the lifespan awaits.
 _ASYNC_START = ("feature_flags", "bars_runtime")
-#: The five tasks the lifespan starts and stops as one list: a failed stop is logged under the
+#: The six tasks the lifespan starts and stops as one list: a failed stop is logged under the
 #: task's class name, so each fake is a class of its own, named like the real one.
 _ALERT_TASKS = {
     "alert_purge_task": "AlertDeliveriesPurgeTask",
@@ -70,6 +71,7 @@ _ALERT_TASKS = {
     "drawings_purge_task": "DrawingsPurgeTask",
     "workspaces_purge_task": "WorkspacesPurgeTask",
     "incidents_purge_task": "IncidentsPurgeTask",
+    "incidents_open_gauge": "OpenIncidentsGauge",
 }
 
 

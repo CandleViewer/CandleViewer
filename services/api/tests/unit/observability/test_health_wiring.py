@@ -15,7 +15,6 @@ from pydantic import SecretStr
 from candleviewer import app as app_module
 from candleviewer.app import build_auth_service, create_app
 from candleviewer.audit.redact import REDACTION_MARKER, redact
-from candleviewer.bus.models import Topic
 from candleviewer.db.models import incidents, system_events
 from candleviewer.health_wiring import (
     HealthSystemPublisher,
@@ -77,14 +76,6 @@ class _Repo:
         u = _Uow(self.log, self.fail_at)
         self.uows.append(u)
         return u
-
-
-class _Bus:
-    def __init__(self) -> None:
-        self.sent: list[tuple[Topic, Any]] = []
-
-    async def publish(self, topic: Topic, event: Any) -> None:
-        self.sent.append((topic, event))
 
 
 def _writer(repo: _Repo) -> PgSystemEventWriter:
@@ -197,10 +188,13 @@ async def test_a_failed_statement_commits_neither_row(fail_at: int) -> None:
 
 
 async def test_transition_writes_event_and_publishes_snapshot() -> None:
-    repo, bus = _Repo(), _Bus()
+    repo = _Repo()
+    frames: list[dict[str, Any]] = []
+    publisher = HealthSystemPublisher()
+    publisher.direct_sinks.append(frames.append)
     reg = HealthRegistry(
         events=_writer(repo),
-        on_snapshot=HealthSystemPublisher(bus, "demo"),
+        on_snapshot=publisher,
         clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
     )
     state = {"s": ComponentState.HEALTHY}
@@ -222,11 +216,12 @@ async def test_transition_writes_event_and_publishes_snapshot() -> None:
     state["s"] = ComponentState.HEALTHY
     await reg.refresh()
     assert [s.table for s in repo.log] == [system_events, incidents, system_events]  # down: error
-    assert len(bus.sent) == 3
-    topic, payload = bus.sent[1]
-    assert topic.domain == "system"
-    assert payload["kind"] == "health" and payload["health"] == "down"
-    assert payload["exchange"]["public_ws"] == "down"  # type: ignore[index]  # payload is dict[str, object]; test narrows by key
+    assert len(frames) == 3
+    frame = frames[1]
+    assert frame["kind"] == "health" and frame["health"] == "down"
+    assert [c["state"] for c in frame["components"]] == ["down"]
+    # a probe that is down without naming a connection phase says nothing of the socket: no word
+    assert "exchange" not in frame
 
 
 async def test_real_probes_replace_placeholders_and_report_failure(tmp_path: Any) -> None:

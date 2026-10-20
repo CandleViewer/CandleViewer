@@ -1,6 +1,7 @@
 """Composition-root wiring of the admin read models (E42-T01): `GET /admin/overview` and
 `GET /admin/capacity`; `build_statechart_inspector` adds E42-T07's `GET /admin/statecharts`; and
-(E42-T05) `GET /admin/incidents` (`build_admin_incidents` at the end).
+(E42-T05) `GET /admin/incidents` (`build_admin_incidents`) and the `cv_incidents_open` gauge over
+the overview's incident count (`build_open_incidents_gauge`, at the end).
 
 Real sources on the real storage backend:
 - the Postgres counts repository (users, accounts and keys, unresolved incidents from the
@@ -40,6 +41,7 @@ from datetime import datetime
 from typing import Final
 
 from candleviewer.admin.inspector import StatechartInspector
+from candleviewer.admin.ops.incident_metrics import OpenIncidentsGauge
 from candleviewer.admin.ops.incidents import AdminIncidentsService
 from candleviewer.admin.overview.capacity import AdminCapacityService, project
 from candleviewer.admin.overview.fanout import SliceFanOut, SourceUnavailable, utc_now
@@ -249,3 +251,22 @@ def build_admin_incidents(
         )
         store = SqlAlchemyIncidents(relational)
     return AdminIncidentsService(store, now=now)
+
+
+def build_open_incidents_gauge(
+    settings: Settings, *, system_settings: SystemSettings | None = None
+) -> OpenIncidentsGauge:
+    """`cv_incidents_open` (E42-T05, #966 BK-15) over the count the overview shows as
+    `incidents_open` (`AdminCountsAdapter.open_incidents`), on the admin area's one engine as
+    above; the lifespan refreshes it. The fake backend has no `incidents` table, so its series
+    never has a sample, never a made-up 0."""
+    if settings.storage_backend != "real":
+        return OpenIncidentsGauge(None)
+    relational = (
+        system_settings.relational
+        if isinstance(system_settings, SqlAlchemySystemSettings)
+        else SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
+    )
+    return OpenIncidentsGauge(
+        AdminCountsAdapter(SqlAlchemyAdminCounts(relational, env=settings.environment.value))
+    )

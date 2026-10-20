@@ -10,11 +10,12 @@ Owner: accounts-admin. Code: `incident_grouping.py` (the signature) and `inciden
 An `error` or `critical` `system_events` row written before the write path deployed has no incident,
 and nothing backfills it: the signature comes from the application's normaliser, which an
 `INSERT ... SELECT` cannot repeat exactly, and a row keyed any other way would never match a later
-occurrence. So `GET /api/v1/admin/incidents` and the overview's `incidents_open` count omit such rows. They
-appear only when the same fault recurs: a new row creates its incident, counted from that
-occurrence. A health component that has been down since before the deploy writes no new row until it
-recovers and fails again, because health events are edge-triggered. Resolving the old rows is not an
-option yet: no route writes `system_events.resolved_at` (E09-S12).
+occurrence. So `GET /api/v1/admin/incidents`, the overview's `incidents_open` count and the
+`cv_incidents_open` gauge (the same count) omit such rows. They appear only when the same fault
+recurs: a new row creates its incident, counted from that occurrence. A health component that has
+been down since before the deploy writes no new row until it recovers and fails again, because
+health events are edge-triggered. Resolving the old rows is not an option yet: no route writes
+`system_events.resolved_at` (E09-S12).
 
 The raw rows stay in `system_events`. To list what the count and the list omit, and compare it with
 `GET /api/v1/admin/incidents`, connect `psql` as the read-only role `cv_ro` and set `deployed_at` to

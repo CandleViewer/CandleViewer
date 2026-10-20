@@ -2817,6 +2817,22 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=4,  # the four results
         exported=True,
     ),
+    # --- Incidents (E42-T05, #966 BK-15); admin.ops.incident_metrics, read at the scrape ---
+    _s(
+        "cv_incidents_open",
+        "gauge",
+        "incidents",
+        (),
+        "Unresolved incidents (open or acknowledged) of the incidents read model: the overview's "
+        "incidents_open, read every 30 s. No sample until a read succeeds, after a read that "
+        "failed, or once the last good read is more than 90 s old; a 0 means none are unresolved.",
+        "dashboard only; no sample means the incident store is unreadable (or not read yet), "
+        "never that none are open (#966 BK-15)",
+        _L,
+        "E42",
+        max_series=1,
+        exported=True,
+    ),
     # --- Audit verify job (#2111, E09-X04 R-5) ------------------------------
     _s(
         "cv_audit_verify_last_ok_timestamp_seconds",
