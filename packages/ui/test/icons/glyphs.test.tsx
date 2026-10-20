@@ -86,6 +86,14 @@ describe("the icon components (src/icons/generated/)", () => {
     }
   });
 
+  it.each([{ "aria-label": "" }, { "aria-label": "  " }, { "aria-labelledby": "" }])(
+    "keeps an icon hidden when its name is blank (%o): an unnamed image is no image",
+    (blank) => {
+      const svg = svgOf("warning", blank);
+      expect([svg.getAttribute("aria-hidden"), svg.getAttribute("role")]).toEqual(["true", null]);
+    },
+  );
+
   it("keeps the grid whatever untyped props a caller passes", () => {
     const svg = svgOf("close", {
       fill: "#ff0000",

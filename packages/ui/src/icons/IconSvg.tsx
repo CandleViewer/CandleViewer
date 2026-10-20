@@ -43,15 +43,18 @@ interface IconSvgProps extends IconProps {
   readonly children: ReactNode;
 }
 
+/** A name assistive technology can read: a blank one names nothing. */
+const isName = (value: string | undefined): boolean => value !== undefined && value.trim() !== "";
+
 /**
  * The icon grid (E05-T06) that every generated icon draws its geometry in: the 24-unit box at the
  * optical size, `currentColor` so the icon takes its context's semantic colour, and a 1.5px stroke
  * at every size (each shape's `vectorEffect="non-scaling-stroke"` keeps it from scaling with the
- * box). An icon is decorative (`aria-hidden`) unless it is named with `aria-label` or
+ * box). An icon is decorative (`aria-hidden`) unless it is named with a non-blank `aria-label` or
  * `aria-labelledby`, which makes it `role="img"` (brief §5, CMP-019).
  */
 export function IconSvg({ icon, size, style, children, ...rest }: IconSvgProps): JSX.Element {
-  const named = rest["aria-label"] !== undefined || rest["aria-labelledby"] !== undefined;
+  const named = isName(rest["aria-label"]) || isName(rest["aria-labelledby"]);
   const extent = EXTENT[size ?? "default"];
   return (
     <svg

@@ -34,9 +34,35 @@ tester.run("icon-only-control-label", iconOnlyControlLabel, {
     "<button>{label}</button>;",
     "<button />;",
     '<div role="presentation"><CloseIcon /></div>;',
+    // Content that may render text is trusted: an outcome that is text, a computed value, a
+    // component (its props may render text), spread props, an image with its own alt text.
+    "<button>{ok ? <CheckIcon /> : 'Retry'}</button>;",
+    "<button>{ok ? <CheckIcon /> : label}</button>;",
+    "<button>{count || <BellIcon />}</button>;",
+    "<button>{icon}</button>;",
+    '<button><Tooltip content="Close"><CloseIcon /></Tooltip></button>;',
+    "<button><span {...hintProps}><CloseIcon /></span></button>;",
+    '<button><img src={closeSrc} alt="Close" /></button>;',
   ],
   invalid: [
     { code: "<button><CloseIcon /></button>;", errors: [unlabelled("button")] },
+    // Text-free wrappers and conditionals whose every outcome is an icon or nothing.
+    { code: "<button><span><CloseIcon /></span></button>;", errors: [unlabelled("button")] },
+    {
+      code: '<button><span aria-label="Close"><CloseIcon /></span></button>;',
+      errors: [unlabelled("button")],
+    },
+    {
+      code: "<button>{open ? <ChevronUpIcon /> : <ChevronDownIcon />}</button>;",
+      errors: [unlabelled("button")],
+    },
+    { code: "<button>{open ? <ChevronUpIcon /> : null}</button>;", errors: [unlabelled("button")] },
+    { code: "<button>{busy && <PendingIcon />}</button>;", errors: [unlabelled("button")] },
+    { code: "<button><><SearchIcon /><FilterIcon /></></button>;", errors: [unlabelled("button")] },
+    {
+      code: '<a href="/pins"><i className="glyph"><PinIcon /></i>{\' \'}</a>;',
+      errors: [unlabelled("a")],
+    },
     {
       code: '<button type="button">\n  {/* dismiss */}\n  <CloseIcon />\n</button>;',
       errors: [unlabelled("button")],
@@ -76,8 +102,18 @@ tester.run("icon-beside-text-hidden", iconBesideTextHidden, {
     '<p>{count}<WarningIcon aria-label="Warning" /></p>;',
     "<p><CloseIcon {...iconProps} /> Close</p>;",
     '<>{cond && <CloseIcon aria-label="Close" />}</>;',
+    "<button><CloseIcon />{label}</button>;",
   ],
   invalid: [
+    // In a control any other content is its text, a computed one included.
+    {
+      code: '<button><CloseIcon aria-label="Close" />{label}</button>;',
+      errors: [exposed("CloseIcon")],
+    },
+    {
+      code: "<Button><SearchIcon role=\"img\" />{t('search')}</Button>;",
+      errors: [exposed("SearchIcon")],
+    },
     {
       code: '<button><CloseIcon aria-label="Close" /> Close</button>;',
       errors: [exposed("CloseIcon")],

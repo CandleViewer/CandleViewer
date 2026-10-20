@@ -155,7 +155,8 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   `currentColor` (an icon takes its context's semantic colour), a 1.5px stroke at every size
   (`vector-effect: non-scaling-stroke`) and the optical `size`: `sm`, `md` or `lg` reads
   `--size-icon-sm|md|lg`, and no size reads the semantic `--size-icon`. An icon is decorative
-  (`aria-hidden`) unless named with `aria-label` or `aria-labelledby`, which makes it `role="img"`.
+  (`aria-hidden`) unless named with a non-blank `aria-label` or `aria-labelledby`, which makes it
+  `role="img"`.
 
 Use an icon by importing the component an element draws: `import { CloseIcon } from
 "@candleviewer/ui"`. Each icon is its own module, so a bundle carries only the icons it imports
@@ -164,8 +165,12 @@ control carries its own `aria-label`. Three lint rules bind this (`eslint.config
 
 - `candleviewer/no-raw-svg`: a raw `<svg>` outside `src/icons/` fails, naming the file.
 - `candleviewer/icon-only-control-label`: a control whose only content is icons needs an
-  `aria-label` (or `aria-labelledby`; for IconButton, its `label`).
-- `candleviewer/icon-beside-text-hidden`: an icon beside visible text must stay `aria-hidden`.
+  `aria-label` (or `aria-labelledby`; for IconButton, its `label`). Icons in text-free wrappers
+  (`<span>`) or in conditionals (`{open ? <ChevronUpIcon /> : <ChevronDownIcon />}`) count as
+  icons; content the source does not show (a component, a computed value, spread props) is
+  trusted.
+- `candleviewer/icon-beside-text-hidden`: an icon beside visible text must stay `aria-hidden`. In
+  a control, any other content counts as its text, a computed `{label}` included.
 
 The Storybook a11y gate runs `Foundations/Icons`; its fixture
 `.storybook/__fixtures__/IconOnlyButton.stories.tsx` fails axe's `button-name` on purpose.

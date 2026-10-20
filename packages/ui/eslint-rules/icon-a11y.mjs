@@ -5,8 +5,11 @@
 //   icon-beside-text-hidden  an icon beside visible text stays aria-hidden: the text names it
 // An icon is a registry component (`Icon`, `<Name>Icon`) or a raw <svg>. A registry icon is
 // aria-hidden unless it is given a name (aria-label, aria-labelledby, role="img"; CMP-019's
-// `decorative={false}`); a raw <svg> is hidden only by aria-hidden="true". Spread props and
-// computed values cannot be read statically, so they are trusted, never guessed at.
+// `decorative={false}`); a raw <svg> is hidden only by aria-hidden="true". A control is icon-only
+// when its content renders icons or nothing: icons, text-free wrappers around them (span, div, i,
+// b, em, strong, small) and conditionals whose every outcome is one. Inside a control any other
+// content is its text, a computed `{label}` included. Elsewhere only static text counts, and
+// components, spread props and computed values cannot be read statically: they are trusted.
 
 const ICON = /^(?:[A-Z][\dA-Za-z]*)?Icon$/;
 const BUTTON = /^(?:[A-Z][\dA-Za-z]*)?Button$/;
@@ -24,6 +27,8 @@ const CONTROL_ROLES = new Set([
   "tab",
 ]);
 const UNKNOWN = Symbol("unknown");
+/** Intrinsic elements that render only their children: around icons alone they add no name. */
+const WRAPPERS = new Set(["b", "div", "em", "i", "small", "span", "strong"]);
 
 /** An element's tag: `button`, `CloseIcon`, or `Button` for `<Toolbar.Button>`. */
 function tagName(opening) {
@@ -64,13 +69,44 @@ function valueOf(opening, name) {
 /** A name a control can carry: a computed one is trusted, a static one must not be blank. */
 const isName = (value) => value === UNKNOWN || (typeof value === "string" && value.trim() !== "");
 
-/** Children that render: whitespace-only text and `{/* comments *\/}` drop out. */
-const contentOf = (element) =>
-  element.children.filter(
-    (child) =>
-      !(child.type === "JSXText" && !/\S/.test(child.value)) &&
-      !(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression"),
-  );
+/** Several outcomes together: any "other" makes "other", else any "icon" makes "icon". */
+const either = (...kinds) =>
+  kinds.includes("other") ? "other" : kinds.includes("icon") ? "icon" : "nothing";
+
+/**
+ * What content renders, as far as the source shows: "nothing" (blank text, comments, null, false,
+ * undefined), "icon" (icons and nothing else) or "other" (text, or anything not read statically).
+ */
+function rendered(node) {
+  switch (node.type) {
+    case "JSXText":
+      return /\S/.test(node.value) ? "other" : "nothing";
+    case "JSXEmptyExpression":
+      return "nothing";
+    case "JSXExpressionContainer":
+      return rendered(node.expression);
+    case "JSXFragment":
+      return either(...node.children.map(rendered));
+    case "JSXElement":
+      if (isIcon(node)) return "icon";
+      return isWrapper(node.openingElement) ? either(...node.children.map(rendered)) : "other";
+    case "ConditionalExpression":
+      return either(rendered(node.consequent), rendered(node.alternate));
+    case "LogicalExpression":
+      // `{busy && <PendingIcon />}`: the icon or nothing. `||` and `??` may render their left.
+      return node.operator === "&&" ? rendered(node.right) : "other";
+    case "Literal":
+      return node.value === null ||
+        node.value === false ||
+        (typeof node.value === "string" && !/\S/.test(node.value))
+        ? "nothing"
+        : "other";
+    case "Identifier":
+      return node.name === "undefined" ? "nothing" : "other";
+    default:
+      return "other";
+  }
+}
 
 /** Visible text: a text node, a string or template literal, or an element that holds one. */
 function isText(child) {
@@ -87,6 +123,10 @@ function isText(child) {
   if (child.type === "JSXFragment") return child.children.some(isText);
   return child.type === "JSXElement" && !isIcon(child) && child.children.some(isText);
 }
+
+/** A text-free wrapper: an intrinsic container that is no control and spreads no props. */
+const isWrapper = (opening) =>
+  WRAPPERS.has(tagName(opening)) && !hasSpread(opening) && !isControl(opening);
 
 function isControl(opening) {
   const tag = tagName(opening);
@@ -130,9 +170,9 @@ export const iconOnlyControlLabel = {
         const opening = node.openingElement;
         if (!isControl(opening) || hasSpread(opening)) return;
         const tag = tagName(opening);
-        const content = contentOf(node);
+        const content = either(...node.children.map(rendered));
         // IconButton (CMP-002) takes its icon as a prop: with no children it is icon-only.
-        if (content.length === 0 ? tag !== "IconButton" : !content.every(isIcon)) return;
+        if (content === "other" || (content === "nothing" && tag !== "IconButton")) return;
         const names = tag === "IconButton" ? ["label", ...NAMING] : NAMING;
         if (names.some((name) => isName(valueOf(opening, name)))) return;
         const label =
@@ -164,7 +204,12 @@ export const iconBesideTextHidden = {
           return;
         }
         const opening = node.openingElement;
-        if (hasSpread(opening) || !parent.children.some((child) => isText(child))) return;
+        // A control carries the name (brief §5): any other content in it is its text.
+        const inControl = parent.type === "JSXElement" && isControl(parent.openingElement);
+        const besideText = parent.children.some((child) =>
+          inControl ? child !== node && rendered(child) === "other" : isText(child),
+        );
+        if (hasSpread(opening) || !besideText) return;
         if (isExposed(opening)) {
           context.report({ node: opening, messageId: "exposed", data: { icon: tagName(opening) } });
         }
