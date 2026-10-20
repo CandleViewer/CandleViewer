@@ -12,7 +12,7 @@ connect code, secret-bearing URL or password appears in this file or in any comm
 | Project                         | `candleviewer`                                                                                                                                                      |
 | Registered agent / part         | `main-orchestrator` (existing; not created, renamed or duplicated)                                                                                                  |
 | Persona / role                  | Atlas / orchestrator                                                                                                                                                |
-| MCP alias                       | `candleviewer-relayroom` (project-scoped `.mcp.json`; no same-name entry at user scope — user scope has only `github`, `penpot`)                                    |
+| MCP alias                       | `candleviewer-relayroom` (git-ignored `.mcp.json` from `docs/ops/relayroom-mcp.template.json`; user scope has no same-name entry, only `github`, `penpot`)          |
 | Machine alias / label           | `l01` / `cv-main-desktop-win-l01`                                                                                                                                   |
 | Client-instance UUID            | `d93a5eee-dc36-43c6-b5b4-98f21e94a7b0` (binding; preserve on resume)                                                                                                |
 | Run UUID (this conversation)    | `8236a4ad-2682-4f72-9750-ed79a5f129d3` (run8 `8236a4ad`)                                                                                                            |
@@ -25,9 +25,9 @@ The three identifiers above are distinct: **agent** (server-registered part), **
 
 | File                                                   | Tracked?                              | Purpose                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.mcp.json`                                            | yes (new)                             | Shared template: alias + `${ENV}` placeholders only                                                                                                                                                                                                                                                         |
-| `.github/CODEOWNERS`                                   | yes                                   | One line: `/.mcp.json` → `@CandleViewer/security @CandleViewer/devsecops` (GOV-001: the new MCP config surface must be code-owned; adds reviewers, removes none)                                                                                                                                            |
-| `.gitignore`                                           | yes                                   | Adds `.claude/relayroom/`, `.claude/settings.local.json` and `.claude/.settings.local.*.tmp` (the credential script's temp file) — narrow entries                                                                                                                                                           |
+| `docs/ops/relayroom-mcp.template.json`                 | yes (new; was root `.mcp.json`)       | Shared template: alias + `${ENV}` placeholders only; copied to a local, git-ignored root `.mcp.json`, which the doctor reads                                                                                                                                                                                |
+| `.github/CODEOWNERS`                                   | yes                                   | One line: `/docs/ops/relayroom-mcp.template.json` → `@CandleViewer/security @CandleViewer/devsecops` (GOV-001: the new MCP config surface must be code-owned; adds reviewers, removes none)                                                                                                                 |
+| `.gitignore`                                           | yes                                   | Adds `.claude/relayroom/`, `.claude/settings.local.json`, `.claude/.settings.local.*.tmp` (the credential script's temp file), `/.mcp.json` and `/.mcp.json.tmp` — narrow entries                                                                                                                           |
 | `CLAUDE.md`                                            | yes                                   | **One line** in §10a (toolkit list) pointing to `/candleviewer-relayroom-check` and this report. The coordination rules are **not** in the tracked file; see "Where the coordination rules live" below                                                                                                      |
 | `.claude/settings.json`                                | yes                                   | Two `permissions.deny` rules on the secret-bearing file only (`Read(./.claude/settings.local.json)` and `Bash(*settings.local.json*)`); the nonsecret `.claude/relayroom/` identity and run records stay readable because the skill and the worker policy read them; no `ask` rule, `defaultMode` unchanged |
 | `scripts/relayroom-main-doctor.py`                     | yes (new)                             | Redacting validator; allowlisted PASS/FAIL output only; exit 0 ready, 1 FAIL, 2 crashed                                                                                                                                                                                                                     |
@@ -87,7 +87,9 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
 1. In the RelayRoom dashboard: open Connect for the existing agent with bypass **off**; read the
    connect code and the agent token privately. (No revocation or rotation is required here: the
    owner kept the existing token, see "Token decision" above.)
-2. `python scripts/relayroom-enter-credentials.py` (masked input; nothing echoed).
+2. `cp docs/ops/relayroom-mcp.template.json .mcp.json` (once; the root file is git-ignored and
+   machine-local), then `python scripts/relayroom-enter-credentials.py` (masked input; nothing
+   echoed).
 3. `python scripts/relayroom-main-doctor.py` → must print `READY` (exit 0).
 4. In the Code session: `/mcp` → reconnect `candleviewer-relayroom`.
 5. Tell Atlas "RelayRoom credentials entered"; Atlas then runs §8: `whoami` → `roster` → `inbox` →
@@ -96,9 +98,11 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
 
 ## Rollback
 
-Remove only: the `candleviewer-relayroom` entry in `.mcp.json`; the `/.mcp.json` line in
-`.github/CODEOWNERS` (together with the file, never alone); the three RelayRoom patterns in
-`.gitignore`; the one-line pointer in `CLAUDE.md` §10a; the two RelayRoom `deny` rules in
+Remove only: the `candleviewer-relayroom` entry in your local `.mcp.json` and the template
+`docs/ops/relayroom-mcp.template.json`; its line in `.github/CODEOWNERS` (together with the
+template, never alone); the five RelayRoom patterns in `.gitignore` (three under `.claude/`, plus
+`/.mcp.json` and `/.mcp.json.tmp`); the one-line pointer in `CLAUDE.md` §10a; the two RelayRoom
+`deny` rules in
 `.claude/settings.json`; the two scripts and `scripts/tests/test_relayroom_scripts.py`; the skill
 directory; and `.claude/relayroom/`. No token was issued by this setup (the existing one was kept),
 so rolling back does not touch the dashboard; rotate or revoke the token there only on an owner

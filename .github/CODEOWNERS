@@ -99,7 +99,6 @@
 /.zap/                                  @CandleViewer/security @CandleViewer/devsecops @basiltt
 /.semgrep/                              @CandleViewer/security @CandleViewer/devsecops @basiltt
 /.semgrepignore                         @CandleViewer/security @CandleViewer/devsecops @basiltt
-/.mcp.json                              @CandleViewer/security @CandleViewer/devsecops @basiltt
 /.semgrep-fixtures/                     @CandleViewer/security @CandleViewer/devsecops @basiltt
 /Makefile                               @CandleViewer/devsecops @CandleViewer/architecture @basiltt
 # Root pytest config: its addopts keep C-9.3 quarantined tests out of suites with no nearer config.
@@ -246,6 +245,9 @@
 # Documentation
 # ---------------------------------------------------------------------------
 /docs/                                  @CandleViewer/architecture @basiltt
+# RelayRoom MCP config template (copied to a git-ignored root .mcp.json): GOV-001 keeps this MCP surface
+# security-owned. It sits after `/docs/` because the last matching rule wins.
+/docs/ops/relayroom-mcp.template.json   @CandleViewer/security @CandleViewer/devsecops @basiltt
 /docs/design/                           @CandleViewer/design @CandleViewer/design-system @basiltt
 /docs/plan/                             @CandleViewer/architecture @basiltt
 /docs/plan/00-planning-brief.md         @basiltt @CandleViewer/architecture
