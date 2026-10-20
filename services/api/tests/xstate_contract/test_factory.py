@@ -128,12 +128,22 @@ async def test_event_schemas_validate_through_real_factory_path(
 
 
 def test_every_registered_event_schema_compiles_to_working_validator() -> None:
-    import candleviewer.statechart.bindings.b16_session  # noqa: F401
+    """Sweeps the catalogue machines' maps only, never a test machine another file registered,
+    so the result does not depend on which tests ran first in the process (C-13.7)."""
+    import importlib
+    import pkgutil
+
+    import candleviewer.statechart.bindings as bindings
     from candleviewer.statechart.config import CV_EVENT_SCHEMAS
     from candleviewer.statechart.factory import _event_validators
 
-    assert CV_EVENT_SCHEMAS["session"]
-    for machine, schemas in CV_EVENT_SCHEMAS.items():
+    for module in pkgutil.iter_modules(bindings.__path__):
+        importlib.import_module(f"{bindings.__name__}.{module.name}")
+    machines = Registry().keys()
+    assert {"order", "session"} <= set(machines)
+    for machine in machines:
+        schemas = CV_EVENT_SCHEMAS[machine]
+        assert schemas, machine
         validators = _event_validators(schemas)
         assert set(validators) == set(schemas)
         for name, validate in validators.items():

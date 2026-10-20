@@ -180,6 +180,12 @@ def set_ports(ports: OrderPorts | None) -> None:
     _ports = ports or OrderPorts()
 
 
+def ports_wired() -> bool:
+    """Whether an OMS facade wired B1's ports: they are process-wide, so a second facade would take
+    over the first one's machines (one facade per process, C-2.11)."""
+    return _ports.persist is not None
+
+
 class PortMissingError(RuntimeError):
     """B1 needs a port the OMS facade has not wired."""
 
@@ -211,6 +217,8 @@ UNRESOLVED_AFTER_RECONCILE: Final = "UNRESOLVED_AFTER_RECONCILE"
 #: 22's `Decimal` text (C6: no exponent, space or `_`) with numeric(38,18)'s 20 + 18 digits.
 MAX_FILLS: Final = 10_000
 MAX_TEXT: Final = 64
+#: The last microsecond since the epoch a `datetime` holds (9999-12-31): no exchange time is later.
+MAX_EXCHANGE_US: Final = 253_402_300_799_999_999
 _MONEY: Final = re.compile(r"-?[0-9]{1,20}(\.[0-9]{1,18})?")
 #: Deadlines (A2), absolute microseconds the OMS's scheduler fires: the stop is confirmed within
 #: 2 s of the first fill (24 Sec.8.8 rule 2), and an order still `unknown` pages at 60 s (Sec.8.5).
@@ -337,6 +345,16 @@ def _validated(event: Any) -> dict[str, Any] | None:
     return _order(order)
 
 
+def _pairs(context: Mapping[str, Any], p: Mapping[str, Any]) -> bool:
+    """*p* is a trade of the exchange order this order is bound to, every field it pairs on the
+    order's own (SR-E29-03)."""
+    return (
+        p.get("exec_type") == "trade"
+        and _id(context.get("exchange_order_id")) is not None
+        and all(_id(p.get(key)) is not None and p.get(key) == context.get(key) for key in PAIRING)
+    )
+
+
 def _admit(
     context: Mapping[str, Any], p: Mapping[str, Any]
 ) -> tuple[str, Mapping[str, Decimal | None]]:
@@ -351,9 +369,7 @@ def _admit(
         raise ValueError(REPEAT)
     if _id(context.get("exchange_order_id")) is None:
         raise ValueError(UNBOUND)
-    if p.get("exec_type") != "trade" or any(
-        _id(p.get(key)) is None or p.get(key) != context.get(key) for key in PAIRING
-    ):
+    if not _pairs(context, p):
         raise ValueError("the execution is not a trade of this order's bound exchange order")
     if len(seen) >= MAX_FILLS:
         raise ValueError("the order holds MAX_FILLS fills")
@@ -541,30 +557,45 @@ def _covers(context: Mapping[str, Any], reading: Mapping[str, Any]) -> bool:
     return _money(stop) == _money(requested) and _money(reading["size"]) > 0
 
 
+def _latest(context: Mapping[str, Any], reading: Mapping[str, Any]) -> Mapping[str, Any]:
+    """INV-B1-f: the last reading decides. *reading*, unless the one kept in `sl_reading` is later
+    by exchange time, or as late and a loss: on a tie the loss wins. Between two readings of one
+    time that are not losses, the one taken last decides."""
+    last = context.get("sl_reading")
+    if not isinstance(last, Mapping) or type(last.get("updated_time")) is not int:
+        return reading
+    when = last["updated_time"]
+    if when > reading["updated_time"]:
+        return last
+    if when == reading["updated_time"] and last.get("kind") == "SL_LOST":
+        return last
+    return reading
+
+
+def _confirms(context: Mapping[str, Any], reading: Mapping[str, Any]) -> bool:
+    """The last reading, *reading* or the kept one (`_latest`), shows the requested stop on the
+    open position: a later or tied loss, or a later reading of another stop or of a flat
+    position, denies a reading delivered late."""
+    latest = _latest(context, reading)
+    return latest.get("kind") != "SL_LOST" and _covers(context, latest)
+
+
 def sl_attach_ok(context: dict[str, Any], event: Any) -> bool:
-    """The attach result's read-back shows the requested stop on the open position, and no
-    `SL_LOST` the exchange stamped at or after that read-back was recorded meanwhile (INV-B1-f):
-    on a tie the loss wins. The call's own acknowledgement is no evidence: a result without a
-    read-back is a denial."""
-
-    def check() -> bool:
-        back = _reading(_fields(event).get("position"))
-        last = context.get("sl_reading")
-        later = (
-            isinstance(last, Mapping)
-            and last.get("kind") == "SL_LOST"
-            and int(last["updated_time"]) >= back["updated_time"]
-        )
-        return _covers(context, back) and not later
-
-    return _total("sl_attach_ok", check)
+    """The attach result's read-back is a reading (`_reading`), and the last reading, it or the
+    one recorded during the attach, shows the requested stop on the open position (INV-B1-f): an
+    `SL_LOST` the exchange stamped at or after the read-back denies it, as on a tie the loss wins.
+    The call's own acknowledgement is no evidence: a result without a read-back is a denial."""
+    return _total(
+        "sl_attach_ok", lambda: _confirms(context, _reading(_fields(event).get("position")))
+    )
 
 
 def sl_observed_ok(context: dict[str, Any], event: Any) -> bool:
-    """`SL_OBSERVED` counts as `sl_attach_ok`'s read-back does: the requested stop on the open
-    position (INV-B1-f); another stop, a flat position, or a discovered order's stop leaves
-    `sl_missing` as it is."""
-    return _total("sl_observed_ok", lambda: _covers(context, _reading(_fields(event))))
+    """`SL_OBSERVED` counts as `sl_attach_ok`'s read-back does: the last reading shows the
+    requested stop on the open position (INV-B1-f). Another stop, a flat position, a discovered
+    order's stop, or a reading the exchange stamped at or before a recorded loss (or before a
+    later recorded reading) leaves `sl_missing` as it is."""
+    return _total("sl_observed_ok", lambda: _confirms(context, _reading(_fields(event))))
 
 
 # --- The write-ahead step (S7, S8, S11) -------------------------------------------------------
@@ -977,8 +1008,10 @@ async def set_cancel_missing_remote(_i: Any, context: dict[str, Any], _e: Any, _
 
 async def record_sl_fact_ignored(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """INV-B1-f: a protection fact the leaf does not act on is consumed, never deferred. A reading
-    is kept in `sl_reading` when it is the latest by exchange time, so a loss during the attach
-    still decides the attach's result (`sl_attach_ok`)."""
+    is kept in `sl_reading` when it is the last one (`_latest`: by exchange time, and on a tie the
+    loss wins), so a loss during the attach still decides the attach's result (`sl_attach_ok`).
+    `sl_present`'s `SL_LOST` arm records its loss the same way, so no reading the exchange stamped
+    at or before it returns the region to `sl_present` (`sl_observed_ok`)."""
     kind = _name(event)
     if kind not in _READINGS:
         return
@@ -987,11 +1020,8 @@ async def record_sl_fact_ignored(_i: Any, context: dict[str, Any], event: Any, _
     except Exception:  # A1: a malformed reading is dropped, never kept
         logger().error("b01_sl_reading_refused", order_link_id=context.get("order_link_id"))
         return
-    last = context.get("sl_reading")
-    if isinstance(last, Mapping) and type(last.get("updated_time")) is int:
-        if last["updated_time"] > reading["updated_time"]:
-            return
-    context["sl_reading"] = reading
+    if _latest(context, reading) is reading:
+        context["sl_reading"] = reading
 
 
 async def arm_sl_deadline(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
@@ -1022,9 +1052,19 @@ def starts_protection(context: Mapping[str, Any], lifecycle: str | None, trigger
 
 async def notify_protection_region(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """INV-B1-o: asks the facade for `FIRST_FILL` when `starts_protection` says so; the region
-    consumes a repeat, so no flag tracks the first fill."""
-    if starts_protection(context, _leaf(i), _name(event)):
+    consumes a repeat, so no flag tracks the first fill. An `EXEC` that an S6 arm consumed calls
+    for this order's stop only when it pairs with the order (SR-E29-03): another order's fill, or a
+    hostile one, never starts an attach of this order's stop (SR-E29-06), so the position goes to
+    B8 instead, which reads it and attaches its fallback stop if none is there (C-2.6)."""
+    leaf, trigger = _leaf(i), _name(event)
+    if not starts_protection(context, leaf, trigger):
+        return
+    if trigger != "EXEC" or starts_protection(context, leaf) or _pairs(context, _fields(event)):
         _post(context, "first_fill")
+        return
+    exec_id = _id(_fields(event).get("exec_id"))
+    logger().error("b01_unpaired_exec", order_link_id=context.get("order_link_id"), exec_id=exec_id)
+    _post(context, "request_fallback_sl")
 
 
 async def notify_amend_rejected(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
@@ -1261,7 +1301,12 @@ _DECIMAL: Final = r"^-?[0-9]{1,20}(\.[0-9]{1,18})?$"  # the guards re-check with
 _TEXT: Final = {"type": "string", "minLength": 1, "maxLength": MAX_TEXT}
 _MONEY_TEXT: Final = {"type": "string", "pattern": _DECIMAL}
 _MONEY_OR_NULL: Final = {"type": ["string", "null"], "pattern": _DECIMAL}
-_COUNT: Final = {"type": "integer", "minimum": 0}
+#: Exchange times since the epoch, up to the last instant a `datetime` holds (OM-T04): an order
+#: push's or a reading's `updated_time` in ms, an execution's `ts_exec` and `ts_ingest` in µs, so
+#: the step writer's conversion never overflows; an execution's `seq` is a bigint.
+_MS: Final = {"type": "integer", "minimum": 0, "maximum": MAX_EXCHANGE_US // 1_000}
+_US: Final = {"type": "integer", "minimum": 0, "maximum": MAX_EXCHANGE_US}
+_SEQ: Final = {"type": "integer", "minimum": 0, "maximum": 2**63 - 1}
 _FLAG: Final = {"type": "boolean"}
 _VERDICT: Final = {"enum": [PASSED, FAILED]}
 _SIDE: Final = {"enum": ["buy", "sell"]}
@@ -1284,7 +1329,8 @@ _EXECUTION: Final = _closed(
     closed_pnl=_MONEY_OR_NULL,
     exec_type={"enum": ["trade", "funding", "adl_trade", "bust_trade", "settle"]},
     is_maker=_FLAG,
-    **dict.fromkeys(("ts_exec", "ts_ingest", "seq"), _COUNT),
+    **dict.fromkeys(("ts_exec", "ts_ingest"), _US),
+    seq=_SEQ,
     source=_SOURCE,
 )
 #: An order push the exchange sent: the order's status and cumulative fill when it changed.
@@ -1293,11 +1339,11 @@ _PUSH: Final = _closed(
     order_link_id=_TEXT,
     order_status=_TEXT,
     cum_exec_qty=_MONEY_TEXT,
-    updated_time=_COUNT,
+    updated_time=_MS,
     source=_SOURCE,
 )
 #: A protection reading (B1.5): the position row's exchange time, stop and size.
-_READING: Final = _closed(updated_time=_COUNT, stop_loss=_MONEY_OR_NULL, size=_MONEY_TEXT)
+_READING: Final = _closed(updated_time=_MS, stop_loss=_MONEY_OR_NULL, size=_MONEY_TEXT)
 #: A reconciliation finding, sent after its SR-E29-03 full match (INV-B1-m).
 _FOUND: Final = _closed(exchange_order_id=_TEXT, execution=_EXECUTION, pass_id=_TEXT)
 _REASON: Final = _closed(reason=_TEXT)

@@ -63,8 +63,7 @@ from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.gateway import Gateway, GatewayError, receipt_is_conclusive
 from candleviewer.statechart.persistence import ChainTripLatch, MachineKey
-from candleviewer.statechart.plugins import MachineEventSink, Pager, cv_plugins
-from candleviewer.statechart.plugins._base import LogPager
+from candleviewer.statechart.plugins import LogPager, MachineEventSink, Pager, cv_plugins
 from candleviewer.storage.repositories.orders import (
     LIFECYCLE_STATE_OF,
     MAX_EVENT_PAGE,
@@ -97,6 +96,7 @@ __all__ = [
     "MAX_HELD",
     "MAX_HISTORY",
     "MAX_MACHINES",
+    "MAX_PUSH_LEAD_MS",
     "PORT_TIMEOUT",
     "PUSH_EVENTS",
     "Actor",
@@ -134,6 +134,10 @@ SETTLE_ROUNDS: Final = 4 * MAX_HELD
 MAX_HISTORY: Final = 32 * MAX_EVENT_PAGE
 #: Seconds a replayed step may take to commit (its send, or its invoke's recorded answer).
 REPLAY_STEP_TIMEOUT: Final = 5.0
+#: How far an `orders` push's exchange time may lead the facade's clock when it moves S5's
+#: watermark (C-2.18): a push stamped further ahead, from a skewed or hostile stream, moves it only
+#: this far, so it cannot hide the pushes after it for longer.
+MAX_PUSH_LEAD_MS: Final = 60_000
 #: Seconds the facade waits on its audit, notice and read ports (C-2.18): an order's lock is held
 #: meanwhile, so a stalled sink must not hold the order, or a KILL, for longer.
 PORT_TIMEOUT: Final = 5.0
@@ -346,6 +350,11 @@ def _int(raw: object) -> int:
     return raw if type(raw) is int else 0
 
 
+def _row_state(row: OrderRow) -> str:
+    """The order's B1 `lifecycle` state, as its row stores it (24 Sec.8.2 mapping)."""
+    return row.lifecycle_state or LIFECYCLE_STATE_OF[row.state]
+
+
 def _uuid(raw: object) -> UUID | None:
     try:
         return UUID(str(raw))
@@ -427,7 +436,8 @@ class _Order:
     notices: deque[dict[str, Any]] = field(default_factory=deque)
     #: The reorder buffer: `((ts_exec, seq), event, payload)`.
     held: list[tuple[tuple[int, int], str, dict[str, Any]]] = field(default_factory=list)
-    #: S5: the exchange time of the newest `orders`-topic push the order took.
+    #: S5: the exchange time of the newest `orders`-topic push the order took (a push B1 refused
+    #: was not taken), at most `MAX_PUSH_LEAD_MS` ahead of the clock when it was taken.
     last_update_ms: int = -1
     #: `exec_id` -> why B1 refused that EXEC, for the facade's answer (`_answer`).
     denied: OrderedDict[str, str] = field(default_factory=OrderedDict)
@@ -480,9 +490,10 @@ class _Observer:
 
 class OrderMachines:
     """B1's OMS facade: one per process, as it wires the binding's process-wide ports, which
-    `stop()` unwires. Every send to an order runs under that order's lock (a keyed
-    `asyncio.Lock`), so an order's commands, pushes and turns never interleave; orders run
-    concurrently."""
+    `stop()` unwires. A second one is refused while the first holds them (`RuntimeError`): it
+    would take over the first one's machines, a demo and a live root's included (C-2.11). Every
+    send to an order runs under that order's lock (a keyed `asyncio.Lock`), so an order's
+    commands, pushes and turns never interleave; orders run concurrently."""
 
     def __init__(
         self,
@@ -495,6 +506,8 @@ class OrderMachines:
         registry: Registry | None = None,
         max_machines: int = MAX_MACHINES,
     ) -> None:
+        if b01.ports_wired():
+            raise RuntimeError("an OMS facade holds B1's ports already: one per process (C-2.11)")
         self._ports = ports
         self._metrics = metrics
         self._pager: Pager = pager if pager is not None else LogPager()
@@ -523,6 +536,7 @@ class OrderMachines:
         b01.set_ports(b01.OrderPorts(persist=self._persist, commands=ports.commands, now_us=now_us))
         b01.set_audit_hook(self._audited)
         b01.set_fill_core(apply_fields)
+        self._wired = True
 
     # --- The API -------------------------------------------------------------------------------
 
@@ -572,7 +586,8 @@ class OrderMachines:
         state; `OrderNotLoaded` when the account holds no such order, and `OrderHistoryRefused`,
         logged and paged with nothing kept, when its history does not rebuild its row or replay
         on B1. An order whose machine lives is answered from it once a hydration or a resync
-        under way ends; one whose machine is still being built refuses this one (L3)."""
+        under way ends; one whose machine is still being built refuses this one
+        (`IllegalTransition`: one machine per order)."""
         live = self._live(account_id, order_id)
         for _ in range(FOLLOWS):
             if live is None:
@@ -651,10 +666,10 @@ class OrderMachines:
         written; `OrderBufferFull` when it would wait in a full reorder buffer;
         `OrderStepRefused` when B1 rolled its step back (S7), and `OrderStepUnknown` when the
         step's write may have committed all the same: the machine is rebuilt first, and as the
-        facade keeps no copy of the push, its caller delivers it again (or leaves it to
-        reconciliation, 24 Sec.8.5 step 2), which changes nothing the first one did (S4, S5). A
-        push that waited while a resync rebuilt the order's machine is taken by the rebuilt
-        one."""
+        facade keeps no copy of the push, its caller delivers it again once, which changes
+        nothing the first one did (S4, S5), and leaves it to reconciliation (24 Sec.8.5 step 2)
+        if that is answered `OrderStepUnknown` too. A push that waited while a resync rebuilt the
+        order's machine is taken by the rebuilt one."""
         self._vet(PUSH_EVENTS, event, payload)
         o = self._live(account_id, order_id)
         for _ in range(FOLLOWS):
@@ -741,9 +756,11 @@ class OrderMachines:
         await asyncio.gather(*list(self._tasks), return_exceptions=True)
         for o in list(self._orders.values()):
             await self._close(o, publish=False)
-        b01.set_ports(None)
-        b01.set_audit_hook(None)
-        b01.set_fill_core(None)
+        if self._wired:  # a stopped facade never unwires the ports of the one after it
+            self._wired = False
+            b01.set_ports(None)
+            b01.set_audit_hook(None)
+            b01.set_fill_core(None)
 
     # --- Build, lookup and eviction (C-2.18, MUST-11, OM-I02) -----------------------------------
 
@@ -841,7 +858,8 @@ class OrderMachines:
         the machine's own invoke, and committed before the next (`_persist` answers its `seq`);
         then the machine must hold the order its events rebuild (`_recovered`). The binding's
         replay starts only once `_open` built the machine: a second hydration of a live order is
-        refused first, and leaves that machine's attempts and replay alone (L3)."""
+        refused first (one machine per order), and leaves that machine's attempts and replay
+        alone."""
         link = row.order_link_id
         o = await self._open(
             row.id, row.exchange_account_id, environment, "hydrate", replaying=deque(plan)
@@ -870,8 +888,10 @@ class OrderMachines:
                 await self._settle(o)
                 return o.lifecycle
         except BaseException:
-            b01.end_replay(link)
-            await self._close(o, publish=False)
+            try:  # the machine stops first, so no invoke waiting on the replay's gate is sent
+                await self._close(o, publish=False)
+            finally:
+                b01.end_replay(link)
             raise
 
     async def _replayed(self, o: _Order, seq: int) -> None:
@@ -927,7 +947,7 @@ class OrderMachines:
 
     async def _stored(self, account_id: UUID, order_id: UUID) -> str | None:
         row = await self._bounded(self._ports.orders.get(account_id, order_id))
-        return None if row is None else row.lifecycle_state or LIFECYCLE_STATE_OF[row.state]
+        return None if row is None else _row_state(row)
 
     async def _bounded[T](self, call: Awaitable[T]) -> T:
         """A read, audit or notice port's answer within `PORT_TIMEOUT` (C-2.18), else
@@ -940,14 +960,16 @@ class OrderMachines:
     ) -> None:
         """A push for an order with no machine here. A protection fact is B8's once the order's
         machine is gone; for a final order the push is an anomaly (S6), and a fill also hands the
-        position to B8, as no machine can start its stop."""
+        position to B8, as no machine can start its stop, unless the order is reduce-only: it
+        opens no position (C-2.6, as `b01_order.starts_protection` says)."""
         if event in _PROTECTION:
             return
-        state = await self._stored(account_id, order_id)
-        if state is None or state not in self.legality.finals:
+        row = await self._bounded(self._ports.orders.get(account_id, order_id))
+        state = "" if row is None else _row_state(row)
+        if row is None or state not in self.legality.finals:
             raise OrderNotLoaded("no machine in this process holds the order")
         await self._anomaly(order_id, account_id, state, event, payload)
-        if event == "EXEC":
+        if event == "EXEC" and not row.reduce_only:
             notice = OrderNotice("request_fallback_sl", order_id, account_id, None, {})
             await self._notify(notice)
         raise ReconcileAnomaly(state, event)
@@ -1036,9 +1058,10 @@ class OrderMachines:
         if event in _ENDS and _outruns(push, o.view.get("filled_qty")):
             self._hold(o, event, push)  # it waits for the fills it reports (INV-B1-k)
             return False
-        if type(stamp) is int:
-            o.last_update_ms = stamp
         await self._send_order(o, event, push)
+        if type(stamp) is int:  # taken, so the watermark moves, at most to the clock's lead
+            lead = self._now_us() // 1_000 + MAX_PUSH_LEAD_MS
+            o.last_update_ms = max(o.last_update_ms, min(stamp, lead))
         return False
 
     def _hold(self, o: _Order, event: str, push: dict[str, Any]) -> None:
@@ -1386,7 +1409,7 @@ class OrderMachines:
     async def _record(self, o: _Order, name: str, detail: Mapping[str, str | None]) -> None:
         action, outcome, severity = B1_AUDITS[name]
         if action == ANOMALY:
-            self._anomalies.inc()
+            self._alert_anomaly()
         fields = {"order_link_id": o.view.get("order_link_id"), **detail}
         record = OrderAuditRecord(action, o.order_id, o.account_id, outcome, severity, name, fields)
         try:
@@ -1406,7 +1429,7 @@ class OrderMachines:
         that cannot be written raises (C-2.9). The push never met B1's closed schema, so its
         `exec_id` is kept only as B1 keeps one (text of 1 to `MAX_TEXT` characters): the detail
         holds ids and state names, never a caller's value (C-12.6)."""
-        self._anomalies.inc()
+        self._alert_anomaly()
         exec_id = push.get("exec_id")
         detail = {
             "state": state,
@@ -1420,6 +1443,12 @@ class OrderMachines:
             ANOMALY, order_id, account_id, "denied", "error", POST_TERMINAL_PUSH, detail
         )
         await self._bounded(self._ports.audit.write(record))
+
+    def _alert_anomaly(self) -> None:
+        """S6 (#847's "raised, audited and alerted"): each anomaly is counted in
+        `oms_reconcile_anomaly_total` and raised to the pager as an alert, a ticket, not a page."""
+        self._anomalies.inc()
+        self._pager.raise_alert("alert", "oms_reconcile_anomaly", machine_kind=MACHINE)
 
     async def _notify(self, notice: OrderNotice) -> None:
         try:

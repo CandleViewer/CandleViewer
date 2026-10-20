@@ -17,6 +17,8 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from hypothesis import HealthCheck, example, given, settings
+from hypothesis import strategies as st
 from structlog.testing import capture_logs
 from xstate_statemachine import PluginBase, SimulatedClock
 from xstate_statemachine.exceptions import InvalidEventPayloadError
@@ -183,7 +185,7 @@ async def test_s7_a_write_that_fails_changes_nothing_and_pages(
     """S7, S11: a refused, timed-out or unwired write raises in `persist_event`; the rollback
     leaves the configuration and context as they were, nothing reaches the exchange (the invoke
     the entry armed is torn down with it), and the order lane pages. A timed-out write raises
-    `StepOutcomeUnknown`, as its row may have committed (codeA r1 Medium): the facade reads it."""
+    `StepOutcomeUnknown`, as its row may have committed: the facade reads it."""
     store, commands, pager = Store(), Commands(), _Pager()
     monkeypatch.setattr(b01, "_ports", b01.OrderPorts(persist=store, commands=commands))
     hooks = CvErrorHooks(machine_kind="order", lane="order", pager=pager)
@@ -389,7 +391,7 @@ async def test_a_kill_cancels_through_the_audited_cancel_service(
     over: dict[str, object], audits: list[str], cancels: list[str], commands: Commands
 ) -> None:
     """SR-E29-06: the KILL's cancel is the OMS's audited cancel (`kind` `kill_cancel`), never the
-    binding's own service; a skipped one names why (lows-847s1: an unverified duplicate)."""
+    binding's own service; a skipped one names why (unsubmitted, or an unverified duplicate)."""
     seen: list[str] = []
 
     async def _hook(name: str, _ctx: dict[str, Any]) -> None:
@@ -440,7 +442,12 @@ class _Interp:
 @pytest.mark.parametrize(
     ("action", "interp", "event", "notice"),
     [
-        ("notify_protection_region", None, {"type": "EXEC"}, {"kind": "first_fill"}),
+        (
+            "notify_protection_region",
+            _Interp("lifecycle.partially_filled"),
+            {"type": "EXEC"},
+            {"kind": "first_fill"},
+        ),
         ("notify_amend_rejected", None, {"error_code": "RATE_LIMITED"}, {"kind": "amend_rejected"}),
         (
             "emit_terminal",
@@ -547,6 +554,9 @@ def test_second_consecutive_miss_counts_the_earlier_misses(misses: object, secon
 
 
 READ = {"updated_time": 100, "stop_loss": "62000", "size": "1"}
+#: Readings `record_sl_fact_ignored` keeps: a loss and a sighting of the stop, both at 100.
+LOST = {"kind": "SL_LOST", "updated_time": 100, "stop_loss": None, "size": "1"}
+SEEN = {"kind": "SL_OBSERVED", **READ}
 
 
 @pytest.mark.parametrize(
@@ -559,22 +569,49 @@ READ = {"updated_time": 100, "stop_loss": "62000", "size": "1"}
         (READ | {"size": "0"}, None, False),  # a flat position
         (READ | {"updated_time": -1}, None, False),
         (None, None, False),  # the call's ack alone, no read-back
-        (READ, {"kind": "SL_LOST", "updated_time": 101}, False),  # lost after the read-back
-        (READ, {"kind": "SL_LOST", "updated_time": 100}, False),  # a tie: the loss wins
-        (READ, {"kind": "SL_LOST", "updated_time": 99}, True),  # a stale loss
-        (READ, {"kind": "SL_OBSERVED", "updated_time": 101}, True),
+        (READ, LOST | {"updated_time": 101}, False),  # lost after the read-back
+        (READ, LOST, False),  # a tie: the loss wins
+        (READ, LOST | {"updated_time": 99}, True),  # a stale loss
+        (READ, SEEN | {"updated_time": 101}, True),  # a later reading of the stop
+        (READ, SEEN | {"updated_time": 101, "stop_loss": "61000"}, False),  # of another stop
+        (READ, SEEN | {"updated_time": 101, "size": "0"}, False),  # of a flat position
+        (READ, SEEN | {"stop_loss": "61000"}, True),  # a tie of two readings: the new one
+        (READ, SEEN | {"updated_time": 99, "stop_loss": "61000"}, True),  # a stale one
+        (READ | {"stop_loss": "61000"}, SEEN | {"updated_time": 101}, True),  # the later decides
+        (READ | {"stop_loss": "61000"}, SEEN | {"updated_time": 99}, False),
     ],
 )
 def test_sl_attach_ok_needs_a_read_back_no_later_loss_superseded(
     position: object, last: object, ok: bool
 ) -> None:
-    """INV-B1-f (version 3): the read-back of the open position shows the stop the OMS
-    requested, and no `SL_LOST` stamped after it was recorded during the attach."""
+    """INV-B1-f (version 3): the last reading decides. The read-back of the open position shows
+    the stop the OMS requested, unless the reading recorded during the attach is later (or as
+    late and a loss), which then decides; an `SL_OBSERVED` counts exactly as a read-back does."""
     ctx = _ctx(sl_reading=last)
     assert b01.sl_attach_ok(ctx, _Done({"ok": True, "position": position})) is ok
-    observed = ok or (last is not None and position == READ)  # no supersede check on a read
     reading = position if isinstance(position, dict) else {}
-    assert b01.sl_observed_ok(ctx, _Event("SL_OBSERVED", **reading)) is observed
+    assert b01.sl_observed_ok(ctx, _Event("SL_OBSERVED", **reading)) is ok
+
+
+@pytest.mark.parametrize(
+    ("first", "then", "kept", "size"),
+    [
+        ("SL_OBSERVED", "SL_LOST", "SL_LOST", "2"),  # a loss as late as a sighting replaces it
+        ("SL_LOST", "SL_OBSERVED", "SL_LOST", "1"),  # a sighting as late as a loss never does
+        ("SL_OBSERVED", "SL_OBSERVED", "SL_OBSERVED", "2"),  # the one taken last
+        ("SL_LOST", "SL_LOST", "SL_LOST", "1"),
+    ],
+)
+async def test_record_sl_fact_ignored_gives_a_tie_to_the_loss(
+    first: str, then: str, kept: str, size: str
+) -> None:
+    """INV-B1-f: of two readings with one exchange time the loss is kept, whichever arrived
+    first, so the arrival order of a tie never decides the region (`sl_attach_ok`)."""
+    ctx = _ctx()
+    await b01.record_sl_fact_ignored(None, ctx, _Event(first, **READ), None)
+    await b01.record_sl_fact_ignored(None, ctx, _Event(then, **READ | {"size": "2"}), None)
+    assert (ctx["sl_reading"]["kind"], ctx["sl_reading"]["size"]) == (kept, size)
+    assert b01.sl_attach_ok(ctx, _Done({"ok": True, "position": READ})) is (kept != "SL_LOST")
 
 
 async def test_record_sl_fact_ignored_keeps_the_latest_reading() -> None:
@@ -594,7 +631,7 @@ async def test_record_sl_fact_ignored_keeps_the_latest_reading() -> None:
 
 
 async def test_a_loss_during_the_attach_ends_in_sl_missing(charts: Charts) -> None:
-    """lows-847s1b security Low 1, on the library with the real guards: an `SL_LOST` the
+    """INV-B1-f on the library with the real guards: an `SL_LOST` the
     exchange stamped after the attach's read-back, delivered while the attach was in flight, is
     kept, and the confirmed result then goes to `sl_missing`, never `protected`."""
     gate, commands = asyncio.Event(), Commands()
@@ -616,6 +653,70 @@ async def test_a_loss_during_the_attach_ends_in_sl_missing(charts: Charts) -> No
             assert not interp.has_tag("protected") and interp.deferred_count == 0
 
 
+def _reading_of(kind: str, when: int, own: bool) -> dict[str, Any]:
+    """A reading at exchange time *when*: a loss, or a sighting of the requested stop (*own*) or
+    of another one."""
+    if kind == "SL_LOST":
+        return {"updated_time": when, "stop_loss": None, "size": "1"}
+    return {"updated_time": when, "stop_loss": "62000" if own else "61000", "size": "1"}
+
+
+async def test_a_reading_delivered_late_never_undoes_a_loss(charts: Charts) -> None:
+    """INV-B1-f on the library with the real guards and actions: `sl_present`'s `SL_LOST` arm
+    records its loss, so an `SL_OBSERVED` of the requested stop the exchange stamped before it, or
+    at its time, leaves `sl_missing`; only a later one returns the region to `sl_present`."""
+    async with _machine(charts, "protection.sl_present", AuditTap()) as interp:
+        interp.context.update(stop_loss="62000", order_link_id=LINK)
+        await _send(interp, "SL_LOST", **_reading_of("SL_LOST", 200, True))
+        for when, leaf in ((150, "sl_missing"), (200, "sl_missing"), (250, "sl_present")):
+            await _send(interp, "SL_OBSERVED", **_reading_of("SL_OBSERVED", when, True))
+            assert f"order.protection.{leaf}" in interp.current_state_ids, when
+        assert interp.context["sl_reading"]["kind"] == "SL_LOST"
+        assert interp.deferred_count == 0
+
+
+_SEQUENCES = st.lists(
+    st.tuples(
+        st.sampled_from(("SL_OBSERVED", "SL_LOST")),
+        st.integers(min_value=0, max_value=3),
+        st.booleans(),
+    ),
+    max_size=8,
+)
+
+
+@settings(
+    max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(readings=_SEQUENCES)
+@example(readings=[("SL_LOST", 2, True), ("SL_OBSERVED", 1, True)])  # a stale sighting
+@example(readings=[("SL_LOST", 2, True), ("SL_OBSERVED", 2, True)])  # a tie
+@example(  # a later sighting of another stop, then a stale one of the requested stop
+    readings=[("SL_LOST", 1, True), ("SL_OBSERVED", 3, False), ("SL_OBSERVED", 2, True)]
+)
+async def test_inv_b1_f_the_last_reading_decides_property(
+    readings: list[tuple[str, int, bool]], charts: Charts
+) -> None:
+    """INV-B1-f on the library with the real guards and actions: in whatever order the readings
+    arrive, the region returns to `sl_present` only when the last reading, by exchange time (on a
+    tie the loss, else the one taken last), shows the requested stop on the open position; a
+    loss always leaves `sl_present`, and no reading is deferred."""
+    last: tuple[int, int, int] = (-1, 0, -1)  # (exchange time, a loss, arrival) of the last one
+    covered = True  # the attach's read-back the region started from
+    async with _machine(charts, "protection.sl_present", AuditTap()) as interp:
+        interp.context.update(stop_loss="62000", order_link_id=LINK)
+        for arrival, (kind, when, own) in enumerate(readings):
+            lost = kind == "SL_LOST"
+            if (key := (when, int(lost), arrival)) > last:
+                last, covered = key, own and not lost
+            before = "order.protection.sl_present" in interp.current_state_ids
+            await _send(interp, kind, **_reading_of(kind, when, own))
+            after = "order.protection.sl_present" in interp.current_state_ids
+            assert interp.has_tag("protected") is after and interp.deferred_count == 0
+            assert not (lost and after), "a loss leaves sl_present"
+            assert covered or not (after and not before), "only the last reading restores it"
+
+
 @pytest.mark.parametrize(
     ("event", "payload"),
     [
@@ -623,6 +724,10 @@ async def test_a_loss_during_the_attach_ends_in_sl_missing(charts: Charts) -> No
         ("EXEC", {"qty": 0.4}),  # a float, never money
         ("VALIDATE", {"gates": {"risk": True}}),  # a verdict is `pass` or `fail`, never a bool
         ("SL_OBSERVED", {"updated_time": "100"}),
+        ("SL_LOST", {"updated_time": b01.MAX_EXCHANGE_US // 1_000 + 1}),  # past 9999-12-31
+        ("EXPIRE", {"updated_time": 10**30}),
+        ("EXEC", {"ts_exec": b01.MAX_EXCHANGE_US + 1}),
+        ("EXEC", {"seq": 2**63}),  # past a bigint
         ("CANCEL", {"anything": "at all"}),
         ("KILL", {"reason": ""}),
     ],
@@ -668,7 +773,7 @@ def test_recorded_attempts_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_a_replay_begins_with_none_of_the_orders_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """codeA and codeB r2 Medium (INV-B1-f, SR-E29-15): a replayed machine is a new one, so it
+    """INV-B1-f, SR-E29-15: a replayed machine is a new one, so it
     holds only the outcomes its record holds. The order's attempts this process kept, the attach's
     read-back and a place cut off unanswered, are forgotten; another order's stay."""
     monkeypatch.setattr(b01, "_ATTEMPTS", type(b01._ATTEMPTS)())
@@ -725,7 +830,7 @@ async def test_an_amend_sends_the_terms_its_event_staged(
 async def test_a_command_port_that_hangs_fails_the_attempt(
     commands: Commands, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """codeA r1 Low (S1): every attempt is bounded by `CV_COMMAND_TIMEOUT`; a port that never
+    """S1: every attempt is bounded by `CV_COMMAND_TIMEOUT`; a port that never
     answers fails it with `TimeoutError`, recorded like any failure, so the invoke lands in
     `unknown` and a re-entered one sends nothing again."""
     monkeypatch.setattr(b01, "CV_COMMAND_TIMEOUT", 0.0)
@@ -746,7 +851,7 @@ async def test_a_command_port_that_hangs_fails_the_attempt(
 
 
 async def test_a_discovered_orders_stop_is_never_the_omss(commands: Commands) -> None:
-    """codeA r1 Medium (SR-E29-06, SR-E29-12): `discovered` marks a stop found on the exchange,
+    """SR-E29-06, SR-E29-12: `discovered` marks a stop found on the exchange,
     so the attach sends nothing for it and no reading of it confirms the region, until an
     adoption makes the order the OMS's."""
     ctx = _ctx(discovered=True)
@@ -775,7 +880,7 @@ async def test_a_discovered_orders_stop_is_never_the_omss(commands: Commands) ->
 async def test_notify_protection_region_on_a_fill_state_or_a_held_fill(
     leaf: str, over: dict[str, Any], notified: bool
 ) -> None:
-    """INV-B1-o (codeA r1 Lows): entering `partially_filled` or `filled` always starts the stop,
+    """INV-B1-o: entering `partially_filled` or `filled` always starts the stop,
     an order that holds no fill included; `cancelled` and `expired` only for an order with fills;
     a reduce-only order never, as it opens no position (C-2.6)."""
     ctx = _ctx(**over)
@@ -783,8 +888,32 @@ async def test_notify_protection_region_on_a_fill_state_or_a_held_fill(
     assert (ctx["outbox"] == [{"seq": 0, "kind": "first_fill"}]) is notified
 
 
+@pytest.mark.parametrize("leaf", ["held", "cancelled", "rejected", "expired", "killed"])
+@pytest.mark.parametrize(
+    ("over", "notice"),
+    [
+        ({}, "first_fill"),  # a trade of the exchange order the order is bound to
+        ({"exchange_order_id": "x-foreign"}, "request_fallback_sl"),  # another order's fill
+        ({"order_link_id": "cvl-another-order"}, "request_fallback_sl"),
+        ({"exec_type": "funding"}, "request_fallback_sl"),  # no trade
+    ],
+)
+async def test_an_s6_fill_starts_the_orders_stop_only_when_it_pairs(
+    leaf: str, over: dict[str, Any], notice: str
+) -> None:
+    """C-2.6, SR-E29-06: an `EXEC` a held or final order without fills consumed (S6) asks for this
+    order's stop only when it pairs with the order (SR-E29-03); another order's fill, or a
+    hostile one, never starts an attach of this order's stop, and the position goes to B8."""
+    ctx = _ctx(exchange_order_id="x1")
+    fill = _Event("EXEC", **_exec("e9", "0.1", **over))
+    with capture_logs() as logs:
+        await b01.notify_protection_region(_Interp(f"lifecycle.{leaf}"), ctx, fill, None)
+    assert [n["kind"] for n in ctx["outbox"]] == [notice]
+    assert [e["event"] for e in logs] == ([] if notice == "first_fill" else ["b01_unpaired_exec"])
+
+
 async def test_a_deadline_while_the_attach_hangs_leaves_the_position_naked(charts: Charts) -> None:
-    """C-2.6, 24 Sec.8.8 rule 2 (codeA r1 Low), on the library with the real bindings: the stop is
+    """C-2.6, 24 Sec.8.8 rule 2, on the library with the real bindings: the stop is
     not confirmed by its deadline while the attach still hangs, so `SL_DEADLINE` takes the region
     to `sl_missing`, which raises `SL_ATTACH_FAILED` and hands the position to B8; the attach's
     late result does not take it back."""

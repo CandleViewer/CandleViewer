@@ -121,9 +121,11 @@ class Notices:
 @dataclass
 class Pager:
     calls: list[str] = field(default_factory=list)
+    severities: list[str] = field(default_factory=list)
 
     def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
         self.calls.append(summary)
+        self.severities.append(severity)
 
 
 @dataclass

@@ -9,9 +9,10 @@
 * a step that applies a fill (an `EXEC`, or a reconciliation finding that carries the execution)
   commits the execution, the totals the machine computed, the state and the fill event together
   (`ExecutionRepository.commit_fill`). An `exec_id` stored already refuses it, as the machine has
-  just counted it (S4): for an `EXEC` as `StaleOrderState`, since the row holds a fill the machine
-  did not know, so the facade rebuilds the machine from the row (24 Sec.8.2 S7); for a finding as
-  a `ValueError`;
+  just counted it (S4): for an `EXEC` whose execution this order holds as `StaleOrderState`, since
+  the row holds a fill the machine did not know, so the facade rebuilds the machine from the row
+  (24 Sec.8.2 S7); for one another order holds (hostile or misrouted, OM-T04), and for a finding,
+  as a `ValueError`, which rebuilds nothing;
 * any other step is a compare-and-set of the state with its event (`OrderRepository.transition`).
   A `filled` step needs its execution: the store refuses `filled` without one (OM-R02).
 
@@ -152,15 +153,20 @@ class OrderStepWriter:
         if kind not in FILL_KINDS:
             return (await self._orders.transition(move)).event.seq
         done = await self._executions.commit_fill(_fill(step, move))
-        if done is None and step.event == "EXEC":
-            # The machine counted as new a fill its row holds: the row moved on under it (a COMMIT
-            # that landed after the machine was rebuilt), so the facade rebuilds it again (S7).
-            raise StaleOrderState(order_id, move.from_state)
-        if done is None:
+        if done is not None:
+            return done.event.seq
+        if step.event != "EXEC":
             raise ValueError(
                 "the execution is stored already, so the machine counted it twice (S4)"
             )
-        return done.event.seq
+        stored = await self._executions.get(account, str(step.payload.get("exec_id")))
+        if stored is None or stored.order_id != order_id:
+            # Another order's execution under this order's pairing fields: hostile or misrouted
+            # (OM-T04), never a row that moved on, so nothing is rebuilt for it.
+            raise ValueError("the execution is stored already, for another order")
+        # The machine counted as new a fill its row holds: the row moved on under it (a COMMIT that
+        # landed after the machine was rebuilt), so the facade rebuilds it again (S7).
+        raise StaleOrderState(order_id, move.from_state)
 
     async def _create(
         self, step: Step, account: UUID, order_id: UUID, to_state: LifecycleState
@@ -268,11 +274,16 @@ def _agrees(order: NewOrder, step: Step, account: UUID) -> None:
 
 
 def _at(raw: object, fallback: datetime) -> datetime:
+    """An execution's `ts_exec` as a time, else `ValueError` (hostile data, OM-T04): one past the
+    last instant a `datetime` holds is refused as a malformed one is, never an `OverflowError`."""
     if raw is None:
         return fallback
     if type(raw) is not int or raw < 0:
         raise ValueError("an execution time is not microseconds since the epoch")
-    return _EPOCH + timedelta(microseconds=raw)
+    try:
+        return _EPOCH + timedelta(microseconds=raw)
+    except OverflowError:
+        raise ValueError("an execution time is past the last one a datetime holds") from None
 
 
 def _fill(step: Step, move: OrderTransition) -> OrderFill:

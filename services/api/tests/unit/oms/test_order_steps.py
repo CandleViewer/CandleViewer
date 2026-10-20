@@ -19,6 +19,7 @@ from candleviewer.oms.fakes import InMemoryExecutionStore, InMemoryOrderStore
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.statechart.bindings.b01_order import Step
 from candleviewer.storage.repositories import orders as port
+from candleviewer.storage.repositories.executions import NewExecution
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER_ID = UUID(int=0xA1), UUID(int=0x01)
@@ -213,7 +214,7 @@ async def test_a_fill_commits_with_its_execution(
 async def test_an_exec_the_row_holds_already_finds_the_row_moved_on(
     writer: OrderStepWriter, db: InMemoryOrderStore
 ) -> None:
-    """codeA r2 Low (S4, S7): the machine counted as new an `EXEC` whose execution the row holds
+    """S4, S7: the machine counted as new an `EXEC` whose execution the row holds
     (a COMMIT that landed after the machine was rebuilt), so the row is ahead of the machine:
     `StaleOrderState`, which rebuilds the machine, never a refusal that leaves it behind. A
     finding that carries a stored execution is still refused as counted twice, with nothing
@@ -227,6 +228,40 @@ async def test_an_exec_the_row_holds_already_finds_the_row_moved_on(
     finding = _step("partially_filled", "partially_filled", "RECON_FOUND_PARTIAL", found, **FILLED)
     with pytest.raises(ValueError, match="counted it twice"):
         await writer(finding)
+    assert await _events(db) == before
+
+
+async def test_an_exec_whose_id_another_execution_holds_rebuilds_nothing(
+    writer: OrderStepWriter, db: InMemoryOrderStore
+) -> None:
+    """S4, OM-T04: an `EXEC` that pairs with the order but whose `exec_id` the account holds for
+    an execution of no order of this one's is refused with nothing written, never as the row
+    moving on (`StaleOrderState`), which would rebuild the machine, and re-attach its stop, on
+    every redelivery of the push."""
+    await _submitted(writer)
+    other = NewExecution(
+        exchange_account_id=ACCOUNT, exec_id="e1", symbol="BTCUSDT", side="Buy",
+        exec_qty=Decimal("0.4"), exec_price=Decimal(63000), exec_value=Decimal(25200),
+        exec_type="Trade", is_maker=False, exec_ts=T0,
+    )  # fmt: skip
+    assert await InMemoryExecutionStore(db).insert(other)
+    before = await _events(db)
+    with pytest.raises(ValueError, match="for another order"):
+        await writer(_step("submitted", "partially_filled", "EXEC", EXECUTION, **FILLED))
+    assert await _events(db) == before
+
+
+@pytest.mark.parametrize("ts_exec", [253_402_300_800_000_000, 10**30])
+async def test_an_execution_time_past_a_datetimes_range_is_refused_as_malformed(
+    writer: OrderStepWriter, db: InMemoryOrderStore, ts_exec: int
+) -> None:
+    """OM-T04: B1's schema bounds `ts_exec`; behind it, a time no `datetime` holds is refused as a
+    malformed one is (`ValueError`), never an `OverflowError`, with nothing written."""
+    await _submitted(writer)
+    before = await _events(db)
+    late = EXECUTION | {"ts_exec": ts_exec}
+    with pytest.raises(ValueError, match="past the last one a datetime holds"):
+        await writer(_step("submitted", "partially_filled", "EXEC", late, **FILLED))
     assert await _events(db) == before
 
 
@@ -321,7 +356,7 @@ def _kind_table() -> dict[str, tuple[str, str]]:
 
 
 def test_each_trigger_is_recorded_with_the_kind_and_source_24_names() -> None:
-    """codeB r1 Medium: the write-ahead row of every trigger B1 writes records the kind and source
+    """S8, OM-R02: the write-ahead row of every trigger B1 writes records the kind and source
     24 Sec.8.2 names (the `source` label of `oms_state_transitions_total` too); an exchange fact
     with no `source` of its own keeps its default. The table and `_KINDS` name the same
     triggers."""

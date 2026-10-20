@@ -5,6 +5,7 @@ on the real binding with the in-memory stores."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -310,7 +311,7 @@ async def test_the_fold_of_an_orders_events_equals_its_row(rig: Rig, path: str) 
 async def test_the_reject_columns_are_rebuilt_from_their_event(
     rig: Rig, path: str, code: str
 ) -> None:
-    """lows-847s3 Low 3: a reject's code is its event's `ret_code`, the fold's one source."""
+    """OM-T03: a reject's code is its event's `ret_code`, the fold's one source."""
     order = await FINAL[path][0](rig)
     history = await _history(rig, order)
     rebuilt, row = rebuild(history), await _row(rig, order)
@@ -460,7 +461,7 @@ async def test_hydrating_a_live_order_answers_its_state(rig: Rig) -> None:
 
 
 async def test_a_hydrated_machine_is_scoped_to_its_stored_account(rig: Rig) -> None:
-    """OM-I02, C-12.4 (codeB r1 Medium): hydration builds the machine with the stored order's
+    """OM-I02, C-12.4: hydration builds the machine with the stored order's
     account, so its state is published to that account only, and another account's command or
     push finds nothing, as for an unknown order."""
     order = await rig.submitted()
@@ -559,6 +560,35 @@ async def test_a_forged_amend_request_is_refused_where_the_replay_leaves_the_rec
             await again.facade.hydrate(ACCOUNT, order.id, environment="demo")
         assert again.facade.state(order.id) is None and again.commands.sent == []
         assert again.pager.calls[-1:] == ["oms_order_history_refused"]
+    finally:
+        await again.facade.stop()
+
+
+async def test_a_refused_replay_stops_its_machine_before_its_parked_invoke_runs(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SR-E29-15, OM-T03: an order that crashed with its cancel unanswered replays to
+    `cancel_pending`, whose cancel waits for the replay to end. A replay then refused at its end
+    stops the machine before it ends the replay, so that cancel is never sent, even when stopping
+    the machine yields to the loop first."""
+    order = await _amended(rig)
+    _gate, rig.commands.on_cancel = gated({"ok": True})
+    await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user")
+    _state, _context, again = await _crashed(rig, order)
+    _forge(again, order, 4, price="0")  # the replayed machine is not the order its events rebuild
+    close = again.facade._close
+
+    async def close_yielding(o: Any, *, publish: bool) -> None:
+        for _ in range(16):
+            await asyncio.sleep(0)
+        await close(o, publish=publish)
+
+    monkeypatch.setattr(again.facade, "_close", close_yielding)
+    try:
+        with pytest.raises(OrderHistoryRefused, match="not the order its events rebuild"):
+            await again.facade.hydrate(ACCOUNT, order.id, environment="demo")
+        await again.quiet()
+        assert again.commands.sent == [] and b01._REPLAYS == {}
     finally:
         await again.facade.stop()
 

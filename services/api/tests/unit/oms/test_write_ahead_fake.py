@@ -133,7 +133,7 @@ class TestInMemoryStore(WriteAheadContract):
             await h.events.list_for_order(row.exchange_account_id, row.id, after_seq=-2)
 
     async def test_another_task_runs_while_a_call_waits_on_the_store(self, h: Harness) -> None:
-        """lows-847s3b (security r2 Low 1): each call yields once, as a driver call suspends, so
+        """Each call yields once, as a driver call suspends, so
         the OMS's per-order lock and its tasks meet the interleaving Postgres gives them."""
         row, ran = await h.order(), []
 
@@ -185,7 +185,7 @@ def _checks(table: str) -> set[str]:
 
 
 def test_the_fake_meets_every_check_the_schema_declares() -> None:
-    """lows-847s3b (code r2): a migration that adds a CHECK (as the order vocabulary's revision
+    """A migration that adds a CHECK (as the order vocabulary's revision
     added `ord_lifecycle`) fails here until the fake models it or leaves it to the types."""
     assert _checks("orders") == set(fakes._ORDER_CHECKS) | _LEFT_TO_TYPES["orders"]
     assert _checks("executions") == set(fakes._EXECUTION_CHECKS) | _LEFT_TO_TYPES["executions"]

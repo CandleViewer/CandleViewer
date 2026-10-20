@@ -408,7 +408,7 @@ _RET = {"reject_code": "ret_code", "reject_message": "ret_msg"}
 def test_the_reject_columns_are_the_events_or_the_step_is_refused(
     to: Any, given: dict[str, Any], said: dict[str, Any]
 ) -> None:
-    """lows-847s3 Low 3 (OM-T03): a step into `rejected` names its event's `ret_code` and
+    """OM-T03: a step into `rejected` names its event's `ret_code` and
     `ret_msg` as its reject columns, and no other step names any, before any statement; so a
     fold of the events rebuilds both columns."""
     with pytest.raises(ValueError, match="reject columns are its event's"):
@@ -416,7 +416,7 @@ def test_the_reject_columns_are_the_events_or_the_step_is_refused(
 
 
 def test_the_bound_reject_columns_are_the_bound_event_fields() -> None:
-    """lows-847s3 Low 3: the UPDATE binds the reject columns the event's insert binds as
+    """OM-T03: the UPDATE binds the reject columns the event's insert binds as
     `ret_code` and `ret_msg`, each redacted alike (#845 decision 2)."""
     code, text = _KEY, _REJECTED_TEXT
     said_so = event(ret_code=code, ret_msg=text)

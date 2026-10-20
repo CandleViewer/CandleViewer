@@ -841,7 +841,10 @@
           ],
           "on": {
             "SL_LOST": {
-              "target": "#order.protection.sl_missing"
+              "target": "#order.protection.sl_missing",
+              "actions": [
+                "record_sl_fact_ignored"
+              ]
             }
           }
         },

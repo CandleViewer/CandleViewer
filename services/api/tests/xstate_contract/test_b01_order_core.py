@@ -35,7 +35,7 @@ _STAMPED |= {"leaves_qty": "0.5", "reduce_only": False}
 _X1 = {"ok": True, "exchange_order_id": "x1"}  # the place ack
 _KEPT = ("63000", "1", "0.75", 1)  # price, qty, leaves_qty and one ERROR log: not adopted
 _REJECT = [{"ok": False, "terms": {"stop_loss": "1", "price": "1"}}]  # ruling 3: a business reject
-_CODE_ONLY = [{"ok": False, "error_code": "RATE_LIMITED"}]  # an `OrderAck` refusal, no terms (DL3)
+_CODE_ONLY = [{"ok": False, "error_code": "RATE_LIMITED"}]  # an `OrderAck` refusal, no terms
 _RATES = st.sampled_from([Decimal("-0.0001"), Decimal("0.0002"), Decimal("0.00055")])
 _FILL = st.tuples(st.decimals(1, 9, places=2), st.decimals(1, 99, places=1), _RATES)
 
@@ -371,7 +371,7 @@ async def test_inv_b1_h_kill_cancels_a_reconciled_duplicate(
         assert trail == ["halted_by_kill", "cancel_order", "kill_protection_retained"]
 
 
-# --- #847 slice 5: the context actions' bodies, and slice 4's Lows (SL1-SL3, CL1-CL3, DL2-DL3) ---
+# --- #847 slice 5: the context actions' bodies ----------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -472,7 +472,7 @@ async def test_a_slice_5_action_writes_only_its_fields(
 async def test_a_disagreement_is_logged_at_error_never_adopted(
     action: str, over: dict[str, Any], event: object, logged: list[str]
 ) -> None:
-    """SR-E29-03, OM-S05 (#3804 SL1, SL3, CL2): an id the order is not bound to is never taken,
+    """SR-E29-03, OM-S05: an id the order is not bound to is never taken,
     a cancel ack binds nothing, and a code 24 Sec.8.6 routes to reconciliation is flagged."""
     ctx = _ctx(**over)
     with capture_logs() as logs:
@@ -482,7 +482,7 @@ async def test_a_disagreement_is_logged_at_error_never_adopted(
 
 
 async def test_a_cancel_ack_never_binds_on_the_library(charts: Charts) -> None:
-    """#3804 SL1 (M18): a duplicate-id place leaves the order unbound in `unknown`; reconciliation
+    """SR-E29-03: a duplicate-id place leaves the order unbound in `unknown`; reconciliation
     finds it live under `x1`; a cancel ack naming a foreign id then binds nothing."""
     ctx = _ctx(exchange_order_id=None)
     await _run("adopt_cancel_ack", ctx, _Done({"ok": True, "exchange_order_id": "x-foreign"}))
@@ -520,7 +520,7 @@ async def test_adopt_recon_binds_and_applies_what_it_carries(
 
 async def test_record_discovered_records_the_found_order_or_nothing() -> None:
     """S9: an untracked order keeps the identity, terms and id reconciliation found, marked as
-    discovered: its stop is the exchange's, not one the OMS requested (codeA r1 Medium)."""
+    discovered: its stop is the exchange's, not one the OMS requested."""
     ctx: dict[str, Any] = {}
     await _run("record_discovered", ctx, _Ev(order=ORDER | {"exchange_order_id": "x7"}))
     assert ctx == _STAMPED | {
@@ -549,7 +549,7 @@ async def test_an_anomaly_or_a_stray_operator_command_is_audited(
 
 
 def test_a_failing_guard_denies_and_logs_once() -> None:
-    """A6 (#3804 CL2a): a guard that cannot decide denies, with one ERROR naming it."""
+    """A6: a guard that cannot decide denies, with one ERROR naming it."""
     with capture_logs() as logs:
         assert b01.has_fills(_ctx(filled_qty="junk"), None) is False
     assert [(e["event"], e["log_level"], e["guard"]) for e in logs] == [
@@ -558,7 +558,7 @@ def test_a_failing_guard_denies_and_logs_once() -> None:
 
 
 def test_text_and_id_bounds_are_pinned() -> None:
-    """#3804 CL3: a negative zero renders as `0`; an id of 1 and of `MAX_TEXT` characters is
+    """A negative zero renders as `0`; an id of 1 and of `MAX_TEXT` characters is
     taken, 0 and `MAX_TEXT + 1` are not."""
     assert b01._text(Decimal("-0")) == "0" and b01._text(Decimal("-0.000")) == "0"
     assert [b01._id("x" * n) is not None for n in (0, 1, 64, 65)] == [False, True, True, False]
@@ -567,7 +567,7 @@ def test_text_and_id_bounds_are_pinned() -> None:
 async def test_an_exec_before_the_bind_waits_and_is_logged_below_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#3804 SL2 (SR-E29-03): an EXEC for an order with no bound id is refused as `UNBOUND`, at
+    """SR-E29-03: an EXEC for an order with no bound id is refused as `UNBOUND`, at
     INFO, for the facade's reorder buffer, never answered with `FAULT`."""
     monkeypatch.setattr(b01, "_hook", AsyncMock())
     ctx = _ctx(exchange_order_id=None)
@@ -578,7 +578,7 @@ async def test_an_exec_before_the_bind_waits_and_is_logged_below_error(
 
 @pytest.mark.parametrize("term", ["price", "stop_loss", "take_profit", "trigger_price"])
 async def test_an_amend_of_one_term_changes_that_term_alone(term: str) -> None:
-    """#3804 CL1: `qty` absent, the order's own `qty` and `leaves_qty` stand."""
+    """S2: `qty` absent, the order's own `qty` and `leaves_qty` stand."""
     ctx = _ctx(filled_qty="0.25", leaves_qty="0.75")
     before = copy.deepcopy(ctx)
     await _run("adopt_amend", ctx, _Done({"ok": True, "terms": {term: "61000"}}))
@@ -589,7 +589,7 @@ async def test_an_amend_of_one_term_changes_that_term_alone(term: str) -> None:
 async def test_an_accepted_amend_moves_the_terms_on_the_library(
     fills: list[str], state: str, charts: Charts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#3804 DL3, S2's positive twin: an ok amend through the real result arms adopts its terms
+    """S2's positive twin: an ok amend through the real result arms adopts its terms
     into the live state it came from, with fills (`ret_code_ok_and_has_fills`) and without."""
     terms = {"price": "64000", "stop_loss": "62500"}
     monkeypatch.setitem(
@@ -608,7 +608,7 @@ async def test_an_accepted_amend_moves_the_terms_on_the_library(
 async def test_inv_b1_h_kill_cancels_nothing_under_an_unverified_duplicate(
     charts: Charts, place: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """INV-B1-h (#3804 DL2): a KILL straight after a duplicate-id place result, with no
+    """INV-B1-h: a KILL straight after a duplicate-id place result, with no
     reconciliation between, cancels nothing and audits why: the id may not be ours."""
     trail: list[str] = []
 

@@ -126,7 +126,7 @@ def _edges(chart: dict[str, Any]) -> set[tuple[str, str]]:
 
 
 def test_b01_24_diagram_draws_every_lifecycle_edge() -> None:
-    """lows-847s1: 24 §8.2's diagram draws exactly the chart's `lifecycle` edges, so the owner
+    """C-2.19: 24 §8.2's diagram draws exactly the chart's `lifecycle` edges, so the owner
     document cannot drift from the contract (C-2.19)."""
     text = (_CATALOGUE.parent / "24-internal-schemas.md").read_text(encoding="utf-8")
     block = text[text.index("### 8.2 Order state machine") : text.index("**Binding transition")]
@@ -524,7 +524,7 @@ async def test_inv_b1_m_a_stray_operator_command_is_refused_never_kept(
 ) -> None:
     """Every guard allowed: `OPERATOR_RESOLVED` outside `held`, or `ADOPT` outside `untracked`,
     is consumed and audited by the `lifecycle` arm, never deferred, so a later MISMATCH still
-    holds the order for the Owner (lows-847s1)."""
+    holds the order for the Owner."""
     if _OWNED_BY[command] == state:
         return  # the owner's own arm: INV-B1-m's property and INV-B1-l's
     async with _at(state, charts, guards=dict.fromkeys(b01.GUARDS, True)) as (i, rec, _c):
@@ -625,7 +625,7 @@ async def test_inv_b1_o_a_fill_reaching_a_final_or_held_order_is_an_audited_anom
 @pytest.mark.parametrize("event", ["RECON_FOUND_LIVE", "RECON_FOUND_PARTIAL", "EXEC"])
 async def test_b01_untracked_consumes_the_exchange_facts(event: str, charts: Charts) -> None:
     """INV-B1-l (version 3): `untracked` records the facts and restarts its miss count, never
-    deferring them (the DEFER_MAX eviction of lows-847s1), and runs no managing action."""
+    deferring them (past DEFER_MAX a deferred event is evicted), and runs no managing action."""
     async with _at("untracked", charts) as (i, rec, _c):
         mark = len(rec.actions)
         await i.send(event, wait=True)
@@ -638,7 +638,7 @@ async def test_b01_untracked_consumes_the_exchange_facts(event: str, charts: Cha
 async def test_b01_a_repeated_first_fill_or_a_late_deadline_is_consumed(
     leaf: str, charts: Charts
 ) -> None:
-    """INV-B1-f (slice 1b code Lows 2 and 4): after the attach result a repeated FIRST_FILL and a
+    """INV-B1-f: after the attach result a repeated FIRST_FILL and a
     late SL_DEADLINE are consumed by the region's arm, never deferred, and move nothing."""
     async with _at(f"protection.{leaf}", charts) as (i, rec, _c):
         mark = len(rec.actions)

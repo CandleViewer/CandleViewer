@@ -95,8 +95,8 @@ _BIG = "12345678901234567890.123456789012345678"  # 38 digits, within numeric(38
 
 
 def test_apply_execution_is_exact_at_38_digits_whatever_the_thread_context() -> None:
-    """#3804 SL5 (M14, M15): the sums and the one division run under the exact local context, so
-    38-digit values never round to the thread's precision, a hostile one included."""
+    """Money is exact at numeric(38,18): the sums and the one division run under the exact local
+    context, so 38-digit values never round to the thread's precision, a hostile one included."""
     tiny = apply_execution(OrderFills(D(_BIG)), Fill(D("0.000000000000000001"), D(1), D(0), D(0)))
     assert tiny.leaves_qty == D("12345678901234567890.123456789012345677")
     priced = apply_execution(OrderFills(D(2)), Fill(D(1), D(_BIG), D(0), D(0)))

@@ -76,7 +76,7 @@ def _proves_it() -> None: ...
 
 
 def test_a_ledger_entry_may_name_several_tests_and_each_must_exist() -> None:
-    """#3804 DL2: an invariant proven by more than one test lists them all, and renaming or
+    """An invariant proven by more than one test lists them all, and renaming or
     deleting any of them fails the ledger."""
     ledger: dict[str, str | tuple[str, ...]]
     ledger = dict.fromkeys(catalogue_invariants(_CATALOGUE, 1), "deferred:E29")

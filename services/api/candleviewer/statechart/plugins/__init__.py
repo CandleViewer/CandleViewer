@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from candleviewer.statechart.plugins._base import Pager
+from candleviewer.statechart.plugins._base import LogPager, Pager
 from candleviewer.statechart.plugins.audit import (
     CvAuditPlugin,
     InMemoryMachineEventSink,
@@ -61,6 +61,7 @@ __all__ = [
     "CvErrorHooks",
     "CvMetricsPlugin",
     "InMemoryMachineEventSink",
+    "LogPager",
     "MachineEventRow",
     "MachineEventSink",
     "Pager",

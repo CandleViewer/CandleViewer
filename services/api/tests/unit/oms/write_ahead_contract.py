@@ -278,7 +278,7 @@ class WriteAheadContract:
     async def test_a_step_that_leaves_the_chart_state_behind_is_refused(
         self, h: Harness, write: str
     ) -> None:
-        """`ord_lifecycle` (wave 286's carried item): a step that names no chart state moves
+        """`ord_lifecycle` (24 Sec.8.2's mapping): a step that names no chart state moves
         `state` away from the `lifecycle_state` the row holds, a pair the mapping does not admit,
         so it is refused by name, with nothing written, on either store."""
         row = await h.order("accepted", lifecycle_state="submitted")
@@ -319,7 +319,7 @@ class WriteAheadContract:
     async def test_text_holding_nul_is_refused_with_nothing_written(
         self, h: Harness, write: str
     ) -> None:
-        """lows-847s3b (security r2 Low 2): exchange text the redaction never sees (an
+        """OM-T04: exchange text the redaction never sees (an
         `exec_id`, an `exchange_order_id`) cannot hold NUL in Postgres text. The statement is
         refused whole (SQLSTATE 22021 as the server decodes the value), so a hostile push is a
         write that fails every retry, never one the fake takes (C-13.3), and nothing is written."""

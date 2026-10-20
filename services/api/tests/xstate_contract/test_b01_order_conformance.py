@@ -393,7 +393,7 @@ async def test_inv_5_no_delivered_exec_is_unaccounted_for_property(
     """INV-5 (LC-03, 24 Sec.8.2 S10): every `exec_id` sent to the machine, whatever its state, is
     in `seen_exec_ids`, still deferred, or in the record of the arm that consumed it (a repeat, a
     fill of another order or past `qty`: `guard_denied`; a fill of a held or final order:
-    `reconcile_anomaly`; one `untracked` heard of: `record_remote_state`'s, codeA r1 Low), never
+    `reconcile_anomaly`; one `untracked` heard of: `record_remote_state`'s), never
     dropped silently. Orders that were sent and orders discovered on the exchange alike."""
     gate, held = gated({"ok": True, "exchange_order_id": "x1"})
     with capture_logs() as logs:
