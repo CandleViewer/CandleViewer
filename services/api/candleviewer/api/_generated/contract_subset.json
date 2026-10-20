@@ -1043,23 +1043,48 @@
         "type": "string"
       },
       "IndicatorPresetInput": {
+        "additionalProperties": false,
+        "description": "Writable preset fields, and the item of `WorkspaceBundle.indicator_presets`. `PUT` is a\nfull replacement: an omitted field takes its default. Only the server sets `id`,\n`owner_user_id` (the caller), `is_builtin` (`false`), `created_at`, `updated_at` and\n`deleted_at`: sent in a body, each is refused (`422`) like any other unknown property.\n`name` is at most 80 characters as sent (rule `string_too_long`), then sanitised as\n`WorkspaceInput.name` is; empty after sanitising is rule `string_too_short`, and a lone\nsurrogate is rule `invalid_unicode`.\n",
         "properties": {
           "indicator_code": {
-            "maxLength": 40,
+            "description": "An indicator `id` from `listIndicators`. A value outside the pattern is rule `invalid_indicator_code`, and one that names no catalogue indicator is `unknown_indicator`; neither message echoes the value. Immutable once saved.",
+            "maxLength": 32,
+            "pattern": "^[a-z0-9_]{2,32}$",
             "type": "string"
           },
-          "is_default": {
+          "is_favourite": {
             "default": false,
+            "description": "Starred in the indicator picker. A built-in is starred by saving a copy of it (`createIndicatorPreset`), possible only once `listIndicators` lists the built-in's indicator.",
             "type": "boolean"
           },
           "name": {
+            "description": "At most 80 characters as sent, at least 1 after sanitising (above). Unique per owner and `indicator_code`, case-insensitive, among live presets (`409 conflict`, rule `name_taken`); a copy of a built-in may keep its name.",
             "maxLength": 80,
             "minLength": 1,
             "type": "string"
           },
+          "pane_target": {
+            "default": "overlay",
+            "description": "Where the indicator draws: over the price pane, or in a sub-pane of its own.",
+            "enum": [
+              "overlay",
+              "subpane"
+            ],
+            "type": "string"
+          },
           "params": {
             "additionalProperties": true,
+            "description": "The indicator's parameters, checked against its descriptor's `params_schema` (`listIndicators`) before anything is stored, and never clamped. Only the first parameter defect is reported: a key the descriptor does not declare (rule `additionalProperties` on `params`), else the first parameter, in the descriptor's order, that breaks one of its keywords (`type`, `enum`, `minimum`, `maximum` or `multipleOf` on `params.<name>`); the message names the bound, never the value. Stored complete and canonical: an omitted parameter is stored at its default, so changing a default later never alters a saved preset. At most 4 KiB, nesting depth 4 and 64 keys (rules `params_too_large`, `params_too_deep` and `params_too_many_keys`).\n",
+            "maxProperties": 64,
             "type": "object"
+          },
+          "style": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IndicatorPresetStyle"
+              }
+            ],
+            "description": "Optional; omitted means no style overrides (stored and returned as `{}`)."
           }
         },
         "required": [
@@ -1067,6 +1092,12 @@
           "indicator_code",
           "params"
         ],
+        "type": "object"
+      },
+      "IndicatorPresetStyle": {
+        "additionalProperties": false,
+        "description": "Style overrides by design-token name: a closed set of keys, each taking a closed set of\ntoken values from the E13-D04 token list (SR-E13-08), so no colour, CSS, URL or free text\nis stored or handed to a renderer. A key or value outside the set is `422` rule\n`style_not_allowed`, never dropped. The set is empty until E13-D04 publishes it, so only\n`{}` is accepted today; its keys are then added here, additively (C-6.3).\n",
+        "maxProperties": 64,
         "type": "object"
       },
       "Layout": {
@@ -1448,7 +1479,7 @@
             ]
           },
           "indicator_preset_ids": {
-            "description": "Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until `indicator_presets` ships (E13-T03); then every id must name a preset the caller may use.",
+            "description": "Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until panes resolve preset references; the preset store alone (E13-T03) does not lift this. Then every id must name a preset the caller may use.",
             "items": {
               "format": "uuid",
               "type": "string"
@@ -1944,6 +1975,7 @@
             "type": "string"
           },
           "indicator_presets": {
+            "description": "Export holds only the caller's live presets, never a built-in or another user's: at most 500, the per-user cap of `createIndicatorPreset`, and never truncated to the import limits below. Import (E15-S07; no operation takes a bundle yet) never trusts them: every item is validated again as on `createIndicatorPreset`, so `is_builtin` and `owner_user_id` are never honoured (an item carrying either is refused), the importer owns what is imported, and the array is imported whole or not at all. The server refuses it whole beyond 200 items or 1 MiB of preset JSON (SR-E13-07's import limits; the 1 MiB counts this array, not the whole bundle), on any invalid item, or when it would take the importer past 500 live presets.\n",
             "items": {
               "$ref": "#/components/schemas/IndicatorPresetInput"
             },
