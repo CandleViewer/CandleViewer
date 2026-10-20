@@ -7,7 +7,7 @@ import { getActiveClient } from "../../src/lib/ws/client/activeClient.js";
 import type { WsState } from "../../src/lib/ws/state/types.js";
 import { INITIAL_WS_STATE } from "../../src/lib/ws/state/reducer.js";
 import { getShellState, resetShellState, setShellState } from "../../src/shell/bootstrap/store.js";
-import { accessToken, REFRESH_PATH } from "../../src/lib/auth/accessToken.js";
+import { accessToken, REFRESH_PATH, REFRESH_WAIT_MS } from "../../src/lib/auth/accessToken.js";
 import { startShell, toConnectionState } from "../../src/shell/startShell.js";
 import { tokenOf, URL } from "../lib/ws/support/connectionHarness";
 import { BOOK } from "../lib/ws/support/engineHarness";
@@ -223,6 +223,29 @@ describe("startShell", () => {
     expect(sent).toEqual([`Bearer ${token}`, `Bearer ${token}`, `Bearer ${token}`]);
     expect(port.of("token")[0]).toMatchObject({ result: { kind: "ok", accessToken: token } });
     handle.stop();
+  });
+
+  it("holds the first paint for REFRESH_WAIT_MS at most when another tab keeps the refresh lock", async () => {
+    vi.useFakeTimers();
+    const grants: (() => void)[] = [];
+    const request = (_name: string, task: () => Promise<unknown>) =>
+      new Promise((resolve) => grants.push(() => resolve(task())));
+    vi.stubGlobal("navigator", { language: "en", locks: { request } });
+    try {
+      const { fetchImpl, handle } = started();
+      let painted = false;
+      void handle.ready.then(() => (painted = true));
+      await vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS - 1);
+      expect(painted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await handle.ready;
+      expect(fetchImpl).toHaveBeenCalled(); // the bootstrap ran, without a token
+      handle.stop();
+    } finally {
+      grants.forEach((grant) => grant()); // the other tab lets go: the refresh ends with this test
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+    }
   });
 
   it("gives the worker the token it is given", async () => {

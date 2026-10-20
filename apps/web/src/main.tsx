@@ -23,7 +23,8 @@ function systemWsUrl(): string {
 // E10-T04-B1 (#1725): the bootstrap (/me, preferences, keymap) must run
 // before the router renders, otherwise the R-101 guard sees no session and
 // redirects every route to /login. runBootstrap never rejects and each call
-// has a hard timeout, so this cannot hang the first paint.
+// has a hard timeout, and the page-load token refresh before it is waited for
+// at most REFRESH_WAIT_MS (#2712), so this cannot hang the first paint.
 const shell = startShell({ wsUrl: systemWsUrl() });
 // App is imported lazily: its module creates the data router, which runs the
 // initial route loaders (guards) at creation time.

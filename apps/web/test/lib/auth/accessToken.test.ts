@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import {
   REFRESH_LOCK,
   REFRESH_PATH,
+  REFRESH_WAIT_MS,
+  TOKEN_CHANNEL,
   accessToken,
   createAccessTokenHolder,
   type AccessTokenHolder,
@@ -44,6 +46,45 @@ function serialLocks() {
     }),
   };
 }
+/** A lock another tab holds and never lets go of. */
+const heldElsewhere = () => ({ request: () => new Promise<never>(() => undefined) });
+/** A same-origin BroadcastChannel stand-in: a post reaches every other open channel of its name, as a task (a 1 ms timer under fake time). */
+function siblingChannels() {
+  const open: Channel[] = [];
+  class Channel {
+    static readonly opened: string[] = [];
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    constructor(readonly name: string) {
+      open.push(this);
+      Channel.opened.push(name);
+    }
+    postMessage(data: unknown): void {
+      for (const other of open.filter((c) => c !== this && c.name === this.name)) {
+        setTimeout(() => other.onmessage?.(new MessageEvent("message", { data })), 0);
+      }
+    }
+  }
+  return Channel;
+}
+/**
+ * The server's side of one session, as the API runs it: a refresh answers in 50 ms, rotating the CSRF
+ * cookie and minting the next token, and the token before stops working. A REST call with another token
+ * is refused: a write by the CSRF check first (`403 csrf_token_invalid`), a read with a 401.
+ */
+function rotatingSession() {
+  const state = { live: 0 };
+  vi.spyOn(document, "cookie", "get").mockImplementation(() => `__Host-cv_csrf=csrf-${state.live}`);
+  fetchMock.mockImplementation(() => later(50, () => refreshed((state.live += 1))));
+  const api = vi.fn(async (init: RequestInit) => {
+    if (authOf(init) === bearer(state.live)) return noContent();
+    return init.method === "POST"
+      ? json(403, { code: "csrf_token_invalid" })
+      : refused("unauthenticated");
+  });
+  return { state, api };
+}
+const later = <T>(ms: number, value: () => T | PromiseLike<T>): Promise<T> =>
+  new Promise((resolve) => setTimeout(() => resolve(value()), ms));
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let toSignIn: Mock<() => void>;
@@ -115,6 +156,11 @@ describe("the bearer goes to same-origin /api/v1 calls only", () => {
     ["a URL object of another origin", false, new URL("https://evil.example/api/v1/me")],
     ["a Request to another origin", false, new Request("https://evil.example/api/v1/me")],
     ["a URL that does not parse", false, "http://[bad/api/v1/me"],
+    ["userinfo before another host", false, "https://x@evil.example/api/v1/me"],
+    ["a backslash path to another host", false, "/\\evil.example/api/v1/me"],
+    ["a path that only begins like /api/v1", false, "/api/v1evil"],
+    ["a dot segment out of /api/v1", false, "/api/v1/../../assets/x"],
+    ["an encoded dot segment out of /api/v1", false, "/api/v1/%2e%2e/x"],
   ])("apiFetch to %s: bearer sent %s", async (_name, carries, input) => {
     accessToken.set(bundle(1));
     fetchMock.mockResolvedValueOnce(noContent());
@@ -122,6 +168,14 @@ describe("the bearer goes to same-origin /api/v1 calls only", () => {
     const [sent, init] = fetchMock.mock.calls[0] ?? [];
     const own = sent instanceof Request ? sent.headers.get("Authorization") : null;
     expect(authOf(init) ?? own).toBe(carries ? bearer(1) : null);
+    // a redirect of a bearer call to another origin is a network error, whatever the browser does
+    expect((init as RequestInit | undefined)?.mode).toBe(carries ? "same-origin" : undefined);
+  });
+
+  it("refuses a Request that carries a body: a call may be repeated, and a body is read once", async () => {
+    const input = new Request(`${origin}/api/v1/x`, { method: "POST", body: "{}" });
+    await expect(apiFetch(input)).rejects.toThrow(TypeError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -153,47 +207,106 @@ describe("refresh ahead of expiry, one refresh at a time", () => {
     expect(answers).toEqual([ok, ok, ok]);
   });
 
-  it("makes a second tab wait for the first under the cv.auth.refresh lock", async () => {
+  it("makes a second tab wait for the first under the cv.auth.refresh lock, then take its bundle", async () => {
     const locks = serialLocks();
     vi.stubGlobal("navigator", { locks });
-    const answer: ((res: Response) => void)[] = [];
-    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => answer.push(resolve)));
-    const first = holder.getToken();
+    vi.stubGlobal("BroadcastChannel", siblingChannels());
+    rotatingSession();
+    const first = createAccessTokenHolder(vi.fn()).getToken();
     const second = createAccessTokenHolder(vi.fn()).getToken();
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(1); // the single-use cookie is never presented twice at once
-    answer[0]?.(refreshed(1));
-    await flush();
-    expect(fetchMock).toHaveBeenCalledTimes(2); // the second tab presents the cookie the first one rotated
-    answer[1]?.(refreshed(2));
-    await expect(first).resolves.toMatchObject({ accessToken: tokenOf(1) });
-    await expect(second).resolves.toMatchObject({ accessToken: tokenOf(2) });
+    await vi.advanceTimersByTimeAsync(60); // the answer at 50 ms, the first tab's post a moment later
+    await expect(first).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(1) });
+    await expect(second).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(1) });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the second tab rotated nothing, so revoked nothing
     expect(locks.request).toHaveBeenCalledWith(REFRESH_LOCK, expect.any(Function));
-    await expect(holder.refresh()).resolves.toBe("ok"); // a token that is still fresh presents nothing
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("presents nothing for a token that is still fresh", async () => {
+    holder.set(bundle(1));
+    await expect(holder.refresh()).resolves.toBe("ok");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
     ["answers 503", async () => json(503, {})],
     ["answers 200 without a bundle", async () => json(200, { status: "authenticated" })],
     ["cannot be reached", () => Promise.reject(new TypeError("offline"))],
-    [
-      "does not answer in 10 s",
-      (_url: string, init: RequestInit) =>
-        new Promise((_resolve, reject) =>
-          init.signal?.addEventListener("abort", () => reject(new DOMException("", "AbortError"))),
-        ),
-    ],
   ])("a refresh that %s answers unavailable and clears nothing", async (_name, answer) => {
     holder.set(bundle(1));
     holder.invalidate();
     fetchMock.mockImplementationOnce(answer);
-    const result = holder.getToken();
-    await vi.advanceTimersByTimeAsync(10_000);
-    await expect(result).resolves.toEqual({ kind: "unavailable" });
+    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" });
     await holder.send("/api/v1/x", {}, transport);
     expect(authOf(transport.mock.calls[0]?.[0])).toBe(bearer(1));
     expect(toSignIn).not.toHaveBeenCalled();
+  });
+
+  it("never aborts a sent refresh: the caller stops waiting at 10 s, nothing is sent again, and the late bundle is held", async () => {
+    holder.set(bundle(1));
+    holder.invalidate();
+    let answer: (res: Response) => void = () => undefined;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)));
+    const first = holder.getToken();
+    await vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS);
+    await expect(first).resolves.toEqual({ kind: "unavailable" });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit; // the refresh's own call
+    expect(init.signal).toBeUndefined(); // the spent cookie is never presented again after a lost answer
+    expect(init.keepalive).toBe(true); // a reload or a closed tab still stores the rotated cookie
+    const second = holder.getToken(); // the WS client asks again
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    answer(refreshed(2));
+    await expect(second).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(2) });
+  });
+
+  it("does not hold a refresh that answers after the session ended (a logout racing it)", async () => {
+    holder.set(bundle(1));
+    holder.invalidate();
+    let answer: (res: Response) => void = () => undefined;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)));
+    const pending = holder.refresh();
+    await flush();
+    holder.endSession();
+    answer(refreshed(2));
+    await expect(pending).resolves.toBe("lost");
+    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" });
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // and no timer was armed for it
+  });
+
+  it("re-issues the CSRF cookie through GET /auth/session (cookie only) after a 403, then presents once more", async () => {
+    let csrf = "stale.mac";
+    vi.spyOn(document, "cookie", "get").mockImplementation(() => `__Host-cv_csrf=${csrf}`);
+    fetchMock
+      .mockResolvedValueOnce(json(403, { code: "csrf_token_invalid" }))
+      .mockImplementationOnce(async () => {
+        csrf = "reissued.mac"; // SR-041: refused before the cookie was spent
+        return json(200, {});
+      })
+      .mockResolvedValueOnce(refreshed(1));
+    await expect(holder.getToken()).resolves.toMatchObject({ kind: "ok", accessToken: tokenOf(1) });
+    const calls = fetchMock.mock.calls as [string, RequestInit][];
+    expect(calls.map(([url]) => url)).toEqual([REFRESH_PATH, "/api/v1/auth/session", REFRESH_PATH]);
+    expect(authOf(calls[1]?.[1])).toBeNull(); // the cv_refresh cookie identifies the session
+    expect(new Headers(calls[2]?.[1].headers).get("X-CSRF-Token")).toBe("reissued.mac");
+  });
+
+  it("stops waiting for a lock another tab never lets go of: 10 s for a token, or the caller's abort", async () => {
+    vi.stubGlobal("navigator", { locks: heldElsewhere() });
+    holder.set(bundle(1));
+    holder.invalidate();
+    const token = holder.getToken();
+    await vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS);
+    await expect(token).resolves.toEqual({ kind: "unavailable" });
+    transport.mockResolvedValue(refused("unauthenticated"));
+    const abort = new AbortController();
+    const call = holder.send("/api/v1/x", { signal: abort.signal }, transport);
+    await flush();
+    abort.abort(); // e.g. the bootstrap's own timeout
+    await expect(call).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).not.toHaveBeenCalled(); // nothing was presented without the lock
   });
 });
 
@@ -208,6 +321,13 @@ describe("the WS TokenSource", () => {
     fetchMock.mockResolvedValueOnce(refreshed(3));
     await expect(holder.getToken()).resolves.toMatchObject({ accessToken: tokenOf(3) });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("hands out no token inside its last 65 s: the WS client re-auths by the server's earlier expiry", async () => {
+    holder.set(bundle(1));
+    vi.setSystemTime(Date.now() + 536_000); // T - 64 s: the holder's own timer is not due yet
+    fetchMock.mockResolvedValueOnce(refreshed(2));
+    await expect(holder.getToken()).resolves.toMatchObject({ accessToken: tokenOf(2) });
   });
 
   it("answers locked on 401 session_idle_locked and clears nothing", async () => {
@@ -255,6 +375,23 @@ describe("a lost session goes back to sign-in", () => {
     await expect(holder.refresh()).resolves.toBe("lost");
     expect(toSignIn).not.toHaveBeenCalled();
     await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" });
+    transport.mockResolvedValue(refused("unauthenticated"));
+    expect((await holder.send("/api/v1/me", {}, transport)).status).toBe(401);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // no session: a refused call asks nothing again
+  });
+
+  it("the tab's holder goes to SCR-001 with where the user was, as the route guard does", async () => {
+    const assign = vi.fn();
+    const { origin } = window.location;
+    vi.stubGlobal("location", { origin, pathname: "/terminal/abc", search: "?tf=15", assign });
+    fetchMock.mockImplementation(async () => refused("refresh_token_invalid"));
+    await accessToken.refresh(); // a page load that finds no session: the route guard's turn
+    expect(assign).not.toHaveBeenCalled();
+    accessToken.set(bundle(1));
+    accessToken.invalidate();
+    await accessToken.getToken(); // a session the tab held is lost
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith("/login?next=%2Fterminal%2Fabc%3Ftf%3D15");
   });
 });
 
@@ -304,11 +441,54 @@ describe("a 401 on an API call", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("is never repeated on an auth route, where a 401 judges a password or a code", async () => {
+  it.each(["/api/v1/auth/unlock", "/api/v1/auth/password", "/api/v1/auth/mfa/methods/m1"])(
+    "is never repeated on %s, where a 401 judges a password or a code",
+    async (path) => {
+      holder.set(bundle(1));
+      transport.mockResolvedValue(refused("unlock_invalid"));
+      await holder.send(path, { method: "POST" }, transport);
+      expect(transport).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["/api/v1/auth/session", "/api/v1/auth/session/extend", "/api/v1/auth/logout"])(
+    "is repeated on %s, which judges no credential",
+    async (path) => {
+      holder.set(bundle(1));
+      fetchMock.mockResolvedValueOnce(refreshed(2));
+      transport.mockImplementation(async (init: RequestInit) =>
+        authOf(init) === bearer(2) ? noContent() : refused("unauthenticated"),
+      );
+      expect((await holder.send(path, { method: "POST" }, transport)).status).toBe(204);
+      expect(transport).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("returns a 401 session_idle_locked as it is: locked, so nothing is refreshed or repeated", async () => {
     holder.set(bundle(1));
-    transport.mockResolvedValue(refused("unlock_invalid"));
-    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    transport.mockResolvedValue(refused("session_idle_locked"));
+    expect((await holder.send("/api/v1/x", {}, transport)).status).toBe(401);
     expect(transport).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refreshes once for a call made before any token (the page-load refresh failed), and repeats it", async () => {
+    fetchMock.mockResolvedValueOnce(refreshed(1));
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === bearer(1) ? noContent() : refused("unauthenticated"),
+    );
+    expect((await holder.send("/api/v1/me", {}, transport)).status).toBe(204);
+    expect(transport.mock.calls.map(([init]) => authOf(init))).toEqual([null, bearer(1)]);
+  });
+
+  it("forgets the token when a logout succeeds: no bearer after it, and no refresh timer", async () => {
+    holder.set(bundle(1));
+    await holder.send("/api/v1/auth/logout", { method: "POST" }, transport);
+    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" });
+    await holder.send("/api/v1/x", {}, transport);
+    expect(authOf(transport.mock.calls[1]?.[0])).toBeNull();
+    await vi.advanceTimersByTimeAsync(600_000);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
@@ -323,6 +503,18 @@ describe("every response that carries a token bundle hands it to the holder", ()
     fetchMock.mockResolvedValueOnce(refreshed(3));
     await apiFetch(path, { method: "POST", body: "{}" });
     await expect(accessToken.getToken()).resolves.toMatchObject({ accessToken: tokenOf(3) });
+  });
+
+  it.each([
+    ["/api/v1/auth/login", false],
+    ["/api/v1/auth/mfa/verify", false],
+    ["/api/v1/auth/mfa/recovery", false],
+    ["/api/v1/auth/mfa/enroll/confirm", true],
+    ["/api/v1/auth/step-up", true],
+  ])("%s carries the bearer: %s (pre-session calls get none)", async (path, carries) => {
+    holder.set(bundle(1));
+    await holder.send(path, { method: "POST" }, transport);
+    expect(authOf(transport.mock.calls[0]?.[0])).toBe(carries ? bearer(1) : null);
   });
 
   it("a step-up waits for a refresh under the lock, sends the token of that moment, and its bundle replaces it", async () => {
@@ -349,5 +541,63 @@ describe("every response that carries a token bundle hands it to the holder", ()
     expect(fetchMock).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(100_000); // the step-up token's
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("one token per origin: a bundle one tab receives, its sibling tabs hold", () => {
+  const tab = (): AccessTokenHolder => createAccessTokenHolder(vi.fn());
+  /** Two tabs after a page load: the first refreshed once, and the second holds its token. */
+  async function twoTabs() {
+    const Channel = siblingChannels();
+    vi.stubGlobal("navigator", { locks: serialLocks() });
+    vi.stubGlobal("BroadcastChannel", Channel);
+    const session = rotatingSession();
+    const tabs = [tab(), tab()] as const;
+    const loaded = tabs[0].refresh();
+    await vi.advanceTimersByTimeAsync(60); // the answer at 50 ms, the post to the sibling a moment later
+    await expect(loaded).resolves.toBe("ok");
+    await expect(tabs[1].getToken()).resolves.toMatchObject({ accessToken: tokenOf(1) });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(Channel.opened).toEqual([TOKEN_CHANNEL, TOKEN_CHANNEL]);
+    return { ...session, tabs };
+  }
+
+  it("after one tab refreshes, the other tab's reads and writes carry the new token", async () => {
+    const { api, tabs } = await twoTabs();
+    await vi.advanceTimersByTimeAsync(540_100); // T - 60 s in both tabs: one refreshes, the other takes its bundle
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await tabs[1].send("/api/v1/x", {}, api);
+    await tabs[1].send("/api/v1/x", { method: "POST" }, api);
+    expect(api.mock.calls.map(([init]) => authOf(init))).toEqual([bearer(2), bearer(2)]); // no 401, 403 or repeat
+    await expect(tabs[1].getToken()).resolves.toMatchObject({
+      kind: "ok",
+      accessToken: tokenOf(2),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("repeats a write refused 403 csrf_token_invalid, its bearer revoked by a sibling's refresh, with that tab's token", async () => {
+    const { api, tabs } = await twoTabs();
+    let sent = 0;
+    const slowFirst = vi.fn((init: RequestInit) =>
+      (sent += 1) === 1 ? later(100, () => api(init)) : api(init),
+    );
+    const write = tabs[1].send("/api/v1/x", { method: "POST" }, slowFirst);
+    tabs[0].invalidate(); // the WS client in the other tab was refused: it refreshes while the write is on the wire
+    void tabs[0].getToken();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(write).resolves.toMatchObject({ status: 204 });
+    expect(slowFirst.mock.calls.map(([init]) => authOf(init))).toEqual([bearer(1), bearer(2)]);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // the writing tab refreshed nothing
+  });
+
+  it("renews two calls refused at once with one refresh, so neither repeat is rotated away", async () => {
+    const { state, api, tabs } = await twoTabs();
+    state.live += 1; // a rotation whose bundle these tabs never got (its tab has closed): token 1 is dead
+    const calls = tabs.map((t) => t.send("/api/v1/x", {}, api));
+    await vi.advanceTimersByTimeAsync(60);
+    const answers = await Promise.all(calls);
+    expect(answers.map((res) => res.status)).toEqual([204, 204]);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // the page load's, and one renewal
   });
 });

@@ -49,7 +49,8 @@ let stopActive: (() => void) | null = null;
 /** Starts the bootstrap fetch and the WS client. Returns a `stop()` to tear down the client (used by tests and by logout). */
 export function startShell(options: StartShellOptions): { stop(): void; ready: Promise<void> } {
   stopActive?.();
-  // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call
+  // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
+  // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.
   const ready = accessToken.refresh().then(() => runBootstrap(options));
 
   let port: PortLike;

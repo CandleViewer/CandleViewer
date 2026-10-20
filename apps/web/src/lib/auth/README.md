@@ -3,8 +3,11 @@
 Session/auth client helpers and RBAC guard hooks. Empty at E02-T04; the
 route tree, auth/RBAC guards and env badge are E10's scope.
 
-- `accessToken.ts` (#2712, ADR-0020): the tab's access token, in memory only. It
+- `accessToken.ts` (#2712, ADR-0020): the access token, in memory only. It
   gives the bearer to same-origin `/api/v1/` calls (`apiFetch`, the bootstrap's
   `fetchJson`), refreshes at `expires_at - 60 s` under the `cv.auth.refresh` Web
-  Lock, and is the WS client's `TokenSource` (`startShell`).
+  Lock, and is the WS client's `TokenSource` (`startShell`). A rotation revokes
+  the token before it, so every bundle a tab receives is posted to its
+  same-origin sibling tabs over the `cv.auth.token` BroadcastChannel (memory
+  only), which hold it in its place: one token per origin.
 - `meCache.ts`: the `/me` claims the route guards read.
