@@ -373,6 +373,7 @@ async def test_an_ambiguous_create_found_nowhere_is_resent_once_under_its_id() -
     assert outcome == Sent(_ack(ok=True))
     assert [call[0] for call in exchange.calls] == ["open_orders", "order_history", "place_order"]
     assert exchange.sent == [_request()]  # the same order_link_id and native stop (C-2.6)
+    assert exchange.sent[0].stop_loss == STOP_LOSS
 
 
 @pytest.mark.parametrize("failing", ["open_orders", "order_history"])

@@ -166,8 +166,12 @@ async def adopt_or_resend(
     `Unresolved`. Other errors of the re-send propagate, as in `place_or_adopt`, and
     so do `AuthError` and `ClockDriftError` from a lookup: they gate trading.
 
-    For E29-T04: the only re-send after `AmbiguousResultError` (a restart re-driving
-    the row, say), never from B1 `unknown` (INV-B1-e). Audit as `place_or_adopt`.
+    For E29-T04: the only re-send after an ambiguous create (a restart re-driving the
+    row, say), never from B1 `unknown` (INV-B1-e). The caller runs the synchronous gates
+    (kill switch, live-enablement gate, risk caps) just before calling it, and never
+    calls it for a `killed` or terminal row (C-2.21). It lets one driver resolve a row
+    at a time, because two drivers could both miss and both re-send. It audits as for
+    `place_or_adopt`: the re-send intent ahead, its outcome after (C-2.9).
     """
     _require_our_id(request)
     link = request.order_link_id
