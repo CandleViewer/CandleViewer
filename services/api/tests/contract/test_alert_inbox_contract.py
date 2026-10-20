@@ -146,14 +146,24 @@ def test_list_notifications_503() -> None:
 
 #: The modules whose `Problem(<status>, "<code>", ...)` these operations answer with.
 _ROUTERS = ("alert_deliveries.py", "notifications.py", "alerts_http.py")
-_PROBLEM = re.compile(r'Problem\(\s*\d{3},\s*"([a-z_]+)"')
+_PROBLEM = re.compile(r'Problem\(\s*(\d{3}),\s*"([^"]+)"')
+_CALL = re.compile(r"(?<!class )\bProblem\(")
 
 
-def test_every_problem_code_the_routes_answer_is_catalogued() -> None:
+def test_every_problem_code_the_routes_answer_is_catalogued_with_its_status() -> None:
     """22's `x-error-codes` is the closed catalogue of `code` (no service emits one outside it):
-    a refused write-ahead record is `audit_unavailable`, a store down `store_unavailable`."""
+    a refused write-ahead record is `audit_unavailable`, a store down `store_unavailable`. Each
+    status is the catalogue's, but `validation_failed` may also be the 422 of
+    `UnprocessableEntity`, as `test_openapi_conformance.py` allows; a call the pattern cannot
+    read (a keyword or computed code) fails here instead of slipping past it."""
     here = Path(alert_deliveries.__file__).parent
-    codes = {c for name in _ROUTERS for c in _PROBLEM.findall((here / name).read_text("utf-8"))}
-    catalogue = {entry["code"] for entry in _SPEC["x-error-codes"]}
-    assert {"audit_unavailable", "store_unavailable", "unauthenticated"} <= codes
-    assert codes <= catalogue, codes - catalogue
+    found: set[tuple[int, str]] = set()
+    for name in _ROUTERS:
+        source = (here / name).read_text("utf-8")
+        literal = _PROBLEM.findall(source)
+        assert len(literal) == len(_CALL.findall(source)), name  # every call has a literal code
+        found |= {(int(status), code) for status, code in literal}
+    catalogue = {(entry["status"], entry["code"]) for entry in _SPEC["x-error-codes"]}
+    expected = {"audit_unavailable", "store_unavailable", "unauthenticated", "invalid_cursor"}
+    assert expected <= {code for _, code in found}
+    assert found <= catalogue | {(422, "validation_failed")}, found - catalogue

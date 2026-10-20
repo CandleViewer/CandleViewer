@@ -117,7 +117,7 @@ def test_list_refuses_a_malformed_alert_id_or_status(env: Env) -> None:
 
 def test_list_invalid_cursor_is_400(env: Env) -> None:
     r = env.c.get("/alerts/deliveries", params={"cursor": "bm9wZQ=="})
-    assert r.status_code == 400 and r.json()["detail"] == "invalid cursor"
+    assert r.status_code == 400 and r.json()["code"] == "invalid_cursor"  # 22's code for it
 
 
 def test_list_is_not_shadowed_by_the_alert_crud_route(env: Env) -> None:

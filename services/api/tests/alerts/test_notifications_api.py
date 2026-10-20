@@ -232,7 +232,7 @@ def test_unknown_kind_is_422(env: Env) -> None:
 
 def test_invalid_cursor_is_400(env: Env) -> None:
     r = env.c.get("/notifications", params={"cursor": "bad"})
-    assert r.status_code == 400 and r.json()["detail"] == "invalid cursor"
+    assert r.status_code == 400 and r.json()["code"] == "invalid_cursor"  # 22's code for it
 
 
 @pytest.mark.parametrize("key", ["user_id", "userId", "account", "exchange_account_ids"])
@@ -243,13 +243,15 @@ def test_undeclared_query_parameter_is_refused(env: Env, key: str) -> None:
 
 def test_no_session_is_401_and_unwired_resolver_501(env: Env) -> None:
     env.actor = None
-    assert env.c.get("/notifications").status_code == 401
+    r = env.c.get("/notifications")
+    assert r.status_code == 401 and r.json()["code"] == "unauthenticated"
     assert Env(wired=False).c.get("/notifications").status_code == 501
 
 
 def test_store_down_is_503(env: Env) -> None:
     env.store_up = False
-    assert env.c.get("/notifications").status_code == 503
+    r = env.c.get("/notifications")
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
 
 
 def test_declared_query_set_matches_the_contract() -> None:

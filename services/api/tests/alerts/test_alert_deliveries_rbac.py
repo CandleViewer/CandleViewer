@@ -56,6 +56,7 @@ def test_every_route_is_401_without_a_session(
     env.user = None
     r = env.c.request(method, path.format(id=1), json=body)
     assert r.status_code == 401 and r.headers["content-type"] == "application/problem+json"
+    assert r.json()["code"] == "unauthenticated"
 
 
 @pytest.mark.parametrize(("method", "path", "body", "perm"), ROUTES)

@@ -370,7 +370,7 @@ def make_alert_deliveries_router(
                 cursor=cursor, limit=limit,
             )  # fmt: skip
         except ValueError:
-            raise Problem(400, "validation_failed", "Bad request", "invalid cursor") from None
+            raise Problem(400, "invalid_cursor", "Bad request", "invalid cursor") from None
         items = [dump(r) for r in page.items]
         meta = {"next_cursor": page.next_cursor, "has_more": page.next_cursor is not None,
                 "count": len(items)}  # fmt: skip

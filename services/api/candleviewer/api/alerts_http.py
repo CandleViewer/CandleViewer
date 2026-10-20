@@ -5,16 +5,17 @@
   handler; `Refused` carries a ready response (the shared SR-026 query refusal) as is.
 * `ProblemRoute`: the route class that renders both, and answers a refused write-ahead audit
   record (`AuditUnavailable`, `AuditWriterStopped`) with the operations' declared 503,
-  `audit_unavailable`, as `api/drawings.py` does: the request fails closed (C-2.9), nothing
-  having changed.
-
-Every code here and in the two routers is one of 22's `x-error-codes` (pinned by
-`tests/contract/test_alert_inbox_contract.py`).
+  `audit_unavailable` (as `api/drawings.py` refuses one, there as `store_unavailable`): the
+  request fails closed (C-2.9), nothing having changed.
 * `caller()`: the one caller dependency, so the authorization order is written once:
   no resolver wired → 501 (fail closed); no verified session → 401; the operation's permission
   missing → 403 with `required_permissions`; then SR-026 - any query key the operation does not
   declare → 422 - before anything is read. `permission=None` is an operation whose `x-rbac`
   declares no permission (`listNotifications`): a session is still required.
+
+Every `Problem` here, in `alert_deliveries.py` and in `notifications.py` answers one of 22's
+`x-error-codes` with its status (`tests/contract/test_alert_inbox_contract.py`); the `/alerts`
+CRUD router's two 503s are #1131's.
 
 RBAC is enforced here, server-side (C-12.4); ownership (`scope: self`) stays with each router,
 which knows its rows.

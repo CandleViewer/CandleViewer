@@ -183,7 +183,7 @@ def make_notifications_router(
                 scope, unread_only=unread_only, cursor=cursor, limit=limit
             )
         except ValueError:
-            raise Problem(400, "validation_failed", "Bad request", "invalid cursor") from None
+            raise Problem(400, "invalid_cursor", "Bad request", "invalid cursor") from None
         if sum(r.nkind == "system" for r in rows) > OFFLOAD_SYSTEM_ROWS:
             items = await asyncio.to_thread(_dump_page, rows)  # redaction off the loop
         else:
