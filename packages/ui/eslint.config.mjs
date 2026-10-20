@@ -2,13 +2,24 @@ import tseslint from "typescript-eslint";
 import reactPlugin from "eslint-plugin-react";
 import reactHooksPlugin from "eslint-plugin-react-hooks";
 import baseConfig from "@candleviewer/config/eslint";
+import { iconBesideTextHidden, iconOnlyControlLabel } from "./eslint-rules/icon-a11y.mjs";
 import noRawDesignValues from "./eslint-rules/no-raw-design-values.mjs";
+import noRawSvg from "./eslint-rules/no-raw-svg.mjs";
 import storyTitleBands from "./eslint-rules/story-title-bands.mjs";
 
 /** The package's own rules, one plugin object for every block that uses them. */
 const candleviewer = {
-  rules: { "no-raw-design-values": noRawDesignValues, "story-title-bands": storyTitleBands },
+  rules: {
+    "icon-beside-text-hidden": iconBesideTextHidden,
+    "icon-only-control-label": iconOnlyControlLabel,
+    "no-raw-design-values": noRawDesignValues,
+    "no-raw-svg": noRawSvg,
+    "story-title-bands": storyTitleBands,
+  },
 };
+/** Component code the icon rules bind; the a11y gate's fixtures break them on purpose. */
+const ICON_RULE_FILES = ["src/**/*.{ts,tsx}", ".storybook/**/*.{ts,tsx}"];
+const FIXTURES = ".storybook/__fixtures__/**";
 
 /** @type {import("eslint").Linter.Config[]} */
 export default tseslint.config(
@@ -55,6 +66,25 @@ export default tseslint.config(
     plugins: { candleviewer },
     rules: {
       "candleviewer/no-raw-design-values": "error",
+    },
+  },
+  {
+    // The decorative-vs-meaningful icon rule (16-design-system-brief.md §5, CMP-002, CMP-019).
+    files: ICON_RULE_FILES,
+    ignores: [FIXTURES],
+    plugins: { candleviewer },
+    rules: {
+      "candleviewer/icon-only-control-label": "error",
+      "candleviewer/icon-beside-text-hidden": "error",
+    },
+  },
+  {
+    // Glyphs come from the icon registry; its own modules (src/icons/**) draw the one <svg>.
+    files: ICON_RULE_FILES,
+    ignores: ["src/icons/**", FIXTURES],
+    plugins: { candleviewer },
+    rules: {
+      "candleviewer/no-raw-svg": "error",
     },
   },
   {
