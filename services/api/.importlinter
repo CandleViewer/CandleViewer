@@ -1210,6 +1210,11 @@ source_modules =
     candleviewer.bars
     candleviewer.orderflow
     candleviewer.orderbook_wiring
+    candleviewer.replay.clock
+    candleviewer.replay.injector
+    candleviewer.replay.pacing
+    candleviewer.replay.regroup
+    candleviewer.replay.runner
 forbidden_modules =
     candleviewer.statechart
     xstate_statemachine
