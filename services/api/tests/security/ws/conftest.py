@@ -11,6 +11,7 @@ from structlog.contextvars import merge_contextvars
 from structlog.processors import format_exc_info
 from structlog.testing import capture_logs
 
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from tests.contract.ws._harness import OFFERS, reset_wire, use_wire
 from tests.security.ws._raw import RawWorld
 
@@ -28,14 +29,23 @@ def wire(request: pytest.FixtureRequest) -> Iterator[str]:
 
 
 @pytest.fixture
+def flag() -> BackpressureConfig | None:
+    """The outbound budget the gateway runs with: none, the backpressure flag off (the default)."""
+    return None
+
+
+@pytest.fixture
 def world(
-    wire: str, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+    wire: str,
+    flag: BackpressureConfig | None,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> Iterator[RawWorld]:
     """A `RawWorld` with its client running and the sinks a token must stay out of captured: the
     gateway's log events as production's chain builds them (bound context merged in, an exception
     rendered into the event as `format_exc_info` does), stdlib logging, stdout and stderr."""
     caplog.set_level(logging.DEBUG)
-    w = RawWorld(caplog, capsys)
+    w = RawWorld(caplog, capsys, flag)
     with capture_logs(processors=[merge_contextvars, format_exc_info]) as events, w.client:
         w.events = events
         yield w
