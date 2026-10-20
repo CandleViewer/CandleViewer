@@ -17,7 +17,7 @@ from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy, TopicPattern
 from candleviewer.exchange.bybit.ticker import parse_ticker_frame, ticker_topic
 from candleviewer.ingestion.ticker_stream import TickerMerger, TickerStream, UnknownSymbolError
-from candleviewer.ingestion.watchdog import FeedHealthEvent
+from candleviewer.ingestion.watchdog import FeedHealthEvent, feed_health
 from tests._corpus import corpus_path
 
 FIX = corpus_path("ws/tickers_BTCUSDT.jsonl")
@@ -153,7 +153,7 @@ async def test_reconnect_invalidates_state_and_rebuilds_from_full_push() -> None
     await h.stream.handle_frame(FRAMES[0])
     h.events()
     h.states()
-    await h.stream.process_health(FeedHealthEvent("*", "resubscribing", 0.0))
+    await h.stream.process_health(feed_health("*", "resubscribing", 0.0, now_us=0))
     assert h.stream.latest("BTCUSDT") is None  # no stale values presented as live
     assert "reconnecting" in h.states()
     await h.stream.handle_frame(FRAMES[1])  # delta only after reconnect: held
@@ -167,7 +167,7 @@ async def test_stale_marks_and_recovers() -> None:
     h = Harness()
     h.stream.acquire("a", "BTCUSDT")
     await h.stream.handle_frame(FRAMES[0])
-    await h.stream.process_health(FeedHealthEvent("tickers.BTCUSDT", "stale", 6.0))
+    await h.stream.process_health(feed_health("tickers.BTCUSDT", "stale", 6.0, now_us=0))
     assert h.stream.is_stale("BTCUSDT")
     await h.stream.handle_frame(FRAMES[1])
     assert h.stream.phase("BTCUSDT") == "live"
@@ -282,7 +282,7 @@ async def test_rest_contract_and_rbac() -> None:
     assert body["bid1_price"] == "63120.40"
     assert body["stale"] is False
     Ticker.model_validate(body)
-    await h.stream.process_health(FeedHealthEvent("tickers.BTCUSDT", "stale", 6.0))
+    await h.stream.process_health(feed_health("tickers.BTCUSDT", "stale", 6.0, now_us=0))
     assert c.get(url).json()["stale"] is True
 
 

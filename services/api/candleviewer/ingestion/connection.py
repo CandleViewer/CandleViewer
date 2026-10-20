@@ -24,7 +24,12 @@ from candleviewer.bus.models import Topic
 from candleviewer.ingestion.metrics import ingest_ws_up
 from candleviewer.ingestion.planner import SubscriptionPlanner
 from candleviewer.ingestion.reconnect import ConnectionRateGuard, ReconnectPolicy
-from candleviewer.ingestion.watchdog import FeedHealthEvent, StalenessWatchdog, ping_loop
+from candleviewer.ingestion.watchdog import (
+    FeedHealthEvent,
+    StalenessWatchdog,
+    feed_health,
+    ping_loop,
+)
 from candleviewer.observability.context import spawn
 from candleviewer.observability.latency import StageRecorder, StageStamps
 from candleviewer.statechart import build
@@ -77,6 +82,7 @@ class ConnectionManager:
         clock_offset_ms: Callable[[], int | None] = lambda: None,
         now_ms: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
         clock: Callable[[], float] = time.monotonic,
+        now_us: Callable[[], int] = lambda: time.time_ns() // 1000,
     ) -> None:
         self._factory = factory
         self._planner = planner
@@ -93,6 +99,7 @@ class ConnectionManager:
         self._latency = latency
         self._clock_offset_ms = clock_offset_ms
         self._now_ms = now_ms
+        self._now_us = now_us  # feed-health envelopes; `now_ms` stamps sampled latency only
         self._desired: set[str] = set()
         #: Topics subscribed on the current socket. A live `TOPICS_CHANGED` pass
         #: sends only the diff against it (#1913); `None` = fresh socket.
@@ -310,7 +317,7 @@ class ConnectionManager:
         elif state == "degraded":
             self._set_phase(PHASE_DEGRADED)
         for topic in sorted(self._desired) or ["*"]:
-            await self._publish(FeedHealthEvent(topic, state, 0.0))
+            await self._publish(feed_health(topic, state, 0.0, now_us=self._now_us()))
 
     # ---- internals ------------------------------------------------------
     def _cancel_timer(self) -> None:
@@ -363,7 +370,7 @@ class ConnectionManager:
             await self._sleep(self._check_interval)
             if stale := self._watchdog.check():
                 for topic in stale:
-                    await self._publish(FeedHealthEvent(topic, "stale", 0.0))
+                    await self._publish(feed_health(topic, "stale", 0.0, now_us=self._now_us()))
                 if self._watchdog.all_stale():
                     return
                 for topic in stale:

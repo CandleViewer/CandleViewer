@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 
 from candleviewer.book.models import BookPhase, BookStatus
+from candleviewer.domain.events import uuid7
+from candleviewer.domain.primitives import EventId
 from candleviewer.ingestion.connection import ConnectionManager
 from candleviewer.ingestion.metrics import (
     OTHER_SYMBOL,
@@ -69,6 +71,10 @@ async def test_ws_up_gauge_follows_connection_phase() -> None:
 
 def _status(state: BookPhase, reason: str, symbol: str = "BTCUSDT") -> BookStatus:
     return BookStatus(
+        event_id=EventId(uuid7(0)),
+        ts_event=1,
+        ts_ingest=1,
+        source="live",
         symbol=symbol,
         depth=200,
         state=state,

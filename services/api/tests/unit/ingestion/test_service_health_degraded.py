@@ -35,7 +35,7 @@ from candleviewer.ingestion.service import (
     IngestionService,
 )
 from candleviewer.ingestion.trade_stream import UNRECOVERED_RETENTION_S, GapEvent, TradeStream
-from candleviewer.ingestion.watchdog import FeedHealthEvent
+from candleviewer.ingestion.watchdog import feed_health
 from candleviewer.observability.health import HealthStatus
 from tests._corpus import corpus_path
 from tests.unit.ingestion._fakes import ParkingSleep, settle
@@ -310,7 +310,7 @@ class _Tape:
         """Print 3, reconnect, print 7 closes the window while REST is down (prints 4-6
         lost), then print 8: live prints have resumed."""
         await self.stream.handle_frame(FRAMES[1])
-        reconnect = FeedHealthEvent("publicTrade.BTCUSDT", "resubscribing", 0.0)
+        reconnect = feed_health("publicTrade.BTCUSDT", "resubscribing", 0.0, now_us=0)
         await self.stream.process_health(reconnect)
         await self.stream.handle_frame(FRAMES[2])
         await self.stream.wait_backfills()

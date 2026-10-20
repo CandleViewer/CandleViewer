@@ -16,6 +16,8 @@ from collections.abc import Awaitable, Callable
 from candleviewer.book.errors import BookError, BookInvariantError
 from candleviewer.book.models import BookPhase, BookStatus
 from candleviewer.book.state import BookState
+from candleviewer.domain.events import uuid7
+from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import BookDelta, BookSnapshot
 
 #: INV-B14-d: deltas buffered while a snapshot is in flight are bounded.
@@ -23,7 +25,7 @@ BUFFER_BOUND = 1_000
 #: Security note: >5 resyncs in 60 s trips the breaker -> `degraded`.
 BREAKER_MAX, BREAKER_WINDOW_US = 5, 60_000_000
 
-Publish = Callable[[object], Awaitable[None]]
+Publish = Callable[[BookSnapshot | BookDelta | BookStatus], Awaitable[None]]
 
 
 #: Receives lifecycle edges (`SUBSCRIBE`, `SNAPSHOT`, `SEQUENCE_GAP`,
@@ -219,13 +221,18 @@ class BookEngine:
             await self._status(self._reason)
 
     async def _status(self, reason: str) -> None:
+        now = self._now()
         await self._publish(
             BookStatus(
+                event_id=EventId(uuid7(now // 1000)),
+                ts_event=now,
+                ts_ingest=now,
+                source="live",
                 symbol=self.symbol,
                 depth=self.depth,
                 state=self.phase,
                 reason=reason,
-                ts_us=self._now(),
+                ts_us=now,
                 last_good_ts_us=self.last_good_ts_us,
                 resync_count=self.resync_count,
                 degraded=self.degraded,

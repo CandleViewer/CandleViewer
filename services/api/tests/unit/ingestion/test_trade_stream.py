@@ -40,7 +40,7 @@ from candleviewer.ingestion.trade_stream import (
     TradeStream,
     merge_ordered,
 )
-from candleviewer.ingestion.watchdog import FeedHealthEvent
+from candleviewer.ingestion.watchdog import feed_health
 from tests._corpus import corpus_path
 from tests.unit.ingestion._fakes import ParkingSleep, settle
 
@@ -122,7 +122,9 @@ async def _recent(_s: str) -> Sequence[TradePrint]:
 
 
 async def _reconnect(h: Harness) -> None:
-    await h.stream.process_health(FeedHealthEvent("publicTrade.BTCUSDT", "resubscribing", 0.0))
+    await h.stream.process_health(
+        feed_health("publicTrade.BTCUSDT", "resubscribing", 0.0, now_us=0)
+    )
 
 
 # ---- Scenario: Ingest -------------------------------------------------------
@@ -423,7 +425,7 @@ async def test_lifecycle_health_loop_marks_gap_and_release_unsubscribes() -> Non
 
     await h.bus.publish(
         Topic(env="live", domain="health", detail="feed"),
-        FeedHealthEvent("publicTrade.BTCUSDT", "degraded", 0.0),
+        feed_health("publicTrade.BTCUSDT", "degraded", 0.0, now_us=0),
     )
     for _ in range(5):
         await asyncio.sleep(0)

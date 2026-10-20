@@ -456,6 +456,18 @@ the table's family→stream mapping is otherwise unchanged. Implemented today: `
 (`InstrumentUpdatedEvent`, published by the catalogue refresh since #1633; listed by E08-Q06,
 #283).
 
+**Envelope of the E08 control events (#3876, drift D1).** `BookStatus`, `GapEvent` and
+`FeedHealthEvent` carry the §1.4 envelope (C6) with `schema_version = 1` and `source = "live"`.
+Adding it removes and renames nothing (§17.1), so these first versioned shapes take §1.4's default,
+as §2.10's events do; a later shape change bumps it per §17.1. The envelope fields are required as
+§1.4 declares them: the events stay in-process (no WS frame, REST body, row or recording carries
+them), so no older payload needs a default to be read. `event_id` is a UUID7 stamped with
+`ts_event`'s millisecond. `GapEvent.ts_event` is `end_us` (the first live print after the window)
+and its `ts_ingest` that batch's receipt time. `BookStatus` and `FeedHealthEvent` are local
+observations with no exchange record, so §1.4's rule against a synthesized `ts_event` (written for
+exchange records) does not apply: `ts_event` = `ts_ingest` = the producer's injected clock at the
+edge (for `BookStatus`, its `ts_us`), and their feed latency reads 0.
+
 **Replay namespace (E26-T03).** A replay session's re-emitted events use the same grammar with `env` =
 `replay-{session_id}`, the replay session's UUID in lower-case canonical form (`replay-` then 8-4-4-4-12
 lower-case hex digits), e.g. `replay-0b7c5e1a-3f2d-4c8e-9a61-5d0e7b2c4f18.md.BTCUSDT.trade`. `live`, `demo`,

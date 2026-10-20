@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import importlib
 import inspect
 import re
 import typing
 import warnings
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, UnionType
 from typing import Any, Final
 
 import pytest
@@ -102,12 +103,14 @@ MARKET_FAMILIES: Final = (
     OpenInterestEvent,
     FundingEvent,
 )
-# Drift D1 (docs/qa/e08-signoff.md): E08 publishes these on the bus without the 24 §1.1 C6
-# envelope (`schema_version`, `event_id`, `ts_event`, `ts_ingest`) that C6 asks of every bus event.
-# Pinned so the record cannot go stale: adding the envelope to one fails the check below, and the
-# fix then removes it here and updates the evidence pack. The check covers these three only: it does
-# not find a new bus payload without the envelope.
-UNVERSIONED_CONTROL_PAYLOADS: Final = (BookStatus, GapEvent, FeedHealthEvent)
+# Every class E08 hands to `Bus.publish`; since #3876 (drift D1) each carries the C6 envelope. The
+# census checks every class it finds and must find exactly these, so a new one is listed here.
+E08_BUS_PAYLOADS: Final = frozenset(
+    {TradeEvent, BookSnapshot, BookDelta, TickerEvent}  # 24 §2.1-2.3, parsed by the adapter
+    | {BookStatus, GapEvent, FeedHealthEvent}  # E08's control events (drift D1)
+    | {InstrumentUpdatedEvent}  # 24 §2.8, from the catalogue refresh
+)
+C6_FIELDS: Final = ("schema_version", "event_id", "ts_event", "ts_ingest")
 # (domain, detail) of every bus topic E08 publishes -> how 24 §2.9 "As shipped" spells it.
 E08_BUS_TOPICS: Final[Mapping[tuple[str, str], str]] = {
     ("md", "trade"): "`trade`",
@@ -117,6 +120,7 @@ E08_BUS_TOPICS: Final[Mapping[tuple[str, str], str]] = {
     ("health", "feed"): "`{env}.health.feed`",
     ("instruments", "updated"): "`{env}.instruments.{symbol}.updated`",
 }
+E08_DOMAINS: Final = frozenset(domain for domain, _ in E08_BUS_TOPICS)
 E08_MODULES: Final = ("ingestion/", "book/", "orderbook_wiring.py")
 # The WS family -> the ingestion stream that holds its upstream demand (ws_wiring, E17-S02).
 E08_FED_FAMILIES: Final = {
@@ -201,18 +205,195 @@ def test_b_every_event_family_e08_emits_is_versioned_frozen_and_closed(
     assert model.model_config.get("extra") == "forbid"
 
 
-@pytest.mark.parametrize("payload", UNVERSIONED_CONTROL_PAYLOADS, ids=lambda p: p.__name__)
-def test_b_each_drift_d1_control_payload_still_lacks_the_c6_envelope(payload: type) -> None:
-    if issubclass(payload, BaseModel):
-        fields = set(payload.model_fields)
-    else:
-        assert dataclasses.is_dataclass(payload), f"{payload.__name__}: neither model nor dataclass"
-        fields = {f.name for f in dataclasses.fields(payload)}
+class _Unread(LookupError):
+    """A publish site whose payload class the census cannot read off the code."""
 
-    assert "schema_version" not in fields, (
-        f"{payload.__name__} now carries schema_version: drift D1 is resolved for it, so drop it "
-        "from UNVERSIONED_CONTROL_PAYLOADS and update docs/qa/e08-signoff.md"
+
+_Fn = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+def _classes(hint: object) -> set[type]:
+    """A type hint's classes (a union's members, `None` dropped); never `object` or `Any`."""
+    found = set(typing.get_args(hint) if isinstance(hint, UnionType) else (hint,)) - {type(None)}
+    if not found or not all(isinstance(m, type) and m not in (object, Any) for m in found):
+        raise _Unread(repr(hint))
+    return found
+
+
+def _annotated(node: ast.expr | None, ns: Mapping[str, Any]) -> set[type]:
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _annotated(node.left, ns) | _annotated(node.right, ns)
+    if isinstance(node, ast.Constant) and node.value is None:
+        return set()
+    if isinstance(node, ast.Name) and isinstance(ns.get(node.id), type):
+        return _classes(ns[node.id])
+    raise _Unread(ast.unparse(node) if node else "unannotated")
+
+
+def _bindings(fn: _Fn, name: str) -> list[ast.Assign | ast.AnnAssign]:
+    return [
+        s
+        for s in ast.walk(fn)
+        if (isinstance(s, ast.Assign) and [ast.unparse(t) for t in s.targets] == [name])
+        or (isinstance(s, ast.AnnAssign) and ast.unparse(s.target) == name)
+    ]
+
+
+def _payload(node: ast.expr, ns: Mapping[str, Any], fn: _Fn | None, owner: object) -> set[type]:
+    """A payload's classes: a constructor, a function's or `self` method's return annotation,
+    or the annotation or value of the parameter or local it passes."""
+    func = node.func if isinstance(node, ast.Call) else None
+    if isinstance(func, ast.Name) and func.id in ns:
+        made = ns[func.id]
+        return {made} if isinstance(made, type) else _classes(typing.get_type_hints(made)["return"])
+    if isinstance(func, ast.Attribute) and ast.unparse(func.value) == "self" and owner:
+        return _classes(typing.get_type_hints(getattr(owner, func.attr))["return"])
+    if isinstance(node, ast.Name) and fn is not None:
+        params = {a.arg: a for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)}
+        if node.id in params:
+            return _annotated(params[node.id].annotation, ns)
+        bound: set[type] = set()
+        for s in _bindings(fn, node.id):
+            if isinstance(s, ast.AnnAssign):
+                bound |= _annotated(s.annotation, ns)
+            else:
+                bound |= _payload(s.value, ns, fn, owner)
+        if bound:
+            return bound
+    raise _Unread(ast.unparse(node))
+
+
+def _topic_domain(node: ast.expr | None, fn: _Fn | None) -> object:
+    """The literal `domain` of the `Topic(...)` a publish passes, directly or through a local."""
+    for s in _bindings(fn, node.id) if isinstance(node, ast.Name) and fn else ():
+        return _topic_domain(s.value, fn) if s.value else None
+    domain = [k.value for k in getattr(node, "keywords", ()) if k.arg == "domain"]
+    return domain[0].value if domain and isinstance(domain[0], ast.Constant) else None
+
+
+def _publish_calls(
+    tree: ast.AST, fn: _Fn | None = None, cls: str | None = None
+) -> Iterator[tuple[ast.Call, _Fn | None, str | None]]:
+    """Every call of an attribute named `publish`, with its enclosing function and class."""
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "publish":
+            yield node, fn, cls
+        inner = node if isinstance(node, _Fn) else fn
+        yield from _publish_calls(node, inner, node.name if isinstance(node, ast.ClassDef) else cls)
+
+
+def _is_bus_publish(call: ast.Call) -> bool:
+    """`<bus>.publish(topic, payload)`: a receiver named `bus`/`_bus`, two positional arguments."""
+    bus = getattr(call.func, "value", None)
+    named = getattr(bus, "attr", None) in {"bus", "_bus"} or getattr(bus, "id", None) == "bus"
+    return named and len(call.args) == 2 and not call.keywords
+
+
+def _census(
+    tree: ast.AST, ns: Mapping[str, Any], where: str, *, e08_topics_only: bool = False
+) -> tuple[dict[type, list[str]], list[str]]:
+    """Class -> the sites (`where:line`) publishing it, and the sites it cannot read: a payload,
+    a `publish` call not shaped `<bus>.publish(topic, payload)`, or a `publish` passed on
+    uncalled. In `app.py` it skips only a call whose topic is a literal of another domain."""
+    found: dict[type, list[str]] = {}
+    unread: list[str] = []
+    calls = list(_publish_calls(tree))
+    for call, fn, cls in calls:
+        domain = _topic_domain(call.args[0] if call.args else None, fn)
+        if e08_topics_only and isinstance(domain, str) and domain not in E08_DOMAINS:
+            continue
+        site = f"{where}:{call.lineno}"
+        try:
+            if not _is_bus_publish(call):
+                raise _Unread(f"{ast.unparse(call)} is not <bus>.publish(topic, payload)")
+            for made in _payload(call.args[1], ns, fn, ns.get(cls) if cls else None):
+                found.setdefault(made, []).append(site)
+        except (_Unread, KeyError, NameError, TypeError, AttributeError) as exc:
+            unread.append(f"{site} {exc!r}")
+    called = {id(call.func) for call, _, _ in calls}
+    return found, unread + [
+        f"{where}:{node.lineno} {ast.unparse(node)!r} is passed on uncalled"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "publish" and id(node) not in called
+    ]
+
+
+def _bus_payloads() -> tuple[dict[type, list[str]], list[str]]:
+    """The census over E08's modules, plus `app.py`'s publishes on E08 topics (as section c)."""
+    found: dict[type, list[str]] = {}
+    unread: list[str] = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        rel = _relative(path)
+        if _is_e08_module(rel) or rel == "app.py":
+            name = ".".join(path.relative_to(API_ROOT).with_suffix("").parts)
+            ns = vars(importlib.import_module(name.removesuffix(".__init__")))
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            part, missed = _census(tree, ns, rel, e08_topics_only=rel == "app.py")
+            for made, sites in part.items():
+                found.setdefault(made, []).extend(sites)
+            unread += missed
+    return found, unread
+
+
+def _envelope_problems(cls: type) -> list[str]:
+    """What `cls` lacks of the C6 envelope as 24 §1.4's `DomainEvent` holds it, and of C1."""
+    if not issubclass(cls, DomainEvent):
+        return ["not a 24 §1.4 DomainEvent: no C6 envelope"]
+    fields, base = cls.model_fields, DomainEvent.model_fields
+    problems = [f"{f} retyped" for f in C6_FIELDS if fields[f].annotation != base[f].annotation]
+    version = fields["schema_version"].default
+    if not (isinstance(version, int) and version >= 1):
+        problems.append("schema_version has no version default (24 §17.1)")
+    if cls.model_config.get("frozen") is not True or cls.model_config.get("extra") != "forbid":
+        problems.append("not frozen and closed (C1)")
+    return problems
+
+
+def test_b_every_payload_e08_publishes_on_the_bus_carries_the_c6_envelope() -> None:
+    """24 §1.1 C6 asks it of every bus event. The census reads each publish site's payload class
+    off the code (mypy --strict keeps the annotations it reads true) and fails a site it cannot
+    read, including any `publish` not written `<bus>.publish(topic, payload)`, so a new bus
+    payload cannot pass unseen."""
+    found, unread = _bus_payloads()
+    bare = {
+        f"{cls.__name__} ({', '.join(sites)})": problems
+        for cls, sites in found.items()
+        if (problems := _envelope_problems(cls))
+    }
+
+    assert not unread, f"publish sites whose payload class the census cannot read: {unread}"
+    assert not bare, f"bus payloads without the C6 envelope: {bare}"
+    assert set(found) == E08_BUS_PAYLOADS
+
+
+@dataclasses.dataclass(frozen=True)
+class _Bare:
+    topic: str
+
+
+def test_b_the_census_finds_a_payload_without_the_envelope_and_an_unread_site() -> None:
+    probe = (
+        "async def publish(self, bus, topic, ev: _Bare):\n"
+        "    bare = _Bare('x')\n"
+        "    await bus.publish(topic, ev)\n"
+        "    await self._bus.publish(topic, bare)\n"
+        "    await bus.publish(topic, unknown())\n"
+        "    await self._bus.publish(topic, event=bare)\n"
+        "    await self._events.publish(topic, bare)\n"
+        "    self._sink = bus.publish\n"
     )
+    found, unread = _census(ast.parse(probe), {"_Bare": _Bare}, "probe.py")
+
+    assert found == {_Bare: ["probe.py:3", "probe.py:4"]}
+    assert _envelope_problems(_Bare) == ["not a 24 §1.4 DomainEvent: no C6 envelope"]
+    assert [u.split(" ")[0] for u in unread] == [f"probe.py:{n}" for n in (5, 6, 7, 8)]
+    app = (  # in `app.py` only a literal topic of another domain is skipped
+        "async def compose(bus, env, ev: _Bare, topic_of):\n"
+        "    await bus.publish(Topic(env=env, domain='rules'), {'k': 1})\n"
+        "    await bus.publish(topic_of(ev), ev)\n"
+    )
+    in_app = _census(ast.parse(app), {"_Bare": _Bare}, "app.py", e08_topics_only=True)
+    assert in_app == ({_Bare: ["app.py:3"]}, [])
 
 
 def _topics_built(path: Path) -> Iterator[tuple[str, str | None, str]]:

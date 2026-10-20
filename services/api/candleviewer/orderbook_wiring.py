@@ -259,6 +259,7 @@ class BookStream:
             self.sync,
             publish,
             lambda s: self._topic_for(s, self._depth),
+            now_us=self._now_us,
         )
 
     def _drop(self, symbol: str) -> None:
@@ -321,7 +322,7 @@ class BookStream:
     # ---- engines ----------------------------------------------------------
     def _make_engine(self, symbol: str) -> Callable[[int, bool], BookEngine]:
         def make(depth: int, muted: bool) -> BookEngine:
-            async def publish(obj: object) -> None:
+            async def publish(obj: BookSnapshot | BookDelta | BookStatus) -> None:
                 await self._publish(symbol, obj)
 
             async def resub() -> None:
@@ -362,7 +363,7 @@ class BookStream:
         await tb.start()
         return tb
 
-    async def _publish(self, symbol: str, obj: object) -> None:
+    async def _publish(self, symbol: str, obj: BookSnapshot | BookDelta | BookStatus) -> None:
         topic = Topic(env=self._env, domain="md", symbol=symbol, detail="book")
         await self._bus.publish(topic, obj)
         if isinstance(obj, BookStatus):

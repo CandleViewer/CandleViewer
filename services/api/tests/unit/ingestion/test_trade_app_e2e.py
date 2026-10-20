@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api.trades import make_trades_router
 from candleviewer.app import create_app
 from candleviewer.bus.models import Topic
-from candleviewer.ingestion.watchdog import FeedHealthEvent
+from candleviewer.ingestion.watchdog import feed_health
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.rows import TradeRow
 from candleviewer.storage.testing.fakes import FakeMarketDataRepository
@@ -104,7 +104,7 @@ async def test_real_bus_health_event_marks_gap() -> None:
         await ing.trades.handle_frame(await ing.ws_frames.get())
         topic = Topic(env=ctx.settings.environment.value, domain="health", detail="feed")
         await ctx.bus.bus.publish(
-            topic, FeedHealthEvent("publicTrade.BTCUSDT", "resubscribing", 0.0)
+            topic, feed_health("publicTrade.BTCUSDT", "resubscribing", 0.0, now_us=0)
         )
         for _ in range(100):
             if ing.trades.open_gaps():
