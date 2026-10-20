@@ -226,21 +226,33 @@ supervisor enters Degraded (§6). Tests use an in-memory fake source — never a
 
 ## 8. Break-glass CLI (#2119) — offline KEK load
 
-Per the #2119 decision the CLI lives under `candleviewer.admin` (allowed to import `secrets`, C-3.2):
+As built by E09-S11 (#2119, decisions R1–R8 and O1–O4 recorded on #2119): the flow lives under
+`candleviewer.admin` (allowed to import `secrets`, C-3.2) and runs through a thin top-level entry
+point (R5):
 
-- Entry `python -m candleviewer.admin.breakglass`; on WSL run via the launcher
-  (`cv-launch.ps1 breakglass`, same stdin/FIFO handoff), on the VPS via
-  `systemd-run -p LoadCredentialEncrypted=...`. No new custody path.
-- Proof of KEK possession = `secrets.verify_kek_possession()` (load + constant-time KCV). Fails closed.
-  **As decided (#2119 O1):** the CLI uses `secrets.prove_kek_possession()` instead. It runs the boot
-  custody path but never enrols a KEK, refusing `kek_not_enrolled` in every environment.
-- Postgres direct, no listener, refuses while `cv-api` holds the run lock; `file` source in `live` refused.
+- Entry `python -m candleviewer.breakglass` (R5, replacing the `admin` entry first planned here).
+  The flow is `candleviewer.admin.breakglass`, its ports are composed in
+  `candleviewer.admin.breakglass_wiring`, and the entry point imports neither `secrets` nor `audit`.
+  It loads the KEK through the boot custody path with cv-api's own `CV_KEK_*` settings: no new
+  custody path. The host steps, the WSL launcher (`cv-launch.ps1 breakglass`, same stdin/FIFO
+  handoff) and `systemd-run -p LoadCredentialEncrypted=...` on the VPS, are FU-1 (#2151); the
+  procedure is `docs/ops/runbooks/auth-rbac.md` §3.
+- Proof of KEK possession (O1): `secrets.prove_kek_possession()`, metadata only. It runs the boot
+  custody path but never enrols a KEK, refusing `kek_not_enrolled` in every environment; the CLI
+  never calls `secrets.verify_kek_possession()`, whose boot path enrols an unknown KEK. Fails closed.
+- Reset only (O2): one transaction revokes the named Owner's MFA methods and sessions and raises a
+  critical `system_events` row `auth`/`break_glass_used`. No login, session, token or recovery path
+  is minted; the Owner enrols TOTP again at the next sign-in.
+- Postgres direct, no listener. It refuses while cv-api holds the run lock and while another session
+  of its database role is connected (`pg_stat_activity`, R2c); `file` source in `live` refused.
 - ★ **Second factor in `live`:** the operator must supply one unused Owner recovery code (SR-023 sealed
   envelope), verified offline against its hash in the DB and consumed. KEK + host access alone is not
-  enough in `live`.
-- ★ The CLI writes its host-local append-only audit record **before** it acts (intent), then an outcome
-  record; both fold into `audit_log` on next boot (E09 threat model §3.6.1; lifespan ack with Agent A
-  per #2119).
+  enough in `live`. O3, replacing it with `--live` and the typed phrase alone, is the owner's call
+  (#2701); main-orchestrator's ruling of 2026-10-20 keeps the rule until then.
+- ★ The CLI writes its intent record to a host-local append-only journal **before** it checks or acts,
+  then an outcome record, and flushes both to `audit_log` before it exits (R2d, E09 threat model
+  §3.6.1). Only the records Postgres could not take (it was down) stay in the journal: cv-api folds
+  them into `audit_log` at its next boot, after its own WAL replay, exactly once.
 
 ## 9. Restore drill, inconclusive items, follow-ups
 

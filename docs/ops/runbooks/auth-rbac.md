@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615 (its break-glass line is a shape until #2119); §4 was updated 2026-10-18 for #965 (the served disable and its limits). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -301,20 +301,159 @@ Expected elapsed time: not measured. E09-X04 did not run a reset drill; this is 
 
 ## 3. Break-glass for total Owner lockout (SR-023)
 
-**BLOCKED — not implemented.** There is no break-glass CLI, route or script in the repository
-(`docs/security/reviews/e09-auth-review.md` §3, finding R-6). Tracking: Owner item AB on #1778 and the CLI ticket #2119 (E09-S11, open). The drill has not been executed.
+Runnable since #2119 (E09-S11): `python -m candleviewer.breakglass`, the offline CLI of SR-023 and
+of the break-glass trust boundary (`docs/security/threat-models/e09-auth-rbac.md` §3.6.1). It
+resets the named Owner's MFA and nothing else: it mints no login, session, token or recovery code
+(decision O2). It has been rehearsed on a local throwaway database (dry-run transcript below in
+this section), not on staging: that drill is #2494 (E09-X04, #300).
 
-Preconditions that any future procedure will need, stated now so nobody burns time: shell access to the
-host that runs the API **and** access to the key-encryption material held by the host keychain
-(`kek_source` in `settings.py`). Without both, there is no recovery path.
+**When.** The sole Owner cannot sign in: the TOTP device is lost and no unused recovery code is at
+hand (U10). An Owner who still holds an unused recovery code signs in with it instead (§1), which
+needs no host access. In `live` a total loss (the device and every code) has no CLI path, because
+the CLI itself needs one unused code there (O3 below): do not hand-edit `users`, `mfa_methods`,
+`recovery_codes` or audit rows; escalate to the repository owner, who decides on direct database
+repair under the security process. Record the incident in every case.
 
-What an operator can and cannot do today if the sole Owner is locked out of TOTP with no recovery
-codes: nothing supported. Do not hand-edit `users`, `mfa_methods` or `recovery_codes` rows; do not
-touch audit rows. Escalate to the repository owner, who decides on direct database repair under the
-security process. Record the incident.
+**What a run does.** It writes `auth.break_glass_attempt` before any check, then checks, in this
+order: the host journal and its run lock, `--live` against `CV_ENVIRONMENT`, the KEK, that no other
+session of cv-api's database role is connected, the Owner, the terminal and the retyped phrase, and
+in `live` one recovery code. Then one transaction revokes every MFA method and live session of the
+Owner (`revoked_reason` `break_glass`) and raises the critical, unresolved `system_events` row
+`auth`/`break_glass_used`, which cv-api announces as a `system` notice (reason
+`auth.break_glass_used`) after each client's first WS `auth_ok`. The run's last record is
+`auth.break_glass_reset` or `auth.break_glass_refused` with its reason. Every record is critical,
+with actor `system:breakglass` and the run's id as `request_id`; the CLI writes it to
+`breakglass/journal.wal` under the run lock and flushes it to `audit_log` before it exits. What
+Postgres could not take (it was down) stays in the journal, and cv-api folds it into `audit_log` at
+its next boot, exactly once. No option skips a check or a record, and nothing secret is printed or
+logged.
 
-**The audit volume (#2615).** In compose, cv-api and the break-glass CLI (once #2119 ships it) share
-one audit directory: the named volume `cv-audit-data`, mounted at `/var/lib/candleviewer/audit`,
+**Exit status.** The reason in the refusal record is the status name in lower case.
+
+| Status                                                             | Meaning                                                                                                                                                           |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0                                                                  | Reset done, and every record is in `audit_log` or waiting in the journal (the last line says which).                                                              |
+| 1 `step_failed`                                                    | A check broke (an error, or no answer within 60 s); nothing changed.                                                                                              |
+| 2                                                                  | Usage or settings error (`--owner` missing, invalid settings, `CV_AUTH_RECOVERY_HMAC_KEY_HEX` unset or not 32 bytes of hex): nothing ran and nothing is recorded. |
+| 3 `reset_failed`                                                   | The reset transaction failed and rolled back, unless the link broke at COMMIT: an unresolved `break_glass_used` event means it applied.                           |
+| 4 `host_fs_unavailable`                                            | `CV_AUDIT_WAL_PATH` is relative, holds `..` or a symlink, or the journal is unusable.                                                                             |
+| 5 `api_running`                                                    | cv-api holds the run lock, or another session of its database role is connected.                                                                                  |
+| 6 `audit_unavailable`                                              | A record could not be written. If it was the attempt, nothing was checked; if it was the closing record, the line above it says how the run ended.                |
+| 7 `live_flag_required`, 8 `live_flag_mismatch`                     | `--live` is missing in `live`, or given outside it.                                                                                                               |
+| 9 `kek_unproven`                                                   | No KEK, a wrong or retired one, or one no cv-api boot enrolled for this environment: the proof never enrols one (decision O1).                                    |
+| 10 `not_owner`                                                     | The name is unknown, deleted, disabled or not an active Owner.                                                                                                    |
+| 11 `no_tty`, 12 `confirmation_mismatch`, 13 `confirmation_timeout` | No terminal; the phrase was not retyped exactly; it was not retyped within 5 minutes.                                                                             |
+| 14 `recovery_code_required`, 15 `recovery_code_invalid`            | `live` only: no code, or not an unused code of this Owner. Nothing is consumed.                                                                                   |
+| 16 `operator_cancelled`                                            | Ctrl-C before the reset began.                                                                                                                                    |
+| 130                                                                | A second Ctrl-C: the outcome is unknown. Read the run's audit rows (and look for an unresolved `break_glass_used` event) before running it again.                 |
+
+**Preconditions.**
+
+- cv-api is stopped, and nothing else is connected as its database role: a `psql` session of that
+  role counts, so close it.
+- Postgres is up.
+- The KEK, through cv-api's own custody path: the same `CV_KEK_SOURCE`, `CV_KEK_HANDLE` and
+  `CV_KEK_VERSION` as a cv-api start, and for a FIFO `CV_KEK_ACK_PATH` and a FIFO the launcher fills
+  for this run (`docs/ops/runbooks/kek-custody.md`). Its check value must already be enrolled for
+  this environment by a cv-api boot. In `live` a `file` KEK is refused, as for cv-api, and so is a
+  run whose SR-009 process hardening did not take effect. The launcher and systemd steps are not
+  drilled yet (FU-1, #2151). Where cv-api has no KEK (the dev compose stack wires none), the CLI
+  refuses `kek_unproven` and changes nothing.
+- cv-api's recovery-code key, `CV_AUTH_RECOVERY_HMAC_KEY_HEX`: the `live` rule checks the code with
+  it. Never put its value, or any other secret, on a command line or in this file.
+- A terminal: `docker compose run` allocates one (with `-T` it does not, and the CLI refuses).
+- In `live`: `--live`, and one unused Owner recovery code from the SR-023 sealed envelope.
+
+**Procedure (compose).** Use the compose files (`-f`) and project (`-p`) of the running stack, as
+`docker compose ls` lists them, so that the run gets cv-api's settings, KEK handle and audit volume.
+
+1. Record the incident: who, when, why, and who has the host.
+2. Stop cv-api and check that it is down:
+
+   ```bash
+   docker compose -f infra/compose/docker-compose.yml --profile core stop api
+   docker compose -f infra/compose/docker-compose.yml --profile core ps api
+   ```
+
+3. Run the CLI as a one-off container of `api`, naming the Owner by username or email, and add
+   `--live` in `live`. The line replaces the image entrypoint (`candleviewer.server`, which takes no
+   arguments) and has no `-v` and no `--user` of its own (see the audit volume below):
+
+   ```bash
+   docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint python api -m candleviewer.breakglass --owner <owner username or email>
+   ```
+
+   Retype the phrase it shows, `reset <owner> on <environment> <6 hex digits>`. In `live` type one
+   unused recovery code when asked: it is not echoed, and the reset consumes it.
+
+4. Read the last lines. `Break-glass reset done ...` and `Audit: every record reached audit_log.`
+   is the expected end (exit 0). `Audit: records waiting in the host journal: N` means Postgres did
+   not take them: they reach `audit_log` at the next cv-api boot. A refusal names its reason (table
+   above): fix it and run again; each run is a new attempt with records of its own.
+5. Start cv-api again (`docker compose ... start api`). It refuses to boot while a CLI run holds the
+   lock.
+6. The Owner signs in with the password, gets an enrolment-only session and enrols TOTP again (§2
+   step 4), then seals the 10 new recovery codes in the envelope (SR-023).
+7. The `break_glass_used` event stays unresolved, and every client's first WS authentication gets
+   the notice, until the Owner resolve route exists (E09-S12, not built; filing it is #2710 item 2).
+   Do not edit `system_events` by hand.
+
+**Alerts (R8).** `AuthBreakGlassAttempted` pages for every run, refused ones included;
+`AuthBreakGlassUsed` pages while a reset's event is unresolved; `AuthBreakGlassStateReadFailing` is
+a ticket when cv-api cannot read that state (their sections in `docs/plan/07-release-and-prr.md`).
+main-orchestrator ruled this routing (page, page, ticket) on 2026-10-17 under the owner's
+delegation; it awaits the owner's confirmation on #2119. A severity is one label in
+`infra/prometheus/alerts`.
+
+**Live gating (O3).** In `live` the CLI requires `--live`, the phrase naming `live`, and one unused
+Owner recovery code, verified offline against its hash and consumed in the reset's transaction:
+the rule ratified in ADR-0009 Amendment 1. There is no path with `--live` and the phrase alone.
+The owner may relax the code requirement (O3, asked on #2701); main-orchestrator's ruling of
+2026-10-20 keeps it until then.
+
+**Dry-run transcript** (2026-10-20, this procedure's CLI on branch
+`feat/e09-s11-breakglass-entry-runbook`, run directly with the settings in its environment as
+`docker compose run` passes them: a throwaway local Postgres 16 at head, `CV_ENVIRONMENT=demo`, a
+test KEK file enrolled for `demo`, a test recovery-code key, and a seeded `drill_owner` with one
+TOTP method and two live sessions; no real credential). The JSON lines are the CLI's structured
+log, which shares stdout with its text. Afterwards `audit_log` held the six records of the three
+runs, and `drill_owner` had no unrevoked MFA method, no live session and one unresolved
+`break_glass_used` event.
+
+```text
+$ python -m candleviewer.breakglass --owner drill_owner   # the operator declines at the phrase
+{"environment":"demo","event":"secrets.kek_file_source","env":"demo","level":"warning","ts":"2026-10-20T05:47:36.075989Z"}
+Break-glass revokes every MFA method and session of drill_owner on demo.
+To confirm, type: reset drill_owner on demo 1259F1
+> no
+{"run_id":"96d783a3-cefb-4042-91eb-7ce4708c48a0","reason":"confirmation_mismatch","event":"breakglass.run_ended","env":"demo","level":"warning","ts":"2026-10-20T05:47:36.135245Z"}
+Break-glass ended without a reset (confirmation_mismatch); nothing was changed.
+Audit: every record reached audit_log.
+$ echo $?
+12
+
+$ python -m candleviewer.breakglass --owner drill_owner   # a session of cv-api's database role is connected
+{"environment":"demo","event":"secrets.kek_file_source","env":"demo","level":"warning","ts":"2026-10-20T05:47:36.802858Z"}
+{"run_id":"fa443d74-7d58-4c5b-933f-8b09792fdb29","reason":"api_running","event":"breakglass.run_ended","env":"demo","level":"warning","ts":"2026-10-20T05:47:36.849498Z"}
+Break-glass ended without a reset (api_running); nothing was changed.
+Audit: every record reached audit_log.
+$ echo $?
+5
+
+$ python -m candleviewer.breakglass --owner drill_owner   # the reset
+{"environment":"demo","event":"secrets.kek_file_source","env":"demo","level":"warning","ts":"2026-10-20T05:47:37.473797Z"}
+Break-glass revokes every MFA method and session of drill_owner on demo.
+To confirm, type: reset drill_owner on demo 8042A6
+> reset drill_owner on demo 8042A6
+{"run_id":"12bcf1d2-b6b3-4f70-affb-05d39f2dab96","reason":null,"event":"breakglass.run_ended","env":"demo","level":"warning","ts":"2026-10-20T05:47:37.533661Z"}
+Break-glass reset done for drill_owner on demo: 1 MFA methods and 2 sessions revoked, system event 1 raised. The Owner enrols TOTP again at the next sign-in.
+Audit: every record reached audit_log.
+$ echo $?
+0
+```
+
+**The audit volume (#2615).** In compose, cv-api and the break-glass CLI share one audit directory:
+the named volume `cv-audit-data`, mounted at `/var/lib/candleviewer/audit`,
 with `CV_AUDIT_WAL_PATH` fixed at `/var/lib/candleviewer/audit/audit.wal` in
 `infra/compose/docker-compose.yml`. It holds the audit WAL and its commit cursor (`audit.wal`,
 `audit.wal.committed`) and the break-glass journal and run lock (`breakglass/journal.wal`,
@@ -354,18 +493,6 @@ root-owned `0700` directory outside the checkout and outside every path a compos
 whoever runs as it can read the key. Unset, the source is `/dev/null`, which a real backend refuses;
 compose runs the fake backend today, which never reads it. Rotation and `_PREVIOUS_` retirement
 are S4a's rows.
-
-The CLI will run as a one-off container of the `api` service, so only with cv-api stopped: that is
-also the CLI's own rule, since it takes `instance.lock` exclusively and cv-api holds it shared.
-`docker compose run` gives that container the service's own volume, `CV_AUDIT_WAL_PATH`, user and
-read-only root, so the line has no `-v` of its own and must not set `--user`: a file the CLI creates
-as root is one cv-api (uid 10001) cannot open. The image entrypoint is `candleviewer.server`, so the
-line replaces it. Postgres must be up. This is the shape only and **does not run until #2119 ships
-`candleviewer.breakglass`**; that ticket's runbook slice owns the arguments and the KEK access:
-
-```bash
-docker compose -f infra/compose/docker-compose.yml --profile core run --rm --no-deps --entrypoint python api -m candleviewer.breakglass
-```
 
 ## 4. Disable a user and what follows (SR-029)
 
@@ -936,8 +1063,8 @@ exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) e
 While the sink refuses records, sign-out, session revocation and refresh answer `503` and change
 nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). The break-glass
-reset (section 3, E09-S11 #2119, not runnable yet) will be the Owner's emergency path: it runs only
-with cv-api stopped and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
+reset (section 3, E09-S11 #2119) is the Owner's emergency path: it runs only with cv-api stopped
+and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
 `ticket`, muted 22:00-07:00 UTC by default (`CV_ALERT_QUIET_HOURS`) and active 15 minutes after the
 last loss, so a lone loss at night is not delivered and the page (more than 5 in 15 minutes) does
 not cover it (#2621, section 1): in the morning, read the counter and `outcome_lost` log lines.
@@ -987,24 +1114,25 @@ commit is counted and alerted, never rolled back). The alert runbooks are the an
 
 ## Known gaps referenced above
 
-| Gap                                                                       | Reference            |
-| ------------------------------------------------------------------------- | -------------------- |
-| Break-glass CLI (SR-023)                                                  | #1778 item AB, #2119 |
-| `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110                |
-| Scheduled audit-chain verifier                                            | #2111                |
-| Disable-user drill on staging (SR-029)                                    | #2494, #300          |
-| Activating the seeded `invited` bootstrap Owner (O5)                      | #2710                |
-| No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445         |
-| Session rotation on role change and step-up                               | #2101                |
-| Lock alerts lost inside quiet hours                                       | #2621                |
-| No alert rule reads the session, invite, probe or step-up failure series  | #2746                |
-| No alert rule reads the enrolment-only refusal series (section 7)         | #2746                |
-| `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747                |
-| No durable retry of a lost audit outcome record                           | EX-07, #3009         |
-| No durable retry of a lost backstop audit record                          | EX-08, #3009         |
-| A refused refresh of a disabled user neither revokes nor counts           | #3331                |
-| A cancel after the revoking `UPDATE` loses count, log, publish and record | #3332                |
-| No counter or alert for a write-ahead audit refusal (the `503`)           | #3009, #2267         |
+| Gap                                                                       | Reference      |
+| ------------------------------------------------------------------------- | -------------- |
+| Break-glass drill on staging (SR-023)                                     | #2494, #300    |
+| Owner route to resolve a break-glass event (section 3, step 7)            | E09-S12, #2710 |
+| `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110          |
+| Scheduled audit-chain verifier                                            | #2111          |
+| Disable-user drill on staging (SR-029)                                    | #2494, #300    |
+| Activating the seeded `invited` bootstrap Owner (O5)                      | #2710          |
+| No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445   |
+| Session rotation on role change and step-up                               | #2101          |
+| Lock alerts lost inside quiet hours                                       | #2621          |
+| No alert rule reads the session, invite, probe or step-up failure series  | #2746          |
+| No alert rule reads the enrolment-only refusal series (section 7)         | #2746          |
+| `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747          |
+| No durable retry of a lost audit outcome record                           | EX-07, #3009   |
+| No durable retry of a lost backstop audit record                          | EX-08, #3009   |
+| A refused refresh of a disabled user neither revokes nor counts           | #3331          |
+| A cancel after the revoking `UPDATE` loses count, log, publish and record | #3332          |
+| No counter or alert for a write-ahead audit refusal (the `503`)           | #3009, #2267   |
 
 ## Execution record
 

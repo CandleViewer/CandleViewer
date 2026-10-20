@@ -165,16 +165,31 @@ The offline break-glass CLI is modelled as a trust boundary distinct from the ru
   access to the WSL2 volume) **and** access to unwrap the KEK (OS keyring / `age` identity, TB-5). This
   is intentionally a narrower set than "anyone who can reach the app over the tailnet" — it requires
   physical/host-level compromise, not just network or session compromise.
-- **What it can do:** mint a recovery path for the Owner without going through password+TOTP. This is
-  necessarily powerful — it is the escape hatch for total lockout (U10) — so it is scoped to run only
-  with the process detached from any network listener, and every invocation writes an audit row on the
-  _next_ successful application start (the audit chain cannot be written while the app is down, so the
-  break-glass tool logs to a host-local, append-only file that is folded into `audit_log` on next boot
-  and chain-verified against it).
+- **What it can do:** reset the Owner's second factor without going through password+TOTP. One
+  transaction revokes every MFA method and session of the named Owner and raises a critical, unresolved
+  `break_glass_used` event, so the Owner signs in with the password and must enrol TOTP again; it mints
+  no login, session, token or recovery path (decision O2 on #2119). In `live` it also needs one unused
+  Owner recovery code, which it consumes (ADR-0009 Amendment 1; O3 is the owner's to change). This is
+  necessarily powerful — it is the escape hatch for total lockout (U10) — so it is an offline CLI,
+  `python -m candleviewer.breakglass` (R5), with no network listener: no HTTP route, WS topic or
+  OpenAPI path reaches it, and nothing cv-api serves imports it (#2119 slice 5, S8). It proves KEK
+  possession without ever enrolling a KEK (O1) and runs only while cv-api is stopped (a run lock
+  cv-api holds while it runs, and a probe for any other session of its database role, R2). Every
+  invocation writes its intent record before any check, then its outcome record, to a host-local,
+  append-only journal under that run lock, and flushes both into `audit_log`, where the chain trigger
+  links them, before it exits (R2d). Only records Postgres could not take (it was down) stay in the
+  journal; cv-api folds them into `audit_log` at its next boot, after its own WAL replay, exactly once
+  and chain-verified.
+- **How a use is surfaced:** the unresolved `break_glass_used` event reaches every client as a WS
+  `system` notice after its first `auth_ok` (O4). Every run, refused ones included, pages
+  (`AuthBreakGlassAttempted`), an unresolved reset pages (`AuthBreakGlassUsed`), and a failure to read
+  that state raises a ticket (`AuthBreakGlassStateReadFailing`): decision R8 as built under #2496,
+  awaiting the owner's confirmation on #2119.
 - **Residual risk stated explicitly (not assumed away):** an attacker who has already achieved
   host-level compromise (RDP/SSH into the Windows host, or physical access) can use break-glass to
-  mint Owner access regardless of TOTP. This risk is **not mitigated by this ticket's scope** — it is
-  bounded by host hardening (out of scope for M18, tracked as RSK-022's sibling concern) and by the
+  strip the Owner's TOTP regardless of the device (in `live` only with an unused recovery code too).
+  This risk is **not mitigated by this ticket's scope** — it is bounded by host hardening (out of
+  scope for M18, tracked as RSK-022's sibling concern) and by the
   fact that host-level compromise already implies access to the KEK and therefore to A-01/A-02 (all
   exchange keys), which is a strictly larger loss than auth bypass alone. This asymmetry is recorded so
   it is not silently assumed safe: **the break-glass path's blast radius equals a full host compromise's
