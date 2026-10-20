@@ -117,6 +117,11 @@ class ReplayBooks:
       what it holds and buffers (the snapshot supersedes it in the read order), and rebuilds from
       it. On its own the engine takes a snapshot while LIVE for a server reset and waits for a
       fresh one, which a recording never sends;
+    - a reset (a seek, a loop restart or a recording gap) is a control action, not a data fault:
+      once its consumers are told the book left LIVE, a fresh engine replaces it, whose resync
+      count starts over (the book it rebuilds is labelled `subscribe`). The engine's breaker
+      counts desyncs over a minute of its clock, which a restart rewinds, so an engine kept
+      across loop passes would read `degraded` for good from the sixth wrap;
     - its clock is the replay time of the event it applies, never the wall clock (RP-T12)."""
 
     def __init__(self, bus: Bus, session_id: UUID) -> None:
@@ -140,12 +145,13 @@ class ReplayBooks:
         await engine.on_event(event)
 
     async def reset(self, reason: str, *, symbol: str | None = None) -> None:
-        """Every LIVE book, or only `symbol`'s, leaves LIVE (its consumers are told why); a book
-        already waiting for a snapshot keeps waiting, and the deltas it holds die with that
-        snapshot."""
-        for (book_symbol, _depth), engine in self._engines.items():
+        """Every book, or only `symbol`'s, starts afresh: a LIVE one leaves LIVE first (its
+        consumers are told why), then a new engine replaces each, holding nothing from before
+        and waiting for the next recorded snapshot, its resync breaker clean (see the class)."""
+        for (book_symbol, depth), engine in tuple(self._engines.items()):
             if symbol is None or book_symbol == symbol:
                 await engine.invalidate(reason)  # a no-op unless LIVE
+                await self._open(book_symbol, depth)
 
     async def _open(self, symbol: str, depth: int) -> BookEngine:
         topic = Topic(env=self._env, domain="md", symbol=symbol, detail="book")
