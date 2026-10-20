@@ -19,6 +19,15 @@ rendered from `Decimal` (`format(d, "f")`) and read back as text with `parse_flo
 no float ever touches it; a NULL ladder binds SQL NULL, never JSON `null`, which
 `ap_ladder_shape` would refuse.
 
+Given a `write_ahead` hook, an update or a delete first reads its row's before-state `FOR UPDATE`,
+and a default move the account's current default (`default_statement`). Each write then awaits
+the hook once per row it changed, after its statement and before the commit, a default move the
+demoted default first and then the new one. `bounded_write_ahead` bounds each call to
+`audit_timeout_s`; `WriteAheadTimeout` and anything the hook raises roll the write back and leave
+unchanged, except that a raw `OSError` or driver error from the hook is mapped below as the
+database's (so the hook raises its own typed refusal). A commit that fails after the hook leaves a
+record of a change that never landed: write-ahead over-reports, it never under-reports.
+
 A database refusal leaves as `AccountProfileStoreRuleError` (a CHECK or the ladder trigger,
 which names itself with `USING CONSTRAINT`) or `AccountProfileStoreConflictError` (a unique
 index), carrying only the name; any other failure as `StorageQueryFailed(sqlstate)`, and a

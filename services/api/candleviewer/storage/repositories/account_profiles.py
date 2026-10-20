@@ -119,9 +119,12 @@ class DefaultMove:
 
 
 #: Awaited inside a write's transaction, before it commits, once per profile row the write
-#: changed: the row as it stood before (`None` for a create) and after. A hook that raises, or
-#: outlasts the store's audit timeout, rolls the write back (C-2.9 write-ahead; E28-T02 wires the
-#: `profile.created|updated|deleted` record).
+#: changed (never for a write that changes none): the row as it stood before (`None` for a create)
+#: and after, in stored units (`profile_from_row` reads them). A hook that raises, or outlasts the
+#: store's audit timeout, rolls the write back (C-2.9 write-ahead; E28-T02 wires the
+#: `profile.created|updated|deleted` record). A hook raises its own typed refusal, as
+#: `api/users.py`'s `_AuditRefused` does: a raw `OSError` or driver error from it is mapped as the
+#: database's own, `StorageTierUnavailable` or `StorageQueryFailed`.
 ProfileWriteAhead = Callable[[AccountProfileRow | None, AccountProfileRow], Awaitable[None]]
 
 #: The refusals a write can meet, by the name the database gives them: every CHECK of

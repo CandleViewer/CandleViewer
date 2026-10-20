@@ -188,14 +188,19 @@ class EffectiveProfiles:
                 profile = None if row is None else profile_from_row(row)
             except StorageError:
                 raise  # `_load` maps it: the store could not answer
-            except (ValueError, TypeError, KeyError, ArithmeticError):
-                # A stored row the store's decoder or the model refuses (pydantic's
+            except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
+                # A stored row that cannot be decoded, by the store or the model (pydantic's
                 # ValidationError is a ValueError): fail closed like any other unreadable
-                # profile, with none of its values in the error or the log (SR-E28-24).
+                # profile, with the error's class but none of its values (SR-E28-24).
                 _log().warning(
-                    "profile.read_failed_closed", reason="invalid_row", account_id=str(account_id)
+                    "profile.read_failed_closed",
+                    reason="invalid_row",
+                    account_id=str(account_id),
+                    error=type(exc).__name__,
                 )
                 raise ProfileUnavailableError("stored profile unreadable") from None
+            if profile is not None and not _answers(profile, account_id, profile_id):
+                return None  # not this read's: never cached, and read as not found
             if profile is not None and generation == self._generations.get(account_id, 0):
                 self._install(profile)
             return profile

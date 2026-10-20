@@ -41,6 +41,7 @@ from candleviewer.storage.repositories.account_profiles import (
     AccountProfileStoreScopeDeniedError,
     AccountProfileStoreStaleError,
     AccountProfileValues,
+    DefaultMove,
     LadderRung,
 )
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -182,9 +183,12 @@ def test_the_ladder_is_read_as_text_so_its_numbers_stay_exact() -> None:
         mod.delete_statement(_OWNER, _ACCOUNT, _PROFILE, 3),
         mod.revision_statement(_OWNER, _ACCOUNT, _PROFILE, 2),
         mod.lock_account_statement(_OWNER, _ACCOUNT),
+        mod.default_statement(_OWNER, _ACCOUNT),
     ],
-    ids=["list", "get", "update", "lock", "unset", "set", "delete", "revision", "account"],
-)
+    ids=[
+        "list", "get", "update", "lock", "unset", "set", "delete", "revision", "account", "default",
+    ],
+)  # fmt: skip
 def test_every_owner_statement_carries_the_live_account_and_the_owner_predicate(stmt: Any) -> None:
     """SR-051 in the statement itself, not only in the gate before it."""
     where = _where(stmt)
@@ -214,6 +218,18 @@ def test_a_profile_is_matched_under_its_own_account_only(stmt: Any) -> None:
     assert "account_profiles.deleted_at IS NULL" in where
     params = _params(stmt)
     assert params["id_1"] == _PROFILE and params["exchange_account_id_1"] == _ACCOUNT
+
+
+def test_the_default_read_locks_the_live_default_of_this_account_only() -> None:
+    """The before-state a default move hands the hook: this account's live default, locked as the
+    row the move then unsets is (CR-1B-R3-01)."""
+    stmt = mod.default_statement(_OWNER, _ACCOUNT)
+    where = _where(stmt)
+    assert "account_profiles.exchange_account_id = $" in where
+    assert "account_profiles.is_default IS true" in where
+    assert "account_profiles.deleted_at IS NULL" in where
+    assert _sql(stmt).endswith(" FOR UPDATE OF account_profiles")
+    assert _params(stmt)["exchange_account_id_1"] == _ACCOUNT
 
 
 def test_a_list_reads_live_profiles_the_default_first_and_is_bounded() -> None:
@@ -628,6 +644,88 @@ async def test_a_default_move_hands_the_hook_the_old_default_then_the_new_one() 
     )
     assert ahead.seen == [(2, 3, 0), (3, 4, 0)] and rel.commits == 1
     assert "FOR UPDATE OF account_profiles" in _sql(rel.calls[3])
+
+
+async def test_a_default_move_without_a_previous_default_hands_the_hook_the_new_one_only() -> None:
+    rel = _Rel(
+        _GATE_OK,
+        _Result(),
+        _Result([_mapping(version=3)]),
+        _Result([]),
+        _Result([]),
+        _Result([_mapping(version=4, is_default=True)]),
+    )
+    ahead = _Ahead(rel)
+    move = await _store(rel).set_default_profile(
+        _OWNER, _ACCOUNT, _PROFILE, expected_version=3, write_ahead=ahead
+    )
+    assert move is not None and move.written and move.previous is None
+    assert ahead.seen == [(3, 4, 0)] and rel.commits == 1
+
+
+async def _refusable(
+    write: str, store: mod.SqlAlchemyAccountProfileStore, ahead: _Ahead
+) -> AccountProfileRow | DefaultMove | None:
+    if write == "update":
+        return await store.update_profile(
+            _OWNER, _ACCOUNT, _PROFILE, _VALUES, expected_version=3, write_ahead=ahead
+        )
+    if write == "delete":
+        return await store.delete_profile(
+            _OWNER, _ACCOUNT, _PROFILE, expected_version=3, write_ahead=ahead
+        )
+    return await store.set_default_profile(
+        _OWNER, _ACCOUNT, _PROFILE, expected_version=3, write_ahead=ahead
+    )
+
+
+_V4 = _Result([_mapping(version=4)])
+_DEFAULT = _Result([_mapping(version=3, is_default=True)])
+
+
+@pytest.mark.parametrize(
+    ("write", "results", "refusal"),
+    [
+        ("update", [_V4, _Result([]), _V4], AccountProfileStoreStaleError),
+        ("update", [_Result([]), _Result([]), _Result([])], None),
+        ("update", [_DEFAULT, _Result([]), _DEFAULT], AccountProfileStoreRuleError),
+        ("delete", [_V4, _Result([]), _V4], AccountProfileStoreStaleError),
+        ("delete", [_DEFAULT, _Result([]), _DEFAULT], AccountProfileStoreConflictError),
+        ("delete", [_Result([]), _Result([]), _Result([])], None),
+        ("default", [_Result(), _V4], AccountProfileStoreStaleError),
+        ("default", [_Result(), _Result([])], None),
+        ("default", [_Result(), _DEFAULT], None),
+    ],
+    ids=[
+        "stale-update", "missing-update", "default-moves-alone", "stale-delete",
+        "delete-the-default", "missing-delete", "stale-move", "missing-move", "already-default",
+    ],
+)  # fmt: skip
+async def test_a_write_that_changes_no_row_never_calls_the_hook(
+    write: str, results: list[_Result], refusal: type[Exception] | None
+) -> None:
+    """Once per row it changed, so never for a refused, missing or no-op write (CR-1B-R3-02)."""
+    rel = _Rel(_GATE_OK, *results)
+    ahead = _Ahead(rel)
+    if refusal is None:
+        outcome = await _refusable(write, _store(rel), ahead)
+        assert outcome is None or (isinstance(outcome, DefaultMove) and not outcome.written)
+    else:
+        with pytest.raises(refusal):
+            await _refusable(write, _store(rel), ahead)
+    assert ahead.seen == [] and rel.commits == 0
+
+
+async def test_a_raw_os_error_from_the_hook_reads_as_the_database_unreachable() -> None:
+    """Why the hook raises its own typed refusal (the `ProfileWriteAhead` contract): the store
+    maps an `OSError` it cannot tell from the driver's as the tier's (CR-1B-R3-07)."""
+    rel = _Rel(_GATE_OK, _Result([_mapping(version=3)]), _Result([_mapping(version=4)]))
+    with pytest.raises(StorageTierUnavailable):
+        await _store(rel).update_profile(
+            _OWNER, _ACCOUNT, _PROFILE, _VALUES, expected_version=3,
+            write_ahead=_Ahead(rel, ConnectionError("audit disk")),
+        )  # fmt: skip
+    assert rel.commits == 0
 
 
 async def test_a_hook_that_raises_leaves_the_write_uncommitted() -> None:

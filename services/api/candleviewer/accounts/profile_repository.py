@@ -16,8 +16,9 @@ is never deleted (`AccountConflictError("default_profile")`).
 Every write, whatever its outcome, invalidates the account in `EffectiveProfiles` before it
 returns (SR-E28-15), and `version_bumps` counts the profile rows a write bumped. A refusal by a
 named rule or constraint is logged at WARN with that name, never with a value. Each write takes an
-optional `write_ahead` hook, run in the write's transaction before it commits (C-2.9): E28-T02
-(#906) wires the `profile.created|updated|deleted` record through it, and maps the
+optional `write_ahead` hook, run in the write's transaction before it commits (C-2.9) with the
+store's rows in stored units (`profile_from_row` reads them): E28-T02 (#906) wires the
+`profile.created|updated|deleted` record through it, as a typed refusal when it fails, and maps the
 `ap_native_sl` rule (unreachable through `AccountProfile`, whose `require_native_sl` is
 `Literal[True]`) to `native_stop_mandatory` with its audit row (SR-E28-08).
 """

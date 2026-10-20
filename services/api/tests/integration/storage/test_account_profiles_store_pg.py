@@ -320,6 +320,46 @@ async def test_the_write_ahead_hook_runs_in_the_write_and_a_failure_leaves_no_tr
     assert after == before
 
 
+async def test_a_default_move_hands_the_hook_both_rows_and_a_refusal_moves_nothing(
+    repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
+) -> None:
+    """C-2.9 on the two-row write (SEC-1B-R3-03): `default_statement` locks the old default, the
+    hook sees it demoted first and then the new default, and a refusing hook leaves both rows, and
+    their history, as they were."""
+    account = _account(pg_dsn)
+    (bootstrap,) = await repo.list_profiles(owner, account)
+    alternate = await repo.create_profile(owner, account, _profile(account))
+    state = (
+        "SELECT id, version, is_default FROM account_profiles WHERE exchange_account_id = %s "
+        "ORDER BY id"
+    )
+    history = (
+        "SELECT count(*) FROM account_profile_revisions WHERE profile_id IN "
+        "(SELECT id FROM account_profiles WHERE exchange_account_id = %s)"
+    )
+    before = (_sql(pg_dsn, state, account), _sql(pg_dsn, history, account))
+
+    async def refuses(before: AccountProfileRow | None, after: AccountProfileRow) -> None:
+        raise RuntimeError("audit store down")
+
+    with pytest.raises(RuntimeError):
+        await repo.set_default_profile(owner, account, alternate.profile_id, expected_version=1,
+                                       write_ahead=refuses)  # fmt: skip
+    assert (_sql(pg_dsn, state, account), _sql(pg_dsn, history, account)) == before
+    seen: list[tuple[uuid.UUID, int | None, bool | None, int, bool]] = []
+
+    async def records(before: AccountProfileRow | None, after: AccountProfileRow) -> None:
+        was = (None, None) if before is None else (before.version, before.values.is_default)
+        seen.append((after.id, *was, after.version, after.values.is_default))
+
+    await repo.set_default_profile(owner, account, alternate.profile_id, expected_version=1,
+                                   write_ahead=records)  # fmt: skip
+    assert seen == [
+        (bootstrap.profile_id, bootstrap.version, True, bootstrap.version + 1, False),
+        (alternate.profile_id, 1, False, 2, True),
+    ]
+
+
 async def test_a_soft_deleted_profile_is_gone_from_every_read_and_write(
     repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
 ) -> None:

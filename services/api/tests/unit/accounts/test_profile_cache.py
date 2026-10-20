@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import gc
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,7 +17,11 @@ import structlog
 from candleviewer.accounts.errors import AccountNotFoundError, ProfileUnavailableError
 from candleviewer.accounts.profile_cache import EffectiveProfiles
 from candleviewer.accounts.profiles import AccountProfile, profile_values
-from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
+from candleviewer.storage.errors import (
+    StorageQueryFailed,
+    StorageRecordInvalid,
+    StorageTierUnavailable,
+)
 from candleviewer.storage.repositories.account_profiles import AccountProfileRow
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
@@ -280,7 +283,8 @@ async def test_a_stored_row_the_model_refuses_fails_closed_without_its_values() 
     with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError) as ei:
         await cache.get_effective_profile(_ACCOUNT)
     assert "btc" not in str(ei.value) and ei.value.__cause__ is None
-    assert [log["reason"] for log in logs] == ["invalid_row"] and "btc" not in str(logs)
+    assert [(log["reason"], log["error"]) for log in logs] == [("invalid_row", "ValidationError")]
+    assert "btc" not in str(logs)
     assert cache.peek(_ACCOUNT) is None
     assert (await cache.get_effective_profile(_ACCOUNT)).version == 3
 
@@ -365,23 +369,17 @@ async def test_a_timed_out_and_an_overtaken_read_are_logged_with_their_reason() 
 
 
 async def test_a_load_that_fails_after_its_reader_left_is_still_retrieved() -> None:
-    """No "Task exception was never retrieved" for a load whose reader timed out first."""
-    loop = asyncio.get_running_loop()
-    reported: list[str] = []
-    previous = loop.get_exception_handler()
-    loop.set_exception_handler(lambda _loop, context: reported.append(str(context.get("message"))))
-    try:
-        reads = _Reads(StorageTierUnavailable("postgres unreachable (OSError)"), gated=True)
-        cache, _ = _cache(reads, load_timeout_s=0.01)
-        with pytest.raises(ProfileUnavailableError):
-            await cache.get_effective_profile(_ACCOUNT)
-        reads.gates[0].set()
-        for _ in range(20):  # let the orphaned load run to its failure
-            await asyncio.sleep(0)
-        gc.collect()
-    finally:
-        loop.set_exception_handler(previous)
-    assert not [m for m in reported if "never retrieved" in m]
+    """No "Task exception was never retrieved" for a load whose reader timed out first: the
+    cache retrieves the failure itself when the load settles (CR-1B-R3-03)."""
+    reads = _Reads(StorageTierUnavailable("postgres unreachable (OSError)"), gated=True)
+    cache, _ = _cache(reads, load_timeout_s=0.01)
+    with pytest.raises(ProfileUnavailableError):
+        await cache.get_effective_profile(_ACCOUNT)
+    (load,) = cache._tasks  # the orphaned load, still waiting on the store
+    reads.gates[0].set()
+    await asyncio.wait({load})
+    assert not load._log_traceback  # asyncio's own flag: set until someone retrieves the error
+    assert not cache._tasks and isinstance(load.exception(), StorageTierUnavailable)
 
 
 @pytest.mark.parametrize(
@@ -394,7 +392,20 @@ async def test_a_row_the_store_cannot_decode_fails_closed(decoded: Exception) ->
     cache, _ = _cache(_Reads(decoded))
     with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError) as ei:
         await cache.get_effective_profile(_ACCOUNT)
-    assert ei.value.__cause__ is None and [log["reason"] for log in logs] == ["invalid_row"]
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__
+    assert [(log["reason"], log["error"]) for log in logs] == [
+        ("invalid_row", type(decoded).__name__)
+    ]
+
+
+async def test_a_store_record_error_is_the_store_failing_not_an_unreadable_row() -> None:
+    """A `StorageError` that is also a `ValueError` is the store's answer, mapped as such."""
+    cache, _ = _cache(_Reads(StorageRecordInvalid("column missing")))
+    with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError):
+        await cache.get_effective_profile(_ACCOUNT)
+    assert [(log["reason"], log["error"]) for log in logs] == [
+        ("store_unavailable", "StorageRecordInvalid")
+    ]
 
 
 async def test_a_loaded_profile_of_another_account_is_never_served() -> None:
@@ -403,6 +414,7 @@ async def test_a_loaded_profile_of_another_account_is_never_served() -> None:
     cache, _ = _cache(_Reads(_row(other)))
     with pytest.raises(AccountNotFoundError):
         await cache.get_effective_profile(_ACCOUNT, other.profile_id)
+    assert cache.peek(other.account_id, other.profile_id) is None  # refused before it is cached
 
 
 async def test_a_loaded_non_default_never_answers_for_the_default() -> None:
@@ -410,6 +422,7 @@ async def test_a_loaded_non_default_never_answers_for_the_default() -> None:
     cache, _ = _cache(_Reads(_row(alternate)))
     with pytest.raises(AccountNotFoundError):
         await cache.get_effective_profile(_ACCOUNT)
+    assert cache.peek(_ACCOUNT, alternate.profile_id) is None
 
 
 def test_the_bound_must_hold_one_profile() -> None:
