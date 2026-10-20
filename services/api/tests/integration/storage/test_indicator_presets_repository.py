@@ -255,14 +255,16 @@ async def test_import_renames_by_the_fold_of_ux_ip_name_never_by_pythons(
 ) -> None:
     """This database's `lower()` (libc collation) folds U+0130 onto 'i', where Python's
     `str.lower` gives 'i' plus U+0307: the import renames the name the index would refuse (no
-    409) and keeps the one it admits."""
+    409) and keeps the one it admits. A server whose `lower()` folds U+0130 as Python does (an
+    ICU provider) cannot build the case, so there the test skips instead of failing its premise."""
     dotted, combining = "\u0130stanbul", "i\u0307stanbul"
     with _sync(pg_dsn) as c:
         folds = c.execute(
             "SELECT lower(%s) = lower('istanbul'), lower(%s) = lower(%s)",
             (dotted, dotted, combining),
         ).fetchone()
-    assert folds == (True, False)  # the premise; Python's fold says (False, True)
+    if folds != (True, False):  # the premise; Python's fold says (False, True)
+        pytest.skip("this server's lower() folds U+0130 as Python does: no fold mismatch here")
     a = _user(pg_dsn)
     await repo.create(a, str(uuid.uuid4()), _f(dotted))
     await repo.create(a, str(uuid.uuid4()), _f(combining, code="sma", n=20))

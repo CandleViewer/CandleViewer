@@ -155,6 +155,19 @@ async def test_lifespan_starts_and_stops_the_drawings_purge_task() -> None:
     task.stop.assert_awaited_once_with()
 
 
+async def test_lifespan_starts_and_stops_the_indicator_presets_gauge() -> None:
+    """E13-T03: `indicator_presets_total`'s startup read (`IndicatorPresetsGaugePrimer`),
+    started and stopped with the purge tasks beside it; its stop cancels a read in flight."""
+    app = FastAPI()
+    app.state.app_context = _fake_ctx()
+    app.state.indicator_presets_gauge = task = SimpleNamespace(start=Mock(), stop=AsyncMock())
+
+    async with _lifespan(app):
+        task.start.assert_called_once_with()
+
+    task.stop.assert_awaited_once_with()
+
+
 async def test_lifespan_starts_and_stops_the_incidents_purge_task() -> None:
     app = FastAPI()
     app.state.app_context = _fake_ctx()

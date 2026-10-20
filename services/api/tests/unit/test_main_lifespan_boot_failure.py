@@ -55,6 +55,7 @@ _BOOT = (
     "alert_gauge_task.start",
     "drawings_purge_task.start",
     "workspaces_purge_task.start",
+    "indicator_presets_gauge.start",
     "incidents_purge_task.start",
     "incidents_open_gauge.start",
     "users_purge_task.start",

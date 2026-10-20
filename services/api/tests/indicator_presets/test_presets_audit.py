@@ -261,7 +261,10 @@ async def test_stop_cancels_a_read_still_in_flight() -> None:
     primer = IndicatorPresetsGaugePrimer(lambda: repo, metrics)
     primer.start()
     await entered.wait()
-    await primer.stop()
+    (task,) = _primer_tasks()
+    # Bounded: a stop that no longer cancels would wait out the read's own 10 s timeout.
+    await asyncio.wait_for(primer.stop(), 1)
+    assert task.cancelled()
     await primer.stop()  # a second stop has nothing to cancel
     assert _primer_tasks() == [] and metrics.presets.values == {}
 
@@ -299,5 +302,7 @@ async def test_a_bug_at_startup_is_logged_and_never_leaves_the_task_failed() -> 
 
 async def test_without_a_store_the_primer_reads_and_sets_nothing() -> None:
     metrics = Metrics()
-    await IndicatorPresetsGaugePrimer(lambda: None, metrics).prime()
+    with capture_logs() as logs:
+        await IndicatorPresetsGaugePrimer(lambda: None, metrics).prime()
     assert metrics.presets.values == {}
+    assert logs == []  # no read attempted, so no failure logged
