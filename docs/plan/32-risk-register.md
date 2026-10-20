@@ -62,7 +62,7 @@ These are the project-board `Risk` field values, reused verbatim across tickets 
 
 ## 2. Risk heat map (current scores)
 
-Updated 2026-10-20 (E28-X01): RSK-076 to RSK-080 (four Critical at L3/I5 = 15, one High at L3/I4 = 12) are left to §10, like RSK-065 to RSK-071, and no plotted score changed. Regenerated 2026-10-17 (E42-X01): RSK-072 and RSK-073 added at L2/I5 = 10. The chart plots a selection, not the whole register (§10 lists every entry by band): RSK-074 and RSK-075 (Medium, 8), like RSK-065 to RSK-071, are left to §10. RSK-076 to RSK-081 (E29-X01, High, 10 to 12, 2026-10-20) are left to §10 as well. No other plotted score changed. (Previously: 2026-10-09 (E12-K01): RSK-062 added at L3/I3 = 9.)
+Updated 2026-10-20 (E28-X01): RSK-082 to RSK-086 (four Critical at L3/I5 = 15, one High at L3/I4 = 12) are left to §10, like RSK-065 to RSK-071, and no plotted score changed. Regenerated 2026-10-17 (E42-X01): RSK-072 and RSK-073 added at L2/I5 = 10. The chart plots a selection, not the whole register (§10 lists every entry by band): RSK-074 and RSK-075 (Medium, 8), like RSK-065 to RSK-071, are left to §10. RSK-076 to RSK-081 (E29-X01, High, 10 to 12, 2026-10-20) are left to §10 as well. No other plotted score changed. (Previously: 2026-10-09 (E12-K01): RSK-062 added at L3/I3 = 9.)
 
 ```mermaid
 quadrantChart
@@ -893,7 +893,7 @@ the 30-minute canary meanwhile.
 - **Trigger** — Two creates under one id in the request log; a resend with no preceding lookup; E29-T04 (#913) merging before G-7. Review by 2026-11-15.
 - **Contingency** — Cancel the duplicate, reconcile positions against the exchange, and flatten any surplus exposure.
 
-### RSK-076 · A request default, a per-leg override or a group amend widens a leg beyond the account profile, or clears its stop
+### RSK-082 · A request default, a per-leg override or a group amend widens a leg beyond the account profile, or clears its stop
 
 `Risk: R4` · Category **Security** · L 3 · I 5 · **Score 15 — Critical (the model's inherent rating; Low once SR-E28-03, -04 and -33 ship)** · Owner **Architect** · Epics E28, E34 · Status **Open**
 
@@ -902,7 +902,7 @@ the 30-minute canary meanwhile.
 - **Trigger** — E28-T02, E28-T05 or E34-S01 mounting a route before P-1 lands; E34-S03 mounting `amendTradeGroup` or `cancelTradeGroup` without the never-widen and native-stop checks; a leg whose resolved cap exceeds the bound profile.
 - **Contingency** — Refuse per-trade overrides and group amends in the validator, run the kill switch on the affected accounts, and audit the exposure window against the exchange.
 
-### RSK-077 · The profile and group schema allows an uncapped trading profile, an ownerless group definition and a group that spans environments
+### RSK-083 · The profile and group schema allows an uncapped trading profile, an ownerless group definition and a group that spans environments
 
 `Risk: R4` · Category **Security** · L 3 · I 4 · **Score 12 — High (the model's inherent rating; Low once SR-E28-01, -16 and -31 ship)** · Owner **Architect** · Epics E28, E34 · Status **Open**
 
@@ -911,7 +911,7 @@ the 30-minute canary meanwhile.
 - **Trigger** — E28-T01 merging before SR-E28-01, -16 and -31 are in the migration; D8 or D11 undecided at that merge; a trading-enabled profile with a NULL loss cap or an empty allow-list that means "all".
 - **Contingency** — Fix forward with a new migration (C-5.4): add the missing columns and constraints, disable trading on every profile that violates them, and re-check every group's members against the grants and the environment.
 
-### RSK-078 · A deferred, retried or child leg is sent after the kill switch, a lockout, the live gate or a revoked grant has taken effect
+### RSK-084 · A deferred, retried or child leg is sent after the kill switch, a lockout, the live gate or a revoked grant has taken effect
 
 `Risk: R4` · Category **Security** · L 3 · I 5 · **Score 15 — Critical (the model's inherent rating; Low once SR-E28-27 ships)** · Owner **Backend lead** · Epics E28, E34, E39 · Status **Open**
 
@@ -920,16 +920,16 @@ the 30-minute canary meanwhile.
 - **Trigger** — A position-opening adapter call after a kill switch, lockout or live-gate change took effect (must be zero); E34-S02 merging without `test_kill_switch_checked_before_every_leg_send`.
 - **Contingency** — Engage the kill switch globally, cancel working entries at the exchange if needed, and audit every order sent in the window against the exchange.
 
-### RSK-079 · A native stop placed beyond the liquidation price never fires first
+### RSK-085 · A native stop placed beyond the liquidation price never fires first
 
 `Risk: R4` · Category **Security** · L 3 · I 5 · **Score 15 — Critical (the model's inherent rating; Low once SR-E28-26 ships)** · Owner **Backend lead** · Epics E28 · Status **Open**
 
-- **Description** — Introduced by E28-X01 (PF-D06; finding F-15). At high leverage a wide stop, or the 2 % fallback from about 45x, lies past the liquidation price, so the native stop-loss cannot protect the position (C-2.6), and nothing checks the stop against it. A gap that fills a stop-market order beyond its price is a separate residual, proposed for acceptance as part of RR-19 in `04-security-program.md` §16.1.
+- **Description** — Introduced by E28-X01 (PF-D06; finding F-15). At high leverage a wide stop, or the 2 % fallback from about 45x, lies past the liquidation price, so the native stop-loss cannot protect the position (C-2.6), and nothing checks the stop against it. A gap that fills a stop-market order beyond its price is a separate residual, proposed for acceptance as part of RR-23 in `04-security-program.md` §16.1.
 - **Mitigation** — SR-E28-26: the sizer refuses a leg whose stop is not inside the estimated liquidation distance, with a buffer, at the leg's leverage and margin mode (`stop_beyond_liquidation`), and the validator warns at save (E28-T03 #907, E28-T02 #906); abuse case AC-27; the E28-Q01 (#904) fixtures include a high-leverage wide-stop profile.
 - **Trigger** — A leg admitted with a stop at or beyond the estimated liquidation price; E28-T03 merging without `test_stop_beyond_liquidation_is_refused`.
 - **Contingency** — Cap leverage by configuration on the affected profiles, flatten any position whose stop lies past liquidation, and review the exposure window.
 
-### RSK-080 · Entry retries drain the stop and cancel reserve, which three documents define three ways
+### RSK-086 · Entry retries drain the stop and cancel reserve, which three documents define three ways
 
 `Risk: R4` · Category **Security** · L 3 · I 5 · **Score 15 — Critical (the model's inherent rating; Low once SR-E28-23 ships)** · Owner **Backend lead** · Epics E34, E29, E28 · Status **Open**
 
@@ -944,10 +944,10 @@ the 30-minute canary meanwhile.
 
 | Score band           | Count  | IDs                                                                                                                                                                                                                                                                                                                                |
 | -------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Critical (15–25)** | 13     | RSK-053, RSK-001, RSK-004, RSK-010, RSK-013, RSK-014, RSK-031, RSK-037, RSK-060, RSK-076, RSK-078, RSK-079, RSK-080                                                                                                                                                                                                                |
-| **High (10–14)**     | 36     | RSK-056, RSK-002, RSK-011, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-022, RSK-023, RSK-026, RSK-028, RSK-029, RSK-032, RSK-036, RSK-039, RSK-041, RSK-043, RSK-046, RSK-047, RSK-049, RSK-065, RSK-066, RSK-068, RSK-069, RSK-070, RSK-071, RSK-072, RSK-073, RSK-076, RSK-077, RSK-078, RSK-079, RSK-080, RSK-081, RSK-077 |
+| **Critical (15–25)** | 13     | RSK-053, RSK-001, RSK-004, RSK-010, RSK-013, RSK-014, RSK-031, RSK-037, RSK-060, RSK-082, RSK-084, RSK-085, RSK-086                                                                                                                                                                                                                |
+| **High (10–14)**     | 36     | RSK-056, RSK-002, RSK-011, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-022, RSK-023, RSK-026, RSK-028, RSK-029, RSK-032, RSK-036, RSK-039, RSK-041, RSK-043, RSK-046, RSK-047, RSK-049, RSK-065, RSK-066, RSK-068, RSK-069, RSK-070, RSK-071, RSK-072, RSK-073, RSK-076, RSK-077, RSK-078, RSK-079, RSK-080, RSK-081, RSK-083 |
 | **Medium (5–9)**     | 32     | RSK-003, RSK-005, RSK-012, RSK-015, RSK-021, RSK-024, RSK-025, RSK-027, RSK-030, RSK-033, RSK-034, RSK-035, RSK-038, RSK-040, RSK-042, RSK-044, RSK-048, RSK-050, RSK-051, RSK-052, RSK-054, RSK-055, RSK-057, RSK-058, RSK-059, RSK-061, RSK-062, RSK-063, RSK-064, RSK-067, RSK-074, RSK-075                                     |
-| **Total entries**    | **81** | RSK-001 … RSK-081 (non-contiguous numbering, grouped by category block; numbers are never reused)                                                                                                                                                                                                                                  |
+| **Total entries**    | **81** | RSK-001 … RSK-086 (non-contiguous numbering, grouped by category block; numbers are never reused)                                                                                                                                                                                                                                  |
 
 Band arithmetic (corrected by E49-T03; the earlier text said 47 and predated RSK-051…057): 13 Critical + 36 High + 32 Medium = **81**, equal to the 81 `### RSK-nnn` entries in §3–§9 (RSK-053 moved High→Critical on its provisional re-score). There are no Low-band entries: anything that scored ≤4 during drafting was not carried into the register as a tracked risk (see §10.1.2). RSK-012 moved High->Medium in an earlier PR (E07-K01 spike evidence, partial retirement); its narrative was corrected in this PR after QA bug #1562 found the spike's original shape-B result was not reproducible (see §4 entry) — the band/score is unchanged, only the evidence text.
 
@@ -974,7 +974,7 @@ IDs are assigned in **category blocks of ten** so a reader can infer a risk's fa
 | 069–071      | Replay security (R4/R8), E26-X01                  | 069, 070, 071                | none — three Security entries from the E26-X01 STRIDE model, numbered after 068 for the same reason                                                                                                                                                                                                                                                                             |
 | 072–075      | Admin-area security (R6/R14), E42-X01             | 072, 073, 074, 075           | none — four Security entries from the E42-X01 STRIDE model, numbered after 071 for the same reason                                                                                                                                                                                                                                                                              |
 | 076–081      | Order-management security (R4/R5/R6), E29-X01     | 076, 077, 078, 079, 080, 081 | none — six Security entries from the E29-X01 STRIDE model, numbered after 075 for the same reason                                                                                                                                                                                                                                                                               |
-| 076–080      | Profiles & trade-group security (R4), E28-X01     | 076, 077, 078, 079, 080      | none — five Security entries from the E28-X01 STRIDE model, numbered after 075 for the same reason                                                                                                                                                                                                                                                                              |
+| 082–086      | Profiles & trade-group security (R4), E28-X01     | 082, 083, 084, 085, 086      | none — five Security entries from the E28-X01 STRIDE model, numbered after 081 for the same reason                                                                                                                                                                                                                                                                              |
 
 **E49-T03 (2026-10-06):** no ID was retired in the re-review — no risk's mitigation is fully shipped (the storage-writer and unwired-component clusters in `e49-root-cause-clusters.md` are defect clusters, not register entries; RSK-012 stays _largely retired_ until E07-S07). Nothing was reused or back-filled.
 
@@ -987,7 +987,7 @@ Each of the 81 entries appears in **exactly one** category row below — the cat
 | Category                                                                            | Count  | IDs (ascending)                                                                                                                                                                                                      |
 | ----------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Technical (rendering, market data, storage, concurrency, quality-of-rendering a11y) | 17     | RSK-001, 002, 003, 004, 005, 010, 011, 012, 017, 026, 027, 028, 040, 044, 050, 052, 062                                                                                                                              |
-| Security                                                                            | 42     | RSK-016, 018, 019, 020, 021, 022, 029, 030, 043, 051, 053, 055, 056, 057, 058, 059, 060, 061, 063, 064, 065, 066, 067, 068, 069, 070, 071, 072, 073, 074, 075, 076, 077, 078, 079, 080, 081, 076, 077, 078, 079, 080 |
+| Security                                                                            | 42     | RSK-016, 018, 019, 020, 021, 022, 029, 030, 043, 051, 053, 055, 056, 057, 058, 059, 060, 061, 063, 064, 065, 066, 067, 068, 069, 070, 071, 072, 073, 074, 075, 076, 077, 078, 079, 080, 081, 082, 083, 084, 085, 086 |
 | Vendor/Bybit                                                                        | 6      | RSK-013, 014, 015, 023, 024, 025                                                                                                                                                                                     |
 | Schedule                                                                            | 5      | RSK-031, 032, 033, 036, 039                                                                                                                                                                                          |
 | Team                                                                                | 4      | RSK-037, 038, 041, 042                                                                                                                                                                                               |
@@ -1025,7 +1025,7 @@ This is the second of the three partitions reconciled in §10.1.1. Each of the 8
 | R1 Rendering & frame budget     | 5      | RSK-001, 002, 003, 004, 005                                                   |
 | R2 Market-data integrity        | 6      | RSK-010, 011, 057, 059, 061, 063                                              |
 | R3 Exchange API dependency      | 6      | RSK-013, 014, 015, 023, 024, 025                                              |
-| R4 Order-execution safety       | 15     | RSK-016, 017, 056, 067, 070, 071, 076, 077, 078, 081, 076, 077, 078, 079, 080 |
+| R4 Order-execution safety       | 15     | RSK-016, 017, 056, 067, 070, 071, 076, 077, 078, 081, 082, 083, 084, 085, 086 |
 | R5 Credential & key security    | 6      | RSK-018, 019, 065, 066, 068, 080                                              |
 | R6 AuthN/AuthZ                  | 9      | RSK-020, 021, 022, 043, 064, 073, 074, 075, 079                               |
 | R7 Data persistence & retention | 7      | RSK-012, 026, 027, 052, 058, 060, 062                                         |
@@ -1048,7 +1048,7 @@ This is the second of the three partitions reconciled in §10.1.1. Each of the 8
 | R0    | RSK-001 (spike result), RSK-012 (hot-tier decision), RSK-003, RSK-029                                                                                                                                         |
 | R1    | RSK-001, RSK-002, RSK-004, RSK-011, RSK-026, RSK-040                                                                                                                                                          |
 | R2    | RSK-004, RSK-005, RSK-010, RSK-027, RSK-028, RSK-044, RSK-049, RSK-069, RSK-070, RSK-071                                                                                                                      |
-| R3    | RSK-013, RSK-014, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-034, RSK-050, RSK-056, RSK-072, RSK-073, RSK-076, RSK-077, RSK-078, RSK-079, RSK-080, RSK-081, RSK-076, RSK-077, RSK-078, RSK-079, RSK-080 |
+| R3    | RSK-013, RSK-014, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-034, RSK-050, RSK-056, RSK-072, RSK-073, RSK-076, RSK-077, RSK-078, RSK-079, RSK-080, RSK-081, RSK-082, RSK-083, RSK-084, RSK-085, RSK-086 |
 | R4    | RSK-013, RSK-014, RSK-016, RSK-019, RSK-020, RSK-022, RSK-023, RSK-043, RSK-046, RSK-047                                                                                                                      |
 | R5    | RSK-040, RSK-044, RSK-046, RSK-047, RSK-048, plus every accepted risk re-reviewed against its expiry                                                                                                          |
 

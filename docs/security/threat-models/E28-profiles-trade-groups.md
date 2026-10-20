@@ -3,7 +3,7 @@
 - Ticket: E28-X01 (issue #910). Owner: Security engineer (CODEOWNER). Status: **Approved** (2026-10-20; independent
   reviews: fable security and sonnet code, APPROVE x2 at `f10d3ae8` on #2591, revision 3 at `4c9ed26c` applying their
   items; QA record on #910; the Fable security pass on the approving amendment is recorded on its PR). Owner acceptance
-  of the §11.2 residuals (RR-19) and the Owner decisions D8 and D11 are pending, queued on #2701; review log at the end
+  of the §11.2 residuals (RR-23) and the Owner decisions D8 and D11 are pending, queued on #2701; review log at the end
   of §11.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow (C-12.1),
   in the four-question frame: what are we building (§1, §2), what can go wrong (§3 to §5), what are we going to do
@@ -783,9 +783,9 @@ not extended (`32-risk-register.md` §1.3).
 PF-T12 and PF-T13 keep E13's Medium residual (E13 model §12, RSK-060), E13's acceptance, not a new one. No High
 residual remains once the requirements ship; until then every Critical or High row is open. Register entries for every
 Critical finding and every schema High (F-01, F-03 to F-05, F-11, F-12, F-15, F-16, F-29) are recorded in
-`32-risk-register.md`: RSK-076 (F-01, F-29), RSK-077 (F-03 to F-05), RSK-078 (F-12), RSK-079 (F-15) and RSK-080 (F-16),
-and a refinement of RSK-060 for F-11. `04-security-program.md` §16.1 carries them as RR-18 (open, release blockers for
-R3) and the five residuals above as RR-19 (proposed for acceptance); both are queued on #2701 with D8 and D11.
+`32-risk-register.md`: RSK-082 (F-01, F-29), RSK-083 (F-03 to F-05), RSK-084 (F-12), RSK-085 (F-15) and RSK-086 (F-16),
+and a refinement of RSK-060 for F-11. `04-security-program.md` §16.1 carries them as RR-22 (open, release blockers for
+R3) and the five residuals above as RR-23 (proposed for acceptance); both are queued on #2701 with D8 and D11.
 
 ### 11.3 Amendment notes owed
 
@@ -806,5 +806,5 @@ programme §8.2, `audit/actions.py` and the tickets (F-21); (8) ADR numbering (F
 | 2026-10-15 | code-reviewer (sonnet, independent; PR #2591)    | Docs accuracy and traceability: APPROVE at `70fd1924` and at `f10d3ae8`                                                                                                                                                                                                           |
 | 2026-10-15 | author (hpe-worker-1)                            | Revision 3 at `4c9ed26c` (docs only, merged as `016d157e`) applies the delta reviewers' last items; `git range-diff` shows revisions 1 and 2 equal; no review is recorded at that head                                                                                            |
 | 2026-10-20 | QA (sonnet, independent; #910)                   | FAIL on main `a7583e99` (record of 03:47Z): model still Draft; no E28 entry in the risk register, 04 §5.11 or §16.1; schema findings and abuse cases not posted on their tickets; no sign-off. Closed by this amendment except the Owner items, the P-1 filing and the Fable pass |
-| 2026-10-20 | amendment author (agent)                         | Approved on that basis: RSK-076 to RSK-080 and an RSK-060 refinement in `32-risk-register.md`; RR-18 and RR-19 in 04 §16.1; F-13 and PF-E05 brought to the control #2855 shipped; requests posted (§10.3)                                                                         |
+| 2026-10-20 | amendment author (agent)                         | Approved on that basis: RSK-082 to RSK-086 and an RSK-060 refinement in `32-risk-register.md`; RR-22 and RR-23 in 04 §16.1; F-13 and PF-E05 brought to the control #2855 shipped; requests posted (§10.3)                                                                         |
 | 2026-10-20 | security-reviewer (Fable, independent; this PR)  | Pending: the pass covers the model as merged (`4c9ed26c`) and this amendment; its record is on the PR                                                                                                                                                                             |
