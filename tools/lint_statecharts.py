@@ -54,13 +54,21 @@ ALLOWED_DRAIN_MODULES = {"persistence.py"}
 ALLOWED_REMINT_MODULES = {"gateway.py"}
 
 # Hot-path package/module prefixes that must never import the statechart
-# package (CV-LINT-HOTPATH, MUSTNOT-01..03, catalogue §3).
+# package (CV-LINT-HOTPATH, MUSTNOT-01..03, catalogue §3). The replay modules
+# on the per-event path (E26-T03) are listed one by one, as in the
+# import-linter contract (module-contracts.toml hotpath_statechart): the replay
+# session service beside them drives B12 and imports the statechart package.
 HOTPATH_MODULE_PREFIXES = (
     "candleviewer.book",
     "candleviewer.bars",
     "candleviewer.orderflow",
     "candleviewer.oms.hotpath",
     "candleviewer.rules.evaluator",
+    "candleviewer.replay.clock",
+    "candleviewer.replay.injector",
+    "candleviewer.replay.pacing",
+    "candleviewer.replay.regroup",
+    "candleviewer.replay.runner",
 )
 
 SEVERITY_ERROR = "error"
