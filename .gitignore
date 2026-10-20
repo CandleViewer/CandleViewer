@@ -67,6 +67,11 @@ CLAUDE.local.md
 .claude/settings.local.json
 # temp file of scripts/relayroom-enter-credentials.py's atomic write (holds the secrets if a kill leaves it behind)
 .claude/.settings.local.*.tmp
+# project-scoped MCP config holds the RelayRoom connect URL — machine-local
+/.mcp.json
+/.mcp.json.tmp
+# the RelayRoom diagnostic skill is installed per machine by the client tooling
+/.claude/skills/candleviewer-relayroom-check/
 .coverage
 *.tmp.*
 .spike-tmp/

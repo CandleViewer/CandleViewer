@@ -224,7 +224,8 @@ def test_doctor_reads_config_root_from_argv_when_not_given(cfg_root, capsys, mon
 
 def test_doctor_committed_mcp_template_satisfies_the_template_check(cfg_root, capsys):
     # The tracked, secret-free template must stay in step with what the doctor expects.
-    template = json.loads((REPO_ROOT / ".mcp.json").read_text(encoding="utf-8"))
+    template_path = REPO_ROOT / "docs/ops/relayroom-mcp.template.json"
+    template = json.loads(template_path.read_text(encoding="utf-8"))
     outcome = run_doctor(make_root(cfg_root, mcp=template), capsys)
 
     assert outcome.code == 0, outcome.out
@@ -859,12 +860,17 @@ def test_repo_gitignore_covers_the_private_files_and_the_atomic_write_temp_file(
     shutil.copy2(REPO_ROOT / ".gitignore", cfg_root / ".gitignore")
     claude = cfg_root / ".claude"
     (claude / "relayroom" / "runs").mkdir(parents=True)
+    skill_dir = claude / "skills" / "candleviewer-relayroom-check"
+    skill_dir.mkdir(parents=True)
     fd, tmp_name = tempfile.mkstemp(dir=claude, prefix=creds.TMP_PREFIX, suffix=creds.TMP_SUFFIX)
     os.close(fd)
     private = [
         claude / "settings.local.json",
         claude / "relayroom" / "identity.local.json",
         claude / "relayroom" / "runs" / "x.json",
+        cfg_root / ".mcp.json",
+        cfg_root / ".mcp.json.tmp",
+        skill_dir / "SKILL.md",
     ]
     for path in private:
         path.write_text("{}", encoding="utf-8")
@@ -872,7 +878,12 @@ def test_repo_gitignore_covers_the_private_files_and_the_atomic_write_temp_file(
     for path in [*private, Path(tmp_name)]:
         rel = path.relative_to(cfg_root).as_posix()
         assert git(cfg_root, "check-ignore", "-q", rel).returncode == 0, f"{rel} not ignored"
-    for shared in (".claude/settings.json", ".claude/skills/candleviewer-relayroom-check/SKILL.md"):
+    for shared in (
+        ".claude/settings.json",
+        ".claude/skills/other-skill/SKILL.md",  # the skill entry is narrow, not all of skills/
+        "docs/ops/relayroom-check-skill.template.md",
+        "docs/ops/relayroom-mcp.template.json",
+    ):
         assert git(cfg_root, "check-ignore", "-q", shared).returncode == 1, f"{shared} ignored"
 
 

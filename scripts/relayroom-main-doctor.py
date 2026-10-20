@@ -61,7 +61,7 @@ def load_json(p: Path) -> dict | None:
 
 def run(root: Path) -> int:
     """Run every check against `root`, print the allowlisted report, return the exit code."""
-    # --- shared template --------------------------------------------------
+    # --- local MCP config (copied from docs/ops/relayroom-mcp.template.json) ---
     mcp = load_json(root / ".mcp.json")
     check(".mcp.json parses as a JSON object", mcp is not None)
     servers = mcp.get("mcpServers") if mcp is not None else None
