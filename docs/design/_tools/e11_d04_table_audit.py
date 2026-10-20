@@ -93,6 +93,15 @@ CR = {
         "light": "palette.light.red.700",
         "high-contrast": "palette.red.300",
     },
+    # CR-D04-14 (lens round 2, F-6): in light, color.status.danger.strong resolves to the same
+    # primitive as color.status.warning.strong (palette.light.amber.300). The candidate keeps dark
+    # and hc unchanged and proposes a deep red for light; the DS owner weighs it against 16
+    # section 2.1 (danger must also stay apart from sell / env.live -- see the CVD rows).
+    "CR:color.status.danger.strong": {
+        "dark": "palette.amber.400",
+        "light": "palette.light.red.800",
+        "high-contrast": "palette.amber.400",
+    },
 }
 
 
@@ -115,7 +124,12 @@ PAIRS: list[tuple[str, str, str, str]] = [
     ("time row header, numbers (odd row)", "color.text.primary", "color.surface.canvas", "text"),
     ("time row header, numbers (even row)", "color.text.primary", "color.surface.raised", "text"),
     ("numbers on the hovered row", "color.text.primary", "color.surface.hover", "text"),
-    ("numbers on the focused row", "color.text.primary", "color.surface.selected", "text"),
+    (
+        "numbers on a selected row (surface.selected + check)",
+        "color.text.primary",
+        "color.surface.selected",
+        "text",
+    ),
     ("numbers on the expanded level sub-table", "color.text.primary", "color.surface.app", "text"),
     (
         "secondary cell text: forming bar, caption, counts (canvas)",
@@ -124,7 +138,12 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "text",
     ),
     ("secondary cell text (raised row)", "color.text.secondary", "color.surface.raised", "text"),
-    ("secondary cell text (focused row)", "color.text.secondary", "color.surface.selected", "text"),
+    (
+        "secondary cell text (selected row)",
+        "color.text.secondary",
+        "color.surface.selected",
+        "text",
+    ),
     ("secondary text on the level sub-table", "color.text.secondary", "color.surface.app", "text"),
     (
         "zebra: even row fill vs odd row fill",
@@ -133,9 +152,19 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "decorative",
     ),
     ("row divider hairline", "color.border.subtle", "color.surface.canvas", "decorative"),
-    ("focused row fill vs canvas", "color.surface.selected", "color.surface.canvas", "decorative"),
-    ("focus ring on an odd row", "color.focus.ring", "color.surface.canvas", "non-text"),
-    ("focus ring on an even row", "color.focus.ring", "color.surface.raised", "non-text"),
+    ("selected row fill vs canvas", "color.surface.selected", "color.surface.canvas", "decorative"),
+    (
+        "focus ring on an odd row (the cursor row: ring only)",
+        "color.focus.ring",
+        "color.surface.canvas",
+        "non-text",
+    ),
+    (
+        "focus ring on an even row (the cursor row: ring only)",
+        "color.focus.ring",
+        "color.surface.raised",
+        "non-text",
+    ),
     (
         "focus ring on the hovered row / header (unregistered in pairs.mjs)",
         "color.focus.ring",
@@ -143,7 +172,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "non-text",
     ),
     (
-        "focus ring on the focused row fill (unregistered in pairs.mjs)",
+        "focus ring on a selected row fill (cursor + selected; unregistered in pairs.mjs)",
         "color.focus.ring",
         "color.surface.selected",
         "non-text",
@@ -181,7 +210,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "text",
     ),
     (
-        "CR: delta / CVD positive number (focused row)",
+        "CR: delta / CVD positive number (selected row)",
         "CR:color.text.buy",
         "color.surface.selected",
         "text",
@@ -206,7 +235,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "text",
     ),
     (
-        "CR: delta / CVD negative number (focused row)",
+        "CR: delta / CVD negative number (selected row)",
         "CR:color.text.sell",
         "color.surface.selected",
         "text",
@@ -244,7 +273,7 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "non-text",
     ),
     (
-        "imbalance flag bar on the focused row",
+        "imbalance flag bar on a selected row",
         "color.footprint.imbalance",
         "color.surface.selected",
         "non-text",
@@ -389,6 +418,18 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "non-text",
     ),
     (
+        "CR: error card rule / alert icon, light-distinct danger.strong (CR-D04-14)",
+        "CR:color.status.danger.strong",
+        "color.surface.raised",
+        "non-text",
+    ),
+    (
+        "CR: error card rule against the canvas edge, light-distinct (CR-D04-14)",
+        "CR:color.status.danger.strong",
+        "color.surface.canvas",
+        "non-text",
+    ),
+    (
         "error card -- REJECTED pair (danger.default as text on the card)",
         "color.status.danger.default",
         "color.surface.raised",
@@ -509,7 +550,22 @@ CVD_PAIRS: list[tuple[str, str, str]] = [
     ("(estimated) glyph vs delta positive text", "color.status.info.strong", "CR:color.text.buy"),
     ("primary CTA fill vs focus ring", "color.action.primary.default", "color.focus.ring"),
     ("link vs delta positive text", "color.text.link", "CR:color.text.buy"),
-    ("focused row fill vs hovered row fill", "color.surface.selected", "color.surface.hover"),
+    ("selected row fill vs hovered row fill", "color.surface.selected", "color.surface.hover"),
+    (
+        "CR danger.strong (light-distinct) vs restoring icon (warning.strong)",
+        "CR:color.status.danger.strong",
+        "color.status.warning.strong",
+    ),
+    (
+        "CR danger.strong (light-distinct) vs env LIVE",
+        "CR:color.status.danger.strong",
+        "color.env.live",
+    ),
+    (
+        "CR danger.strong (light-distinct) vs delta negative text (sell hue)",
+        "CR:color.status.danger.strong",
+        "CR:color.text.sell",
+    ),
 ]
 JND = 5.0
 
@@ -526,10 +582,7 @@ PRIMARY_COLUMNS: list[tuple[str, int]] = [  # (column, character budget incl. si
     ("close", 9),
     ("volume", 8),
     ("delta", 8),
-    (
-        "state",
-        7,
-    ),  # forming / Est. / POC: the row-state word (lens F-2); the full list is in `flags`
+    ("state", 8),  # forming / Est. / POC / "Est.·POC" (lens F-2, F-10); the full list is in `flags`
 ]
 EXTENDED_FIRST: tuple[str, int] = ("CVD", 9)
 FIXED_CSS_PX = {"expander": 24, "actions": 24, "scrollbar": 12}  # size.target.min x2 + a scrollbar
@@ -645,6 +698,7 @@ def main() -> int:
         "color.footprint.imbalance",
         "color.status.warning.strong",
         "color.status.danger.strong",
+        "CR:color.status.danger.strong",
         "color.status.info.strong",
         "color.data-confidence.delisted.indicator",
         "color.action.primary.default",
