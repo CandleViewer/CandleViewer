@@ -18,7 +18,8 @@
     "duration_s": 86400,
     "sample_every_s": 60,
     "realtime": false,
-    "scaling": "none: 24 h of scenario time at 1x fixture cadence, 3 symbols, 32 specs x 1 000 bars each, sample every 60 s, memory baseline = hour 2 (fraction 0.0833); on the virtual clock, as memory follows the trades and closes, not the wall clock (soak_steady keeps the 1x wall-clock leg)"
+    "plateau_window_s": 43200,
+    "scaling": "none: 24 h of scenario time at 1x fixture cadence, 3 symbols, 32 specs x 1 000 bars each, sample every 60 s, memory baseline = hour 2 (fraction 0.0833), plateau (R4, #399) = the Theil-Sen slope of the last 12 h; on the virtual clock, as memory follows the trades and closes, not the wall clock (soak_steady keeps the 1x wall-clock leg)"
   },
   "smoke": {
     "duration_s": 90,
@@ -26,7 +27,7 @@
     "realtime": false,
     "warmup_s": 120,
     "warmup_wall_s": 2,
-    "scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s). Each lane's ring of 8 192 recent trades fills 164 s into the run, 44 s into the sampled window, so that fill is inside it and uses part of the 5 % flatness margin (1.9 % measured)"
+    "scaling": "soak_steady's smoke with the bars path at the same cap: 90 s of scenario time on a virtual clock, sample every 5 s, after an unsampled warm-up of 120 s of scenario time and at least 2 s of wall time; flatness baseline at the same 1/12 fraction of the sampled window (t=7.5 s), and no plateau check (R4 reads the last 12 h, which 90 s does not hold). Each lane's ring of 8 192 recent trades fills 164 s into the run, 44 s into the sampled window, so that fill is inside it and uses part of the 5 % flatness margin (1.9 % measured)"
   },
   "tolerances": {
     "ingest_lag_ms": 0.25,
