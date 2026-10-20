@@ -121,8 +121,8 @@ async def client(pg_dsn: str, tmp_path: Path, lane_key: str) -> AsyncIterator[ht
     )
     app = create_app(settings, auth_clock=lambda: _NOW)
     ctx = app.state.app_context
-    # Only the modules under test: StorageService(real) is not implemented yet
-    # (raises StorageTierUnavailable), and auth/audit own their own engines.
+    # Only the modules under test: StorageService(real) would also need QuestDB and a
+    # cold-tier root (#3874), and auth/audit own their own engines.
     await ctx.audit.start(ctx)
     await ctx.auth.start(ctx)
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))

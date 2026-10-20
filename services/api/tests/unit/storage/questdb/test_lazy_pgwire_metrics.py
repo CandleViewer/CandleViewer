@@ -285,4 +285,4 @@ def test_each_series_is_its_catalogue_row_bounded_by_the_closed_names() -> None:
         assert (row.labels, row.help, row.max_series) == (labels, family.documentation, cap)
         assert (row.status, row.exported) == ("live", True)
     assert rows["questdb_pgwire_lock_wait_seconds"].buckets == pm.LOCK_WAIT_BUCKETS
-    assert (wires, len(pm.DISCARD_REASONS)) == (6, 3)
+    assert (wires, len(pm.DISCARD_REASONS)) == (7, 3)

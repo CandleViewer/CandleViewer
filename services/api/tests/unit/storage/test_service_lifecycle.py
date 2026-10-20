@@ -84,12 +84,6 @@ async def test_health_is_degraded_when_started_but_postgres_tier_missing(
     assert service.health().status is HealthStatus.DEGRADED
 
 
-async def test_real_backend_raises_tier_unavailable_at_start() -> None:
-    service = StorageService(backend="real")
-    with pytest.raises(StorageTierUnavailable):
-        await service.start(ctx=None)  # type: ignore[arg-type]
-
-
 async def test_stop_awaits_in_flight_write_within_grace_window() -> None:
     service = StorageService(backend="fake")
     await service.start(ctx=None)  # type: ignore[arg-type]

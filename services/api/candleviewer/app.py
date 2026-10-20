@@ -1379,6 +1379,8 @@ def create_app(
             ingestion_health=ctx.ingestion.health,
             secrets_health=ctx.secrets.health,
             accounts_health=ctx.accounts.health,
+            # #3874: the real tiers' probes; the fake backend's tiers are not checked
+            storage_health=ctx.storage.tier_health if resolved.storage_backend == "real" else None,
         )
     )
     # E04-T04: cached component health. Unbuilt modules register `not_deployed`

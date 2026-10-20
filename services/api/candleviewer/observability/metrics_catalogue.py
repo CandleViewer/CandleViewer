@@ -1279,7 +1279,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         " any on wire=bars = REST, klines or the writer probe losing their connection",
         _L,
         "E12",
-        max_series=18,  # 6 `WireName` x 3 `DiscardReason` (observability.pgwire_metrics)
+        max_series=21,  # 7 `WireName` x 3 `DiscardReason` (observability.pgwire_metrics)
         exported=True,
     ),
     _s(
@@ -1292,7 +1292,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "any on wire=bars = a REST or klines read gave up queued on the connection (#2787 G2)",
         _L,
         "E12",
-        max_series=6,
+        max_series=7,
         exported=True,
     ),
     _s(
@@ -1307,7 +1307,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E12",
         LOCK_WAIT_BUCKETS,
-        max_series=6,
+        max_series=7,
         exported=True,
     ),
     _s(
