@@ -78,11 +78,13 @@ from candleviewer.ws.metrics import (
 from candleviewer.ws.rebuild_budget import RebuildBudget, UserRebuilds, topic_key
 from candleviewer.ws.rebuild_budget import Scope as BudgetScope
 from candleviewer.ws.revocation import (
+    CLOSE_FAILURE_LOG_EVERY_S,
     EVICTION_LOG_EVERY_S,
     Closer,
     RevokedReason,
     revoked_frame,
     user_disabled_bye,
+    ws_revocation_close_failures_total,
     ws_revoked_total,
 )
 from candleviewer.ws.sequencing import (
@@ -1132,6 +1134,10 @@ class ConnectionRegistry:
         #: Live entries forgotten at the cap, and when that was last logged.
         self._disabled_evicted = 0
         self._disabled_evicted_logged_at: float | None = None
+        #: Per-user closes that failed (raised or hit `send_timeout_s`) since this registry
+        #: started, all users together, and when one was last logged (#3635).
+        self._close_failures = 0
+        self._close_failure_logged_at: float | None = None
 
     @property
     def disabled_memory_s(self) -> float:
@@ -1413,7 +1419,18 @@ class ConnectionRegistry:
         gateway's closer queues the `bye` and seals the connection, and its writer closes the
         socket later, which is not measured. Made in a `finally`, so a close that raised, one cut
         off at `send_timeout_s` and a caller that cancelled mid-batch (the disable cascade bounds
-        this step at 2 s and does not shield it) are timed too."""
+        this step at 2 s and does not shield it) are timed too.
+
+        A close that raised or was cut off at `send_timeout_s` is a failed close (#3635). It is
+        counted on `ws_session_revocation_close_failures_total`, the hub's counter, and logged at
+        most once per `CLOSE_FAILURE_LOG_EVERY_S` with the registry's running total
+        (`_close_failed`); the user's other sockets are still closed. The call still returns how
+        many sockets it tried and the disable cascade's `socket_close` step still ends `ok`, so
+        the counter and its log line are the only signs. The socket can stay open until its access
+        token expires (12 minutes at most); REST has refused the user since the disable, and
+        orders are REST only. A cancellation (the cascade's 2 s cut, which opens before
+        `send_timeout_s` and so ends a hung closer first) is not a failed close: it is not counted,
+        and it propagates."""
         self._changed_at = next(self._versions)  # SR-189: also for a socket mid-handshake
         self._remember_disabled(user_id)  # before the closes, which suspend
         entries = self._conns.pop(user_id, [])
@@ -1425,15 +1442,40 @@ class ConnectionRegistry:
                 closer = self._closers.pop(id(authz), None)
                 authz.release_all()
                 ws_revoked_total.labels(reason="user_disabled").inc()
-                with contextlib.suppress(Exception):
+                try:
                     async with asyncio.timeout(self.send_timeout_s):
                         if closer is not None:
                             await closer(user_disabled_bye(self._clock_ms()), 4403)
                         elif close is not None:
                             await close()
+                except Exception:
+                    # Raised or cut off at the bound: counted, and the next socket is still closed.
+                    # A cancellation is no `Exception`, so it propagates, uncounted.
+                    self._close_failed(user_id)
         finally:
             auth_revocation_latency_seconds.observe(self.services.clock() - started)
         return len(entries)
+
+    def _close_failed(self, user_id: uuid.UUID) -> None:
+        """One failed per-user close, called from the handler of its exception (#3635). Counted
+        first, so nothing after it can lose the count, then logged with that traceback at most
+        once per `CLOSE_FAILURE_LOG_EVERY_S` on `monotonic`: a window opens at a logged line, not
+        at a counted failure, and the line carries this registry's running total of failures."""
+        ws_revocation_close_failures_total.inc()
+        self._close_failures += 1
+        now = self._monotonic()
+        logged_at = self._close_failure_logged_at
+        if logged_at is None or now - logged_at >= CLOSE_FAILURE_LOG_EVERY_S:
+            self._close_failure_logged_at = now
+            # A failing log sink must never skip the closes that follow (C-2.12); the counter
+            # above still records the failure.
+            with contextlib.suppress(Exception):
+                _log().error(
+                    "ws revocation close failed; disabled user's socket may remain open",
+                    user_id=str(user_id),
+                    failed_total=self._close_failures,
+                    exc_info=True,
+                )
 
 
 Send = Any  # async (frame: dict) -> None

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from prometheus_client import REGISTRY, CollectorRegistry, generate_latest
 from prometheus_client.parser import text_string_to_metric_families
+from structlog.testing import capture_logs
 
 from candleviewer.app import create_app
 from candleviewer.audit.actions import AUDIT_ACTIONS
@@ -35,6 +36,7 @@ from candleviewer.auth.models import MfaMethodKind
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
+from candleviewer.ws.revocation import ws_revocation_close_failures_total
 
 SECURITY_SERIES = ("auth_lockouts_total", "authz_denied_total", "auth_stepup_failures_total")
 #: #2319: series now served on the scraped registry, with their catalogue labels.
@@ -252,6 +254,56 @@ def test_the_revoke_to_close_latency_has_one_name_catalogued_and_exported() -> N
     assert (spec.kind, spec.labels, spec.status, spec.exported) == ("histogram", (), "live", True)
     assert _LATENCY in AUTH_EXPORTED_NAMES
     assert spec.buckets is not None and 5.0 in spec.buckets  # SR-029's line is a bucket edge
+
+
+#: #3497, #3635 (SR-029): the failed-close count, declared in `ws/revocation.py` and counted by the
+#: hub and by the disable's per-user close; this module only names it for the scrape.
+_CLOSE_FAILURES = "ws_session_revocation_close_failures_total"
+
+
+def test_the_close_failure_counter_is_catalogued_exported_and_present_from_start() -> None:
+    # Its HELP is the catalogue's word for word, since nothing derives one from the other. It
+    # exists before the first failure: `increase()` needs that 0, and an `absent()` guard reads it.
+    spec = _SPECS[_CLOSE_FAILURES]
+    (family,) = ws_revocation_close_failures_total.describe()
+
+    assert (spec.kind, spec.labels, spec.status, spec.exported) == ("counter", (), "live", True)
+    assert _CLOSE_FAILURES in AUTH_EXPORTED_NAMES
+    assert family.documentation == spec.help
+    assert REGISTRY.get_sample_value(_CLOSE_FAILURES) is not None
+
+
+def test_create_app_serves_the_close_failure_counter_with_env_as_its_only_label() -> None:
+    app = create_app(Settings(environment=Environment.DEMO))
+    text = generate_latest(app.state.app_context.metrics).decode()
+    family = {f.name: f for f in text_string_to_metric_families(text)}[
+        _CLOSE_FAILURES.removesuffix("_total")
+    ]
+    assert family.type == "counter" and family.samples
+    assert {label for sample in family.samples for label in sample.labels} == {"env"}
+    assert f"# HELP {_CLOSE_FAILURES} " in text
+
+
+async def test_a_failed_close_of_a_revoked_session_is_one_scraped_failure() -> None:
+    """#3497's acceptance criterion on the deployed app's hub: a session with an open socket whose
+    close fails is revoked, and the counter the scraped registry serves, with `env` only, gains
+    exactly one. The ticket that fires on that increase is proven by promtool, in
+    `infra/prometheus/tests/system_alerts.test.yml`."""
+    app = create_app(Settings(environment=Environment.DEMO))
+    scraped: CollectorRegistry = app.state.app_context.metrics
+
+    async def socket(frame: dict[str, object], code: int) -> None:
+        raise ConnectionResetError("the peer is gone")
+
+    def failures() -> float | None:
+        return scraped.get_sample_value(_CLOSE_FAILURES, {"env": "demo"})
+
+    app.state.revocation_hub.register("s1", socket)
+    before = failures()
+    assert before is not None, f"{_CLOSE_FAILURES} is not on the scraped registry"
+    with capture_logs():  # the hub logs the failure
+        assert await app.state.revocation_hub.revoke("s1") == 1
+    assert failures() == before + 1
 
 
 def test_enrolment_series_are_catalogued_exported_and_bound_from_process_start() -> None:

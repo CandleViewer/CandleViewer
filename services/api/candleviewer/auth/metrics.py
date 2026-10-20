@@ -355,6 +355,11 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_break_glass_state_read_failures_total",
         # SR-029 revoke-to-close latency, observed by the WS hub and the per-user close (#3415)
         "auth_revocation_latency_seconds",
+        # SR-029 failed closes of those two paths, declared in `ws/revocation.py` (`ws` may import
+        # `auth`, never the reverse): the collector reads the default registry by name, so this
+        # module imports nothing for it. `WsRevocationCloseFailed` tickets any increase (#3497,
+        # #3635).
+        "ws_session_revocation_close_failures_total",
     }
 )
 

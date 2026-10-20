@@ -11,7 +11,10 @@ hub's monotonic clock (#3415): from the revoke to the last of its closes initiat
 disable's per-user close, `ConnectionRegistry.user_disabled` (`ws/permissions.py`), which also ends
 the sockets on sessions that no revoke names (#3440), is one more, on the registry's clock. The
 gateway's closer queues the `bye` and seals the connection without suspending, so no data frame
-is sent after it; its writer closes the socket later, and that is not measured.
+is sent after it; its writer closes the socket later, and that is not measured. A close that
+raised or hit its bound, here or in that per-user close, is one count of
+`ws_session_revocation_close_failures_total` (scraped; `WsRevocationCloseFailed` tickets any
+increase, #3497, #3635) and is logged, and the closes after it still run.
 
 The hub also remembers each revoked session id, with its reason, for one access-token
 lifetime (#2739), so an `auth` that was already in flight when the revocation was published
@@ -52,9 +55,20 @@ def _log() -> Any:
 
 CLOSE_TOKEN_EXPIRED = 4401
 
+#: One count of close attempts that failed, from both paths that end a socket on a revocation
+#: (#3497, #3635): this hub's per-session closes, and `ConnectionRegistry.user_disabled`'s per-user
+#: closes (`ws/permissions.py`). A close that raised or hit its bound counts once; a cancellation
+#: is not a failed close and is not counted. A failed close means the socket can stay open until
+#: its access token expires (12 minutes at most), and a closer that raised may also have left the
+#: connection unsealed, still receiving its read-only streams. REST has refused the session (or the
+#: disabled user) since the revocation, and orders are REST only. The deployed gateway's closer
+#: seals without waiting, so a failure is not expected: this is how a regression would be seen. No
+#: label: the log lines name the session or the user. Scraped: in `AUTH_EXPORTED_NAMES`
+#: (`auth/metrics.py`, with `env` only); the `WsRevocationCloseFailed` ticket reads it.
 ws_revocation_close_failures_total = Counter(
     "ws_session_revocation_close_failures_total",
-    "WebSocket closes that failed during session revocation (socket may remain open).",
+    "WebSocket closes that failed during a session revocation or a user disable "
+    "(the socket may remain open).",
 )
 
 #: §9.5 / §13.6 closed `revoked.reason` set - no internal detail ever leaks through it.
@@ -157,6 +171,10 @@ REVOKED_MEMORY_S: Final = 720.0
 MAX_REVOKED_IDS: Final = 4096
 #: A forced eviction (cap reached while the oldest is still live) is logged at most this often.
 EVICTION_LOG_EVERY_S: Final = 60.0
+#: A failed per-user close (`ConnectionRegistry.user_disabled`) is logged at most this often, on
+#: the registry's monotonic clock (#3635); `ws_revocation_close_failures_total` counts every one.
+#: The hub's own failure line is not throttled.
+CLOSE_FAILURE_LOG_EVERY_S: Final = 60.0
 #: At most this many revoke batches close at once (C-2.18). A batch over the cap is closed inline
 #: in its caller, as before the close task: no close is dropped, but that caller is not shielded.
 MAX_CLOSE_TASKS: Final = 256

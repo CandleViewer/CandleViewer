@@ -197,6 +197,34 @@ groups:
         annotations:
           summary: "A session revocation took more than 5 s to seal its sockets (SR-029)"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh"
+      - alert: WsRevocationCloseFailed
+        # #3635 (with #3497; SR-029): a WebSocket close that raised or hit its bound, on either
+        # path: the hub's per-session close of a revocation (ws/revocation.py, 2 s) and the
+        # registry's per-user close of a disable (ws/permissions.py, `send_timeout_s`). A
+        # cancelled close (the disable cascade's 2 s cut, which opens first and so ends a hung
+        # per-user closer before `send_timeout_s`) is not counted. That socket can stay
+        # open until its access token ends (12 minutes at most) and, if its closer raised, may
+        # not be sealed and keep receiving its read-only streams. A ticket, not a page: REST
+        # already refuses the session (or the disabled user) and orders are REST only
+        # (07-release-and-prr.md section 9: a page is act now). With the deployed gateway the
+        # closer seals without waiting, so a failure is not expected today: this is how a
+        # regression would be seen. Alertmanager mutes tickets 22:00-07:00 UTC and never sends
+        # one that fires and resolves inside it, so the rule is held firing for 9 h 30 m, as
+        # AuthDisabledUserSessionRevoked is (ws_gateway.yml header, with its two preconditions).
+        # The series has no user or session label (the counter is unlabelled; it reads 0 from
+        # process start, so the first failure after a restart is an increase). The log lines name
+        # the session (the hub's `ws revocation close failed; revoked socket may remain open`) or
+        # the user (the registry's `ws revocation close failed; disabled user's socket may remain
+        # open`, at most one a minute, so the counter is the count).
+        expr: sum by (env) (increase(ws_session_revocation_close_failures_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          summary: "A WebSocket close failed during a revocation or a user disable; the socket may have stayed open"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wsrevocationclosefailed"
       - alert: AuthzDeniedSpike
         expr: sum(increase(authz_denied_total[10m])) > 20
         for: 0m

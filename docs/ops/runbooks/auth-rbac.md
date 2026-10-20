@@ -560,10 +560,50 @@ What the cascade builds on, and what to read afterwards:
   observation of a disable that had a socket, from its start to the last of the user's closes
   initiated or failed; the cascade cuts that step off at 2 s. The socket's own close follows in the
   connection's writer and is not measured. `AuthRevocationLatencyHigh` raises a ticket when its p99
-  over 15 minutes is above 5 s (`docs/plan/07-release-and-prr.md`, section 9). A failed hub close is
-  the `ws revocation close failed` log line; its counter `ws_session_revocation_close_failures_total`
-  is process-local and not served (#3497). The per-user close logs and counts a failed close not at
-  all: it only times it.
+  over 15 minutes is above 5 s (`docs/plan/07-release-and-prr.md`, section 9). A close that fails
+  is counted and logged on either path (next bullet).
+- A close that fails (#3497, #3635). A close that raised or hit its bound (2 s each: the hub's, and
+  the registry's `send_timeout_s`) adds one to `ws_session_revocation_close_failures_total` (no
+  label; served on the metrics listener, `127.0.0.1:9108`, with `env`), and the closes after it
+  still run. The hub logs the error line
+  `ws revocation close failed; revoked socket may remain open` with the `session_id`. The socket
+  step's per-user close logs the error line
+  `ws revocation close failed; disabled user's socket may remain open` with the `user_id` and
+  `failed_total`, the process's running count of failed per-user closes (all users together). That
+  line is written at most once a minute, and the first failure after a start always logs, so the
+  counter, not the lines, is the number. A cancelled close is not counted: the cascade's 2 s cut-off
+  of the per-user close is a failed `socket_close` step (`UserLifecycleStepFailed`, section 11), not
+  a count here. That cut-off opens before the registry's `send_timeout_s`, so in a disable a hung
+  per-user closer is that failed step and only a closer that raised is counted; the hub's closes
+  normally run in its own shielded task, where its 2 s bound does end, and count, a hung close (past
+  its close-task cap a batch closes inline, and the cascade's cut ends it first). A close that
+  failed inside the hub's loop or the per-user loop leaves that step
+  `ok`, because each loop goes on to the next socket, so the counter and its lines are the only
+  trace. The `WsRevocationCloseFailed` ticket fires on any increase
+  (`docs/plan/07-release-and-prr.md`, section 9) and is held 9 h 30 m;
+  `ExpectedMetricMissingWsSessionRevocationCloseFailuresTotal` fires if the series is not scraped.
+- What an increase means, and what to check. The socket whose close failed can stay open until its
+  access token ends, 12 minutes at most, and if its closer raised the connection may also not be
+  sealed, so it can keep receiving its read-only streams. REST has refused the session (or the
+  disabled user) since the revocation, and orders are REST only, so nothing can be placed through
+  that socket. With the deployed gateway the closer seals the connection without waiting, so a
+  failure is not expected: treat it as a regression and file a bug with the lines below. Check:
+
+  ```bash
+  curl -s http://127.0.0.1:9108/metrics | grep '^ws_session_revocation_close_failures_total'
+  docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 1h api | grep 'ws revocation close failed'
+  docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 1h api | grep '"event":"users.disable.step"' | grep '"step":"socket_close"'
+  ```
+
+  The first is the count since the process started: 0 when no close has failed. The second prints
+  both lines, each with the closer's traceback: the hub's names the `session_id`, the per-user
+  close's the `user_id`. Whether the socket outlived its revocation: a socket the revocation closed
+  has a `ws close` line at that instant (`session_id`, `user_id`, `reason`, `code`) with the
+  revocation's `reason` (`user_disabled` and `4403` for a disable); one that outlived it ends later,
+  up to 12 minutes on, with `reason` `token_expired`. The third prints a disable's socket steps:
+  `failed` is the cascade's own cut-off or a raise out of `user_disabled`, and an `ok` step does not
+  show that every socket closed (a close either loop counted leaves it `ok`).
+
 - `users.status = disabled` makes login refuse with `403 Account disabled` after a correct password.
 
 What a `disabled` status does to sessions (#2911). It holds however the status was set, and it is
