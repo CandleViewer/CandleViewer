@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
+
+from candleviewer.domain.events import DomainEvent
 
 
 class BookPhase(StrEnum):
@@ -17,10 +19,11 @@ class BookPhase(StrEnum):
     DESYNCED = "desynced"
 
 
-class BookStatus(BaseModel):
+class BookStatus(DomainEvent):
     """Published on the book topic whenever the book leaves/enters LIVE so
     SCR-050 / SCR-152 can announce "Book resynchronising" with a text reason
-    and the last-good time (accessibility note)."""
+    and the last-good time (accessibility note). Carries the 24 §1.4 envelope
+    (C6, #3876): a local observation, so `ts_event` = `ts_ingest` = `ts_us`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

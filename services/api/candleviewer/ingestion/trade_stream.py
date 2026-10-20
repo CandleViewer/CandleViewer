@@ -47,6 +47,7 @@ from typing import Protocol
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy, Topic, TopicPattern
+from candleviewer.domain.events import DomainEvent
 from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import TradeEvent
 from candleviewer.exchange.base.trade_print import TradePrint
@@ -95,15 +96,15 @@ class TradeWriter(Protocol):
     async def write_trades(self, events: Sequence[TradeEvent]) -> None: ...
 
 
-@dataclass(frozen=True, slots=True)
-class GapEvent:
-    """A tape window with possibly missing prints, published on `{env}.md.{sym}.gap`."""
+class GapEvent(DomainEvent):
+    """A tape window with possibly missing prints, published on `{env}.md.{sym}.gap`, with the
+    24 §1.4 envelope (C6, #3876): `ts_event` = `end_us`, the first live print after the window."""
 
     symbol: str
     start_us: int
     end_us: int
     recovered: bool
-    reason: str  # "reconnect" | "frame_loss"
+    reason: str  # "reconnect" | "frame_loss" | "rejected_frame" | ... (`mark_gap` callers)
 
     def label(self) -> str:
         """Words, not a colour band (a11y note): `No data 12:03:11-12:03:19`."""
@@ -256,7 +257,7 @@ class TradeStream:
             await self._bus.publish(health, ev)
 
         return await prune_unlisted(
-            self._demand, self._is_listed, self.sync, publish, self._topic_for
+            self._demand, self._is_listed, self.sync, publish, self._topic_for, now_us=self._now_us
         )
 
     # ---- reads (GET /market/trades) --------------------------------------
@@ -371,7 +372,17 @@ class TradeStream:
         recovered = bool(rows) and min(p.ts_event_us for p in rows) <= start_us
         live_ids = {p.trade_id for p in live}
         merged = merge_ordered(live, rows)
-        gev = GapEvent(sym, start_us, end_us, recovered, reason)
+        gev = GapEvent(
+            event_id=EventId(uuid7(end_us // 1000)),
+            ts_event=end_us,
+            ts_ingest=ts_ingest,
+            source="live",
+            symbol=sym,
+            start_us=start_us,
+            end_us=end_us,
+            recovered=recovered,
+            reason=reason,
+        )
         self._gaps.setdefault(sym, deque(maxlen=256)).append(gev)
         trade_gaps_total.labels(symbol=symbol_label(sym), recovered=str(recovered).lower()).inc()
         if not recovered:  # health keeps it; only a missing/empty page is worth a retry

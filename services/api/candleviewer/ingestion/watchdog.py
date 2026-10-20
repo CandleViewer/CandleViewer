@@ -7,9 +7,11 @@ inline in the read loop, so a slow consumer cannot starve it.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 
+from candleviewer.domain.events import DomainEvent, uuid7
+from candleviewer.domain.primitives import EventId
 from candleviewer.ingestion.planner import DemandTracker
 
 PING_INTERVAL_S = 20.0
@@ -17,11 +19,30 @@ PONG_DEADLINE_S = 10.0
 STALENESS_S: dict[str, float] = {"book": 2.0, "trade": 10.0, "ticker": 5.0}
 
 
-@dataclass(frozen=True, slots=True)
-class FeedHealthEvent:
+class FeedHealthEvent(DomainEvent):
+    """Per-topic feed health on `{env}.health.feed`, with the 24 §1.4 envelope (C6, #3876)."""
+
     topic: str
-    state: str  # "stale" | "healthy" | "resubscribing" | "degraded" | "delisted"
+    state: str  # "stale" | "healthy" | "resubscribing" | "degraded" | "delisted" | "warming"
     last_msg_age_s: float
+
+
+def feed_health(topic: str, state: str, last_msg_age_s: float, *, now_us: int) -> FeedHealthEvent:
+    """`FeedHealthEvent` observed at `now_us`, the producer's injected wall clock: a local
+    observation has no exchange time, so `ts_event` = `ts_ingest` (24 §2.9)."""
+    return FeedHealthEvent(
+        event_id=EventId(uuid7(now_us // 1000)),
+        ts_event=now_us,
+        ts_ingest=now_us,
+        source="live",
+        topic=topic,
+        state=state,
+        last_msg_age_s=last_msg_age_s,
+    )
+
+
+def _wall_now_us() -> int:
+    return time.time_ns() // 1000
 
 
 def _default_kind(topic: str) -> str:
@@ -37,8 +58,9 @@ class StalenessWatchdog:
         limits: dict[str, float] | None = None,
         *,
         kind_of: Callable[[str], str] | None = None,
+        now_us: Callable[[], int] = _wall_now_us,
     ) -> None:
-        self._clock = clock
+        self._clock, self._now_us = clock, now_us  # monotonic ages; wall-clock envelopes
         # Exchange-specific topic -> stream-kind mapping is injected by the
         # composition root (C-2.2: venue vocabulary stays in exchange/<venue>/).
         self._kind = kind_of or _default_kind
@@ -81,7 +103,7 @@ class StalenessWatchdog:
             if limit is not None and now - last >= limit and topic not in self._stale:
                 self._stale.add(topic)
                 fired.append(topic)
-                self._on_health(FeedHealthEvent(topic, "stale", now - last))
+                self._on_health(feed_health(topic, "stale", now - last, now_us=self._now_us()))
         return fired
 
 
@@ -91,17 +113,19 @@ async def prune_unlisted(
     sync: Callable[[], None],
     publish: Callable[[FeedHealthEvent], Awaitable[None]],
     topic_for: Callable[[str], str],
+    *,
+    now_us: Callable[[], int],
 ) -> list[str]:
     """#1913: drop demand for symbols the catalogue no longer lists as trading
     (held topics were only checked on `acquire`), unsubscribe via `sync()`, and
-    publish a plain `delisted` FeedHealthEvent per symbol. Shared by streams."""
+    publish a `delisted` FeedHealthEvent per symbol. Shared by streams."""
     gone = sorted(s for s in demand.desired() if not is_listed(s))
     for sym in gone:
         demand.drop(sym)
     if gone:
         sync()
     for sym in gone:
-        await publish(FeedHealthEvent(topic_for(sym), "delisted", 0.0))
+        await publish(feed_health(topic_for(sym), "delisted", 0.0, now_us=now_us()))
     return gone
 
 

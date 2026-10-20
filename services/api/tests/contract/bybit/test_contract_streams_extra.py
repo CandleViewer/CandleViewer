@@ -34,7 +34,7 @@ from candleviewer.ingestion.metrics import (
     ws_topic_staleness_seconds,
 )
 from candleviewer.ingestion.ticker_stream import TickerStream
-from candleviewer.ingestion.watchdog import FeedHealthEvent
+from candleviewer.ingestion.watchdog import feed_health
 from tests._corpus import frames, rest
 from tests.contract.bybit._support import NOW_US, TradeHarness, counter_value, tick_of
 
@@ -144,7 +144,7 @@ async def test_c06_stale_flag_and_staleness_gauge_during_a_drop_then_reset() -> 
     raws = frames(TICKERS)
     await stream.handle_frame(raws[0])
     assert _get(stream).json()["stale"] is False
-    await stream.process_health(FeedHealthEvent(TOPIC, "stale", 6.0))
+    await stream.process_health(feed_health(TOPIC, "stale", 6.0, now_us=0))
     assert _get(stream).json()["stale"] is True  # never a silently-frozen "live" value
     clock.t = 7.0
     stream.sync()
@@ -173,7 +173,9 @@ async def test_d04_trade_gap_is_counted_backfilled_and_equals_the_recorded_oracl
     h.drain()
     gaps = counter_value(trade_gaps_total, symbol="BTCUSDT", recovered="true")
     rows = counter_value(trade_backfill_rows_total, result="ok")
-    await h.stream.process_health(FeedHealthEvent("publicTrade.BTCUSDT", "resubscribing", 0.0))
+    await h.stream.process_health(
+        feed_health("publicTrade.BTCUSDT", "resubscribing", 0.0, now_us=0)
+    )
     await h.stream.handle_frame(raws[2])
     await h.stream.wait_backfills()  # #1905: the backfill runs off the dispatch path
     (gap,) = h.drain_gaps()

@@ -14,15 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Protocol
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy, Topic, TopicPattern
+from candleviewer.domain.events import uuid7  # re-exported in __all__ for its importers
 from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.exchange.base.ticker_delta import TICKER_FIELDS, TickerDelta
@@ -37,7 +36,7 @@ from candleviewer.ingestion.metrics import (
 )
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S, DemandTracker
 from candleviewer.ingestion.rejection import RejectionLog
-from candleviewer.ingestion.watchdog import FeedHealthEvent, prune_unlisted
+from candleviewer.ingestion.watchdog import FeedHealthEvent, feed_health, prune_unlisted
 from candleviewer.observability.context import spawn
 
 #: A merged ticker is publishable only once these are all known. The optional
@@ -56,14 +55,6 @@ class UnknownSymbolError(ValueError):
 
 class TickerWriter(Protocol):
     async def write_ticker(self, event: TickerEvent) -> None: ...
-
-
-def uuid7(ts_ms: int) -> uuid.UUID:
-    """RFC 9562 UUIDv7 (time-sortable); `uuid.uuid7` is absent before py3.14."""
-    value = (ts_ms & 0xFFFFFFFFFFFF) << 80 | int.from_bytes(os.urandom(10), "big")
-    value = (value & ~(0xF << 76)) | (0x7 << 76)
-    value = (value & ~(0x3 << 62)) | (0x2 << 62)
-    return uuid.UUID(int=value)
 
 
 class TickerMerger:
@@ -180,7 +171,7 @@ class TickerStream:
             await self._bus.publish(health, ev)
 
         return await prune_unlisted(
-            self._demand, self._is_listed, self.sync, publish, self._topic_for
+            self._demand, self._is_listed, self.sync, publish, self._topic_for, now_us=self._now_us
         )
 
     # ---- reads ----------------------------------------------------------
@@ -215,7 +206,7 @@ class TickerStream:
         if self._raw_sink is not None:
             self._raw_sink(delta)  # raw delta for the recorder, never the merged view
         was = self._phase.get(sym)
-        event = self._merger.apply(delta, ts_ingest_us=self._now_us())
+        event: TickerEvent | None = self._merger.apply(delta, ts_ingest_us=self._now_us())
         if event is None:
             if was is None or was == "stale":
                 self._phase[sym] = "warming"
@@ -244,7 +235,8 @@ class TickerStream:
 
     async def _health_event(self, symbol: str, state: str) -> None:
         topic = Topic(env=self._env, domain="health", detail="feed")
-        await self._bus.publish(topic, FeedHealthEvent(self._topic_for(symbol), state, 0.0))
+        ev = feed_health(self._topic_for(symbol), state, 0.0, now_us=self._now_us())
+        await self._bus.publish(topic, ev)
 
     # ---- feed health (reconnect / stale) ---------------------------------
     async def process_health(self, event: FeedHealthEvent) -> None:

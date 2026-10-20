@@ -1,12 +1,15 @@
 """Base event envelope and instrument metadata (§1.3, §1.4).
 
 `DomainEvent`/`MarketEvent` are the immutable envelope every normalised
-market-data event (§2) inherits from. `Instrument` is the version-tracked
-instrument-metadata record referenced by `MarketDataPort.instrument`.
+market-data event (§2) inherits from, and `uuid7` mints its `event_id`.
+`Instrument` is the version-tracked instrument-metadata record referenced by
+`MarketDataPort.instrument`.
 """
 
 from __future__ import annotations
 
+import os
+import uuid
 from decimal import Decimal
 from typing import Literal
 
@@ -59,6 +62,14 @@ class Instrument(BaseModel):
     copy_trading: bool
     metadata_version: int
     fetched_at: TsUs
+
+
+def uuid7(ts_ms: int) -> uuid.UUID:
+    """RFC 9562 UUIDv7 (time-sortable); `uuid.uuid7` is absent before py3.14."""
+    value = (ts_ms & 0xFFFFFFFFFFFF) << 80 | int.from_bytes(os.urandom(10), "big")
+    value = (value & ~(0xF << 76)) | (0x7 << 76)
+    value = (value & ~(0x3 << 62)) | (0x2 << 62)
+    return uuid.UUID(int=value)
 
 
 class DomainEvent(BaseModel):

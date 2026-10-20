@@ -26,7 +26,7 @@ from candleviewer.ingestion import dispatch
 from candleviewer.ingestion.metrics import ingest_dispatch_overflow_total
 from candleviewer.ingestion.service import IngestionService
 from candleviewer.ingestion.trade_stream import TradeStream
-from candleviewer.ingestion.watchdog import FeedHealthEvent
+from candleviewer.ingestion.watchdog import feed_health
 
 
 def book(sym: str, n: int) -> str:
@@ -256,7 +256,9 @@ async def test_stalled_backfill_never_blocks_frames_for_any_symbol() -> None:
     try:
         svc.offer_frame(trade("BTCUSDT", 0))
         await settle()
-        await stream.process_health(FeedHealthEvent("publicTrade.BTCUSDT", "resubscribing", 0))
+        await stream.process_health(
+            feed_health("publicTrade.BTCUSDT", "resubscribing", 0, now_us=0)
+        )
         for i in range(1, 51):
             svc.offer_frame(trade("BTCUSDT", i))
             svc.offer_frame(trade("ETHUSDT", i))

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from candleviewer.book.models import BookPhase, BookStatus
 from candleviewer.bus.bus import Bus
+from candleviewer.domain.events import uuid7
+from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.bybit.orderbook import book_topic
 from candleviewer.orderbook_wiring import RESYNC_BACKOFF_CAP_S, BookStream
 
@@ -34,6 +36,10 @@ class _Rig:
         await self.stream._publish(
             "BTCUSDT",
             BookStatus(
+                event_id=EventId(uuid7(0)),
+                ts_event=0,
+                ts_ingest=0,
+                source="live",
                 symbol="BTCUSDT",
                 depth=50,
                 state=state,
