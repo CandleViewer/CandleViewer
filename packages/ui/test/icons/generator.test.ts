@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   componentName,
   iconSources,
@@ -127,5 +128,37 @@ describe("the icon generator (scripts/build-icons.mjs)", () => {
     expect(componentName("close")).toBe("CloseIcon");
     expect(componentName("chevrons-up-down")).toBe("ChevronsUpDownIcon");
     expect(componentName("zoom-in")).toBe("ZoomInIcon");
+  });
+});
+
+describe("the generator's source tree (iconSources)", () => {
+  const trees: string[] = [];
+  /** A package root holding `files` (paths under src/icons/source/) in a fresh temp directory. */
+  const tree = (...files: string[]) => {
+    const root = mkdtempSync(path.join(tmpdir(), "cv-icon-sources-"));
+    trees.push(root);
+    for (const file of files) {
+      mkdirSync(path.dirname(path.join(root, "src/icons/source", file)), { recursive: true });
+      writeFileSync(path.join(root, "src/icons/source", file), source('<path d="M0 0h24" />'));
+    }
+    return root;
+  };
+  afterEach(() => trees.splice(0).forEach((root) => rmSync(root, { recursive: true })));
+
+  it("reads each origin's sources, past its licence notice", () => {
+    const root = tree("lucide/LICENSE", "lucide/close.svg", "custom/twap.svg");
+    expect(iconSources(root)).toEqual([
+      { name: "close", origin: "lucide", file: "src/icons/source/lucide/close.svg" },
+      { name: "twap", origin: "custom", file: "src/icons/source/custom/twap.svg" },
+    ]);
+  });
+
+  it.each([
+    ["a directory that is not an origin", ["phosphor/close.svg"], /phosphor: not an origin/],
+    ["a file that is not a kebab-case SVG", ["lucide/Close.svg"], /Close\.svg: not a kebab-case/],
+    ["a stray file", ["lucide/README.md"], /README\.md: not a kebab-case/],
+    ["two names with one component", ["lucide/a1b.svg", "custom/a-1b.svg"], /clashes with/],
+  ])("fails on %s", (_, files, message) => {
+    expect(() => iconSources(tree(...files))).toThrow(message);
   });
 });
