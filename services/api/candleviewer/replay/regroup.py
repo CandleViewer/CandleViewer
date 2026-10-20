@@ -12,9 +12,12 @@ It reads one item ahead. Everything else passes through as is: `ReplayGap` marke
 snapshots and every other stream. Consecutive rows form one update only when they agree on
 everything but side, price and size; rows that disagree (corrupt data) form separate updates
 with one `update_id`, which the replay book sees as a sequence mismatch, never as one silently
-merged update. If the wrapped stream fails while an update is being read, the failure is raised
-at once and the partial update is dropped: an update is delivered whole or not at all. A
-cancelled read keeps the rows read so far. `aclose()` closes the wrapped stream.
+merged update. An update holds at most `4 * depth` rows, as long as any delta the live book
+applies (`2 * depth` levels a side): a longer run of one update's rows is corrupt data, refused
+(`ReplayEventRefused`) before another row is buffered, and the partial update is dropped. If
+the wrapped stream fails while an update is being read, the failure is raised at once and the
+partial update is dropped: an update is delivered whole or not at all. A cancelled read keeps
+the rows read so far. `aclose()` closes the wrapped stream.
 """
 
 from __future__ import annotations
@@ -61,6 +64,12 @@ def _key(event: RecordedEvent, row: RecordedBookDelta) -> _Key:
 
 def _price(level: Level) -> Decimal:
     return level[0]
+
+
+def _max_rows(depth: int) -> int:
+    """The rows one update may hold: the live book applies a delta of up to `2 * depth` levels
+    a side (`book/state.py` `BookState.apply`), as levels leave its window while others enter."""
+    return 4 * depth
 
 
 def _fold(head: RecordedEvent, rows: list[RecordedBookDelta]) -> RecordedEvent:
@@ -114,6 +123,7 @@ class RegroupedStream:
                 return item
             head, row = delta
             self._head, self._key, self._rows = head, _key(head, row), [row]
+        cap = _max_rows(self._rows[0].depth)
         while True:
             try:
                 item = await self._next()
@@ -126,6 +136,11 @@ class RegroupedStream:
             if delta is None or _key(*delta) != self._key:
                 self._held = item
                 break
+            if len(self._rows) >= cap:  # corrupt data: refused before it is buffered
+                self._drop()
+                raise ReplayEventRefused(
+                    "a recorded orderbook_delta update has more rows than its depth allows"
+                )
             self._rows.append(delta[1])
         rows = self._rows
         self._drop()

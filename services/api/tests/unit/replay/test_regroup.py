@@ -48,14 +48,15 @@ def row(
     prev_update_id: int | None = None,
     ts_match: int | None = None,
     symbol: str = SYM,
+    depth: int = 200,
 ) -> RecordedEvent:
     """One recorded `orderbook_deltas` row, as `event_from_row` maps it."""
     px = Decimal(price)
     payload = RecordedBookDelta(
-        200, side, px, Decimal(size), update_id, cross_seq, prev_update_id, ts_match
+        depth, side, px, Decimal(size), update_id, cross_seq, prev_update_id, ts_match
     )
     seq = update_id if cross_seq is None else cross_seq
-    key = (update_id, 200, side, px)
+    key = (update_id, depth, side, px)
     return RecordedEvent(T0 + offset_us, seq, symbol, DELTAS, key, payload)
 
 
@@ -201,6 +202,39 @@ async def test_regroup_a_cancelled_read_keeps_the_rows_read_so_far() -> None:
 async def test_regroup_refuses_a_row_without_a_book_side() -> None:
     with pytest.raises(ReplayEventRefused):
         await regroup([row(5, 7, "mid", "100")])
+
+
+def update_rows(depth: int, per_side: int) -> list[RecordedEvent]:
+    """`per_side` rows a side of one update (id 7) of a `depth` book, each at its own price."""
+    bids = [row(5, 7, "bid", str(1000 - i), depth=depth) for i in range(per_side)]
+    asks = [row(5, 7, "ask", str(1001 + i), depth=depth) for i in range(per_side)]
+    return bids + asks
+
+
+@pytest.mark.parametrize("depth", [1, 50])
+@pytest.mark.parametrize("a_side", [1, 2], ids=["2x-depth-rows", "4x-depth-rows"])
+async def test_regroup_folds_an_update_as_long_as_any_the_live_book_applies(
+    depth: int, a_side: int
+) -> None:
+    """The live book applies a delta of up to `2 * depth` levels a side, levels leaving its
+    window as others enter (`BookState.apply`): `2 * depth` rows and the longest, `4 * depth`,
+    are each one update."""
+    rows = update_rows(depth, a_side * depth)
+    [update] = updates(await regroup([*rows, trade(6)]))
+    assert (len(update.bids), len(update.asks)) == (a_side * depth, a_side * depth)
+
+
+async def test_regroup_refuses_an_update_past_its_depths_rows_before_buffering_more() -> None:
+    """A run of one update's key past `4 * depth` rows is corrupt data: the regrouping buffer
+    is bounded, so the next row is refused, never buffered, and nothing after it is read. The
+    refusal names no recorded value."""
+    rows = [*update_rows(1, 2), row(5, 7, "bid", "990", depth=1), row(5, 7, "bid", "989", depth=1)]
+    inner = GatedStream([*rows, trade(6)], gate_at=-1)
+    with pytest.raises(ReplayEventRefused) as refused:
+        await anext(RegroupedStream(inner))
+    assert inner.reads == 5  # the four rows of the longest update, then the one refused
+    message = str(refused.value)
+    assert not any(value in message for value in ("990", "1000", "1001", "7", "BTCUSDT"))
 
 
 async def test_regroup_one_clock_step_delivers_one_whole_update() -> None:
