@@ -1,14 +1,14 @@
 # E30-D01 — UX research: how traders decide, size and fire an order under time pressure
 
-- **Ticket:** E30-D01 (issue #826) · **Status:** In Review — Penpot boards and PNG exports pending (the mandatory
-  evidence of `docs/design/README.md` "Approval rule" is not yet attached; see "Research boards") · **Owner approval
+- **Ticket:** E30-D01 (issue #826) · **Status:** In Review — the seven Penpot boards and their PNG exports are attached (the
+  evidence of `docs/design/README.md` "Approval rule"; see "Research boards") · **Owner approval
   pending** (Agent-delivery adaptations, owner decision 2026-09-25) · **Method:** heuristic evaluation +
   public-documentation comparison; persona scenarios are cited as a basis, not walked through; **no sessions were run**
   · **Revision 2026-10-20 (r2):** the Fable design-review round-1 desk items are folded — a recommended default for
   every source conflict and open question (§1a, §10), the hybrid sizing pattern (§5b), staleness (F18), hotkey safety
   (F19, F20), re-arm after reconnect (F21), the badge contrast matrix (§3), Sierra Chart and TradingView's "Paper
-  Trading" label (§6), the reduce-only bracket state and the opens-vs-reduces read-out (§4); the boards follow when the
-  Penpot bridge is back.
+  Trading" label (§6), the reduce-only bracket state and the opens-vs-reduces read-out (§4). The seven boards were drawn from the r3
+  script on page `E30-D01` on 2026-10-20 (boards commit `59af1da7`).
 - **Scope:** SCR-060 order ticket (single account) and the surfaces it opens into — SCR-076 confirmation, SCR-077
   rejection drawer, SCR-158 rate-limited state, SCR-114 trading defaults, the SCR-061 selector slice — plus the arm/lock
   control (CMP-229, `scope: "global"` only, E30-S04) and the environment treatment (CMP-074/075). Feeds E30-D02
@@ -69,14 +69,15 @@ a recommendation pending the owner run; **open** = needs sessions or an owner de
 Per `docs/design/README.md` ("Approval rule"), a research ticket still ships boards on its Penpot page plus PNG exports:
 team `b564c72c-f31f-81ec-8008-b109a9175d0b`, file `b564c72c-f31f-81ec-8008-b112c6fdc116`. Page **`E30-D01`**, page id `0a41e3a8-e6a6-807a-8008-d1d0922b0ebc`:
 `https://design.penpot.app/#/workspace?team-id=b564c72c-f31f-81ec-8008-b109a9175d0b&file-id=b564c72c-f31f-81ec-8008-b112c6fdc116&page-id=0a41e3a8-e6a6-807a-8008-d1d0922b0ebc`.
-Planned: one frame per board, bound to semantic tokens in `packages/ui/tokens` only (no raw hex), exported with
-`docs/design/_tools/penpot_export.py` to `docs/design/E30/img/E30-D01-<board>.png`, page link in the PR body and the
-issue comment, no image embedded until exports exist. Boards 2 and 3 are also the Probe B and Probe C stimulus (protocol
+One frame per board, bound to semantic tokens in `packages/ui/tokens` only (no raw hex), exported with
+`docs/design/_tools/penpot_export.py` to `docs/design/E30/img/E30-D01-<board>.png` and embedded below; the page link is
+also in the PR body and the issue comment. Boards 2 and 3 are also the Probe B and Probe C stimulus (protocol
 file §2). The seven boards: **1 Decide → size → fire journey** (P1, P2; "decide" = the last check before submit — reading
 the market is E31-D01): the 13 §5–§6 flow, the glance inventory (§2), the staleness and hotkey-safety states (F18–F20),
 the post-rejection journey (§4) and the re-arm-after-reconnect journey (F21) · **2 Armed/locked × demo/live legibility
 matrix**: per treatment the 2×2 plus its own `unknown` frame, 15 frames, plus the badge contrast matrix (§3); greyscale
-and deuteranopia renders via `docs/design/_tools/cvd_sim.py`, the three-dichromacy token check via
+and deuteranopia renders via `docs/design/_tools/cvd_sim.py` (made from the committed PNG before the owner runs Probe B;
+not produced with the boards, by the orchestrator's decision of 2026-10-20), the three-dichromacy token check via
 `docs/research/_tools/cvd_simulate.py` (§3, §5a) · **3 Sizing-mode probe wireframes**: three tickets — segmented control,
 mode-per-field and the hybrid (one input + unit switch + computed read-outs of every framing, the recommended default) —
 computed result visible (§5b) · **4 Rejection failure-path map** by class, with the protective-stop failure and the
