@@ -2,7 +2,7 @@
 
 - Ticket: E14-X01 (issue #433). Owner: Security engineer (CODEOWNER). Status: **Approved** (2026-10-20; independent
   reviews on PR #2564: sonnet security, sonnet code, sonnet delta security; the Fable security pass and the Architect
-  review are recorded on the close-out PR). Owner acceptance of the residuals (RR-18 to RR-20 in
+  review are recorded on the close-out PR). Owner acceptance of the residuals (RR-24 to RR-26 in
   `04-security-program.md` §16.1) is pending, queued on #2701; review log at the end of §7.
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per epic (C-12.1). Format mirrors
   `E22-big-trades.md`. Auth/session mechanics are E09's (`e09-auth-rbac.md`) and consumed as given.
@@ -272,8 +272,8 @@ RR4 with them. The two sets disagree and neither is enforced today. The value, a
 #2727 carries, which keeps it out of every work queue) is acceptable for a control this row says blocks epic
 sign-off, are Owner decisions queued on #2701.
 
-Register entries. `04-security-program.md` §16.1 records RR6 as RR-18 (open High until built, not accepted;
-`32-risk-register.md` RSK-076), RR4 as RR-19 (RSK-077) and RR1, RR2, RR3, RR5 and RR7 as RR-20, each with owner
+Register entries. `04-security-program.md` §16.1 records RR6 as RR-24 (open High until built, not accepted;
+`32-risk-register.md` RSK-087), RR4 as RR-25 (RSK-088) and RR1, RR2, RR3, RR5 and RR7 as RR-26, each with owner
 sign-off pending, queued on #2701 (RR3 was accepted on #357). SR-E14-11's denied, 413/422 and batch-cap counters have
 no owning ticket: #2727 covers only the per-user gauge, so a ticket is to be filed or #2727 widened (the close-out PR
 lists it as needing filing).
@@ -286,8 +286,8 @@ lists it as needing filing).
   review; agent sign-off, owner-delegated per #1778 2026-10-13) are recorded on the close-out PR, and the
   Security-engineer sign-off on #433 follows the Fable pass (agent-delivery adaptation, as in E22).
 - Owner acceptance of the residuals is pending, queued on #2701. RR1 and RR4 were queued first (the 2026-10-15 item
-  there; its RR1 ask also covered the foreign `layout_id` probes now recorded as RR2); the close-out adds RR-18 to
-  RR-20 (RR6; RR4; RR1, RR2, RR3, RR5 and RR7) in `04-security-program.md` §16.1.
+  there; its RR1 ask also covered the foreign `layout_id` probes now recorded as RR2); the close-out adds RR-24 to
+  RR-26 (RR6; RR4; RR1, RR2, RR3, RR5 and RR7) in `04-security-program.md` §16.1.
 - **Tabletop walkthroughs** (recorded here and on #433 on 2026-10-20,
   [comment](https://github.com/CandleViewer/CandleViewer/issues/433#issuecomment-6283296790); to be re-run by
   E14-X02): (1) *Malicious Manager reads the Owner's levels:* every read is owner-filtered in SQL, `GET /drawings`
@@ -306,7 +306,7 @@ lists it as needing filing).
 | 2026-10-15 | code-reviewer (sonnet, independent; PR #2564; docs accuracy and traceability) | APPROVE at `8d293d1c` with 1 MINOR and 2 NIT findings; rule references checked (`scripts/check_rule_refs.py` exit 0) |
 | 2026-10-15 | security-reviewer (sonnet, independent; PR #2564; delta `8d293d1c..1af40ce8`) | APPROVE at `1af40ce8`: all 8 findings fixed and the 8 newly cited tests present; both approvals carried over at `74867db3` (message-only change, tree identical); merged as `c96974be4` |
 | 2026-10-20 | QA (sonnet, independent; #433) | FAIL on main `a7583e991` (reviewed files identical to `61533c2e3`): Draft status, an author-only log, no per-element coverage matrix, SR-E14-05 and SR-E14-11 owned by a placeholder, and the requests, tabletop and register entries missing. Open after this amendment: the SR-E14-11 counters' owning ticket (to be filed), the two rows below and the Owner decisions (RR1, RR4) |
-| 2026-10-20 | amendment author (agent) | Approved. Added the §5.1 coverage matrix, cited #2727 (DR32, DR33, RR4, SR-E14-05), laid the two quota proposals side by side and routed the value to the Owner, completed this log, posted the requests (hand-offs below) and the tabletop record (sign-off above) and recorded RR6, RR4 and the accepted residuals as RR-18 to RR-20 in `04-security-program.md` §16.1 and RSK-076, RSK-077 in `32-risk-register.md`. No row is re-rated and no control is changed |
+| 2026-10-20 | amendment author (agent) | Approved. Added the §5.1 coverage matrix, cited #2727 (DR32, DR33, RR4, SR-E14-05), laid the two quota proposals side by side and routed the value to the Owner, completed this log, posted the requests (hand-offs below) and the tabletop record (sign-off above) and recorded RR6, RR4 and the accepted residuals as RR-24 to RR-26 in `04-security-program.md` §16.1 and RSK-087, RSK-088 in `32-risk-register.md`. No row is re-rated and no control is changed |
 | pending | security-reviewer (Fable, independent; the close-out PR) | Fable security pass on this PR: record on the PR |
 | pending | architect (agent sign-off, owner-delegated per #1778 2026-10-13; the close-out PR) | Architect review via PR review: record on the PR |
 
