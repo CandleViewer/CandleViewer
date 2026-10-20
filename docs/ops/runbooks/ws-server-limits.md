@@ -144,8 +144,8 @@ rendered message through the same redaction as stdout. What that looks like:
   matches in it (#2868).
 - **Support bundle.** The buffer writes each record on one line, a line break as `\n`, as in a
   traceback. The bundle's secret scan refuses a bundle (`BUNDLE_SECRET_DETECTED`) for a line that
-  still matches one of its rules, such as a label and its value on two lines of a message, a
-  traceback or a stack. The error names the file and the rule, not the value: find the line on
+  still matches one of its rules.
+  The error names the file and the rule, not the value: find the line on
   stdout for the same window, follow the `SupportBundleSecretDetected` alert runbook, and choose a
   window without it meanwhile.
 - **Access lines.** The HTTP access line is off whenever the `/metrics` listener runs

@@ -11,9 +11,9 @@ exception text (`token = …`), so such a line passes the support bundle's scan.
 its start and its last lines, and a second pass changes nothing. A placeholder is no value only as
 the whole value or right before the cut's marker, a dotted id (`machines.session:<id>`) is no label
 where a dotted attribute and its value is one, a format string is left to format, and the buffer
-writes each record on one line, so a label and its value on two lines are refused. Each backup
-download path (E42-T05 BK-11) in a traceback or a stack shows its marker where it stood, as the
-whole of a message line that holds one does.
+writes each record on one line. The redaction filter and the bundle scan agree on whitespace
+between a label and its value. Each backup download path (E42-T05 BK-11) in a traceback or a stack
+shows its marker where it stood, as the whole of a message line that holds one does.
 
 Values are assembled at runtime, so no secret-shaped literal sits in the repo.
 """
@@ -53,7 +53,7 @@ from candleviewer.observability.logging import (
     reset_logging,
 )
 from candleviewer.observability.redaction import redact_text
-from candleviewer.observability.support_bundle import BundleError, BundleSources, build_bundle
+from candleviewer.observability.support_bundle import BundleSources, build_bundle
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
 from candleviewer.oms.order_link import OrderLinkIdParts
 
@@ -592,16 +592,71 @@ def _two_line_message() -> None:
     [_two_line_message, _log_raised(f"config:\ntoken=\n{_SHORT_VALUE}")],
     ids=["message", "traceback"],
 )
-def test_a_label_and_its_value_on_two_lines_are_one_buffer_line_that_refuses_the_bundle(
+def test_the_filter_and_the_scan_agree_on_whitespace_between_a_label_and_its_value_in_the_buffer(
     emit: Callable[[], None], tmp_path: Path
 ) -> None:
-    _, ring = _capture(emit)  # the label pass reads a line: the value stays (stated)
+    lines, ring = _capture(emit)
 
     [entry] = ring
     assert "\n" not in entry  # logs.ndjson keeps one record per line
-    with pytest.raises(BundleError) as refused:
-        _build(ring, tmp_path)
-    assert refused.value.code == "BUNDLE_SECRET_DETECTED"
+    assert _SHORT_VALUE not in _logged(lines, ring)
+    assert _build(ring, tmp_path).is_file()
+
+
+_LABEL_KINDS = {
+    "name": ("password=", _LABELLED_ONLY, _KEY_MARK),
+    "quoted-name": ('{"token":', f'"{_LABELLED_ONLY}"}}', f'"{_KEY_MARK}"}}'),
+    "dotted-name": ("cfg.token:", _LABELLED_ONLY, _KEY_MARK),
+    "to-line-end": ("Cookie:", f"a={_LABELLED_ONLY}; b=1", _KEY_MARK),
+    "scheme": ("Authorization:", f"Bearer {_LABELLED_ONLY}", _KEY_MARK),
+}
+_SPACES = ["\t", "   ", "\n", "\r\n", " \t\\n\r\n \n", "\\t", "\\r"]
+
+
+@pytest.mark.parametrize("space", _SPACES, ids=list("abcdefg"))
+@pytest.mark.parametrize(("label", "value", "shown"), _LABEL_KINDS.values(), ids=_LABEL_KINDS)
+def test_the_redaction_filter_and_the_bundle_scan_agree_on_whitespace_between_a_label_and_its_value(
+    label: str, value: str, shown: str, space: str
+) -> None:
+    text, out = label + space + value, label + space + shown
+
+    assert "labelled-secret" in set(scan_text(text))
+    for redact in (redact_text, redaction._redact_runs):
+        assert redact(text) == out
+        assert redact(out) == out
+    assert list(scan_text(out)) == []
+
+
+_WHITESPACE = [" ", "\t", "\n", "\r\n"]
+_SPACE_RUN = st.lists(st.sampled_from(_WHITESPACE), max_size=4).map("".join)
+_AROUND_PIECES = [*"ab9.,;:=()[]{}<>/-_*'\"", *_WHITESPACE]
+_AROUND = st.lists(st.sampled_from(_AROUND_PIECES), max_size=10).map("".join)
+_FLAGGED = st.builds(
+    lambda quote, value: quote + value + quote,
+    st.sampled_from(["", '"', "'"]),
+    st.text(_CHARS + ".+/=:", min_size=6, max_size=12),
+)
+_LABELLED_TEXT = st.builds(
+    lambda *parts: "".join(parts),
+    _AROUND,
+    st.sampled_from(sorted(redaction._REDACT_KEYS | redaction._REDACT_KEY_FORMS)),
+    st.sampled_from(["", '"', "'"]),
+    _SPACE_RUN,
+    st.sampled_from(":="),
+    _SPACE_RUN,
+    _FLAGGED,
+    _AROUND,
+)
+
+
+@given(_LABELLED_TEXT)
+@example(f"token\n={_LABELLED_ONLY}")
+@example(f'{{"password"\r\n:\r\n\t"{_LABELLED_ONLY}"}}')
+def test_the_filter_and_the_scan_agree_on_whitespace_between_a_label_and_its_value_in_any_text(
+    text: str,
+) -> None:
+    for redact in (redact_text, redaction._redact_runs):
+        assert list(scan_text(redact(text))) == []
 
 
 class _Login(pydantic.BaseModel):
