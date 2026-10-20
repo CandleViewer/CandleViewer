@@ -4296,6 +4296,7 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 | `maintenance.mode`                                                       | boolean | `false` | `is_killswitch=true`; blocks order entry      | `all_roles`  |
 | `maintenance.keep_recorder`                                              | boolean | `true`  | Recorder keeps running in maintenance         | `owner_only` |
 | `audit.lane_journal_first`                                               | boolean | `false` | ADR-0037 lane; owner @basiltt, removal #3009  | `owner_only` |
+| `desktop.backend_connection`                                             | boolean | `false` | ADR-0038 CORS; owner @basiltt, removal #3931  | `owner_only` |
 
 ### 10.8 Demo/dev fixtures (never in production)
 

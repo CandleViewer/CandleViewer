@@ -30,6 +30,7 @@ _SECTION_10_7 = {
     ("maintenance.mode", _B, False, True, _ALL),
     ("maintenance.keep_recorder", _B, True, False, _OWN),
     ("audit.lane_journal_first", _B, False, False, _OWN),
+    ("desktop.backend_connection", _B, False, False, _OWN),
 }
 
 
@@ -59,6 +60,20 @@ def test_the_audit_lane_flag_is_adr_0037_decision_12s() -> None:
         True,
     )
     assert "owner @basiltt" in spec.description and spec.description.endswith("removal #3009")
+
+
+def test_backend_connection_flag_is_an_owner_only_rollout_off_with_its_removal_ticket() -> None:
+    """ADR-0038 2e, C-4.13: off by default and while the store cannot be read, and owned, with its
+    removal ticket; overridable, though its reader takes no principal, so no override applies."""
+    spec = default_registry()["desktop.backend_connection"]
+    assert (spec.gates, spec.default, spec.restrictive, spec.overridable) == (
+        Category.FEATURE_ROLLOUT,
+        False,
+        False,
+        True,
+    )
+    assert spec.visibility.value == "owner_only"
+    assert "owner @basiltt" in spec.description and spec.description.endswith("removal #3931")
 
 
 _ROLES = ("owner", "manager", "viewer")
