@@ -21,6 +21,7 @@ env badge and global shortcuts are **E10**.
 - `pnpm --filter @candleviewer/web dev` — Vite dev server.
 - `pnpm --filter @candleviewer/web build` — production build to `dist/`.
 - `pnpm --filter @candleviewer/web test` / `test:cov` — Vitest, ≥80% gate.
+- `pnpm --filter @candleviewer/web test:fuzz` — the WS codec fuzz (`fuzz` project, not part of `test`).
 - `pnpm --filter @candleviewer/web e2e` — Playwright smoke + a11y specs
   (builds and previews the app first).
 - `pnpm --filter @candleviewer/web size` — size-limit budget check

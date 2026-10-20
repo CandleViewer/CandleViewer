@@ -141,7 +141,7 @@ def _cvwb_targets() -> set[str]:
 # writes, read from the generator's own output paths (for generate_cvwb_vectors.py, from
 # its source; services/api/tests/unit/ws/test_cvwb_binary.py also pins its evaluated
 # TARGETS). The tracked files in those directories are those files, the CVWB layout twin
-# (step 3's) and one corpus kept by hand (SR-185). #3452: docs/generated, where only
+# (step 3's) and the corpora kept by hand (SR-185; #415). #3452: docs/generated, where only
 # scripts/keymap_lint.py writes (the governance job runs its --check-docs).
 _GATED_DIRS = {
     "docs/generated",
@@ -176,8 +176,14 @@ _FIXED_OUTPUTS = {
     for writer, files in _WRITES.items()
 }
 _HAND_KEPT = "tests/fuzz/ws-frames/msgpack-client.json"
+#: #415: the WS parser fuzz corpora, kept by hand beside it.
+_PARSER_CORPORA = [
+    "tests/fuzz/ws-frames/topics.json",
+    "tests/fuzz/ws-frames/json-client.json",
+]
 _FIXED_TREE = sorted(
-    {rel for files in _FIXED_OUTPUTS.values() for rel in files} | {_HAND_KEPT}
+    {rel for files in _FIXED_OUTPUTS.values() for rel in files}
+    | {_HAND_KEPT, *_PARSER_CORPORA}
 )
 
 
@@ -795,7 +801,7 @@ def generated_repo(
     monkeypatch.chdir(root)
     subprocess.run(gen_gate.GENERATE_CMD, check=True)
     # #3392: the directories step 7 judges (FIXED_OUTPUT_DIRS) hold what their
-    # generators wrote and the hand-kept corpus; this stand-in generator leaves them alone.
+    # generators wrote and the hand-kept corpora; this stand-in generator leaves them alone.
     for rel in _FIXED_TREE:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(f"stand-in for {rel}\n", encoding="utf-8")
@@ -1204,13 +1210,14 @@ def _commit(repo: Path, rel: str, text: str = _POSING) -> None:
 
 
 def test_fixed_outputs_name_what_each_generator_writes_there() -> None:
-    """Each entry is pinned to its generator's own output paths; the one tracked file
-    there that no generator writes is the SR-185 corpus, kept by hand and named."""
+    """Each entry is pinned to its generator's own output paths; the tracked files there
+    that no generator writes are the seed corpora, kept by hand and named."""
     assert {path.as_posix() for path in gen_gate.FIXED_OUTPUT_DIRS} == _GATED_DIRS
     fixed = {writer: sorted(files) for writer, files in gen_gate.FIXED_OUTPUTS.items()}
     assert fixed == _FIXED_OUTPUTS
-    assert list(gen_gate.HAND_KEPT) == [_HAND_KEPT]
+    assert list(gen_gate.HAND_KEPT) == [_HAND_KEPT, *_PARSER_CORPORA]
     assert "SR-185" in gen_gate.HAND_KEPT[_HAND_KEPT]
+    assert all("SR-155" in gen_gate.HAND_KEPT[rel] for rel in _PARSER_CORPORA)
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -1302,7 +1309,7 @@ def test_ci_gen_006_gets_one_git_rm_command_and_the_gate_then_passes(
 
 
 @pytest.mark.parametrize(
-    "rel", ["packages/protocol/generated/ws_constants.py", _HAND_KEPT]
+    "rel", ["packages/protocol/generated/ws_constants.py", _HAND_KEPT, *_PARSER_CORPORA]
 )
 def test_a_file_the_tables_name_that_git_does_not_track_fails_closed(
     generated_repo: Path, rel: str, capsys: pytest.CaptureFixture[str]
@@ -1336,7 +1343,7 @@ def test_the_checkout_passes_step_7(
     isolated_git: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The real index (read only): every tracked file in the gated directories is a
-    generator's, the CVWB layout twin or the hand-kept corpus."""
+    generator's, the CVWB layout twin or one of the hand-kept corpora."""
     monkeypatch.chdir(_REPO_ROOT)
     gen_gate.check_fixed_outputs()
 

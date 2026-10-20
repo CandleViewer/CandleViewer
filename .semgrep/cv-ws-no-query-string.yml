@@ -1,0 +1,65 @@
+# The rule sees one file at a time and only `ws/`: a scope or a connection handed to a helper
+# outside it is not followed. A path parameter (`/ws/{token}`) is not the query string and is
+# outside the rule by design. Known limits within `ws/`, each a `todoruleid` (a miss) or `todook`
+# (a false positive) row in the fixture. Not seen: the URL read whole (`str(ws.url)`, `ws.url`
+# handed to a logger or another parser), `.query` on a URL not spelled `<x>.url.query` (an alias,
+# a helper's parameter, `urlsplit(str(ws.url)).query`, `URL(scope=ws.scope).query`),
+# `ws.url.components[3]`, `getattr(ws, "query_params")`, a constant key in a subscript, a
+# `Mapping` method other than `get` (`pop`, `setdefault`), the scope read whole (`items()`,
+# `{**scope}`), `fastapi.params.Query(...)`, a read in the target of a strip, a route registered by
+# a call (`add_api_websocket_route`) or through a decorator alias, an unannotated route parameter,
+# `**kwargs` and the parameters of a dependency (FastAPI binds those to the query string too). A
+# route parameter counts as a path parameter when its name occurs in the text of the route argument
+# (the constant's name when the path is a constant). Flagged: one bound to a header or a cookie,
+# one with a `fastapi.Depends(...)` default or typed through an `Annotated` alias, one typed
+# `BackgroundTasks`, `HTTPConnection` or `"WebSocket"` (quoted) or through an alias of
+# `WebSocket`, and a strip not spelled `= b""` (`del`, `= bytes()`).
+rules:
+  - id: cv-ws-no-query-string
+    languages: [python]
+    severity: ERROR
+    message: >-
+      The WS gateway never reads the upgrade's query string: a token or an option in the URL is
+      ignored, and only the `auth` frame authenticates (docs/plan/23-ws-protocol.md section 4.3,
+      E17-X01 model WS-I01, E17-X02). Do not read `query_params`, `url.query`,
+      `scope["query_string"]` or a `Query(...)` parameter in `services/api/candleviewer/ws/`, and
+      do not add a plain parameter to a WebSocket route: FastAPI binds it to the query string.
+    metadata:
+      rule-id: cv-ws-no-query-string
+      references:
+        - docs/plan/23-ws-protocol.md section 4.3
+        - docs/security/threat-models/E17-ws-gateway.md section 9
+    patterns:
+      - pattern-either:
+          - pattern: $WS.query_params
+          - pattern: $WS.url.query
+          - pattern: $WS.url.components.query
+          - pattern: $SCOPE["query_string"]
+          - pattern: $SCOPE.get("query_string", ...)
+          - pattern: fastapi.Query(...)
+          - pattern: starlette.datastructures.QueryParams(...)
+          - pattern: urllib.parse.parse_qs(...)
+          - pattern: urllib.parse.parse_qsl(...)
+          # A route parameter that is neither the WebSocket nor a dependency is a query parameter.
+          - patterns:
+              - pattern-either:
+                  - pattern: "@$R.$DEC($PATH, ...)\nasync def $F(..., $P: $T, ...):\n    ..."
+                  - pattern: "@$R.$DEC(..., path=$PATH, ...)\nasync def $F(..., $P: $T, ...):\n    ..."
+              - metavariable-regex:
+                  metavariable: $DEC
+                  regex: ^(websocket|api_websocket_route)$
+              - pattern-not: "@$R.$DEC(...)\nasync def $F(..., $P: $T = Depends(...), ...):\n    ..."
+              - pattern-not: "@$R.$DEC(...)\nasync def $F(..., $P: $T = Security(...), ...):\n    ..."
+              - focus-metavariable: $P
+              - metavariable-regex:
+                  metavariable: $T
+                  regex: (?s)^(?!(\w+\.)*WebSocket$)(?!(typing\.)?Annotated\[.*\b(Depends|Security)\()
+              - metavariable-comparison:
+                  metavariable: $P
+                  comparison: str($P) not in str($PATH)
+      # Emptying the query string is a write, not a read.
+      - pattern-not-inside: $SCOPE["query_string"] = b""
+    paths:
+      include:
+        - "services/api/candleviewer/ws/**"
+        - "**/cv-ws-no-query-string.py"

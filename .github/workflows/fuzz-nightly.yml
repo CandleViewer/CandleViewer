@@ -1,18 +1,64 @@
 name: fuzz-nightly
 
-# E17-T02 part B (#2042, Refs #380): nightly mutation fuzz of the CVWB binary-frame decoders,
-# seeded from tests/fuzz/ws-frames/corpus.json (SR-155). Invariant: decoders raise ONLY the typed
-# malformed error, bounded memory. Failing inputs are uploaded as artefacts, never committed.
-# No atheris dependency (C-12): Python uses a Hypothesis mutation strategy, TS a seeded-PRNG loop.
+# E17-T02 part B (#2042, Refs #380) and #415 (E17-X02): nightly mutation fuzz of the WS decoders and
+# parsers, seeded from tests/fuzz/ws-frames/ (SR-155). Invariant: each target returns a typed
+# refusal or a bounded value, in bounded memory. No atheris dependency (C-12): Python uses a
+# Hypothesis mutation strategy, TS a seeded-PRNG loop.
+#   python      every `fuzz`-marked test of services/api/tests/unit/ws: the CVWB and msgpack
+#               decoders, the topic and option parsers, the JSON client-frame path
+#   typescript  both `test:fuzz` projects: @candleviewer/protocol (the CVWB decoders) and
+#               @candleviewer/web (the client codec)
+#
+# Time box (#415). Decision D2 set about 30 minutes per suite plus a weekend run, about 60
+# runner-minutes a night. The weekend length (3 hours), its 240-minute job timeout and the weekly
+# total (about 12 runner-hours) are this workflow's choice, not D2's: the one number to lower is
+# CV_FUZZ_BUDGET_SECONDS, how long a job fuzzes for. It is 30 minutes on a night from Sunday to
+# Friday and 3 hours on Saturday. The Saturday cron, or the `weekend` input of a manual run, picks
+# the long budget and the job timeout that goes with it (setup headroom on top). Each fuzz step
+# splits the budget evenly over its targets, 1 s at least, and hands the share to the suite as
+# CV_FUZZ_SECONDS, how long EACH target runs; a target stops at the first run that ends past its
+# share, a few seconds late.
+#   python      the budget / the fuzz-marked tests `pytest --collect-only` finds in the folder: 9 at
+#               this writing (4 decoder, 5 parser), so 200 s each (Saturday 1200 s). A new fuzz
+#               test is counted by the next run; none collected leaves pytest to fail the job
+#   typescript  the budget / 2 projects: 900 s each (Saturday 5400 s)
+# Cost: two jobs, so about 60 runner-minutes of fuzzing a night and 6 runner-hours on Saturday,
+# plus setup. scripts/tests/test_fuzz_nightly_budget.py pins the split, the selection and the
+# timeouts.
+#
+# #415 (E17-X02): the repository is public, so the job keeps failing inputs out of its logs and
+# uploads them only encrypted. A failure message carries only the target and a sha256 digest of
+# (seed, input). The (seed, input) pair is written to fuzz-failures/ and, when the job fails,
+# uploaded ONLY as an `openssl enc` archive (AES-256-CBC, PBKDF2) keyed from the Actions secret
+# CV_FUZZ_ARTIFACT_KEY (32 characters or more), which reaches that one step through its
+# environment. Without such a key the job uploads nothing, so that night's failing inputs are
+# lost, and still fails with the digest. The owner downloads the artifact (GitHub serves it as a
+# zip), unzips it, and decrypts the .enc file offline:
+#   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:CV_FUZZ_ARTIFACT_KEY \
+#     -in fuzz-failures-python.enc | tar -xzf -
+# No issue is filed automatically; a red night is reported privately.
+#
+# The seed is drawn at random too: each fuzz step reads 8 bytes from /dev/urandom and exports them
+# to the suite alone. It is never written to $GITHUB_ENV (the runner lists those variables in the
+# env: header of later steps), printed, or taken from the run's context or inputs; it is recorded
+# only in the failure file inside the encrypted archive, and the digest uses all of it. To replay
+# a failure, run the suite's own command locally, at the failing run's commit, with the seed from
+# the decrypted file (it holds the failing input too):
+#   python      CV_FUZZ_SEED=<the recorded seed>, with no CV_FUZZ_SECONDS: it is the seed of the
+#               run that drew the input, so one run replays it
+#   typescript  CV_FUZZ_SEED=<the recorded seed> CV_FUZZ_SECONDS=<that project's share, or more>,
+#               so the loop runs as far as the input
 
 on:
   schedule:
-    - cron: "43 3 * * *"
+    - cron: "43 3 * * 0-5" # Sunday to Friday: the nightly budget
+    - cron: "43 3 * * 6" # Saturday: the weekend budget
   workflow_dispatch:
     inputs:
-      examples:
-        description: "Mutated inputs per suite"
-        default: "20000"
+      weekend:
+        description: "Fuzz for the weekend budget (3 hours per job), not the nightly one (30 minutes)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,15 +68,14 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  CV_FUZZ_EXAMPLES: ${{ inputs.examples || '20000' }}
-  CV_FUZZ_SEED: ${{ github.run_id }}
+  CV_FUZZ_BUDGET_SECONDS: ${{ (github.event.schedule == '43 3 * * 6' || inputs.weekend) && '10800' || '1800' }}
   CV_FUZZ_ARTIFACT_DIR: ${{ github.workspace }}/fuzz-failures
 
 jobs:
   python:
     name: fuzz-nightly-python
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ (github.event.schedule == '43 3 * * 6' || inputs.weekend) && 240 || 50 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
@@ -43,21 +88,41 @@ jobs:
       - name: uv sync --frozen
         working-directory: services/api
         run: uv sync --frozen --all-groups
-      - name: CVWB mutation fuzz (Hypothesis)
+      - name: WS decoder and parser mutation fuzz (Hypothesis)
         working-directory: services/api
-        run: uv run pytest tests/unit/ws/test_cvwb_fuzz.py -m "fuzz and not flaky" --no-cov -p no:randomly -p no:cacheprovider
+        run: |
+          CV_FUZZ_SEED="$(od -An -N8 -tu8 /dev/urandom | tr -d ' ')"
+          [ -n "$CV_FUZZ_SEED" ] || exit 1
+          export CV_FUZZ_SEED
+          targets=$(uv run pytest tests/unit/ws -m "fuzz and not flaky" --collect-only -q --no-cov -p no:randomly -p no:cacheprovider | grep -c '^tests/.*::' || true)
+          share=$((CV_FUZZ_BUDGET_SECONDS / (targets > 0 ? targets : 1)))
+          export CV_FUZZ_SECONDS="$((share > 0 ? share : 1))"
+          uv run pytest tests/unit/ws -m "fuzz and not flaky" --no-cov -p no:randomly -p no:cacheprovider
+      - name: Encrypt failing inputs
+        if: failure()
+        env:
+          CV_FUZZ_ARTIFACT_KEY: ${{ secrets.CV_FUZZ_ARTIFACT_KEY }}
+        run: |
+          set -o pipefail
+          trap 'rm -rf fuzz-failures' EXIT
+          if [ "${#CV_FUZZ_ARTIFACT_KEY}" -lt 32 ]; then
+            echo "key missing or short: nothing uploaded"
+          elif [ -d fuzz-failures ]; then
+            tar -czf - fuzz-failures | openssl enc -aes-256-cbc -pbkdf2 -salt -iter 200000 \
+              -pass env:CV_FUZZ_ARTIFACT_KEY -out fuzz-failures-python.enc
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: fuzz-failures-python
-          path: fuzz-failures/
+          path: fuzz-failures-python.enc
           if-no-files-found: ignore
           retention-days: 30
 
   typescript:
     name: fuzz-nightly-typescript
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ (github.event.schedule == '43 3 * * 6' || inputs.weekend) && 240 || 50 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -67,12 +132,36 @@ jobs:
       # first, as _job-js.yml does.
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: CVWB mutation fuzz (vitest fuzz project)
-        run: pnpm --filter @candleviewer/protocol test:fuzz
+      - name: WS codec mutation fuzz (vitest fuzz projects)
+        run: |
+          CV_FUZZ_SEED="$(od -An -N8 -tu8 /dev/urandom | tr -d ' ')"
+          [ -n "$CV_FUZZ_SEED" ] || exit 1
+          export CV_FUZZ_SEED
+          projects=(@candleviewer/protocol @candleviewer/web)
+          share=$((CV_FUZZ_BUDGET_SECONDS / ${#projects[@]}))
+          export CV_FUZZ_SECONDS="$((share > 0 ? share : 1))"
+          failed=0
+          for project in "${projects[@]}"; do
+            pnpm --filter "$project" test:fuzz || failed=1
+          done
+          exit "$failed"
+      - name: Encrypt failing inputs
+        if: failure()
+        env:
+          CV_FUZZ_ARTIFACT_KEY: ${{ secrets.CV_FUZZ_ARTIFACT_KEY }}
+        run: |
+          set -o pipefail
+          trap 'rm -rf fuzz-failures' EXIT
+          if [ "${#CV_FUZZ_ARTIFACT_KEY}" -lt 32 ]; then
+            echo "key missing or short: nothing uploaded"
+          elif [ -d fuzz-failures ]; then
+            tar -czf - fuzz-failures | openssl enc -aes-256-cbc -pbkdf2 -salt -iter 200000 \
+              -pass env:CV_FUZZ_ARTIFACT_KEY -out fuzz-failures-typescript.enc
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: fuzz-failures-typescript
-          path: fuzz-failures/
+          path: fuzz-failures-typescript.enc
           if-no-files-found: ignore
           retention-days: 30

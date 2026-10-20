@@ -161,6 +161,14 @@ HAND_KEPT: dict[str, str] = {
         "the SR-185 seed corpus of the cv.v1.msgpack client-frame decoder (#2483), "
         "kept by hand"
     ),
+    "tests/fuzz/ws-frames/topics.json": (
+        "the SR-155 seed corpus of the WS topic parser (#415), built from the topic "
+        "registry, kept by hand"
+    ),
+    "tests/fuzz/ws-frames/json-client.json": (
+        "the SR-155 seed corpus of the cv.v1.json client-frame path (#415), the 13 example "
+        "frames of 23 §12 plus 12 edge and malformed frames, kept by hand"
+    ),
 }
 # The directories step 7 judges: those holding a file either table names. The CVWB
 # layout twin shares services/api/candleviewer/ws/_generated; step 3 judges it.

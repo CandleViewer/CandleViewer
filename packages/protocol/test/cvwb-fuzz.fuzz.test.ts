@@ -1,9 +1,11 @@
 // E17-T02 part B: nightly mutation fuzz of the TS CVWB decoders (SR-155), seeded from
 // tests/fuzz/ws-frames/corpus.json. Invariant: every decoder returns or throws ONLY
-// BinaryFrameError. N via CV_FUZZ_EXAMPLES (default 20 000), seed via CV_FUZZ_SEED.
-// Failing inputs go to CV_FUZZ_ARTIFACT_DIR (CI artefact, never the repo).
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// BinaryFrameError. N via CV_FUZZ_EXAMPLES (default 20 000), seed via CV_FUZZ_SEED; CV_FUZZ_SECONDS
+// (> 0) time-boxes the mutation loop instead. The deterministic seeds (every header bit, every
+// truncation, every power-of-two count, a 256 KiB frame) are cvwb-exhaustive.test.ts, in the unit lane.
+// A failure reports only its target and a sha256 digest of (seed, input), as the Python suite does:
+// the pair goes to CV_FUZZ_ARTIFACT_DIR, which CI uploads only encrypted (fuzz-nightly.yml).
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -17,6 +19,7 @@ import {
   decodeHeatmapColumn,
   decodeTrades,
 } from "../src/runtime/index.js";
+import { breach, report, untyped } from "./support/fuzzReport.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const corpus = JSON.parse(
@@ -24,12 +27,17 @@ const corpus = JSON.parse(
 ) as { name: string; hex: string }[];
 const SEEDS = corpus.map((s) => Uint8Array.from(Buffer.from(s.hex, "hex")));
 const N = Number(process.env["CV_FUZZ_EXAMPLES"] ?? 20_000);
-const SEED = Number(process.env["CV_FUZZ_SEED"] ?? 0xc0ffee);
-// Per-decode sanity bounds (not perf asserts): inputs are <= ~300 B, so 16 MiB of heap growth or
-// 50 ms is a count sizing an allocation/loop. GC is not forced (no --expose-gc in the vitest pool),
-// hence the loose heap bound; the targeted SR-128 test below is the precise check.
-const MAX_DECODE_HEAP = 16 * 1024 * 1024;
-const MAX_DECODE_MS = 50;
+const SECONDS = Number(process.env["CV_FUZZ_SECONDS"] ?? 0);
+if (!(Number.isFinite(SECONDS) && SECONDS >= 0)) {
+  throw new Error("CV_FUZZ_SECONDS must be a finite number of seconds, 0 or more");
+}
+const BOX = SECONDS > 0 ? `${SECONDS} s of` : String(N);
+const TIMEOUT = SECONDS > 0 ? (SECONDS + 120) * 1000 : 600_000;
+const SEED = BigInt(process.env["CV_FUZZ_SEED"] ?? 0xc0ffee); // up to 64 bits
+// Per-decode caps: a trip-wire for a future allocation or loop sized from a count in the input,
+// not a perf assert. Inputs are <= ~300 B, so 16 MiB or 50 ms means a count sized it; the targeted
+// SR-128 test below is the precise check.
+const CAPS = { ms: 50, bytes: 16 * 1024 * 1024 };
 const INTERESTING = [0, 1, 2, 0x7fffffff, 0x80000000, 0xffffffff, 0xfffffffe];
 const DECODERS = [
   decodeBookSnapshot,
@@ -74,39 +82,29 @@ function mutate(seed: Uint8Array, rnd: () => number): Uint8Array {
   return buf;
 }
 
-function save(data: Uint8Array): void {
-  const dir = process.env["CV_FUZZ_ARTIFACT_DIR"];
-  if (!dir) return;
-  mkdirSync(dir, { recursive: true });
-  const name = createHash("sha256").update(data).digest("hex");
-  writeFileSync(join(dir, `cvwb-ts-fail-${name}.bin`), data);
+/** Fails with the target and the digest alone; the (seed, input) pair goes to the artefact dir. */
+function fail(why: string, decode: { name: string }, data: Uint8Array): never {
+  throw new Error(report(why, decode.name, data, `${SEED}:`, { seed: String(SEED) }));
 }
 
-function fail(what: string, decode: { name: string }, data: Uint8Array, i: number): never {
-  save(data);
-  throw new Error(
-    `${what}: ${decode.name} seed=${SEED} iteration=${i} input=${Buffer.from(data).toString("hex")}`,
-  );
-}
-
-it(`decoders throw only BinaryFrameError over ${N} mutated corpus inputs`, () => {
-  const rnd = prng(SEED);
-  for (let i = 0; i < N; i++) {
+const TITLE = `decoders throw only BinaryFrameError over ${BOX} mutated inputs`;
+// A box of 60 s or more must hand the event loop back now and then: while the loop holds it,
+// vitest's worker-to-runner RPC times out ("Timeout calling onTaskUpdate", and the run exits 1).
+const YIELD_EVERY = 5_000;
+it(TITLE, { timeout: TIMEOUT }, async () => {
+  // the digest takes the whole seed; the PRNG state is folded from it
+  const rnd = prng(Number(BigInt.asUintN(32, SEED ^ (SEED >> 32n))));
+  const end = performance.now() + SECONDS * 1000;
+  let runs = 0;
+  for (let i = 0; SECONDS > 0 ? performance.now() < end : i < N; i++, runs++) {
+    if (runs % YIELD_EVERY === 0) await new Promise<void>((resolve) => setImmediate(resolve));
     const data = mutate(SEEDS[Math.floor(rnd() * SEEDS.length)] ?? new Uint8Array(0), rnd);
     for (const decode of DECODERS) {
-      const heap0 = process.memoryUsage().heapUsed;
-      const t0 = performance.now();
-      try {
-        decode(data);
-      } catch (e) {
-        if (!(e instanceof BinaryFrameError)) fail(`non-typed throw ${String(e)}`, decode, data, i);
-      }
-      if (performance.now() - t0 > MAX_DECODE_MS) fail("decode exceeded time cap", decode, data, i);
-      if (process.memoryUsage().heapUsed - heap0 > MAX_DECODE_HEAP) {
-        fail("decode exceeded heap cap", decode, data, i);
-      }
+      const why = breach(decode, data, CAPS);
+      if (why) fail(why, decode, data);
     }
   }
+  expect(runs).toBeGreaterThan(0); // a malformed time box or count must not pass by running nothing
 });
 
 // SR-128 (targeted): a wire count that cannot fit must be rejected UP FRONT by assertFits ("exceeds"),
@@ -153,9 +151,10 @@ it("every wire count that cannot fit is rejected up front (SR-128), per site and
         try {
           site.decode(data);
         } catch (e) {
-          msg = e instanceof BinaryFrameError ? e.message : `UNTYPED ${String(e)}`;
+          if (!(e instanceof BinaryFrameError)) fail(untyped(e), site.decode, data);
+          msg = e.message;
         }
-        expect(msg, `${site.decode.name}@${site.offset} count=${value}`).toMatch(/exceeds/);
+        if (!/exceeds/.test(msg)) fail("count not rejected up front", site.decode, data);
       }
     }
   }

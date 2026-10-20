@@ -1036,6 +1036,16 @@ previous entry.
   fails any prod-credential or repo-scoped release secret name.
   Re-run 2026-10-03 (`gh api .../actions/secrets`, `/variables`, `/environments`; names only): still 0/0/0. No long-lived
   cloud credentials present; OIDC conversion (SR-141) n/a, evidenced by the empty inventory.
+- Nightly fuzz failure archive (#415). `fuzz-nightly.yml` keeps a failing fuzz input out of its logs and uploads it
+  only as an encrypted archive (`fuzz-failures-python`, `fuzz-failures-typescript`; 30 days). It needs one repository
+  secret, `CV_FUZZ_ARTIFACT_KEY`, added after the inventory above: a passphrase of 32 characters or more (for
+  example `openssl rand -base64 48`) that reaches only the two encrypt steps, through their environment, and guards
+  no production system. Without a valid key a failing night uploads nothing, so that night's inputs are lost; the
+  job still fails red, with the target and a digest. To read a failure: download the artifact, unzip it (GitHub
+  serves it as a zip), and decrypt it offline, with the passphrase in that variable, using the `openssl enc -d` line
+  in the header comment of `.github/workflows/fuzz-nightly.yml`. Optional hardening: create the secret as an
+  environment secret of an environment whose deployment branches are limited to `main`, and add `environment:` with
+  that name to both jobs.
 - SR-146: the `gitleaks` job runs `check_secrets_hygiene.py all` and scans its own log/artefact outputs
   (`logs`), covered by a leaky-job test. Scope: it scans the job's report/log files in the workspace
   (`*.json`, `*.log`, `*.sarif`), not the hosted Actions log stream itself.
