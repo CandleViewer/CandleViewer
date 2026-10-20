@@ -25,20 +25,27 @@ from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.system_filter import FlagVisible
-from tests.unit.ws.test_system_filter import ACC_A, SAMPLES
+from tests.unit.ws.test_system_filter import _ACCOUNT, ACC_A, ACC_B, SAMPLES
 
 _DEADLINE_S = 5.0
 BASE_MS = 1_789_132_262_000
 ORIGIN = "http://testserver"
 KILL, KILL_NEUTRAL = SAMPLES["kill_switch"]
 NOTICE, _ = SAMPLES["notice"]
+#: An account notice about B, as a producer may repeat it in the first `system_notices` (latched).
+STALE_B = _ACCOUNT | {"reason": "oms.account_stale", "exchange_account_ids": [str(ACC_B)]}
 assert KILL_NEUTRAL is not None
 STATE, VIEW, GONE = KILL["kill_switch"], KILL_NEUTRAL["kill_switch"], "no kill_switch"
 
 
-def _as(user: uuid.UUID, *roles: str) -> PrincipalSnapshot:
-    grants = (AccountGrant(ACC_A, True, True, False),) if {"manager", "viewer"} & set(roles) else ()
-    return PrincipalSnapshot(user, frozenset(roles), frozenset(), grants)
+def _as(
+    user: uuid.UUID, *roles: str, accounts: tuple[uuid.UUID, ...] = (ACC_A,)
+) -> PrincipalSnapshot:
+    """A principal with `roles`; a Manager or Viewer is granted `accounts` (view and trade)."""
+    grants = tuple(AccountGrant(a, True, True, False) for a in accounts)
+    return PrincipalSnapshot(
+        user, frozenset(roles), frozenset(), grants if {"manager", "viewer"} & set(roles) else ()
+    )
 
 
 async def _no_sleep(_seconds: float) -> None:
@@ -196,6 +203,24 @@ async def test_the_notices_after_the_first_auth_ok_follow_the_principal(
     rig = _Rig(notices=[{"kind": "tick"}, NOTICE])  # an unknown kind reaches nobody
     async with asyncio.timeout(_DEADLINE_S):
         sock = await rig.connect(_as(uuid.uuid4(), *roles))
+        assert await _system(sock) == expected
+        await rig.close()
+
+
+@pytest.mark.parametrize(
+    ("accounts", "expected"),
+    [((ACC_A,), []), ((ACC_B,), [(1, STALE_B)]), ((ACC_A, ACC_B), [(1, STALE_B)])],
+    ids=["granted-a", "granted-b", "granted-both"],
+)
+async def test_an_account_notice_after_the_first_auth_ok_follows_the_grants(
+    accounts: tuple[uuid.UUID, ...], expected: list[tuple[int, Any]]
+) -> None:
+    """The `system_notices` seam, which a producer may use to repeat a latched stale state to a
+    late joiner, is cut as every `system` frame is (SR-E29-10): a Viewer granted A only is sent
+    nothing about B and its `s` does not move; one granted B is sent it as `s` 1."""
+    rig = _Rig(notices=[STALE_B])
+    async with asyncio.timeout(_DEADLINE_S):
+        sock = await rig.connect(_as(uuid.uuid4(), "viewer", accounts=accounts))
         assert await _system(sock) == expected
         await rig.close()
 

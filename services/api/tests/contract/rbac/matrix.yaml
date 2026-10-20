@@ -1872,9 +1872,14 @@ topics:
 # `system` content per role (SR-188, 23-ws-protocol.md §15.9; #2175): one row per §15.9 `kind`,
 # and `unknown` for any other. A cell is what the actor receives of one frame of that kind, which
 # carries the kind's Owner-only fields where it has any: whole = the frame as emitted; neutral = its
-# role-neutral fields only (kill-switch accounts cut to the actor's view grants, flag keys to those
-# whose registry `visibility` admits the actor's role, E42-T03); none = no frame.
+# role-neutral fields only (kill-switch and account-notice accounts cut to the actor's view grants,
+# flag keys to those whose registry `visibility` admits the actor's role, E42-T03); none = no frame.
+# An `account_notice` (SR-E29-10, #3864) names two accounts here, the granted one and a foreign one:
+# only the actor granted the first receives it (neutral: the list cut to that account), and an actor
+# with no grant on either gets none, as the frame is not queued for it.
 system_kinds:
+  account_notice: {owner: whole, manager_with_grant: neutral, manager_without_grant: none,
+    viewer: none, unauthenticated: none}
   clock_drift: {owner: whole, manager_with_grant: whole, manager_without_grant: whole,
     viewer: whole, unauthenticated: none}
   connection_quality: {owner: whole, manager_with_grant: whole, manager_without_grant: whole,

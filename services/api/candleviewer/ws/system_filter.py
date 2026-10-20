@@ -1,19 +1,22 @@
-"""Per-role view of a `system` frame (SR-188, `23-ws-protocol.md` §15.9; #2175).
+"""Per-role view of a `system` frame (SR-188, `23-ws-protocol.md` §15.9; #2175, #3864).
 
 `system` is implicit (§6.2), so it is filtered per frame, not at `sub`: `_Connection.push_system`,
 the one place a `system` frame is queued, asks `system_view` what the socket's principal may get
 at that moment, so a role or grant change or an in-place re-`auth` applies to every later frame.
-Deny by default: a `kind` outside §15.9's nine reaches nobody, and a principal with none of the
+Deny by default: a `kind` outside §15.9's ten reaches nobody, and a principal with none of the
 three roles (the deny-all snapshot) gets nothing. The Owner gets the frame whole; a Manager or
 Viewer only the fields `NEUTRAL_FIELDS` lists for its `kind`, health components without `detail`
 (`04-security-program.md` §7.2.2 row 48), a kill switch without who engaged it or why, its
-accounts cut to the socket's `account_scope`, and only the flag keys that the injected
-`FlagVisible` admits for its roles (E42-T03): none without one, and a `feature_flags` frame left
-with no key is not sent. A body with nothing to leave out is passed on as is (no copy). A left-out
-field, and a flag frame left with no key, are the contract, so nothing is audited or counted for
-them; a whole frame that is faulty (an unknown `kind`, a kill switch without its state) or that
-this socket cannot receive is named by `withheld_reason` for the gateway's counter.
-`kill_switch_view` is that kill-switch cut on its own, for `auth_ok.kill_switch` (§4.3).
+accounts, like those of an `account_notice`, cut to the socket's `account_scope` (an
+`account_notice` left with none is not sent: it is its accounts, SR-E29-10), and only the flag keys
+that the injected `FlagVisible` admits for its roles (E42-T03): none without one, and a
+`feature_flags` frame left with no key is not sent. A body with nothing to leave out is passed on
+as is (no copy). A left-out field, and a flag frame or an account notice left with nothing, are
+the contract, so nothing is audited or counted for them; a whole frame that is faulty (an unknown
+`kind`, a kill switch without its state, an `account_notice` naming no account, an account list on
+any other `kind`) or that this socket cannot receive is named by `withheld_reason` for the
+gateway's counter. `kill_switch_view` is that kill-switch cut on its own, for
+`auth_ok.kill_switch` (§4.3).
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ _ACCOUNTS: Final = "exchange_account_ids"
 _FLAGS: Final = "feature_flags"
 _EXCHANGE: Final = "exchange"
 _APPLIED: Final = "applied"
+_ACCOUNT_NOTICE: Final = "account_notice"
 
 #: (flag key, a principal's roles) -> whether that principal may learn the flag: its registry
 #: `visibility`, and never for a key no flag definition names. The composition root builds it from
@@ -56,6 +60,7 @@ NEUTRAL_FIELDS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
         "degraded_data": _BASE | {"degraded_topics", "affected_symbols"},
         "clock_drift": _BASE | {"clock_offset_ms"},
         "notice": _BASE | {"reason"},
+        _ACCOUNT_NOTICE: _BASE | {"reason", _ACCOUNTS},
     }
 )
 #: The fields of a health component a Manager or Viewer receives.
@@ -99,8 +104,8 @@ def system_view(
     # nosemgrep: cv-ws-no-adhoc-authz reason=sys-view owner=@CandleViewer/security review=2027-03-25
     if principal.roles.isdisjoint(SCOPED_ROLES):
         return None
-    if _is_stateless(kind, body):
-        return None  # a kill-switch frame is its state: never sent without it
+    if _is_faulty(kind, body):
+        return None  # a kill-switch frame is its state, an account notice its accounts
     view = body
     for key in body:
         if key not in fields or not _is_neutral(key, body[key], principal.roles, flag_visible):
@@ -108,23 +113,28 @@ def system_view(
             break
     if kind == _FLAGS and _FLAGS not in view:
         return None  # a flag frame is its keys: never sent with none the role may learn
+    if kind == _ACCOUNT_NOTICE and _ACCOUNTS not in view:
+        return None  # an account notice is its accounts: never sent naming none the socket may view
     return view
 
 
 def withheld_reason(body: object, principal: PrincipalSnapshot | None) -> WithheldReason | None:
     """Why `system_view` gives `principal` nothing of `body` for a reason that is not its role's
     cut. The frame is judged before the socket: a `kind` outside §15.9 (nobody receives it, the
-    Owner included) and a kill-switch frame without its state (only the Owner receives that) are
-    faults of the producer; then come no principal, and none of the three roles. `None` when it
-    receives the frame, or is not meant to (a `feature_flags` frame with no key its role may learn,
-    E42-T03): that is the contract. A Manager's or Viewer's flag frame has none, shown or not, so
-    no flag predicate is needed."""
+    Owner included), a kill-switch frame without its state, an `account_notice` whose list names
+    no account and an account list on any other `kind` (only the Owner receives those) are faults
+    of the producer; then come no principal, and none of the three roles. `None` when it
+    receives the frame, or is not meant to (a `feature_flags` frame with no key its role may
+    learn, E42-T03, or an `account_notice` naming no account it may view, SR-E29-10): that is the
+    contract. A Manager's or Viewer's flag frame has none, shown or not, so no flag predicate is
+    needed; the accounts a notice names are read from the principal, which `system_view` also
+    has, so nothing more is asked for here."""
     kind = body.get("kind") if isinstance(body, Mapping) else None
     if not isinstance(body, Mapping) or not isinstance(kind, str) or kind not in NEUTRAL_FIELDS:
         return "unknown_kind"
     if principal is not None and principal.is_owner:
         return None
-    if _is_stateless(kind, body):
+    if _is_faulty(kind, body):
         return "invalid_body"
     if principal is None:
         return "no_principal"
@@ -146,8 +156,16 @@ def kill_switch_view(
     return _kill_switch_view(state, principal)
 
 
-def _is_stateless(kind: str, body: Mapping[str, Any]) -> bool:
-    """A kill-switch frame without its state, which only the Owner (any frame whole) receives."""
+def _is_faulty(kind: str, body: Mapping[str, Any]) -> bool:
+    """A frame only the Owner (any frame whole) receives, because a producer got it wrong: a
+    kill-switch frame without its state, an `account_notice` whose `exchange_account_ids` is not a
+    list naming at least one account, and an account list on any other `kind` (it is never cut
+    away silently: that would send the frame, and the fact behind it, to every role)."""
+    if kind == _ACCOUNT_NOTICE:
+        ids = body.get(_ACCOUNTS)
+        return not isinstance(ids, list | tuple) or all(_account(raw) is None for raw in ids)
+    if _ACCOUNTS in body:
+        return True
     return kind == _KILL_SWITCH and not isinstance(body.get(_KILL_SWITCH), Mapping)
 
 
@@ -156,7 +174,8 @@ def _is_neutral(
 ) -> bool:
     """Whether a Manager or Viewer may receive this field of the kind's list as is: a nested
     object only with neutral fields and an empty list of accounts, a list only of such objects,
-    a flag map only with keys it may learn."""
+    a flag map only with keys it may learn. Never an account list: it is always cut to the
+    accounts the socket may view."""
     if key == _FLAGS:  # with a key, and every key one the role may learn
         return isinstance(value, Mapping) and 0 < len(_flags(value, roles, visible)) == len(value)
     if key == _KILL_SWITCH:
@@ -168,6 +187,8 @@ def _is_neutral(
             isinstance(item, Mapping) and all(k in NEUTRAL_COMPONENT for k in item)
             for item in value
         )
+    if key == _ACCOUNTS:
+        return False
     if (neutral := _OBJECTS.get(key)) is not None:
         return isinstance(value, Mapping) and all(k in neutral for k in value)
     return True
@@ -192,6 +213,9 @@ def _project(
         elif key == _COMPONENTS:
             if isinstance(value, list | tuple):
                 out[key] = [_only(c, NEUTRAL_COMPONENT) for c in value if isinstance(c, Mapping)]
+        elif key == _ACCOUNTS:
+            if mine := _viewable(value, principal):
+                out[key] = mine
         elif (neutral := _OBJECTS.get(key)) is not None:
             if isinstance(value, Mapping):
                 out[key] = _only(value, neutral)

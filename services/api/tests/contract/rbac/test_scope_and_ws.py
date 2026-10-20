@@ -693,6 +693,13 @@ _FLAGS = {"trading.one_click": True, "storage.cold_tier": True, "test.undefined"
 _SEEN = {"trading.one_click": True}  # what a Manager or Viewer may learn of them
 #: One frame per `system_kinds` row, carrying the kind's Owner-only fields where it has any.
 _SYSTEM_SAMPLES: dict[str, dict[str, Any]] = {
+    "account_notice": {
+        "kind": "account_notice",
+        "severity": "warning",
+        "message": "An account is resynchronising.",
+        "reason": "oms.account_resyncing",
+        "exchange_account_ids": [str(GRANTED), str(FOREIGN)],  # only the first is the actor's
+    },
     "clock_drift": {"kind": "clock_drift", "severity": "warning", "clock_offset_ms": 900},
     "connection_quality": {"kind": "connection_quality", "class": "lagging", "queue_pct": 30},
     "degraded_data": {"kind": "degraded_data", "degraded_topics": ["heatmap.BTCUSDT"]},
@@ -734,6 +741,8 @@ def _neutral(kind: str, actor: str) -> dict[str, Any]:
         }
     if kind == "feature_flags":
         return {"kind": "feature_flags", "feature_flags": _SEEN}
+    if kind == "account_notice":  # only manager_with_grant holds GRANTED, so only it is sent one
+        return _SYSTEM_SAMPLES[kind] | {"exchange_account_ids": [str(GRANTED)]}
     mine = [str(GRANTED)] if actor == "manager_with_grant" else []
     return {"kind": "kill_switch", "kill_switch": _HALT | {"exchange_account_ids": mine}}
 

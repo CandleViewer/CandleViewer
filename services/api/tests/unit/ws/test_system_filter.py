@@ -75,6 +75,14 @@ _HALT = {"kind": "kill_switch", "severity": "critical", "message": "Trading halt
 _STATE = {"engaged": True, "scope": "accounts", "engaged_at_ms": 1789133000000}
 _WHO = {"engaged_by": ENGAGER, "engaged_by_username": "owner.alice", "reason": "B breached its cap"}
 _BOTH = {"exchange_account_ids": [str(ACC_A), str(ACC_B)]}
+#: An account notice (§15.9, SR-E29-10): the accounts it concerns are in `exchange_account_ids`
+#: alone, so this is what a notice carries besides them; the text names no account.
+_ACCOUNT = {
+    "kind": "account_notice",
+    "severity": "warning",
+    "message": "An account is resynchronising.",
+    "reason": "oms.account_resyncing",
+}
 
 #: kind -> (the frame as emitted, what a Manager or Viewer viewing account A gets; None: nothing).
 SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {
@@ -104,6 +112,7 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {
     "degraded_data": _same({"kind": "degraded_data", "affected_symbols": ["BTCUSDT"]}),
     "clock_drift": _same({"kind": "clock_drift", "severity": "warning", "clock_offset_ms": 900}),
     "notice": _same({"kind": "notice", "severity": "critical", "reason": "net.binding_safe"}),
+    "account_notice": (_ACCOUNT | _BOTH, _ACCOUNT | {"exchange_account_ids": [str(ACC_A)]}),
 }
 
 
@@ -192,6 +201,101 @@ def test_kill_switch_view_equals_the_system_frames_kill_switch(who: PrincipalSna
 def test_a_kill_switch_frame_without_its_state_reaches_only_the_owner(body: dict[str, Any]) -> None:
     assert system_view(body, OWNER) is body
     assert system_view(body, MANAGER) is None and system_view(body, VIEWER) is None
+
+
+# -- account notices: the accounts a frame names are cut to the socket's grants (SR-E29-10) -----
+
+_ONLY_A = (AccountGrant(ACC_A, True, False, False),)
+_ONLY_B = (AccountGrant(ACC_B, True, False, False),)
+
+
+@pytest.mark.parametrize("role", ["manager", "viewer"])
+@pytest.mark.parametrize(
+    ("grants", "ids", "kept"),
+    [
+        (_ONLY_A, [str(ACC_B)], None),  # AC-07 (E29-X01): B's notice names nothing A's holder views
+        (_ONLY_A, [str(ACC_A), str(ACC_B)], [str(ACC_A)]),
+        (_ONLY_B, [str(ACC_A), str(ACC_B)], [str(ACC_B)]),
+        ((), [str(ACC_A), str(ACC_B)], None),  # no grant: no account, so no frame
+        ((AccountGrant(ACC_A, False, True, False),), [str(ACC_A)], None),  # no view grant
+        ((AccountGrant(ACC_A, True, True, True),), [str(ACC_A)], None),  # frozen: no access
+        (_ONLY_A, [str(ACC_A).upper(), "x", 7], [str(ACC_A)]),  # canonical; a junk entry is dropped
+        (_ONLY_A, (str(ACC_B), str(ACC_A)), [str(ACC_A)]),  # a tuple is a list of ids
+    ],
+    ids=["other", "first", "second", "no-grant", "no-view", "frozen", "canonical", "tuple"],
+)
+def test_an_account_notice_reaches_a_manager_or_viewer_cut_to_its_accounts_or_not_at_all(
+    role: str, grants: tuple[AccountGrant, ...], ids: Any, kept: list[str] | None
+) -> None:
+    who = principal(role, grants=grants)
+    body = _ACCOUNT | {"exchange_account_ids": ids}
+    view = system_view(body, who)
+    assert view == (None if kept is None else _ACCOUNT | {"exchange_account_ids": kept})
+    assert withheld_reason(body, who) is None  # cut to nothing is the contract: nothing is counted
+    if view is not None:
+        validate(_frame(view))
+
+
+_NO_ACCOUNT: dict[str, dict[str, Any]] = {
+    "no-list": _ACCOUNT,
+    "empty": _ACCOUNT | {"exchange_account_ids": []},
+    "empty-tuple": _ACCOUNT | {"exchange_account_ids": ()},
+    "junk": _ACCOUNT | {"exchange_account_ids": ["x", 7, None]},
+    "str": _ACCOUNT | {"exchange_account_ids": str(ACC_A)},
+    "null": _ACCOUNT | {"exchange_account_ids": None},
+    **{
+        f"on-{kind}": SAMPLES[kind][0] | {"exchange_account_ids": [str(ACC_A)]}
+        for kind in sorted(SAMPLES)
+        if kind != "account_notice"
+    },
+}
+
+
+@pytest.mark.parametrize("body", _NO_ACCOUNT.values(), ids=list(_NO_ACCOUNT))
+def test_an_account_list_that_names_no_account_or_rides_another_kind_reaches_only_the_owner(
+    body: dict[str, Any],
+) -> None:
+    """A producer fault, never cut away silently: stripping the list and sending the rest would
+    give every role the fact the list was there to scope."""
+    assert system_view(body, OWNER) is body
+    assert system_view(body, MANAGER) is None and system_view(body, VIEWER) is None
+    for who in (MANAGER, VIEWER, None, DENY_ALL):  # the frame is judged before the socket
+        assert withheld_reason(body, who) == "invalid_body"
+    assert withheld_reason(body, OWNER) is None
+
+
+_LIST = "exchange_account_ids"
+_UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.IGNORECASE)
+
+
+@pytest.mark.parametrize("who", [MANAGER, VIEWER], ids=["manager", "viewer"])
+def test_an_account_notice_view_names_its_accounts_only_in_exchange_account_ids(
+    who: PrincipalSnapshot,
+) -> None:
+    """Scenario 2 of #3864: whatever else a producer puts on the frame (a component or an
+    `exchange` that names account B), a Manager or Viewer gets the notice's own fields, and an
+    account id nowhere but in the list."""
+    other = {
+        "components": [{"name": str(ACC_B), "state": "down"}],
+        "health": "degraded",
+        "exchange": {"private_ws": "resyncing", "uid": str(ACC_B)},
+        "affected_symbols": ["BTCUSDT"],
+    }
+    body = _ACCOUNT | _BOTH | other
+    view = system_view(body, who)
+    assert view == _ACCOUNT | {"exchange_account_ids": [str(ACC_A)]}
+    assert view is not None
+    assert not _UUID.search(json.dumps({k: v for k, v in view.items() if k != _LIST}))
+    assert system_view(body, OWNER) is body  # the Owner's frame is whole, every account in it
+
+
+def test_the_schema_has_the_accounts_of_a_notice_as_an_optional_list_of_at_least_one_uuid() -> None:
+    assert _SCHEMA["properties"][_LIST] == {
+        "type": "array",
+        "minItems": 1,
+        "items": {"$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"},
+    }
+    assert _LIST not in _SCHEMA["required"]
 
 
 def test_a_health_frame_drops_a_kill_switch_that_is_not_an_object() -> None:
@@ -456,6 +560,17 @@ def test_section_15_9_says_a_kill_switch_frame_without_its_state_reaches_only_th
     assert said in _rows()["kill_switch"]
 
 
+def test_section_15_9_says_an_account_notice_names_accounts_only_in_its_list() -> None:
+    """A notice left with no account is the contract and is not sent; one whose list names none is
+    a fault of the producer, counted under the reason `withheld_reason` gives it."""
+    reason = withheld_reason({"kind": "account_notice"}, MANAGER)
+    row = _rows()["account_notice"]
+    assert "a frame left with none is not sent" in row
+    assert f"counted as `{reason}`" in row
+    said = "the frame names an account only in its `exchange_account_ids`"
+    assert said in " ".join(_section_15_9().split())
+
+
 # -- feature flags: each key by its registry `visibility` (E42-T03, §15.9) ---------------------
 
 #: Stands in for the registry's predicate: flag key -> the roles that may learn it. A real flag is
@@ -598,11 +713,21 @@ _SYMBOLS = st.lists(st.sampled_from(["BTCUSDT", "ETHUSDT"]), max_size=2)
 
 
 def _body(
-    kind: str, extra: dict[str, Any], state: Any, parts: Any, nested: Any, flags: Any, symbols: Any
+    kind: str,
+    extra: dict[str, Any],
+    state: Any,
+    parts: Any,
+    nested: Any,
+    flags: Any,
+    symbols: Any,
+    accounts: Any,
 ) -> dict[str, Any]:
-    """The drawn fields over `extra`; `exchange` and `applied` take the one `nested` draw."""
+    """The drawn fields over `extra`; `exchange` and `applied` take the one `nested` draw. The
+    `accounts` draw is the list of an `account_notice` alone: any other kind has the key only if
+    `extra` drew it, which is a fault the cut must not hide."""
     drawn = {"kind": kind, "kill_switch": state, "components": parts, "feature_flags": flags}
-    return extra | drawn | {"affected_symbols": symbols, "exchange": nested, "applied": nested}
+    body = extra | drawn | {"affected_symbols": symbols, "exchange": nested, "applied": nested}
+    return body | {_LIST: accounts} if kind == "account_notice" else body
 
 
 #: Every body of the property tests: any kind of §15.9, whatever shape each of its fields takes;
@@ -622,6 +747,7 @@ BODIES = st.builds(
     nested=st.builds(dict) | st.dictionaries(_NESTED_KEYS, _VALUES) | _VALUES,
     flags=st.dictionaries(_FLAG_KEYS, _VALUES) | _VALUES,
     symbols=st.builds(list) | _SYMBOLS | _VALUES,
+    accounts=_IDS | _IDS.map(tuple) | _VALUES,
 )
 
 
@@ -639,6 +765,13 @@ def test_no_manager_or_viewer_view_carries_an_owner_only_field_or_a_foreign_acco
     if view is None:
         return
     assert set(view) <= NEUTRAL_FIELDS[kind] and not set(view) & _OWNER_ONLY
+    # the accounts of a frame are cut, and only an account notice has them: a list on another kind
+    # is a fault that reaches the Owner alone
+    assert (_LIST in view) == (kind == "account_notice")
+    if _LIST in view:
+        grants = who.account_grants
+        granted = {str(g.exchange_account_id) for g in grants if g.can_view and not g.frozen}
+        assert view[_LIST] and set(view[_LIST]) <= granted
     shown = view.get("feature_flags")
     assert shown or kind != "feature_flags"  # a flag frame is never sent without a key
     if shown is not None:  # a flag key only if the role may learn it, and never an empty map

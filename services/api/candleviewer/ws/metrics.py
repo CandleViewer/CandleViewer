@@ -262,16 +262,20 @@ cv_ws_clock_skew_ms = Histogram(
 # -- SR-188 `system` topic (gateway.py `push_system`, system_filter.py `withheld_reason`) --------
 #: Why a `system` frame was left out of a socket's queue for a reason that is not its role's cut:
 #: a `kind` outside 23 section 15.9 (nobody receives it, the Owner included), a kill switch without
-#: its state (only the Owner does), a socket with no principal, a principal with none of the three
-#: roles. The closed `reason` set: no frame content.
+#: its state, an `account_notice` naming no account and an account list on another `kind` (only the
+#: Owner receives those), a socket with no principal, a principal with none of the three roles. An
+#: `account_notice` cut to nothing for a socket (SR-E29-10, #3864) is the contract, as is a flag
+#: frame left with no key: it is not counted. The closed `reason` set: no frame content.
 WithheldReason = Literal["unknown_kind", "invalid_body", "no_principal", "no_role"]
 WITHHELD_REASONS: Final[tuple[WithheldReason, ...]] = get_args(WithheldReason)
 cv_ws_system_frames_withheld_total = Counter(
     "cv_ws_system_frames_withheld_total",
     "System WS frames not queued for a socket: a kind outside 23 section 15.9, a kill switch "
-    "without its state, no principal or no role (SR-188, #3125). A deny-all socket counts "
-    "every other frame as no_role. A Manager's or Viewer's feature_flags frame left with no "
-    "key it may learn is the contract and is not counted.",
+    "without its state, an account notice naming no account or an account list on another "
+    "kind, no principal or no role (SR-188, #3125, #3864). A deny-all socket counts every "
+    "other frame as no_role. A Manager's or Viewer's feature_flags frame left with no key it "
+    "may learn is the contract and is not counted, nor is an account_notice naming no "
+    "account it may view.",
     labelnames=("reason",),
 )
 # Bound now, as `cv_ws_closes_total` is, so each series exists at 0 from process start and the
