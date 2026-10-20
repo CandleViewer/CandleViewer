@@ -37,7 +37,7 @@ class Guard:
         self.offset = offset
 
     def offset_ms_or_none(self) -> int | None:
-        return cast(Any, self.offset)
+        return cast("int | None", self.offset)
 
 
 def part(name: str, state: str, detail: str, last_good_at: str | None = None) -> dict[str, str]:

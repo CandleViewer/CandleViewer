@@ -2,6 +2,33 @@
 
 QA #1668. Kept out of `health_probes` so that module stays I/O-free. Probe
 `detail` strings never include DSNs, hosts or raw exception text.
+
+The `health` frame (E42-T05, #966 BK-15). `HealthSystemPublisher` builds one per snapshot and hands
+it to its `direct_sinks`. `create_app` appends `GatewayHub.broadcast_system` to them, the path of
+the mesh gate's notices (`net.system_topic`, E27-T02), so each authenticated socket is sent the
+frame cut for its role (`ws.system_filter`, `23-ws-protocol.md` 15.9). Nothing subscribes to the
+`{env}.system` bus topic, so the frame is not published there.
+
+How a snapshot becomes a frame is this module's mapping, not the contract's. The frame must be a
+valid `system` frame (`cv://ws/v1/system.schema.json`):
+
+- `components[]`: every probe under its `GET /admin/health` name; `not_deployed` is sent as
+  `healthy` with the detail `not deployed`; `last_good_at` once there is one. The filter cuts
+  `detail` for a Manager or a Viewer.
+- `exchange.public_ws` and `exchange.private_ws`: the word of the connection phase a probe reports
+  (`register_public_ws_probe`: healthy at `open`, else degraded with the phase as its detail).
+  `open` is `connected` and `connecting` is `connecting`; `degraded` (backing off, or blocked by the
+  connection budget) and `closed` are `disconnected`. The manager has no phase for a book rebuild,
+  so `resyncing` is never sent. A detail that names no phase (a probe timeout, a probe error) says
+  nothing of the connection, so it gives no word.
+- `exchange.rest`: the word of the component's state: healthy is `healthy`, degraded and warning
+  are `degraded`, down is `down`. `rate_limited` is not sent: no probe states it.
+- A component that is `not_deployed` or missing leaves its key out, never a made-up
+  `disconnected`; with no key left, `exchange` is left out.
+- `clock_offset_ms` is an integer in the schema, so it is the measured offset of the ClockGuard
+  (`ctx.ingestion.clock`, attached after the app is built, so read when the frame is built) when it
+  has one, and left out otherwise: never a null, and never the 0 that `ingestion.clock_offset_ms`
+  answers before a guard is attached.
 """
 
 from __future__ import annotations
@@ -9,16 +36,22 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, Protocol
+from types import MappingProxyType
+from typing import Any, Final, Protocol
 
 import structlog
 from sqlalchemy import insert, select, text
 
-from candleviewer.bus.models import Topic
 from candleviewer.db.models import system_events
-from candleviewer.ingestion.connection import PHASE_OPEN, ConnectionManager
+from candleviewer.ingestion.connection import (
+    PHASE_CLOSED,
+    PHASE_CONNECTING,
+    PHASE_DEGRADED,
+    PHASE_OPEN,
+    ConnectionManager,
+)
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.health_probes import (
     BARS,
@@ -51,10 +84,6 @@ _DISK_DOWN = 0.97
 
 class _UowFactory(Protocol):
     def unit_of_work(self) -> Any: ...
-
-
-class _Publisher(Protocol):
-    async def publish(self, topic: Topic, event: Any) -> None: ...
 
 
 #: The audit serializer `system_events.details` pass through, injected by the composition root
@@ -137,10 +166,51 @@ class PgSystemEventReader:
             ]
 
 
-def _exchange_word(c: ComponentHealth | None) -> str:
+#: `ConnectionManager.state()` -> the 15.9 word of `exchange.public_ws` and `private_ws` (the module
+#: docstring says why each phase maps as it does).
+_WS_WORD: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        PHASE_OPEN: "connected",
+        PHASE_CONNECTING: "connecting",
+        PHASE_DEGRADED: "disconnected",
+        PHASE_CLOSED: "disconnected",
+    }
+)
+#: A component's state -> the 15.9 word of `exchange.rest`. `not_deployed` is absence: no word.
+_REST_WORD: Final[Mapping[ComponentState, str]] = MappingProxyType(
+    {
+        ComponentState.HEALTHY: "healthy",
+        ComponentState.DEGRADED: "degraded",
+        ComponentState.WARNING: "degraded",
+        ComponentState.DOWN: "down",
+    }
+)
+
+
+def _ws_word(c: ComponentHealth | None) -> str | None:
+    """`exchange.public_ws` or `private_ws`: `connected` for a healthy connection, else the word of
+    the phase its probe names in `detail`; None, so the key is left out, for a component that is
+    missing or not deployed and for a detail that names no phase."""
     if c is None or c.state is ComponentState.NOT_DEPLOYED:
-        return "not_deployed"
-    return "connected" if c.state is ComponentState.HEALTHY else c.state.value
+        return None
+    if c.state is ComponentState.HEALTHY:
+        return _WS_WORD[PHASE_OPEN]
+    return _WS_WORD.get(c.detail)
+
+
+def _rest_word(c: ComponentHealth | None) -> str | None:
+    """`exchange.rest`: the word of the state, None for a component missing or not deployed."""
+    return None if c is None else _REST_WORD.get(c.state)
+
+
+def _exchange(by_name: Mapping[str, ComponentHealth]) -> dict[str, str]:
+    """The `exchange` block: a key for each component that has a word, none for the rest."""
+    words = {
+        "public_ws": _ws_word(by_name.get("bybit_public_ws")),
+        "private_ws": _ws_word(by_name.get("bybit_private_ws")),
+        "rest": _rest_word(by_name.get("bybit_rest")),
+    }
+    return {key: word for key, word in words.items() if word is not None}
 
 
 #: `23-ws-protocol.md` 15.9, "Health components": `not_deployed` exists only in the REST report. The
@@ -165,29 +235,47 @@ def _component(c: ComponentHealth) -> dict[str, str]:
     return item
 
 
-class HealthSystemPublisher:
-    """Publishes the `health` frame to `{env}.system` per snapshot: the overall word, every
-    component (`components[]`) and the `exchange` block."""
+def _health_frame(snap: HealthSnapshot, clock_offset_ms: object) -> dict[str, object]:
+    """The `health` frame of `snap`: the overall word and every component, an `exchange` block when
+    a component gives it a key, and `clock_offset_ms` only when it is an integer."""
+    frame: dict[str, object] = {
+        "kind": "health",
+        "health": snap.overall.value,
+        "components": [_component(c) for c in snap.components],
+    }
+    if exchange := _exchange({c.name: c for c in snap.components}):
+        frame["exchange"] = exchange
+    if isinstance(clock_offset_ms, int) and not isinstance(clock_offset_ms, bool):
+        frame["clock_offset_ms"] = clock_offset_ms
+    return frame
 
-    def __init__(self, bus: _Publisher, env: str) -> None:
-        self._bus = bus
-        self._topic = Topic(env=env, domain="system")
+
+class _OffsetSource(Protocol):
+    """The slice of `ingestion.clock.ClockGuard` the frame reads."""
+
+    def offset_ms_or_none(self) -> int | None: ...
+
+
+class HealthSystemPublisher:
+    """Hands the `health` frame of each snapshot to `direct_sinks`, as `SystemTopicPublisher` does
+    its notices: late-bound, since the hub is built after the registry this is the callback of.
+    A sink that raises is logged and never stops the others, or the health tick.
+
+    `clock_guard` returns the ClockGuard, or None while none is attached (`attach_clock` runs after
+    the app is built); the frame reads its measured offset each time it is built."""
+
+    def __init__(self, *, clock_guard: Callable[[], _OffsetSource | None] = lambda: None) -> None:
+        self.direct_sinks: list[Callable[[dict[str, object]], object]] = []
+        self._clock_guard = clock_guard
 
     async def __call__(self, snap: HealthSnapshot) -> None:
-        by_name = {c.name: c for c in snap.components}
-        payload: dict[str, object] = {
-            "kind": "health",
-            "health": snap.overall.value,
-            "components": [_component(c) for c in snap.components],
-            "exchange": {
-                "public_ws": _exchange_word(by_name.get("bybit_public_ws")),
-                "private_ws": _exchange_word(by_name.get("bybit_private_ws")),
-                "rest": _exchange_word(by_name.get("bybit_rest")),
-            },
-            # None until E08 time sync lands; never a fabricated 0.
-            "clock_offset_ms": None,
-        }
-        await self._bus.publish(self._topic, payload)
+        guard = self._clock_guard()
+        frame = _health_frame(snap, None if guard is None else guard.offset_ms_or_none())
+        for sink in self.direct_sinks:
+            try:
+                sink(frame)
+            except Exception:
+                logger().exception("health_wiring: direct sink failed")
 
 
 def register_real_probes(

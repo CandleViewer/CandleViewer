@@ -1388,13 +1388,14 @@ def create_app(
         else None
     )
     app.state.health_pg = health_pg
+    health_publisher = HealthSystemPublisher(clock_guard=lambda: ctx.ingestion.clock)
     health_registry = HealthRegistry(
         events=(
             PgSystemEventWriter(health_pg, redact_details=system_event_redactor())
             if health_pg is not None
             else None
         ),
-        on_snapshot=HealthSystemPublisher(ctx.bus.bus, resolved.environment.value),
+        on_snapshot=health_publisher,
     )
     health_registry.register_placeholders()
     if health_pg is not None:
@@ -1535,6 +1536,7 @@ def create_app(
     )
     # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.
     ctx.mesh_system_topic_publisher.direct_sinks.append(ws_hub.broadcast_system)
+    health_publisher.direct_sinks.append(ws_hub.broadcast_system)  # E42-T05: health frames
     # #2492: unless a test injects them, the owner user-management routes (role change,
     # invites, owner TOTP reset) get the session-backed snapshot resolver and the Postgres
     # role store; the E09-S06 onboarding checklist gets the same resolver (#2506). The fake
