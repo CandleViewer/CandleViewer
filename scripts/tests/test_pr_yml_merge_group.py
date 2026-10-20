@@ -84,6 +84,10 @@ EVENT_CONDITIONS = {
     # unlabelled PR from a non-release branch. The opt-in audit query-plan spike, not a lane:
     "_job-integration.yml:audit-query-plan": "${{ "
     "contains(github.event.pull_request.labels.*.name, 'run-audit-spike') }}",
+    # #3881: the compose integration lane starts on a merge group and on a train, never on a pull
+    # request's own run. The reverse of a PR guard: a queue run can only gain a job from it, and
+    # the resolver requires the lane there (MERGE_GROUP_ONLY in scripts/ci_gate_resolver.mjs).
+    "_job-integration.yml:integration": "${{ github.event_name != 'pull_request' }}",
     # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
     FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
     "'dependabot[bot]' || contains(github.event.pull_request.labels.*.name, 'dependencies')) }}",
@@ -407,21 +411,26 @@ def test_pr_metadata_gates_run_on_pull_requests_only() -> None:
     assert {gate: steps[gate]["if"] for gate in PR_ONLY} == dict.fromkeys(PR_ONLY, pr_only)
 
 
-def _resolve(context: dict[str, str]) -> tuple[int, set[str]]:
+def _run(context: dict[str, str], event: str = "") -> subprocess.CompletedProcess[str]:
     """The resolver step under the env GitHub builds: every job and gate green and every
-    changed-paths output true, then `context`; an unresolved expression is ''."""
+    changed-paths output true, then `context`; an unresolved expression is ''. `event` is the
+    runner's GITHUB_EVENT_NAME, which the step reads itself: unset when it is ''."""
     _needs("bash", "node")
     values = {f"needs.{job}.result": "success" for job in JOBS}
     values |= {f"needs.gates.outputs.{gate}": "success" for gate in JOBS["gates"]["outputs"]}
     values |= {f"needs.changed-paths.outputs.{o}": "true" for o in JOBS["changed-paths"]["outputs"]}
     values |= context
-    env = {"PATH": os.environ.get("PATH", "")}
+    env = {"PATH": os.environ.get("PATH", "")} | ({"GITHUB_EVENT_NAME": event} if event else {})
     for name, expression in RESOLVER["env"].items():
         path = re.fullmatch(r"\$\{\{ ([\w.-]+) \}\}", expression)
         assert path, expression
         env[name] = values.get(path[1], "")
     run = ["bash", "-c", RESOLVER["run"]]
-    proc = subprocess.run(run, cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+    return subprocess.run(run, cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+
+
+def _resolve(context: dict[str, str], event: str = "") -> tuple[int, set[str]]:
+    proc = _run(context, event)
     return proc.returncode, {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
 
 
@@ -454,6 +463,53 @@ def test_resolver_still_requires_the_pr_metadata_gates_on_a_pull_request(gate: s
 def test_resolver_fails_a_merge_group_run_whose_tree_gate_failed() -> None:
     red = QUEUED | {"needs.gates.outputs.gen": "failure", "needs.gates.result": "failure"}
     assert _resolve(red) == (1, {FAIL % ("gen", "failure"), FAIL % ("gates", "failure")})
+
+
+#: #3881: the compose lane's job skips on a pull request, so its caller reports `skipped` there.
+INTEGRATION_SKIPPED = {RESULTS["integration"]: "skipped"}
+
+
+def test_resolver_reads_a_pull_requests_skipped_integration_lane_as_deferred() -> None:
+    proc = _run(INTEGRATION_SKIPPED, "pull_request")
+    notice = [line for line in proc.stdout.splitlines() if line.startswith("::notice")]
+    assert (proc.returncode, "CI-GATE" in proc.stderr) == (0, False)
+    assert len(notice) == 1
+    assert notice[0].startswith("::notice title=integration deferred::integration: skipped")
+    assert notice[0].endswith("runs on the merge group")
+
+
+@pytest.mark.parametrize("event", ["merge_group", "workflow_dispatch", ""])
+def test_resolver_requires_the_integration_lane_on_a_merge_group_and_a_train(event: str) -> None:
+    # A queue or train run that skipped it is misconfigured, as is a run whose event is unknown.
+    proc = _run(QUEUED | INTEGRATION_SKIPPED, event)
+    errors = {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
+    assert (proc.returncode, errors) == (1, {SKIP % "integration"})
+    assert "::notice" not in proc.stdout
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled"])
+def test_resolver_still_fails_a_pull_request_whose_integration_lane_ran_red(result: str) -> None:
+    # The opt-in audit-query-plan job can start the workflow on a labelled PR: a red run is no skip.
+    expected = (1, {FAIL % ("integration", result)})
+    assert _resolve({RESULTS["integration"]: result}, "pull_request") == expected
+
+
+def test_resolver_defers_no_other_lane_on_a_pull_request() -> None:
+    assert _resolve({RESULTS["py"]: "skipped"}, "pull_request") == (1, {SKIP % "py"})
+
+
+def test_the_deferred_lanes_are_the_ones_whose_job_skips_a_pull_request() -> None:
+    """The resolver's MERGE_GROUP_ONLY and the lane's job `if:` say the same thing (#3881)."""
+    script = (ROOT / "scripts" / "ci_gate_resolver.mjs").read_text(encoding="utf-8")
+    (listed,) = re.findall(r"MERGE_GROUP_ONLY = new Set\(\[(.*?)\]\)", script)
+    skipping = {
+        lane
+        for lane, job in JOBS.items()
+        if "uses" in job
+        for inner in _load(job["uses"].removeprefix("./.github/workflows/"))["jobs"].values()
+        if " ".join(str(inner.get("if", "")).split()) == "${{ github.event_name != 'pull_request' }}"
+    }
+    assert skipping == set(re.findall(r'"([\w-]+)"', listed)) == {"integration"}
 
 
 def _strings(node: object) -> Iterator[str]:

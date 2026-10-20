@@ -201,7 +201,7 @@ flowchart TB
   - Rule engine: rule created via API → persisted to Postgres → evaluated against streamed fixture market data → triggers a paper order via the paper matcher.
   - Multi-account fan-out: one ticket → N per-account orders against N mock sub-accounts → trade-group aggregation in read APIs, including partial-account-failure handling (see chaos §9).
   - Auth/RBAC: role-gated endpoints and screens enforce Owner/Manager/Viewer correctly, including audit-log entries being written for every privileged action.
-- Integration suite runs on every PR (subset tagged `@integration-fast`, <5 min) and in full nightly (`@integration-full`, includes 24h-compressed soak-lite variants where feasible).
+- Integration suite: the compose-backed `integration` CI lane gates **every merge into `main` through the merge queue** — it runs on the merge group (and on a merge train), not on a pull request's own run, because it is the slowest job of the gate (#3881, `docs/ci-runbook.md` §3). The DB-backed suites under `services/api/tests/integration` and `tests/chaos` still run on every PR in the sharded `py` test lanes. The full suite runs nightly (`@integration-full`, includes 24h-compressed soak-lite variants where feasible).
 
 ## 7. E2E suites (Playwright, web + Electron)
 

@@ -3,12 +3,18 @@
 
 `tools/ci/py-test-lanes.json` is the one source of truth. Named lanes list test paths relative to
 services/api; the rest lane runs `tests` minus every listed path, so a new test directory runs in
-the rest lane instead of dropping out. `.github/workflows/_job-py.yml` calls `pytest-args LANE`
-(one lane's path arguments), `data-files DIR` (the lane coverage data to combine, on stdout; with
-CI-COV-003 on stderr and exit 1 unless there is exactly one file per lane) and `fail-under` (the
-addopts floor the lanes switch off and the `py` job applies to the combined data). `check`, also run
-by scripts/tests/test_py_test_lanes.py, fails when a listed path is missing, holds no test file or
-overlaps another, or when a test file would run in no lane or in two. Stdlib only; no network.
+the rest lane instead of dropping out. A heavy lane is sharded (#3881): its shards are lanes of
+their own (`unit-heavy-1`, `unit-heavy-2`, ...), each with its own coverage data, and a directory
+can be shared between them: a path one lane lists inside another lane's path is carved out of the
+outer one (`--ignore`), so the outer lane keeps whatever no lane lists, a new subdirectory too.
+`.github/workflows/_job-py.yml` calls `pytest-args LANE` (one lane's path arguments), `data-files
+DIR` (the lane coverage data to combine, on stdout; with CI-COV-003 on stderr and exit 1 unless
+there is exactly one file per lane) and `fail-under` (the addopts floor the lanes switch off and
+the `py` job applies to the combined data). `check`, also run by scripts/tests/test_py_test_lanes.py,
+fails when a listed path is missing, holds no test file, is listed twice or overlaps another path of
+its own lane, or when a test file would run in no lane or in two. `estimate LOG...` (#3881) sums
+each lane's per-file run time from the job logs of a CI run: the numbers to rebalance the lanes by.
+Stdlib only; no network.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ import sys
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +42,11 @@ LISTED_PATH_RE = re.compile(r"^tests(?:/[A-Za-z0-9_.-]+)+$")
 FAIL_UNDER_RE = re.compile(r"--cov-fail-under[= ](\d+(?:\.\d+)?)")
 PYTHON_FILES = ("test_*.py", "*_test.py")  # pytest's default; pyproject sets no other
 IGNORE_PREFIX = "--ignore="
+# A GitHub Actions log line: its UTC time (microseconds kept) and the text; pytest's file progress.
+LOG_LINE_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,6})\d*Z (.*)$")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+PROGRESS_RE = re.compile(r"^(tests/\S+\.py) +[.sxXFE]+")
+CONTINUATION_RE = re.compile(r"^[.sxXFE]+ *(?:\[ *\d+%\])?$")
 
 
 class LaneManifestError(Exception):
@@ -90,17 +102,29 @@ def load_manifest(path: Path = DEFAULT_MANIFEST) -> Manifest:
     return Manifest(lanes=lanes, rest_lane=rest)
 
 
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + "/")
+
+
 def pytest_args(manifest: Manifest, lane: str) -> list[str]:
-    """Path arguments for one lane's pytest run from services/api."""
+    """Path arguments for one lane's pytest run from services/api.
+
+    A path another lane lists inside one of this lane's paths is carved out of it (`--ignore`), so
+    a directory can be shared: the lane that lists the directory runs what no other lane lists in
+    it, including a test directory added later."""
     if lane == manifest.rest_lane:
         return [TESTS_DIR, *(f"{IGNORE_PREFIX}{path}" for path in manifest.listed_paths)]
     if lane not in manifest.lanes:
         raise LaneManifestError(f"unknown lane {lane!r}; lanes: {', '.join(manifest.names)}")
-    return list(manifest.lanes[lane])
-
-
-def _under(path: str, root: str) -> bool:
-    return path == root or path.startswith(root + "/")
+    own = manifest.lanes[lane]
+    carved = [
+        path
+        for other, paths in manifest.lanes.items()
+        if other != lane
+        for path in paths
+        if any(_under(path, root) and path != root for root in own)
+    ]
+    return [*own, *(f"{IGNORE_PREFIX}{path}" for path in carved)]
 
 
 def collects(args: Sequence[str], test_file: str) -> bool:
@@ -152,11 +176,14 @@ def check(manifest: Manifest, api_root: Path = DEFAULT_API_ROOT) -> list[str]:
             problems.append(f"{path}: listed but missing (renamed or deleted?)")
         elif not any(_under(f, path) for f in files):
             problems.append(f"{path}: listed but holds no test file")
-    for index, first in enumerate(listed):
-        for second in listed[index + 1 :]:
-            if _under(first, second) or _under(second, first):
+    entries = [(lane, path) for lane, paths in manifest.lanes.items() for path in paths]
+    for index, (lane, first) in enumerate(entries):
+        for other, second in entries[index + 1 :]:
+            if first == second:
+                problems.append(f"{first} is listed in {lane} and {other}: list a path once")
+            elif lane == other and (_under(first, second) or _under(second, first)):
                 problems.append(
-                    f"{first} and {second} overlap: list a path once, never inside another"
+                    f"{first} and {second} overlap inside lane {lane}: list the outer path only"
                 )
     lane_args = {lane: pytest_args(manifest, lane) for lane in manifest.names}
     return problems + partition_problems(lane_args, files)
@@ -194,6 +221,43 @@ def fail_under(api_root: Path = DEFAULT_API_ROOT) -> str:
     return str(floors[0])
 
 
+def log_durations(text: str) -> dict[str, float]:
+    """Seconds each test file took, from a lane job's log (GitHub Actions stamps every line).
+
+    pytest runs one file after another and ends a file's progress line when its last test is done,
+    so a file took the time since the previous progress line (the first: since `collected N
+    items`). Collection and start-up are in none of it: a lane's job takes that much longer."""
+    seconds: dict[str, float] = {}
+    last: datetime | None = None
+    current = ""
+    for raw in text.splitlines():
+        line = LOG_LINE_RE.match(ANSI_RE.sub("", raw))
+        if line is None:
+            continue
+        stamp, body = datetime.fromisoformat(line[1]), line[2]
+        progress = PROGRESS_RE.match(body)
+        if body.startswith("collected "):
+            last = stamp
+        elif progress or (current and CONTINUATION_RE.match(body)):
+            current = progress[1] if progress else current
+            if last is not None:
+                seconds[current] = seconds.get(current, 0.0) + (stamp - last).total_seconds()
+            last = stamp
+    return seconds
+
+
+def estimate(manifest: Manifest, seconds: Mapping[str, float]) -> dict[str, tuple[int, float]]:
+    """Per lane, how many of the timed files it collects and their summed seconds."""
+    lane_args = {lane: pytest_args(manifest, lane) for lane in manifest.names}
+    totals = {lane: (0, 0.0) for lane in manifest.names}
+    for test_file, took in seconds.items():
+        for lane, args in lane_args.items():
+            if collects(args, test_file):
+                count, total = totals[lane]
+                totals[lane] = (count + 1, total + took)
+    return totals
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -207,6 +271,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     commands.add_parser("fail-under", help="print the --cov-fail-under floor from addopts")
     commands.add_parser("check", help="verify that the lanes partition the test files")
+    commands.add_parser("estimate", help="sum each lane's run time from CI job logs").add_argument(
+        "logs", type=Path, nargs="+"
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -216,6 +283,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "fail-under":
             print(fail_under(args.api_root))
+            return 0
+        if args.command == "estimate":
+            seconds: dict[str, float] = {}
+            for log in args.logs:
+                try:
+                    seconds |= log_durations(log.read_text(encoding="utf-8", errors="replace"))
+                except OSError as exc:
+                    raise LaneManifestError(f"cannot read {log}: {exc}") from exc
+            for lane, (count, total) in estimate(manifest, seconds).items():
+                print(f"{lane:<20} {count:4d} files {total:6.0f} s")
             return 0
         if args.command == "data-files":
             files, problems = data_files(manifest, args.directory)

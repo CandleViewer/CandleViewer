@@ -39,11 +39,14 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 ├─ dependabot-alerts (always, #3558) → C-9.1 #11's Dependabot alert gate: the open alerts on
 │                                      `main`, judged on this tree         (CI-SEC-001/004/005)
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001, CI-BUILD-001)
-├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
-│                                      lanes (tools/ci/py-test-lanes.json), coverage combined
+├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in sixteen
+│                                      parallel lanes (tools/ci/py-test-lanes.json, the heavy
+│                                      matrices sharded, #3881), coverage combined over all of them
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
-├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
+├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002); its
+│                                      `integration` job runs on the merge group and a merge
+│                                      train only, never on a PR's own run (#3881, see §3)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web (4 shards), e2e-staging (@demo-rest-only),
 │                                      a11y-axe smoke, e2e-electron on release/* heads
 │                                      (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
@@ -222,6 +225,16 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   `merge train refused` names the check the dispatch failed: rebuild the train, dispatch it again.
   Its red `ci-required` stays on the commit it ran on: on a PR's head, re-run the PR's own `pr` run;
   on `main` (the UI's default ref) it does not mean `main` is broken and goes when `main` moves.
+- The `integration` lane (the compose stack, about 14 minutes) is the one lane a pull request's own
+  run does not execute (#3881): it runs on the merge group and on a merge train, where it is
+  required like any lane. On a PR its job is skipped by its own `if:` (`_job-integration.yml`) and
+  the lane reads `skipped`. The resolver then prints a notice, "integration: skipped — runs on the
+  merge group", instead of CI-GATE-002. That rule is `MERGE_GROUP_ONLY` in
+  `scripts/ci_gate_resolver.mjs`, which reads the event from `GITHUB_EVENT_NAME` (an unknown event
+  is strict); it and the job's `if:` change together. A PR run that did start the lane (the opt-in
+  `run-audit-spike` label) and went red is still CI-GATE-001, and the lane red on a group drops its
+  PR from the queue. A PR can therefore be green and still fail in the queue on `integration`:
+  read the group's `integration` log, not the PR's.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
@@ -974,6 +987,39 @@ section in the same sprint — do not just work around it and move on.
   Performance note); it fails loudly (not silently) if the `ci-metrics`
   artifact for a given week is entirely absent, since a missing metric is
   itself worth flagging, not treating as "zero incidents".
+
+### Rebalancing the services/api pytest lanes (#2424, #3881)
+
+- **What runs where.** `tools/ci/py-test-lanes.json` lists test paths (directories or files, below
+  `services/api`) per lane; `_job-py.yml` runs one `py-tests` job per lane, and `py` combines every
+  lane's raw coverage, so the 85% / 75% floors (C-9.4) are measured on the union, never per shard.
+  The `rest` lane runs `tests` minus every listed path: a new test directory runs there until it is
+  listed. A heavy matrix is several lanes named `<family>-<k>` (`unit-heavy-1..4`, `db-chaos-1..5`,
+  `contract-security-1..3`; `rest-heavy-1..3` are the listed part of `rest`). A directory can be
+  shared: a path one lane lists inside another lane's path is carved out of it (`--ignore`), so
+  `contract-security-1` runs `tests/contract` minus what the other two list below it, a
+  subdirectory added later included.
+- **Budget.** No PR job over 8 minutes (#3881). On the sixteen lanes (run 39401416075) the longest
+  lane took 6m04s (`unit-heavy-1`), the others 3 to 5.5 minutes, and the run 7m39s, with
+  `semgrep-bandit` (7m02s) the longest job of any lane. The first cut into ten lanes had its
+  longest lane at 12m05s (run 39396453049), and before the split the longest was 14m32s (run
+  39369408394, listed in ADR-0013's Validation). A lane's job is its summed run time plus
+  collection and start-up, which is large for import-heavy directories (`tests/contract` takes about
+  2 minutes to collect under `--cov`). The Postgres- and QuestDB-backed files (`db-chaos-*`) ran up
+  to 3 times slower on one run than on another a few hours earlier, so cut lanes from a run's
+  numbers, not from the best one.
+- **To rebalance**, take the lane jobs' logs of a recent green `pr` run (job ids from
+  `gh api repos/CandleViewer/CandleViewer/actions/runs/<run id>/jobs`, then
+  `gh api --allow-escape-sequences repos/CandleViewer/CandleViewer/actions/jobs/<job id>/logs`) and
+  run `python tools/ci/py_test_lanes.py estimate <log>...`: it sums each lane's per-file run time
+  from the timestamps of pytest's progress lines. Move paths between lanes in the manifest (list a
+  heavy directory's subdirectories or files in another lane to split it), run
+  `python tools/ci/py_test_lanes.py check` (every test file in exactly one lane), and keep the
+  `py-tests` matrix in `_job-py.yml` in step if a lane was added or removed:
+  `scripts/tests/test_py_test_lanes.py` fails when they differ, and `test_pr_yml_gates.py` pins the
+  job count of a PR run. Keep lane names stable otherwise; they are in the job name, the
+  `py-lane-cov-<lane>` artifact and CI-COV-003. Required-check names (C-9.1) do not change:
+  `ci-required` judges `py`, which judges every lane.
 
 ## 11. ADR-0013 validation log
 

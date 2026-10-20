@@ -715,7 +715,12 @@ jobs:
     name: integration
     needs: changed-paths
     # Integration exercises services/api's fixture-driven pipeline + OMS suite;
-    # applicable whenever backend code, tooling or fixtures change.
+    # applicable whenever backend code, tooling or fixtures change. #3881: on a pull request the
+    # called workflow skips its `integration` job (its own `if:` reads github.event_name), so the
+    # lane runs on the merge group and on a merge train, and the `ci-required` resolver reads a
+    # pull request's skip as "runs on the merge group", not as CI-GATE-002 (MERGE_GROUP_ONLY in
+    # scripts/ci_gate_resolver.mjs). It restates that job's condition: change both together. The
+    # opt-in `audit-query-plan` job of the same workflow still starts from a labelled PR.
     if: ${{ needs.changed-paths.outputs.py == 'true' }}
     uses: ./.github/workflows/_job-integration.yml
   migrations:
@@ -813,6 +818,8 @@ jobs:
         with:
           node-version: "20"
       - name: Resolve ci-required conclusion
+        # #3881: the resolver also reads GITHUB_EVENT_NAME, which the runner sets. On a pull request
+        # it reads a skipped `integration` lane as deferred to the merge group, not as CI-GATE-002.
         env:
           FILTER_JS: ${{ needs.changed-paths.outputs.js }}
           FILTER_PY: ${{ needs.changed-paths.outputs.py }}
