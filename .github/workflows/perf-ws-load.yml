@@ -1,0 +1,171 @@
+name: perf-ws-load
+# E17-Q03 (#568): the recorded k6 WS load profiles (A, B, C), the W5 phases and the self-check, on the
+# self-hosted bench runner cv-bench-01 (labels self-hosted, Linux, X64, bench; 8 vCores, 32 GiB).
+# Dispatch only: never on a PR or a schedule (a self-hosted runner never runs a PR's code), and not a
+# required check (C-9.2). Nothing reads its result but whoever dispatches it: a run's artefacts are
+# the evidence the Results PR for #568 cites, and no release gate consults it.
+# The VPS-class profile (4 vCPU, 8 GiB) is reproduced on that machine: the backend on cpus 0-3 (and
+# in a systemd scope with CPUQuota=400% and MemoryMax=8G where the runner has a user manager), k6 on
+# 4-7, so the two never share a CPU. The backend is the loopback fixture (services/api/bench/ws) fed
+# from the recorded corpus: it binds loopback only and constructs no exchange or other outbound
+# client, and its sessions are minted in process, so no credential exists (C-13.5, C-12.9). The
+# runner itself has egress (k6 is downloaded here): that is not what this guarantee rests on.
+#
+# Never overlap the 24 h ingestion soak (perf-ingestion-nightly.yml, job perf-pack-full, on the same
+# runner). The first step is a guard that REFUSES TO START while that job is queued or running,
+# rather than a shared concurrency group. Why: GitHub keeps one pending run per group and cancels
+# the older pending one, so a group shared with the soak could cancel a pending 24 h soak dispatch
+# (and needs an edit to the soak's workflow); the runner runs one job at a time, so a ws-load job
+# queued behind a 24-35 h soak would only wait out GitHub's 24 h queue limit and fail; and the guard
+# names the cause. A soak dispatched after this job starts queues behind it on the runner. The own
+# group below only keeps two ws-load runs from queueing over each other.
+#
+# C-13.9: the regression gate is 5 % on the median of 3 runs, so `runs` defaults to 3 and the
+# `gate` step compares them with the baseline. k6 v2.3.0 is fetched by `gh release download` and
+# checked against the sha256 pinned here and the release's checksums file. Needs gh, tar and
+# coreutils on the runner; every input reaches a script through env and is validated first.
+# Steps run under the runner's `bash -e`, so the load step clears it (`set +e`): every run is wanted
+# even after a red one, and its exit code is the worst of them. The checkout drops its token
+# (nothing here pushes or fetches again), as on every other workflow; the machine profile is named,
+# as the soak names its own, so a baseline's key does not depend on the runner's CPU count.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "smoke (2 min), A, B (1 h each), C (30 min), W5 (10 phases) or selfcheck (inflated fan-out must fail)"
+        type: choice
+        options: [smoke, A, B, C, W5, selfcheck]
+        default: smoke
+      flag:
+        description: "CV_WS_BACKPRESSURE_ENABLED for the backend (on is the rollout target, off the control)"
+        type: choice
+        options: ["on", "off"]
+        default: "on"
+      runs:
+        description: "Runs of the profile; the gate and the reproducibility check need 3 (A, B, C, smoke only)"
+        type: choice
+        options: ["1", "2", "3"]
+        default: "3"
+      duration_s:
+        description: "Steady window in seconds (empty: the profile's own; W5: every phase's, and the phases keep their own warm-ups, so 30 is a dry run of about 14 minutes; a shorter run is never a baseline)"
+        type: string
+        default: ""
+      ws_path:
+        description: "Where the fixture serves the gateway and k6 connects: /ws, or a prefix and /ws such as /api/v1/ws"
+        type: string
+        default: "/ws"
+permissions:
+  actions: read # the guard lists the soak's jobs
+  contents: read
+concurrency:
+  group: perf-ws-load
+  cancel-in-progress: false
+jobs:
+  ws-load:
+    runs-on: [self-hosted, Linux, X64, bench]
+    timeout-minutes: 720
+    env:
+      CV_ENV: test
+      CV_BENCH_MACHINE_PROFILE: bench-runner
+      K6_VERSION: v2.3.0
+      # sha256 of k6-v2.3.0-linux-amd64.tar.gz (the release asset's digest)
+      K6_SHA256: 39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
+      K6_NO_USAGE_REPORT: "true"
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
+    steps:
+      - name: Refuse to start while the 24 h ingestion soak is queued or running on the bench runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || { echo "gh is not installed on this runner" >&2; exit 1; }
+          busy=0
+          for status in in_progress queued; do
+            ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/perf-ingestion-nightly.yml/runs?status=${status}&per_page=50" --jq '.workflow_runs[].id')
+            for id in $ids; do
+              n=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs" --jq '[.jobs[] | select(.name == "perf-pack-full" and (.status == "in_progress" or .status == "queued"))] | length')
+              busy=$((busy + n))
+            done
+          done
+          if [ "$busy" -gt 0 ]; then
+            echo "::error::refusing to start: the ingestion soak (perf-ingestion-nightly.yml, job perf-pack-full) is queued or running on the bench runner; dispatch again when it has finished" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - id: sync
+        run: uv sync --project services/api
+      - name: Install the pinned k6 (sha256 verified twice)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/k6"
+          mkdir -p "$dir"
+          cd "$dir"
+          tarball="k6-${K6_VERSION}-linux-amd64.tar.gz"
+          gh release download "$K6_VERSION" -R grafana/k6 -p "$tarball" -p "k6-${K6_VERSION}-checksums.txt" --clobber
+          echo "${K6_SHA256}  ${tarball}" | sha256sum -c -
+          grep " ${tarball}\$" "k6-${K6_VERSION}-checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          ./k6 version | grep -F "k6 ${K6_VERSION} "
+          echo "K6_BIN=$dir/k6" >> "$GITHUB_ENV"
+      - name: WS load run (${{ inputs.profile }}, flag ${{ inputs.flag }}, ${{ inputs.runs }} run(s))
+        id: load
+        working-directory: services/api
+        env:
+          PROFILE: ${{ inputs.profile }}
+          FLAG: ${{ inputs.flag }}
+          RUNS: ${{ inputs.runs }}
+          DURATION: ${{ inputs.duration_s }}
+          WS_PATH: ${{ inputs.ws_path }}
+        run: |
+          set -uo pipefail
+          set +e # the runner's bash -e would end the step at the first red run
+          [[ "$FLAG" =~ ^(on|off)$ ]] || { echo "flag must be on or off" >&2; exit 2; }
+          [[ "$RUNS" =~ ^[1-3]$ ]] || { echo "runs must be 1, 2 or 3" >&2; exit 2; }
+          [[ "$WS_PATH" =~ ^(/[A-Za-z0-9_~-][A-Za-z0-9._~-]*)*/ws$ ]] || { echo "ws_path must be /ws or a prefix and /ws" >&2; exit 2; }
+          extra=(--ws-path "$WS_PATH")
+          if [ -n "$DURATION" ]; then
+            [[ "$DURATION" =~ ^[0-9]+$ ]] || { echo "duration_s must be whole seconds" >&2; exit 2; }
+            extra+=(--duration-s "$DURATION")
+          fi
+          staging=(--backend-cpus 0-3 --k6-cpus 4-7)
+          if systemd-run --user --scope --quiet true 2>/dev/null; then staging+=(--staging); fi
+          case "$PROFILE" in
+            selfcheck) cmd=(selfcheck); RUNS=1 ;;
+            W5) cmd=(w5); RUNS=1 ;;
+            smoke | A | B | C) cmd=(run "$PROFILE") ;;
+            *) echo "unknown profile" >&2; exit 2 ;;
+          esac
+          out="$GITHUB_WORKSPACE/ws-load"
+          echo "runs=$RUNS" >> "$GITHUB_OUTPUT"
+          worst=0
+          for i in $(seq 1 "$RUNS"); do
+            dir="$out/run-$i"
+            if [ "$RUNS" -eq 1 ]; then dir="$out"; fi
+            uv run python -m bench.ws.runner "${cmd[@]}" --flag "$FLAG" "${staging[@]}" --out-dir "$dir" "${extra[@]}"
+            code=$?
+            [ "$code" -gt "$worst" ] && worst=$code
+          done
+          exit "$worst"
+      - name: Regression gate (5 % on the median of 3 runs, C-13.9)
+        if: ${{ !cancelled() && steps.load.outputs.runs == '3' && contains(fromJSON('["smoke","A","B","C"]'), inputs.profile) }}
+        working-directory: services/api
+        run: uv run python -m bench.ws.runner gate "$GITHUB_WORKSPACE"/ws-load/run-1 "$GITHUB_WORKSPACE"/ws-load/run-2 "$GITHUB_WORKSPACE"/ws-load/run-3
+      - name: Reproducibility (AC 5, within 15 % or a named variance source)
+        if: ${{ !cancelled() && contains(fromJSON('["2","3"]'), steps.load.outputs.runs) && contains(fromJSON('["smoke","A","B","C"]'), inputs.profile) }}
+        working-directory: services/api
+        run: uv run python -m bench.ws.runner repro "$GITHUB_WORKSPACE"/ws-load/run-1 "$GITHUB_WORKSPACE"/ws-load/run-2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ws-load-${{ inputs.profile }}-${{ inputs.flag }}
+          # tokens.json holds opaque session handles valid only inside the run's own process; never kept
+          path: |
+            ws-load/
+            !ws-load/**/tokens.json
+            !ws-load/**/bars/**
+          if-no-files-found: ignore
