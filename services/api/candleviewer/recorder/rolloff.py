@@ -70,6 +70,7 @@ recorder_rolloff_streams_unlisted_total = Counter(
 )
 for _stream in ROLLOFF_STREAMS:  # at 0 from the start: the alert's `increase()` sees the first
     recorder_rolloff_streams_unlisted_total.labels(stream=_stream.value)
+recorder_rolloff_failures_total.labels(reason="unlisted_check_failed")  # likewise 07's query
 #: A partition whose newest row is older than this belongs to a day that closed at least a day
 #: before the listing's own one-day cut-off, whatever the table's partitioning.
 UNLISTED_AGE_DAYS = 2

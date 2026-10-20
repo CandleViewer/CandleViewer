@@ -765,6 +765,8 @@ def test_the_unlisted_counter_starts_at_zero_for_every_rolloff_stream() -> None:
     name = "recorder_rolloff_streams_unlisted_total"
     for stream in ROLLOFF_STREAMS:
         assert REGISTRY.get_sample_value(name, {"stream": stream.value}) is not None, stream
+    failed = {"reason": "unlisted_check_failed"}  # 07's first diagnostic query reads it
+    assert REGISTRY.get_sample_value("recorder_rolloff_failures_total", failed) is not None
 
 
 @pytest.mark.parametrize(
