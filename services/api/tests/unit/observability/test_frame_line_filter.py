@@ -5,7 +5,8 @@ padding), their bytes fixed per draw so a run is repeatable (C-13.7), and each h
 `_`. Each rides an `auth` frame, as `cv.v1.json` text and as `cv.v1.msgpack` bytes, logged
 as the websockets server logs a frame (`< %s` with the frame) and formatted by the app's log config
 at DEBUG: neither stdout nor the support bundle's buffer holds any run of 8 of its characters, or
-of 4 of its bytes in hex.
+of 4 of its bytes in hex, run together or spaced as websockets writes a binary payload, and each
+holds the frame's opcode and length alone.
 """
 
 from __future__ import annotations
@@ -127,6 +128,16 @@ def test_configure_logging_installs_one_frame_line_filter_and_reset_removes_it()
     assert _frame_filters() == []
 
 
+def _hex_runs(token: str) -> set[str]:
+    """Every 4 bytes of `token` in hex: run together, and spaced as websockets shows a binary
+    payload in a frame's preview (`61 75 74 68`), the form a binary frame's `str` holds."""
+    out = set[str]()
+    for i in range(len(token) - 3):
+        four = token.encode()[i : i + 4]
+        out |= {four.hex(), " ".join(f"{b:02x}" for b in four)}
+    return out
+
+
 @pytest.mark.parametrize("encoding", sorted(_FRAMES))
 @pytest.mark.parametrize("token", TOKENS, ids=[f"draw-{i}" for i in range(len(TOKENS))])
 def test_a_frame_line_at_debug_holds_no_part_of_the_token(encoding: str, token: str) -> None:
@@ -135,7 +146,8 @@ def test_a_frame_line_at_debug_holds_no_part_of_the_token(encoding: str, token: 
         lambda: logging.getLogger("uvicorn.error").debug("< %s", frame), level="debug", ring=True
     )
     text = "\n".join((got.out, got.err, *got.ring))
-    runs = {token[i : i + 8] for i in range(len(token) - 7)}
-    runs |= {token.encode()[i : i + 4].hex() for i in range(len(token) - 3)}
+    runs = {token[i : i + 8] for i in range(len(token) - 7)} | _hex_runs(token)
     assert [run for run in runs if run in text] == []
-    assert f"< {frame.opcode.name} [{len(frame.data)} bytes]" in got.out
+    line = f"< {frame.opcode.name} [{len(frame.data)} bytes]"
+    assert got.events() == [("debug", line)]  # stdout: this line alone
+    assert got.ring_lines() == [f"DEBUG uvicorn.error {line}"]  # and the support bundle's buffer
