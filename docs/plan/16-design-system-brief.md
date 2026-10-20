@@ -362,7 +362,7 @@ the host adapter loads the resolved uniform file for the active theme and calls 
 |          | `color.buy`                                                                                                                                              | `space.field.gap`                     |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | Tier 1   | `palette.green.500 = "#2EBD59"`                                                                                                                          | `space.2 = "8"`                       |
-| Tier 2   | `color.buy.default = "{palette.green.500}"` (+ `.hover→palette.green.400 #4FC86F`, `.subtle→palette.green.900 #0E3D1F`, `.hc→palette.green.300 #6BD48A`) | `space.field.gap = "{space.2}"`       |
+| Tier 2   | `color.buy.default = "{palette.green.500}"` (+ `.hover→palette.green.300 #6BD48A`, `.subtle→palette.green.900 #0E3D1F`, `.hc→palette.green.300 #6BD48A`) | `space.field.gap = "{space.2}"`       |
 | CSS      | `--color-buy-default: #2EBD59;` under `[data-theme="dark"]`                                                                                              | `--space-field-gap: 8px;`             |
 | TS       | `tokens.color.buy.default === "#2EBD59"`                                                                                                                 | `tokens.space.field.gap === "8"`      |
 | Engine   | `{ "hex": "#2EBD59", "rgba": [0.1804, 0.7412, 0.3490, 1.0] }`                                                                                            | not exported (colour/typography only) |

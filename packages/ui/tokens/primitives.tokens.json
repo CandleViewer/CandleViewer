@@ -75,6 +75,10 @@
     "$type": "color",
     "$value": "#0F2650"
   },
+  "palette.blue.450": {
+    "$type": "color",
+    "$value": "#3676EB"
+  },
   "palette.green.300": {
     "$type": "color",
     "$value": "#6BD48A"

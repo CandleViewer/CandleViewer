@@ -73,11 +73,11 @@
   },
   "color.action.primary.hover": {
     "$type": "color",
-    "$value": "{palette.blue.400}"
+    "$value": "{palette.blue.600}"
   },
   "color.action.primary.active": {
     "$type": "color",
-    "$value": "{palette.blue.600}"
+    "$value": "{palette.blue.700}"
   },
   "color.action.secondary.default": {
     "$type": "color",
@@ -93,7 +93,7 @@
   },
   "color.buy.hover": {
     "$type": "color",
-    "$value": "{palette.green.400}"
+    "$value": "{palette.green.300}"
   },
   "color.buy.subtle": {
     "$type": "color",
