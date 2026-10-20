@@ -152,7 +152,7 @@ def test_every_new_problem_code_is_registered_with_its_status(code: str) -> None
 def test_no_other_view_as_code_and_step_up_is_reused() -> None:
     catalogue = _ws_section("### 10.2 Catalogue")
     assert "`view_as_expired` is absent for the same reason" in catalogue
-    assert "| `view_as_read_only` | request | no | = |" in catalogue  # class, retryable, REST
+    assert "| `view_as_read_only` | any | no | = |" in catalogue  # class, retryable, REST
     registered = {e["code"] for e in SPEC["x-error-codes"] if e["code"].startswith("view_as")}
     assert registered == set(_CODES)
     assert "step_up_required" in {e["code"] for e in SPEC["x-error-codes"]}

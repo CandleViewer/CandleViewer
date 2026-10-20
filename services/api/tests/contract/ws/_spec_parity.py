@@ -613,10 +613,7 @@ _SCOPE_TEXT: Final = {
     "own alerts only": "SELF",
 }
 #: A family the document marks contract only, with the words that mark it.
-CONTRACT_ONLY_MARKERS: Final = {
-    "indicators": "**Status: contract only (C-6.1).**",
-    "alerts": "#### 6.2.1 `alerts` topic (contract only)",
-}
+CONTRACT_ONLY_MARKERS: Final = {"indicators": "**Status: contract only (C-6.1).**"}
 
 
 def doc_spelling(pattern: str) -> str:

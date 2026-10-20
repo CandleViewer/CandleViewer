@@ -154,11 +154,6 @@ def test_10_2_rest_column_is_the_registrys() -> None:
     assert not drifts, sp.render(drifts)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F-07: the registry gives the seven dual-surface codes the scope `any`; 10.2 names "
-    "topic or request for six of them (#572)",
-)
 def test_10_2_scope_is_the_registrys() -> None:
     drifts = sp.error_drifts("scope")
     assert not drifts, sp.render(drifts)
