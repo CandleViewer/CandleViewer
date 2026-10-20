@@ -93,7 +93,8 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
    machine-local), then `python scripts/relayroom-enter-credentials.py` (masked input; nothing
    echoed).
    Transition (checkouts that pulled this change over a `.mcp.json` from the tracked era): the pull
-   deletes an unmodified root copy and the skill file — re-run this step and the skill `cp`. A plain
+   deletes an unmodified root copy and the skill file — re-run the `cp` half of this step and the
+   skill `cp` (credentials live in `.claude/settings.local.json`, which the pull never touches). A plain
    `git pull` / `git pull --rebase` over a hand-edited root copy aborts ("would be overwritten");
    never clear that abort with `git add` or `commit -a` — move the edited file aside instead. With
    `--autostash`, a stash/pop, or an edit that was already committed, git's rename detection moves
