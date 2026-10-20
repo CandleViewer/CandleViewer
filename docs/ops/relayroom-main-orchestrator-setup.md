@@ -93,12 +93,16 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
    machine-local), then `python scripts/relayroom-enter-credentials.py` (masked input; nothing
    echoed).
    Transition (checkouts that pulled this change over a `.mcp.json` from the tracked era): the pull
-   deletes an unmodified root copy and the skill file — re-run this step and the skill `cp`. If the
-   root copy had been edited by hand, git's rename detection moves that edit onto
-   `docs/ops/relayroom-mcp.template.json` (a tracked, public file): run
-   `cp docs/ops/relayroom-mcp.template.json .mcp.json && git checkout -- docs/ops/relayroom-mcp.template.json`
-   before anything is committed or pushed, and drop any local commit that already carries the edit.
-   The orchestrator's root copy stays placeholder-only (the doctor fails on a literal URL).
+   deletes an unmodified root copy and the skill file — re-run this step and the skill `cp`. A plain
+   `git pull` / `git pull --rebase` over a hand-edited root copy aborts ("would be overwritten");
+   never clear that abort with `git add` or `commit -a` — move the edited file aside instead. With
+   `--autostash`, a stash/pop, or an edit that was already committed, git's rename detection moves
+   the edit onto `docs/ops/relayroom-mcp.template.json` (a tracked, public file): run
+   `git restore --source=HEAD --staged --worktree -- docs/ops/relayroom-mcp.template.json` (this
+   also undoes a staged carry), then `cp docs/ops/relayroom-mcp.template.json .mcp.json`, and drop
+   any local commit that carries the edit; `git diff origin/main -- docs/ops/relayroom-mcp.template.json`
+   must print nothing before you push. The orchestrator's root copy stays placeholder-only (the
+   doctor fails on a literal URL); worker clients re-enter their binding with their own tooling.
 3. `python scripts/relayroom-main-doctor.py` → must print `READY` (exit 0).
 4. In the Code session: `/mcp` → reconnect `candleviewer-relayroom`.
 5. Tell Atlas "RelayRoom credentials entered"; Atlas then runs §8: `whoami` → `roster` → `inbox` →
