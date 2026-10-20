@@ -8,7 +8,9 @@ An instance lives while it has a lease; after the last release it is kept `grace
 
 Caps (`limits.py`), checked by `check` before anything is held: a NEW distinct instance is refused
 past `per_symbol` instances on its symbol or `process` instances in all, counting those in their
-grace; a user is refused past `per_user` distinct instances held. Joining a running instance counts
+grace; a user is refused past `per_user` distinct instances held, or released by that user and
+still in their grace (IR-31: releasing and starting others never runs more than `per_user` for
+one user; holding one again, by anyone, ends that charge). Joining a running instance counts
 toward the user's cap only. `user=None` (a system consumer) is exempt from the user cap only. A
 refusal is counted (`indicator_cap_rejected_total{cap}`) and changes nothing. Pure bookkeeping:
 no I/O and no task; the engine acts on what it returns. Every instance of the process is one entry
@@ -48,6 +50,7 @@ DEFAULT_CAPS: Final = InstanceCaps()
 class _Instance:
     holders: dict[str, str | None] = field(default_factory=dict)  # consumer -> user
     expires_at: int | None = None  # set while in grace
+    released_by: str | None = None  # in grace: the user whose release started it (IR-31)
 
 
 class InstanceLeases:
@@ -59,26 +62,18 @@ class InstanceLeases:
         self._caps, self._grace = caps, grace_us
         self._held: dict[Key, _Instance] = {}
 
-    def __contains__(self, key: Key) -> bool:
-        return key in self._held
-
-    def __len__(self) -> int:
-        return len(self._held)
-
-    def holders(self, key: Key) -> int:
-        entry = self._held.get(key)
-        return 0 if entry is None else len(entry.holders)
-
     def held_by(self, key: Key, consumer: str) -> bool:
         entry = self._held.get(key)
         return entry is not None and consumer in entry.holders
 
     def _mine(self, user: str, consumer: str | None) -> set[Key]:
-        """The keys `user` holds through a consumer other than `consumer`."""
+        """The keys `user` holds through a consumer other than `consumer`, and those in a grace
+        `user`'s release started."""
         return {
             key
             for key, entry in self._held.items()
             if any(u == user and c != consumer for c, u in entry.holders.items())
+            or (not entry.holders and entry.released_by == user)
         }
 
     def check(
@@ -107,19 +102,25 @@ class InstanceLeases:
         if entry is None:
             entry = self._held[key] = _Instance()
         entry.holders[consumer] = user
-        entry.expires_at = None
+        entry.expires_at = entry.released_by = None
         self._observe()
         return new
 
     def release(self, key: Key, consumer: str, now_us: int) -> None:
-        """Drop a lease; the last release starts the grace. Releasing a lease never held raises."""
+        """Drop a lease; the last release starts the grace, charged to its user. Releasing a lease
+        never held raises."""
         entry = self._held.get(key)
         if entry is None or consumer not in entry.holders:
             raise IndicatorError("That consumer holds no lease on that indicator instance.")
-        del entry.holders[consumer]
+        user = entry.holders.pop(consumer)
         if not entry.holders:
-            entry.expires_at = now_us + self._grace
+            entry.expires_at, entry.released_by = now_us + self._grace, user
         self._observe()
+
+    def drop(self, key: Key) -> None:
+        """Forget an instance that never ran (an admission undone): no grace, no charge."""
+        if self._held.pop(key, None) is not None:
+            self._observe()
 
     def expired(self, now_us: int) -> tuple[Key, ...]:
         """Remove and return every instance whose grace has elapsed."""

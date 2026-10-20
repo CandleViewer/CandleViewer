@@ -2,7 +2,7 @@
 
 The series store hydrates from the newest stored rows (`read_tail`); an instance that needs more
 bars than the store holds reads the older ones of the series' generation through
-`stored_history` (`read_bars`, parameterised SQL), on one of the recompute slots, and ends as a
+`StoredHistory` (`read_bars`, parameterised SQL), on one of the recompute slots, and ends as a
 from-scratch fold of the whole window. Another generation's rows and a kline row are left out.
 """
 
@@ -41,8 +41,8 @@ async def test_an_instance_primes_older_bars_through_bar_reader_on_real_questdb(
     from candleviewer.bars.series_store import SeriesStore
     from candleviewer.orderflow.indicators.engine import (
         IndicatorEngine,
+        StoredHistory,
         resolve_instances,
-        stored_history,
     )
     from candleviewer.orderflow.indicators.kernels import compute
     from candleviewer.orderflow.indicators.types import KernelContext, bar_input
@@ -63,15 +63,16 @@ async def test_an_instance_primes_older_bars_through_bar_reader_on_real_questdb(
             )
         )  # fmt: skip
 
-    def row(i: int, gen: int = 0, **change: object) -> dict[str, object]:
-        out = {**bar_row(bar(i), spec, generation=gen), **change}
+    def row(i: int, gen: int = 0, change: dict[str, object] | None = None) -> dict[str, object]:
+        out = {**bar_row(bar(i), spec, generation=gen), **(change or {})}
         out["row_checksum"] = row_checksum(out)
         return out
 
-    flowless = dict.fromkeys(ORDERFLOW_NULL_COLUMNS)
+    kline: dict[str, object] = {"source": KLINE_SOURCE, "index": None}
+    kline.update(dict.fromkeys(ORDERFLOW_NULL_COLUMNS))
     rows = [row(i) for i in range(40)]  # generation 0, minutes 0..39
     # Inside the window the read takes, and left out: another generation's bar, a kline row.
-    rows += [row(20, gen=1), row(21, source=KLINE_SOURCE, index=None, **flowless)]
+    rows += [row(20, gen=1), row(21, change=kline)]
     host, pg_port, ilp_port = questdb_container
     conn = await _connect(host, pg_port)
     try:
@@ -97,7 +98,7 @@ async def test_an_instance_primes_older_bars_through_bar_reader_on_real_questdb(
 
         store = SeriesStore(tail)
         hold = await store.ensure(sym, spec)
-        engine = IndicatorEngine(store, history=stored_history(reader))
+        engine = IndicatorEngine(store, history=StoredHistory(reader))
         (r,) = resolve_instances([{"indicator": "sma", "params": {"n": 20}}], spec)
         engine.admit(sym, spec, (r,), "c1", "u1", history=5)  # 25 bars: 15 must be read
         await asyncio.gather(*list(engine._tasks))

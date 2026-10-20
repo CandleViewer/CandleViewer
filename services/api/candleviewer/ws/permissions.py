@@ -383,6 +383,11 @@ def _bar_spec(
     return spec, None
 
 
+def _indicator_history(sub: Subscription) -> int:
+    """An `indicators.*` subscription's `history` (§6.1), its default when left out."""
+    return int(sub.effective.get("history", INDICATORS_DEFAULTS["history"]))
+
+
 #: `unknown_topic` for a topic in the catalogue that this server does not serve (§6.1, §10.2).
 _UNSERVED: Final = "This topic is not available on this server."
 #: One message per refusal code, whatever the cause: `account_scope_denied` carries §6.2's.
@@ -815,10 +820,10 @@ class ConnectionAuthz:
         if sub.replay_session_id is not None or sub.topic.family.private:
             return None
         consumer, user, symbol = self._consumer(sub), str(self.principal.user_id), sub.topic.symbol
-        engine = self.services.indicators
-        history = int(sub.effective.get("history", INDICATORS_DEFAULTS["history"]))
+        engine = self.services.indicators if requested else None  # `indicators.*` alone has any
+        history = _indicator_history(sub) if engine is not None else 0
         try:
-            if engine is not None and spec is not None and requested:  # before anything is held
+            if engine is not None and spec is not None:  # before anything is held
                 engine.check(symbol or "", spec, requested, user, history=history)
             bars = self.services.bars
             if spec is not None and bars is not None:
@@ -831,7 +836,7 @@ class ConnectionAuthz:
             for key in keys:
                 await self.services.upstream.acquire(key, consumer)
                 sub.upstream = (*sub.upstream, key)
-            if engine is not None and spec is not None and requested:
+            if engine is not None and spec is not None:  # all or nothing: `admit` undoes a raise
                 engine.admit(symbol or "", spec, requested, consumer, user, history=history)
                 sub.indicator_keys = tuple(r.key for r in requested)
         except SpecCapExceeded:
@@ -1042,7 +1047,6 @@ class ConnectionAuthz:
             raise TopicError("invalid_options", str(exc), "instances") from None
         engine = self.services.indicators
         if engine is not None and sub.replay_session_id is None:
-            history = int(sub.effective.get("history", INDICATORS_DEFAULTS["history"]))
             user, consumer = str(self.principal.user_id), self._consumer(sub)
             try:
                 engine.check(
@@ -1050,7 +1054,7 @@ class ConnectionAuthz:
                     spec,
                     requested,
                     user,
-                    history=history,
+                    history=_indicator_history(sub),
                     consumer=consumer,
                 )
             except InstanceCapError as exc:
@@ -1068,11 +1072,10 @@ class ConnectionAuthz:
         engine = self.services.indicators
         if engine is None or not sub.indicator_keys:
             return
-        history = int(sub.effective.get("history", INDICATORS_DEFAULTS["history"]))
         engine.admit(
             sub.topic.symbol or "", spec, requested, self._consumer(sub),
-            str(self.principal.user_id), history=history, replacing=sub.indicator_keys,
-            reason="param_change",
+            str(self.principal.user_id), history=_indicator_history(sub),
+            replacing=sub.indicator_keys, reason="param_change",
         )  # fmt: skip
         sub.indicator_keys = tuple(r.key for r in requested)
 

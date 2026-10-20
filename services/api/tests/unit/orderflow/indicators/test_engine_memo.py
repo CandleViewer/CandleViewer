@@ -14,7 +14,16 @@ from candleviewer.orderflow.indicators.metrics import (
     indicator_cache_misses_total,
 )
 from candleviewer.orderflow.indicators.types import BarInput, Outputs
-from tests.unit.orderflow.indicators._engine import ATR14, M1, SYM, admit, close, counter, wave
+from tests.unit.orderflow.indicators._engine import (
+    ATR14,
+    M1,
+    SYM,
+    admit,
+    close,
+    counter,
+    instances,
+    wave,
+)
 
 
 @pytest.fixture
@@ -40,7 +49,7 @@ async def test_ten_consumers_of_atr14_cost_one_update_per_bar_close(updates: lis
         admit(engine, ATR14, consumer=f"c{i}", user=f"u{i}" if i % 2 else None)[0].key
         for i in range(10)
     }
-    assert len(keys) == 1 and engine.instances(SYM, M1.spec_hash) == 1
+    assert len(keys) == 1 and instances(engine) == 1
     for k in range(30):
         await close(store, engine, wave(k))
     assert len(updates) == 30 and len(set(updates)) == 30  # once per close, not ten times
@@ -78,6 +87,6 @@ async def test_different_params_or_bar_specs_are_different_instances() -> None:
     b = admit(engine, [{"indicator": "atr", "params": {"n": 15}}])[0].key
     c = admit(engine, [{"indicator": "atr", "params": {"n": 14.0}}], consumer="c2")[0].key
     assert a != b and a == c  # 14 and 14.0 share one identity (24 §7.4)
-    assert engine.instances(SYM, M1.spec_hash) == 2
+    assert instances(engine) == 2
     for h in holds:
         h.release()

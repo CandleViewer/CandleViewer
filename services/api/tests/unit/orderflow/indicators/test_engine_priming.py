@@ -15,13 +15,9 @@ from candleviewer.bars.rows import bar_row, row_checksum
 from candleviewer.bars.series import BarSeries
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.orderflow.errors import RecomputeRefusedError
-from candleviewer.orderflow.indicators.engine import (
-    MAX_FILL_SLOTS,
-    IndicatorEngine,
-    Requested,
-    stored_history,
-)
+from candleviewer.orderflow.indicators.engine import IndicatorEngine, Requested, StoredHistory
 from candleviewer.orderflow.indicators.kernels import compute
+from candleviewer.orderflow.indicators.limits import MAX_FILL_SLOTS
 from candleviewer.orderflow.indicators.metrics import CAP_REJECTED, RECOMPUTES
 from candleviewer.orderflow.indicators.types import BarInput, KernelContext, Unavailable, bar_input
 from tests.unit.orderflow.indicators._engine import (
@@ -33,6 +29,7 @@ from tests.unit.orderflow.indicators._engine import (
     admit,
     close,
     counter,
+    instances,
     wave,
 )
 
@@ -137,7 +134,7 @@ async def test_a_read_with_no_free_slot_is_refused_never_queued() -> None:
         admit(engine, [{"indicator": "sma", "params": {"n": 21}}], consumer="c2", history=5)
     assert caught.value.cap == "recompute"
     assert counter(CAP_REJECTED["recompute"]) - refused == 1
-    assert engine.instances(SYM, M1.spec_hash) == 1 and len(history.calls) == 1  # nothing held
+    assert instances(engine) == 1 and len(history.calls) == 1  # nothing held
     admit(engine, EMA3, consumer="c3", history=5)  # no read needed: admitted at once
     history.go.set()
     await _done(engine)
@@ -194,7 +191,7 @@ async def test_stored_history_reads_one_generations_closed_tape_bars_oldest_firs
             queries.append(params)
             return rows
 
-    read = stored_history(BarReader(_Fetch(), _no_rebuild))
+    read = StoredHistory(BarReader(_Fetch(), _no_rebuild))
     got = await read(SYM, M1, GEN, wave(0).open_time, wave(10).open_time)
     assert list(got) == [(i, bar_input(wave(i))) for i in (5, 6)]
     assert len(queries) == 1 and queries[0][0] == SYM  # a bind, never inlined
@@ -301,7 +298,7 @@ async def test_stored_history_pages_through_the_window_and_stops_at_its_bound() 
             return BarPage(rows, wave(first + 1).open_time if first == 0 else None, stale=False)
 
     pages = _Pages()
-    read = stored_history(pages, max_rows=10)
+    read = StoredHistory(pages, max_rows=10)
     got = await read(SYM, M1, GEN, wave(0).open_time, wave(9).open_time)
     assert [i for i, _ in got] == [0, 1, 2, 3]
     assert pages.calls == [(10, None), (8, wave(1).open_time)]
@@ -336,7 +333,7 @@ async def test_an_instance_gone_before_its_read_ends_is_not_primed_and_a_crash_i
     engine.release(SYM, [], "nobody")
     history.go.set()
     await _done(engine)
-    assert engine.snapshot(SYM, r.key, 5) is None and engine.instances(SYM, M1.spec_hash) == 0
+    assert engine.snapshot(SYM, r.key, 5) is None and instances(engine) == 0
 
     class _Broken(Listener):
         def ready(self, symbol: str, spec: BarSpec) -> None:
@@ -351,3 +348,171 @@ async def test_an_instance_gone_before_its_read_ends_is_not_primed_and_a_crash_i
         ("indicator_backfill_crashed", "RuntimeError")
     ]
     assert engine._busy == 0
+
+
+# -- a full recompute's fold is cooperative (C-2.17): chunks, closes held back meanwhile --------
+
+SMA1500 = [{"indicator": "sma", "params": {"n": 1_500}}]
+
+
+class _Deep:
+    """A deep series of `GEN`: the store's read gets bars 2 000..2 999, `read` (`HistoryRead`)
+    every stored bar opening in its window, at once."""
+
+    def __init__(self) -> None:
+        self.bars = [wave(i) for i in range(3_000)]
+
+    async def tail(self, symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        newest = self.bars[2_000:][-limit:]
+        return BarTail([(GEN, b) for b in newest], since_us=0, fetched=len(newest))
+
+    async def read(
+        self, symbol: str, spec: BarSpec, generation: int, start_us: int, end_us: int
+    ) -> list[tuple[int, BarInput]]:
+        return [(b.index, bar_input(b)) for b in self.bars if start_us <= b.open_time < end_us]
+
+
+class _Folding:
+    """Set once the engine folds its first chunk (a spy on `_fold`)."""
+
+    def __init__(self, engine: IndicatorEngine, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.started = asyncio.Event()
+        real = engine._fold
+
+        def fold(*args: Any) -> bool:
+            self.started.set()
+            return real(*args)
+
+        monkeypatch.setattr(engine, "_fold", fold)
+
+    async def begun(self, engine: IndicatorEngine, r: Requested) -> int:
+        """Wait until the instance's read is folding; the points it has folded by then."""
+        await self.started.wait()
+        inst = engine._instances[(SYM, r.key)]
+        assert inst.held is not None and not inst.ready
+        assert engine.snapshot(SYM, r.key, 5) is None
+        return len(inst.points)
+
+
+async def _deep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[_Deep, SeriesStore, IndicatorEngine, Requested, _Folding, Any]:
+    """SMA(1 500) with history 1 000 needs 2 500 bars: it reads 500..1 999 and folds 2 500 bars,
+    `PRIME_CHUNK_BARS` at a time. The test's coroutine runs once the fold has begun."""
+    deep = _Deep()
+    store = SeriesStore(deep.tail)
+    hold = await store.ensure(SYM, M1)
+    engine = IndicatorEngine(store, history=deep.read)
+    folding = _Folding(engine, monkeypatch)
+    (r,) = admit(engine, SMA1500, history=1_000)
+    return deep, store, engine, r, folding, hold
+
+
+async def test_a_read_is_folded_in_chunks_and_closes_meanwhile_are_folded_before_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The loop runs between chunks (a close lands mid-fold); the instance stays not ready, and
+    the closes it held back (a new bar, then an amended one) are folded in order before it is:
+    it ends as a from-scratch fold of the series as the store ends."""
+    deep, store, engine, r, folding, _hold = await _deep(monkeypatch)
+    late = wave(2_999).model_copy(update={"close": wave(2_999).close + 9})
+    folded: list[int] = []
+
+    async def land() -> None:
+        folded.append(await folding.begun(engine, r))
+        await close(store, engine, wave(3_000), generation=GEN)
+        await close(store, engine, late, generation=GEN, amended=True)
+
+    await asyncio.gather(land(), _done(engine))
+    assert 0 < folded[0] < 2_500  # it ran mid-fold
+    batch = engine.snapshot(SYM, r.key, 1_000)
+    assert batch is not None and [p.index for p in batch.points] == list(range(2_001, 3_001))
+    series = [*deep.bars[500:2_999], late, wave(3_000)]
+    expected = _fold(r, [bar_input(b) for b in series])
+    assert _reprs([p.values for p in batch.points]) == expected[-1_000:]
+
+
+async def test_a_generation_change_during_the_fold_primes_from_the_store_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _deep_bars, store, engine, r, folding, _hold = await _deep(monkeypatch)
+
+    async def land() -> None:
+        await folding.begun(engine, r)
+        await close(store, engine, wave(0, slot=3_001), generation=GEN + 1)  # a cold start
+
+    await asyncio.gather(land(), _done(engine))
+    batch = engine.snapshot(SYM, r.key, 1_000)
+    assert batch is not None and [(p.generation, p.index) for p in batch.points] == [(GEN + 1, 0)]
+
+
+async def test_a_store_repair_during_the_fold_primes_from_the_store_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _deep_bars, _store, engine, r, folding, _hold = await _deep(monkeypatch)
+
+    async def land() -> None:
+        await folding.begun(engine, r)
+        engine.history_repair(SYM, M1, 1)
+
+    await asyncio.gather(land(), _done(engine))
+    batch = engine.snapshot(SYM, r.key, 1_000)
+    assert batch is not None and [p.index for p in batch.points] == list(range(2_000, 3_000))
+    assert {p.values for p in batch.points} == {(None,)}  # SMA(1 500) on the store's 1 000 bars
+
+
+async def test_more_closes_than_an_instance_holds_back_prime_it_from_the_store_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At most `MAX_POINTS` closes are held back (C-2.18); past it the instance ends with the
+    store's bars, which hold the newest closes."""
+    _deep_bars, store, engine, r, folding, _hold = await _deep(monkeypatch)
+
+    async def land() -> None:
+        await folding.begun(engine, r)
+        for i in range(3_000, 4_001):  # 1 001 closes while the fold waits
+            await close(store, engine, wave(i), generation=GEN)
+
+    await asyncio.gather(land(), _done(engine))
+    batch = engine.snapshot(SYM, r.key, 1_000)
+    assert batch is not None and [p.index for p in batch.points] == list(range(3_001, 4_001))
+    assert {p.values for p in batch.points} == {(None,)}  # SMA(1 500) on the store's 1 000 bars
+
+
+async def test_stored_history_reads_pages_of_at_most_a_thousand_rows_and_yields_between() -> None:
+    """C-2.17: a page's checks and conversions run without a yield, so pages are short and the
+    loop runs between them (the reader here never yields itself)."""
+    rows = [bar_row(wave(i), M1, generation=GEN) for i in range(2_500)]
+    at = {wave(i).open_time: i + 1 for i in range(2_500)}  # a cursor -> the next row's position
+
+    class _Pages:
+        def __init__(self) -> None:
+            self.limits: list[int] = []
+
+        async def read_bars(
+            self, symbol: str, spec: BarSpec, from_us: int, to_us: int, limit: int, *,
+            after_us: int | None = None, at_key: BarKey | None = None,
+        ) -> BarPage:  # fmt: skip
+            self.limits.append(limit)
+            first = 0 if after_us is None else at[after_us]
+            page = rows[first : first + limit]
+            more = first + limit < len(rows)
+            return BarPage(page, wave(first + limit - 1).open_time if more else None, stale=False)
+
+    pages, turns, done = _Pages(), [0], [False]
+
+    async def ticker() -> None:
+        while not done[0]:
+            turns[0] += 1
+            await asyncio.sleep(0)
+
+    async def reading() -> list[tuple[int, BarInput]]:
+        try:
+            return await StoredHistory(pages)(SYM, M1, GEN, wave(0).open_time, 2**53)
+        finally:
+            done[0] = True
+
+    got, _ = await asyncio.gather(reading(), ticker())
+    assert [i for i, _ in got] == list(range(2_500))
+    assert pages.limits == [1_000, 1_000, 1_000]
+    assert turns[0] >= 2  # the loop ran after each full page

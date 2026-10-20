@@ -232,6 +232,13 @@ class Kernel(ABC):
         at index `warmup_bars - 1` at the earliest. Each output is `None` exactly when
         `nullable_when` says."""
 
+    @classmethod
+    def anchor_us(cls, params: Mapping[str, ParamValue], context: KernelContext) -> int | None:
+        """Where each period of a kernel that restarts at an anchor (`vwap`, `cvd`) starts, in µs
+        past 00:00 UTC (`session_start`), or None for a kernel that never restarts. A fold that
+        begins inside a period holds part of it only: the engine never serves that (24 §7.4)."""
+        return None
+
     @abstractmethod
     def update(self, bar: BarInput) -> Outputs:
         """Fold in the next closed bar; returns one value per entry of `outputs`."""

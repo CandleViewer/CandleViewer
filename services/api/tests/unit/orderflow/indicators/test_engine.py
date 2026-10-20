@@ -5,6 +5,10 @@ E13 threat model SR-E13-01/03/04, IR-24, IR-41, IR-45). Priming, swaps and repai
 from __future__ import annotations
 
 import dataclasses
+import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,12 +22,13 @@ from candleviewer.orderflow.errors import (
     InstanceRefusedError,
     RecomputeRefusedError,
 )
+from candleviewer.orderflow.indicators import engine as engine_module
 from candleviewer.orderflow.indicators.engine import (
     Available,
     IndicatorEngine,
     resolve_instances,
 )
-from candleviewer.orderflow.indicators.kernels import AtrKernel, EmaKernel
+from candleviewer.orderflow.indicators.kernels import AtrKernel, EmaKernel, build_kernel
 from candleviewer.orderflow.indicators.limits import MAX_WINDOW_BARS
 from candleviewer.orderflow.indicators.metrics import CAP_REJECTED
 from candleviewer.orderflow.indicators.types import BarInput, Outputs, Unavailable
@@ -37,10 +42,13 @@ from tests.unit.orderflow.indicators._engine import (
     bar,
     close,
     counter,
+    holders,
+    instances,
     wave,
 )
 
 RENKO = BarSpec(kind="renko", range_ticks=10)
+_API_ROOT = Path(__file__).resolve().parents[4]
 
 
 class _Now:
@@ -127,7 +135,7 @@ async def test_the_ninth_distinct_instance_of_a_user_is_refused_naming_the_cap()
     assert (caught.value.cap, caught.value.limit) == ("user", 8)
     assert str(caught.value) == "At most 8 server indicator instances per user."
     assert counter(CAP_REJECTED["user"]) - refused == 1
-    assert engine.instances(SYM, M1.spec_hash) == 8  # nothing was held for the refusal
+    assert instances(engine) == 8  # nothing was held for the refusal
     admit(engine, [{"indicator": "ema", "params": {"n": 10}}], consumer="sys", user=None)
 
 
@@ -139,7 +147,7 @@ async def test_a_window_past_its_bound_is_refused_before_anything_is_held() -> N
         engine.check(SYM, M1, requested, "u1", history=MAX_WINDOW_BARS)
     assert caught.value.cap == "window" and "250000" in str(caught.value)
     assert counter(CAP_REJECTED["window"]) - refused == 1
-    assert engine.instances(SYM, M1.spec_hash) == 0
+    assert instances(engine) == 0
 
 
 async def test_no_kernel_exists_before_validate_params_passes(
@@ -218,10 +226,10 @@ async def test_a_released_instance_keeps_its_grace_then_goes() -> None:
     engine.release(SYM, [r.key], "c2")  # its grace ends at 29_999_999 + 30 s
     now.us = 29_999_999 + 30_000_000 - 1
     engine.release(SYM, [], "nobody")  # a sweep
-    assert engine.instances(SYM, M1.spec_hash) == 1
+    assert instances(engine) == 1
     now.us += 1
     engine.release(SYM, [], "nobody")
-    assert engine.instances(SYM, M1.spec_hash) == 0 and engine.snapshot(SYM, r.key, 1) is None
+    assert instances(engine) == 0 and engine.snapshot(SYM, r.key, 1) is None
 
 
 async def test_a_replacing_admission_swaps_the_consumers_instances() -> None:
@@ -231,7 +239,7 @@ async def test_a_replacing_admission_swaps_the_consumers_instances() -> None:
         await close(store, engine, wave(k))
     new = resolve_instances([{"indicator": "sma", "params": {"n": 2}}], M1)
     engine.admit(SYM, M1, new, "c1", "u1", history=500, replacing=(old.key,))
-    assert engine._leases.holders((SYM, old.key)) == 0  # in its grace, no lease left
+    assert holders(engine._leases, (SYM, old.key)) == 0  # in its grace, no lease left
     batch = engine.snapshot(SYM, new[0].key, 500)
     assert batch is not None and len(batch.points) == 5  # primed from the store's 5 bars
 
@@ -323,4 +331,84 @@ async def test_releasing_a_lease_not_held_is_logged_and_never_raises() -> None:
         engine.release(SYM, [r.key, "f" * 64], "c1")
         engine.release(SYM, [r.key], "c1")  # released already
     assert [e["event"] for e in logs] == ["indicator_lease_not_held"] * 2
-    assert engine._leases.holders((SYM, r.key)) == 0
+    assert holders(engine._leases, (SYM, r.key)) == 0
+
+
+async def test_an_admission_that_raises_after_its_checks_holds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SR-E13-03 bookkeeping fails closed (security review of the WS delivery): a kernel that
+    cannot be built after the leases are taken undoes the admission whole: the instances it
+    started and the leases it took, a join's included, with no grace and no cap left held."""
+    store, engine, _hold = await _engine()
+    (running,) = admit(engine, EMA3, consumer="first")
+
+    def failing(indicator: str, *args: Any, **kw: Any) -> Any:
+        if indicator == "rsi":
+            raise RuntimeError("kernel")
+        return build_kernel(indicator, *args, **kw)
+
+    monkeypatch.setattr(engine_module, "build_kernel", failing)
+    # A join of the running instance, a start, and a start whose kernel fails.
+    raw: list[dict[str, Any]] = [*EMA3, {"indicator": "sma"}, {"indicator": "rsi"}]
+    with pytest.raises(RuntimeError, match="kernel"):
+        admit(engine, raw, consumer="second", user="u2")
+    assert set(engine._leases._held) == {(SYM, running.key)}  # the first consumer's alone
+    assert holders(engine._leases, (SYM, running.key)) == 1 and instances(engine) == 1
+    monkeypatch.setattr(engine_module, "build_kernel", build_kernel)
+    refused = counter(CAP_REJECTED["user"])
+    eight = [{"indicator": "ema", "params": {"n": n}} for n in range(2, 10)]
+    admit(engine, eight, consumer="third", user="u2")  # nothing of the failed one counts
+    assert counter(CAP_REJECTED["user"]) == refused
+    await close(store, engine, wave(0))
+    assert engine.read(SYM, running.key) == Unavailable("warmup")  # the join's instance runs on
+
+
+async def test_an_unheld_instance_stops_folding_within_a_second_of_its_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The release grace bounds work too (review of the WS delivery): with no admission or
+    release anywhere, the emit path removes an instance whose grace has ended, at most a second
+    after it, so it folds nothing more."""
+    now = _Now()
+    store, engine, _hold = await _engine(now_us=now)
+    (r,) = admit(engine, EMA3)
+    engine.release(SYM, [r.key], "c1")
+    folds: list[int] = []
+    real = EmaKernel.update
+
+    def counting(self: EmaKernel, b: BarInput) -> Outputs:
+        folds.append(b.t)
+        return real(self, b)
+
+    monkeypatch.setattr(EmaKernel, "update", counting)
+    now.us = 30_000_000 - 1  # in its grace: it still folds each close
+    await close(store, engine, wave(0))
+    assert folds == [wave(0).open_time] and instances(engine) == 1
+    now.us = 30_000_000 + 1_000_000  # its grace ended a second ago: the next close removes it
+    await close(store, engine, wave(1))
+    assert folds == [wave(0).open_time] and instances(engine) == 0
+
+
+def test_importing_the_indicators_package_loads_no_bars_module() -> None:
+    """M15 `rules` imports the catalogue through `candleviewer.orderflow.indicators` and may not
+    reach M8 `bars` (import-linter counts indirect imports): a fresh interpreter proves the
+    package's `__init__` loads none, the engine being imported from its own module only."""
+    probe = (
+        "import sys, candleviewer.orderflow.indicators as p; "
+        "print(sorted(m for m in sys.modules if m.startswith('candleviewer.bars')), "
+        "'candleviewer.orderflow.indicators.engine' in sys.modules)"
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+    env["PYTHONPATH"] = str(_API_ROOT)
+    done = subprocess.run(  # noqa: S603 -- fixed argv: this interpreter and a literal probe
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=_API_ROOT,
+        env=env,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "[] False"

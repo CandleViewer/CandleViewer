@@ -21,7 +21,8 @@ Fractional bounds are `Decimal`, so the step check is exact (`catalogue.validate
 
 The second block holds the resource caps of the server instances (SR-E13-03) and of their full
 recomputes (SR-E13-04), which `leases.InstanceLeases` and `engine.IndicatorEngine` enforce before
-anything is allocated or computed.
+anything is allocated or computed, and the third the bounds of an instance's own state. Every
+constant the engine and the leases use is here, and pinned.
 """
 
 from __future__ import annotations
@@ -51,7 +52,9 @@ PSAR_ACCELERATION_STEP: Final = Decimal("0.001")
 
 #: SR-E13-03: the most distinct server instances (`(symbol, spec_hash)`) one user may hold, one
 #: symbol may run and the process may run. An instance in its release grace still counts toward
-#: the symbol and process caps (it still costs CPU and memory); joining a running instance counts
+#: the symbol and process caps (it still costs CPU and memory), and toward the cap of the user
+#: whose release started that grace, until it ends or someone holds the instance again (IR-31:
+#: churn through releases never runs more than 8 for one user); joining a running instance counts
 #: toward the user's cap only; a system consumer (`user=None`) is exempt from the user cap only.
 INSTANCE_CAP_PER_USER: Final = 8
 INSTANCE_CAP_PER_SYMBOL: Final = 32
@@ -59,11 +62,33 @@ INSTANCE_CAP_PROCESS: Final = 128
 #: An instance whose last lease is released is kept this long (US-MKT-005's 30 s), so a quick
 #: resubscribe finds it computed.
 INSTANCE_GRACE_US: Final = 30_000_000
-#: SR-E13-04: the most bars one instance's window may span (its warmup plus the history a
-#: subscription asks for), refused beyond it, never truncated.
+#: The emit path removes instances whose grace has ended at most this often, so an unheld one
+#: stops folding closes within a second of its grace (`check` and `release` remove them too).
+SWEEP_EVERY_US: Final = 1_000_000
+#: SR-E13-04: the most bars one instance's window may span (its warmup, the history a
+#: subscription asks for and, for a session-anchored one, the day back to a session start),
+#: refused beyond it, never truncated.
 MAX_WINDOW_BARS: Final = 250_000
 #: SR-E13-04: full recomputes that read stored bars at once; one more is refused, never queued.
 MAX_CONCURRENT_RECOMPUTES: Final = 2
 #: How long a full recompute's read of stored bars may take; past it the instance is primed from
 #: the series store's tail alone.
 RECOMPUTE_TIMEOUT_S: Final = 5.0
+#: C-2.17: a full recompute reads stored bars in pages of at most this many rows and yields to
+#: the event loop after each, and folds them this many bars at a time with a yield between.
+HISTORY_PAGE_ROWS: Final = 1_000
+PRIME_CHUNK_BARS: Final = 512
+
+# --- Instance state (`engine`) ---------------------------------------------------------------
+
+#: The most points an instance keeps: the WS `history` cap (23 §6.1), so any snapshot is whole,
+#: and the series store's tail (`bars.limits.MAX_TAIL`, which this module may not import). It
+#: also bounds the closes an instance holds back while a full recompute folds.
+MAX_POINTS: Final = 1_000
+#: A time-series instance keeps a kernel snapshot before every this-many real bars, for amended
+#: closes (24 §7.4).
+CHECKPOINT_EVERY: Final = 8
+#: More empty slots than this in one time-series gap restart the kernel instead of being filled.
+MAX_FILL_SLOTS: Final = 1_000
+#: A read of an instance more than this many closes behind its series is `stale`.
+STALE_AFTER_BARS: Final = 2

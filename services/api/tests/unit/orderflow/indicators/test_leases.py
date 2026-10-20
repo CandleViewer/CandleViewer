@@ -44,7 +44,7 @@ def test_the_33rd_on_a_symbol_and_the_129th_in_the_process_are_refused() -> None
     leases = InstanceLeases()
     for u in range(4):
         _hold(leases, SYM, 8, f"u{u}", start=u * 8)
-    assert len(leases) == 32
+    assert len(leases._held) == 32
     assert _refused(leases, SYM, _key(999), "u9") == "symbol"
     assert _refused(leases, SYM, _key(999), None) == "symbol"  # system consumers are not exempt
     leases.check(SYM, [_key(5)], "u9")  # joining a running instance counts toward no symbol cap
@@ -74,11 +74,11 @@ def test_a_released_instance_keeps_its_grace_and_still_counts() -> None:
     leases = InstanceLeases(InstanceCaps(per_symbol=1), grace_us=30_000_000)
     assert leases.acquire((SYM, _key(1)), "c1", "u1") is True
     leases.release((SYM, _key(1)), "c1", now_us=1_000)
-    assert leases.expired(30_000_999) == () and (SYM, _key(1)) in leases
+    assert leases.expired(30_000_999) == () and (SYM, _key(1)) in leases._held
     assert _refused(leases, SYM, _key(2), "u2") == "symbol"  # in its grace it still counts
     assert leases.acquire((SYM, _key(1)), "c2", "u2") is False  # re-acquired: the same instance
     leases.release((SYM, _key(1)), "c2", now_us=2_000)
-    assert leases.expired(30_002_000) == ((SYM, _key(1)),) and len(leases) == 0
+    assert leases.expired(30_002_000) == ((SYM, _key(1)),) and len(leases._held) == 0
     with pytest.raises(IndicatorError):
         leases.release((SYM, _key(1)), "c2", now_us=3_000)
 
@@ -100,3 +100,45 @@ def test_the_subscription_gauge_buckets_users_by_instances_held_never_by_id() ->
         "8",
         "8",
     ]
+
+
+def test_an_instance_a_user_released_counts_toward_that_user_until_its_grace_ends() -> None:
+    """IR-31 (security review of the WS delivery): releasing 8 and starting 8 others never runs
+    more than 8 for one user; another user is not charged, and holding one again ends the charge."""
+    leases = InstanceLeases(grace_us=30_000_000)
+    _hold(leases, SYM, 8, "u1")
+    for i in range(8):
+        leases.release((SYM, _key(i)), f"u1-c{i}", now_us=0)
+    before = counter(CAP_REJECTED["user"])
+    assert _refused(leases, OTHER, _key(50), "u1") == "user"  # 8 in their grace are u1's
+    assert counter(CAP_REJECTED["user"]) - before == 1
+    leases.check(OTHER, [_key(50)], "u2")
+    leases.acquire((SYM, _key(0)), "u2-c0", "u2")  # held again: no longer charged to u1
+    leases.check(OTHER, [_key(50)], "u1")
+    assert len(leases.expired(30_000_000)) == 7  # the other seven's grace ends
+    _hold(leases, OTHER, 8, "u1", start=60)
+
+
+def test_a_replace_after_a_replace_counts_the_instances_the_first_one_released() -> None:
+    """A WS `ctl` is checked as holding its new set alone, but what it released stays charged to
+    its user for the grace: a second swap of all 8 within it is refused."""
+    leases = InstanceLeases()
+    for i in range(8):
+        leases.acquire((SYM, _key(i)), "ctl-sub", "u1")
+    leases.check(SYM, [_key(i) for i in range(10, 18)], "u1", "ctl-sub")  # the first swap
+    for i in range(10, 18):
+        leases.acquire((SYM, _key(i)), "ctl-sub", "u1")
+    for i in range(8):
+        leases.release((SYM, _key(i)), "ctl-sub", now_us=0)
+    with pytest.raises(InstanceCapError):
+        leases.check(SYM, [_key(i) for i in range(20, 28)], "u1", "ctl-sub")
+    leases.check(SYM, [_key(i) for i in range(20, 28)], None, "ctl-sub")  # a system consumer
+
+
+def test_drop_forgets_an_instance_with_no_grace_and_no_charge() -> None:
+    leases = InstanceLeases()
+    assert leases.acquire((SYM, _key(1)), "c1", "u1") is True
+    leases.drop((SYM, _key(1)))
+    leases.drop((SYM, _key(1)))  # twice is nothing
+    assert leases._held == {} and leases.expired(10**12) == ()
+    _hold(leases, SYM, 8, "u1", start=10)

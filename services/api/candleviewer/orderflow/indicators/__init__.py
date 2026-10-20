@@ -4,7 +4,9 @@ The authoritative backend kernels of the `compute: server` indicators: pure floa
 closed bars (`kernel`, `kernels`), their identity (`identity.spec_hash`), and the C3 Decimal
 boundary (`boundary.to_decimal`); the catalogue of all 28 v1 indicators that `GET /indicators`
 serves and the rule vocabulary binds to (`catalogue`), with its parameter bounds (`limits`).
-Nothing here imports M8 `bars` (see `types`).
+Nothing this package exports imports M8 `bars` (see `types`), and importing the package loads no
+`bars` module: M15 `rules` imports the catalogue through it and may not reach `bars`. The engine
+(`engine`, a `BarSink` on the bars emit path), its `leases` and `metrics` are never imported here.
 """
 
 from __future__ import annotations

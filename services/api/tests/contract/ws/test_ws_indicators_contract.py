@@ -14,6 +14,7 @@ instances (and one refused, which changes nothing); the refusals: `invalid_optio
 
 from __future__ import annotations
 
+import asyncio
 import functools
 from decimal import Decimal
 from typing import Any, Final
@@ -29,14 +30,17 @@ from candleviewer.orderflow.indicators.kernels import compute
 from candleviewer.orderflow.indicators.types import BarInput, KernelContext, bar_input
 from candleviewer.ws.indicators_publish import IndicatorsPublisher, wire_value
 from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
+from candleviewer.ws.permissions import Subscription
 from candleviewer.ws_wiring import SnapshotRouter
 from tests.contract.test_market_bars_contract import _SERIES, _build
 from tests.contract.ws import _harness as h
+from tests.unit.orderflow.indicators._engine import instances as running
 from tests.unit.ws.test_subscriptions import _Bars
 
 M1: Final = _SERIES["time", "1"]
 CH: Final = "indicators.BTCUSDT.time.1"
-INSTANCES: Final = [
+MINUTE: Final = 60_000_000
+INSTANCES: Final[list[dict[str, Any]]] = [
     {"indicator": "ema", "params": {"n": 5}},
     {"indicator": "vwap"},
     {"indicator": "atr", "params": {"n": 3}},
@@ -62,8 +66,8 @@ class _Rig:
         source = IndicatorsSnapshotSource(
             self.engine, stale=lambda symbol, spec_hash: (symbol, spec_hash) in self.quarantined
         )
-        services = self.w.registry.services
-        services.bars, services.series, services.indicators = _Bars(), self.store, self.engine
+        services, self.bars = self.w.registry.services, _Bars()
+        services.bars, services.series, services.indicators = self.bars, self.store, self.engine
         services.snapshots = SnapshotRouter({"indicators": source})
 
     def close(self, b: Bar, *, generation: int = 0, amended: bool = False) -> None:
@@ -188,7 +192,7 @@ def test_contract_indicators_ctl_retunes_the_instances_and_re_snapshots() -> Non
         assert snap["meta"]["reason"] == "reconfigure"
         ((instance,),) = [snap["p"]["instances"]]
         assert instance["key"] == key and [p["index"] for p in instance["points"]] == [0, 1, 2, 3]
-    assert rig.engine.instances("BTCUSDT", M1.spec_hash) == 2  # the old one keeps its grace
+    assert running(rig.engine, M1) == 2  # the old one keeps its grace
 
 
 def test_contract_indicators_refusals_name_the_entry_and_never_clamp() -> None:
@@ -207,7 +211,7 @@ def test_contract_indicators_refusals_name_the_entry_and_never_clamp() -> None:
                 code,
                 field,
             )
-        assert rig.engine.instances("BTCUSDT", M1.spec_hash) == 0
+        assert running(rig.engine, M1) == 0
 
 
 def test_contract_indicators_past_a_cap_is_subscription_limit_naming_it() -> None:
@@ -242,7 +246,7 @@ def test_contract_indicators_a_busy_recompute_executor_refuses_retryably() -> No
             "internal_error",
             True,
         )
-    assert rig.engine.instances("BTCUSDT", M1.spec_hash) == 0
+    assert running(rig.engine, M1) == 0
 
 
 async def _never(*_: Any) -> list[tuple[int, BarInput]]:
@@ -255,3 +259,145 @@ def test_contract_indicators_without_marketdata_read_is_forbidden() -> None:
     with h.connect(rig.w) as c:
         result = _sub(c, INSTANCES[:1])
         assert (result["ok"], result["error"]["code"]) == (False, "forbidden")
+
+
+def _subscription(rig: _Rig, ch: str) -> Subscription:
+    """The live subscription of `ch` on the rig's one connection (read between frames)."""
+    authz, _send, _close = rig.w.registry._conns[next(iter(rig.w.registry._conns))][0]
+    sub = authz.named(ch, None)
+    assert sub is not None
+    return sub
+
+
+def test_contract_indicators_a_ctl_past_the_user_cap_is_refused_and_changes_nothing() -> None:
+    """§6.1: a `ctl` that changes instances is refused as a `sub` is, with an `err`, and changes
+    nothing (SR-E13-03 on the second path that admits server computations). Seven instances on
+    one series and one on another: retuning the one to eight new ones is `subscription_limit`
+    naming the user cap; retuning it to one other is the legal control."""
+    rig = _Rig()
+    three = "indicators.BTCUSDT.time.3"
+    with h.connect(rig.w) as c:
+        assert _sub(c, [{"indicator": "ema", "params": {"n": n}} for n in range(2, 9)])["ok"]
+        c.next_of("snap")
+        frame = c.sub({"ch": three, "opts": {"instances": [{"indicator": "cvd"}]}})
+        assert frame["p"]["results"][0]["ok"]
+        c.next_of("snap")
+        sub = _subscription(rig, three)
+        keys, echo, held = (
+            sub.indicator_keys,
+            sub.effective["instances"],
+            set(rig.engine._leases._held),
+        )
+        eight = [{"indicator": "ema", "params": {"n": n}} for n in range(20, 28)]
+        c.send({"t": "ctl", "id": "c-1", "ch": three, "p": {"instances": eight}})
+        err = c.next_of("err")
+        assert (err["id"], err["p"]["code"]) == ("c-1", "subscription_limit")
+        assert err["p"]["message"] == "At most 8 server indicator instances per user."
+        assert (sub.indicator_keys, sub.effective["instances"]) == (keys, echo)
+        assert set(rig.engine._leases._held) == held
+        one = [{"indicator": "cvd", "params": {"anchor": "utc_day"}}]
+        c.send({"t": "ctl", "id": "c-2", "ch": three, "p": {"instances": one}})
+        ok = c.next_of("ctl_ok")
+        assert ok["id"] == "c-2"  # no `ctl_ok` went out for the refused one
+        assert [f["id"] for f in c.seen if f["t"] == "ctl_ok"] == ["c-2"]
+        assert sub.indicator_keys != keys
+
+
+def test_contract_indicators_a_ctl_needing_a_read_with_no_free_slot_changes_nothing() -> None:
+    """SR-E13-04 on the `ctl` path: a new instance that needs a stored-bar read with no slot free
+    is `internal_error` (retryable, never queued) and the subscription keeps its instances."""
+    bars = _bars()[:10]
+
+    async def tail(symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        return BarTail([(0, b.model_copy(update={"index": b.index + 100})) for b in bars])
+
+    rig = _Rig(tail=tail, history=_never, slots=0)
+    with h.connect(rig.w) as c:
+        assert _sub(c, [{"indicator": "ema", "params": {"n": 2}}], history=5)["ok"]  # no read
+        c.next_of("snap")
+        sub = _subscription(rig, CH)
+        keys, echo, held = (
+            sub.indicator_keys,
+            sub.effective["instances"],
+            set(rig.engine._leases._held),
+        )
+        sma = [{"indicator": "sma", "params": {"n": 20}}]  # 25 bars: a read the store needs
+        c.send({"t": "ctl", "id": "c-1", "ch": CH, "p": {"instances": sma}})
+        err = c.next_of("err")
+        assert (err["id"], err["p"]["code"], err["p"]["retryable"]) == (
+            "c-1",
+            "internal_error",
+            True,
+        )
+        assert (sub.indicator_keys, sub.effective["instances"]) == (keys, echo)
+        assert set(rig.engine._leases._held) == held and running(rig.engine, M1) == 1
+
+
+class _Gate:
+    """A `HistoryRead` that returns `rows` once `release` runs on the app's loop."""
+
+    def __init__(self, rows: list[tuple[int, BarInput]]) -> None:
+        self.rows = rows
+        self.event: asyncio.Event | None = None
+
+    def _event(self) -> asyncio.Event:
+        self.event = self.event or asyncio.Event()  # made on the app's loop, by either side
+        return self.event
+
+    async def read(self, *_: Any) -> list[tuple[int, BarInput]]:
+        await self._event().wait()
+        return self.rows
+
+    async def release(self) -> None:
+        self._event().set()
+
+
+def test_contract_indicators_a_snap_waits_for_its_instance_s_stored_read() -> None:
+    """23 §16: an instance primed from stored bars sends its `snap` once that read ends (the
+    engine's `ready` flushes it), never before. SMA(20) with history 5 needs 25 bars, the store
+    holds 10 from index 100: the read brings 85..99, and the snap holds 105..109."""
+    bars = [b.model_copy(update={"index": b.index + 100}) for b in _bars()[:10]]
+    first = bars[0]
+    older = [
+        first.model_copy(update={"index": 85 + k, "open_time": first.open_time - (15 - k) * MINUTE})
+        for k in range(15)
+    ]
+
+    async def tail(symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        return BarTail([(0, b) for b in bars])
+
+    gate = _Gate([(b.index, bar_input(b)) for b in older])
+    rig = _Rig(tail=tail, history=gate.read)
+    sma = [{"indicator": "sma", "params": {"n": 20}}]
+    with h.connect(rig.w) as c:
+        assert _sub(c, sma, history=5)["ok"]
+        c.send({"t": "ping", "id": "p-1"})
+        before = []
+        while (frame := c.recv())["t"] != "pong":
+            before.append(frame["t"])
+        assert "snap" not in before  # the read is held: the snapshot waits
+        rig.w.call(gate.release)
+        snap = c.next_of("snap")
+        ((instance,),) = [snap["p"]["instances"]]
+        assert [p["index"] for p in instance["points"]] == list(range(105, 110))
+        (r,) = resolve_instances(sma, M1)
+        dense = BarSeries(M1, [*older, *bars]).densify()
+        rows = compute("sma", [bar_input(b) for b in dense], r.params, source="close")
+        want = [
+            [wire_value(v) for v in row]
+            for row, b in zip(rows, dense, strict=True)
+            if not b.synthetic
+        ]
+        assert [p["v"] for p in instance["points"]] == want[-5:]
+
+
+def test_contract_indicators_a_series_no_builder_serves_is_refused_and_holds_nothing() -> None:
+    """SR-E12-03 bounds the series of `indicators.*` as it bounds `bars.*`: `time.7` names no
+    interval, so the `sub` is `invalid_topic_format` and nothing is held."""
+    rig = _Rig()
+    with h.connect(rig.w) as c:
+        frame = c.sub({"ch": "indicators.BTCUSDT.time.7", "opts": {"instances": INSTANCES[:1]}})
+        (result,) = frame["p"]["results"]
+        assert (result["ok"], result["error"]["code"]) == (False, "invalid_topic_format")
+    assert rig.engine._leases._held == {} and rig.engine._instances == {}
+    assert rig.bars.registered == []  # no builder lease either

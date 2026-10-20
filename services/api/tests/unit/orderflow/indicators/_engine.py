@@ -17,6 +17,7 @@ from candleviewer.orderflow.indicators.engine import (
     Requested,
     resolve_instances,
 )
+from candleviewer.orderflow.indicators.leases import InstanceLeases
 
 SYM: Final = "BTCUSDT"
 M1: Final = BarSpec(kind="time", interval_ms=60_000)
@@ -116,3 +117,14 @@ class Listener:
 def counter(metric: Any) -> float:
     """A counter child's (or an unlabelled counter's) current value."""
     return float(metric._value.get())
+
+
+def instances(engine: IndicatorEngine, spec: BarSpec = M1, symbol: str = SYM) -> int:
+    """Instances running on a series, in their grace too (white box: no caller needs a count)."""
+    return len(engine._series.get((symbol, spec.spec_hash), {}))
+
+
+def holders(leases: InstanceLeases, key: tuple[str, str]) -> int:
+    """Leases held on an instance (white box, as `instances`)."""
+    entry = leases._held.get(key)
+    return 0 if entry is None else len(entry.holders)

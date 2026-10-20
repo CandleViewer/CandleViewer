@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from candleviewer.bars.limits import MAX_TAIL
 from candleviewer.orderflow.indicators import limits
+from candleviewer.ws.topics import FAMILIES
 
 FRACTIONAL = ("MULTIPLIER", "DEVIATION_PCT", "PSAR_ACCELERATION")
 
@@ -37,22 +39,38 @@ def test_limits_every_fractional_range_starts_and_ends_on_its_step() -> None:
         assert low % step == 0 and high % step == 0 and low < high, prefix
 
 
-#: SR-E13-03 (instances: 8 per user, 32 per symbol, 128 per process, 30 s grace) and SR-E13-04
-#: (a window of at most 250 000 bars, 2 recomputes at once, each read bounded).
+#: SR-E13-03 (instances: 8 per user, 32 per symbol, 128 per process, 30 s grace, swept at most a
+#: second after it), SR-E13-04 (a window of at most 250 000 bars, 2 recomputes at once, each read
+#: bounded), C-2.17 (a recompute's read pages and fold chunks) and an instance's own state (its
+#: points, checkpoint spacing, longest filled gap and staleness).
 CAPS = {
     "INSTANCE_CAP_PER_USER": 8,
     "INSTANCE_CAP_PER_SYMBOL": 32,
     "INSTANCE_CAP_PROCESS": 128,
     "INSTANCE_GRACE_US": 30_000_000,
+    "SWEEP_EVERY_US": 1_000_000,
     "MAX_WINDOW_BARS": 250_000,
     "MAX_CONCURRENT_RECOMPUTES": 2,
     "RECOMPUTE_TIMEOUT_S": 5.0,
+    "HISTORY_PAGE_ROWS": 1_000,
+    "PRIME_CHUNK_BARS": 512,
+    "MAX_POINTS": 1_000,
+    "CHECKPOINT_EVERY": 8,
+    "MAX_FILL_SLOTS": 1_000,
+    "STALE_AFTER_BARS": 2,
 }
 
 
 def test_limits_instance_and_recompute_caps_are_pinned_per_sr_e13_03_and_04() -> None:
     assert {name: getattr(limits, name) for name in CAPS} == CAPS
     assert all(type(getattr(limits, n)) is type(v) for n, v in CAPS.items())
+
+
+def test_limits_max_points_is_the_ws_history_cap_and_the_series_store_tail() -> None:
+    """An instance keeps as many points as a snapshot may ask for (23 §6.1) and the series store
+    holds closed bars (`bars.limits.MAX_TAIL`): `limits` may not import `bars`, so this pins the
+    copy."""
+    assert limits.MAX_POINTS == MAX_TAIL == FAMILIES["indicators"].options["history"].hi
 
 
 def test_limits_module_holds_exactly_the_pinned_names() -> None:

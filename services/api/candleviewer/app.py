@@ -271,7 +271,7 @@ from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySi
 from candleviewer.oms.service import OmsService
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
-from candleviewer.orderflow.indicators.engine import IndicatorEngine, stored_history
+from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
@@ -1330,8 +1330,9 @@ def create_app(
         scales = functools.partial(_catalogue_scales, ctx)
         publisher = BarsPublisher(ws_sequencing, scales, swap_reason="generation_swap")
         # E13-T02 (#426): the indicator engine, on the emit path after the publisher; it primes
-        # from the store and reads older bars through the REST reader's connection.
-        history = stored_history(bars_reader) if bars_reader is not None else None
+        # from the store, and reads older bars through the store's own reader, so its reads join
+        # the first reads on `bars_hydrate`, never REST's connection (D-G2, 20 §4.2).
+        history = StoredHistory(hydrate_reader) if hydrate_reader is not None else None
         indicators = IndicatorEngine(bars_series, history=history, now_us=bars_clock)
         indicators.listen(IndicatorsPublisher(ws_sequencing))
         # #2787 D2-H1, 23 §7.4: a repairing read reaches the subscribers through the store's hook
