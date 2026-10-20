@@ -5,24 +5,34 @@ Three PR runs on 2026-10-20 went red on rules the lanes' own test subsets left o
 drill matrix, the bars bench pins and CodeQL's clear-text-logging query. This gate diffs the tree
 against the merge base with origin/main and runs, one process at a time, CI's governance scripts,
 the lane scripts the changed paths switch on, backend lint, types and tests, Semgrep and gitleaks
-when installed, and a pattern check for the CodeQL miss. One table; exit 1 on any failure. The
-lanes that apply are pr.yml's own `changed-paths` selection (tools/ci/path_filters.py reads it, so
-no rule is copied here). No network. Windows and Linux: pathlib, no fcntl. What a machine cannot
-run is no pass: a missing tool is SKIP, tests Windows cannot import (fcntl, parts of os) are
-PARTIAL, and the verdict line counts both. LEFT_TO_CI says what only CI runs.
+when installed, a pattern check for the CodeQL miss and, last, CI's `gen` step. One table; exit 1
+on any failure. The lanes that apply are pr.yml's own `changed-paths` selection (tools/ci/
+path_filters.py reads it, so no rule is copied here). No network. Windows and Linux: pathlib, no
+fcntl. What a machine cannot run is no pass: a missing tool is SKIP, tests Windows cannot import
+(fcntl, parts of os) are PARTIAL, and the verdict line counts both. A step that outruns
+STEP_TIMEOUT is killed with everything it started.
+
+`gen-freshness` wants a clean tree (commit or stage what you generated): it deletes the tracked
+generated files and regenerates them, so it runs last, and is SKIP without pnpm and node_modules.
+Tests are picked by file (select_tests). Not seen: tests outside scripts/tests and tests/unit that
+read a changed file, modules without a tests/unit directory, what a deletion breaks. `--fast` shows
+the tests of a docs-only change as SKIP. LEFT_TO_CI says what only CI runs.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import io
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath
@@ -41,6 +51,7 @@ API = "services/api"
 UNIT = f"{API}/tests/unit"
 BASE_REF = "origin/main"
 STEP_TIMEOUT = 1500  # seconds a step may take: CI's py lane is cut off at 30 minutes
+OUTPUT_LIMIT = 16 << 20  # bytes of a step's output kept, its tail: the summary comes last
 RUN: dict[str, Any] = {
     "capture_output": True,
     "text": True,
@@ -73,11 +84,15 @@ SEMGREP_FLAGS = ("--error", "--metrics=off", "--disable-version-check", "--quiet
 CAVEATS = (("SKIP", "skipped"), ("PARTIAL", "partial"))
 LEFT_TO_CI = (
     "Left to CI: CodeQL, the js/e2e/contract/integration/migrations lanes, the integration and "
-    "chaos tests (Docker), xstate-contract and tests/lint_statecharts, the PR title and body, and "
-    "the PR size (over 800 counted LOC fails PR-SIZE-001)."
+    "chaos tests (Docker), xstate-contract and tests/lint_statecharts, the PR title and body, the "
+    "PR size (over 800 counted LOC fails PR-SIZE-001), and every CI lane or gate not in this "
+    "table. Tests are picked by file, so these are not seen: tests outside scripts/tests and "
+    "tests/unit that read a changed file, modules without a tests/unit directory, deletions."
 )
 #: Files so many tests name that a name says nothing about which test reads them.
 GENERIC_NAMES = frozenset({"README.md", "package.json", "__init__.py"})
+#: Backend files outside candleviewer/ and tests/ that the unit tests that name them run for.
+API_INPUTS = frozenset({f"{API}/pyproject.toml", f"{API}/uv.lock"})
 #: The lint targets outside services/api that _job-py.yml's ruff and mypy steps also check.
 PY_LANE_LINT = re.compile(r"uv run (?:ruff|mypy) .*")  # the lines of _job-py.yml that lint
 PY_LANE_EXTRAS = re.compile(r"\.\./\.\./[\w./-]+\.py")  # the targets such a line adds
@@ -175,6 +190,17 @@ def changed(root: Path, base_ref: str = BASE_REF) -> Change:
     return Change(root, paths, base, workflow, selected)
 
 
+def kill_tree(step: subprocess.Popen[bytes]) -> None:
+    """Kill a step and everything it started: `uv run pytest` is three processes deep, and a
+    grandchild left running holds the CPU long after the gate has reported."""
+    if sys.platform == "win32":
+        kill = ["taskkill", "/T", "/F", "/PID", str(step.pid)]
+        subprocess.run(kill, capture_output=True, check=False)  # noqa: S603 - a fixed argv
+    else:  # run_command made the step a session leader: its pid is its process group's
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(step.pid, signal.SIGKILL)
+
+
 def run_command(argv: Sequence[str], cwd: Path) -> tuple[int, str]:
     exe = shutil.which(argv[0])
     if exe is None:
@@ -182,11 +208,23 @@ def run_command(argv: Sequence[str], cwd: Path) -> tuple[int, str]:
     # CI's py lane (HYPOTHESIS_PROFILE); pytest keeps the reason on each summary line (COLUMNS)
     env = {**os.environ, "PYTHONUTF8": "1", "HYPOTHESIS_PROFILE": "ci", "COLUMNS": "240"}
     cmd = [exe, *argv[1:]]  # a fixed argv, no shell
-    try:
-        done = subprocess.run(cmd, cwd=cwd, env=env, timeout=STEP_TIMEOUT, **RUN)  # noqa: S603
-    except subprocess.TimeoutExpired:
-        return 124, f"{argv[0]} timed out after {STEP_TIMEOUT // 60} minutes"
-    return done.returncode, done.stdout + done.stderr
+    # The output goes to a file, not a pipe: a grandchild that outlives its step cannot hold it.
+    with tempfile.TemporaryFile() as log:
+        step = subprocess.Popen(  # noqa: S603
+            cmd, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
+        )
+        try:
+            code = step.wait(timeout=STEP_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            kill_tree(step)
+            step.wait()
+            return 124, f"{argv[0]} timed out after {STEP_TIMEOUT // 60} minutes"
+        except BaseException:  # Ctrl-C: a step in its own session no longer gets it from the tty
+            kill_tree(step)
+            step.wait()
+            raise
+        log.seek(max(0, log.seek(0, os.SEEK_END) - OUTPUT_LIMIT))
+        return code, log.read(OUTPUT_LIMIT).decode("utf-8", errors="replace").replace("\r\n", "\n")
 
 
 def command(gate: str, scope: str, argv: Sequence[str], cwd: Path) -> Step:
@@ -197,6 +235,11 @@ def command(gate: str, scope: str, argv: Sequence[str], cwd: Path) -> Step:
         return ("PASS", "") if code == 0 else ("FAIL", output)
 
     return Step(gate, scope, run)
+
+
+def skip(gate: str, scope: str, why: str) -> Step:
+    """A row for what the gate leaves out, so that nothing is left out silently."""
+    return Step(gate, scope, lambda: ("SKIP", why))
 
 
 def backend(*argv: str) -> list[str]:
@@ -210,19 +253,37 @@ def is_test_file(path: str) -> bool:
     )
 
 
+def naming(
+    root: Path, tests: Iterable[Path], stems: Iterable[str], names: Iterable[str]
+) -> set[str]:
+    """The `tests` (as repo paths) that import a script by one of `stems` or read a file by one of
+    `names`: the name in quotes, since a test that only mentions a file reads nothing."""
+    imported = [rf"(?<![\w-]){re.escape(s)}(?![\w-])" for s in sorted(stems)]
+    read = [rf"""["'](?:[^"'\s]*/)?{re.escape(n)}["']""" for n in sorted(names)]
+    if not (imported or read):
+        return set()
+    pattern = re.compile("|".join([*imported, *read]))
+    return {
+        t.relative_to(root).as_posix()
+        for t in tests
+        if pattern.search(t.read_text(encoding="utf-8", errors="replace"))
+    }
+
+
 def select_tests(root: Path, paths: Iterable[str]) -> tuple[list[str], list[str]]:
     """The tests a change affects: (paths for pytest inside services/api, files for scripts/tests).
 
     A backend module runs its tests/unit directory, a changed test itself (a helper or conftest,
-    its directory), PINNED_TESTS what pins a module from elsewhere, any other file, root files
-    such as AGENTS.md and Makefile too, the governance tests that read it by name (the name in
-    quotes: a test that only mentions it reads nothing) and a script the tests that import it.
-    GENERIC_NAMES, which too many tests name, select nothing.
+    its directory), PINNED_TESTS what pins a module from elsewhere, API_INPUTS the unit tests that
+    read it by name, any other file, root files such as AGENTS.md and Makefile too, the governance
+    tests that read it by name and a script the tests that import it. GENERIC_NAMES, which too
+    many tests name, select nothing. A deleted file selects nothing.
     """
     api: set[str] = set()
     gov: set[str] = set()
     modules: set[str] = set()
     files: set[str] = set()
+    inputs: set[str] = set()
     importers: set[str] = set()
     unit = root / UNIT
     for path in paths:
@@ -247,6 +308,8 @@ def select_tests(root: Path, paths: Iterable[str]) -> tuple[list[str], list[str]
                 api.add(where)  # never the whole suite, never the tests that need Docker
         elif path.startswith("scripts/tests/test_"):
             gov.add(path)
+        elif path in API_INPUTS:
+            inputs.add(pure.name)
         elif not path.startswith(API) and pure.name not in GENERIC_NAMES:
             script = pure.suffix == ".py" and re.search("[_-]", pure.stem)
             (modules if script else files).add(pure.stem if script else pure.name)
@@ -257,13 +320,8 @@ def select_tests(root: Path, paths: Iterable[str]) -> tuple[list[str], list[str]
             for t in unit.rglob("test_*.py")
             if imports.search(t.read_text(encoding="utf-8", errors="replace"))
         )
-    if modules or files:
-        imported = [rf"(?<![\w-]){re.escape(m)}(?![\w-])" for m in sorted(modules)]
-        read = [rf"""["'](?:[^"'\s]*/)?{re.escape(f)}["']""" for f in sorted(files)]
-        names = re.compile("|".join([*imported, *read]))
-        for test in sorted((root / "scripts" / "tests").glob("test_*.py")):
-            if names.search(test.read_text(encoding="utf-8", errors="replace")):
-                gov.add(test.relative_to(root).as_posix())
+    gov |= naming(root, sorted((root / "scripts" / "tests").glob("test_*.py")), modules, files)
+    api |= naming(root, unit.rglob("test_*.py"), (), inputs)
     api = {a for a in api if not any(a.startswith(f"{d}/") for d in api)}  # a dir covers its files
     return sorted(api), sorted(gov)
 
@@ -352,18 +410,9 @@ def tool_steps(change: Change) -> list[Step]:
     extras = py_lane_extras(root)
     lint = py + [e for e in extras if e.removeprefix("../../") in change.present]
     steps = []
-    if change.selected["protocol"]:  # CI runs `gen` on every PR; here its inputs start it
-        gen = command("gen-freshness", "protocol", [sys.executable, GEN_CHECK], root)
-        skip = Step(
-            gen.gate, gen.scope, lambda: ("SKIP", "run pnpm install --frozen-lockfile first")
-        )
-        steps.append(
-            gen if (root / "node_modules").is_dir() else skip
-        )  # it rewrites generated files
     for gate, args in (("ruff", ("check",)), ("ruff-format", ("format", "--check"))):
-        steps += [command(gate, f"{len(lint)} file(s)", backend("ruff", *args, *lint), api)] * bool(
-            lint
-        )
+        argv = backend("ruff", *args, "--", *lint)  # `--`: a file name is no option
+        steps += [command(gate, f"{len(lint)} file(s)", argv, api)] * bool(lint)
     contracts = {f"{API}/.importlinter", "docs/plan/module-contracts.toml"} & set(change.paths)
     package = bool(contracts) or any(p.startswith(("candleviewer/", "cvdev/")) for p in py)
     if package or len(lint) > len(py):
@@ -375,7 +424,7 @@ def tool_steps(change: Change) -> list[Step]:
     rules = [p.relative_to(root).as_posix() for p in sorted((root / ".semgrep").glob("cv-*.yml"))]
     if code and rules:
         configs = [arg for rule in rules for arg in ("--config", rule)]
-        argv = ["semgrep", "scan", *SEMGREP_FLAGS, *configs, *code]
+        argv = ["semgrep", "scan", *SEMGREP_FLAGS, *configs, "--", *code]
         steps.append(command("semgrep", f"{len(code)} file(s)", argv, root))
     leaks = ["--redact", "--no-banner", "--config", ".gitleaks.toml"]
     commits = ["gitleaks", "git", "--log-opts", f"{change.base}..HEAD", *leaks, "."]
@@ -400,22 +449,23 @@ def check_steps(change: Change) -> list[Step]:
     ]
 
     def run_codeql() -> tuple[str, str]:
-        hits = []
+        hits: list[str] = []
+        unread: list[str] = []
         for path in tests:
             try:
-                source = (root / path).read_text(encoding="utf-8")
-                found = logged_passwords(source)
-            except (SyntaxError, UnicodeDecodeError):
+                found = logged_passwords((root / path).read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError) as exc:
+                unread.append(f"{path}: not checked, {type(exc).__name__}")
                 continue
             hits += [f"{path}:{line}: `{name}` reaches a logger" for line, name in found]
-        return ("FAIL", "\n".join([*hits, CODEQL_NOTE])) if hits else ("PASS", "")
+        if hits:
+            return "FAIL", "\n".join([*hits, *unread, CODEQL_NOTE])
+        return ("PARTIAL", "\n".join(unread)) if unread else ("PASS", "")
 
     return [Step("codeql-logging", f"{len(tests)} test file(s)", run_codeql)] if tests else []
 
 
 def test_steps(change: Change, fast: bool) -> list[Step]:
-    if fast and change.docs_only:
-        return []
     api, gov = select_tests(change.root, change.present)
     windows = os.name == "nt"
     flags = ["-q", "-p", "no:cacheprovider", "--tb=line"]
@@ -437,12 +487,29 @@ def test_steps(change: Change, fast: bool) -> list[Step]:
         paths = [p.removeprefix(f"{API}/") for p in api]
         argv = backend("pytest", *flags, "--no-cov", "-m", LOCAL_MARKERS, *paths)
         steps.append(pytest_step("pytest-api", f"{len(api)} path(s)", argv, change.root / API))
+    if not steps:
+        return [skip("pytest", "none selected", "no tests selected for the changed files")]
+    if fast and change.docs_only:  # the rows stay in the table, as SKIP
+        return [skip(s.gate, s.scope, "--fast: the change is docs only") for s in steps]
     return steps
+
+
+def gen_steps(change: Change) -> list[Step]:
+    """CI's `gen` step, which runs on every PR. Last: it deletes the tracked generated files and
+    regenerates them, so it wants a clean tree, and a failure leaves them missing."""
+    gen = command("gen-freshness", "every change", [sys.executable, GEN_CHECK], change.root)
+
+    def run() -> tuple[str, str]:
+        if shutil.which("pnpm") and (change.root / "node_modules").is_dir():
+            return gen.run()
+        return "SKIP", "needs pnpm and `pnpm install --frozen-lockfile` first"
+
+    return [Step(gen.gate, gen.scope, run)]
 
 
 def plan(change: Change, fast: bool = False) -> list[Step]:
     steps = [*script_steps(change), *tool_steps(change), *check_steps(change)]
-    return steps + test_steps(change, fast)
+    return steps + test_steps(change, fast) + gen_steps(change)
 
 
 def execute(step: Step) -> Result:
@@ -462,9 +529,13 @@ def table(results: Sequence[Result]) -> str:
 
 
 def header(change: Change, base_ref: str) -> str:
-    lanes = ", ".join(name for name, on in change.selected.items() if on) or "none"
+    on = [name for name, hit in change.selected.items() if hit]
     where = f"{len(change.paths)} changed path(s) vs {base_ref} ({change.base[:9]})"
-    return f"pr-gate: {where}; lanes: {lanes}"
+    lines = [f"pr-gate: {where}; lanes: {', '.join(on) or 'none'}"]
+    unmapped = [name for name in on if name not in (*ON_FILTER, "docs")]  # docs only picks --fast
+    if unmapped:  # a filter pr.yml gained shows here at once; the CI-only lanes always do
+        lines.append(f"pr-gate: unmapped filter, runs nothing here: {', '.join(unmapped)}")
+    return "\n".join(lines)
 
 
 def report(change: Change, results: Sequence[Result]) -> str:
@@ -488,7 +559,9 @@ def report(change: Change, results: Sequence[Result]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--base", default=BASE_REF, help="ref to diff against")
-    parser.add_argument("--fast", action="store_true", help="skip the tests of a docs-only change")
+    parser.add_argument(
+        "--fast", action="store_true", help="skip the tests of a docs-only change (shown as SKIP)"
+    )
     args = parser.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, io.TextIOWrapper):

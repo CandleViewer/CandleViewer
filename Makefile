@@ -81,9 +81,10 @@ security:
 	python tools/ci/run_security_local.py
 
 # #3882: the PR workflow's checks, run locally on what this branch changes against origin/main: one
-# table, exit 1 on any failure; `make pr-gate FAST=1` skips the tests of a docs-only change.
+# table, exit 1 on any failure; `make pr-gate FAST=1` skips the tests of a docs-only change (FAST=0
+# does not). Wants a clean tree: its last step deletes and regenerates the tracked generated files.
 pr-gate:
-	uv run --frozen --project services/api python tools/ci/pr_gate.py $(if $(FAST),--fast,)
+	uv run --frozen --project services/api python tools/ci/pr_gate.py $(if $(filter-out 0,$(FAST)),--fast,)
 
 # GOV-001 (CODEOWNERS coverage check) + GOV-002 (rule-reference link check) +
 # GOV-003 (single-source-of-truth duplication check). Stdlib-only Python; runs

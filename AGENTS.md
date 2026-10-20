@@ -306,7 +306,7 @@ the source of truth for ticket _content_.
 | Architecture-boundary contracts (import-linter + dependency-cruiser, C-3.1..C-3.5, §9 #18) | `pnpm arch` (or `make arch`)         |
 | Local security lane (SAST/SCA/secrets/license-check, whatever is runnable on this machine) | `pnpm security` (or `make security`) |
 | Full local gate (what CI runs on a PR)                                                     | `pnpm verify`                        |
-| Pre-push gate: CI's checks on the changed paths (or `python tools/ci/pr_gate.py [--fast]`) | `make pr-gate`                       |
+| Pre-push gate: CI's checks on the changed paths (or `python tools/ci/pr_gate.py [--fast]`) | `make pr-gate` (clean tree)          |
 | Meta: assert `pnpm verify`'s gate list matches CONSTITUTION.md §9 (C-16.5 drift guard)     | `pnpm check:verify-gate-list`        |
 | Threshold-guard: fail on an un-amended coverage/bundle-size floor decrease (C-9.4)         | `pnpm gate:threshold-guard`          |
 | Flaky-test quarantine report (C-9.3)                                                       | `pnpm gate:flaky-quarantine`         |
