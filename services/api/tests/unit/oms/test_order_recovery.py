@@ -15,7 +15,6 @@ from uuid import UUID
 
 import pytest
 
-from candleviewer.oms import order_machine as om
 from candleviewer.oms.errors import IllegalTransition, OrderHistoryRefused, OrderNotLoaded
 from candleviewer.oms.order_machine import Legality
 from candleviewer.oms.order_steps import event_kind
@@ -417,6 +416,7 @@ async def test_a_crash_mid_place_with_nothing_found_sends_it_once(rig: Rig) -> N
         await again.quiet()
         assert again.facade.state(order.id) == ("submitted", "not_required")
         assert [(c.kind, c.key) for c in again.commands.sent] == [("lookup", key), ("place", key)]
+        assert again.commands.sent[1].order["stop_loss"] == "62000"  # C-2.6 on the resumed place
     finally:
         await again.facade.stop()
 
@@ -457,6 +457,25 @@ async def test_hydrating_a_live_order_answers_its_state(rig: Rig) -> None:
     published = len(rig.publish.calls)
     assert await rig.facade.hydrate(ACCOUNT, order.id, environment="demo") == "submitted"
     assert len(rig.publish.calls) == published and rig.commands.kinds() == ["place"]
+
+
+async def test_a_hydrated_machine_is_scoped_to_its_stored_account(rig: Rig) -> None:
+    """OM-I02, C-12.4 (codeB r1 Medium): hydration builds the machine with the stored order's
+    account, so its state is published to that account only, and another account's command or
+    push finds nothing, as for an unknown order."""
+    order = await rig.submitted()
+    _state, _context, again = await _crashed(rig, order)
+    try:
+        await again.facade.hydrate(ACCOUNT, order.id, environment="demo")
+        assert {(o, a) for o, a, _p, _l in again.publish.calls} == {(order.id, ACCOUNT)}
+        with pytest.raises(OrderNotLoaded):
+            await again.facade.command(OTHER, order.id, "CANCEL", actor="user")
+        with pytest.raises(OrderNotLoaded):
+            await again.facade.push(OTHER, order.id, "TRIGGERED", {"updated_time": 1})
+        assert again.facade.state(order.id) == ("submitted", "not_required")
+        assert again.commands.sent == []
+    finally:
+        await again.facade.stop()
 
 
 async def test_only_the_accounts_own_order_is_hydrated(rig: Rig) -> None:
@@ -572,9 +591,13 @@ async def test_a_hydration_racing_a_build_never_makes_a_second_machine(rig: Rig)
         o.interp = interp
 
 
-def test_a_view_with_malformed_fills_holds_none() -> None:
-    assert not om._holds_fills({"filled_qty": "junk"})
-    assert om._holds_fills({"filled_qty": "0.1"}) and not om._holds_fills({})
+def test_a_view_with_malformed_fills_starts_no_stop_outside_the_fill_states() -> None:
+    """`starts_protection`, which hydration asks: malformed or no fills start nothing in a state
+    an order reaches without a fill, a fill does, and `partially_filled` always does."""
+    assert not b01.starts_protection({"filled_qty": "junk"}, "submitted")
+    assert b01.starts_protection({"filled_qty": "0.1"}, "submitted")
+    assert not b01.starts_protection({}, "submitted")
+    assert b01.starts_protection({"filled_qty": "junk"}, "partially_filled")
 
 
 def test_end_replay_of_an_order_not_replaying_does_nothing() -> None:

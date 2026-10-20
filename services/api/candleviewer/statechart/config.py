@@ -56,8 +56,17 @@ CV_KILL_CANCEL_TIMEOUT: Final[float] = 5.0
 #: Bound on B1's write-ahead step (#847): `persist_event` awaits the OMS's `order_events` write
 #: inside `asyncio.timeout(CV_PERSIST_TIMEOUT)`. A store that does not answer in time refuses the
 #: step, and `actionErrorPolicy: "rollback"` leaves the machine as it was (24 Sec.8.2 S7, S11).
-#: The p95 budget of a whole transition is 5 ms; this bounds a stalled store, not a slow one.
+#: The p95 budget of a whole transition is 5 ms; this bounds a stalled store, not a slow one. The
+#: order store's server-side statement cap is longer (2 s, #845), so a COMMIT in flight may land
+#: after the binding gave up: it raises `StepOutcomeUnknown`, and the OMS facade rebuilds the order
+#: from its events, where the row decides.
 CV_PERSIST_TIMEOUT: Final[float] = 1.0
+
+#: Bound on one command attempt of a B1 service (#847): `place` (with its lookups), `cancel`,
+#: `amend` and `attach_stop` through the OMS's command port. A backstop above the adapter's own
+#: call timeouts: a port that does not answer in time fails the attempt with `TimeoutError`, an
+#: ambiguous outcome, so the order lands in `unknown` (24 Sec.8.2 S1) or the stop in `sl_missing`.
+CV_COMMAND_TIMEOUT: Final[float] = 10.0
 
 #: `maxIterations` default sized against the descent plateau
 #: (`limit + 3`, CV-C62); individual chart JSON may declare its own value

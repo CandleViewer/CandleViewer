@@ -13,11 +13,14 @@ The effects go through what the OMS facade wires (`set_ports`, `set_audit_hook`,
 * `persist_event` hands each `lifecycle` step to the write-ahead store inside
   `asyncio.timeout(CV_PERSIST_TIMEOUT)`. A refused or timed-out write raises, and
   `actionErrorPolicy: "rollback"` leaves configuration and context as they were (24 Sec.8.2 S7,
-  S8, S11). It is the one action that raises by design; the rest are total (A1).
-* The services call the OMS's command port (E29-T04), which answers a Sec.14.4 `OrderAck` and
-  raises on an ambiguous outcome, so `onError` lands in `unknown` (S1). Each is idempotent under
-  re-entry: a rollback that re-arms an invoke gets the recorded outcome, never a second send, and
-  a `place` this process did not begin looks the id up before it sends (SR-E29-15).
+  S8, S11). It is the one action that raises by design; the rest are total (A1). A timed-out
+  write raises `StepOutcomeUnknown`: its row may have committed, so the facade rebuilds the order
+  from its events.
+* The services call the OMS's command port (E29-T04) inside `asyncio.timeout(CV_COMMAND_TIMEOUT)`;
+  it answers a Sec.14.4 `OrderAck` and raises on an ambiguous outcome, as does a call that does not
+  answer in time, so `onError` lands in `unknown` (S1). Each is idempotent under re-entry: a
+  rollback that re-arms an invoke gets the recorded outcome, never a second send, and a `place`
+  this process did not begin looks the id up before it sends (SR-E29-15).
 * The notices (`notify_*`, `emit_terminal`, the alerts, the `request_*` hand-offs) go to the
   bounded `outbox` in context, which the facade drains: no action sends to its own machine
   (CV-C25), and a rolled-back step takes its notices with it (CV-C02).
@@ -53,6 +56,7 @@ import structlog
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.statechart.bindings import register_binding_module
 from candleviewer.statechart.config import (
+    CV_COMMAND_TIMEOUT,
     CV_KILL_CANCEL_TIMEOUT,
     CV_PERSIST_TIMEOUT,
     register_event_schemas,
@@ -180,6 +184,12 @@ class RecordedFailureError(RuntimeError):
     """A re-entered invoke whose command already failed: it fails again, with nothing resent."""
 
 
+class StepOutcomeUnknown(RuntimeError):
+    """The write-ahead store did not answer in time: the step rolls back, but its row may have
+    committed (a COMMIT in flight still lands), so the OMS facade rebuilds the order from its
+    events, where the row decides (24 Sec.8.2 S7)."""
+
+
 #: `VALIDATE`'s verdicts (each `PASSED`: a bool could read as "engaged"), the order's identity, the
 #: terms an amend may change besides `qty` (22-api-openapi.yaml `AmendOrderRequest`), and what an
 #: EXEC shares with its order: it pairs on the bound exchange order id (SR-E29-03).
@@ -219,6 +229,8 @@ _INVOKES: Final = {"submitting": "place", "cancel_pending": "cancel", "amend_pen
 #: The states whose step creates the order's row: `validated` (24 Sec.8.4) and `untracked`.
 _FIRST_ROWS: Final = frozenset({"validated", "untracked"})
 _READINGS: Final = ("SL_OBSERVED", "SL_LOST")
+#: The states an order enters only with a fill reported, whose entry always starts the stop.
+_FILL_STATES: Final = frozenset({"partially_filled", "filled"})
 
 
 def _fields(event: Any) -> Mapping[str, Any]:
@@ -517,17 +529,19 @@ def _reading(raw: object) -> dict[str, Any]:
 
 def _covers(context: Mapping[str, Any], reading: Mapping[str, Any]) -> bool:
     """The reading shows the stop the OMS requested and recorded (SR-E29-06) on an open
-    position, which a Full-mode stop covers whole."""
+    position, which a Full-mode stop covers whole. A discovered order's stop is the one found on
+    the exchange, not one the OMS requested, so it never counts (S9, SR-E29-12)."""
     requested, stop = context.get("stop_loss"), reading["stop_loss"]
-    if requested is None or stop is None:
+    if requested is None or stop is None or context.get("discovered") is True:
         return False
     return _money(stop) == _money(requested) and _money(reading["size"]) > 0
 
 
 def sl_attach_ok(context: dict[str, Any], event: Any) -> bool:
     """The attach result's read-back shows the requested stop on the open position, and no
-    `SL_LOST` the exchange stamped after that read-back was recorded meanwhile (INV-B1-f). The
-    call's own acknowledgement is no evidence: a result without a read-back is a denial."""
+    `SL_LOST` the exchange stamped at or after that read-back was recorded meanwhile (INV-B1-f):
+    on a tie the loss wins. The call's own acknowledgement is no evidence: a result without a
+    read-back is a denial."""
 
     def check() -> bool:
         back = _reading(_fields(event).get("position"))
@@ -535,7 +549,7 @@ def sl_attach_ok(context: dict[str, Any], event: Any) -> bool:
         later = (
             isinstance(last, Mapping)
             and last.get("kind") == "SL_LOST"
-            and int(last["updated_time"]) > back["updated_time"]
+            and int(last["updated_time"]) >= back["updated_time"]
         )
         return _covers(context, back) and not later
 
@@ -544,7 +558,8 @@ def sl_attach_ok(context: dict[str, Any], event: Any) -> bool:
 
 def sl_observed_ok(context: dict[str, Any], event: Any) -> bool:
     """`SL_OBSERVED` counts as `sl_attach_ok`'s read-back does: the requested stop on the open
-    position (INV-B1-f); another stop, or a flat position, leaves `sl_missing` as it is."""
+    position (INV-B1-f); another stop, a flat position, or a discovered order's stop leaves
+    `sl_missing` as it is."""
     return _total("sl_observed_ok", lambda: _covers(context, _reading(_fields(event))))
 
 
@@ -564,7 +579,8 @@ async def persist_event(i: Any, context: dict[str, Any], event: Any, _a: Any) ->
     """S8: the step's `order_events` row is committed before the machine moves on. Nothing is
     written in `draft`, nor for a step that leaves it with no row (`rejected`, `killed`): the
     first row is `validated`'s (24 Sec.8.4) or `untracked`'s. A refused or timed-out write raises,
-    so `actionErrorPolicy: "rollback"` restores the configuration and context (S7, S11)."""
+    so `actionErrorPolicy: "rollback"` restores the configuration and context (S7, S11); a
+    timed-out one raises `StepOutcomeUnknown`, as its row may have committed."""
     to_state, from_state = _leaf(i), context.get("persisted_state")
     if to_state in (None, "draft") or (from_state is None and to_state not in _FIRST_ROWS):
         return
@@ -580,8 +596,11 @@ async def persist_event(i: Any, context: dict[str, Any], event: Any, _a: Any) ->
         payload=_step_payload(event),
         context=dict(context),
     )
-    async with asyncio.timeout(CV_PERSIST_TIMEOUT):
-        seq = await _ports.persist(step)
+    try:
+        async with asyncio.timeout(CV_PERSIST_TIMEOUT):
+            seq = await _ports.persist(step)
+    except TimeoutError as exc:
+        raise StepOutcomeUnknown(f"the {to_state} step's write did not answer in time") from exc
     context.update(persisted_state=to_state, event_seq=seq)
     link = _id(step.order_link_id) or ""
     if (kind := _INVOKES.get(str(to_state))) is not None and link not in _REPLAYS:
@@ -669,7 +688,9 @@ async def _command(
     context: Mapping[str, Any], kind: CommandKind, terms: Mapping[str, Any] | None = None
 ) -> Mapping[str, Any]:
     """*kind* once per attempt: a re-entered invoke gets the recorded outcome, a recorded failure
-    fails again, and only a `place` this process did not begin looks the id up first."""
+    fails again, and only a `place` this process did not begin looks the id up first. The
+    attempt's calls are bounded together by `CV_COMMAND_TIMEOUT`: a port that hangs fails the
+    attempt with `TimeoutError`, recorded as any failure, so the order reaches `unknown` (S1)."""
     port = _ports.commands
     if port is None:
         raise PortMissingError(f"no command port is wired for {kind}")
@@ -685,7 +706,8 @@ async def _command(
     command = Command(kind=kind, key=":".join(key), order=_view(context), terms=dict(terms or {}))
     resumed, attempt = attempt is None, attempt or _remember(key)
     try:
-        result = await _dispatch(port, command, resumed=resumed)
+        async with asyncio.timeout(CV_COMMAND_TIMEOUT):
+            result = await _dispatch(port, command, resumed=resumed)
     except Exception as exc:  # recorded, then raised: `onError` lands in `unknown` (S1)
         attempt.failure = type(exc).__name__
         raise
@@ -714,10 +736,12 @@ async def amend_order(_i: Any, context: dict[str, Any], _e: Any) -> Mapping[str,
 
 async def attach_native_sl(_i: Any, context: dict[str, Any], _e: Any) -> Mapping[str, Any]:
     """`sl_pending`'s invoke: the stop the OMS requested, attached and read back (24 Sec.8.8 rule
-    2). Without a requested stop nothing is sent (SR-E29-06): the result is not `sl_attach_ok`,
-    so the region reaches `sl_missing`, which alerts and hands the position to B8."""
+    2). Nothing is sent without a stop the OMS requested (SR-E29-06): none was requested, or the
+    order was discovered on the exchange, whose stop is not the OMS's to attach or move (S9,
+    SR-E29-12; 24 Sec.8.8 rule 5). The result is then not `sl_attach_ok`, so the region reaches
+    `sl_missing`, which alerts and hands the position to B8."""
     stop = context.get("stop_loss")
-    if stop is None:
+    if stop is None or context.get("discovered") is True:
         return {"ok": False, "error_code": NATIVE_STOP_REQUIRED}
     return await _command(context, "attach_stop", {"stop_loss": stop})
 
@@ -875,8 +899,9 @@ async def record_mismatch(_i: Any, context: dict[str, Any], event: Any, _a: Any)
 
 async def record_discovered(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """`DISCOVERED`: reconciliation found an exchange order with no local row (24 Sec.8.5 step
-    3c). Its identity, terms and exchange order id are recorded as found; it is never managed
-    (S9, SR-E29-12)."""
+    3c). Its identity, terms and exchange order id are recorded as found, and `discovered` marks
+    them as the exchange's, not the OMS's: it is never managed (S9, SR-E29-12), and its stop is
+    never one the OMS requested, so the attach service sends nothing for it."""
     order = _fields(event).get("order")
     try:
         if not isinstance(order, Mapping) or _id(order.get("exchange_order_id")) is None:
@@ -885,13 +910,14 @@ async def record_discovered(_i: Any, context: dict[str, Any], event: Any, _a: An
     except Exception:  # A1: an order we cannot read stays unrecorded; its row write refuses it
         logger().error("b01_discovered_order_refused")
         return
-    context.update(found, exchange_order_id=order["exchange_order_id"])
+    context.update(found, exchange_order_id=order["exchange_order_id"], discovered=True)
 
 
 async def adopt_untracked(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """`ADOPT` passed `adoption_allowed` (deny-all until E45-S01 records D6): the order is managed
-    from here as it was discovered; the adoption's own audit record is its route's (SR-E29-12)."""
-    context["needs_lookup"] = False
+    """`ADOPT` passed `adoption_allowed` (deny-all until E45-S01 records D6), whose verdicts
+    include a native stop attached (C-2.6): the order is managed from here as it was discovered,
+    its stop the OMS's now; the adoption's own audit record is its route's (SR-E29-12)."""
+    context.update(needs_lookup=False, discovered=False)
     logger().warning("b01_untracked_adopted", order_link_id=context.get("order_link_id"))
 
 
@@ -910,10 +936,13 @@ async def adopt_recon(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> 
 
 async def record_remote_state(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """`untracked` heard from the exchange (INV-B1-l): the order exists, so `recon_misses`
-    restarts. The fact is logged; no managing action runs (SR-E29-12)."""
+    restarts. The fact is logged, with the `exec_id` of an `EXEC` (INV-5); no managing action runs
+    (SR-E29-12)."""
     context["recon_misses"] = 0
-    link = context.get("order_link_id")
-    logger().info("b01_untracked_order_seen", order_link_id=link, trigger=_name(event))
+    link, exec_id = context.get("order_link_id"), _id(_fields(event).get("exec_id"))
+    logger().info(
+        "b01_untracked_order_seen", order_link_id=link, trigger=_name(event), exec_id=exec_id
+    )
 
 
 async def bump_recon_misses(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
@@ -965,10 +994,22 @@ async def arm_recon_deadline(_i: Any, context: dict[str, Any], _e: Any, _a: Any)
 # --- Notices, through the outbox (CV-C25) -----------------------------------------------------
 
 
-async def notify_protection_region(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """INV-B1-o: asks the facade for `FIRST_FILL` when the order holds a fill or is handling an
-    EXEC; the region consumes a repeat, so no flag tracks the first fill."""
-    if _name(event) == "EXEC" or _filled(context):
+def starts_protection(context: Mapping[str, Any], lifecycle: str | None, trigger: str = "") -> bool:
+    """INV-B1-o: whether the order's fills call for its `protection` region (24 Sec.8.8 rule 2):
+    always in `partially_filled` and `filled`, which an order enters only on a reported fill, an
+    execution found by reconciliation included; for an `EXEC` an S6 arm consumed; and in any
+    other state when the order holds a fill (a `cancelled` or `expired` order ended with fills).
+    Never for a reduce-only order: it opens no position, and C-2.6 covers position-opening
+    orders, so its exits page nothing. The OMS facade asks the same after a hydration."""
+    if context.get("reduce_only") is True:
+        return False
+    return lifecycle in _FILL_STATES or trigger == "EXEC" or _filled(context)
+
+
+async def notify_protection_region(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """INV-B1-o: asks the facade for `FIRST_FILL` when `starts_protection` says so; the region
+    consumes a repeat, so no flag tracks the first fill."""
+    if starts_protection(context, _leaf(i), _name(event)):
         _post(context, "first_fill")
 
 

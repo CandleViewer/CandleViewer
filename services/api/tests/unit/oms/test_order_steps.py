@@ -3,9 +3,11 @@ repositories, run on the in-memory stores (the Postgres twin is the write-ahead 
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -288,3 +290,25 @@ async def test_an_accepted_amend_writes_its_terms(
     await writer(_step("amend_pending", "submitted", "done.invoke.amend", result, price=price))
     row = await db.get(ACCOUNT, ORDER_ID)
     assert row is not None and (row.price, row.qty) == stored
+
+
+PLAN = Path(__file__).resolve().parents[5] / "docs" / "plan"
+
+
+def _kind_table() -> dict[str, tuple[str, str]]:
+    """24 Sec.8.2's "Event kinds" table: trigger -> (kind, source)."""
+    text = (PLAN / "24-internal-schemas.md").read_text(encoding="utf-8")
+    block = text[text.index("**Event kinds (E29-T03") : text.index("**Recovery (E29-T03")]
+    rows = re.findall(r"^\| `([\w.]+)` +\| `(\w+)` +\| `(\w+)` +\|$", block, re.M)
+    return {trigger: (kind, source) for trigger, kind, source in rows}
+
+
+def test_each_trigger_is_recorded_with_the_kind_and_source_24_names() -> None:
+    """codeB r1 Medium: the write-ahead row of every trigger B1 writes records the kind and source
+    24 Sec.8.2 names (the `source` label of `oms_state_transitions_total` too); an exchange fact
+    with no `source` of its own keeps its default. The table and `_KINDS` name the same
+    triggers."""
+    table = _kind_table()
+    assert set(table) == set(steps._KINDS) and len(table) == 22
+    for trigger, want in table.items():
+        assert steps.event_kind(_step("submitted", "submitted", trigger)) == want, trigger

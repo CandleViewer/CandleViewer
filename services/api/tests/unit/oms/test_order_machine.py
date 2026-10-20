@@ -17,31 +17,38 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.errors import (
     IllegalTransition,
     OrderBufferFull,
     OrderMachinesFull,
     OrderNotLoaded,
     OrderStepRefused,
+    OrderStepUnknown,
     ReconcileAnomaly,
 )
 from candleviewer.oms.order_machine import (
     B1_AUDITS,
+    COMMAND_EVENTS,
     MAX_HELD,
+    PUSH_EVENTS,
     Actor,
     CommandEvent,
     Legality,
+    OrderAuditRecord,
 )
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.gateway import GatewayOverloadedError
 from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.statechart.registry import Registry
-from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.storage.repositories.orders import NewOrder, NewOrderEvent, OrderTransition
 from tests.unit.oms.order_rig import (
     ACCOUNT,
     GATES,
     NOW_US,
     OTHER,
     READ_BACK,
+    T0,
     Rig,
     build_rig,
     fill_of,
@@ -214,7 +221,11 @@ async def test_terminal_state_is_immutable(rig: Rig) -> None:
     with pytest.raises(ReconcileAnomaly):
         await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.1"))
     assert (raised.value.code, raised.value.state) == ("POST_TERMINAL_PUSH", "filled")
-    assert rig.audit.reasons("oms.reconcile_anomaly") == ["POST_TERMINAL_PUSH"] * 2
+    s6 = ("oms.reconcile_anomaly", order.id, ACCOUNT, "denied", "error", "POST_TERMINAL_PUSH")
+    assert rig.audit.records == [  # C-2.9 (codeB r1 Medium): each record in full
+        OrderAuditRecord(*s6, {"state": "filled", "trigger": "TRIGGERED", "exec_id": None}),
+        OrderAuditRecord(*s6, {"state": "filled", "trigger": "EXEC", "exec_id": "e2"}),
+    ]
     assert rig.count("oms_reconcile_anomaly_total") == 2
     assert await rig.store.list_for_order(ACCOUNT, order.id) == before
     assert rig.notices.kinds() == ["request_fallback_sl"]
@@ -234,8 +245,13 @@ async def test_a_fill_for_a_final_machine_still_alive_is_b1s_anomaly(rig: Rig) -
         await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.5"))
     with pytest.raises(ReconcileAnomaly):
         await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", {"updated_time": 9})
-    reasons = rig.audit.reasons("oms.reconcile_anomaly")
-    assert reasons == ["reconcile_anomaly", "POST_TERMINAL_PUSH"]
+    anomaly = ("oms.reconcile_anomaly", order.id, ACCOUNT, "denied", "error")
+    b1 = {"order_link_id": order.order_link_id, "state": "filled", "exec_id": "e2"}
+    s6 = {"state": "filled", "trigger": "REMOTE_CANCELLED", "exec_id": None}
+    assert rig.audit.records == [  # C-2.9 (codeB r1 Medium): B1's record, then the facade's
+        OrderAuditRecord(*anomaly, "reconcile_anomaly", b1 | {"trigger": "EXEC"}),
+        OrderAuditRecord(*anomaly, "POST_TERMINAL_PUSH", s6),
+    ]
     assert rig.count("oms_reconcile_anomaly_total") == 2
     assert rig.context(order)["filled_qty"] == "1"
     gate.set()
@@ -432,7 +448,19 @@ async def test_a_hostile_execution_quarantines_the_order(rig: Rig) -> None:
     await rig.quiet()
     assert rig.facade.state(order.id) == ("quarantined", "not_required")
     assert len(rig.context(order)["outbox"]) == 1  # both notices taken; the newest anchors seq
-    assert rig.audit.reasons("oms.reconcile_anomaly") == ["guard_denied"]
+    refusal = "the execution is not a trade of this order's bound exchange order"
+    detail = {"order_link_id": order.order_link_id, "state": "submitted", "exec_id": "e1"}
+    assert rig.audit.records == [  # C-2.9 (codeB r1 Medium): the record in full
+        OrderAuditRecord(
+            "oms.reconcile_anomaly",
+            order.id,
+            ACCOUNT,
+            "denied",
+            "error",
+            "guard_denied",
+            detail | {"trigger": None, "refusal": refusal},
+        )
+    ]
     assert rig.count("oms_reconcile_anomaly_total") == 1
     assert rig.notices.kinds() == ["alert", "request_reconciliation"]
 
@@ -529,15 +557,28 @@ async def test_a_lost_stop_pages_and_hands_the_position_to_b8(rig: Rig) -> None:
 
 async def test_a_kill_that_does_not_commit_is_reported_and_pages(rig: Rig) -> None:
     """INV-B1-h: an order whose KILL rolled back is answered and paged (the receipt can read clean,
-    CV-C06); a reason B1 would refuse is refused before any order is touched."""
+    CV-C06)."""
     order = await rig.submitted()
-    for reason in ("", "x" * 65):
-        with pytest.raises(ValueError, match="KILL reason"):
-            await rig.facade.kill(reason)
     rig.store.fail_next(RuntimeError("Postgres is down"))
     assert await rig.facade.kill("kill switch engaged") == (order.id,)
     assert rig.facade.state(order.id) == ("submitted", "not_required")
     assert "oms_kill_not_recorded" in rig.pager.calls
+
+
+@pytest.mark.parametrize(("reason", "recorded"), [("", "kill"), ("x" * 65, "x" * 64)])
+async def test_a_malformed_kill_reason_still_kills_every_live_order(
+    rig: Rig, reason: str, recorded: str
+) -> None:
+    """codeA r1 Low (C-2.21): a reason B1's closed `KILL` schema would refuse (empty, or past
+    `MAX_TEXT`) is normalised, never refused, so a malformed reason stops no order's KILL."""
+    orders = [await rig.submitted(order_of(n)) for n in (1, 2)]
+    assert await rig.facade.kill(reason) == ()
+    for order in orders:
+        row = await rig.orders.get(ACCOUNT, order.id)
+        assert row is not None and row.state == "killed"
+        events = await rig.store.list_for_order(ACCOUNT, order.id)
+        assert events[-1].payload == {"reason": recorded}
+    assert sorted(rig.commands.kinds()) == ["kill_cancel", "kill_cancel", "place", "place"]
 
 
 async def test_a_turn_stops_at_a_failure_and_the_next_step_retries(
@@ -693,3 +734,465 @@ async def test_each_committed_step_is_counted_by_state_and_source(rig: Rig) -> N
     for source, target, origin in steps:
         assert rig.count(name, **{"from": source, "to": target, "source": origin}) == 1
     assert rig.count(name) == 4
+
+
+# --- S7, an unknown outcome: the row decides (codeA r1 Medium, codeB r1 Low) ---------------------
+
+_CUT_OFF = "the commit's answer was cut off"
+
+
+async def test_a_fill_whose_write_outcome_is_unknown_is_rebuilt_from_its_row(rig: Rig) -> None:
+    """24 Sec.8.2 S7: a fill's row commits but its answer is lost (the binding's timeout cut the
+    write off). B1 rolls the step back, so the caller is told the outcome is unknown, and the
+    facade pages and rebuilds the machine from the order's events, where the row decides: the
+    machine holds the fill, its stop is attached (24 Sec.8.8 rule 2), and the next fill applies."""
+    order = await rig.submitted()
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    with pytest.raises(OrderStepUnknown, match="EXEC"):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and (row.state, row.cum_exec_qty) == ("partially_filled", Decimal("0.4"))
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    assert (rig.context(order)["seen_exec_ids"], rig.context(order)["filled_qty"]) == (
+        ["e1"],
+        "0.4",
+    )
+    assert rig.commands.kinds() == ["place", "attach_stop"]
+    assert "oms_step_outcome_unknown" in rig.pager.calls
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.6"))
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and (row.state, row.cum_exec_qty) == ("filled", Decimal(1))
+    assert rig.facade.state(order.id) is None  # final, its stop confirmed: evicted
+
+
+async def test_a_place_ack_whose_write_outcome_is_unknown_converges_with_one_create(
+    rig: Rig,
+) -> None:
+    """S7 for a step no caller drove: the place ack's row commits but its answer is lost. The
+    re-armed invoke answers its recorded result (one create), its write meets a row that moved
+    on, and a turn rebuilds the machine from the row: bound, and a fill that came before the bind
+    and waited in the reorder buffer is carried over and applies."""
+    order = order_of()
+    gate, rig.commands.on_place = gated({"ok": True, "exchange_order_id": "x1"})
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))  # held: unbound
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    gate.set()
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    assert rig.context(order)["seen_exec_ids"] == ["e1"]
+    assert rig.commands.kinds() == ["place", "attach_stop"]
+    assert rig.pager.calls.count("oms_step_outcome_unknown") == 1
+
+
+async def test_a_row_another_writer_moved_is_read_again(rig: Rig) -> None:
+    """S7: a step that meets a row which moved on under the machine (`StaleOrderState`) rolls
+    back; the machine was behind its row, so it is rebuilt from the order's events, and the order
+    takes the next command from where the row is."""
+    order = await rig.submitted()
+    pushed = NewOrderEvent(
+        kind="exchange_push", source="ws_private", event_ts=T0, payload={"updated_time": 5}
+    )
+    moved = OrderTransition(
+        account_id=ACCOUNT,
+        order_id=order.id,
+        from_state="accepted",
+        to_state="triggered",
+        event=pushed,
+        lifecycle_state="triggered",
+    )
+    await rig.store.transition(moved)
+    with pytest.raises(OrderStepUnknown, match="CANCEL is not known: StaleOrderState"):
+        await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user")
+    assert rig.facade.state(order.id) == ("triggered", "not_required")
+    assert await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user") == "cancel_pending"
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "cancelled"
+    assert rig.commands.kinds() == ["place", "cancel"]
+
+
+async def test_an_order_whose_first_row_outcome_is_unknown_is_rebuilt_if_it_landed(
+    rig: Rig,
+) -> None:
+    """S7 at the first row: it committed, but its answer was lost, so the caller is told the
+    outcome is unknown and the facade rebuilds the order from that row: `validated`, and sent."""
+    order = order_of()
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    with pytest.raises(OrderStepUnknown, match="VALIDATE"):
+        await rig.start(order)
+    assert rig.facade.state(order.id) == ("validated", "not_required")
+    assert await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user") == "submitting"
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+
+
+async def test_an_order_whose_first_row_did_not_land_leaves_nothing(rig: Rig) -> None:
+    """S7: the store timed out before the first row committed: the outcome is unknown to the
+    caller, the facade finds no row to rebuild, and nothing is kept."""
+    rig.store.fail_next(TimeoutError(_CUT_OFF))
+    with pytest.raises(OrderStepUnknown):
+        await rig.start()
+    assert rig.facade.state(UUID(int=1)) is None
+    assert await rig.orders.get(ACCOUNT, UUID(int=1)) is None
+
+
+async def test_a_final_fill_whose_outcome_is_unknown_hands_the_position_to_b8(rig: Rig) -> None:
+    """S7, C-2.6: the fill that filled the order committed while its machine rolled it back. The
+    row is final, so no machine is rebuilt (MUST-11), and as none can start the stop, the position
+    goes to B8 (`request_fallback_sl`); an exchange end that waited for that fill is recorded as
+    an S6 anomaly, as for any final order, never lost."""
+    order = await rig.submitted()
+    end = {"cum_exec_qty": "1", "updated_time": 10}
+    await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", end)  # waits for its fill
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    with pytest.raises(OrderStepUnknown):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) is None
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "filled"
+    assert rig.notices.kinds() == ["request_fallback_sl"]
+    assert rig.commands.kinds() == ["place"]
+    s6 = {"state": "filled", "trigger": "REMOTE_CANCELLED", "exec_id": None}
+    assert [dict(r.detail) for r in rig.audit.records] == [s6]
+
+
+# --- The synchronous gates hold for every caller (codeB r1 Medium, C-2.21) -----------------------
+
+
+async def test_a_payload_cannot_rename_the_event_the_gates_checked(rig: Rig) -> None:
+    """A rule's SEND whose payload names `type: KILL` is refused before any send: the gates
+    checked SEND, and the payload never replaces the event."""
+    order = order_of()
+    await rig.start(order)
+    with pytest.raises(IllegalTransition):
+        await rig.facade.command(ACCOUNT, order.id, "SEND", {"type": "KILL"}, actor="rule")
+    with pytest.raises(IllegalTransition):
+        await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", {"type": "KILL", "updated_time": 1})
+    assert rig.facade.state(order.id) == ("validated", "not_required")
+    assert rig.commands.sent == [] and rig.count("oms_illegal_transitions_total") == 2
+    _gate, rig.commands.on_place = gated({"ok": True, "exchange_order_id": "x1"})
+    await rig.facade._send_order(rig.facade._orders[order.id], "SEND", {"type": "KILL"})
+    assert rig.facade.state(order.id) == ("submitting", "not_required")  # never a KILL
+
+
+async def test_a_latched_order_cannot_be_cancelled_through_a_smuggled_type(rig: Rig) -> None:
+    """CV-C63: with the chain tripped, a TRANSPORT_FAULT carrying `type: CANCEL` is refused, so
+    the cancel the latch refuses never reaches the exchange."""
+    order = await rig.submitted()
+    rig.facade._orders[order.id].interp.chain_trips = 1
+    smuggled = {"type": "CANCEL", "reason": "socket closed"}
+    with pytest.raises(IllegalTransition):
+        await rig.facade.command(ACCOUNT, order.id, "TRANSPORT_FAULT", smuggled, actor="system")
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    assert rig.commands.kinds() == ["place"]
+
+
+@pytest.mark.parametrize(
+    ("via", "event", "actor"),
+    [("push", "OPERATOR_RESOLVED", "user"), ("command", "KILL", "rule"), ("push", "FAULT", "user")],
+)
+async def test_an_event_outside_the_methods_set_is_refused(
+    rig: Rig, via: str, event: Any, actor: Any
+) -> None:
+    """`command` takes only `COMMAND_EVENTS` and `push` only `PUSH_EVENTS`, whatever the static
+    types said: a push cannot resolve a hold (only a user does, D6), a rule cannot KILL, and no
+    push can quarantine an order (OM-T04 is the facade's answer)."""
+    order = await rig.submitted()
+    mismatch = {"exchange_order_id": "x9"}
+    await rig.facade.command(ACCOUNT, order.id, "MISMATCH", mismatch, actor="system")
+    assert rig.facade.state(order.id) == ("held", "not_required")
+    with pytest.raises(IllegalTransition, match=f"{event} is not a transition of order"):
+        if via == "push":  # an untyped caller: `event` is `Any`, as a mapped request's would be
+            await rig.facade.push(ACCOUNT, order.id, event, {"decided_by": "owner"})
+        else:
+            await rig.facade.command(ACCOUNT, order.id, event, actor=actor)
+    assert rig.facade.state(order.id) == ("held", "not_required")
+    assert "OPERATOR_RESOLVED" not in PUSH_EVENTS and "KILL" not in COMMAND_EVENTS
+
+
+# --- C-2.6 on the place path, C-2.9 records, C-12.4 scope (codeB r1 Mediums) --------------------
+
+
+async def test_every_place_carries_the_native_stop(rig: Rig) -> None:
+    """C-2.6 (AGENTS.md Sec.6 rule 9): the `place` command the exchange receives carries the stop
+    the validated order requested, with the order's identity and terms."""
+    order = await rig.submitted()
+    place = rig.commands.sent[0]
+    assert (place.kind, place.order["stop_loss"]) == ("place", "62000")
+    assert (place.order["order_link_id"], place.order["qty"], place.order["price"]) == (
+        order.order_link_id,
+        "1",
+        "63000",
+    )
+
+
+async def test_a_kill_record_names_the_order_its_account_and_state(rig: Rig) -> None:
+    """C-2.9: the KILL's records in full, the order's cancel (`orders.cancel`, OM-R01), written
+    for the order and its account: the lifecycle's, with the state the KILL found, then the
+    `protection` region's, which keeps the stop (INV-B1-i), once the order is `killed`."""
+    order = await rig.submitted()
+    assert await rig.facade.kill("kill switch engaged") == ()
+    cancel = ("orders.cancel", order.id, ACCOUNT, "success")
+    detail = {"order_link_id": order.order_link_id, "exec_id": None, "trigger": None}
+    assert rig.audit.records == [
+        OrderAuditRecord(*cancel, "warning", "halted_by_kill", detail | {"state": "submitted"}),
+        OrderAuditRecord(*cancel, "info", "kill_protection_retained", detail | {"state": "killed"}),
+    ]
+
+
+async def test_a_kill_for_one_account_leaves_another_accounts_orders_live(rig: Rig) -> None:
+    """C-12.4, OM-I02: `kill(account_id=...)` records KILL on that account's orders only."""
+    mine = await rig.submitted()
+    theirs = order_of(2, exchange_account_id=OTHER)
+    await rig.start(theirs)
+    await rig.facade.command(OTHER, theirs.id, "SEND", actor="user")
+    await rig.quiet()
+    assert await rig.facade.kill("account kill", account_id=ACCOUNT) == ()
+    row = await rig.orders.get(ACCOUNT, mine.id)
+    assert row is not None and row.state == "killed" and rig.facade.state(mine.id) is None
+    assert rig.facade.state(theirs.id) == ("submitted", "not_required")
+    assert [c.order["order_id"] for c in rig.commands.sent if c.kind == "kill_cancel"] == [
+        str(mine.id)
+    ]
+
+
+def test_the_transition_labels_serve_only_the_b1_step_counter() -> None:
+    """codeB r1 Low: the allow-list's `from`, `to` and `source` (.semgrep, #847) are bounded only
+    for `oms_state_transitions_total` (B1's states and `OrderEventSource`, `max_series` 256); a
+    new metric using them must bring its own bound to review, so this pin then fails."""
+    users = {spec.name for spec in CATALOGUE if {"from", "to", "source"} & set(spec.labels)}
+    assert users == {"oms_state_transitions_total"}
+    spec = next(spec for spec in CATALOGUE if spec.name == "oms_state_transitions_total")
+    assert (spec.labels, spec.max_series) == (("from", "to", "source"), 256)
+
+
+# --- The outbox keeps a notice until it is acted on (codeA r1 Low, codeB r1 Low) -----------------
+
+
+async def test_a_first_fill_that_could_not_start_the_stop_pages_and_is_tried_again(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.6: a one-shot full fill's FIRST_FILL is refused once (an overloaded inbox). The notice
+    stays, the order is paged, and its machine is not evicted: the next push the order takes
+    tries it again, and the stop is attached."""
+    order = await rig.submitted()
+    send, refused = rig.facade._gateway.send, []
+
+    async def overloaded_once(key: str, event: Any, *, wait: bool = False) -> Any:
+        if isinstance(event, Mapping) and event.get("type") == "FIRST_FILL" and not refused:
+            refused.append(key)
+            raise GatewayOverloadedError(key, "order")
+        return await send(key, event, wait=wait)
+
+    monkeypatch.setattr(rig.facade._gateway, "send", overloaded_once)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("filled", "not_required")
+    assert "oms_first_fill_not_delivered" in rig.pager.calls
+    assert rig.commands.kinds() == ["place"]
+    seen = {"updated_time": 50, "stop_loss": None, "size": "1"}
+    await rig.facade.push(ACCOUNT, order.id, "SL_OBSERVED", seen)
+    await rig.quiet()
+    assert rig.commands.kinds() == ["place", "attach_stop"]
+    assert rig.facade.state(order.id) is None  # its stop confirmed: evicted (MUST-11)
+
+
+async def test_a_refused_quarantine_is_tried_again_at_the_next_turn(rig: Rig) -> None:
+    """OM-T04: the FAULT that answers a hostile fill is refused once (the store is down); the
+    refusal stays queued, so the next push's settle (one the order ignores) quarantines it."""
+    order = await rig.submitted()
+    hostile = fill_of(order, "e1", "0.4", exchange_order_id="x-foreign")
+    rig.store.fail_next(RuntimeError("Postgres is down"))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", hostile)
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    await rig.facade.push(ACCOUNT, order.id, "AMEND_REJECTED", {"error_code": "X"})  # ignored
+    assert rig.facade.state(order.id) == ("quarantined", "not_required")
+
+
+# --- Stalled ports and a concurrent KILL (codeB r1 Low, C-2.18) -------------------------------
+
+
+async def test_a_stalled_audit_sink_neither_holds_the_order_nor_stops_the_kill(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The audit port is awaited within `PORT_TIMEOUT`: a sink that never answers loses its
+    record, which pages, and the KILL of every order goes on."""
+    orders = [await rig.submitted(order_of(n)) for n in (1, 2)]
+    monkeypatch.setattr("candleviewer.oms.order_machine.PORT_TIMEOUT", 0.0)
+
+    async def stalled(_record: OrderAuditRecord) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(rig.audit, "write", stalled)
+    async with asyncio.timeout(10):  # a backstop only: a regression would hang here
+        assert await rig.facade.kill("kill switch engaged") == ()
+    for order in orders:
+        row = await rig.orders.get(ACCOUNT, order.id)
+        assert row is not None and row.state == "killed"
+    assert "oms_audit_record_lost" in rig.pager.calls
+
+
+async def test_a_slow_kill_cancel_delays_no_other_orders_kill(rig: Rig) -> None:
+    """The orders are killed concurrently: while the first order's cancel hangs, the second order
+    is already `killed`."""
+    first, second = await rig.submitted(order_of(1)), await rig.submitted(order_of(2))
+    gate = asyncio.Event()
+
+    async def cancel(command: b01.Command) -> Mapping[str, Any]:
+        if command.order["order_id"] == str(first.id):
+            await gate.wait()
+        return {"ok": True}
+
+    rig.commands.on_cancel = cancel
+    kill = asyncio.create_task(rig.facade.kill("kill switch engaged"))
+    for _ in range(200):
+        await asyncio.sleep(0)
+    row = await rig.orders.get(ACCOUNT, second.id)
+    assert row is not None and row.state == "killed" and not kill.done()
+    gate.set()
+    assert await kill == ()
+    row = await rig.orders.get(ACCOUNT, first.id)
+    assert row is not None and row.state == "killed"
+
+
+@pytest.mark.parametrize("exec_id", ["e" * 100_000, 123, ""])
+async def test_an_s6_record_keeps_no_exec_id_b1_would_not_keep(rig: Rig, exec_id: object) -> None:
+    """C-12.6: a push for an evicted final order never met B1's closed schema; its `exec_id`
+    enters the record and the log only as B1 keeps one (text of 1 to `MAX_TEXT` characters)."""
+    order = await rig.submitted()
+    await rig.facade.push(ACCOUNT, order.id, "EXPIRE", {"updated_time": 5})
+    await rig.quiet()
+    late = fill_of(order, "e1", "0.1") | {"exec_id": exec_id}
+    with pytest.raises(ReconcileAnomaly):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", late)
+    assert [dict(r.detail) for r in rig.audit.records] == [
+        {"state": "expired", "trigger": "EXEC", "exec_id": None}
+    ]
+
+
+# --- Whose stop the protection region manages (codeA r1 Medium and Lows, C-2.6) ----------------
+
+
+async def test_a_discovered_order_found_filled_never_has_its_stop_managed(rig: Rig) -> None:
+    """B1.8(b), INV-B1-l, SR-E29-06, SR-E29-12: an order reconciliation discovered, with a stop on
+    it, is found filled. Its fill starts the protection region, but that stop is the exchange's,
+    not one the OMS requested: no attach is sent (it could loosen a stop the user tightened, 24
+    Sec.8.8 rule 5), and the region goes to `sl_missing`, whose alert pages and whose fallback
+    request hands the position to B8."""
+    found = order_of(7, order_link_id="ext-" + "ab" * 16, exchange_order_id="x7")
+    assert await rig.facade.discover(found, environment="demo") == "untracked"
+    finding = {"exchange_order_id": "x7", "execution": fill_of(found, "e7", "1"), "pass_id": "p1"}
+    state = await rig.facade.command(
+        ACCOUNT, found.id, "RECON_FOUND_FILLED", finding, actor="system"
+    )
+    assert state == "filled"
+    await rig.quiet()
+    assert rig.commands.sent == []
+    assert [(n.kind, dict(n.detail)) for n in rig.notices.got] == [
+        ("alert", {"alert": "SL_ATTACH_FAILED"}),
+        ("request_fallback_sl", {}),
+    ]
+    last = rig.publish.calls[-1]
+    assert (last[2]["regions"]["protection"], last[3]) == ("sl_missing", True)
+    assert rig.facade.state(found.id) is None  # final, its region settled: evicted, B8's now
+
+
+async def test_a_partial_fill_found_without_its_execution_starts_the_stop(rig: Rig) -> None:
+    """INV-B1-o: reconciliation finds the unknown order partly filled, with no execution to apply
+    yet: `partially_filled` starts the protection region all the same, so the stop is attached."""
+    order = await _unknown(rig)
+    found = {"exchange_order_id": "x1", "pass_id": "p1"}
+    await rig.facade.command(ACCOUNT, order.id, "RECON_FOUND_PARTIAL", found, actor="system")
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    assert rig.context(order)["filled_qty"] == "0"
+    assert rig.commands.kinds() == ["place", "attach_stop"]
+
+
+async def test_a_reduce_only_exit_starts_no_stop_and_pages_nothing(rig: Rig) -> None:
+    """C-2.6 covers position-opening orders: a reduce-only exit, which carries no stop, opens no
+    position, so its fills start no protection region (no attach, no `SL_ATTACH_FAILED` page, no
+    hand-off to B8), and neither does its hydration after a restart."""
+    order = order_of(reduce_only=True, stop_loss=None, intent="flatten")
+    await rig.submitted(order)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("partially_filled", "not_required")
+    assert (rig.commands.kinds(), rig.notices.got, rig.pager.calls) == (["place"], [], [])
+    again = await rig.restart()
+    try:
+        await again.facade.hydrate(ACCOUNT, order.id, environment="demo")
+        await again.quiet()
+        assert again.facade.state(order.id) == ("partially_filled", "not_required")
+        assert again.commands.sent == []
+    finally:
+        await again.facade.stop()
+
+
+async def test_what_a_resync_leaves_without_a_machine_is_sent_on_or_paged(rig: Rig) -> None:
+    """S7, C-2.6 (`_orphaned`): with no machine rebuilt, a held push goes as an evicted order's
+    would (here the row is live, so it is dropped, logged, for reconciliation to apply again),
+    each notice but `first_fill` and `terminal` goes to the notice port, and a hostile fill no
+    machine can quarantine pages; a row holding no fill needs no hand-off to B8."""
+    order = await rig.submitted()
+    o = rig.facade._orders[order.id]
+    await rig.facade._close(o, publish=False)  # as `_resync` does before it hydrates
+    o.held.append(((1, 0), "EXEC", fill_of(order, "e1", "0.1")))
+    o.notices.extend(
+        [
+            {"seq": 7, "kind": "alert", "alert": "order_unknown"},
+            {"seq": 8, "kind": "first_fill"},
+            {"seq": 9, "kind": "terminal", "state": "filled"},
+        ]
+    )
+    o.denied["e9"] = "the execution is not a trade of this order's bound exchange order"
+    with capture_logs() as logs:
+        await rig.facade._orphaned(o)
+    dropped = [e for e in logs if e["event"] == "oms_held_push_dropped"]
+    assert [(e["trigger"], e["error"]) for e in dropped] == [("EXEC", "OrderNotLoaded")]
+    assert [(n.kind, dict(n.detail)) for n in rig.notices.got] == [
+        ("alert", {"alert": "order_unknown"})
+    ]
+    assert rig.pager.calls == ["oms_hostile_exec_not_quarantined"]
+
+
+async def test_a_resync_that_cannot_read_the_row_pages(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.6: whether the position needs B8 is unknown when the row cannot be read, so the
+    operator is paged rather than told nothing."""
+    order = await rig.submitted()
+    o = rig.facade._orders[order.id]
+    await rig.facade._close(o, publish=False)
+
+    async def unreadable(_account: UUID, _order: UUID) -> Any:
+        raise TimeoutError
+
+    monkeypatch.setattr(rig.orders, "get", unreadable)
+    await rig.facade._orphaned(o)
+    assert rig.pager.calls == ["oms_resync_row_unread"] and rig.notices.got == []
+
+
+async def test_a_kill_that_fails_unexpectedly_is_reported_and_pages(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INV-B1-h: an order whose KILL raised something unforeseen is answered and paged; the other
+    orders' KILLs are not held up by it."""
+    first, second = await rig.submitted(order_of(1)), await rig.submitted(order_of(2))
+    real = rig.facade._kill
+
+    async def broken(o: Any, reason: str) -> None:
+        if o.order_id == first.id:
+            raise RuntimeError("unforeseen")
+        await real(o, reason)
+
+    monkeypatch.setattr(rig.facade, "_kill", broken)
+    assert await rig.facade.kill("kill switch engaged") == (first.id,)
+    assert rig.pager.calls == ["oms_kill_not_recorded"]
+    row = await rig.orders.get(ACCOUNT, second.id)
+    assert row is not None and row.state == "killed"

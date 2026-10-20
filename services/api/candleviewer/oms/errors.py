@@ -39,11 +39,25 @@ class ReconcileAnomaly(OmsError):
 
 
 class OrderStepRefused(OmsError):
-    """B1 rolled the step back (24 Sec.8.2 S7, S11): its write-ahead row was refused or an action
-    failed, so the order is as it was and nothing was sent. `failure` is the error's class."""
+    """B1 rolled the step back (24 Sec.8.2 S7, S11): its write-ahead row was refused, with nothing
+    written, or an action failed, so the order is as it was and nothing was sent. A write whose
+    outcome is not known is `OrderStepUnknown` instead. `failure` is the error's class."""
 
     def __init__(self, event: str, failure: str) -> None:
         super().__init__(f"the order did not take {event}: {failure}")
+        self.event = event
+        self.failure = failure
+
+
+class OrderStepUnknown(OmsError):
+    """B1 rolled the step back, but its row may be ahead of the machine (24 Sec.8.2 S7): the write
+    did not answer in time, so a COMMIT in flight may still have landed (`StepOutcomeUnknown`), or
+    it met a row that had moved on (`StaleOrderState`). The facade has paged and rebuilt the
+    order's machine from its events, where the row decides; the caller reads the order's state
+    again rather than resending. `failure` is the error's class."""
+
+    def __init__(self, event: str, failure: str) -> None:
+        super().__init__(f"the outcome of {event} is not known: {failure}")
         self.event = event
         self.failure = failure
 

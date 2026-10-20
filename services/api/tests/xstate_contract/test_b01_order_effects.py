@@ -169,13 +169,21 @@ class _Pager:
         self.calls.append((severity, summary))
 
 
-@pytest.mark.parametrize("outage", ["refused", "timed_out", "unwired"])
+@pytest.mark.parametrize(
+    ("outage", "raised"),
+    [
+        ("refused", RuntimeError),
+        ("timed_out", b01.StepOutcomeUnknown),
+        ("unwired", b01.PortMissingError),
+    ],
+)
 async def test_s7_a_write_that_fails_changes_nothing_and_pages(
-    outage: str, charts: Charts, monkeypatch: pytest.MonkeyPatch
+    outage: str, raised: type[BaseException], charts: Charts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """S7, S11: a refused, timed-out or unwired write raises in `persist_event`; the rollback
     leaves the configuration and context as they were, nothing reaches the exchange (the invoke
-    the entry armed is torn down with it), and the order lane pages."""
+    the entry armed is torn down with it), and the order lane pages. A timed-out write raises
+    `StepOutcomeUnknown`, as its row may have committed (codeA r1 Medium): the facade reads it."""
     store, commands, pager = Store(), Commands(), _Pager()
     monkeypatch.setattr(b01, "_ports", b01.OrderPorts(persist=store, commands=commands))
     hooks = CvErrorHooks(machine_kind="order", lane="order", pager=pager)
@@ -189,7 +197,9 @@ async def test_s7_a_write_that_fails_changes_nothing_and_pages(
             monkeypatch.setattr(b01, "CV_PERSIST_TIMEOUT", 0.0)
         else:
             monkeypatch.setattr(b01, "_ports", b01.OrderPorts(commands=commands))
-        await _send(interp, "SEND")
+        receipt = await interp.send("SEND", wait=True)
+        await settle()
+        assert type(receipt.error) is raised
         assert "order.lifecycle.validated" in interp.current_state_ids
         assert (interp.context, commands.sent, len(store.steps)) == (before, [], 1)
         assert ("page", "transition failed: order") in pager.calls
@@ -254,6 +264,7 @@ async def test_a_place_is_sent_once_per_attempt(commands: Commands) -> None:
     again = await b01.place_order(None, ctx, None)
     assert first == again == {"ok": True, "exchange_order_id": "x1"}
     assert commands.kinds() == ["place"] and commands.sent[0].key == f"{LINK}:place:1"
+    assert commands.sent[0].order["stop_loss"] == "62000"  # C-2.6: the place carries the stop
     _begun(ctx := _ctx(event_seq=5), "place")
     await b01.place_order(None, ctx, None)
     assert commands.kinds() == ["place", "place"]
@@ -301,6 +312,7 @@ async def test_a_place_this_process_did_not_begin_looks_the_id_up_first(
     commands.on_lookup = _found
     assert await b01.place_order(None, _ctx(), None) == want
     assert commands.kinds() == kinds
+    assert all(c.order["stop_loss"] == "62000" for c in commands.sent)  # C-2.6, the resumed place
 
 
 async def test_a_duplicate_id_is_looked_up_before_the_guards_read_it(commands: Commands) -> None:
@@ -548,6 +560,7 @@ READ = {"updated_time": 100, "stop_loss": "62000", "size": "1"}
         (READ | {"updated_time": -1}, None, False),
         (None, None, False),  # the call's ack alone, no read-back
         (READ, {"kind": "SL_LOST", "updated_time": 101}, False),  # lost after the read-back
+        (READ, {"kind": "SL_LOST", "updated_time": 100}, False),  # a tie: the loss wins
         (READ, {"kind": "SL_LOST", "updated_time": 99}, True),  # a stale loss
         (READ, {"kind": "SL_OBSERVED", "updated_time": 101}, True),
     ],
@@ -692,3 +705,93 @@ async def test_an_amend_sends_the_terms_its_event_staged(
         assert interp.context["amend_terms"] is None
         row = await book.store.get(ACCOUNT, ORDER_ID)  # the row holds what the exchange accepted
         assert row is not None and (row.price, row.stop_loss) == (Decimal(64000), Decimal(62500))
+
+
+async def test_a_command_port_that_hangs_fails_the_attempt(
+    commands: Commands, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """codeA r1 Low (S1): every attempt is bounded by `CV_COMMAND_TIMEOUT`; a port that never
+    answers fails it with `TimeoutError`, recorded like any failure, so the invoke lands in
+    `unknown` and a re-entered one sends nothing again."""
+    monkeypatch.setattr(b01, "CV_COMMAND_TIMEOUT", 0.0)
+
+    async def _hung(_command: b01.Command) -> Mapping[str, Any]:
+        await asyncio.Event().wait()
+        return {}
+
+    commands.on_place = _hung
+    ctx = _ctx()
+    _begun(ctx, "place")
+    async with asyncio.timeout(10):  # a backstop only: a regression would hang here
+        with pytest.raises(TimeoutError):
+            await b01.place_order(None, ctx, None)
+        with pytest.raises(b01.RecordedFailureError, match="TimeoutError"):
+            await b01.place_order(None, ctx, None)
+    assert commands.kinds() == ["place"]
+
+
+async def test_a_discovered_orders_stop_is_never_the_omss(commands: Commands) -> None:
+    """codeA r1 Medium (SR-E29-06, SR-E29-12): `discovered` marks a stop found on the exchange,
+    so the attach sends nothing for it and no reading of it confirms the region, until an
+    adoption makes the order the OMS's."""
+    ctx = _ctx(discovered=True)
+    assert await b01.attach_native_sl(None, ctx, None) == {
+        "ok": False,
+        "error_code": "NATIVE_STOP_REQUIRED",
+    }
+    assert commands.sent == []
+    assert not b01.sl_observed_ok(ctx, _Event("SL_OBSERVED", **READ))
+    assert not b01.sl_attach_ok(ctx, _Done({"ok": True, "position": READ}))
+    await b01.adopt_untracked(None, ctx, None, None)
+    assert b01.sl_observed_ok(ctx, _Event("SL_OBSERVED", **READ))
+
+
+@pytest.mark.parametrize(
+    ("leaf", "over", "notified"),
+    [
+        ("lifecycle.partially_filled", {}, True),  # no fill held yet: a finding without one
+        ("lifecycle.filled", {}, True),
+        ("lifecycle.cancelled", {}, False),
+        ("lifecycle.cancelled", {"filled_qty": "0.4"}, True),
+        ("lifecycle.partially_filled", {"reduce_only": True, "filled_qty": "0.4"}, False),
+        ("lifecycle.filled", {"reduce_only": True, "filled_qty": "1"}, False),
+    ],
+)
+async def test_notify_protection_region_on_a_fill_state_or_a_held_fill(
+    leaf: str, over: dict[str, Any], notified: bool
+) -> None:
+    """INV-B1-o (codeA r1 Lows): entering `partially_filled` or `filled` always starts the stop,
+    an order that holds no fill included; `cancelled` and `expired` only for an order with fills;
+    a reduce-only order never, as it opens no position (C-2.6)."""
+    ctx = _ctx(**over)
+    await b01.notify_protection_region(_Interp(leaf), ctx, _Event("RECON_FOUND_PARTIAL"), None)
+    assert (ctx["outbox"] == [{"seq": 0, "kind": "first_fill"}]) is notified
+
+
+async def test_a_deadline_while_the_attach_hangs_leaves_the_position_naked(charts: Charts) -> None:
+    """C-2.6, 24 Sec.8.8 rule 2 (codeA r1 Low), on the library with the real bindings: the stop is
+    not confirmed by its deadline while the attach still hangs, so `SL_DEADLINE` takes the region
+    to `sl_missing`, which raises `SL_ATTACH_FAILED` and hands the position to B8; the attach's
+    late result does not take it back."""
+    gate, commands = asyncio.Event(), Commands()
+
+    async def _attached(_command: b01.Command) -> Mapping[str, Any]:
+        await gate.wait()
+        return {"ok": True, "position": READ}
+
+    commands.on_attach = _attached
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(b01, "_ports", b01.OrderPorts(persist=Store(), commands=commands))
+        mp.setattr(b01, "_ATTEMPTS", type(b01._ATTEMPTS)())
+        async with _machine(charts, "protection.not_required", AuditTap()) as interp:
+            interp.context.update(stop_loss="62000", order_link_id=LINK)
+            await _send(interp, "FIRST_FILL")
+            assert "order.protection.sl_pending" in interp.current_state_ids
+            await _send(interp, "SL_DEADLINE")
+            assert "order.protection.sl_missing" in interp.current_state_ids
+            kinds = [(n["kind"], n.get("alert")) for n in interp.context["outbox"]]
+            assert kinds == [("alert", "SL_ATTACH_FAILED"), ("request_fallback_sl", None)]
+            gate.set()
+            await settle()
+            assert "order.protection.sl_missing" in interp.current_state_ids
+            assert not interp.has_tag("protected") and commands.kinds() == ["attach_stop"]

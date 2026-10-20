@@ -185,8 +185,8 @@ def _checks(table: str) -> set[str]:
 
 
 def test_the_fake_meets_every_check_the_schema_declares() -> None:
-    """lows-847s3b (code r2): a migration that adds a CHECK (as `0033_order_vocabulary` added
-    `ord_lifecycle`) fails here until the fake models it or leaves it to the types."""
+    """lows-847s3b (code r2): a migration that adds a CHECK (as the order vocabulary's revision
+    added `ord_lifecycle`) fails here until the fake models it or leaves it to the types."""
     assert _checks("orders") == set(fakes._ORDER_CHECKS) | _LEFT_TO_TYPES["orders"]
     assert _checks("executions") == set(fakes._EXECUTION_CHECKS) | _LEFT_TO_TYPES["executions"]
     assert _checks("order_events") == {"oe_latency"} | _LEFT_TO_TYPES["order_events"]

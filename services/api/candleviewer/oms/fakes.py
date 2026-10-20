@@ -33,8 +33,9 @@ _PAGE = port.MAX_EVENT_PAGE
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{4,20}")
 #: The SQLSTATE Postgres refuses text holding NUL with, as it decodes the bound value (22021).
 _NUL_TEXT: Final = "22021"
-#: The CHECKs (`0029_oms_core`, `0033_order_vocabulary`) a value of the types can break, each true
-#: where SQL's is false: a NULL leaves a CHECK unknown, which passes it.
+#: The CHECKs (`0029_oms_core`'s, and `ord_lifecycle`, which the order vocabulary's revision adds)
+#: a value of the types can break, each true where SQL's is false: a NULL leaves a CHECK unknown,
+#: which passes it.
 _ORDER_CHECKS: Final[dict[str, Callable[[port.NewOrder | Row], bool]]] = {
     "ord_cum": lambda o: not 0 <= o.cum_exec_qty <= o.qty,
     "ord_lifecycle": lambda o: (

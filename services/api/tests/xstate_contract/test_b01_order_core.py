@@ -397,7 +397,12 @@ async def test_inv_b1_h_kill_cancels_a_reconciled_duplicate(
             _Done({}),
             {"amend_terms": None},
         ),
-        ("adopt_untracked", {"needs_lookup": True}, _Ev(), {"needs_lookup": False}),
+        (
+            "adopt_untracked",
+            {"needs_lookup": True, "discovered": True},
+            _Ev(),
+            {"needs_lookup": False, "discovered": False},
+        ),
         ("set_cancel_missing_remote", {}, None, {}),
         ("record_cancel_refused", {}, _Done({"error_code": "ORDER_NOT_FOUND"}), {}),
         ("record_mismatch", {}, _Done({"lookup": {"exchange_order_id": "x9"}}), {}),
@@ -514,7 +519,8 @@ async def test_adopt_recon_binds_and_applies_what_it_carries(
 
 
 async def test_record_discovered_records_the_found_order_or_nothing() -> None:
-    """S9: an untracked order keeps the identity, terms and id reconciliation found."""
+    """S9: an untracked order keeps the identity, terms and id reconciliation found, marked as
+    discovered: its stop is the exchange's, not one the OMS requested (codeA r1 Medium)."""
     ctx: dict[str, Any] = {}
     await _run("record_discovered", ctx, _Ev(order=ORDER | {"exchange_order_id": "x7"}))
     assert ctx == _STAMPED | {
@@ -522,6 +528,7 @@ async def test_record_discovered_records_the_found_order_or_nothing() -> None:
         "leaves_qty": "1",
         "stop_loss": "62000",
         "exchange_order_id": "x7",
+        "discovered": True,
     }
     fresh: dict[str, Any] = {}
     with capture_logs() as logs:

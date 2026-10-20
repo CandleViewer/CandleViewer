@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any
@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 from xstate_statemachine import PluginBase, SimulatedClock
 
 from candleviewer.oms.execution import apply_fields
@@ -254,10 +255,13 @@ class _Bounded(PluginBase[Any]):
 
 @asynccontextmanager
 async def _order_machine(
-    *plugins: Any, place: Callable[..., Awaitable[object]] | None = None
+    *plugins: Any,
+    place: Callable[..., Awaitable[object]] | None = None,
+    start: str = "submitting",
 ) -> AsyncIterator[tuple[Any, list[tuple[str, dict[str, Any]]]]]:
     """B1 from `draft` on its real binding, the command port answering at once (or *place*), the
-    step writer a recording double, and every audit record collected."""
+    step writer a recording double, and every audit record collected; sent (VALIDATE and SEND),
+    or discovered on the exchange (`untracked`) when *start* says so."""
     records: list[tuple[str, dict[str, Any]]] = []
 
     async def hook(name: str, context: dict[str, Any]) -> None:
@@ -273,8 +277,12 @@ async def _order_machine(
             "order", clock=SimulatedClock(), lane="order", registry=REGISTRY, plugins=plugins
         )
         try:
-            await built.interpreter.send("VALIDATE", wait=True, **VALIDATE)
-            await built.interpreter.send("SEND", wait=True)
+            if start == "untracked":
+                found = {"order": _ORDER | {"exchange_order_id": "x1"}}
+                await built.interpreter.send("DISCOVERED", wait=True, **found)
+            else:
+                await built.interpreter.send("VALIDATE", wait=True, **VALIDATE)
+                await built.interpreter.send("SEND", wait=True)
             yield built.interpreter, records
         finally:
             await built.interpreter.stop()
@@ -374,16 +382,33 @@ _DELIVERIES = st.lists(
 
 
 @_HYP
-@given(deliveries=_DELIVERIES, early=st.integers(min_value=0, max_value=2))
+@given(
+    deliveries=_DELIVERIES,
+    early=st.integers(min_value=0, max_value=2),
+    start=st.sampled_from(("submitting", "untracked")),
+)
 async def test_inv_5_no_delivered_exec_is_unaccounted_for_property(
-    deliveries: list[tuple[str, str, bool, str]], early: int
+    deliveries: list[tuple[str, str, bool, str]], early: int, start: str
 ) -> None:
     """INV-5 (LC-03, 24 Sec.8.2 S10): every `exec_id` sent to the machine, whatever its state, is
-    in `seen_exec_ids`, still deferred, or in the audit record of the arm that consumed it (a
-    repeat, a fill of another order or past `qty`: `guard_denied`; a fill of a held or final
-    order: `reconcile_anomaly`), never dropped silently."""
+    in `seen_exec_ids`, still deferred, or in the record of the arm that consumed it (a repeat, a
+    fill of another order or past `qty`: `guard_denied`; a fill of a held or final order:
+    `reconcile_anomaly`; one `untracked` heard of: `record_remote_state`'s, codeA r1 Low), never
+    dropped silently. Orders that were sent and orders discovered on the exchange alike."""
     gate, held = gated({"ok": True, "exchange_order_id": "x1"})
-    async with _order_machine(place=held) as (interp, records):
+    with capture_logs() as logs:
+        await _deliver(deliveries, early, start, gate, held, logs)
+
+
+async def _deliver(
+    deliveries: list[tuple[str, str, bool, str]],
+    early: int,
+    start: str,
+    gate: Any,
+    held: Callable[..., Awaitable[object]],
+    logs: Sequence[Mapping[str, Any]],
+) -> None:
+    async with _order_machine(place=held, start=start) as (interp, records):
         delivered: list[str] = []
         for index, (exec_id, qty, foreign, then) in enumerate(deliveries):
             if index == early:
@@ -400,5 +425,6 @@ async def test_inv_5_no_delivered_exec_is_unaccounted_for_property(
         audited = {
             r.get("exec_id") for n, r in records if n in ("guard_denied", "reconcile_anomaly")
         }
-        accounted = set(interp.context["seen_exec_ids"]) | deferred | audited
+        seen = {e["exec_id"] for e in logs if e["event"] == "b01_untracked_order_seen"}
+        accounted = set(interp.context["seen_exec_ids"]) | deferred | audited | seen
         assert set(delivered) <= accounted

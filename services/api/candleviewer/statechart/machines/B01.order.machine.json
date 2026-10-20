@@ -43,7 +43,8 @@
     "event_seq": null,
     "recon_deadline_us": null,
     "sl_reading": null,
-    "outbox": []
+    "outbox": [],
+    "discovered": false
   },
   "states": {
     "lifecycle": {
