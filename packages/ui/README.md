@@ -142,7 +142,8 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   one-sentence meaning, sorted by name. It is the code twin of the Penpot icon page; the two compare
   by diff.
 - `source/<origin>/<name>.svg`: the vetted glyphs. `lucide/` holds glyphs vendored verbatim from
-  `lucide-static` (ISC: `source/lucide/LICENSE`; version and owner in the vendored-code register,
+  `lucide-static` (ISC, with the MIT notice for its Feather-derived glyphs: `source/lucide/LICENSE`;
+  version and owner in the vendored-code register,
   [`35-dependency-freeze-policy.md` §7](../../docs/plan/35-dependency-freeze-policy.md)), each
   renamed to its registry name. `custom/` receives the trading glyphs that E05-D02 draws.
 - `generated/`: one component per icon (`CloseIcon`), plus `index.ts` and `components.ts`
@@ -182,9 +183,18 @@ optical size in the browser: the token's extent, a 1.5px stroke, and geometry in
 To add an icon:
 
 1. Put its SVG at `src/icons/source/<origin>/<name>.svg`, with a kebab-case name. A Lucide glyph is
-   copied verbatim from the vendored `lucide-static` version; a custom glyph comes from its design
-   ticket's Penpot export on the same grid (`viewBox="0 0 24 24"`, `fill="none"`,
-   `stroke="currentColor"`, plain geometry).
+   copied verbatim from the vendored `lucide-static` version: download that version's tarball,
+   check its sha512 against the register row (`35-dependency-freeze-policy.md` §7), then copy
+   `package/icons/<glyph>.svg`. A custom glyph comes from its design ticket's Penpot export,
+   prepared for the grid:
+   - a `viewBox="0 0 24 24"` root with `fill="none"` and `stroke="currentColor"`;
+   - outline geometry only (path, circle, ellipse, line, polyline, polygon, rect): no fill, group,
+     transform, clip path, colour, style or text, so flatten them in the export. A dot is a
+     zero-length, round-capped path, as in Lucide;
+   - geometry inside the live area, 2 to 22 on both axes.
+
+   The generator rejects anything else, naming the file.
+
 2. Add its entry to `registry.ts`, in name order: `category`, `source` (`lucide/<glyph>` or
    `custom/<ticket>`) and a one-sentence `description`.
 3. In `packages/ui`, run `node scripts/build-icons.mjs`, then `test`: it writes the new icon's

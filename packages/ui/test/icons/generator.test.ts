@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   componentName,
   iconSources,
@@ -10,6 +10,7 @@ import {
   OUTPUT_DIR,
   parseIconSource,
   renderIconModules,
+  run,
 } from "../../scripts/build-icons.mjs";
 
 const PACKAGE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -143,7 +144,10 @@ describe("the generator's source tree (iconSources)", () => {
     }
     return root;
   };
-  afterEach(() => trees.splice(0).forEach((root) => rmSync(root, { recursive: true })));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    trees.splice(0).forEach((root) => rmSync(root, { recursive: true }));
+  });
 
   it("reads each origin's sources, past its licence notice", () => {
     const root = tree("lucide/LICENSE", "lucide/close.svg", "custom/twap.svg");
@@ -151,6 +155,38 @@ describe("the generator's source tree (iconSources)", () => {
       { name: "close", origin: "lucide", file: "src/icons/source/lucide/close.svg" },
       { name: "twap", origin: "custom", file: "src/icons/source/custom/twap.svg" },
     ]);
+  });
+
+  it("writes a tree's modules, finds them in sync, and repairs a hand-edit or a stray file", () => {
+    const root = tree("lucide/close.svg", "custom/twap.svg");
+    const logs = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(run(["--check"], root)).toBe(1); // nothing generated yet
+    expect(run([], root)).toBe(0);
+    expect(run(["--check"], root)).toBe(0);
+    writeFileSync(path.join(root, OUTPUT_DIR, "CloseIcon.tsx"), "// edited by hand\n");
+    writeFileSync(path.join(root, OUTPUT_DIR, "Stray.tsx"), "");
+    errors.mockClear();
+    expect(run(["--check"], root)).toBe(1);
+    expect(errors.mock.calls.slice(0, 2)).toEqual([
+      [`stale or missing: ${OUTPUT_DIR}/CloseIcon.tsx`],
+      [`not generated: ${OUTPUT_DIR}/Stray.tsx`],
+    ]);
+    expect(run([], root)).toBe(0);
+    expect(logs.mock.calls.at(-1)).toEqual(["[icons] 4 modules: 1 written, 1 deleted"]);
+    expect(run(["--check"], root)).toBe(0);
+  });
+
+  it("reports a rejected source in one line naming the file, not a stack trace", () => {
+    const root = tree("custom/twap.svg");
+    writeFileSync(path.join(root, "src/icons/source/custom/twap.svg"), source("<g />"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(run([], root)).toBe(1);
+    expect(errors.mock.calls).toEqual([
+      ["src/icons/source/custom/twap.svg: <g> is not a geometry element"],
+    ]);
+    expect(run(["--write"], root)).toBe(1);
+    expect(errors.mock.calls.at(-1)).toEqual(["usage: node scripts/build-icons.mjs [--check]"]);
   });
 
   it.each([

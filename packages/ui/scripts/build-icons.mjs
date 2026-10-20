@@ -247,14 +247,26 @@ export function renderIconModules(root = PACKAGE) {
   return modules;
 }
 
-function main(args) {
+/**
+ * The command line on the package at `root`: writes the modules, or with `--check` reports drift.
+ * Returns the exit code; a rejected source is one line naming the file, not a stack trace.
+ */
+export function run(args, root = PACKAGE) {
   if (args.some((arg) => arg !== "--check")) {
-    throw new Error("usage: node scripts/build-icons.mjs [--check]");
+    console.error("usage: node scripts/build-icons.mjs [--check]");
+    return 1;
   }
-  const modules = renderIconModules();
-  const outDir = path.join(PACKAGE, OUTPUT_DIR);
+  let modules;
+  try {
+    modules = renderIconModules(root);
+  } catch (error) {
+    if (!(error instanceof IconSourceError)) throw error;
+    console.error(error.message);
+    return 1;
+  }
+  const outDir = path.join(root, OUTPUT_DIR);
   const read = (file) =>
-    existsSync(path.join(PACKAGE, file)) ? readFileSync(path.join(PACKAGE, file), "utf-8") : null;
+    existsSync(path.join(root, file)) ? readFileSync(path.join(root, file), "utf-8") : null;
   const extra = (existsSync(outDir) ? readdirSync(outDir) : [])
     .map((entry) => `${OUTPUT_DIR}/${entry}`)
     .filter((file) => !modules.has(file));
@@ -264,18 +276,17 @@ function main(args) {
   if (args.includes("--check")) {
     for (const file of stale) console.error(`stale or missing: ${file}`);
     for (const file of extra) console.error(`not generated: ${file}`);
-    if (stale.length + extra.length > 0) {
-      console.error('Regenerate: node scripts/build-icons.mjs (packages/ui/README.md, "Icons")');
-      process.exitCode = 1;
-    }
-    return;
+    if (stale.length + extra.length === 0) return 0;
+    console.error('Regenerate: node scripts/build-icons.mjs (packages/ui/README.md, "Icons")');
+    return 1;
   }
   mkdirSync(outDir, { recursive: true });
-  for (const file of stale) writeFileSync(path.join(PACKAGE, file), modules.get(file));
-  for (const file of extra) rmSync(path.join(PACKAGE, file));
+  for (const file of stale) writeFileSync(path.join(root, file), modules.get(file));
+  for (const file of extra) rmSync(path.join(root, file));
   console.log(`[icons] ${modules.size} modules: ${stale.length} written, ${extra.length} deleted`);
+  return 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2));
+  process.exitCode = run(process.argv.slice(2));
 }

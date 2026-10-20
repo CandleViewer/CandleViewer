@@ -28,3 +28,5 @@ export declare function parseIconSource(text: string, file: string): ParsedIconS
 export declare function componentName(name: string): string;
 export declare function iconSources(root?: string): IconSourceFile[];
 export declare function renderIconModules(root?: string): Map<string, string>;
+/** The command line on the package at `root` (default packages/ui): its exit code. */
+export declare function run(args: readonly string[], root?: string): number;
