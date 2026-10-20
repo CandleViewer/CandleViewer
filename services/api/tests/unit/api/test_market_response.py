@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 
 from candleviewer.api import market_response as mr
 from candleviewer.bars import limits
+from candleviewer.bars.threshold_builders import MIN_SUBSCRIBABLE_DELTA_QTY_STEPS
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +96,7 @@ def test_limits_are_the_threat_model_numbers() -> None:
     assert limits.MAX_WINDOW_BARS == 250_000
     assert limits.TICK_PARAM_RANGE == (100, 1_000_000)
     assert limits.RANGE_TICKS_RANGE == (2, 100_000) and limits.QTY_PARAM_MAX == 10**12
+    assert limits.QTY_PARAM_MIN_STEPS == MIN_SUBSCRIBABLE_DELTA_QTY_STEPS == 10  # x qty_step
     assert limits.RENKO_TICKS_RANGE == (2, 100_000) and limits.MAX_REVERSAL_BRICKS == 10
     assert limits.MAX_BRICKS_PER_TRADE == 1_000
     assert limits.MAX_TAIL == 1_000  # SR-E12-07: the WS `bars` `history` maximum

@@ -30,7 +30,7 @@ def test_wire_enum_is_fully_covered_by_the_parametrisation() -> None:
 
 @pytest.mark.parametrize("kind", _SERVED)
 def test_factory_accepts_every_shipped_bar_kind(kind: str) -> None:
-    spec = parse_bar_request(kind, _PARAM[kind])
+    spec = parse_bar_request(kind, _PARAM[kind], qty_step=Decimal("0.001"))
     assert _make()(spec, SYM).spec.kind == kind
 
 

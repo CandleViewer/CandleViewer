@@ -68,6 +68,10 @@ MAX_REVERSAL_BRICKS: Final = 10
 #: this many; beyond it the builder raises, and on the live path the set quarantines the series.
 MAX_BRICKS_PER_TRADE: Final = 1_000
 QTY_PARAM_MAX: Final = 10**12
+#: `volume`/`delta` floor, in lot steps: `param >= QTY_PARAM_MIN_STEPS x` the symbol's `qty_step`
+#: (BR-29: a smaller threshold emits about one bar per print). Per symbol, so it is applied by
+#: `bars.spec.check_param_bounds` once the catalogue supplies the step.
+QTY_PARAM_MIN_STEPS: Final = 10
 
 __all__ = [
     "DEFAULT_LIMIT",
@@ -82,6 +86,7 @@ __all__ = [
     "MAX_TIME_WINDOW_US",
     "MAX_WINDOW_BARS",
     "QTY_PARAM_MAX",
+    "QTY_PARAM_MIN_STEPS",
     "QUERY_TIMEOUT_S",
     "RANGE_TICKS_RANGE",
     "RENKO_TICKS_RANGE",

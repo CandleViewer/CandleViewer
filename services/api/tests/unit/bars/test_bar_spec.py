@@ -9,10 +9,11 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import assume, given
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+import candleviewer.bars.spec as spec_mod
 from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
 from candleviewer.bars.limits import RENKO_TICKS_RANGE
 from candleviewer.bars.models import KIND_PARAM, PARAM_FIELDS, BarSpec
@@ -244,7 +245,7 @@ def test_rendered_artifacts_match_committed_in_process() -> None:
     [("tick", "100"), ("tick", "1000000"), ("range", "2"), ("volume", "1"), ("time", "1")],
 )
 def test_check_param_bounds_accepts_the_floor_and_the_ceiling(bar_type: str, param: str) -> None:
-    check_param_bounds(from_wire(bar_type, param), bar_type)
+    check_param_bounds(from_wire(bar_type, param), bar_type, qty_step=Decimal("0.001"))
 
 
 @pytest.mark.parametrize(
@@ -256,6 +257,84 @@ def test_check_param_bounds_refuses_outside_them_naming_the_bound(
     bar_type: str, param: str, lo: int, hi: int
 ) -> None:
     with pytest.raises(BarParamOutOfRange) as err:
-        check_param_bounds(from_wire(bar_type, param), bar_type)
+        check_param_bounds(from_wire(bar_type, param), bar_type, qty_step=Decimal("0.001"))
     assert str(err.value) == f"param for bar_type {bar_type} must be between {lo} and {hi}."
     assert isinstance(err.value, BarSpecError)  # existing BarSpecError handlers still catch it
+
+
+# -- SR-E12-03 / BR-29 (#2720): volume and delta floor at 10 x the symbol's `qty_step` -------
+
+
+@pytest.mark.parametrize("bar_type", ["volume", "delta"])
+@pytest.mark.parametrize(
+    ("step", "param", "floor"),
+    [("1", "1", "10"), ("1", "9", "10"), ("0.5", "4", "5"), ("0.15", "1", "1.5"),
+     ("100", "999", "1000")],
+)  # fmt: skip
+def test_check_param_bounds_refuses_volume_and_delta_below_ten_qty_steps(
+    bar_type: str, step: str, param: str, floor: str
+) -> None:
+    with pytest.raises(BarParamOutOfRange) as err:
+        check_param_bounds(from_wire(bar_type, param), bar_type, qty_step=Decimal(step))
+    assert str(err.value) == (
+        f"param for bar_type {bar_type} must be at least {floor} "
+        f"(10 x this symbol's qty step of {step})."
+    )
+
+
+@pytest.mark.parametrize("bar_type", ["volume", "delta"])
+@pytest.mark.parametrize(
+    ("step", "param"),
+    [("1", "10"), ("1", "11"), ("0.5", "5"), ("0.001", "1"), ("100", "1000")],
+)
+def test_check_param_bounds_accepts_volume_and_delta_at_and_above_the_floor(
+    bar_type: str, step: str, param: str
+) -> None:
+    check_param_bounds(from_wire(bar_type, param), bar_type, qty_step=Decimal(step))
+
+
+@given(k=st.integers(1, 10**6), offset=st.sampled_from([-1, 0, 1]))
+def test_volume_floor_is_exactly_ten_qty_steps(k: int, offset: int) -> None:
+    step, param = Decimal(k) / 10, k + offset  # 10 x step is the whole number k: the floor
+    assume(param >= 1)
+    spec = from_wire("volume", str(param))
+    if param < k:
+        with pytest.raises(BarParamOutOfRange):
+            check_param_bounds(spec, "volume", qty_step=step)
+    else:
+        check_param_bounds(spec, "volume", qty_step=step)
+
+
+@pytest.mark.parametrize("bar_type", ["volume", "delta"])
+@pytest.mark.parametrize(
+    "step", [None, Decimal(0), Decimal("-0.001"), Decimal("NaN"), Decimal("Infinity")]
+)
+def test_check_param_bounds_refuses_volume_and_delta_when_the_qty_step_is_unknown(
+    bar_type: str, step: Decimal | None
+) -> None:
+    """Never a default of 1: an unlisted symbol, no catalogue or a nonsense step refuses them."""
+    with pytest.raises(BarParamOutOfRange) as err:
+        check_param_bounds(from_wire(bar_type, "50"), bar_type, qty_step=step)
+    assert str(err.value) == (
+        f"param for bar_type {bar_type} cannot be checked: "
+        "the qty step of this symbol is not known."
+    )
+
+
+def test_check_param_bounds_treats_an_omitted_qty_step_as_unknown() -> None:
+    with pytest.raises(BarParamOutOfRange, match="qty step of this symbol is not known"):
+        check_param_bounds(from_wire("volume", "50"), "volume")
+
+
+def test_qty_step_for_asks_the_resolver_only_for_the_kinds_that_floor_on_a_step() -> None:
+    asked: list[str] = []
+
+    def resolve(symbol: str) -> Decimal | None:
+        asked.append(symbol)
+        return Decimal("0.5")
+
+    kinds = ("volume", "delta", "time", "tick", "range", "renko")
+    got = {k: spec_mod.qty_step_for(k, "BTCUSDT", resolve) for k in kinds}
+    assert {k for k, step in got.items() if step is not None} == {"volume", "delta"}
+    assert asked == ["BTCUSDT", "BTCUSDT"]  # one lookup for volume, one for delta, none else
+    assert spec_mod.qty_step_for("volume", "BTCUSDT", None) is None  # no catalogue wired

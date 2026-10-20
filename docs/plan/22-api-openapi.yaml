@@ -3373,6 +3373,11 @@ paths:
         Non-time bars are **not** anchored to wall-clock; each bar carries `open_time` and
         `close_time` derived from its first/last trade.
 
+        A `volume` or `delta` `param` below 10 times the symbol's `qty_step` is refused with 400
+        `validation_failed`, naming the bound, and so is any `volume` or `delta` request while that
+        step is not known (before the instrument catalogue's first snapshot, or for a symbol it
+        does not list).
+
         **Ordering and identity (#2014).** A bar's identity is `(series, generation, index)`
         (21 §4.8, 24 §3.1). A window may span several generations: every builder cold start
         begins a new one (24 §3.5) and older epochs stay readable (ADR-0033), so one response

@@ -16,13 +16,19 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from decimal import Decimal, localcontext
 from typing import Any, Final, Literal
 
 import structlog
 
 from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
-from candleviewer.bars.limits import QTY_PARAM_MAX, RANGE_TICKS_RANGE, TICK_PARAM_RANGE
+from candleviewer.bars.limits import (
+    QTY_PARAM_MAX,
+    QTY_PARAM_MIN_STEPS,
+    RANGE_TICKS_RANGE,
+    TICK_PARAM_RANGE,
+)
 from candleviewer.bars.models import BarSpec, check_renko_bounds
 from candleviewer.observability.metrics import Counter
 
@@ -158,17 +164,44 @@ _PARAM_BOUNDS: Final[dict[str, tuple[int, int]]] = {
     "volume": (1, QTY_PARAM_MAX),
     "delta": (1, QTY_PARAM_MAX),
 }
+#: The kinds whose floor is per symbol (`QTY_PARAM_MIN_STEPS` x the catalogue's `qty_step`, #2720).
+QTY_STEP_KINDS: Final = frozenset({"volume", "delta"})
 
 
-def check_param_bounds(spec: BarSpec, bar_type: str) -> None:
+def check_param_bounds(spec: BarSpec, bar_type: str, *, qty_step: Decimal | None = None) -> None:
     """Raise `BarParamOutOfRange`, naming the bound, when `spec`'s param is outside SR-E12-03's
     floor and ceiling for its kind (a one-print tick bar is a builder-amplification vector,
-    BR-29). `bar_type` is the wire name, for the message."""
+    BR-29). `bar_type` is the wire name, for the message.
+
+    `volume` and `delta` also floor at `QTY_PARAM_MIN_STEPS` x `qty_step`, the symbol's lot step,
+    which only the instrument catalogue knows: `None` or a step that is not a positive number
+    refuses them, never a default of 1. The other kinds need no step."""
     bounds = _PARAM_BOUNDS.get(spec.kind)
     if bounds is not None and not bounds[0] <= int(spec.param_value) <= bounds[1]:
         raise BarParamOutOfRange(
             f"param for bar_type {bar_type} must be between {bounds[0]} and {bounds[1]}."
         )
+    if spec.kind not in QTY_STEP_KINDS:
+        return
+    if qty_step is None or not qty_step.is_finite() or qty_step <= 0:
+        raise BarParamOutOfRange(
+            f"param for bar_type {bar_type} cannot be checked: "
+            "the qty step of this symbol is not known."
+        )
+    floor = QTY_PARAM_MIN_STEPS * qty_step
+    if spec.param_value < floor:
+        raise BarParamOutOfRange(
+            f"param for bar_type {bar_type} must be at least {dec_str(floor)} "
+            f"({QTY_PARAM_MIN_STEPS} x this symbol's qty step of {dec_str(qty_step)})."
+        )
+
+
+def qty_step_for(
+    bar_type: str, symbol: str, resolve: Callable[[str], Decimal | None] | None
+) -> Decimal | None:
+    """`symbol`'s catalogue lot step for `check_param_bounds`, asked of `resolve` only for the kinds
+    that floor on it (`QTY_STEP_KINDS`). `None`: `resolve` is not wired or does not know it."""
+    return resolve(symbol) if resolve is not None and bar_type in QTY_STEP_KINDS else None
 
 
 def to_wire(spec: BarSpec) -> tuple[WireBarType, str]:

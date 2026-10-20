@@ -9,6 +9,9 @@ Order of refusal (each before any storage read except where noted):
 2. `bar_type`/`param` parsed by E12-T01's `bars.spec.from_wire` plus the SR-E12-03 bounds
    (`bars.limits`): malformed -> 400 `validation_failed`; a type the server cannot build
    (`pnf`, `heikin_ashi`, renko `atr:*` per ADR-0033 R1) -> 422 naming the alternative.
+   `volume`/`delta` also floor at 10 x the symbol's catalogue `qty_step` (#2720): below it, or
+   with no known step (symbol not in the catalogue, no catalogue wired), -> 400 like the other
+   bounds, ahead of the symbol check below.
 3. Unknown symbol -> 422; storage not composed -> 503.
 4. Non-time bars: a window starting before `recording_started_at` -> 422 `no_data_recorded`.
    This is checked **before** the window cap: it is the more specific data-availability fact,
@@ -35,6 +38,7 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, Final, Protocol
 
 import structlog
@@ -71,7 +75,7 @@ from candleviewer.bars.metrics import (
 )
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarKey, BarPage, row_key, stored_bar
-from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire
+from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire, qty_step_for
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.repositories.rows import TradeTotals
@@ -125,8 +129,10 @@ def _bad_param(reason: str, status: int, detail: str) -> _Rejected:
     return _Rejected(problem(status, "validation_failed", "Invalid param", detail))
 
 
-def parse_bar_request(bar_type: str, param: str) -> BarSpec:
-    """`(bar_type, param)` -> `BarSpec` or `_Rejected` (400 malformed, 422 unsupported)."""
+def parse_bar_request(bar_type: str, param: str, *, qty_step: Decimal | None = None) -> BarSpec:
+    """`(bar_type, param)` -> `BarSpec` or `_Rejected` (400 malformed or out of range, 422
+    unsupported). `qty_step` is the symbol's catalogue lot step, the `volume`/`delta` floor's
+    base (SR-E12-03); `None` refuses those two bar types."""
     if bar_type not in _BAR_TYPES:
         raise _bad_param("invalid", 400, "bar_type is not a supported bar type.")
     if bar_type in ("pnf", "heikin_ashi") or param.startswith("atr:"):
@@ -145,7 +151,7 @@ def parse_bar_request(bar_type: str, param: str) -> BarSpec:
             "invalid", 400, f"param is not valid for bar_type {bar_type}; see the param table."
         ) from None
     try:
-        check_param_bounds(spec, bar_type)
+        check_param_bounds(spec, bar_type, qty_step=qty_step)
     except BarParamOutOfRange as exc:
         raise _bad_param("out_of_range", 400, str(exc)) from None
     return spec
@@ -175,11 +181,13 @@ def make_market_bars_router(
     trade_totals: TradeTotalsSource | None = None,
     principal_resolver: _Resolver | None = None,
     symbol_listed: Callable[[str], bool] | None = None,
+    qty_step: Callable[[str], Decimal | None] | None = None,
     now_us: Callable[[], int],
 ) -> APIRouter:
     """Bind `GET /market/bars`. `reader_provider()` is resolved per request (the bars reader
     exists only once a real QuestDB is composed); `None` -> 503. `symbol_listed=None` fails
-    closed (503), never open, and so does `trade_totals=None` for non-time bars."""
+    closed (503), never open, and so does `trade_totals=None` for non-time bars. `qty_step` is the
+    catalogue's lot step for the `volume`/`delta` floor (SR-E12-03); with none, they are refused."""
     router = APIRouter(tags=["market-data"])
 
     async def _authorize(request: Request) -> None:
@@ -241,7 +249,9 @@ def make_market_bars_router(
     ) -> Response:
         try:
             await _authorize(request)
-            spec = parse_bar_request(bar_type, param)
+            spec = parse_bar_request(
+                bar_type, param, qty_step=qty_step_for(bar_type, symbol, qty_step)
+            )
         except _Rejected as rejected:
             return rejected.response
         try:

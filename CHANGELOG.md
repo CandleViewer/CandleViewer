@@ -5111,6 +5111,7 @@ tracker).
 ### Security
 
 - **backend-platform**: a failed or cancelled first bars build keeps the other consumers' leases on its series, and a series whose saved state cannot be caught up starts afresh (#2762) (#3880)
+- **backend-platform**: bars `volume` and `delta` params are refused below 10 lot steps of their symbol, or while the symbol's lot step is not yet known, on REST and WebSocket (#2720) (#3885)
 - **rule-engine**: the rules-engine freeze scope is keyed by owner and account (#415) (#3847)
 - **backend-platform**: one print closes at most 1 000 volume bars, as it does for renko bricks; a larger print is refused and its series quarantined (#2770) (#3867)
 - **backend-platform**: WebSocket account-scope views and the HTTP session scope list only grants that currently permit access; a withdrawn grant's or permission's queued frames are dropped before the client is told; WebSocket options accept only canonical values; exception text is redacted before it is logged (#415) (#3875)

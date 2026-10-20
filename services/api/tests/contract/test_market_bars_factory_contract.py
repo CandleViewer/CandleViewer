@@ -38,7 +38,7 @@ async def test_market_bars_range_and_delta_compose_a_live_builder_set(
     )
     ctx = build_app_context(settings)
     runtime = wire_bars(ctx, now_us=lambda: 0, tick_size=lambda _s: Decimal("0.1"))
-    spec = parse_bar_request(bar_type, param)
+    spec = parse_bar_request(bar_type, param, qty_step=Decimal("0.001"))
     await runtime.builder_set.register(spec, SYM, "c1")
     lane = runtime.builder_set._lanes[SYM]
     assert [e.spec.kind for e in lane.entries] == [bar_type]
