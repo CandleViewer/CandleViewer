@@ -604,6 +604,43 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E27",
         max_series=6,
     ),
+    # --- Account profiles (E28-T01, #905) (planned) -----------------------------------------
+    # Named ahead: `ProfilesRepository` and `EffectiveProfiles` take these from the composition
+    # root, which wires them with their first consumer (E28-T02's routes, E28-T04's guard).
+    _s(
+        "cv_profile_rows",
+        "gauge",
+        "rows",
+        ("state",),
+        "Live account profiles of the process environment's accounts, by trading state "
+        "(trading_enabled, trading_disabled).",
+        "dashboard only",
+        _P,
+        "E28",
+        max_series=2,
+    ),
+    _s(
+        "cv_profile_version_bumps_total",
+        "counter",
+        "bumps",
+        (),
+        "Profile rows given a new version by a write; each bump also wrote a revision (SR-E28-07).",
+        "dashboard only",
+        _P,
+        "E28",
+        max_series=1,
+    ),
+    _s(
+        "cv_profile_cache_lookups_total",
+        "counter",
+        "lookups",
+        ("result",),
+        "Effective-profile reads on the order path, by cache result (hit, miss).",
+        "dashboard only",
+        _P,
+        "E28",
+        max_series=2,
+    ),
     # --- Wallet snapshot cache (E27-T04, #837 Option B); the sizing decisions it takes -----
     _s(
         "cv_wallet_sizing_old_snapshot_total",

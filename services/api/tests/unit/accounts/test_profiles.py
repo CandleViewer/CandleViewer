@@ -8,6 +8,7 @@ the exact round trip domain -> row -> domain.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -409,7 +410,28 @@ def test_a_value_out_of_any_columns_range_is_refused_not_trapped() -> None:
         _profile("fixed_qty", sl_offset_value="1E+999999999999999998")  # a percent-unit stop
 
 
-def test_a_zero_fits_whatever_exponent_it_was_written_with() -> None:
+@pytest.mark.parametrize(
+    ("change", "error", "message"),
+    [
+        ({"allowed_symbols": ("btcusdt",)}, ValidationError, "allowed_symbols"),
+        ({"size_fixed_qty": None}, ValidationError, "sizing"),
+        ({"tp_ladder": (LadderRung(Decimal("NaN"), Decimal("1")),)}, ValueError, "finite"),
+        ({"fallback_sl_offset_pct": Decimal("1E-1000")}, ValueError, "out of range"),
+    ],
+    ids=["symbol", "sizing-drift", "nan-rung", "out-of-range"],
+)
+def test_a_stored_row_the_model_refuses_raises_rather_than_reads(
+    change: dict[str, Any], error: type[Exception], message: str
+) -> None:
+    """`profile_from_row`'s contract (its consumers catch `ValueError`): a row the model refuses
+    raises `ValidationError`, and a value no adapter can move raises a plain `ValueError`."""
+    row = _row(_profile("fixed_qty"))
+    drifted = dataclasses.replace(row, values=dataclasses.replace(row.values, **change))
+    with pytest.raises(error, match=message):
+        profile_from_row(drifted)
+
+
+def test_a_zero_fits_whatever_exponent_it_carries_within_the_limit() -> None:
     profile = _profile(min_leg_notional="0E-19")
     assert profile.min_leg_notional == 0 and profile_values(profile).min_leg_notional_usd == 0
 

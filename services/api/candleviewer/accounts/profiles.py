@@ -206,12 +206,12 @@ def _fits(value: Decimal, column: tuple[int, int], field: str, *, shift: int = 0
     _, digits, exponent = shifted.as_tuple()
     if not isinstance(exponent, int):  # unreachable: _shift refused it
         raise ValueError("a profile value must be finite")
-    if not any(digits):  # zero fits every column, whatever exponent it was written with
+    if not any(digits):  # zero fits every column, whatever exponent (within the limit) it carries
         return shifted
     while exponent < 0 and len(digits) > 1 and digits[-1] == 0:  # trailing zeros need no scale
         digits, exponent = digits[:-1], exponent + 1
     fraction = max(-exponent, 0)
-    whole = len(digits) + exponent if any(digits) else 0
+    whole = len(digits) + exponent
     if fraction > scale or whole > precision - scale:
         raise ValueError(f"{field} does not fit numeric({precision},{scale})")
     return shifted
