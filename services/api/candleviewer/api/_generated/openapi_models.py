@@ -4895,6 +4895,14 @@ class AuditExportResult(BaseModel):
             pattern="^cv-audit-export-v[0-9]+:[0-9a-f]{16}$",
         ),
     ]
+    public_key: Annotated[
+        str,
+        Field(
+            description="Base64 of the signing key's 32-byte Ed25519 public key, as the file's header line carries it. A verifier compares its SHA-256 with the fingerprint it pinned, and never trusts it on its own.",
+            json_schema_extra={"contentEncoding": "base64"},
+            pattern="^[A-Za-z0-9+/]{43}=$",
+        ),
+    ]
     compressed: bool
     size_bytes: Annotated[int, Field(ge=0)]
     row_count: Annotated[
@@ -4910,6 +4918,78 @@ class AuditExportResult(BaseModel):
     last_id: int | None = None
     expires_at: Annotated[
         AwareDatetime, Field(description="The artefact is deleted after this instant.")
+    ]
+
+
+class AuditSigningKey(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    key_id: Annotated[
+        str,
+        Field(
+            description="`cv-audit-export-v<N>:` and the first 16 hex of `fingerprint_sha256`, N the key's version. It finds the key and is never pinned.",
+            pattern="^cv-audit-export-v[0-9]+:[0-9a-f]{16}$",
+        ),
+    ]
+    alg: Literal["ed25519"]
+    public_key: Annotated[
+        str,
+        Field(
+            description="Base64 of the 32-byte raw Ed25519 public key (RFC 8032).",
+            json_schema_extra={"contentEncoding": "base64"},
+            pattern="^[A-Za-z0-9+/]{43}=$",
+        ),
+    ]
+    fingerprint_sha256: Annotated[
+        str,
+        Field(
+            description="Lowercase hex SHA-256 of the 32-byte raw public key: what a verifier pins.",
+            pattern="^[0-9a-f]{64}$",
+        ),
+    ]
+    status: Annotated[
+        Literal["active", "retired"],
+        Field(
+            description="At most one key of the environment is `active`; a retired key never signs."
+        ),
+    ]
+    verified: Annotated[
+        bool,
+        Field(
+            description="True only once M2 has opened the key's sealed seed and found that it derives `public_key` (the seal binds it, ADR-0039 decision 4); a key failing that check is refused, paged and never signs. Retiring a key destroys its seed (ADR-0039 Q3), so a retired key is never `verified`. No verifier relies on this mark."
+        ),
+    ]
+    valid_from: Annotated[AwareDatetime, Field(description="When the key became active.")]
+    valid_until: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="The `event_ts` of the `security.audit_signing_key_rotated` record of the rotation that retired the key; null while it is active."
+        ),
+    ]
+    retired_reason: Annotated[
+        Literal["scheduled", "compromise", "unrecoverable"] | None,
+        Field(description="That rotation's `reason`; null while the key is active."),
+    ]
+
+
+class AuditSigningKeyRotation(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    active: AuditSigningKey
+    retired: AuditSigningKey
+
+
+class RotateAuditSigningKeyRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    reason: Annotated[
+        Literal["scheduled", "compromise", "unrecoverable"],
+        Field(
+            description="Recorded in the rotation's record and as the retired key's `retired_reason`; `compromise` marks a seed that may have been stolen, and `unrecoverable` a key that can no longer be opened, the recovery after a KEK loss (ADR-0039 decision 6, AD-D13)."
+        ),
     ]
 
 
@@ -6602,7 +6682,12 @@ class Job(BaseModel):
             description='Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object. For `kind: backup` it is `{backup_id}`, plus `audit: "unavailable"` when the run\'s `stage: finished` record could not be written (`createBackup`), and for `kind: backup_verify` it is `{backup_id, verify_method}`, where `verify_method` is `restore_smoke`, `checksum`, `pg_verifybackup` or `duckdb_scan` (the values of `backups.verify_method`, E42-T05); a `backup_restore` result is defined with the restore contract (#3084).'
         ),
     ] = None
-    error: str | None = None
+    error: Annotated[
+        str | None,
+        Field(
+            description="Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written: an audit outage is answered as one) or `internal_error` (ADR-0039)."
+        ),
+    ] = None
 
 
 class Watchlist(WatchlistInput):
