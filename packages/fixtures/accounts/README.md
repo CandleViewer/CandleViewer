@@ -171,9 +171,10 @@ Unless the row says otherwise, a scenario extends `compliant` and the account is
 Private endpoints cannot be recorded without a real key, and agents never handle one. Every REST
 reply is therefore a **synthetic, documented-shape stand-in** under the owner's exception (#1778
 item A), like `services/api/tests/fixtures/key_verification/` (whose six files the REST bases are
-derived from). As plan §9.3 says, #2240's recorded, redacted `query-api` capture replaces the
-key-info replies in both places, and #2893 (scope item 10) verifies the other stand-ins against
-the v5 documentation or that capture. Env `demo` means the demo hosts: REST `api-demo.bybit.com`,
+derived from). As plan §9.3 says, the owner's recorded, redacted `query-api` capture (on the #2701
+owner queue, "#2240 recorded fixture via demo key") replaces the key-info replies in both places,
+and #2893 (scope item 10) verifies the other stand-ins against the v5 documentation or that
+capture. Env `demo` means the demo hosts: REST `api-demo.bybit.com`,
 private WS `stream-demo.bybit.com/v5/private`. The date is the reference `now`: nothing was
 captured.
 

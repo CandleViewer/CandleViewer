@@ -29,11 +29,14 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 #: `(action, fields)` -> one `audit_log` record in the WAL's format.
 AuditRowBuilder = Callable[[str, dict[str, str]], dict[str, Any]]
 
+#: `can_trade` is M2's, derived from the snapshot at insert (#2240); `can_withdraw` and
+#: `can_transfer` keep the database default (false, pinned by `ak_no_withdraw`, `ak_no_transfer`).
 _INSERT = sa.text(
     "INSERT INTO api_keys (id, exchange_account_id, label, key_id_enc, key_id_last4, "
-    "secret_enc, enc_nonce, enc_alg, dek_ref, kek_version, permission_snapshot, read_only) "
+    "secret_enc, enc_nonce, enc_alg, dek_ref, kek_version, permission_snapshot, read_only, "
+    "can_trade) "
     "SELECT :id, ea.id, :label, :key_id_enc, :key_id_last4, :secret_enc, :enc_nonce, :enc_alg, "
-    ":dek_ref, :kek_version, CAST(:permission_snapshot AS jsonb), :read_only "
+    ":dek_ref, :kek_version, CAST(:permission_snapshot AS jsonb), :read_only, :can_trade "
     "FROM exchange_accounts ea WHERE ea.id = :exchange_account_id AND ea.env::text = :env"
 )
 _GET = sa.text(

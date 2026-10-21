@@ -66,7 +66,7 @@ PROBE_ERRORS: Final = frozenset(
 _MS_MIN, _MS_MAX = 1_577_836_800_000, 4_102_444_800_000
 #: No-expiry forms (#836). The venue's reference fills the expiry only for a key with no IP
 #: binding, and every key this pipeline accepts is IP-bound, but the reply for one is undocumented.
-#: Until #2240's capture shows it, an empty `expiredAt`, one at or before the Unix epoch (a zero
+#: Until #2701's capture shows it, an empty `expiredAt`, one at or before the Unix epoch (a zero
 #: time) or a `deadlineDay` of -1 reads as no expiry, never as expired: the venue refuses an
 #: expired key's signed call itself (33004).
 _ZERO_TIME: Final = datetime(1970, 1, 1, tzinfo=UTC)

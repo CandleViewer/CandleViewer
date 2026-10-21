@@ -67,6 +67,9 @@ class CredentialRow:
     enc_alg: str = "AES-256-GCM"
     status: str = "pending"
     revoked: bool = False
+    #: Derived from the projected snapshot when the key is stored (`_permissions.trade_capable`,
+    #: #2240); the verification pass that precedes activation writes the same value again.
+    can_trade: bool = False
     #: Read back for the borrow's C-2.8 re-check (SR-E27-14); `insert` never writes them, so the
     #: database default (false, pinned by `ak_no_withdraw` and `ak_no_transfer`) applies. A read
     #: that does not return one leaves it `None`, which the re-check refuses (`broker._load`).

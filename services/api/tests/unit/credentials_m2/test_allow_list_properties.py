@@ -3,8 +3,9 @@
 Generated permission maps mix documented group and right names, the #2270 bypass spellings and
 arbitrary text. The gate must equal SR-030 / SR-030a read straight from the spec; a compliant map
 passes and any one foreign right fails it; whatever the gate accepts, M13's predicate and
-`PermissionSnapshot` accept too, so a stored snapshot always reads back; and M2's deny-list and
-its M13 restatement (C-3.2 bars M13 from importing M2) give the same verdict on every input.
+`PermissionSnapshot` accept too, so a stored snapshot always reads back; and M2's and M13's
+deny-list wrappers, both over the shared kernel (`candleviewer.domain.key_permissions`, #2240;
+C-3.2 bars M13 from importing M2), give the same verdict on every input.
 """
 
 from __future__ import annotations

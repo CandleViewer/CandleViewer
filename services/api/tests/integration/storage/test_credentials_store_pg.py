@@ -305,6 +305,34 @@ async def test_status_env_and_flags_from_real_rows(pg_dsn: str) -> None:
         await rel.dispose()
 
 
+_TRADE_RIGHTS = {"ContractTrade": ["Order", "Position"]}
+
+
+@pytest.mark.parametrize(
+    ("read_only", "flags"),
+    [(0, (True, False)), (1, (False, True))],
+    ids=["trade", "read_only"],
+)
+async def test_insert_derives_can_trade_and_leaves_the_fund_flags_false(
+    pg_dsn: str, read_only: int, flags: tuple[bool, bool]
+) -> None:
+    """#2240: the real INSERT writes the `can_trade` M2 derives from the snapshot beside
+    `read_only` (`ak_readonly_excl` holds), and the fund flags keep the database default."""
+    rel, store = _store(pg_dsn)
+    try:
+        snapshot = {"uid": "1", "readOnly": read_only, "permissions": _TRADE_RIGHTS}
+        b = CredentialBroker(store, _audit, _kek(0, 1))
+        meta = await b.store(
+            "demo", _account(pg_dsn), "t", Secret("KEYTABCD"), Secret("S"), snapshot
+        )
+        query = (
+            "SELECT can_trade, read_only, can_withdraw, can_transfer FROM api_keys WHERE id = %s"
+        )
+        assert _sql(pg_dsn, query, meta.key_id) == [(*flags, False, False)]
+    finally:
+        await rel.dispose()
+
+
 async def test_kcv_unique_and_versions(pg_dsn: str) -> None:
     rel, store = _store(pg_dsn)
     try:

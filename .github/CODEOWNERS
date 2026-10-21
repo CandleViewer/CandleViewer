@@ -211,6 +211,9 @@
 # E22-T01: the SR-E22 constants module at its real path. Threat model E22 §7. (Its pre-`candleviewer/`
 # placeholder `/services/api/orderflow/limits.py` was removed with the others in #2706.)
 /services/api/candleviewer/orderflow/limits.py  @CandleViewer/backend @CandleViewer/security @basiltt
+# #2240: the C-2.8 key-permission deny-list that M2 (`secrets/`) and M13 (`accounts/`) share. The
+# rest of the shared kernel `candleviewer/domain/` stays with the `/services/api/` rule above.
+/services/api/candleviewer/domain/key_permissions.py  @CandleViewer/backend @CandleViewer/security @basiltt
 /services/api/pyproject.toml            @CandleViewer/backend @CandleViewer/devsecops @CandleViewer/security @basiltt
 
 # ---------------------------------------------------------------------------
