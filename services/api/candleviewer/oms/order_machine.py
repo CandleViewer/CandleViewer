@@ -789,8 +789,9 @@ class OrderMachines:
         """E29-T04 (S2-Q5): an order whose `SEND` step was refused is never sent, and nothing
         would send it again, so the pipeline ends it with a KILL from `validated` only. B1 takes
         it to `killed` with nothing to cancel (`skip_kill_cancel`, audited
-        `kill_no_cancel_unsubmitted`); as for every KILL, the step leaves the entry's recorded
-        stops `pending`, waiting for the complete read (21 Sec.3.3.11's table), never voided blind.
+        `kill_no_cancel_unsubmitted`). The order was never sent, as the send's step commits its
+        attempt before any create can leave, so the step voids the entry's recorded stops (21
+        Sec.3.3.11's table); a KILL after the send leaves them waiting for the complete read.
         Answers `killed`; `IllegalTransition` in any other state, nothing sent; `OrderStepRefused`
         when the KILL's step rolled back; `OrderNotLoaded` when no machine of the account holds
         the order. A reason B1's schema would refuse is cut, as `kill` cuts it."""

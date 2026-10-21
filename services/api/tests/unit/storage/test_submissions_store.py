@@ -110,6 +110,9 @@ def _stop(record_id: uuid.UUID = _SL, **over: Any) -> NewRecordedStop:
 
 
 _STOPS = (_stop(), _stop(_TP, kind="take_profit", trigger_price=Decimal("65000")))
+#: A leg on another account, its profile snapshot that account's.
+_ELSEWHERE = uuid.UUID(int=0x4002)
+_ELSEWHERE_SNAP = {"account_id": str(_ELSEWHERE), "profile_id": str(_PROFILE), "version": 3}
 
 
 def _entry(**over: Any) -> FirstPersist:
@@ -150,6 +153,7 @@ def test_an_entry_and_a_reduce_only_order_that_belong_together_pass() -> None:
         (_groupless(legs=(_leg(),)), _reduce_only(), "writes no leg"),
         (_groupless(), _reduce_only(trade_group_leg_id=_LEG), "writes no leg"),
         (_groupless(recorded_stops=(_stop(),)), _reduce_only(), "records no stop"),
+        (_groupless(), _reduce_only(id=uuid.UUID(int=0x6002)), "names the order"),
         (_entry(), _order(id=uuid.UUID(int=0x6002)), "rs_entry"),
         (_entry(group=_group(id=uuid.UUID(int=0x2002))), _order(), "names its group"),
         (_entry(group=_group(client_group_ref=str(uuid.UUID(int=0xAB)))), _order(), "principal"),
@@ -160,6 +164,8 @@ def test_an_entry_and_a_reduce_only_order_that_belong_together_pass() -> None:
         (_entry(legs=()), _order(), "exactly one leg"),
         (_entry(), _order(trade_group_leg_id=uuid.UUID(int=0x3002)), "group's leg"),
         (_entry(legs=(_leg(resolved_sl_price=Decimal(61000)),)), _order(), "C-2.6"),
+        (_entry(legs=(_leg(exchange_account_id=_ELSEWHERE, profile_snapshot=_ELSEWHERE_SNAP),)),
+         _order(), "order's account"),
         (_entry(recorded_stops=(_stop(),)), _order(), "take-profit when it has one"),
         (_entry(recorded_stops=_STOPS[1:]), _order(), "stop-loss"),
         (_entry(recorded_stops=(_stop(trigger_price=Decimal(61000)), _STOPS[1])), _order(),

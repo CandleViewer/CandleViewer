@@ -21,7 +21,7 @@ from jsonschema import Draft202012Validator
 
 from candleviewer.oms import ExecutionRepository, OrderRepository
 from candleviewer.oms import order_steps as steps
-from candleviewer.oms.errors import HolderNotRead
+from candleviewer.oms.errors import AnchorTaken, HolderNotRead
 from candleviewer.oms.execution import apply_fields
 from candleviewer.oms.fakes import InMemoryExecutionStore, InMemoryOrderStore
 from candleviewer.oms.order_machine import Legality
@@ -39,7 +39,11 @@ from candleviewer.storage.repositories.recorded_stops import (
     REFUSED_ENTRY,
     UNSENT_ENTRY,
 )
-from candleviewer.storage.repositories.submissions import FirstPersist, FirstPersisted
+from candleviewer.storage.repositories.submissions import (
+    AnchorTakenError,
+    FirstPersist,
+    FirstPersisted,
+)
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER_ID = UUID(int=0xA1), UUID(int=0x01)
@@ -121,11 +125,13 @@ async def test_the_first_step_creates_the_registered_order(
 async def test_a_registered_order_unlike_the_machines_is_refused(
     over: dict[str, Any], writer: OrderStepWriter, db: InMemoryOrderStore
 ) -> None:
-    """The row and the machine agree on the identity and terms, or nothing is written."""
+    """The row and the machine agree on the identity and terms, or nothing is written; the
+    refused step spends the registration (CR-2A-06), as the facade drops that machine (S7)."""
     with pytest.raises(ValueError, match="not the order the machine holds"):
         await writer(_step(None, "validated", "VALIDATE", **over))
     assert await db.get(ACCOUNT, ORDER_ID) is None
-    assert await writer(_step(None, "validated", "VALIDATE")) == 0  # it stays registered
+    with pytest.raises(ValueError, match="no registered order"):
+        await writer(_step(None, "validated", "VALIDATE"))
 
 
 @pytest.mark.parametrize(
@@ -520,10 +526,16 @@ def test_each_trigger_is_recorded_with_the_kind_and_source_24_names() -> None:
 
 # -- E29-T04: the first persist, the create's idempotency and the entry's recorded stops ----------
 
+
+async def _audited(persisted: FirstPersisted) -> None:
+    return None  # the pipeline's write-ahead audit (C-2.9, CR-2A-02)
+
+
 _FIRST = FirstPersist(
     anchor=NewAnchor(id=UUID(int=0xF1), created_by=UUID(int=0xB1), operation="placeOrder",
                      client_ref="9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59", request_sha256="ab" * 32,
                      order_id=ORDER_ID),
+    write_ahead=_audited,
 )  # fmt: skip
 
 
@@ -560,6 +572,33 @@ async def test_a_registered_first_persist_writes_the_validated_row_through_its_s
     assert await db.get(ACCOUNT, ORDER_ID) is not None
 
 
+class _Refusing(_Submissions):
+    """A `SubmissionStore` that refuses every first persist, as a held key would."""
+
+    async def create_first(
+        self, first: FirstPersist, order: port.NewOrder, event: port.NewOrderEvent
+    ) -> FirstPersisted:
+        self.calls.append((first, order, event))
+        raise AnchorTakenError("ux_ia_principal_ref")
+
+
+async def test_a_refused_first_persist_spends_its_registration(db: InMemoryOrderStore) -> None:
+    """CR-2A-06: the request's key, fingerprint and audit hook leave the writer with the refusal,
+    not at its FIFO eviction; a retry registers again."""
+    store = _Refusing(db)
+    executions = ExecutionRepository(InMemoryExecutionStore(db))
+    writer = OrderStepWriter(
+        OrderRepository(db), executions, clock=lambda: T0, submissions=SubmissionRepository(store)
+    )
+    writer.expect(_order(), first=_FIRST)
+    with pytest.raises(AnchorTaken):
+        await writer(_step(None, "validated", "VALIDATE"))
+    assert writer._expected == {} and len(store.calls) == 1
+    with pytest.raises(ValueError, match="no registered order"):
+        await writer(_step(None, "validated", "VALIDATE"))
+    assert len(store.calls) == 1
+
+
 @pytest.mark.parametrize("to", ["validated", "untracked"])
 async def test_a_first_persist_needs_its_store_and_a_validated_row(
     writer: OrderStepWriter, db: InMemoryOrderStore, to: str
@@ -578,6 +617,7 @@ async def test_a_first_persist_needs_its_store_and_a_validated_row(
      ("submitting", "unknown", None), ("unknown", "unknown", None),
      ("unknown", "partially_filled", "acked"), ("unknown", "filled", "acked"),
      ("unknown", "cancelled", "acked"), ("unknown", "rejected", "failed"),
+     ("unknown", "triggered", "acked"), ("unknown", "expired", "acked"),  # any answer of it
      ("submitted", "partially_filled", None), ("validated", "killed", None)],
 )  # fmt: skip
 def test_a_step_says_what_became_of_the_create(frm: Any, to: Any, state: str | None) -> None:
@@ -689,7 +729,7 @@ quarantined       submitted         RECON_FOUND_LIVE        answered
 submitted         amend_pending     AMEND                   -
 submitted         cancel_pending    CANCEL                  -
 submitted         cancelled         REMOTE_CANCELLED        void
-submitted         expired           EXPIRE                  waiting
+submitted         expired           EXPIRE                  void
 submitted         filled            EXEC                    -
 submitted         held              MISMATCH                waiting
 submitted         killed            KILL                    waiting
@@ -705,7 +745,7 @@ submitting        unknown           done.invoke.place       -
 submitting        unknown           error.platform.place    -
 triggered         cancel_pending    CANCEL                  -
 triggered         cancelled         REMOTE_CANCELLED        void
-triggered         expired           EXPIRE                  waiting
+triggered         expired           EXPIRE                  void
 triggered         filled            EXEC                    -
 triggered         killed            KILL                    waiting
 triggered         partially_filled  EXEC                    -
@@ -722,7 +762,7 @@ untracked         cancelled         RECON_MISS              waiting
 untracked         filled            RECON_FOUND_FILLED      answered
 untracked         submitted         ADOPT                   answered
 untracked         untracked         RECON_MISS              -
-validated         killed            KILL                    waiting
+validated         killed            KILL                    void
 validated         submitting        SEND                    -
 """
 _ROWS = [tuple(line.split()) for line in _MATRIX.strip().splitlines()]
@@ -751,15 +791,20 @@ def test_each_step_does_to_the_entry_stops_what_the_matrix_says(
 
 
 #: The matrix's steps whose counts decide, with the counts that change the answer: an end push
-#: that reports none, one B1 has not caught up with, a zero that a fill B1 holds contradicts, an
-#: answer that is no push, a fill B1 holds; and the states no cancel or refusal is confirmed out of.
+#: that reports none (a locally timed expiry among them), one B1 has not caught up with, a zero
+#: that a fill B1 holds contradicts, an answer that is no push, a fill B1 holds; and the states no
+#: cancel, expiry or refusal is confirmed out of.
 _COUNTS: list[tuple[str, str, str, str, str | None, str]] = [
     ("submitted", "cancelled", "REMOTE_CANCELLED", "0", None, "waiting"),
     ("submitted", "cancelled", "REMOTE_CANCELLED", "0", "0.4", "waiting"),
     ("partially_filled", "cancelled", "REMOTE_CANCELLED", "0.4", "0", "waiting"),
     ("amend_pending", "cancelled", "REMOTE_CANCELLED", "0", "0.000", "void"),
     ("cancel_pending", "cancelled", "done.invoke.cancel", "0", "0", "waiting"),
-    ("submitted", "expired", "EXPIRE", "0", "0", "waiting"),
+    ("submitted", "expired", "EXPIRE", "0", None, "waiting"),  # a locally timed expiry
+    ("submitted", "expired", "EXPIRE", "0", "0.4", "waiting"),
+    ("triggered", "expired", "EXPIRE", "0", "0.000", "void"),
+    ("unknown", "expired", "EXPIRE", "0", "0", "waiting"),
+    ("validated", "killed", "KILL", "0.4", None, "waiting"),
     ("unknown", "cancelled", "RECON_FOUND_CANCELLED", "0.4", None, "waiting"),
     ("unknown", "killed", "KILL", "0.4", None, "waiting"),
     ("submitting", "rejected", "done.invoke.place", "0.4", None, "waiting"),
@@ -789,11 +834,24 @@ def test_b1s_own_count_never_confirms_an_entry_unfilled(
         ("REMOTE_CANCELLED", {"source": "ws_private"}, None),  # no count reported: waiting
         ("REMOTE_CANCELLED", {"cum_exec_qty": "NaN", "source": "ws_private"}, None),
         ("REMOTE_CANCELLED", {"cum_exec_qty": 0, "source": "ws_private"}, None),  # not text
+        ("REMOTE_CANCELLED", {"cum_exec_qty": "nil", "source": "ws_private"}, None),  # no number
         ("done.invoke.cancel", {"ok": True, "cum_exec_qty": "0"}, None),  # an ack is no push
     ],
 )
 async def test_only_the_exchanges_end_push_confirms_an_unfilled_cancel(
     db: InMemoryOrderStore, event: str, said: dict[str, Any], settles: str | None
+) -> None:
+    await _cancelled_by(db, event, said, settles)
+
+
+async def test_a_fill_b1_holds_outweighs_a_pushed_zero(db: InMemoryOrderStore) -> None:
+    """The two-source rule: the writer hands B1's own count to the rule, so a push reporting zero
+    for an order B1 holds a fill of voids nothing (the rows are that position's stop)."""
+    await _cancelled_by(db, "REMOTE_CANCELLED", {"cum_exec_qty": "0"}, None, **FILLED)
+
+
+async def _cancelled_by(
+    db: InMemoryOrderStore, event: str, said: dict[str, Any], settles: str | None, **ctx: Any
 ) -> None:
     """The writer reads the push's own `cum_exec_qty`, and a step that leaves the rows waiting
     for the complete read names no settle."""
@@ -803,16 +861,39 @@ async def test_only_the_exchanges_end_push_confirms_an_unfilled_cancel(
     writer = OrderStepWriter(orders, executions, clock=lambda: T0)
     writer.expect(_order())
     await _submitted(writer)
-    await writer(_step("submitted", "cancel_pending", "CANCEL", {}, exchange_order_id="x1"))
-    await writer(_step("cancel_pending", "cancelled", event, said, exchange_order_id="x1"))
+    ctx = {"exchange_order_id": "x1", **ctx}
+    await writer(_step("submitted", "cancel_pending", "CANCEL", {}, **ctx))
+    await writer(_step("cancel_pending", "cancelled", event, said, **ctx))
     assert orders.moves[-1].entry_stops == settles
 
 
-@pytest.mark.parametrize("sent", [False, True])
-async def test_a_kill_leaves_the_entry_stops_waiting_for_the_complete_read(
-    db: InMemoryOrderStore, sent: bool
+@pytest.mark.parametrize(
+    ("said", "settles"),
+    [({"cum_exec_qty": "0", "source": "ws_private"}, "void"),  # the exchange's own zero count
+     ({"source": "ws_private"}, None)],  # no exchange count, as a locally timed expiry: it waits
+)  # fmt: skip
+async def test_an_expiry_voids_its_stops_only_on_the_exchanges_own_zero_count(
+    db: InMemoryOrderStore, said: dict[str, Any], settles: str | None
 ) -> None:
-    """The ruling: on a KILL, never sent (`abandon`) or not, the step voids nothing."""
+    """The orchestrator's rulings of 14:26Z: `expired` is an exchange-confirmed terminal with zero
+    count under the rule `cancelled` takes, and nothing else."""
+    orders = _Moves(db)
+    orders.moves = []
+    executions = ExecutionRepository(InMemoryExecutionStore(db))
+    writer = OrderStepWriter(orders, executions, clock=lambda: T0)
+    writer.expect(_order())
+    await _submitted(writer)
+    await writer(_step("submitted", "expired", "EXPIRE", said, exchange_order_id="x1"))
+    assert orders.moves[-1].entry_stops == settles
+
+
+@pytest.mark.parametrize(("sent", "settles"), [(False, "void"), (True, None)])
+async def test_a_kill_voids_a_never_sent_entrys_stops_and_after_the_send_waits(
+    db: InMemoryOrderStore, sent: bool, settles: str | None
+) -> None:
+    """The orchestrator's rulings of 14:26Z: a KILL out of `validated` (`abandon`) meets an order
+    no request sent, as the send's step commits its attempt first, so its stops are voided; a
+    KILL after the send leaves them waiting for the complete read."""
     orders = _Moves(db)
     orders.moves = []
     executions = ExecutionRepository(InMemoryExecutionStore(db))
@@ -824,7 +905,7 @@ async def test_a_kill_leaves_the_entry_stops_waiting_for_the_complete_read(
         await writer(_step(None, "validated", "VALIDATE"))
     frm = "submitted" if sent else "validated"
     await writer(_step(frm, "killed", "KILL", {"reason": "kill switch"}))
-    assert orders.moves[-1].entry_stops is None
+    assert orders.moves[-1].entry_stops == settles
     row = await db.get(ACCOUNT, ORDER_ID)
     assert row is not None and row.state == "killed"
 
@@ -856,7 +937,10 @@ def _swept(
     }  # fmt: skip
 
     def holds(proof: Mapping[str, object]) -> bool:
-        return all(row[name] == value for name, value in proof.items())
+        return all(
+            row[name] in value if isinstance(value, frozenset) else row[name] == value
+            for name, value in proof.items()
+        )
 
     return holds(UNSENT_ENTRY) or (holds(REFUSED_ENTRY) and REFUSED_BY in events)
 
@@ -873,7 +957,10 @@ _ACK = ("submitted", "done.invoke.place", False, False)
         max_size=30,
     )
 )
-@example(moves=_moves(("killed", "KILL", False, False)))  # never sent, then killed
+@example(moves=_moves(("killed", "KILL", False, False)))  # never sent, then killed: void
+@example(moves=_moves(_SENT, ("killed", "KILL", False, False)))  # killed after the send: waits
+@example(moves=_moves(_SENT, _ACK, ("expired", "EXPIRE", False, True)))  # its own zero: void
+@example(moves=_moves(_SENT, _ACK, ("expired", "EXPIRE", False, False)))  # no count: waits
 @example(moves=_moves(_SENT, ("unknown", "error.platform.place", False, False),
                       ("cancelled", "RECON_FOUND_CANCELLED", False, False)))  # fmt: skip
 @example(moves=_moves(_SENT, _ACK, ("cancel_pending", "CANCEL", True, False),
@@ -886,17 +973,22 @@ def test_no_entry_stop_is_voided_blind_and_none_outlives_its_order_unsettled(
     """R10 over B1's lifecycle edges from `validated`: each step's effect is applied as the
     store's `settle_entry_stops_statement` runs it, and the startup sweep's predicate is tried
     after every step, as a restart may come at any point. The claims: a row is voided, by the step
-    or the sweep, only while the exchange holds no fill of its entry; a KILL, or any end out of
-    `unknown`, leaves every row `pending`, waiting for the complete read, and neither the step
-    nor the sweep voids it (the 2026-10-21 ruling); and once the order is final, a row is still
-    in flight only if its end left it for the complete read.
+    or the sweep, only while the exchange holds no fill of its entry; a KILL after the send, or
+    any end out of `unknown`, leaves every row `pending`, waiting for the complete read, and
+    neither the step nor the sweep voids it (the 2026-10-21 ruling); a KILL before the send, and
+    an exchange-confirmed terminal with zero count (`cancelled` or `expired` by the exchange's own
+    push), void it (the rulings of 14:26Z); and once the order is final, a row is still in flight
+    only if its end left it for the complete read.
 
     What the claims rest on is modelled here, no more: B1's count (`applied`) lags the
-    exchange's (`truth`) by the fills the exchange makes unseen once the create is sent; an end
-    push reports `truth`, and the facade delivers it only once `applied` has caught up
-    (INV-B1-k); a cancel's ack, a KILL and reconciliation's findings report no count. An exchange
-    count that is itself wrong is not modelled, nor is the store's own check that a void never
-    meets a recorded fill (SEC-2A-01), which the order-store tests pin."""
+    exchange's (`truth`) by the fills the exchange makes unseen once the create is sent, and only
+    then, as the send's step commits its attempt before the create can leave (the facade test
+    `test_the_attempt_is_committed_before_the_create_leaves` pins that order); an end push
+    reports `truth`, or no count (a locally timed expiry), and the facade delivers it only once
+    `applied` has caught up (INV-B1-k); a cancel's ack, a KILL and reconciliation's findings
+    report no count. An exchange count that is itself wrong is not modelled, nor is the store's
+    own check that a void never meets a recorded fill (SEC-2A-01), which the order-store tests
+    pin."""
     rows: list[dict[str, Any]] = [
         {"status": "pending", "answered": False} for _ in ("stop_loss", "take_profit")
     ]
@@ -930,7 +1022,10 @@ def test_no_entry_stop_is_voided_blind_and_none_outlives_its_order_unsettled(
                 row["answered"] = True
             elif effect == "void":
                 row["status"] = "void"
-        waits = waits or target == "killed" or (state == "unknown" and target in _ENDS)
+        # The ruling's branch: a KILL after the send, or any end out of `unknown`, waits; a KILL
+        # out of `validated` meets an order never sent, as the send's step commits first.
+        killed_sent = target == "killed" and state != "validated"
+        waits = waits or killed_sent or (state == "unknown" and target in _ENDS)
         if (state, target) == ("validated", "submitting"):
             attempts += 1
         idempotency = steps.idempotency_of(cast(Any, state), cast(Any, target)) or idempotency

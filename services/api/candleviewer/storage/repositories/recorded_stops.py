@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from types import MappingProxyType
 from typing import Final, Literal, Protocol
 from uuid import UUID
@@ -39,10 +40,10 @@ from candleviewer.storage.repositories.orders import (
 )
 
 __all__ = [
-    "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT",
-    "UX_RS_IN_FORCE", "NewRecordedStop", "RecordedStopRow", "RecordedStopStore",
-    "StaleRecordedStop", "StopKind", "StopOutcome", "StopSource", "StopStatus", "SweepWriteAhead",
-    "SweptStop",
+    "EVERY_ACCOUNT", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY", "SWEEP_REASON",
+    "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "NewRecordedStop", "RecordedStopRow",
+    "RecordedStopStore", "SettleWriteAhead", "StaleRecordedStop", "StopKind", "StopOutcome",
+    "StopSource", "StopStatus", "SweepScope", "SweepWriteAhead", "SweptStop", "check_request",
 ]  # fmt: skip
 
 StopKind = Literal["stop_loss", "take_profit"]
@@ -61,12 +62,14 @@ UX_RS_IN_FORCE: Final = "ux_rs_in_force"
 MAX_MARKER_CHARS: Final = 64
 #: The startup sweep's whole scope (`void_orphans`, 21 Sec.3.3.11) is an entry never placed: one
 #: never sent, or one the create's own answer refused. `UNSENT_ENTRY` holds the `orders` columns,
-#: and the values, that prove the first: the send's own step marks the create in flight and counts
-#: its attempt before anything leaves (24 Sec.8.4), so an order still `pending_submit`, its create
-#: `unsent`, no attempt counted and nothing filled had no exchange interaction.
+#: and the values (a set: any of them), that prove the first: the send's own step marks the create
+#: in flight and counts its attempt, committed, before any create can leave (24 Sec.8.4; B1 arms
+#: the place only after that write), so an order still `pending_submit`, or killed before its send
+#: (`abandon`), its create `unsent`, no attempt counted and nothing filled had no exchange
+#: interaction (the orchestrator's rulings of 14:26Z).
 UNSENT_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
     {
-        "state": "pending_submit",
+        "state": frozenset({"pending_submit", "killed"}),
         "idempotency_state": "unsent",
         "submit_attempts": 0,
         "cum_exec_qty": Decimal(0),
@@ -76,9 +79,9 @@ UNSENT_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
 #: (`REFUSED_BY`, the persisted states) came out of `submitting`, which only the create's answer
 #: leaves for `rejected`. A rejection out of `unknown` or `held` (reconciliation's, the operator's)
 #: is no such proof. No other order's rows are swept: its own steps settle them, voiding them only
-#: on an end the exchange confirmed unfilled, or leave them waiting for the complete read (24
-#: Sec.8.8 rule 6), a killed order's (one never sent included) and one's that ended out of
-#: `unknown` among them, so the sweep never voids a row blind (C-2.6).
+#: for an entry never sent or on an end the exchange confirmed unfilled, or leave them waiting for
+#: the complete read (24 Sec.8.8 rule 6), the rows of an order killed after its send and of one
+#: that ended out of `unknown` among them, so the sweep never voids a row blind (C-2.6).
 REFUSED_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
     {"state": "rejected", "cum_exec_qty": Decimal(0)}
 )
@@ -86,6 +89,21 @@ REFUSED_BY: Final[tuple[OrderState, OrderState]] = (
     ORDER_STATE_OF["submitting"],
     ORDER_STATE_OF["rejected"],
 )
+#: The audit reason of a row the startup sweep voids (`sl.modified`, or `tp.modified` for a
+#: take-profit side, 21 Sec.3.3.11): its entry was never placed. The sweep's write-ahead hook
+#: records it.
+SWEEP_REASON: Final = "unplaced_entry_swept"
+
+
+class SweepScope(Enum):
+    """The startup sweep's scope when it is not one account. Named, so that an account a caller
+    forgot (`None`) is refused and never read as every account (CR-2A-07)."""
+
+    EVERY_ACCOUNT = "every_account"
+
+
+#: `void_orphans` over every account: the one call slice 3's startup wiring makes.
+EVERY_ACCOUNT: Final = SweepScope.EVERY_ACCOUNT
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -141,6 +159,26 @@ class NewRecordedStop:
 _STOP_MONEY: Final = dict.fromkeys(typed_fields(NewRecordedStop, Decimal), (38, 18))
 
 
+def check_request(stops: Sequence[NewRecordedStop]) -> None:
+    """`ValueError`, before any statement, unless `stops` are the rows of one stop request (21
+    Sec.3.3.11, CR-2A-03): its stop-loss side exactly once, as every request records it and
+    `ux_rs_in_flight` admits one request in flight per position through that row alone, and its
+    take-profit at most once; one position (account, symbol, `position_idx` and side); one source
+    and one order (an entry's, or none). Names no value (21 Sec.12)."""
+    if not stops:
+        raise ValueError("a stop request records at least one row")
+    kinds = [stop.kind for stop in stops]
+    if kinds.count("stop_loss") != 1 or len(set(kinds)) != len(kinds):
+        raise ValueError("a stop request records its stop-loss side once, and each side once")
+    first = stops[0]
+    place = (first.exchange_account_id, first.symbol, first.position_idx, first.position_side)
+    for stop in stops[1:]:
+        if (stop.exchange_account_id, stop.symbol, stop.position_idx, stop.position_side) != place:
+            raise ValueError("a stop request protects one position")
+        if (stop.source, stop.order_id) != (first.source, first.order_id):
+            raise ValueError("a stop request has one source and one order")
+
+
 @dataclass(frozen=True, slots=True)
 class RecordedStopRow:
     """One `recorded_stops` row, every column in table order (pinned to the table by a test)."""
@@ -185,6 +223,11 @@ class SweptStop:
 #: caller's write-ahead audit (C-2.9). A hook that raises, or outlasts the store's audit bound
 #: (`WriteAheadTimeout`), leaves every row as it was.
 SweepWriteAhead = Callable[[tuple[SweptStop, ...]], Awaitable[None]]
+#: Awaited once in a settle's transaction, after its update and before its commit, with the rows
+#: as settled: the writer's write-ahead audit (C-2.9, SEC-2A-05), as for a row a refusal or a
+#: complete read voids (`sl.modified`, or `tp.modified`, 21 Sec.3.3.11). A hook that raises, or
+#: outlasts the store's audit bound (`WriteAheadTimeout`), leaves every row as it was.
+SettleWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
 class StaleRecordedStop(OrderStoreError):
@@ -200,6 +243,7 @@ class RecordedStopStore(Protocol):
 
     async def insert(self, stops: Sequence[NewRecordedStop]) -> tuple[RecordedStopRow, ...]:
         """Insert one request's rows in one transaction, all or none, and return them as stored.
+        `ValueError` before any statement unless they are one request's (`check_request`);
         `OrderConstraintError(UX_RS_IN_FLIGHT)` when a request is in flight for the position."""
         ...
 
@@ -210,9 +254,12 @@ class RecordedStopStore(Protocol):
         outcome: StopOutcome,
         *,
         at: datetime,
+        write_ahead: SettleWriteAhead | None = None,
     ) -> tuple[RecordedStopRow, ...]:
         """Answer one request's rows together (21 Sec.3.3.11): each must be the account's and in
-        flight, else `StaleRecordedStop` with nothing written. Returns them as stored."""
+        flight, else `StaleRecordedStop` with nothing written. `write_ahead`, when given, is
+        awaited with the settled rows before the commit, bounded; `WriteAheadTimeout` when it
+        outlasts the bound, with nothing written. Returns them as stored."""
         ...
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
@@ -220,14 +267,15 @@ class RecordedStopStore(Protocol):
         ...
 
     async def void_orphans(
-        self, account_id: UUID | None, *, at: datetime, write_ahead: SweepWriteAhead
+        self, scope: UUID | SweepScope, *, at: datetime, write_ahead: SweepWriteAhead
     ) -> tuple[SweptStop, ...]:
-        """The startup sweep (R10): every pending entry-attach row, of `account_id` or of every
-        account, whose order is of the row's account and was never placed (`UNSENT_ENTRY`, or
-        `REFUSED_ENTRY` with its `REFUSED_BY` event), becomes `void` (`closed_at` = `at`), the
-        hook awaited before the commit. A row of any other order is left as it is: a killed
-        order's, one's that ended out of `unknown` and one's whose end the exchange did not
-        confirm unfilled wait for the complete read, never voided blind. Only at startup, before
-        the order machines hydrate and order entry opens: a `pending_submit` order is an orphan
-        only while no request can still send it."""
+        """The startup sweep (R10): every pending entry-attach row, of the `scope` account or, for
+        `EVERY_ACCOUNT`, of every account, whose order is of the row's account and was never placed
+        (`UNSENT_ENTRY`, or `REFUSED_ENTRY` with its `REFUSED_BY` event), becomes `void`
+        (`closed_at` = `at`), the hook awaited before the commit (`SWEEP_REASON`). A row of any
+        other order is left as it is: an order's killed after its send, one's that ended out of
+        `unknown` and one's whose end the exchange did not confirm unfilled wait for the complete
+        read, never voided blind. Only at startup, before the order machines hydrate and before
+        order entry opens (slice 3's wiring): a `pending_submit` order is an orphan only while no
+        request can still send it, and a sweep after that could void an entry about to be sent."""
         ...

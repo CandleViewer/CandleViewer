@@ -45,6 +45,7 @@ from candleviewer.storage.repositories.orders import (
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.recorded_stops import (
+    EVERY_ACCOUNT,
     NewRecordedStop,
     StaleRecordedStop,
     SweptStop,
@@ -487,22 +488,23 @@ async def test_a_void_never_meets_a_fill_the_store_holds(
     assert _stops_of(pg_dsn, first) == [("pending", False, False)]
 
 
-#: The sweep's cases (the 2026-10-21 ruling): the first two were never placed and are swept; the
-#: rest wait for the complete read, or stay an order's that lives or filled.
-_SWEPT_CASES: Final = ("never_sent", "refused")
+#: The sweep's cases (the 2026-10-21 ruling, the rulings of 14:26Z): the first three were never
+#: placed and are swept; the rest wait for the complete read, or stay an order's that lives or
+#: filled.
+_SWEPT_CASES: Final = ("never_sent", "refused", "killed_unsent")
 _KEPT_CASES: Final = (
-    "killed_unsent", "killed_sent", "unknown_rejected", "cancelled_unfilled", "live", "filled",
+    "killed_sent", "unknown_rejected", "cancelled_unfilled", "live", "filled",
 )  # fmt: skip
 
 
 async def test_the_startup_sweep_voids_only_the_stops_of_an_entry_never_placed(
     rel: SqlAlchemyRelationalRepository, pg_dsn: str
 ) -> None:
-    """Never sent, or refused by its create's own answer (its event into `rejected` out of
-    `submitting`, the step's settle bypassed here): swept. A KILL's, sent or not, a rejection out
-    of `unknown`, an end the sweep cannot see confirmed unfilled, a live and a filled entry's: left
-    as they are, never voided blind (C-2.6). Each voided row is audited before the commit, and a
-    refused audit voids nothing."""
+    """Never sent (still `pending_submit`, or killed before its send), or refused by its create's
+    own answer (its event into `rejected` out of `submitting`), the step's settle bypassed here:
+    swept. A KILL after the send, a rejection out of `unknown`, an end the sweep cannot see
+    confirmed unfilled, a live and a filled entry's: left as they are, never voided blind (C-2.6).
+    Each voided row is audited before the commit, and a refused audit voids nothing."""
     user, store = _user(pg_dsn), SqlAlchemyOrderStore(rel)
     cases = {name: _entry(user, *_account(pg_dsn)) for name in _SWEPT_CASES + _KEPT_CASES}
     for first, order in cases.values():
@@ -529,7 +531,7 @@ async def test_the_startup_sweep_voids_only_the_stops_of_an_entry_never_placed(
         raise RuntimeError("the audit trail refused the record")
 
     with pytest.raises(RuntimeError):
-        await stops.void_orphans(None, at=_T0, write_ahead=refuse)
+        await stops.void_orphans(EVERY_ACCOUNT, at=_T0, write_ahead=refuse)
     assert all(
         _stops_of(pg_dsn, first) == [("pending", False, False)] for first, _ in cases.values()
     )
@@ -538,7 +540,7 @@ async def test_the_startup_sweep_voids_only_the_stops_of_an_entry_never_placed(
     async def audit(swept: tuple[SweptStop, ...]) -> None:
         audited.extend(swept)
 
-    swept = await stops.void_orphans(None, at=_T0, write_ahead=audit)
+    swept = await stops.void_orphans(EVERY_ACCOUNT, at=_T0, write_ahead=audit)
     ids = {stop.id for stop in swept}
     unplaced = {s.id for n in _SWEPT_CASES for s in cases[n][0].recorded_stops}
     kept = {s.id for n in _KEPT_CASES for s in cases[n][0].recorded_stops}

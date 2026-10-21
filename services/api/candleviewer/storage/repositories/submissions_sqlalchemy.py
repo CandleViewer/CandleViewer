@@ -32,10 +32,7 @@ as they are. Cancellation passes through.
 
 from __future__ import annotations
 
-import math
-from collections.abc import Mapping
-from dataclasses import fields
-from typing import Any, Final
+from typing import Final
 
 from candleviewer.storage.repositories.idempotency_anchors import UX_IA_PRINCIPAL_REF
 from candleviewer.storage.repositories.idempotency_anchors_sqlalchemy import (
@@ -44,13 +41,14 @@ from candleviewer.storage.repositories.idempotency_anchors_sqlalchemy import (
 from candleviewer.storage.repositories.orders import (
     NewOrder,
     NewOrderEvent,
-    OrderRow,
     require_exchange_record,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import (
     OMS_STATEMENT_TIMEOUT_MS,
     CappedStore,
     create_statement,
+    order_row,
+    require_audit_bound,
 )
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
@@ -100,13 +98,7 @@ class SqlAlchemySubmissionStore(CappedStore):
         audit_timeout_s: float = SUBMISSION_AUDIT_TIMEOUT_S,
     ) -> None:
         super().__init__(relational, statement_timeout_ms=statement_timeout_ms)
-        if isinstance(audit_timeout_s, bool) or not (
-            isinstance(audit_timeout_s, int | float)
-            and math.isfinite(audit_timeout_s)
-            and audit_timeout_s > 0
-        ):
-            raise ValueError("audit_timeout_s must be a finite number of seconds above zero")
-        self._audit_timeout_s = audit_timeout_s
+        self._audit_timeout_s = require_audit_bound(audit_timeout_s)
 
     async def create_first(
         self, first: FirstPersist, order: NewOrder, event: NewOrderEvent
@@ -124,7 +116,7 @@ class SqlAlchemySubmissionStore(CappedStore):
             anchor = await uow.session.execute(insert_anchor_statement(first.anchor))
             if anchor.first() is None:
                 raise AnchorTakenError(UX_IA_PRINCIPAL_REF)
-            persisted = FirstPersisted(_order_row(row), first.anchor.id, group, stops)
+            persisted = FirstPersisted(order_row(row), first.anchor.id, group, stops)
             if first.write_ahead is not None:
                 await bounded_write_ahead(first.write_ahead(persisted), self._audit_timeout_s)
             await uow.commit()
@@ -148,7 +140,3 @@ class SqlAlchemySubmissionStore(CappedStore):
         await require_live(uow, first.group, first.legs)
         legs = await uow.session.execute(insert_legs_statement(first.group.id, first.legs))
         return TradeGroupRecord(group_row(inserted), in_order(leg_row(m) for m in legs.mappings()))
-
-
-def _order_row(m: Mapping[Any, Any]) -> OrderRow:
-    return OrderRow(**{f.name: m[f.name] for f in fields(OrderRow)})

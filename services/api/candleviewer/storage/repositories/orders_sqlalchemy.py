@@ -45,6 +45,7 @@ So a caller meets `OrderStoreError` or `StorageError`, never a driver or pool ex
 
 from __future__ import annotations
 
+import math
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, fields
@@ -103,6 +104,17 @@ _SET_TIMEOUT: Final = sa.text("SELECT set_config('statement_timeout', :timeout, 
 _NAMED_VIOLATIONS: Final = frozenset({"23505", "23514", "23503"})
 #: A server that does not serve: shut down (57P01, 57P02), starting (57P03), full (53300).
 _NOT_SERVING: Final = frozenset({"57P01", "57P02", "57P03", "53300"})
+
+
+def require_audit_bound(seconds: float) -> float:
+    """A store's write-ahead audit bound, in seconds: finite and above zero, as a NaN or an
+    infinity would leave the hook unbounded (C-2.18); `ValueError` otherwise. The OMS stores that
+    await a caller's audit hook (`submissions_sqlalchemy`, `recorded_stops_sqlalchemy`) share it."""
+    if isinstance(seconds, bool) or not (
+        isinstance(seconds, int | float) and math.isfinite(seconds) and seconds > 0
+    ):
+        raise ValueError("audit_timeout_s must be a finite number of seconds above zero")
+    return seconds
 
 
 def _event_values(event: NewOrderEvent) -> dict[str, Any]:
@@ -266,10 +278,11 @@ async def commit_step(
         )
         await uow.session.execute(settle)
     await uow.commit()
-    return CommittedStep(_order(row), _event(event, row["order_link_id"]))
+    return CommittedStep(order_row(row), _event(event, row["order_link_id"]))
 
 
-def _order(row: Mapping[Any, Any]) -> OrderRow:
+def order_row(row: Mapping[Any, Any]) -> OrderRow:
+    """An `orders` row as read (`ORDER_COLUMNS`); the first persist reuses it."""
     return OrderRow(**{f.name: row[f.name] for f in fields(OrderRow)})
 
 
@@ -354,7 +367,7 @@ class SqlAlchemyOrderStore(CappedStore):
         async with self._unit_of_work() as uow:
             row = (await uow.session.execute(stmt)).mappings().one()
             await uow.commit()
-        return _order(row)
+        return order_row(row)
 
     async def transition(self, step: OrderTransition) -> CommittedStep:
         require_no_fill(step.event, step.to_state)
@@ -373,7 +386,7 @@ class SqlAlchemyOrderStore(CappedStore):
     ) -> tuple[OrderRow, ...]:
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(list_open_statement(account_id, symbol))
-            return tuple(_order(row) for row in result.mappings())
+            return tuple(order_row(row) for row in result.mappings())
 
     async def link_id_taken(self, order_link_id: str) -> bool:
         async with self._unit_of_work() as uow:
@@ -405,13 +418,13 @@ class SqlAlchemyOrderStore(CappedStore):
     async def _one(self, stmt: sa.Select[Any]) -> OrderRow | None:
         async with self._unit_of_work() as uow:
             row = (await uow.session.execute(stmt)).mappings().first()
-        return None if row is None else _order(row)
+        return None if row is None else order_row(row)
 
 
 __all__ = [
     "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
     "SqlAlchemyOrderStore", "append_statement", "commit_step", "create_statement",
     "fill_statement", "get_by_link_statement", "get_statement", "link_taken_statement",
-    "list_events_statement", "list_open_statement", "lock_order", "lock_statement",
-    "settle_entry_stops_statement", "transition_statement",
+    "list_events_statement", "list_open_statement", "lock_order", "lock_statement", "order_row",
+    "require_audit_bound", "settle_entry_stops_statement", "transition_statement",
 ]  # fmt: skip

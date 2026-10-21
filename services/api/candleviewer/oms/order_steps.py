@@ -34,13 +34,17 @@ E29-T04 (24 Sec.8.4): the send's step (`validated` -> `submitting`) sets `idempo
 `in_flight` and counts `submit_attempts` up; a step out of `submitting` or `unknown` that answers
 the create sets `acked` or `failed`, and `unknown` keeps `in_flight` (`idempotency_of`). Each step
 also settles the entry's recorded stops in its own transaction, as 21 Sec.3.3.11's table says
-(`entry_stop_settle`, R10): `answered` once the order is accepted or fills; `void` only on an end
-the exchange confirmed unfilled (the create's own refusal, or the order's end push reporting a
-zero cumulative fill); and every other end, a KILL, an expiry and any end out of `unknown` among
-them, leaves them `pending`, waiting for the complete read (24 Sec.8.8 rule 6), which settles them
-from what the exchange shows. An attach row is never voided blind (C-2.6): B1's own `filled_qty`
-can lag a fill the exchange holds back, and that fill is a position whose attach stop the read
-must find. A reduce-only order records none.
+(`entry_stop_settle`, R10): `answered` once the order is accepted or fills; `void` only for an
+entry never sent (a KILL out of `validated`) or on an end the exchange confirmed unfilled (the
+create's own refusal, or an exchange-confirmed terminal with zero count: the order's own end push,
+`cancelled` or `expired`, reporting a zero cumulative fill); and every other end, a KILL after the
+send and any end out of `unknown` among them, leaves them `pending`, waiting for the complete read
+(24 Sec.8.8 rule 6), which settles them from what the exchange shows. An attach row is never voided
+blind (C-2.6): B1's own `filled_qty` can lag a fill the exchange holds back, and that fill is a
+position whose attach stop the read must find. "Never sent" is write-ahead: the send's step
+commits its attempt before the create can leave (B1 arms `submitting`'s place only once that
+entry's write committed), so a KILL out of `validated` meets an order no request has sent. A
+reduce-only order records none.
 """
 
 from __future__ import annotations
@@ -161,8 +165,13 @@ _FIRST_PROVENANCE: Final[Mapping[LifecycleState, OrderProvenance]] = {
 _ON_THE_BOOK: Final = frozenset(
     {"submitted", "triggered", "partially_filled", "cancel_pending", "amend_pending"}
 )
-#: The exchange's own order pushes (B1's `_PUSH` payload): `cum_exec_qty` is its cumulative fill.
-_PUSHES: Final = frozenset({"TRIGGERED", "EXPIRE", "REMOTE_CANCELLED"})
+#: An exchange-confirmed terminal with zero count (the orchestrator's rulings of 14:26Z): each end
+#: push the exchange sends (B1's `_PUSH` payload, whose `cum_exec_qty` is its cumulative fill) and
+#: the end it confirms, which the facade holds until B1 holds every fill it reports (INV-B1-k).
+#: Written once, so `cancelled` and `expired` take one rule.
+_CONFIRMED_ENDS: Final[Mapping[str, LifecycleState]] = MappingProxyType(
+    {"REMOTE_CANCELLED": "cancelled", "EXPIRE": "expired"}
+)
 #: The settle statement each effect runs in the step's transaction: `waiting` runs none.
 _STATEMENTS: Final[Mapping[EntryStopEffect | None, EntryStopSettle]] = MappingProxyType(
     {"answered": "answered", "void": "void"}
@@ -190,35 +199,47 @@ def entry_stop_settle(
     reported_fill: Decimal | None = None,
 ) -> EntryStopEffect | None:
     """What the step does to the entry's recorded stops, as 21 Sec.3.3.11's table says (R10): the
-    first step into acceptance or a fill answers them; an end voids them only when the exchange
-    confirmed it unfilled and B1 holds no fill; every other end (a KILL, an expiry, any end out of
-    `unknown`, a cancel's ack, an end reconciliation or the operator decided, a hold) leaves them
-    `pending`, waiting for the complete read; anything else changes nothing (None). `filled_qty`
-    is B1's count, which can lag a fill the exchange holds back, so its zero never voids a row on
-    its own (C-2.6); `reported_fill` is the exchange's own cumulative fill, which the push that
-    `trigger` names reported (`cum_exec_qty`), else None."""
+    first step into acceptance or a fill answers them; an end voids them only when B1 holds no
+    fill and the entry was never sent (`_never_sent`) or the exchange confirmed it unfilled
+    (`_confirms_unfilled`); every other end (a KILL after the send, an expiry or a cancel with no
+    exchange count, any end out of `unknown`, an end reconciliation or the operator decided, a
+    hold) leaves them `pending`, waiting for the complete read; anything else changes nothing
+    (None). `filled_qty` is B1's count, which can lag a fill the exchange holds back, so its zero
+    never voids a row on its own (C-2.6); `reported_fill` is the exchange's own cumulative fill,
+    which the push that `trigger` names reported (`cum_exec_qty`), else None."""
     if to_state in _ANSWERS_STOPS:
         return None if from_state in _ANSWERS_STOPS else "answered"
     if to_state not in _ENDS_ENTRY:
         return None
-    if filled_qty == 0 and _confirms_unfilled(from_state, to_state, trigger, reported_fill):
+    if filled_qty == 0 and (
+        _never_sent(from_state, to_state)
+        or _confirms_unfilled(from_state, to_state, trigger, reported_fill)
+    ):
         return "void"
     return "waiting"
+
+
+def _never_sent(from_state: LifecycleState, to_state: LifecycleState) -> bool:
+    """A KILL out of `validated` (`abandon`, or the kill switch before the send): the send's step,
+    which commits `submit_attempts` before any create can leave, never committed, as this step's
+    compare-and-set from `pending_submit` proves, so no request sent the order (the orchestrator's
+    rulings of 14:26Z)."""
+    return (from_state, to_state) == ("validated", "killed")
 
 
 def _confirms_unfilled(
     from_state: LifecycleState, to_state: LifecycleState, trigger: str, reported: Decimal | None
 ) -> bool:
     """An exchange-confirmed end with nothing filled: the create's own answer refused it
-    (`submitting` -> `rejected` on `done.invoke.place`), or the exchange's end push
-    (`REMOTE_CANCELLED`, which the facade holds until B1 holds every fill it reports, INV-B1-k)
-    reported a zero cumulative fill for an order on its book. A cancel's ack reports no fill, and
-    nothing out of `unknown` is a confirmation: the rows of those wait for the complete read."""
+    (`submitting` -> `rejected` on `done.invoke.place`), or an exchange-confirmed terminal with
+    zero count: the exchange's own end push (`_CONFIRMED_ENDS`, `cancelled` or `expired`) reported
+    a zero cumulative fill for an order on its book. A cancel's ack and a locally timed expiry
+    report no exchange count, and nothing out of `unknown` is a confirmation: the rows of those
+    wait for the complete read."""
     if to_state == "rejected":
         return from_state == "submitting" and trigger == "done.invoke.place"
     return (
-        to_state == "cancelled"
-        and trigger == "REMOTE_CANCELLED"
+        _CONFIRMED_ENDS.get(trigger) == to_state
         and from_state in _ON_THE_BOOK
         and reported is not None
         and reported == 0
@@ -246,7 +267,8 @@ class OrderStepWriter:
         """Register the order the OMS built (E29-T04's pipeline; E29-T06 for one it discovered;
         E29-T05 or E29-T06 for a recorded stop's TP/SL order) before it sends `VALIDATE`,
         `DISCOVERED` or `MATERIALISED`: that step creates the row from it, with `first`'s rows
-        when given (a `validated` row only)."""
+        when given (a `validated` row only). That step spends the registration, whether it
+        writes the row or is refused."""
         self._expected[order.id] = (order, first)
         self._expected.move_to_end(order.id)
         while len(self._expected) > MAX_EXPECTED:
@@ -317,7 +339,10 @@ class OrderStepWriter:
     async def _create(
         self, step: Step, account: UUID, order_id: UUID, to_state: LifecycleState
     ) -> int:
-        expected = self._expected.get(order_id)
+        # The registration is spent by this attempt, written or refused (CR-2A-06): the facade
+        # drops a machine whose first step was refused (S7), so nothing would use it again, and a
+        # first persist holds the request's key, its fingerprint and the audit hook.
+        expected = self._expected.pop(order_id, None)
         if expected is None or FIRST_ROWS.get(to_state) != step.event:
             raise ValueError("no registered order for this order's first row")
         order, first = expected
@@ -339,7 +364,6 @@ class OrderStepWriter:
             raise ValueError("a first persist writes a validated row, through its store")
         else:
             await self._submissions.create_first(first, stored, event)
-        del self._expected[order_id]
         return 0  # an order's first event (`OrderStore.create`)
 
 
@@ -367,10 +391,10 @@ def _decimal(raw: object) -> Decimal:
 
 
 def _reported(step: Step) -> Decimal | None:
-    """The cumulative fill the exchange's own order push reports (`cum_exec_qty`), else None: a
+    """The cumulative fill the exchange's own end push reports (`cum_exec_qty`), else None: a
     command's answer, a finding and B1's count report none, and text that is not a finite decimal
     reports none either, so it never voids a row (`entry_stop_settle`)."""
-    raw = step.payload.get("cum_exec_qty") if step.event in _PUSHES else None
+    raw = step.payload.get("cum_exec_qty") if step.event in _CONFIRMED_ENDS else None
     if not isinstance(raw, str):
         return None
     try:

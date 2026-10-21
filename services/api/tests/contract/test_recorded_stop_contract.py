@@ -132,9 +132,11 @@ _STEPS = _SECTION.split("**An entry's rows at each step of its order", 1)[1].spl
 
 
 def test_an_entry_row_is_voided_only_once_the_exchange_confirms_its_entry_unfilled() -> None:
-    """A KILL or an end out of `unknown` leaves the rows waiting for the complete read, which
-    settles them from what the exchange shows; the sweep voids only an entry never placed
-    (CR-2A-01), and a void never meets a recorded fill (SEC-2A-01)."""
+    """A KILL after the send or an end out of `unknown` leaves the rows waiting for the complete
+    read, which settles them from what the exchange shows; an entry never sent, written ahead, and
+    an exchange-confirmed terminal with zero count (`cancelled` or `expired`) void them (the
+    orchestrator's rulings of 14:26Z); the sweep voids only an entry never placed (CR-2A-01), and a
+    void never meets a recorded fill (SEC-2A-01)."""
     cells = [
         [cell.strip() for cell in line.strip("|").split(" | ")]
         for line in _STEPS.splitlines()
@@ -142,15 +144,20 @@ def test_an_entry_row_is_voided_only_once_the_exchange_confirms_its_entry_unfill
     ]
     effects = {row[0]: row[1] for row in cells[1:]}  # the header row first
     waits = (
-        "Any other step into `killed`, `expired`, `cancelled`, `rejected` or `held`: a KILL (from "
-        "`validated` too), an expiry, any end out of `unknown`, a cancel's own answer, an end "
-        "reconciliation or the operator decided"
+        "Any other step into `killed`, `expired`, `cancelled`, `rejected` or `held`: a KILL after "
+        "the send, any end out of `unknown`, an expiry or a cancel with no exchange count (a "
+        "locally timed expiry, a cancel's own answer), an end reconciliation or the operator "
+        "decided"
     )
     assert effects[waits] == "none: `pending`, **waiting for the complete read**"
     assert effects["`submitting` → `rejected`: the create's own answer refused it"] == "`void`"
     confirmed = [step for step, rows in effects.items() if rows == "`void`"]
-    assert len(confirmed) == 2 and confirmed[1].startswith(
-        "→ `cancelled` on `REMOTE_CANCELLED` reporting a zero cumulative fill"
+    assert len(confirmed) == 3
+    never_sent = "`validated` → `killed`: a KILL before the send (`abandon`), so never sent"
+    assert confirmed[1] == never_sent
+    assert confirmed[2].startswith(
+        "→ `cancelled` or `expired`, an exchange-confirmed terminal with zero count: the order's "
+        "own end push (`REMOTE_CANCELLED`, `EXPIRE`) reporting a zero cumulative fill"
     )
     assert not _missing(
         _words(_SECTION),
@@ -160,17 +167,24 @@ def test_an_entry_row_is_voided_only_once_the_exchange_confirms_its_entry_unfill
         "complete read: B1's own fill count can lag a fill the exchange holds back",
         "voids the pending rows of an entry never placed, audited `sl.modified` (`tp.modified` "
         "for a take-profit side) with reason `unplaced_entry_swept`",
-        "It never voids a row waiting for the complete read, a killed order's included",
+        "It never voids a row waiting for the complete read.",
+        "the send's step commits `submit_attempts` with its `order_events` row before the create "
+        "can leave, as B1 starts `submitting`'s place only once that write committed and never "
+        "after a refused one",
         "A row waiting for the complete read is resolved by that read too",
         "The statement that voids them also needs the order to hold no recorded fill",
     )
     rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
     assert not _missing(
         rule,
-        "or an entry the exchange confirms ended unfilled, leaves the prior record in force",
-        "or an entry that ended with no such confirmation (a KILL, an expiry, any end out of "
-        "`unknown`, or a cancel's own answer, which reports no fill: the record is then waiting "
-        "for the complete read",
+        "an entry never sent, or one the exchange confirms ended unfilled, leaves the prior record "
+        "in force",
+        "an exchange-confirmed terminal with zero count: the order's own end push, `cancelled` or "
+        "`expired`, reporting a zero cumulative fill",
+        "its entry was never sent (a KILL before the send, which is written ahead",
+        "or an entry that ended with no such confirmation (a KILL after the send, any end out of "
+        "`unknown`, or a locally timed expiry or a cancel's own answer, which report no count: the "
+        "record is then waiting for the complete read",
     )
 
 

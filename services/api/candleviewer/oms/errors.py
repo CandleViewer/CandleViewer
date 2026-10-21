@@ -11,7 +11,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import ClassVar, Final
+from typing import TYPE_CHECKING, ClassVar, Final
+
+if TYPE_CHECKING:  # the closed vocabularies only: no runtime import of the storage port
+    from candleviewer.storage.repositories.submissions import AnchorConstraint, SubmissionRefusal
 
 #: Codes the OMS raises itself, never mapped from an exchange answer (24 Sec.8.6).
 ILLEGAL_TRANSITION: Final = "ILLEGAL_TRANSITION"
@@ -157,11 +160,12 @@ class AnchorTaken(OmsError):
     """The request's key is held already (E29-T04 #913): by an earlier request of the principal,
     or by a concurrent first persist that committed first, on the anchor (`ux_ia_principal_ref`)
     or an entry's group (`ux_tg_creator_ref`). Nothing was written; the caller answers the request
-    as a repeat (21 Sec.3.3.10). Names the constraint only."""
+    as a repeat (21 Sec.3.3.10). Names the constraint only, one of `AnchorConstraint`, so a caller's
+    dispatch on it is closed (SEC-2A-06)."""
 
-    def __init__(self, constraint: str) -> None:
+    def __init__(self, constraint: AnchorConstraint) -> None:
         super().__init__(f"the request's key is held already ({constraint})")
-        self.constraint = constraint
+        self.constraint: AnchorConstraint = constraint
 
 
 class StopRequestInFlight(OmsError):
@@ -172,11 +176,12 @@ class StopRequestInFlight(OmsError):
 class SubmissionRefused(OmsError):
     """The first persist found, under its share locks, the order's account not live
     (`account_not_live`) or the leg's profile past the version it was sized from
-    (`profile_changed`, SR-E28-15): nothing was written. `reason` names which."""
+    (`profile_changed`, SR-E28-15): nothing was written. `reason` names which, one of
+    `SubmissionRefusal`, so a caller's dispatch on it is closed (SEC-2A-06)."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: SubmissionRefusal) -> None:
         super().__init__(f"the order was not stored: {reason}")
-        self.reason = reason
+        self.reason: SubmissionRefusal = reason
 
 
 class AuditNotDurable(OmsError):

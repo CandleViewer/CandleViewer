@@ -40,12 +40,15 @@ from candleviewer.storage.repositories.trade_groups import (
 
 __all__ = [
     "UX_TG_CREATOR_REF", "AnchorConstraint", "AnchorTakenError", "FirstPersist",
-    "FirstPersistWriteAhead", "FirstPersisted", "SubmissionStore",
+    "FirstPersistWriteAhead", "FirstPersisted", "SubmissionRefusal", "SubmissionStore",
 ]  # fmt: skip
 
 #: The group-level twin of the anchor's key (21 Sec.3.3.2): an entry's group holds it too.
 UX_TG_CREATOR_REF: Final = "ux_tg_creator_ref"
 AnchorConstraint = Literal["ux_ia_principal_ref", "ux_tg_creator_ref"]
+#: Why the first persist's share-locked re-check refused (SR-E28-15): the trade-group store's
+#: refusals a first persist can meet; it locks no definition, so never `definition_not_live`.
+SubmissionRefusal = Literal["account_not_live", "profile_changed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +71,9 @@ FirstPersistWriteAhead = Callable[[FirstPersisted], Awaitable[None]]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FirstPersist:
-    """The rows written with an order's `validated` row (module docstring)."""
+    """The rows written with an order's `validated` row (module docstring). `write_ahead` is the
+    caller's audit of them; the OMS's `SubmissionRepository` refuses a persist without one (C-2.9,
+    CR-2A-02)."""
 
     anchor: NewAnchor
     group: NewTradeGroup | None = None

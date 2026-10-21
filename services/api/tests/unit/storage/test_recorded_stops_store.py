@@ -9,7 +9,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import fields
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -23,13 +23,16 @@ from candleviewer.db import models
 from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeout
 from candleviewer.storage.repositories import recorded_stops_sqlalchemy as mod
 from candleviewer.storage.repositories.recorded_stops import (
+    EVERY_ACCOUNT,
     REFUSED_BY,
     REFUSED_ENTRY,
+    SWEEP_REASON,
     UNSENT_ENTRY,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
     SweptStop,
+    check_request,
 )
 
 _ASYNCPG: Dialect = make_url("postgresql+asyncpg://").get_dialect()()
@@ -60,11 +63,13 @@ def _stop(**over: Any) -> NewRecordedStop:
         ({"trigger_price": Decimal("NaN")}, "finite"),
         ({"trigger_price": 62000.0}, "Decimal"),
         ({"trigger_price": Decimal("1E-19")}, "numeric"),
+        ({"trigger_price": Decimal(10) ** 20}, "numeric"),  # 21 integral digits: numeric(38,18)
         ({"size": Decimal("0.010")}, "rs_size"),
         ({"tpsl_mode": "Partial"}, "rs_size"),
         ({"tpsl_mode": "Partial", "size": Decimal(0)}, "rs_size"),
         ({"trailing_distance": Decimal(50)}, "rs_trail"),
         ({"trailing_distance": Decimal(0), "trailing_active_price": Decimal(1)}, "rs_trail"),
+        ({"trailing_distance": Decimal(50), "trailing_active_price": Decimal(0)}, "rs_trail"),
         ({"kind": "take_profit", "trailing_distance": Decimal(5),
           "trailing_active_price": Decimal(1)}, "rs_trail"),
         ({"order_id": None}, "rs_entry"),
@@ -86,6 +91,15 @@ def test_a_partial_side_a_trail_and_a_marker_the_table_admits_pass() -> None:
     _stop(tpsl_mode="Partial", size=Decimal("0.005"), position_marker="m" * 64)
     _stop(trailing_distance=Decimal(50), trailing_active_price=Decimal(63000))
     _stop(source="restore", order_id=None)
+    _stop(trigger_price=Decimal("0.5"), position_marker="m")  # a sub-unit price; one character
+
+
+def test_a_requests_values_never_change() -> None:
+    """21 Sec.3.3.11: the request's values are written once (`trg_rs_guard`); the row to insert is
+    frozen as well, so nothing between its checks and its insert can change it."""
+    stop = _stop()
+    with pytest.raises(FrozenInstanceError):
+        stop.trigger_price = Decimal(1)  # type: ignore[misc]  # the assignment under test
 
 
 def test_the_row_is_every_column_in_table_order() -> None:
@@ -104,17 +118,71 @@ def _built() -> dict[str, Any]:
         "lock_stops_statement": mod.lock_stops_statement(_ACCOUNT, [_SL, _TP]),
         "settle_statement": mod.settle_statement(_ACCOUNT, [_SL, _TP], "answered", _T),
         "for_order_statement": mod.for_order_statement(_ACCOUNT, _ORDER),
-        "void_orphans_statement": mod.void_orphans_statement(_ACCOUNT, _T),
+        "void_orphans_statement": mod.void_orphans_statement(EVERY_ACCOUNT, _T),
     }
 
 
-def test_every_statement_but_the_insert_filters_the_account() -> None:
+def test_every_statement_but_the_insert_and_the_system_sweep_filters_the_account() -> None:
+    """C-12.4 (SEC-2A-02): the sweep is built over every account here, its system form, so the
+    pin sees the one unscoped read-and-write the startup wiring alone may run."""
     built = _built()
     assert set(built) == {name for name in vars(mod) if name.endswith("_statement")}
     unscoped = {
         n for n, s in built.items() if "recorded_stops.exchange_account_id = " not in _sql(s)
     }
-    assert unscoped == set(mod.UNSCOPED) == {"insert_stops_statement"}
+    assert unscoped == mod.UNSCOPED | mod.SYSTEM_STATEMENTS
+    assert not mod.UNSCOPED & mod.SYSTEM_STATEMENTS
+    assert mod.UNSCOPED == frozenset({"insert_stops_statement"})
+    assert mod.SYSTEM_STATEMENTS == frozenset({"void_orphans_statement"})
+
+
+_OTHER = uuid.UUID(int=0x4002)
+
+
+@pytest.mark.parametrize(
+    ("batch", "rule"),
+    [
+        ([], "at least one row"),
+        ([_stop(kind="take_profit")], "stop-loss side once"),
+        ([_stop(), _stop(id=_TP)], "stop-loss side once"),
+        ([_stop(), _stop(id=_TP, kind="take_profit"), _stop(id=_OTHER, kind="take_profit")],
+         "stop-loss side once"),
+        ([_stop(), _stop(id=_TP, kind="take_profit", exchange_account_id=_OTHER)], "one position"),
+        ([_stop(), _stop(id=_TP, kind="take_profit", symbol="ETHUSDT")], "one position"),
+        ([_stop(), _stop(id=_TP, kind="take_profit", position_idx=1)], "one position"),
+        ([_stop(), _stop(id=_TP, kind="take_profit", position_side="Sell")], "one position"),
+        ([_stop(), _stop(id=_TP, kind="take_profit", order_id=_OTHER)], "one source and one order"),
+        ([_stop(source="trading_stop", order_id=None), _stop(id=_TP, kind="take_profit")],
+         "one source and one order"),
+    ],
+)  # fmt: skip
+async def test_an_insert_of_anything_but_one_requests_rows_is_refused_before_any_statement(
+    batch: list[NewRecordedStop], rule: str
+) -> None:
+    """CR-2A-03 (21 Sec.3.3.11): `ux_rs_in_flight` keys on the stop-loss row alone, so a batch
+    without one, or across positions, sources or orders, would pass it."""
+    rel = _Rel()
+    with pytest.raises(ValueError, match=rule) as err:
+        await _store(rel).insert(batch)
+    assert rel.statements == [] and rel.commits == 0 and "62000" not in str(err.value)
+
+
+def test_each_request_the_writers_send_is_one_requests_rows() -> None:
+    """An entry's attach (its stop-loss, and its take-profit), a trading-stop call (both sides)
+    and a restore (the stop-loss alone)."""
+    tp = _stop(id=_TP, kind="take_profit", trigger_price=Decimal(65000))
+    check_request([_stop()])
+    check_request([_stop(), tp])
+    check_request([_stop(source="trading_stop", order_id=None),
+                   replace(tp, source="trading_stop", order_id=None)])  # fmt: skip
+    check_request([_stop(source="restore", order_id=None)])
+
+
+@pytest.mark.parametrize("bound", [float("nan"), float("inf"), 0, -1.0, True])
+def test_the_audit_bound_is_a_finite_number_of_seconds_above_zero(bound: Any) -> None:
+    """CR-2A-07: a NaN or an infinity would leave a write-ahead hook unbounded."""
+    with pytest.raises(ValueError, match="finite number of seconds above zero"):
+        mod.SqlAlchemyRecordedStopStore(cast(Any, _Rel()), audit_timeout_s=bound)
 
 
 def test_the_lock_takes_the_rows_for_update_in_id_order() -> None:
@@ -231,15 +299,18 @@ def test_the_sweep_voids_only_the_pending_entry_rows_of_an_order_never_placed() 
     assert "FROM orders WHERE orders.id = recorded_stops.order_id" in unplaced
     assert "orders.exchange_account_id = recorded_stops.exchange_account_id" in unplaced
     unsent, refused = unplaced.split(" OR ", 1)
-    assert [term.split(" = ")[0] for term in unsent.split("AND (", 1)[1].split(" AND ")] == [
-        f"orders.{name}" for name in UNSENT_ENTRY
-    ]
+    terms = unsent.split("AND (", 1)[1].split(" AND ")
+    assert terms[0] == "orders.state IN ('killed', 'pending_submit')"  # constants, as literals
+    assert [term.split(" = ")[0] for term in terms[1:]] == [
+        "orders.idempotency_state", "orders.submit_attempts", "orders.cum_exec_qty"
+    ]  # fmt: skip
     refusal = "FROM order_events WHERE order_events.order_id = orders.id AND "
     assert refusal + "order_events.from_state = $" in refused
     assert "order_events.to_state = $" in refused and "orders.cum_exec_qty = $" in refused
     bound = stmt.compile(dialect=_ASYNCPG).params
-    assert [bound[f"{name}_1"] for name in UNSENT_ENTRY] == list(UNSENT_ENTRY.values())
-    assert [bound["state_2"], bound["cum_exec_qty_2"]] == list(REFUSED_ENTRY.values())
+    unsent_binds = ("idempotency_state_1", "submit_attempts_1", "cum_exec_qty_1")
+    assert [bound[name] for name in unsent_binds] == ["unsent", 0, Decimal(0)]
+    assert [bound["state_1"], bound["cum_exec_qty_2"]] == list(REFUSED_ENTRY.values())
     assert (bound["from_state_1"], bound["to_state_1"]) == REFUSED_BY == ("submitted", "rejected")
     assert "answered_at" not in where  # an answered row of an entry never placed goes too
     assert sql.endswith(
@@ -249,7 +320,7 @@ def test_the_sweep_voids_only_the_pending_entry_rows_of_an_order_never_placed() 
 
 
 def test_the_startup_sweep_over_every_account_names_none() -> None:
-    every = _sql(mod.void_orphans_statement(None, _T))
+    every = _sql(mod.void_orphans_statement(EVERY_ACCOUNT, _T))
     assert "recorded_stops.exchange_account_id = $" not in every
     assert "recorded_stops.exchange_account_id = $" in _sql(
         mod.void_orphans_statement(_ACCOUNT, _T)
@@ -257,13 +328,14 @@ def test_the_startup_sweep_over_every_account_names_none() -> None:
 
 
 def test_the_sweep_proves_an_entry_never_placed_and_nothing_else() -> None:
-    """Its whole scope (the 2026-10-21 ruling, CR-2A-01): an entry never sent, or one its create's
-    own answer refused (`rejected` out of `submitting`, persisted `submitted`), nothing filled. A
-    killed order (one never sent included), one ended out of `unknown` or `held`, and a cancel or
-    expiry the sweep cannot see confirmed wait for the complete read: never voided blind (C-2.6)."""
+    """Its whole scope (the 2026-10-21 ruling, CR-2A-01, the rulings of 14:26Z): an entry never
+    sent, still `pending_submit` or killed before its send, or one its create's own answer refused
+    (`rejected` out of `submitting`, persisted `submitted`), nothing filled. An order killed after
+    its send, one ended out of `unknown` or `held`, and a cancel or expiry the sweep cannot see
+    confirmed wait for the complete read: never voided blind (C-2.6)."""
     assert dict(UNSENT_ENTRY) == {
-        "state": "pending_submit", "idempotency_state": "unsent", "submit_attempts": 0,
-        "cum_exec_qty": Decimal(0),
+        "state": frozenset({"pending_submit", "killed"}), "idempotency_state": "unsent",
+        "submit_attempts": 0, "cum_exec_qty": Decimal(0),
     }  # fmt: skip
     assert dict(REFUSED_ENTRY) == {"state": "rejected", "cum_exec_qty": Decimal(0)}
     assert set(UNSENT_ENTRY) | set(REFUSED_ENTRY) <= set(models.orders.c.keys())
@@ -281,7 +353,7 @@ async def test_the_sweep_audits_what_it_voided_before_its_commit() -> None:
     async def audit(swept: tuple[SweptStop, ...]) -> None:
         seen.append((swept, rel.commits))
 
-    got = await _store(rel).void_orphans(None, at=_T, write_ahead=audit)
+    got = await _store(rel).void_orphans(EVERY_ACCOUNT, at=_T, write_ahead=audit)
     assert got == (SweptStop(_SL, _ACCOUNT, _ORDER, "stop_loss"),)
     assert seen == [(got, 0)] and rel.commits == 1
 
@@ -301,5 +373,50 @@ async def test_an_audit_past_its_bound_leaves_every_row_as_it_was() -> None:
 
     store = mod.SqlAlchemyRecordedStopStore(cast(Any, rel), audit_timeout_s=0.01)
     with pytest.raises(WriteAheadTimeout) as exc:
-        await store.void_orphans(None, at=_T, write_ahead=hangs)
+        await store.void_orphans(EVERY_ACCOUNT, at=_T, write_ahead=hangs)
     assert not isinstance(exc.value, StorageTierUnavailable) and rel.commits == 0
+
+
+@pytest.mark.parametrize("scope", [None, "every_account", str(_ACCOUNT)])
+async def test_a_sweep_covers_one_account_or_every_account_by_name(scope: Any) -> None:
+    """CR-2A-07: an account a caller forgot (`None`) is refused before any statement, never read
+    as every account; the audit reason the sweep's hook records is the port's."""
+
+    async def audit(swept: tuple[SweptStop, ...]) -> None:
+        raise AssertionError("no audit without a sweep")
+
+    rel = _Rel()
+    with pytest.raises(TypeError, match="EVERY_ACCOUNT"):
+        await _store(rel).void_orphans(scope, at=_T, write_ahead=audit)
+    assert rel.statements == [] and SWEEP_REASON == "unplaced_entry_swept"
+
+
+async def test_a_settle_awaits_its_audit_with_the_settled_rows_before_its_commit() -> None:
+    """SEC-2A-05 (C-2.9): the writer's audit of the answer lands in the settle's transaction."""
+    voided = {"status": "void", "closed_at": _T}
+    rel = _Rel([], [_row(_TP, kind="take_profit", **voided), _row(_SL, **voided)])
+    seen: list[tuple[list[uuid.UUID], int]] = []
+
+    async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
+        seen.append(([row.id for row in rows], rel.commits))
+
+    rows = await _store(rel).settle(_ACCOUNT, [_SL, _TP], "not_shown", at=_T, write_ahead=audit)
+    assert [row.id for row in rows] == [_SL, _TP] and seen == [([_SL, _TP], 0)]
+    assert rel.commits == 1
+
+
+async def test_a_settle_whose_audit_fails_or_is_late_writes_nothing() -> None:
+    async def refuses(rows: tuple[RecordedStopRow, ...]) -> None:
+        raise RuntimeError("the audit trail refused the record")
+
+    async def hangs(rows: tuple[RecordedStopRow, ...]) -> None:
+        await asyncio.Event().wait()
+
+    refused = _Rel([], [_row(_SL, answered_at=_T)])
+    with pytest.raises(RuntimeError):
+        await _store(refused).settle(_ACCOUNT, [_SL], "answered", at=_T, write_ahead=refuses)
+    late = _Rel([], [_row(_SL, answered_at=_T)])
+    store = mod.SqlAlchemyRecordedStopStore(cast(Any, late), audit_timeout_s=0.01)
+    with pytest.raises(WriteAheadTimeout):
+        await store.settle(_ACCOUNT, [_SL], "answered", at=_T, write_ahead=hangs)
+    assert refused.commits == late.commits == 0

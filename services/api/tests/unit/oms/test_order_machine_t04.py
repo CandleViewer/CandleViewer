@@ -5,6 +5,7 @@ is a typed OMS error and never a foreign one, the native-stop backstop is logged
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
@@ -22,6 +23,7 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.fakes import InMemoryOrderStore
 from candleviewer.oms.repository import SubmissionRepository
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.idempotency_anchors import NewAnchor
 from candleviewer.storage.repositories.orders import NewOrder, NewOrderEvent
 from candleviewer.storage.repositories.submissions import (
@@ -29,12 +31,27 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersist,
     FirstPersisted,
 )
-from tests.unit.oms.order_rig import ACCOUNT, GATES, OTHER, T0, Rig, build_rig, order_of
+from tests.unit.oms.order_rig import (
+    ACCOUNT,
+    GATES,
+    OTHER,
+    T0,
+    Rig,
+    build_rig,
+    order_of,
+    placed,
+)
+
+
+async def _audited(persisted: FirstPersisted) -> None:
+    return None  # the pipeline's write-ahead audit (C-2.9, CR-2A-02)
+
 
 _FIRST = FirstPersist(
     anchor=NewAnchor(id=UUID(int=0xF1), created_by=UUID(int=0xB1), operation="placeOrder",
                      client_ref="9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59", request_sha256="ab" * 32,
                      order_id=UUID(int=1)),
+    write_ahead=_audited,
 )  # fmt: skip
 
 
@@ -182,9 +199,71 @@ async def test_abandon_refuses_an_order_that_left_validated(rig: Rig) -> None:
     assert rig.commands.sent == sent and rig.facade.state(order.id) == ("submitted", "not_required")
 
 
+async def test_abandon_refuses_an_order_already_ended(rig: Rig) -> None:
+    """With no machine left, the row decides: an order that ended is refused as ended."""
+    order = order_of()
+    await rig.start(order)
+    assert await rig.facade.abandon(ACCOUNT, order.id, "submitting row refused") == "killed"
+    with pytest.raises(IllegalTransition):
+        await rig.facade.abandon(ACCOUNT, order.id, "again")
+
+
+async def test_abandon_follows_a_machine_a_resync_closed_while_it_waited(rig: Rig) -> None:
+    """The resync hand-over (`successor`): an abandon that waited on the order's lock while its
+    machine was closed follows to the rebuilt one; with none rebuilt it reads the row and kills
+    nothing blind."""
+    order = order_of()
+    await rig.start(order)
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        call = asyncio.create_task(rig.facade.abandon(ACCOUNT, order.id, "submitting row refused"))
+        for _ in range(64):
+            await asyncio.sleep(0)
+        assert not call.done()
+        await rig.facade._close(o, publish=False)  # as `_resync` does before it hydrates
+    with pytest.raises(OrderNotLoaded):
+        await call
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "pending_submit" and rig.commands.sent == []
+
+
 async def test_abandon_never_reaches_another_accounts_order(rig: Rig) -> None:
     order = order_of()
     await rig.start(order)
     with pytest.raises(OrderNotLoaded):
         await rig.facade.abandon(OTHER, order.id, "not mine")
     assert rig.facade.state(order.id) == ("validated", "not_required")
+
+
+async def test_the_attempt_is_committed_before_the_create_leaves(rig: Rig) -> None:
+    """The orchestrator's rulings of 14:26Z (write-ahead): B1 arms `submitting`'s place only once
+    that state's entry committed its step, so when the create leaves, the stored order counts its
+    attempt and marks the create in flight, and a crash between the two leaves the attempt
+    counted. A refused write sends nothing and counts nothing, so an order with no attempt counted
+    was never sent, and `abandon` may void its stops (21 Sec.3.3.11's table)."""
+    seen: list[tuple[str, int, str]] = []
+
+    async def place(command: b01.Command) -> Mapping[str, Any]:
+        row = await rig.orders.get(ACCOUNT, UUID(command.order["order_id"]))
+        assert row is not None
+        seen.append((row.state, row.submit_attempts, row.idempotency_state))
+        return await placed(command)
+
+    rig.commands.on_place = place
+    sent = order_of()
+    await rig.start(sent)
+    await rig.facade.command(ACCOUNT, sent.id, "SEND", actor="user")
+    await rig.quiet()
+    assert seen == [("submitted", 1, "in_flight")]  # `submitting`, stored before the create
+    refused = order_of(2)
+    await rig.start(refused)
+    rig.store.fail_next(StorageTierUnavailable("postgres unreachable"))
+    with pytest.raises(OrderStepRefused):
+        await rig.facade.command(ACCOUNT, refused.id, "SEND", actor="user")
+    await rig.quiet()
+    assert len(seen) == 1 and rig.commands.kinds().count("place") == 1  # nothing else left
+    row = await rig.orders.get(ACCOUNT, refused.id)
+    assert row is not None
+    unsent = ("pending_submit", 0, "unsent")
+    assert (row.state, row.submit_attempts, row.idempotency_state) == unsent
+    assert await rig.facade.abandon(ACCOUNT, refused.id, "submitting row refused") == "killed"
