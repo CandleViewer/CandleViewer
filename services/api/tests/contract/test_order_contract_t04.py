@@ -301,6 +301,7 @@ def test_the_anchor_table_is_principal_scoped_permanent_and_written_with_its_ord
         "CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors\n"
         "  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();\n"
         "ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;\n"
+        "-- REVOKE DELETE, TRUNCATE ON idempotency_anchors FROM cv_app, cv_ro;\n"
     )
     assert "CREATE FUNCTION audit_refuse_truncate() RETURNS trigger" in _SCHEMA_DOC  # 0003's
     assert (

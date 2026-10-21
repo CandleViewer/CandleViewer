@@ -27,12 +27,6 @@ _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
 _REV, _PREV = "0043_order_submission", "0044_account_no_hard_delete"
 _TEMPLATE = "order_submission_head"
 _TABLES = ("idempotency_anchors", "recorded_stops")
-#: The orchestrator's Q8 ruling: #4006 appends these to 21 Sec.3.3.10's second block.
-_ANCHOR_TRUNCATE = (
-    "CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors\n"
-    "  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();\n"
-    "ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;\n"
-)
 _CATALOG = (
     "SELECT attname, format_type(atttypid, atttypmod), attnotnull, "
     "pg_get_expr(d.adbin, d.adrelid) FROM pg_attribute a LEFT JOIN pg_attrdef d "
@@ -96,13 +90,11 @@ def _fence(heading: str, index: int) -> str:
 
 
 def _doc_ddl() -> str:
-    """21 Sec.3.3.10 and Sec.3.3.11, both blocks each, and the anchor's TRUNCATE trigger until
-    #4006 puts it in its block."""
+    """21 Sec.3.3.10 and Sec.3.3.11, both blocks each: each table's second block holds its guard
+    and its TRUNCATE trigger."""
     anchors = "3.3.10 `idempotency_anchors`"
     stops = "3.3.11 `recorded_stops`"
     blocks = [_fence(anchors, 0), _fence(anchors, 1), _fence(stops, 0), _fence(stops, 1)]
-    if "trg_ia_no_truncate" not in blocks[1]:
-        blocks.insert(2, _ANCHOR_TRUNCATE)
     return "\n".join(blocks)
 
 

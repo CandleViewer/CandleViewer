@@ -23,7 +23,7 @@ already.
 * No row leaves either table: `trg_ia_no_truncate` and `trg_rs_no_truncate` (0003's
   `audit_refuse_truncate()`, SR-E29-05's pattern) refuse a TRUNCATE by any role, and DELETE and
   TRUNCATE are revoked from `cv_app` and `cv_ro` where those roles exist. The anchor's trigger is
-  the orchestrator's Q8 ruling on #913, which #4006 adds to Sec.3.3.10.
+  the orchestrator's Q8 ruling on #913, in Sec.3.3.10's second block.
 * Every trigger is `ENABLE ALWAYS`, so `session_replication_role = replica` cannot switch one
   off; each guard pins `search_path` and refuses with SQLSTATE 23514 naming itself, never a
   value.
@@ -53,7 +53,6 @@ def upgrade() -> None:
     op.execute(_ORDERS_SQL)
     op.execute(_ANCHORS_SQL)
     op.execute(_ANCHOR_GUARD_SQL)
-    op.execute(_ANCHOR_TRUNCATE_SQL)
     op.execute(_STOPS_SQL)
     op.execute(_STOP_GUARD_SQL)
     op.execute(_GRANTS_SQL)
@@ -102,7 +101,8 @@ CREATE TABLE idempotency_anchors (
 );
 """
 
-# Sec.3.3.10, second block, verbatim: the anchor's write-once trigger.
+# Sec.3.3.10, second block, verbatim: the anchor's write-once trigger and, as the orchestrator's
+# Q8 ruling on #913 has it (the anchor is permanent), its TRUNCATE refusal.
 _ANCHOR_GUARD_SQL = """
 CREATE FUNCTION ia_write_once() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp AS $BODY$
@@ -131,12 +131,6 @@ END $BODY$;
 CREATE TRIGGER trg_ia_write_once BEFORE UPDATE ON idempotency_anchors
   FOR EACH ROW EXECUTE FUNCTION ia_write_once();
 ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_write_once;
-"""
-
-# The orchestrator's Q8 ruling on #913: the anchor is permanent, so no role truncates it either.
-# #4006 appends these two statements to Sec.3.3.10's second block; until then they stand apart
-# here, and the parity test reads them right after the block they extend.
-_ANCHOR_TRUNCATE_SQL = """
 CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors
   FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
 ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;

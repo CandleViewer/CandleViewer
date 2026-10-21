@@ -2401,7 +2401,7 @@ CREATE TABLE idempotency_anchors (
 );
 ```
 
-**Writes.** The row is inserted before any send, in the one transaction that persists the request's rows, B1's `VALIDATE` step (24 §8.4 step 5): the anchor, for an entry the one-leg group and its leg, and the order's `validated` row with its first event. So an anchor never exists without its order, and a transaction that does not commit leaves nothing, its repeat being a first submission. `ux_ia_principal_ref` (with an entry's `ux_tg_creator_ref`) is the final guard between two concurrent first submissions: the loser writes nothing and is answered as a repeat. The request records its outcome before it answers, by compare-and-set from NULL: `202`, a business rejection's `502` with its `retCode`, or the `429 exchange_rate_limited` of a create the trading port sent nothing for, having no rate token (24 §8.4 step 6). A refusal before the persist leaves no row, so any other `4xx`, a `500` or a `503` is never stored.
+**Writes.** The row is inserted before any send, in the one transaction that persists the request's rows, B1's `VALIDATE` step (24 §8.4 step 5): the anchor, for an entry the one-leg group and its leg, the order's `validated` row with its first event and, for an entry, its pending stop record (§3.3.11). So an anchor never exists without its order, and a transaction that does not commit leaves nothing, its repeat being a first submission. `ux_ia_principal_ref` (with an entry's `ux_tg_creator_ref`) is the final guard between two concurrent first submissions: the loser writes nothing and is answered as a repeat. The request records its outcome before it answers, by compare-and-set from NULL: `202`, a business rejection's `502` with its `retCode`, or the `429 exchange_rate_limited` of a create the trading port sent nothing for, having no rate token (24 §8.4 step 6). A refusal before the persist leaves no row, so any other `4xx`, a `500` or a `503` is never stored.
 
 **Repeats.** A repeat with the same fingerprint, once it has passed account scope and the arm token under the caller's current grants (`22-api-openapi.yaml`, Idempotency), gets the recorded outcome, for a `202` the rows it names in their current state (`OrderAcceptance`). A row still undecided is `409 idempotency_in_flight` only within `CV_OMS_INFLIGHT_STUCK_S` (30 s) of `created_at`, longer than the submission's own bounds. Past it, its request ended without recording an answer (a crash, or a store failure after the send, which still answered with its outcome, never `503`), and the repeat decides the row: `202` with the rows in their current state, recorded by compare-and-set from NULL (`validated` means never sent). A row answers repeats only, so nothing else needs to decide it, and a repeat never sends (24 §8.4).
 
@@ -2438,6 +2438,7 @@ ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_write_once;
 CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors
   FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
 ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;
+-- REVOKE DELETE, TRUNCATE ON idempotency_anchors FROM cv_app, cv_ro;
 ```
 
 #### 3.3.11 `recorded_stops` — the stop the OMS recorded for each position (E29-T04)
@@ -2588,6 +2589,7 @@ ALTER TABLE recorded_stops ENABLE ALWAYS TRIGGER trg_rs_guard;
 CREATE TRIGGER trg_rs_no_truncate BEFORE TRUNCATE ON recorded_stops
   FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
 ALTER TABLE recorded_stops ENABLE ALWAYS TRIGGER trg_rs_no_truncate;
+-- REVOKE DELETE, TRUNCATE ON recorded_stops FROM cv_app, cv_ro;
 ```
 
 ### 3.4 Rules engine

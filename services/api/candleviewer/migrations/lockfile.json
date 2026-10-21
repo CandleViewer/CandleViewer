@@ -224,7 +224,7 @@
     },
     "0043_order_submission": {
       "path": "services/api/candleviewer/migrations/versions/0043_order_submission.py",
-      "sha256": "92ce0e6d3060e3dc33809431043ac9c908913c6937a8e7c3a44fa45b154b69fa",
+      "sha256": "c8a3ac3215813aeb295a3ff2772063ac8664344dd4d701553ac68f2c366b44ec",
       "down_revision": "0044_account_no_hard_delete"
     }
   }

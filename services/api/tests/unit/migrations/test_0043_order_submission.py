@@ -112,8 +112,8 @@ def test_upgrade_ddl_is_the_plan_doc_ddl_verbatim(heading: str, index: int, coun
 
 
 def test_upgrade_creates_in_dependency_order_under_a_bounded_lock_wait() -> None:
-    """The column before the tables, each table before its guard and its TRUNCATE trigger, the
-    anchor's trigger right after the block #4006 extends, then the grants and the comments."""
+    """The column before the tables, each table before its guard and its TRUNCATE trigger (one
+    block each, as 21 has them), then the grants and the comments."""
     assert _in_order(
         _up(),
         [
