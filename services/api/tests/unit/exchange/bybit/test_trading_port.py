@@ -373,6 +373,14 @@ def test_the_service_builds_one_governor_for_every_client() -> None:
     assert svc._verify_governor._buckets is svc._governor._buckets
 
 
+def test_the_process_governor_holds_the_ip_budget_of_600_requests_per_5_s() -> None:
+    """C-12.7: the governor's default is the IP budget's one definition (no client states one
+    since OM-D08), so it is pinned here: 600 requests per 5 s, refilled at 120 a second."""
+    svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
+    bucket = svc._governor._ip.bucket
+    assert (bucket.capacity, bucket.refill_per_s) == (600.0, 120.0)
+
+
 async def test_a_10018_on_one_account_holds_every_other_account_and_the_public_client() -> None:
     svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
     venue = Venue().on("/v5/order/cancel", rest("rest/error_10018.json"))

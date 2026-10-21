@@ -73,6 +73,7 @@ class Harness:
     prime_capped_book: Callable[[], None]
     prime_amend: Callable[[str], None]
     prime_missing_cancel: Callable[[], None]
+    prime_batch: Callable[[list[str]], None]
     acks: list[tuple[str, OrderAck]] = field(default_factory=list)
 
 
@@ -140,6 +141,16 @@ def _exchange() -> Harness:
     def prime_missing_cancel() -> None:
         venue.on("/v5/order/cancel", MISSING)
 
+    def prime_batch(links: list[str]) -> None:
+        """The batch shape with our ids, every item placed."""
+        item = BATCH["result"]["list"][0]
+        items = [{**item, "orderLinkId": lk, "orderId": f"e-{n}"} for n, lk in enumerate(links)]
+        codes = [{"code": 0, "msg": "OK"} for _ in links]
+        venue.on(
+            "/v5/order/create-batch",
+            {**with_result(BATCH, list=items), "retExtInfo": {"list": codes}},
+        )
+
     harness = Harness(
         port=make_port(venue, governor=governor),
         sent=lambda: len(venue.sent) + len(governor.acquired),
@@ -151,6 +162,7 @@ def _exchange() -> Harness:
         prime_capped_book=prime_capped_book,
         prime_amend=prime_amend,
         prime_missing_cancel=prime_missing_cancel,
+        prime_batch=prime_batch,
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -187,6 +199,7 @@ def _fake() -> Harness:
         prime_capped_book=seed_three,
         prime_amend=lambda _link: None,  # the fake amends the order a create landed
         prime_missing_cancel=lambda: None,  # the fake holds no order under the id
+        prime_batch=lambda _links: None,  # the fake places every new id
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -456,6 +469,27 @@ async def test_both_refuse_an_exit_that_cannot_name_its_order(harness: Harness) 
     assert harness.sent() == 0
 
 
+async def test_both_refuse_an_amend_that_cannot_name_its_order(harness: Harness) -> None:
+    """An amend moves a protective stop (C-2.6): its guard is the cancel's, on both ports."""
+
+    def amend(order_link_id: str, exchange_order_id: str | None) -> AmendOrderRequest:
+        return AmendOrderRequest(
+            account=account(),
+            symbol="BTCUSDT",
+            order_link_id=order_link_id,
+            exchange_order_id=exchange_order_id,
+            stop_loss=Decimal("57000"),
+            lane="critical",
+        )
+
+    for order_link_id in (ext_key("x-1"), "linear-004"):
+        with pytest.raises(ValueError, match="exchange_order_id"):
+            await harness.port.amend_order(amend(order_link_id, None))
+    with pytest.raises(ValueError, match="another exchange order"):
+        await harness.port.amend_order(amend(ext_key("another"), ORDER_ID))
+    assert harness.sent() == 0
+
+
 async def test_both_refuse_a_lookup_by_anything_but_a_generated_id(harness: Harness) -> None:
     for key in (ext_key("x-1"), "linear-004"):
         with pytest.raises(ValueError, match="generated id"):
@@ -480,6 +514,16 @@ async def test_both_refuse_a_batch_outside_its_bounds(harness: Harness) -> None:
     with pytest.raises(ValueError, match="batch"):
         await harness.port.place_batch([place(order_link_id=link(seq=n)) for n in range(11)])
     assert harness.sent() == 0
+
+
+async def test_both_place_a_batch_of_exactly_max_batch_size(harness: Harness) -> None:
+    """The bound is inclusive: a batch of `max_batch_size` (10) orders is one call, one ack each."""
+    links = [link(seq=n) for n in range(harness.port.capabilities.max_batch_size)]
+    assert len(links) == 10  # the venue's bound (24 §14.1)
+    harness.prime_batch(links)
+    acks = await harness.port.place_batch([place(order_link_id=lk) for lk in links])
+    assert [(a.ok, a.order_link_id) for a in acks] == [(True, lk) for lk in links]
+    assert harness.lanes() == ["entry"]
 
 
 async def test_both_refuse_a_window_that_ends_before_it_starts(harness: Harness) -> None:

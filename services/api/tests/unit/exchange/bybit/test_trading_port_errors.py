@@ -64,6 +64,7 @@ from tests.unit.exchange.bybit._trading import (
 DUPLICATE = rest("rest/trading-error-110072.json")
 MISSING = rest("rest/trading-error-110001.json")
 CANCEL = rest("rest/trading-cancel-reply.json")
+AMENDED = rest("rest/trading-amend-reply.json")
 ORDER_ID = CANCEL["result"]["orderId"]
 
 
@@ -157,7 +158,12 @@ async def test_a_batch_answered_with_an_open_code_raises_naming_every_item(code:
 
 @pytest.mark.parametrize("code", OPEN_CODES)
 async def test_the_same_code_on_a_cancel_is_the_venues_answer_an_ack(code: int) -> None:
-    """Only a create's outcome is left open by these codes: a cancel's is an ack, not raised."""
+    """Only a create's outcome is left open by these codes: a cancel's is an ack, not raised.
+
+    Its `error_code` is the class `mapping.py` gives both codes, `RATE_LIMITED`, pinned there by
+    `test_mapping.py` before this port: a known divergence from 24 §8.6, whose rows for `10016`
+    and `10019` say `SERVICE_UNAVAILABLE` outside a create. This test pins the ack the port
+    answers today; it does not settle which of the two is right."""
     ack = await make_port(Venue().on("/v5/order/cancel", _answered(code))).cancel_order(_cancel())
     assert (ack.ok, ack.error_code, ack.exchange_ret_code) == (False, "RATE_LIMITED", code)
 
@@ -387,44 +393,99 @@ async def test_place_or_adopt_over_the_port_adopts_the_order_the_venue_holds() -
     assert venue.queries()[1]["orderLinkId"] == link()
 
 
-async def test_an_ext_key_that_names_another_order_is_refused_unsent() -> None:
-    venue = Venue()
-    request = CancelOrderRequest(
-        account=account(),
-        symbol="BTCUSDT",
-        order_link_id=ext_key("another-order"),
-        exchange_order_id=ORDER_ID,
+Exit = Callable[[BybitTradingPort, str, str | None], Awaitable[object]]
+#: An exit naming its order by `order_link_id` and `exchange_order_id`: a cancel, and an amend
+#: moving a protective stop (C-2.6, 24 §8.8), whose guard is the cancel's.
+EXITS: dict[str, Exit] = {
+    "cancel": lambda port, key, order_id: port.cancel_order(
+        CancelOrderRequest(
+            account=account(), symbol="BTCUSDT", order_link_id=key, exchange_order_id=order_id
+        )
+    ),
+    "amend": lambda port, key, order_id: port.amend_order(
+        AmendOrderRequest(
+            account=account(),
+            symbol="BTCUSDT",
+            order_link_id=key,
+            exchange_order_id=order_id,
+            stop_loss=Decimal("57000"),
+            lane="critical",
+        )
+    ),
+}
+
+
+async def _refused_unsent(
+    send: Callable[[BybitTradingPort], Awaitable[object]], match: str
+) -> None:
+    """The exit is refused before a token is taken or anything is signed or sent."""
+    venue, governor, calls = Venue(), RecordingGovernor(), list[Call]()
+    with pytest.raises(ValueError, match=match):
+        await send(make_port(venue, governor=governor, calls=calls))
+    assert (venue.sent, governor.acquired, calls) == ([], [], [])
+
+
+@pytest.mark.parametrize("exit_", sorted(EXITS))
+async def test_an_ext_key_that_names_another_order_is_refused_unsent(exit_: str) -> None:
+    await _refused_unsent(
+        lambda port: EXITS[exit_](port, ext_key("another-order"), ORDER_ID),
+        "another exchange order",
     )
-    with pytest.raises(ValueError, match="another exchange order"):
-        await make_port(venue).cancel_order(request)
-    assert venue.sent == []
 
 
+@pytest.mark.parametrize("exit_", sorted(EXITS))
 @pytest.mark.parametrize(
     ("order_link_id", "exchange_order_id"),
-    [(ext_key("x-1"), None), (None, None), ("linear-004", None)],
-    ids=["ext-without-order-id", "nothing", "foreign-id"],
+    [(ext_key("x-1"), None), ("linear-004", None)],
+    ids=["ext-without-order-id", "foreign-id"],
 )
 async def test_an_exit_that_cannot_name_its_order_is_refused_unsent(
-    order_link_id: str | None, exchange_order_id: str | None
+    exit_: str, order_link_id: str, exchange_order_id: str | None
 ) -> None:
-    venue = Venue()
-    request = CancelOrderRequest(
-        account=account(),
-        symbol="BTCUSDT",
-        order_link_id=order_link_id,
-        exchange_order_id=exchange_order_id,
+    await _refused_unsent(
+        lambda port: EXITS[exit_](port, order_link_id, exchange_order_id), "exchange_order_id"
     )
-    with pytest.raises(ValueError, match="exchange_order_id"):
-        await make_port(venue).cancel_order(request)
-    assert venue.sent == []
 
 
-async def test_an_exit_answer_naming_another_order_is_unknown() -> None:
-    answer = with_result(CANCEL, orderId="another-order")
-    port = make_port(Venue().on("/v5/order/cancel", answer))
+async def test_a_cancel_naming_no_order_at_all_is_refused_unsent() -> None:
+    """An amend always names its own id (`AmendOrderRequest.order_link_id` is required)."""
+    nothing = CancelOrderRequest(account=account(), symbol="BTCUSDT")
+    await _refused_unsent(lambda port: port.cancel_order(nothing), "exchange_order_id")
+
+
+#: Each exit's transcribed answer, by path.
+ANSWERS = {"cancel": ("/v5/order/cancel", CANCEL), "amend": ("/v5/order/amend", AMENDED)}
+
+
+@pytest.mark.parametrize("exit_", sorted(EXITS))
+async def test_an_exit_answer_naming_another_exchange_order_is_unknown(exit_: str) -> None:
+    path, reply = ANSWERS[exit_]
+    port = make_port(Venue().on(path, with_result(reply, orderId="another-order")))
     with pytest.raises(UnknownStateError, match="another order"):
-        await port.cancel_order(_cancel())
+        await EXITS[exit_](port, ext_key(ORDER_ID), ORDER_ID)
+
+
+@pytest.mark.parametrize("exit_", sorted(EXITS))
+async def test_an_exit_by_our_id_answered_under_another_of_our_ids_is_unknown(exit_: str) -> None:
+    """Named by our own id alone, the answer must name that id: one naming another of ours
+    (a test input on the transcribed answer) is another order's."""
+    path, reply = ANSWERS[exit_]
+    port = make_port(Venue().on(path, with_result(reply, orderLinkId=link(seq=5))))
+    with pytest.raises(UnknownStateError, match="another order"):
+        await EXITS[exit_](port, link(), None)
+
+
+@pytest.mark.parametrize("exit_", sorted(EXITS))
+async def test_an_exit_by_our_id_answered_under_that_id_is_accepted(exit_: str) -> None:
+    """The control of the two above: the same answer naming the exit's own id is its ack."""
+    path, reply = ANSWERS[exit_]
+    port = make_port(Venue().on(path, with_result(reply, orderLinkId=link())))
+    ack: Any = await EXITS[exit_](port, link(), None)
+    assert (ack.ok, ack.order_link_id, ack.exchange_order_id) == (
+        True,
+        link(),
+        reply["result"]["orderId"],
+    )
 
 
 #: A create, and a batch whose first item is valid and whose second is not: 24 §14.2 rule 11
@@ -455,6 +516,48 @@ async def test_a_create_without_a_generated_id_of_its_account_is_refused_unsent(
 def _errors(cls: str) -> float:
     value: float = exchange_errors_total.labels(**{"class": cls})._value.get()
     return value
+
+
+@pytest.mark.parametrize(
+    ("refusal", "counted"),
+    [(CredentialUnavailable("revoked"), "AUTH_ERROR"), (KekUnavailable("down"), "TRANSPORT_ERROR")],
+    ids=["key", "vault"],
+)
+async def test_an_m2_refusal_is_counted_once_under_its_class(
+    refusal: SecretsError, counted: str
+) -> None:
+    """24 §14.4: every taxonomy error the port raises is counted, a refusal to sign included,
+    though nothing was sent."""
+    port = BybitTradingPort(
+        environment="demo",
+        credentials=_credentials(refusal),
+        governor=RecordingGovernor(),
+        transport=httpx.MockTransport(Venue().handler),
+        max_retries=3,
+    )
+    before = _errors(counted)
+    with pytest.raises(ExchangeError):
+        await port.place_order(place())
+    assert _errors(counted) == before + 1
+
+
+async def test_an_answer_the_port_cannot_decode_is_counted_once_as_unknown_state() -> None:
+    def gzip_lie(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"Content-Encoding": "gzip"}, stream=httpx.ByteStream(b"not gzip")
+        )
+
+    port = BybitTradingPort(
+        environment="demo",
+        credentials=_credentials(),
+        governor=RecordingGovernor(),
+        transport=httpx.MockTransport(gzip_lie),
+        max_retries=0,
+    )
+    before = _errors("UNKNOWN_STATE")
+    with pytest.raises(UnknownStateError):
+        await port.cancel_order(_cancel())
+    assert _errors("UNKNOWN_STATE") == before + 1
 
 
 async def test_a_token_the_lane_does_not_get_is_counted_and_logged() -> None:

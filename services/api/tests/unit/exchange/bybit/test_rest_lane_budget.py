@@ -262,6 +262,28 @@ async def test_a_resync_that_would_outlast_the_wait_is_cut_at_what_is_left() -> 
     ]
 
 
+async def test_a_resync_that_answers_within_the_wait_runs_to_its_end() -> None:
+    """The re-measure is bounded by what is left of the wait (24 §8.7), never cut at once: one
+    that yields and then answers runs to its end, and the re-signed retry answers."""
+    clock, sent, measured = FakeClock(), list[httpx.Request](), list[float]()
+
+    async def resync() -> None:
+        await asyncio.sleep(0)  # yields once, as a real server-time call does
+        measured.append(clock.now())
+
+    client, _ = _client(
+        clock,
+        _answers(sent, clock, (0.0, CLOCK_DRIFT), (0.0, CANCELLED)),
+        on_signature_failure=resync,
+    )
+
+    with capture_logs() as logs:
+        reply = await _cancel(client, 5.0)
+
+    assert reply == CANCELLED and measured == [0.0] and len(sent) == 2
+    assert [e for e in logs if e["event"] == "bybit_clock_resync_failed"] == []
+
+
 async def test_a_token_refused_for_the_retry_after_a_10002_raises_the_10002() -> None:
     """The 10002 was sent and answered: the refused retry token never says "nothing was sent"."""
     clock, sent = FakeClock(), list[httpx.Request]()

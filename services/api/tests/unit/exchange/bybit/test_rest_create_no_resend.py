@@ -137,10 +137,18 @@ async def _post(
 
 
 @pytest.mark.parametrize("cls", list(EndpointClass), ids=str)
-@pytest.mark.parametrize("path", [CREATE, "/v5/order/create-batch"])
+@pytest.mark.parametrize(
+    ("path", "order_link_id", "order_link_ids"),
+    [(CREATE, "cv-1", ("cv-1",)), ("/v5/order/create-batch", None, ("cv-1",))],
+    ids=["create", "create-batch"],
+)
 @pytest.mark.parametrize("outcome", LEFT.values(), ids=LEFT.keys())
 async def test_a_create_that_left_is_ambiguous_and_sent_once(
-    path: str, outcome: Outcome, cls: EndpointClass
+    path: str,
+    order_link_id: str | None,
+    order_link_ids: tuple[str, ...],
+    outcome: Outcome,
+    cls: EndpointClass,
 ) -> None:
     counters = [
         exchange_errors_total.labels(**{"class": c}) for c in ("TRANSPORT_ERROR", "UNKNOWN_STATE")
@@ -150,7 +158,7 @@ async def test_a_create_that_left_is_ambiguous_and_sent_once(
     error, sent = await _post([outcome, OK], path, cls)
 
     assert isinstance(error, AmbiguousResultError) and len(sent) == 1
-    assert error.order_link_id == ("cv-1" if path == CREATE else None)  # None for a batch
+    assert (error.order_link_id, error.order_link_ids) == (order_link_id, order_link_ids)
     assert error.retryable is False
     assert [c._value.get() - b for c, b in zip(counters, before, strict=True)] == [1, 0]
 

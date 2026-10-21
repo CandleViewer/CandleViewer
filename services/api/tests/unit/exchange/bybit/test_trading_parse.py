@@ -21,7 +21,7 @@ from hypothesis import strategies as st
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import UnknownStateError
-from candleviewer.exchange.base.models import Order, Position, Wallet
+from candleviewer.exchange.base.models import ClosedPnl, Execution, Order, Position, Wallet
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.exchange.bybit.metrics import cv_bybit_unknown_fields_total
 from tests.unit.exchange.bybit._trading import ACCOUNT_B, account, link
@@ -103,6 +103,7 @@ def test_a_partial_mode_stop_row_maps_its_kind_and_mode() -> None:
         None,
     )
     assert order.reduce_only and order.state == "untriggered"
+    assert order.order_type == "market"  # a Market row is no limit order, whatever its price
 
 
 #: `T_MS` in microseconds: when a terminal row's order ended (its `updatedTime`).
@@ -567,6 +568,31 @@ def test_an_execution_row_maps_with_the_ingest_time() -> None:
     assert tp.set_aside(row) is None and tp.set_aside(row | {"execType": "Funding"})
 
 
+def test_an_execution_row_maps_every_field_to_its_own() -> None:
+    """The whole fill record from `EXEC_ROW`, a Sell (the transcribed fill is a Buy), so a side
+    read as the other, or a swapped figure, shows in the immutable record the OMS stores."""
+    fill = tp.to_execution(tp.parse(tp.ExecutionRow, EXEC_ROW, "executions"), account(), 42)
+    assert fill == Execution(
+        exec_id="x-1",
+        exchange_order_id="e-1",
+        order_link_id=link(),
+        account_id=account().account_id,
+        symbol="BTCUSDT",
+        side="sell",
+        price=Decimal("60000"),
+        qty=Decimal("0.01"),
+        fee=Decimal("-0.01"),
+        fee_rate=Decimal("0.00055"),
+        fee_currency="USDT",
+        is_maker=True,
+        exec_type="trade",
+        closed_pnl=None,
+        ts_exec=int(T_MS) * 1000,
+        ts_ingest=42,
+        seq=7,
+    )
+
+
 @pytest.mark.parametrize("rate", ["-0.000025", "0.0006", "0.0006000000000", "12345678.1234567890"])
 def test_a_fee_rate_numeric_18_10_holds_is_read(rate: str) -> None:
     fill = tp.to_execution(
@@ -597,6 +623,28 @@ CLOSED_ROW: dict[str, Any] = {
     "avgExitPrice": "61000", "closedPnl": "500", "leverage": "5", "createdTime": T_MS,
     "updatedTime": T_MS,
 }  # fmt: skip
+
+
+def test_a_closed_pnl_row_maps_every_field_to_its_own() -> None:
+    """A Buy (the transcribed record is a Sell) with every figure and time its own."""
+    row = CLOSED_ROW | {
+        "side": "Buy",
+        "createdTime": "1700000000001",
+        "updatedTime": "1700000000002",
+    }
+    record = tp.to_closed_pnl(tp.parse(tp.ClosedPnlRow, row, "closed-pnl"), account())
+    assert record == ClosedPnl(
+        account_id=account().account_id,
+        symbol="BTCUSDT",
+        side="buy",
+        qty=Decimal("0.5"),
+        avg_entry_price=Decimal("60000"),
+        avg_exit_price=Decimal("61000"),
+        closed_pnl=Decimal("500"),
+        leverage=Decimal("5"),
+        opened_at=1_700_000_000_001_000,
+        closed_at=1_700_000_000_002_000,
+    )
 
 
 @pytest.mark.parametrize(
@@ -752,3 +800,101 @@ def test_a_dated_futures_row_fails_the_read_as_rule_12_says(
     assert tp.parse(model, row, "row") is not None
     with pytest.raises(UnknownStateError):
         tp.parse(model, row | {"symbol": "BTCUSDT-26DEC25"}, "row")
+
+
+# -- prices below 1, and every bound of a complete row, on both sides ----------------------------
+
+#: Prices of the sub-dollar USDT perpetuals (DOGE, XRP, `1000PEPE`), and 1 itself: test inputs.
+SUB_DOLLAR = ["0.5", "0.00001234", "1"]
+
+
+@pytest.mark.parametrize("price", SUB_DOLLAR)
+@pytest.mark.parametrize(
+    ("model", "row", "field"),
+    [
+        (tp.OrderRow, _row(), "price"),
+        (tp.OrderRow, _row(), "stopLoss"),
+        (tp.OrderRow, _row(), "takeProfit"),
+        (tp.OrderRow, _row(), "triggerPrice"),
+        (tp.ExecutionRow, EXEC_ROW, "execPrice"),
+        (tp.ClosedPnlRow, CLOSED_ROW, "avgEntryPrice"),
+        (tp.ClosedPnlRow, CLOSED_ROW, "avgExitPrice"),
+    ],
+    ids=["price", "stopLoss", "takeProfit", "triggerPrice", "execPrice", "entry", "exit"],
+)
+def test_a_price_below_one_is_read_unchanged(
+    model: type[tp._Venue], row: dict[str, Any], field: str, price: str
+) -> None:
+    """A sub-dollar contract's rows are rows like any other: refusing one would fail the whole
+    page and halt the reconciliation that also repairs stops (ruling R7)."""
+    assert getattr(tp.parse(model, row | {field: price}, "prices"), field) == Decimal(price)
+
+
+@pytest.mark.parametrize("price", SUB_DOLLAR)
+def test_a_limit_order_priced_below_one_or_at_one_maps_with_its_price(price: str) -> None:
+    order = tp.to_order(tp.parse(tp.OrderRow, _row(price=price), "order"), account())
+    assert (order.order_type, order.price) == ("limit", Decimal(price))
+
+
+#: The largest figure each bound admits, and the smallest past it (`frame_guard`: 1e12).
+ON_BOUND, PAST_BOUND = "1000000000000", "1000000000000.1"
+
+
+#: The order row's bounded quantities and optional prices.
+BOUNDED = ["qty", "leavesQty", "cumExecQty", "stopLoss", "takeProfit", "triggerPrice", "avgPrice"]
+
+
+@pytest.mark.parametrize("field", BOUNDED)
+def test_a_quantity_or_price_on_its_bound_is_read(field: str) -> None:
+    parsed = tp.parse(tp.OrderRow, _row(**{field: ON_BOUND}), "order")
+    assert getattr(parsed, field) == Decimal(ON_BOUND)
+
+
+@pytest.mark.parametrize("field", BOUNDED)
+def test_a_quantity_or_price_past_its_bound_fails_the_row(field: str) -> None:
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.OrderRow, _row(**{field: PAST_BOUND}), "order")
+
+
+@pytest.mark.parametrize("field", ["stopLoss", "takeProfit", "triggerPrice", "avgPrice"])
+def test_a_negative_optional_price_fails_the_row(field: str) -> None:
+    """`""` and a zero say "not set"; below zero is no price at all."""
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.OrderRow, _row(**{field: "-1"}), "order")
+
+
+def test_a_fills_sequence_starts_at_zero() -> None:
+    assert tp.parse(tp.ExecutionRow, EXEC_ROW | {"seq": 0}, "executions").seq == 0
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, EXEC_ROW | {"seq": -1}, "executions")
+
+
+#: Zero-padded, so the digit cap of the venue's decimal text (`_DECIMAL`) and not the amount
+#: bound decides: at most 24 whole digits and 18 places, signed by a minus only.
+@pytest.mark.parametrize(
+    "value", ["0" * 23 + "1", "0." + "0" * 17 + "1", "-1"], ids=["24-digits", "18-places", "minus"]
+)
+def test_decimal_text_within_its_digit_caps_is_read(value: str) -> None:
+    fee = tp.parse(tp.ExecutionRow, EXEC_ROW | {"execFee": value}, "fee").execFee
+    assert fee == Decimal(value)
+
+
+@pytest.mark.parametrize(
+    "value", ["0" * 24 + "1", "0." + "0" * 18 + "1", "+1"], ids=["25-digits", "19-places", "plus"]
+)
+def test_decimal_text_past_its_digit_caps_or_signed_plus_fails_the_row(value: str) -> None:
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, EXEC_ROW | {"execFee": value}, "fee")
+
+
+@pytest.mark.parametrize("millis", ["1514764800000", "4102444800000"], ids=["2018", "2100"])
+def test_an_exchange_time_on_the_plausible_windows_edges_is_read(millis: str) -> None:
+    assert tp.parse(tp.OrderRow, _row(createdTime=millis), "order").createdTime == int(millis)
+
+
+@pytest.mark.parametrize(
+    "millis", ["1514764799999", "4102444800001"], ids=["before-2018", "after-2100"]
+)
+def test_an_exchange_time_past_the_plausible_windows_edges_fails_the_row(millis: str) -> None:
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.OrderRow, _row(createdTime=millis), "order")

@@ -211,6 +211,30 @@ async def test_a_deadline_bounds_the_queue_behind_a_busy_bucket() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_deadline_lets_a_taker_queue_behind_a_busy_bucket_for_what_it_leaves() -> None:
+    """24 §8.7: the queue counts against the lane's wait, and only that. Two critical acquires
+    of 5 s each behind a drained bucket that refills a token a second both get their token: the
+    second queues on the bucket while the first waits for its own, never refused at once."""
+    clock = _FakeClock()
+
+    async def sleep(seconds: float) -> None:
+        clock.advance(seconds)
+        await asyncio.sleep(0)  # yields once, so the other taker queues meanwhile
+
+    governor = TokenBucketGovernor(
+        default_capacity=1.0, default_refill_per_s=1.0, clock=clock, sleep=sleep
+    )
+    governor.drain("uid-1", EndpointClass.ORDER, 1.0)
+    takers = [
+        governor.acquire("uid-1", EndpointClass.ORDER, lane="critical", deadline_s=5.0)
+        for _ in range(2)
+    ]
+    async with asyncio.timeout(1.0):  # a guard: virtual time, so it ends at once
+        await asyncio.gather(*takers)
+    assert clock() == pytest.approx(2.0)  # one token a second, each waited for in turn
+
+
+@pytest.mark.asyncio
 async def test_a_view_refused_in_the_queue_gives_its_cap_token_back() -> None:
     governor = TokenBucketGovernor()
     view = governor.capped(5)

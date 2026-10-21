@@ -19,7 +19,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from tests._corpus import CORPUS_ROOT
+from tests._corpus import CORPUS_ROOT, rest
 
 TRANSCRIBED = "docs-transcribed"
 #: A REST route in a stream label: an optional method, then the `/v5/` path.
@@ -171,7 +171,9 @@ def _write(
     (directory / "manifest.json").write_text(json.dumps({"fixtures": fixtures}), encoding="utf-8")
 
 
-REALTIME = _load(CORPUS_ROOT / "2026-10-05" / "rest" / "trading-order-realtime.json")
+#: Loaded by name, as the fixtures README's replacement procedure greps for: the PR that
+#: replaces this transcription repoints it.
+REALTIME = rest("rest/trading-order-realtime.json")
 
 
 def _recorded(**row: Any) -> dict[str, Any]:

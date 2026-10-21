@@ -11,9 +11,11 @@ never stored.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+import httpx
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -42,7 +44,15 @@ from candleviewer.exchange.bybit.trading import (
 )
 from tests._corpus import rest
 from tests.openapi_helpers import deref
-from tests.unit.exchange.bybit._trading import Venue, account, link, make_port, place, with_result
+from tests.unit.exchange.bybit._trading import (
+    FakeClock,
+    Venue,
+    account,
+    link,
+    make_port,
+    place,
+    with_result,
+)
 
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 #: The published `ExchangeCallRecord`, every `$ref` inlined: what the store and the diagnostics
@@ -388,3 +398,89 @@ async def test_an_over_long_message_on_an_accepted_create_still_answers_the_ack(
     assert (ack.ok, ack.exchange_order_id) == (True, CREATED["result"]["orderId"])
     assert ack.record is not None and ack.record.ret_msg is None
     _contract_valid(ack.record)
+
+
+# -- what an ack and its record measure and state ------------------------------------------------
+
+
+@dataclass
+class _Timed(Venue):
+    """The venue whose every answer takes `took_s` on `clock` (a test input), so the port's own
+    measure of the call can be read off the clock."""
+
+    clock: FakeClock = field(default_factory=lambda: FakeClock(now_s=100.0))
+    took_s: float = 0.0
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.clock.now_s += self.took_s
+        return super().handler(request)
+
+
+@pytest.mark.parametrize(
+    ("took_s", "latency_ms"),
+    [(1.5, 1500), (0.0, 0), (-1.0, 0)],
+    ids=["one-and-a-half-seconds", "no-time", "a-clock-that-steps-back"],
+)
+async def test_an_accepted_ack_and_its_record_carry_the_calls_measured_latency(
+    took_s: float, latency_ms: int
+) -> None:
+    """The call's own time on the port's monotonic clock, in ms, never below 0."""
+    venue = _Timed(took_s=took_s)
+    venue.on("/v5/order/create", with_result(CREATED, orderLinkId=link()))
+    ack = await make_port(venue, clock=venue.clock).place_order(place())
+    assert ack.ok and ack.record is not None
+    assert (ack.latency_ms, ack.record.latency_ms) == (latency_ms, latency_ms)
+
+
+async def test_a_refusal_ack_and_its_record_carry_the_calls_measured_latency() -> None:
+    venue = _Timed(took_s=1.5)
+    venue.on("/v5/order/cancel", rest("rest/trading-error-110001.json"))
+    request = CancelOrderRequest(account=account(), symbol="BTCUSDT", exchange_order_id="x-1")
+    ack = await make_port(venue, clock=venue.clock).cancel_order(request)
+    assert not ack.ok and ack.record is not None
+    assert (ack.latency_ms, ack.record.latency_ms) == (1500, 1500)
+
+
+async def test_a_stop_write_records_its_request_and_no_reply_fields() -> None:
+    """The stop write's answer names nothing (`result: {}`): its record states no reply."""
+    venue = Venue().on("/v5/position/trading-stop", rest("rest/trading-trading-stop-reply.json"))
+    ack = await _stop(make_port(venue))
+    assert ack.record is not None and ack.record.response_redacted is None
+    assert ack.record.request_redacted is not None
+    assert ack.record.request_redacted.category == "linear"
+
+
+async def test_every_batch_item_records_its_own_request_with_the_batchs_category() -> None:
+    """Literal: each item went on the wire under the batch's `category`, so its record holds it
+    beside the item's own fields, and each item's reply fields are its own."""
+    links = [link(seq=0), link(seq=1)]
+    items = [
+        {**rest("rest/trading-create-batch-reply.json")["result"]["list"][0], "orderLinkId": lk,
+         "orderId": f"e-{n}"}
+        for n, lk in enumerate(links)
+    ]  # fmt: skip
+    reply = {
+        **with_result(rest("rest/trading-create-batch-reply.json"), list=items),
+        "retExtInfo": {"list": [{"code": 0, "msg": "OK"}] * 2},
+    }
+    venue = Venue().on("/v5/order/create-batch", reply)
+    acks = await make_port(venue).place_batch(
+        [place(order_link_id=links[0]), place(order_link_id=links[1], side="sell")]
+    )
+    recorded = [a.record.request_redacted for a in acks if a.record is not None]
+    assert [r.model_dump(mode="json") for r in recorded if r is not None] == [
+        {
+            "category": "linear", "symbol": "BTCUSDT", "side": side, "order_type": "limit",
+            "qty": "0.010", "price": "60000", "time_in_force": "GTC", "order_link_id": lk,
+            "reduce_only": False, "close_on_trigger": False, "position_idx": 0,
+            "stop_loss": "58000", "sl_trigger_by": "MarkPrice", "tpsl_mode": "Full",
+        }
+        for lk, side in zip(links, ("buy", "sell"), strict=True)
+    ]  # fmt: skip
+    assert [a.record.response_redacted for a in acks if a.record is not None] == [
+        ExchangeRecordFields(order_link_id=lk, exchange_order_id=f"e-{n}")
+        for n, lk in enumerate(links)
+    ]
+    for ack in acks:
+        assert ack.record is not None
+        _contract_valid(ack.record)

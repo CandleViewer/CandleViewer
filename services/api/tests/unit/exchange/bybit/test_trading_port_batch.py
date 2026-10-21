@@ -18,7 +18,11 @@ from typing import Any
 import pytest
 
 from candleviewer.domain.order_link import ext_key
-from candleviewer.exchange.base.errors import AmbiguousResultError, UnknownStateError
+from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
+    DuplicateClientIdError,
+    UnknownStateError,
+)
 from candleviewer.exchange.base.models import AmendOrderRequest, TradingStopRequest
 from candleviewer.exchange.bybit.trading import BybitTradingPort, _order_ref, _wall_us
 from tests._corpus import rest
@@ -351,6 +355,100 @@ async def test_a_batch_outside_its_bounds_is_refused_unsent(requests: list[Any])
     assert venue.sent == []
 
 
+async def test_a_batch_of_the_venues_ten_orders_is_sent_whole() -> None:
+    """`max_batch_size` is the venue's 10 (24 §14.1): a fan-out of exactly 10 legs goes out."""
+    links = [link(seq=n) for n in range(10)]
+    reply = _batch(links, [(0, "OK")] * 10, [f"e-{n}" for n in range(10)])
+    venue = Venue().on("/v5/order/create-batch", reply)
+    acks = await make_port(venue).place_batch([place(order_link_id=lk) for lk in links])
+    assert [(a.ok, a.order_link_id, a.exchange_order_id) for a in acks] == [
+        (True, lk, f"e-{n}") for n, lk in enumerate(links)
+    ]
+    [body] = venue.bodies()
+    assert [item["orderLinkId"] for item in body["request"]] == links
+
+
+def _counted(items: int, codes: int) -> dict[str, Any]:
+    """A batch answer of `items` orders (ours, in order) and `codes` codes: a test input."""
+    item = BATCH["result"]["list"][0]
+    rows = [{**item, "orderLinkId": link(seq=n), "orderId": f"e-{n}"} for n in range(items)]
+    return {
+        **with_result(BATCH, list=rows),
+        "retExtInfo": {"list": [{"code": 0, "msg": "OK"}] * codes},
+    }
+
+
+@pytest.mark.parametrize(
+    ("items", "codes"), [(2, 1), (1, 2), (2, 3)], ids=["one-code", "one-item", "three-codes"]
+)
+async def test_a_batch_answer_whose_counts_are_not_the_requests_leaves_every_outcome_open(
+    items: int, codes: int
+) -> None:
+    """24 §14.4: an answer that cannot be paired raises `AmbiguousResultError` naming every
+    item, never a `ValueError`, which is the port's local refusal, after the batch was sent."""
+    links = [link(seq=0), link(seq=1)]
+    venue = Venue().on("/v5/order/create-batch", _counted(items, codes))
+    with pytest.raises(AmbiguousResultError) as caught:
+        await make_port(venue).place_batch([place(order_link_id=lk) for lk in links])
+    assert caught.value.order_link_ids == tuple(links) and caught.value.__cause__ is None
+    assert len(venue.sent) == 1
+
+
+#: An error envelope of the whole batch, the transcribed duplicate's with its code set (a test
+#: input: no documented batch example answers with a code).
+WHOLE = rest("rest/trading-error-110072.json")
+
+
+@pytest.mark.parametrize("code", [110079, 999999], ids=["110079", "unmapped"])
+async def test_a_whole_batch_answered_with_an_open_outcome_code_raises_unknown_state(
+    code: int,
+) -> None:
+    """As a create's does (24 §14.4): never retryable, and never sent again; it names no item,
+    so it concerns every item of the batch."""
+    venue = Venue().on("/v5/order/create-batch", {**WHOLE, "retCode": code})
+    with pytest.raises(UnknownStateError) as caught:
+        await make_port(venue, max_retries=3).place_batch(
+            [place(order_link_id=link(seq=n)) for n in range(2)]
+        )
+    error = caught.value
+    assert (error.retryable, error.exchange_ret_code) == (False, code)
+    assert error.__cause__ is None and error.__context__ is None and len(venue.sent) == 1
+
+
+async def test_a_whole_batch_answered_with_a_duplicate_raises_as_a_creates_does() -> None:
+    venue = Venue().on("/v5/order/create-batch", WHOLE)
+    with pytest.raises(DuplicateClientIdError) as caught:
+        await make_port(venue, max_retries=3).place_batch(
+            [place(order_link_id=link(seq=n)) for n in range(2)]
+        )
+    assert (caught.value.exchange_ret_code, caught.value.exchange_ret_msg) == (
+        110072,
+        WHOLE["retMsg"],
+    )
+    assert caught.value.__cause__ is None and len(venue.sent) == 1
+
+
+@pytest.mark.parametrize("code", [110007, 10016, 110079], ids=["margin", "10016", "110079"])
+async def test_an_items_own_text_is_kept_verbatim_on_its_ack_and_record(code: int) -> None:
+    """24 §8.6's code-only rule, per item: the venue's own words travel on its ack into the call's
+    stored record, never another item's or none."""
+    links = [link(seq=0), link(seq=1)]
+    reply = _batch(links, [(0, "OK"), (code, f"the item's own text {code}")], ["e-1", ""])
+    acks = await make_port(Venue().on("/v5/order/create-batch", reply)).place_batch(
+        [place(order_link_id=lk) for lk in links]
+    )
+    refused = acks[1]
+    assert (refused.exchange_ret_code, refused.exchange_ret_msg) == (
+        code,
+        f"the item's own text {code}",
+    )
+    assert refused.record is not None
+    assert (refused.record.ret_code, refused.record.ret_msg) == (
+        code,
+        f"the item's own text {code}",
+    )
+
+
 async def test_a_stop_write_sends_both_sides_and_answers_with_no_order() -> None:
     venue = Venue().on("/v5/position/trading-stop", rest("rest/trading-trading-stop-reply.json"))
     request = TradingStopRequest(
@@ -397,11 +495,13 @@ async def test_a_refused_stop_write_is_a_rejection_with_no_order() -> None:
     assert (ack.ok, ack.order_link_id, ack.error_code) == (False, None, "ORDER_NOT_FOUND")
 
 
-async def test_leverage_sets_both_sides() -> None:
+@pytest.mark.parametrize(("leverage", "wire"), [(Decimal("5"), "5"), (Decimal(1), "1")])
+async def test_leverage_sets_both_sides(leverage: Decimal, wire: str) -> None:
+    """1 is the lowest leverage there is, and a valid one: it reaches the wire too."""
     venue = Venue().on("/v5/position/set-leverage", rest("rest/trading-set-leverage-reply.json"))
-    await make_port(venue).set_leverage(account(), "BTCUSDT", Decimal("5"))
+    await make_port(venue).set_leverage(account(), "BTCUSDT", leverage)
     assert venue.bodies() == [
-        {"category": "linear", "symbol": "BTCUSDT", "buyLeverage": "5", "sellLeverage": "5"}
+        {"category": "linear", "symbol": "BTCUSDT", "buyLeverage": wire, "sellLeverage": wire}
     ]
 
 

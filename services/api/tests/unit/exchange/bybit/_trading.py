@@ -84,12 +84,14 @@ def place(ref: AccountRef | None = None, **overrides: Any) -> PlaceOrderRequest:
 
 
 class RecordingGovernor(TokenBucketGovernor):
-    """Records each acquisition as `(uid, endpoint class, lane, deadline)`."""
+    """Records each acquisition as `(uid, endpoint class, lane, deadline)`, and each headroom
+    reading as `(uid, endpoint class, lane)`."""
 
     def __init__(self, **kwargs: Any) -> None:
         options: dict[str, Any] = {"default_capacity": 1000.0, "default_refill_per_s": 1000.0}
         super().__init__(**(options | kwargs))
         self.acquired: list[tuple[str, EndpointClass, RateLane, float | None]] = []
+        self.read: list[tuple[str, EndpointClass, RateLane]] = []
 
     async def acquire(
         self,
@@ -101,6 +103,12 @@ class RecordingGovernor(TokenBucketGovernor):
     ) -> None:
         self.acquired.append((uid, endpoint_class, lane, deadline_s))
         await super().acquire(uid, endpoint_class, lane=lane, deadline_s=deadline_s)
+
+    def headroom(
+        self, uid: str, endpoint_class: EndpointClass, *, lane: RateLane
+    ) -> tuple[float, float]:
+        self.read.append((uid, endpoint_class, lane))
+        return super().headroom(uid, endpoint_class, lane=lane)
 
 
 @dataclass

@@ -66,8 +66,12 @@ def _governed(capacity: float) -> tuple[FakeClock, RecordingGovernor]:
     return clock, governor
 
 
-def _class(lane: RateLane) -> EndpointClass:
-    return EndpointClass.ACCOUNT if lane == "poll" else EndpointClass.ORDER
+#: The class each lane's calls draw, written out (24 §14.2 rule 12): the bucket a test drains.
+DRAWN: dict[RateLane, EndpointClass] = {
+    "critical": EndpointClass.ORDER,
+    "entry": EndpointClass.ORDER,
+    "poll": EndpointClass.ACCOUNT,
+}
 
 
 def test_the_port_reads_its_headroom_through_the_small_protocol() -> None:
@@ -98,7 +102,7 @@ def _drained(lane: RateLane) -> tuple[FakeClock, Venue, BybitTradingPort]:
     clock, governor = _governed(1.0)
     venue = _venue()
     port = make_port(venue, governor=governor, clock=clock)
-    governor.drain(UID, _class(lane), 1.0)
+    governor.drain(UID, DRAWN[lane], 1.0)
     return clock, venue, port
 
 
@@ -132,6 +136,31 @@ async def test_a_spare_token_means_the_next_call_does_not_wait() -> None:
         assert port.headroom(account(), lane).wait_s == 0.0
         await CALLS[lane](port)
     assert clock.sleeps == [] and len(venue.sent) == 3
+
+
+def test_each_lane_is_read_by_its_own_name_on_its_class() -> None:
+    """The lane reaches the governor's reading as it reaches `acquire`: E34-T02's reserve will
+    answer `critical` and `entry` differently from the same bucket."""
+    governor = RecordingGovernor()
+    port = make_port(Venue(), governor=governor)
+    for lane in LANES:
+        port.headroom(account(), lane)
+    assert governor.read == [
+        (UID, EndpointClass.ORDER, "critical"),
+        (UID, EndpointClass.ORDER, "entry"),
+        (UID, EndpointClass.ACCOUNT, "poll"),
+    ]
+
+
+def test_the_wait_is_the_missing_token_over_the_refill_rate() -> None:
+    """A drained bucket refilling 5 tokens a second has its next token in 0.2 s, not 5 s."""
+    clock = FakeClock()
+    governor = RecordingGovernor(
+        default_capacity=1.0, default_refill_per_s=5.0, clock=clock.now, sleep=clock.sleep
+    )
+    port = make_port(Venue(), governor=governor, clock=clock)
+    governor.drain(UID, EndpointClass.ORDER, 1.0)
+    assert port.headroom(account(), "critical").wait_s == pytest.approx(0.2)
 
 
 def test_each_lane_reads_the_class_its_requests_draw() -> None:
