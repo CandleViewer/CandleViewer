@@ -236,10 +236,9 @@ class Gateway:
         decision = self._admission.admit(entry.machine_key, event_type)
         if decision.admitted:
             return
-        entry.metrics.record_send_refused(decision.reason or REASON_DEGRADED)
-        logger().warning(
-            "statechart_send_refused", key=key, kind=entry.kind, reason=REASON_DEGRADED
-        )
+        reason = decision.reason or REASON_DEGRADED
+        entry.metrics.record_send_refused(reason)
+        logger().warning("statechart_send_refused", key=key, kind=entry.kind, reason=reason)
         raise GatewayDegradedError(key, entry.lane)
 
     def _overloaded(self, key: str, entry: _Entry, *, count: bool) -> GatewayOverloadedError:
