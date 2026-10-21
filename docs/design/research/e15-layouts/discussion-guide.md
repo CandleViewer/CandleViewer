@@ -103,9 +103,9 @@ a dated addendum, each `(heuristic)` label they support becomes `(session: Pn)`,
 
 ## 10. Participants and recruitment (ticket Scope)
 
-The owner (P1) and four to six comparable multi-chart traders, scalper and swing profiles mixed, with at least one
-keyboard-dominant participant and at least one on a 1280×800 laptop. `docs/plan/10-personas.md` holds no research
-protocol and no 1280×800 persona, so recruit for both explicitly and record each on the sheet. The v1 population (the
-owner, 0–5 managers and 0–3 viewers, `10` §0) limits how many can come from inside the project. If fewer than four
-external participants join within the sprint, run with the owner and whoever is available, and the report says so at
-the top (ticket AC5). Record any assistive technology or colour-vision deficiency only if the participant offers it.
+The owner (P1) and four or five comparable multi-chart traders (five keeps the ticket's P1..P6 ids), scalper and swing
+profiles mixed, with at least one keyboard-dominant participant and at least one on a 1280×800 laptop. `10-personas.md`
+holds no research protocol and no 1280×800 persona, so recruit for both and record each on the sheet. The v1 population
+(the owner, 0–5 managers and 0–3 viewers, `10` §0) limits how many can be insiders. If fewer than four external
+participants join within the sprint, run with the owner and whoever is available, and the report says so at the top
+(ticket AC5). Record any assistive technology or colour-vision deficiency only if the participant offers it.

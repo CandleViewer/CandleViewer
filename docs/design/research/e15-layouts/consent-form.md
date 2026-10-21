@@ -4,7 +4,7 @@ Read aloud and signed before any recording starts (discussion guide §2). The pa
 is kept on the private research drive, apart from the notes, and is the only document that links a name to a session id.
 
 **What the session is.** Up to about 65 minutes: a 45-minute interview over your own trading screen, then about 20
-minutes with six printed sync pictures and ten preset cards. It is about how you arrange, link and switch your trading
+minutes with six sync pictures and twelve preset cards. It is about how you arrange, link and switch your trading
 screens. It tests the design, not you, and it touches no order and no account.
 
 **What is recorded.** Your screen and your voice during the interview, the note-taker's written notes, your answers to
