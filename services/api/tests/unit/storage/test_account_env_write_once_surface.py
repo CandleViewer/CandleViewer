@@ -4,8 +4,9 @@
 database. These tests hold the same premise in code, as `tests/unit/credentials_m2/
 test_write_once_surface.py` does for `api_keys`: after the INSERT that creates an account, no SQL
 string under `candleviewer/` assigns `env` in an UPDATE or upsert of `exchange_accounts`, and none
-MERGEs into it; the `exchange_accounts` Table is named in code only where it is defined and, to
-read it, by the modules in `_READERS` (the profiles and trade-group stores); and the PATCH body of
+MERGEs into it; the `exchange_accounts` Table is named in code only where it is defined, to read
+it by the modules in `_READERS` (the profiles and trade-group stores), and as a dict key by the
+pinned table of guarded privileges (#3998); and the PATCH body of
 `/exchange-accounts/{accountId}` carries no environment. The store's own patch and its typed error
 for a refusal are pinned in `test_accounts_store_sqlalchemy.py`. They stop an honest regression,
 not a deliberate bypass: the trigger is the enforcement.
@@ -50,6 +51,10 @@ _READERS = frozenset(
     }
 )
 _READS = frozenset({"import", "columns", "select_from"})
+#: The pinned table of what the revisions revoke from `cv_app` (#3998) names the table as a dict
+#: key only (`key`), which the boot check binds as a `has_table_privilege` parameter: no row is
+#: read or written. Any other reference in it is still flagged.
+_PRIVILEGE_TABLE = Path("storage/guarded_privileges.py")
 _ENVIRONMENT = ("env", "environment")
 
 
@@ -205,8 +210,9 @@ def test_the_scan_passes_a_string_that_cannot_change_env(
 # -- The Table, which Core and the ORM write through with no SQL string
 def _shape(node: ast.AST, parent: ast.AST | None) -> str | None:
     """How `node` names the Table: `import`, `columns` (`exchange_accounts.c`), `select_from`
-    (its argument), `other` (`sa.update(exchange_accounts)`, `exchange_accounts.insert()`, an ORM
-    `__tablename__`, a reflected `Table(...)`), or None when it does not name it."""
+    (its argument), `key` (a dict key), `other` (`sa.update(exchange_accounts)`,
+    `exchange_accounts.insert()`, an ORM `__tablename__`, a reflected `Table(...)`), or None when
+    it does not name it."""
     match node:
         case ast.alias(name=name, asname=asname) if _TABLE in (name.rpartition(".")[2], asname):
             return "import"
@@ -218,7 +224,7 @@ def _shape(node: ast.AST, parent: ast.AST | None) -> str | None:
                     return "select_from"
             return "other"
         case ast.Constant(value="exchange_accounts"):
-            return "other"
+            return "key" if isinstance(parent, ast.Dict) and node in parent.keys else "other"
         case _:
             return None
 
@@ -240,17 +246,21 @@ def _table_uses(root: Path = _PKG) -> list[tuple[Path, int, str]]:
 
 
 def _table_writers(root: Path = _PKG) -> list[str]:
-    """`path:line` of each reference that could write the Table: any outside its definition and
-    the reader, and in the reader any but a read."""
+    """`path:line` of each reference that could write the Table: any outside its definition, the
+    readers and the privilege table, in a reader any but a read, in the privilege table any but a
+    dict key."""
     return [
         f"{rel.as_posix()}:{line}"
         for rel, line, shape in _table_uses(root)
-        if rel != _DEFINITION and (rel not in _READERS or shape not in _READS)
+        if rel != _DEFINITION
+        and (rel != _PRIVILEGE_TABLE or shape != "key")
+        and (rel not in _READERS or shape not in _READS)
     ]
 
 
 def test_only_the_definition_and_the_listed_readers_name_the_accounts_table() -> None:
-    assert {rel for rel, _, _ in _table_uses()} == {_DEFINITION, *_READERS}  # the scan sees all
+    seen = {_DEFINITION, _PRIVILEGE_TABLE, *_READERS}
+    assert {rel for rel, _, _ in _table_uses()} == seen  # the scan sees all
     assert _table_writers() == []
 
 
@@ -288,6 +298,12 @@ _TABLE_WRITES = {
         "stmt = exchange_accounts.update().values(env='live')",
         [f"{_IN_READER}:1"],
     ),
+    "privilege table reflects it": (
+        _PRIVILEGE_TABLE.as_posix(),
+        "t = sa.Table('exchange_accounts', sa.MetaData(), autoload_with=engine)",
+        [f"{_PRIVILEGE_TABLE.as_posix()}:1"],
+    ),
+    "a dict key elsewhere": ("repo.py", "P = {'exchange_accounts': 1}", ["repo.py:1"]),
 }
 #: `(module, source)`: names the Table only to read it, or does not name it in code.
 _TABLE_READS = {
@@ -299,6 +315,10 @@ _TABLE_READS = {
     "foreign key": ("repo.py", "fk = ForeignKey('exchange_accounts.id')"),
     "read-only SQL": ("repo.py", "q = sa.text('SELECT id FROM exchange_accounts WHERE id = :id')"),
     "docstring": ("repo.py", '"""exchange_accounts"""'),
+    "privilege table key": (
+        _PRIVILEGE_TABLE.as_posix(),
+        "P = {'exchange_accounts': frozenset({'DELETE'})}",
+    ),
     "its definition": (
         _DEFINITION.as_posix(),
         "exchange_accounts = Table('exchange_accounts', md)",

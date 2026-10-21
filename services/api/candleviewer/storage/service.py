@@ -5,7 +5,10 @@ database containers required, ticket acceptance criterion 1). On `"real"` (#3874
 E07-T02/T03/T04 tier clients (`storage.real_tiers`) and probes each one in start order
 (postgres, questdb, cold), each within `probe_timeout_s`. A tier that cannot answer fails the
 start closed: every client is closed again and `StorageTierUnavailable` names the tier and the
-probe error's type, never a DSN (C-12.6). Nothing is written by a start, failed or not.
+probe error's type, never a DSN (C-12.6). Nothing is written by a start, failed or not. Once every
+tier answers, the start checks the runtime role's guarded privileges (`storage.guarded_privileges`,
+#3998) within `probe_timeout_s`: in `live` a held one, or a check that cannot run, fails the start
+closed the same way.
 
 Once started, the real tiers are probed again every `probe_interval_s` by one task the service
 owns; `tier_health()` reports the latest probe of each, for `/readyz` and the health screen. A
@@ -32,7 +35,9 @@ import structlog
 
 from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
+from candleviewer.settings import Environment
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.guarded_privileges import check_guarded_privileges
 from candleviewer.storage.health import StorageHealthReport, TierHealth, TierState
 from candleviewer.storage.models import StorageTier
 from candleviewer.storage.real_tiers import RealTier, RealTiers, build_real_tiers
@@ -51,6 +56,7 @@ from candleviewer.storage.testing import (
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.observability.metrics import MetricChild
     from candleviewer.settings import Settings
 
 #: Bound on one tier's probe, at start and on every later round.
@@ -106,6 +112,7 @@ class StorageService:
         self._prober: asyncio.Task[None] | None = None
         #: Serialises `start()`: a second call waits, then finds the service started.
         self._start_lock = asyncio.Lock()
+        self._privileges_gauge: MetricChild | None = None
 
     @property
     def market_data(self) -> MarketDataRepository:
@@ -135,6 +142,10 @@ class StorageService:
                 else "storage.start() has not been called"
             )
         return self._retention
+
+    def attach_privileges_gauge(self, gauge: MetricChild) -> None:
+        """Wire `cv_db_guarded_privileges_held` (`create_app`), which the start's check sets."""
+        self._privileges_gauge = gauge
 
     async def start(self, ctx: AppContext) -> None:
         """Construct and connect the configured tier clients; a second call before `stop()`,
@@ -171,6 +182,13 @@ class StorageService:
                         f"storage tier {tier.tier!r} is unreachable at start ({health.detail})"
                     )
                 self._tier_health[tier.tier] = health
+            if built.guarded_privileges is not None:  # #3998: on the relational tier's login
+                await check_guarded_privileges(
+                    built.guarded_privileges,
+                    live=ctx.settings.environment is Environment.LIVE,
+                    gauge=self._privileges_gauge,
+                    timeout_s=self._probe_timeout_s,
+                )
         except BaseException:
             self._tier_health.clear()
             loop = asyncio.get_running_loop()

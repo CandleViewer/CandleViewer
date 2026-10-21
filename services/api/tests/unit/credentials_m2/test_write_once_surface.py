@@ -52,6 +52,10 @@ _PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 #: Modules that may name the `api_keys` Table in code (`db/models.py` defines it). One added here
 #: can write through the Table with no SQL string: add it only after a security review.
 _TABLE_USERS = frozenset({Path("db/models.py")})
+#: The pinned table of what the revisions revoke from `cv_app` (#3998) names the Table as a dict key
+#: only, which the boot check binds as a `has_table_privilege` parameter: no row is read or written.
+#: Its dict keys are skipped; any other reference in it is still a use.
+_PRIVILEGE_TABLE = Path("storage/guarded_privileges.py")
 #: `str` parameters a non-insert port method may take; any other `str` could carry ciphertext.
 _PLAIN_STR = frozenset({"env", "dek_ref"})
 #: `rewrap`'s `(action, fields)` (#2266) goes only to the injected audit-row builder, redacted
@@ -434,13 +438,18 @@ def _api_keys_table_uses(root: Path = _PKG, allowed: frozenset[Path] = _TABLE_US
     for rel, tree in _api_keys_modules(root):
         if rel in allowed or rel.parts[0] == "migrations":
             continue
-        prose = _prose(tree)
+        skipped = _prose(tree) | (_dict_keys(tree) if rel == _PRIVILEGE_TABLE else set())
         uses |= {
             f"{rel}:{line}"
             for n in ast.walk(tree)
-            if n not in prose and (line := _api_keys_line(n)) is not None
+            if n not in skipped and (line := _api_keys_line(n)) is not None
         }
     return sorted(uses)
+
+
+def _dict_keys(tree: ast.Module) -> set[ast.expr]:
+    """Every key of a dict display in `tree`."""
+    return {k for n in ast.walk(tree) if isinstance(n, ast.Dict) for k in n.keys if k is not None}
 
 
 def test_no_candleviewer_code_references_the_api_keys_table_outside_its_definition() -> None:
@@ -546,6 +555,13 @@ def test_table_tripwire_passes_what_does_not_name_the_table_in_code(
     tmp_path: Path, rel: str, source: str
 ) -> None:
     assert _api_keys_table_uses(_tree(tmp_path, {rel: source})) == []
+
+
+def test_table_tripwire_passes_only_the_privilege_tables_dict_keys(tmp_path: Path) -> None:
+    pinned = "P = {'api_keys': frozenset({'DELETE'})}\nt = sa.Table('api_keys', sa.MetaData())"
+    files = {_PRIVILEGE_TABLE.as_posix(): pinned, "repo.py": "P = {'api_keys': 1}"}
+    uses = _api_keys_table_uses(_tree(tmp_path, files))
+    assert uses == ["repo.py:1", f"{_PRIVILEGE_TABLE.as_posix()}:2"]
 
 
 # -- The guard itself: it must see what it claims to see
