@@ -4,11 +4,14 @@ Standalone, offline, stdlib only. Nothing here is market or user evidence; the t
 own text and prints, with a source label on every row, (1) every regime vocabulary and how many
 distinct ones exist, (2) every speed-of-tape window, baseline and update cadence named anywhere,
 (3) the parameter names and defaults of the iceberg, stop-run and absorption detectors per source,
-(4) where each document places the computation (client-side vs backend-side), (5) the analytics
-events SCR-058 and SCR-057 name, (6) the Poisson noise floor of a trades-per-second window at
+(4) where each document places the computation (client-side vs backend-side, with the matched
+phrase per component so a hedge such as CMP-134's is visible), (5) the analytics events named on
+the `- **Analytics/audit:**` lines of SCR-055..059 (only those lines, so a pointer line that
+mentions an event name never counts), (6) the Poisson noise floor of a trades-per-second window at
 1 / 5 / 30 s (the arithmetic the report's window recommendation quotes; a lower bound, since real
 tape is overdispersed) and (7) the Sprint 10 and 13 dates from `calendar_cv.py`. A row reads
-NOT FOUND when the anchor text moved; the tool never guesses a value.
+NOT FOUND when the anchor text moved; the tool never guesses a value and never raises on a moved
+anchor.
 
 Usage: python3 -I docs/design/_tools/e25_d01_contract_audit.py          (Markdown)
        python3 -I docs/design/_tools/e25_d01_contract_audit.py --json   (the boards' numbers)
@@ -16,6 +19,7 @@ Usage: python3 -I docs/design/_tools/e25_d01_contract_audit.py          (Markdow
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import re
@@ -32,6 +36,7 @@ RATES = (
 WINDOWS_S = (1, 5, 30)  # the windows 11 / 14 / 22 name
 Z, PUSH_HZ, COOLDOWN_S = 3.0, 4, 60  # US-DET-002 z > 3; SCR-055 4 Hz; US-DET-002 cooldown 60 s
 SCAN_PER_S = 4.0  # one-token scan, E22-D01 F5 (heuristic)
+HEDGE = "or by a backend detector service"  # CMP-134's placement hedge (15-component-catalogue.md)
 
 
 def text(rel: str) -> str:
@@ -44,9 +49,12 @@ def grab(rel: str, pattern: str, group: int = 1) -> str | None:
 
 
 def block(rel: str, start: str, end: str) -> str:
-    """The text between the first `start` heading and the next `end` heading."""
+    """Text between the first `start` heading and the next `end`; '' when `start` moved."""
     t = text(rel)
-    i = t.index(start)
+    try:
+        i = t.index(start)
+    except ValueError:
+        return ""  # the dependent rows then read NOT FOUND instead of killing the run
     j = t.find(end, i + len(start))
     return t[i : j if j > 0 else len(t)]
 
@@ -156,7 +164,8 @@ def detector_params() -> dict[str, object]:
     return out
 
 
-def placement() -> dict[str, int]:
+def placement() -> dict[str, object]:
+    """Per component the clause saying client-side (hedges visible); per screen, backend-side."""
     s14, s15 = PLAN + "14-screens-catalogue.md", PLAN + "15-component-catalogue.md"
     cmps = (
         ("CMP-131", "CMP-132"),
@@ -165,15 +174,32 @@ def placement() -> dict[str, int]:
         ("CMP-134", "CMP-135"),
     )
     scrs = (("SCR-055", "SCR-056"), ("SCR-056", "SCR-057"), ("SCR-057", "SCR-058"))
-    client = sum("client-side" in block(s15, f"### {a}", f"### {b}") for a, b in cmps)
-    backend = sum("backend-side" in block(s14, f"### {a}", f"### {b}") for a, b in scrs)
-    return {"components_saying_client_side": client, "screens_saying_backend_side": backend}
+    phrases: dict[str, str] = {}
+    for a, b in cmps:
+        m = re.search(r"[^.;\n]*client-side[^.;\n]*", block(s15, f"### {a}", f"### {b}"))
+        phrases[a] = re.sub(r"\s+", " ", m.group(0)).strip() if m else "NOT FOUND"
+    return {
+        "components_saying_client_side": sum(p != "NOT FOUND" for p in phrases.values()),
+        "hedged": ", ".join(c for c, p in phrases.items() if HEDGE in p) or "none",
+        "phrases": phrases,
+        "screens_saying_backend_side": sum(
+            "backend-side" in block(s14, f"### {a}", f"### {b}") for a, b in scrs
+        ),
+    }
 
 
 def analytics() -> dict[str, int]:
-    t = text(PLAN + "14-screens-catalogue.md")
+    """Event names counted on the `- **Analytics/audit:**` lines of SCR-055..059 only."""
+    s14 = PLAN + "14-screens-catalogue.md"
+    lines = [
+        ln
+        for n in range(55, 60)
+        for ln in block(s14, f"### SCR-0{n}", f"### SCR-0{n + 1}").splitlines()
+        if ln.startswith("- **Analytics/audit:**")
+    ]
+    joined = "\n".join(lines)
     return {
-        k: t.count(k)
+        k: joined.count(k)
         for k in ("methodology.opened", "regime.explain_opened", "regime.panel_opened")
     }
 
@@ -213,9 +239,14 @@ def noise_floor() -> dict[str, object]:
 
 
 def sprints() -> dict[str, str]:
-    sys.path.insert(0, str(ROOT / "docs/plan/backlog/_tools"))
-    import calendar_cv
-
+    """The sprint dates from calendar_cv.py, loaded by path (sys.path is left alone)."""
+    spec = importlib.util.spec_from_file_location(
+        "calendar_cv", ROOT / "docs/plan/backlog/_tools/calendar_cv.py"
+    )
+    if spec is None or spec.loader is None:
+        return {f"S{n:02d}": "NOT FOUND" for n in (10, 12, 13)}
+    calendar_cv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(calendar_cv)
     return {
         f"S{n:02d}": " -> ".join(str(d) for d in calendar_cv.sprint_range(n)) for n in (10, 12, 13)
     }
@@ -250,8 +281,15 @@ def main(argv: list[str]) -> int:
         for src, pairs in d["by_source"].items():
             print(f"  - {src}: {', '.join(pairs) if pairs else 'NOT FOUND'}")
     print("\n## Placement and analytics\n")
-    print(f"- {data['placement']}")
-    print(f"- {data['analytics']}")
+    pl = data["placement"]
+    print(
+        f"- components saying client-side: {pl['components_saying_client_side']} "
+        f"(hedged: {pl['hedged']})"
+    )
+    for cmp_id, phrase in pl["phrases"].items():
+        print(f"  - {cmp_id}: {phrase}")
+    print(f"- screens saying backend-side: {pl['screens_saying_backend_side']}")
+    print(f"- events on the SCR-055..059 Analytics/audit lines: {data['analytics']}")
     print("\n## Poisson noise floor of a prints/s window (lower bound; z > 3 at 4 Hz pushes)\n")
     print(
         "| Rate x window | E[prints] | CV % | z>3 at | P(cross) % | indep./h | false/h "
