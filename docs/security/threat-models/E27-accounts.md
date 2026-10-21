@@ -391,7 +391,10 @@ The compensating controls are SR-E27-19:
 
 - one sub-UID per manager or strategy (ADR-0009 item 6), each funded only with the margin its strategy needs;
 - near-real-time detection of executions and orders with no OMS intent on the private stream, with a P1 and an
-  account freeze within seconds (E29-T05). As specified, the reconciler adopts such an order as `untracked` and
+  account freeze within seconds (E29-T05). An order the exchange itself places (a closed `createType` class, 24
+  §8.10) and its trade fills raise the P1 without the freeze. Residual: a key holder can bring such an order about
+  without placing one (raising leverage or switching the margin mode into a liquidation), bounded by the P1 and
+  E39's loss lockouts. As specified, the reconciler adopts such an order as `untracked` and
   only displays it (E29-T06), and `oms_untracked_orders` does not page (E29-T08);
 - exchange-side risk limits per sub-UID, so one position's size is capped at the exchange.
 
