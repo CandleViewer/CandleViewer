@@ -166,6 +166,40 @@ services:
       cv-internal:
         ipv4_address: 172.28.0.10
 
+  # #3897: the deploy's explicit schema step, a one-shot built from the api's Dockerfile: `alembic
+  # upgrade head`, the QuestDB DDL the image ships, then the drift guard
+  # (docs/ops/runbooks/storage-migrate.md). Opt-in (`--profile core --profile migrate run --rm
+  # --build migrate`) and NOT a dependency of `api`: an automated apply waits for #3093. A non-zero
+  # exit stops the deploy.
+  # `pull_policy: build` rebuilds it on every run, so it is this checkout's build and never a stale
+  # one; it shares no `image:` tag with `api` (docker-compose.dev.yml builds api's `builder` target).
+  # The step reads CV_PG_DSN inside the container; here it comes from CV_PG_OWNER_DSN
+  # (Settings.pg_owner_dsn, the cv_owner login) and never from the CV_PG_DSN that `api` reads, which
+  # stays the app role's. The default is the dev stack's, as for `api`.
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infra/images/Dockerfile.api
+    pull_policy: build
+    profiles: ["migrate"]
+    entrypoint: ["python", "-m", "candleviewer.storage.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      questdb:
+        condition: service_healthy
+    environment:
+      CV_ENVIRONMENT: ${CV_ENVIRONMENT:-demo}
+      CV_PG_DSN: ${CV_PG_OWNER_DSN:-postgresql+asyncpg://cv:CHANGE_ME@postgres:5432/candleviewer}
+      CV_QUESTDB_PG: questdb:8812
+    read_only: true
+    tmpfs:
+      - /tmp
+    # A one-shot: its exit status is its result, so there is nothing to probe.
+    healthcheck:
+      disable: true
+    networks: [cv-internal]
+
   prometheus:
     image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
     profiles: ["obs"]
