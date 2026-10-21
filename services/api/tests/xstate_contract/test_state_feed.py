@@ -114,6 +114,13 @@ async def test_a_chain_trip_flips_degraded_once_and_a_stop_removes_the_entry_onc
     assert port.ops.count("remove") == 1 and feed.hook_errors == 0
 
 
+def test_an_error_status_removes_the_entry() -> None:
+    port = Port()
+    (feed,) = feed_plugins(port, FeedBinding("session", SID))
+    feed.on_error(None, RuntimeError("boom"))
+    assert port.ops == ["remove"] and feed.hook_errors == 0
+
+
 async def test_a_session_publishes_regions_and_every_terminal_payload_is_a_last() -> None:
     """B16 `REVOKE` fires two transitions, `elevation` normal then dead, and both hold `terminal`:
     the entity's final payload is the second."""
@@ -211,6 +218,7 @@ _SUMMARIES = {
     "book-entity-symbol": ("book", "BTCUSDT", {**_BOOK, "symbol": None}, _BOOK),
     "recording-off-type": ("recording", "ETHUSDT", _BAD, None),
     "kill_switch-off-type": ("kill_switch", None, {**_KILL, "flatten": "yes"}, _KILL),
+    "kill_switch-bad-scope": ("kill_switch", None, {"scope": "all"}, None),
     "leg-none": ("leg", None, {"symbol": "BTCUSDT"}, None),
     "session-no-user": ("session", None, {**_SESSION, "user_id": SID}, _SESSION),
 }

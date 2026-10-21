@@ -145,6 +145,10 @@ class CvStateFeedPlugin(HookFailureCounter):
     def on_interpreter_stop(self, interpreter: Any) -> None:
         self._handle.remove()  # the registry keeps a terminal entry, and a newer machine's
 
+    @contained
+    def on_error(self, interpreter: Any, error: BaseException) -> None:
+        self._handle.remove()  # the `error` status ends a machine with no `on_interpreter_stop`
+
     def _publish(self, interp: Any) -> None:
         state, regions = project(interp)
         payload: dict[str, Any] = {"machine_kind": self._binding.machine_kind, "state": state}

@@ -1,6 +1,6 @@
 """E17-T08 PR 2b: `RegistryFeed`, the composition-root port of the machines feed (23 §6.4), over
 the real `MachineStateRegistry` on a fake clock. No runtime import here (CV-LINT-IMPORT): a built
-machine reaching the registry is `tests/xstate_contract/test_state_feed.py`."""
+machine reaching the registry is proved by 2c's scenario tests (cut here for the C-4.8 cap)."""
 
 from __future__ import annotations
 

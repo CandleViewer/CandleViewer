@@ -82,7 +82,7 @@ def default_clock() -> Clock:
 
 def _cv_bring_up(interp: Interpreter[Any]) -> None:
     """CV-C66': per-process bring-up work, called by `build()` and `restore()` before `start()`.
-    `on_interpreter_start` fires on every path, restores included (#240), so it stays telemetry
+    `on_interpreter_start` fires on all paths, restores too (library #240), so it stays telemetry
     only: it may branch on `restored_from_snapshot`. Currently a no-op; what a restored machine
     needs once it has started is `cv_bring_up_restored`."""
     return None
@@ -90,8 +90,8 @@ def _cv_bring_up(interp: Interpreter[Any]) -> None:
 
 def cv_bring_up_restored(interp: Interpreter[Any]) -> None:
     """CV-C66': a restored `start()` enters no state, so no plugin hears an `on_transition` for the
-    state the machine comes back in. Each plugin with a `cv_bring_up(interpreter)` is told here,
-    once (the machines feed publishes it, 23 §6.4): after `start()`, before the journal replay."""
+    state the machine comes back in. Each plugin with a `cv_bring_up(interpreter)`, which must not
+    raise, is told here once (the feed publishes, 23 §6.4): after `start()`, before the replay."""
     for plugin in interp.plugins:
         bring_up = getattr(plugin, "cv_bring_up", None)
         if bring_up is not None:
