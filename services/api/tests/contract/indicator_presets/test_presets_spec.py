@@ -15,6 +15,8 @@ from referencing import Registry
 from referencing.jsonschema import DRAFT202012
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.indicator_presets_models import INDICATOR_CODE_PATTERN
+from candleviewer.orderflow.indicators import limits
 from candleviewer.orderflow.indicators.catalogue import default_catalogue, validate_params
 
 SPEC: dict[str, Any] = load_openapi_spec()
@@ -23,15 +25,15 @@ _BASE, _S = "urn:cv:22-api-openapi", "/components/schemas/"
 _REGISTRY: Registry[Any] = Registry().with_resource(_BASE, DRAFT202012.create_resource(SPEC))
 INPUT, STYLE = f"{_S}IndicatorPresetInput", f"{_S}IndicatorPresetStyle"
 
-# The limits the implementation PR enforces, from the threat model (section 3: name 80, 500 live
-# presets per user, bundle import 200 presets; IR-08: the code pattern and 32; SR-E13-06: 64 keys),
-# as literals: the constants module that holds them lands with that PR.
-NAME_MAX = 80
+# The limits the server enforces (`orderflow/indicators/limits.py`; the E13 threat model's section
+# 7: the contract test asserts the OpenAPI bounds match them): name 80, 500 live presets per user,
+# bundle import 200 presets (section 3), 64 keys (SR-E13-06), the code pattern and 32 (IR-08).
+NAME_MAX = limits.PRESET_NAME_MAX
 CODE_MAX = 32
-CODE_PATTERN = "^[a-z0-9_]{2,32}$"
-KEYS_MAX = 64
-PRESETS_PER_USER_MAX = 500
-BUNDLE_IMPORT_PRESETS_MAX = 200
+CODE_PATTERN = INDICATOR_CODE_PATTERN
+KEYS_MAX = limits.PRESET_JSON_MAX_KEYS
+PRESETS_PER_USER_MAX = limits.PRESETS_PER_USER_MAX
+BUNDLE_IMPORT_PRESETS_MAX = limits.BUNDLE_IMPORT_PRESETS_MAX
 
 INPUT_FIELDS = ["indicator_code", "is_favourite", "name", "pane_target", "params", "style"]
 SERVER_MANAGED = ("id", "owner_user_id", "is_builtin", "created_at", "updated_at", "deleted_at")
@@ -188,3 +190,15 @@ def test_bundle_states_its_200_item_and_1_mib_limits_as_import_only() -> None:
     text = _prose(SCHEMAS["WorkspaceBundle"]["properties"]["indicator_presets"]["description"])
     assert "never truncated to the import limits" in text
     assert f"beyond {BUNDLE_IMPORT_PRESETS_MAX} items or 1 MiB of preset JSON" in text
+
+
+def test_the_prose_states_the_byte_depth_and_count_limits_the_server_enforces() -> None:
+    """The bounds 22 states in words (no JSON Schema keyword carries them) are `limits.py`'s."""
+    create = _prose(_operations()["createIndicatorPreset"]["description"])
+    params = _prose(SCHEMAS["IndicatorPresetInput"]["properties"]["params"]["description"])
+    bundle = _prose(SCHEMAS["WorkspaceBundle"]["properties"]["indicator_presets"]["description"])
+    assert f"over {limits.PRESET_BODY_MAX_BYTES // 1024} KiB" in create
+    assert f"({PRESETS_PER_USER_MAX} live presets)" in create
+    assert f"At most {limits.PRESET_JSON_MAX_BYTES // 1024} KiB" in params
+    assert f"nesting depth {limits.PRESET_JSON_MAX_DEPTH} and {KEYS_MAX} keys" in params
+    assert f"{limits.BUNDLE_IMPORT_MAX_BYTES // (1024 * 1024)} MiB of preset JSON" in bundle

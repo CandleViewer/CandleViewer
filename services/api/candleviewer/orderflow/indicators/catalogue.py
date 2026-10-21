@@ -633,3 +633,11 @@ SERVER_DEFINITIONS: Final[Mapping[str, IndicatorDef]] = MappingProxyType(
 def default_catalogue() -> IndicatorCatalogue:
     """A fresh catalogue of the 28 v1 indicators, in ADR-0034's table order."""
     return IndicatorCatalogue(V1_INDICATORS)
+
+
+def json_params(params: Mapping[str, Param]) -> dict[str, JsonValue]:
+    """`validate_params`' output as JSON values, as an indicator preset stores it (E13-T03): an
+    enum as its string, an integral number as an integer and a fractional one as the float whose
+    shortest repr it is. Exact: a fractional value came in as that float, or is a bound or a
+    default, so reading it back through `validate_params` gives the same `Decimal`."""
+    return {name: v if isinstance(v, str) else _json_number(v) for name, v in params.items()}

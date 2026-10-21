@@ -320,7 +320,9 @@ class LayoutPaneIn(BaseModel):
             errs.append(
                 (("chart_template_id",), "chart_template_not_found", "No such chart template")
             )
-        if self.indicator_preset_ids:  # D7: refused until E13-T03
+        # D7: refused until panes resolve preset references; the preset store (E13-T03) does
+        # not lift it (22 `LayoutPaneInput.indicator_preset_ids`).
+        if self.indicator_preset_ids:
             errs.append(
                 (
                     ("indicator_preset_ids",),

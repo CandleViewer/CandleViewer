@@ -167,6 +167,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             getattr(app.state, "alert_gauge_task", None),
             getattr(app.state, "drawings_purge_task", None),
             getattr(app.state, "workspaces_purge_task", None),
+            getattr(app.state, "indicator_presets_gauge", None),  # E13-T03: its startup read
             getattr(app.state, "incidents_purge_task", None),  # E42-T05
             getattr(app.state, "incidents_open_gauge", None),  # E42-T05 (#966 BK-15)
             getattr(app.state, "users_purge_task", None),  # E42-T10: the anonymisation reaper

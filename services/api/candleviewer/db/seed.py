@@ -14,6 +14,10 @@ Not run automatically by any migration — Sec.9.3 rule 5 explicitly separates
 schema migrations from data loading ("No data migrations inside schema
 migrations beyond seed/lookup rows... bulk backfills are idempotent, resumable
 batch jobs"); this loader is that job for the RBAC seed specifically.
+
+`upsert_builtin_indicator_presets` (E13-T03) re-runs the Sec.10.5 built-in
+indicator presets that `0040_indicator_presets` seeds, with the same rows and
+the same `ON CONFLICT DO NOTHING`, so a re-run is a no-op.
 """
 
 from __future__ import annotations
@@ -24,6 +28,8 @@ from typing import Any, TypedDict
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
+
+from candleviewer.db.builtin_indicator_presets import BUILTIN_PRESETS
 
 _RBAC_SEED_PATH = Path(__file__).resolve().parents[1] / "auth" / "rbac_seed.json"
 
@@ -106,3 +112,30 @@ async def upsert_roles_and_permissions(conn: AsyncConnection) -> None:
                 ),
                 {"role_name": role_name, "codes": list(codes)},
             )
+
+
+#: Revision `0040_indicator_presets`'s seed statement for one row (21 Sec.10.5).
+_BUILTIN_PRESET_INSERT = sa.text(
+    "INSERT INTO indicator_presets (id, owner_user_id, indicator_code, name, params, style, "
+    "pane_target, is_builtin, is_favourite) VALUES (CAST(:id AS uuid), NULL, :indicator_code, "
+    ":name, CAST(:params AS jsonb), '{}'::jsonb, :pane_target, true, false) "
+    "ON CONFLICT DO NOTHING"
+)
+
+
+async def upsert_builtin_indicator_presets(conn: AsyncConnection) -> None:
+    """Idempotently insert the 18 built-in indicator presets (E13-T03), exactly as revision
+    `0040_indicator_presets` seeds them: a row already there, or one whose name a live preset
+    of the built-in namespace holds, is left as it is (`ON CONFLICT DO NOTHING`), so a re-run
+    inserts nothing and changes no `updated_at`."""
+    for preset in BUILTIN_PRESETS:
+        await conn.execute(
+            _BUILTIN_PRESET_INSERT,
+            {
+                "id": preset.id,
+                "indicator_code": preset.indicator_code,
+                "name": preset.name,
+                "params": json.dumps(dict(preset.params)),
+                "pane_target": preset.pane_target,
+            },
+        )

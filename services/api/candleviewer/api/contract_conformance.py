@@ -39,10 +39,11 @@ OPENAPI_SPEC_RELPATH = "docs/plan/22-api-openapi.yaml"
 CONTRACT_SUBSET_PACKAGE = "candleviewer.api._generated"
 CONTRACT_SUBSET_RESOURCE = "contract_subset.json"
 
-#: Routers that read raw request bodies (#2551): drawings (E14-T01) and workspaces (E15-T01),
-#: whose router also serves `/layout-presets` (the YAML groups it with `/workspaces*`). The
-#: subset carries their full contract path items, so the app can publish those in its OpenAPI.
-RAW_BODY_PREFIXES = ("/drawings", "/workspaces", "/layout-presets")
+#: Routers that read raw request bodies (#2551): drawings (E14-T01), workspaces (E15-T01),
+#: whose router also serves `/layout-presets` (the YAML groups it with `/workspaces*`), and
+#: indicator presets (E13-T03). The subset carries their full contract path items, so the app
+#: can publish those in its OpenAPI.
+RAW_BODY_PREFIXES = ("/drawings", "/workspaces", "/layout-presets", "/indicator-presets")
 
 # Routes the app serves that are intentionally outside the REST contract
 # (operational/observability endpoints, not product API surface).

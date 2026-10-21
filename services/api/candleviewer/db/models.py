@@ -1882,6 +1882,54 @@ layout_panes = Table(
     Index("ix_lp_symbol", "symbol", postgresql_where=text("symbol IS NOT NULL")),
 )
 
+#: `indicator_presets` (E13-T03, revision 0040_indicator_presets): 21 Sec.3.8.4 with its four
+#: added CHECKs; the 18 built-ins are seeded by the revision (`db/builtin_indicator_presets.py`).
+indicator_presets = Table(
+    "indicator_presets",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("owner_user_id", ForeignKey("users.id", ondelete="CASCADE")),  # NULL = built-in
+    Column("indicator_code", Text, nullable=False),
+    Column("name", Text, nullable=False),
+    Column("params", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("style", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("pane_target", Text, nullable=False, server_default=text("'overlay'")),
+    Column("is_builtin", Boolean, nullable=False, server_default=text("false")),
+    Column("is_favourite", Boolean, nullable=False, server_default=text("false")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("deleted_at", TIMESTAMP(timezone=True)),
+    CheckConstraint("pane_target IN ('overlay','subpane')", name="ip_target"),
+    CheckConstraint("indicator_code ~ '^[a-z0-9_]{2,32}$'", name="ip_code"),
+    CheckConstraint(
+        "(is_builtin = true AND owner_user_id IS NULL) "
+        "OR (is_builtin = false AND owner_user_id IS NOT NULL)",
+        name="ip_builtin_owner",
+    ),
+    CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="ip_name_len"),
+    CheckConstraint(
+        "jsonb_typeof(params) = 'object' AND octet_length(params::text) <= 4096",
+        name="ip_params_shape",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(style) = 'object' AND octet_length(style::text) <= 4096",
+        name="ip_style_shape",
+    ),
+    Index(
+        "ux_ip_name",
+        text("coalesce(owner_user_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+        "indicator_code",
+        text("lower(name)"),
+        unique=True,
+        postgresql_where=text("deleted_at IS NULL"),
+    ),
+    Index(
+        "ix_ip_fav",
+        "owner_user_id",
+        postgresql_where=text("is_favourite AND deleted_at IS NULL"),
+    ),
+)
+
 #: `settings` (E42-T01, revision 0025_settings): 21-database-schema.md Sec.3.9, `settings` only.
 settings = Table(
     "settings",

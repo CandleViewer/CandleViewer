@@ -1900,6 +1900,34 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
         max_series=11,
     ),
+    # E13-T03: indicator presets, registered by `create_app()` for the router; the gauge is read
+    # at startup and again after each create, delete and import, the counter counts each write
+    # refused for its target (audited `rbac.denied` too).
+    _s(
+        "indicator_presets_total",
+        "gauge",
+        "presets",
+        ("builtin",),
+        "Live (not soft-deleted) indicator presets of all owners by builtin (true|false), read "
+        "at startup and again after each create, delete and import (E13-T03).",
+        "dashboard only",
+        _P,
+        "E13",
+        max_series=2,
+    ),
+    _s(
+        "indicator_preset_denied_total",
+        "counter",
+        "requests",
+        ("reason",),
+        "Indicator-preset writes refused for their target: not_owner (another user's preset, "
+        "answered 404) or builtin_immutable (a built-in, 403), each audited rbac.denied "
+        "(E13-T03, E13 threat model section 10).",
+        "sustained not_owner = preset id probing (IR-01)",
+        _P,
+        "E13",
+        max_series=2,
+    ),
     _s(
         "cv_outbox_depth",
         "gauge",
@@ -3574,7 +3602,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuditSinkRefusing (any; ticket, page pending #2701)",
         _L,
         "E09",
-        max_series=35,
+        max_series=36,
         exported=True,
     ),
     _s(

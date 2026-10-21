@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from candleviewer.bars.limits import MAX_TAIL
 from candleviewer.orderflow.indicators import limits
+from candleviewer.storage.repositories import indicator_presets as repo
 from candleviewer.ws.topics import FAMILIES
 
 FRACTIONAL = ("MULTIPLIER", "DEVIATION_PCT", "PSAR_ACCELERATION")
@@ -81,7 +82,36 @@ def test_limits_max_points_is_the_ws_history_cap_and_the_series_store_tail() -> 
     assert limits.MAX_POINTS == MAX_TAIL == FAMILIES["indicators"].options["history"].hi
 
 
+#: E13-T03: a saved preset's bounds (SR-E13-06: params and style 4 KiB, depth 4, 64 keys;
+#: SR-E13-07: 500 live presets per user, a bundle import of at most 200 presets and 1 MiB) and
+#: its name and body caps.
+PRESET_LIMITS = {
+    "PRESET_JSON_MAX_BYTES": 4096,
+    "PRESET_JSON_MAX_DEPTH": 4,
+    "PRESET_JSON_MAX_KEYS": 64,
+    "PRESET_NAME_MAX": 80,
+    "PRESET_BODY_MAX_BYTES": 16 * 1024,
+    "PRESETS_PER_USER_MAX": 500,
+    "BUNDLE_IMPORT_PRESETS_MAX": 200,
+    "BUNDLE_IMPORT_MAX_BYTES": 1024 * 1024,
+}
+
+
+def test_limits_preset_bounds_are_pinned_per_sr_e13_06_and_07() -> None:
+    assert {name: getattr(limits, name) for name in PRESET_LIMITS} == PRESET_LIMITS
+    assert all(type(getattr(limits, name)) is int for name in PRESET_LIMITS)
+
+
+def test_limits_the_storage_copies_of_the_preset_caps_are_equal() -> None:
+    """`storage` may not import `orderflow`, so the repository holds copies (as drawings do)."""
+    assert (repo.MAX_LIVE_PRESETS, repo.MAX_IMPORT_PRESETS, repo.NAME_MAX) == (
+        limits.PRESETS_PER_USER_MAX,
+        limits.BUNDLE_IMPORT_PRESETS_MAX,
+        limits.PRESET_NAME_MAX,
+    )
+
+
 def test_limits_module_holds_exactly_the_pinned_names() -> None:
     fractional = {f"{prefix}_{part}" for prefix in FRACTIONAL for part in ("MIN", "MAX", "STEP")}
-    pinned = {"PERIOD_MIN", "PERIOD_MAX", *fractional, *CAPS}
+    pinned = {"PERIOD_MIN", "PERIOD_MAX", *fractional, *CAPS, *PRESET_LIMITS}
     assert {n for n in vars(limits) if n.isupper()} == pinned
