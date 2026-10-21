@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import fields
 from datetime import UTC, datetime
 from decimal import Context, Decimal
@@ -30,6 +30,7 @@ from candleviewer.accounts.trade_groups import (
     GROUP_FIELD_OF,
     LEG_FIELD_OF,
     MAX_NOTE_CHARS,
+    MAX_TS_US,
     GroupReplay,
     GroupUpdate,
     LegDraft,
@@ -162,6 +163,10 @@ def _draft(**over: Any) -> TradeGroupDraft:
 
 def _leg_draft(**over: Any) -> LegDraft:
     return LegDraft.model_validate(_LEG_DRAFT_BASE | over)
+
+
+def _leg_update(**changes: Any) -> LegUpdate:
+    return LegUpdate.model_validate(changes)
 
 
 def _leg_row(**over: Any) -> TradeGroupLegRow:
@@ -560,13 +565,58 @@ def test_a_draft_names_its_failure_policy() -> None:
             assert group_values(draft).leg_failure_policy == policy
 
 
-def test_leg_draft_requires_a_stop_unless_rejected_cancelled_or_failed() -> None:
-    for status in _LEG_STATUSES:
-        if status in NO_STOP_LEG_STATUSES:
-            assert _leg_draft(status=status, resolved_sl_price=None).resolved_sl_price is None
-        else:
-            with pytest.raises(ValidationError, match="tgl_sl_px"):
-                _leg_draft(status=status, resolved_sl_price=None)
+_WriteCase = tuple[str, Callable[..., BaseModel], list[dict[str, Any]], list[dict[str, Any]]]
+#: (rule, build, valid changes, invalid changes): the write models hold these CHECKs' edges too
+#: (SR-E28-08: every layer), so a value the table would refuse never reaches a statement.
+#: `LegUpdate` holds the half of `tgl_filled_rng` it can see, `filled_qty >= 0`: the other half
+#: needs the leg's `target_qty`, which an update does not carry.
+_WRITE_CHECK_CASES: list[_WriteCase] = [
+    (
+        "tgl_seq", _leg_draft,
+        [{"sequence_no": 0}, {"sequence_no": 100}],
+        [{"sequence_no": -1}, {"sequence_no": 101}],
+    ),
+    (
+        "tgl_qty_pos", _leg_draft,
+        [{"target_qty": _TINY}],
+        [{"target_qty": Decimal("0")}, {"target_qty": -_TINY}],
+    ),
+    ("tgl_filled_rng", _leg_update, [{"filled_qty": Decimal("0")}], [{"filled_qty": -_TINY}]),
+    ("tgl_fees_nonneg", _leg_update, [{"fees_paid": Decimal("0")}], [{"fees_paid": -_TINY}]),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("rule", "build", "valid", "invalid"),
+    _WRITE_CHECK_CASES,
+    ids=[case[0] for case in _WRITE_CHECK_CASES],
+)
+def test_the_write_models_repeat_the_checks_at_their_edges(
+    rule: str,
+    build: Callable[..., BaseModel],
+    valid: list[dict[str, Any]],
+    invalid: list[dict[str, Any]],
+) -> None:
+    """Each edge passes and the first value past it fails, on `LegDraft` and `LegUpdate`."""
+    assert rule in _checks(models.trade_group_legs)
+    for changes in valid:
+        build(**changes)
+    for changes in invalid:
+        with pytest.raises(ValidationError):
+            build(**changes)
+
+
+@pytest.mark.parametrize("status", sorted(NO_STOP_LEG_STATUSES))
+def test_a_rejected_cancelled_or_failed_leg_draft_may_go_without_a_stop(
+    status: LegStatus,
+) -> None:
+    assert _leg_draft(status=status, resolved_sl_price=None).resolved_sl_price is None
+
+
+@pytest.mark.parametrize("status", [s for s in _LEG_STATUSES if s not in NO_STOP_LEG_STATUSES])
+def test_any_other_leg_draft_needs_a_stop(status: LegStatus) -> None:
+    with pytest.raises(ValidationError, match="tgl_sl_px"):
+        _leg_draft(status=status, resolved_sl_price=None)
 
 
 @pytest.mark.parametrize("mode", _MODES)
@@ -671,6 +721,57 @@ def test_every_leg_update_field_is_a_patch_column() -> None:
 def test_times_round_trip_exactly(us: int) -> None:
     moment = from_us(us)
     assert moment.tzinfo is UTC and to_us(moment) == us
+
+
+def test_the_writer_time_bound_is_the_last_instant_a_datetime_holds() -> None:
+    """`MAX_TS_US` is 9999-12-31T23:59:59.999999Z exactly: `from_us` converts it, and raises
+    `OverflowError` one microsecond later."""
+    last = datetime.max.replace(tzinfo=UTC)
+    assert MAX_TS_US == to_us(last)
+    assert from_us(MAX_TS_US) == last
+    with pytest.raises(OverflowError):
+        from_us(MAX_TS_US + 1)
+
+
+#: The time fields of the two updates.
+_UPDATE_TIMES: list[tuple[type[BaseModel], str]] = [
+    (LegUpdate, "native_sl_confirmed_at"),
+    (LegUpdate, "submitted_at"),
+    (LegUpdate, "closed_at"),
+    (GroupUpdate, "submitted_at"),
+    (GroupUpdate, "opened_at"),
+    (GroupUpdate, "closed_at"),
+]
+_UPDATE_TIME_IDS = [f"{model.__name__}.{field}" for model, field in _UPDATE_TIMES]
+#: The patch builder each update feeds.
+_PATCH_OF: Mapping[type[BaseModel], Callable[[Any], Any]] = {
+    LegUpdate: leg_patch,
+    GroupUpdate: group_patch,
+}
+
+
+@pytest.mark.parametrize("us", [0, MAX_TS_US], ids=["epoch", "last-instant"])
+@pytest.mark.parametrize(("model", "field"), _UPDATE_TIMES, ids=_UPDATE_TIME_IDS)
+def test_an_update_takes_a_time_from_the_epoch_to_the_last_instant(
+    model: type[BaseModel], field: str, us: int
+) -> None:
+    patch = _PATCH_OF[model](model.model_validate({field: us}))
+    assert to_us(getattr(patch, field)) == us
+
+
+@pytest.mark.parametrize(
+    "us",
+    [-1, MAX_TS_US + 1, 10**18],
+    ids=["before-the-epoch", "after-the-last-instant", "far-after"],
+)
+@pytest.mark.parametrize(("model", "field"), _UPDATE_TIMES, ids=_UPDATE_TIME_IDS)
+def test_an_update_refuses_a_time_outside_that_range(
+    model: type[BaseModel], field: str, us: int
+) -> None:
+    """Past the last instant `from_us` raises `OverflowError` out of the patch builder, so the
+    update refuses the time first, as a `ValidationError`."""
+    with pytest.raises(ValidationError, match=field):
+        model.model_validate({field: us})
 
 
 # -- the leg snapshot (SR-E28-07, D-10) ------------------------------------------------------------
@@ -971,6 +1072,8 @@ def test_take_profit_leg_is_reduce_only_and_a_ladder_sums_to_at_most_one_exactly
 )  # fmt: skip
 def test_aggregate_invariants(changes: dict[str, Any]) -> None:
     assert TradeGroupAggregate.model_validate(_AGGREGATE_BASE)
+    full = _AGGREGATE_BASE | {"filled_qty": _AGGREGATE_BASE["target_qty"]}
+    assert TradeGroupAggregate.model_validate(full)  # fully filled: filled_qty == target_qty
     with pytest.raises(ValidationError):
         TradeGroupAggregate.model_validate(_AGGREGATE_BASE | changes)
 
@@ -1051,6 +1154,14 @@ def test_shows_private_fields_for_owner_and_creator_only() -> None:
         record=TradeGroupWithLegs(group=group, legs=()), shows_private_fields=False
     )
     assert scoped.shows_private_fields is False
+
+
+def test_a_scoped_group_must_say_whether_it_shows_private_fields() -> None:
+    """SR-E28-21: the flag has no default, so a projection that forgets it fails instead of
+    showing `created_by`, `note` and `client_group_ref`."""
+    record = TradeGroupWithLegs(group=_group(), legs=())
+    with pytest.raises(ValidationError, match=r"shows_private_fields\s+Field required"):
+        ScopedTradeGroup.model_validate({"record": record})
 
 
 def test_repr_hides_note_ref_fingerprint_and_rejection_text() -> None:

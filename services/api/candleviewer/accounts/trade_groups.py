@@ -139,6 +139,12 @@ Figure = Annotated[Decimal, BeforeValidator(_refuse_float)]
 Note = Annotated[str, Field(max_length=MAX_NOTE_CHARS), AfterValidator(refuse_unstorable_text)]
 #: The request fingerprint `sha256_hex` holds: 64 lower-case hex digits.
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+#: The microseconds of 9999-12-31T23:59:59.999999Z, the last instant a `datetime` holds.
+MAX_TS_US: Final = 253_402_300_799_999_999
+#: A time a writer sets: epoch microseconds from 1970-01-01 up to `MAX_TS_US`, so `from_us` always
+#: converts it. A time beyond that range is a `ValidationError` at the update, never an
+#: `OverflowError` out of the patch builder.
+WriterTs = Annotated[TsUs, Field(ge=0, le=MAX_TS_US)]
 
 #: 24 Sec.1.2's labels to the columns' (`tg_side`, `tg_entrytype`, `tg_trigby`), each a bijection
 #: with its inverse below (pinned by a unit test).
@@ -406,9 +412,9 @@ class LegDraft(BaseModel):
 class LegUpdate(BaseModel):
     """What a leg update sets, as absolute values: `None` leaves a field as it is, and at least
     one field is set. `submitted_at` is set once (the store keeps a time already stored). A
-    confirmed native stop needs its time (`tgl_sl_conf`). No write-once, create-only or sized
-    column is here: amending `resolved_*`, `target_qty`, `risk_usd` or `sequence_no` is
-    E34-S03's."""
+    confirmed native stop needs its time (`tgl_sl_conf`). Its times are `WriterTs`, so `from_us`
+    always converts them. No write-once, create-only or sized column is here: amending
+    `resolved_*`, `target_qty`, `risk_usd` or `sequence_no` is E34-S03's."""
 
     model_config = _FROZEN
 
@@ -419,11 +425,11 @@ class LegUpdate(BaseModel):
     realised_pnl: Money | None = None
     fees_paid: Annotated[Money, Field(ge=0)] | None = None
     native_sl_confirmed: bool | None = None
-    native_sl_confirmed_at: TsUs | None = None
+    native_sl_confirmed_at: WriterTs | None = None
     rejection_code: Code | None = Field(default=None, repr=False)
     rejection_message: str | None = Field(default=None, repr=False)
-    submitted_at: TsUs | None = None
-    closed_at: TsUs | None = None
+    submitted_at: WriterTs | None = None
+    closed_at: WriterTs | None = None
 
     @model_validator(mode="after")
     def _rules(self) -> LegUpdate:
@@ -437,14 +443,15 @@ class LegUpdate(BaseModel):
 class GroupUpdate(BaseModel):
     """What a group update sets, as absolute values: `None` leaves a field as it is, and at least
     one field is set. `submitted_at` and `opened_at` are set once (the store keeps a time already
-    stored), and `closed_at` is not before `opened_at` when both are given (`tg_times`)."""
+    stored), and `closed_at` is not before `opened_at` when both are given (`tg_times`). Its
+    times are `WriterTs`, so `from_us` always converts them."""
 
     model_config = _FROZEN
 
     status: TradeGroupStatus | None = None
-    submitted_at: TsUs | None = None
-    opened_at: TsUs | None = None
-    closed_at: TsUs | None = None
+    submitted_at: WriterTs | None = None
+    opened_at: WriterTs | None = None
+    closed_at: WriterTs | None = None
 
     @model_validator(mode="after")
     def _rules(self) -> GroupUpdate:

@@ -2048,7 +2048,7 @@ class TradeGroupLeg(BaseModel):                  # one trade_group_legs row (21 
     risk_usd: Notional | None
     realised_pnl: Notional
     fees_paid: Notional                          # >= 0
-    rejection_code: str | None                   # taxonomy code, 1..64, redacted at insert; never logged
+    rejection_code: str | None                   # taxonomy code (writers bound it to 1..64; read as stored), redacted at insert; never logged
     rejection_message: str | None                # exchange text, redacted at insert; never logged
     submitted_at: TsUs | None
     closed_at: TsUs | None
