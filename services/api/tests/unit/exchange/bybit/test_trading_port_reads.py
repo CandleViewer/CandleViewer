@@ -154,6 +154,28 @@ async def test_executions_walk_every_window_of_the_range() -> None:
     assert venue.queries()[0]["startTime"] == str((NOW_US - 10 * DAY_US) // 1000)
 
 
+async def test_every_window_of_an_execution_range_keeps_its_own_fills() -> None:
+    """Another fill in each of the three weeks (the transcribed row with its `execId` changed, a
+    test input): a walk that kept only the last window's fills would lose the earlier weeks'
+    from a reconciliation after a long outage."""
+    pages = [_last(_rows(EXECUTIONS, execId=f"exec-{n}")) for n in range(3)]
+    venue = Venue().on("/v5/execution/list", *pages)
+    fills = await make_port(venue).executions(account(), NOW_US - 15 * DAY_US, NOW_US)
+    assert len(venue.sent) == 3
+    assert [f.exec_id for f in fills] == ["exec-0", "exec-1", "exec-2"]
+
+
+async def test_every_window_of_a_history_range_keeps_its_own_orders() -> None:
+    """Another order in each of the three weeks (the transcribed row with its `orderId`
+    changed, a test input): a walk that kept only the last window's orders would lose the
+    earlier weeks' from a lookup or a reconciliation."""
+    pages = [_last(_rows(HISTORY, orderId=f"order-{n}")) for n in range(3)]
+    venue = Venue().on("/v5/order/history", *pages)
+    orders = await make_port(venue).order_history(account(), start=NOW_US - 15 * DAY_US, end=NOW_US)
+    assert len(venue.sent) == 3
+    assert [o.exchange_order_id for o in orders] == ["order-0", "order-1", "order-2"]
+
+
 async def test_a_range_longer_than_the_venue_keeps_is_refused_unsent() -> None:
     venue = Venue()
     with pytest.raises(ValueError, match="longer than the exchange keeps"):
