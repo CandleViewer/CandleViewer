@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.oms.errors import (
     INTERNAL_ERROR,
     PROBLEMS,
@@ -25,17 +26,23 @@ from candleviewer.oms.errors import (
     RULE_SIZING_MODE_UNSUPPORTED,
     RULE_STOP_UNIT_UNSUPPORTED,
     AccountScopeDenied,
+    AnchorTaken,
+    AuditNotDurable,
     ClockDriftBlocked,
     DuplicateOrderLinkId,
     EnvironmentMismatch,
     ExchangeRejected,
+    ExchangeUnavailable,
     FieldError,
+    IdempotencyInFlight,
     IdempotencyKeyReuse,
     InvalidOrderLinkId,
     LotSizeViolation,
     OmsError,
+    OrderEntryRefused,
     OrderInvalid,
     OrderLinkIdExhausted,
+    OrderMachinesFull,
     OrderNotAmendable,
     OrderNotFound,
     OrderRefused,
@@ -43,8 +50,11 @@ from candleviewer.oms.errors import (
     RateBudgetExceeded,
     RiskRefused,
     SessionNotArmed,
+    StopRequestInFlight,
+    StopRequestPending,
     StopUnitUnsupported,
     StoreUnavailable,
+    SubmissionRefused,
     TickSizeViolation,
     TradingDisabled,
     VersionConflict,
@@ -71,7 +81,10 @@ _RULES = (
     "sizing_mode_unsupported",
 )
 
-#: The plan's table and R12, written out independently of `PROBLEMS`.
+#: An order-entry gate refusal (#3382), as the shared kernel builds one.
+_GATE = OrderEntryRefusal("maintenance", "Order entry is paused for maintenance.")
+
+#: The plan's table and R12, and slice 2b's rows, written out independently of `PROBLEMS`.
 _EXPECTED: list[tuple[OmsError, int, str, bool, bool]] = [
     (OrderInvalid(), 400, "validation_failed", False, False),
     (StopUnitUnsupported(), 400, "validation_failed", False, False),
@@ -90,6 +103,8 @@ _EXPECTED: list[tuple[OmsError, int, str, bool, bool]] = [
     (SessionNotArmed(), 403, "session_not_armed", False, False),
     (OrderNotFound(), 404, "not_found", False, False),
     (IdempotencyKeyReuse(), 409, "idempotency_key_reuse", False, False),
+    (IdempotencyInFlight(retry_after_s=1), 409, "idempotency_in_flight", True, False),
+    (StopRequestPending(retry_after_s=1), 409, "stop_request_in_flight", True, False),
     (VersionConflict(), 412, "version_conflict", False, False),
     (OrderNotAmendable(), 422, "order_not_amendable", False, False),
     (RateBudgetExceeded(retry_after_s=2), 429, "exchange_rate_limited", True, False),
@@ -101,9 +116,13 @@ _EXPECTED: list[tuple[OmsError, int, str, bool, bool]] = [
         False,
         True,
     ),
+    (OrderMachinesFull("1000 live machines"), 500, "internal_error", False, True),
     (ExchangeRejected(ret_code=110007), 502, "exchange_error", False, False),
     (ClockDriftBlocked(retry_after_s=5), 503, "clock_drift", True, False),
     (StoreUnavailable(), 503, "store_unavailable", False, False),
+    (ExchangeUnavailable(retry_after_s=5), 503, "exchange_unavailable", True, False),
+    (AuditNotDurable("the audit did not land"), 503, "audit_unavailable", False, False),
+    (OrderEntryRefused(_GATE), 403, "trading_disabled", False, False),
 ]
 
 
@@ -124,13 +143,20 @@ def test_every_answer_is_a_registered_code_with_its_registered_status() -> None:
 
 
 def test_the_table_has_one_row_per_error_class_and_nothing_else() -> None:
-    by_inheritance = {StopUnitUnsupported, OrderPlacementRefused}  # answered by their base class
+    by_inheritance = {StopUnitUnsupported, OrderPlacementRefused, OrderEntryRefused}  # base's
     assert set(PROBLEMS) == {type(row[0]) for row in _EXPECTED} - by_inheritance
 
 
 @pytest.mark.parametrize(
     "error",
-    [InvalidOrderLinkId("x"), DuplicateOrderLinkId("cvd-x"), OmsError("unmapped")],
+    [
+        InvalidOrderLinkId("x"),
+        DuplicateOrderLinkId("cvd-x"),
+        OmsError("unmapped"),
+        AnchorTaken("ux_ia_principal_ref"),  # the pipeline answers these: one that escapes it
+        StopRequestInFlight("in flight"),  # is a fault
+        SubmissionRefused("account_not_live"),
+    ],
 )
 def test_an_error_the_table_does_not_name_is_an_internal_error(error: OmsError) -> None:
     assert problem_for(error) == INTERNAL_ERROR == Problem(500, "internal_error")
@@ -148,7 +174,16 @@ def test_exchange_rejected_cannot_carry_the_exchanges_text() -> None:
     assert str(rejected) == rejected.detail
 
 
-@pytest.mark.parametrize("error", [RateBudgetExceeded, ClockDriftBlocked])
+@pytest.mark.parametrize(
+    "error",
+    [
+        RateBudgetExceeded,
+        ClockDriftBlocked,
+        IdempotencyInFlight,
+        StopRequestPending,
+        ExchangeUnavailable,
+    ],
+)
 @pytest.mark.parametrize("seconds", [0, -1])
 def test_a_retry_after_answer_needs_a_positive_delay(error: Any, seconds: int) -> None:
     with pytest.raises(ValueError, match="retry_after_s"):
@@ -204,6 +239,9 @@ _DETAILS: dict[type[OrderRefused], str] = {
     ExchangeRejected: "The exchange refused the order.",
     ClockDriftBlocked: "Order entry is paused until the clock is back in sync.",
     StoreUnavailable: "Orders cannot be recorded right now, so none is sent.",
+    IdempotencyInFlight: "A request with this Idempotency-Key is still being processed.",
+    StopRequestPending: "Send the entry again once the position's stop request is answered.",
+    ExchangeUnavailable: "The exchange did not answer, so the order was not sent.",
 }
 
 
@@ -224,3 +262,19 @@ def test_environment_mismatch_names_both_environments() -> None:
     mismatch = EnvironmentMismatch(order_environment="demo", route_environment="live")
     assert (mismatch.order_environment, mismatch.route_environment) == ("demo", "live")
     assert str(mismatch) == "an order for demo met a route to live (C-2.11)"
+
+
+def test_the_gates_refusal_keeps_its_reason_and_its_own_detail() -> None:
+    """`TradingDisabledProblem`: the gate's `reason` member, and its detail, CandleViewer's own."""
+    refused = OrderEntryRefused(_GATE)
+    assert (refused.reason, refused.detail, refused.errors) == (
+        "maintenance",
+        "Order entry is paused for maintenance.",
+        (),
+    )
+    assert isinstance(refused, TradingDisabled) and str(refused) == refused.detail
+
+
+@pytest.mark.parametrize("code", ["idempotency_in_flight", "stop_request_in_flight"])
+def test_place_order_names_each_conflict_it_answers(code: str) -> None:
+    assert f"`409 {code}`" in _PLACE_ORDER

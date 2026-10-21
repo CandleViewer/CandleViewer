@@ -16,6 +16,10 @@ Slice 2b: `oms/fakes.py` implements the three stores in memory for the OMS's uni
 the same contract as the Postgres adapters (`tests/unit/oms/submission_contract.py`). It is a test
 double: it holds no principal and checks none, as the adapters do not, and no composition root
 wires it (slice 3's wiring binds the Postgres adapters), so it opens no route to them.
+`oms/idempotency.py` reads and decides anchors for the principal it is handed, which slice 3's
+route takes from the authenticated session after its admission (scope and arm, 22 Idempotency),
+never from the request: `find` is keyed by that principal, so another's key reads as missing
+(SR-E29-07), and an anchor is decided only by the id that read returned.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ NAMES = re.compile(
 ALLOWED = frozenset(
     {
         "oms/fakes.py",
+        "oms/idempotency.py",
         "oms/order_steps.py",
         "oms/repository.py",
         "storage/repositories/idempotency_anchors.py",

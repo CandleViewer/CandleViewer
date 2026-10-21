@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Final
 
+from candleviewer.domain.order_entry import OrderEntryRefusal, RefusalReason
+
 if TYPE_CHECKING:  # the closed vocabularies only: no runtime import of the storage port
     from candleviewer.storage.repositories.submissions import AnchorConstraint, SubmissionRefusal
 
@@ -260,9 +262,19 @@ class RiskRefused(OrderRefused):
 
 class TradingDisabled(OrderRefused):
     """`trading_disabled` with no `reason`: live trading not enabled, the B18 kill switch or the
-    read-only gate. The order-entry gate's refusal carries a `reason` and is the API's (#3382)."""
+    read-only gate. The order-entry gate's refusal carries a `reason` (`OrderEntryRefused`)."""
 
     default_detail = "Order entry is disabled."
+
+
+class OrderEntryRefused(TradingDisabled):
+    """The order-entry gate's refusal at the OMS intake (#3382, ruling R1's second check):
+    `trading_disabled` with the gate's `reason` and `detail`, which are CandleViewer's own text
+    (`OrderEntryRefusal`), as the API renders them (`TradingDisabledProblem`)."""
+
+    def __init__(self, refusal: OrderEntryRefusal) -> None:
+        super().__init__(refusal.detail)
+        self.reason: RefusalReason = refusal.reason
 
 
 class SessionNotArmed(OrderRefused):
@@ -277,6 +289,31 @@ class OrderNotFound(OrderRefused):
 
 class IdempotencyKeyReuse(OrderRefused):
     default_detail = "The Idempotency-Key was first used with another request."
+
+
+class IdempotencyInFlight(OrderRefused):
+    """The key's first request is still being processed: its anchor is undecided within
+    `CV_OMS_INFLIGHT_STUCK_S` of its creation (21 Sec.3.3.10 "Repeats"). The repeat sends
+    nothing; `retry_after_s` is the answer's `Retry-After`."""
+
+    default_detail = "A request with this Idempotency-Key is still being processed."
+
+    def __init__(self, *, retry_after_s: int) -> None:
+        super().__init__()
+        self.retry_after_s = _positive_delay(retry_after_s)
+
+
+class StopRequestPending(OrderRefused):
+    """`stop_request_in_flight`: the entry's stop request met one still holding its position, in
+    flight past the bounded retry or waiting for the complete read (21 Sec.3.3.11), so nothing
+    was recorded or sent and the key is not bound: after `Retry-After` the same request is a
+    first submission (#4006's ruling on 2a-Q4)."""
+
+    default_detail = "Send the entry again once the position's stop request is answered."
+
+    def __init__(self, *, retry_after_s: int) -> None:
+        super().__init__()
+        self.retry_after_s = _positive_delay(retry_after_s)
 
 
 class VersionConflict(OrderRefused):
@@ -329,6 +366,18 @@ class StoreUnavailable(OrderRefused):
     default_detail = "Orders cannot be recorded right now, so none is sent."
 
 
+class ExchangeUnavailable(OrderRefused):
+    """A read the order needs before it is recorded failed or did not answer in time (a
+    reduce-only order's position, SR-E29-01), so nothing was recorded or sent; `retry_after_s` is
+    the answer's `Retry-After`."""
+
+    default_detail = "The exchange did not answer, so the order was not sent."
+
+    def __init__(self, *, retry_after_s: int) -> None:
+        super().__init__()
+        self.retry_after_s = _positive_delay(retry_after_s)
+
+
 class EnvironmentMismatch(OmsError):
     """C-2.11: an order built for one environment met a route to another, a demo account's order
     and a live client among them. Never sent; an invariant broken, so it pages."""
@@ -361,9 +410,10 @@ class Problem:
 #: A fault no row names: the API's redacted 500.
 INTERNAL_ERROR: Final = Problem(500, "internal_error")
 
-#: The one mapping table (the #913 plan's taxonomy with rulings R4, R5 and R12). A class answers
-#: with its own row or its nearest base's (`problem_for`); `OrderPlacementRefused` (`validator`)
-#: is a `TradingDisabled` and `StopUnitUnsupported` an `OrderInvalid`.
+#: The one mapping table (the #913 plan's taxonomy with rulings R4, R5 and R12, and the rows of
+#: slice 2b's pipeline). A class answers with its own row or its nearest base's (`problem_for`);
+#: `OrderPlacementRefused` (`validator`) and `OrderEntryRefused` are `TradingDisabled`s, and
+#: `StopUnitUnsupported` an `OrderInvalid`. A refusal with `Retry-After` carries `retry_after_s`.
 PROBLEMS: Final[Mapping[type[OmsError], Problem]] = MappingProxyType(
     {
         OrderInvalid: Problem(400, "validation_failed"),
@@ -375,14 +425,19 @@ PROBLEMS: Final[Mapping[type[OmsError], Problem]] = MappingProxyType(
         SessionNotArmed: Problem(403, "session_not_armed"),
         OrderNotFound: Problem(404, "not_found"),
         IdempotencyKeyReuse: Problem(409, "idempotency_key_reuse"),
+        IdempotencyInFlight: Problem(409, "idempotency_in_flight", retry_after=True),
+        StopRequestPending: Problem(409, "stop_request_in_flight", retry_after=True),
         VersionConflict: Problem(412, "version_conflict"),
         OrderNotAmendable: Problem(422, "order_not_amendable"),
         RateBudgetExceeded: Problem(429, "exchange_rate_limited", retry_after=True),
         OrderLinkIdExhausted: Problem(500, "internal_error", pages=True),
         EnvironmentMismatch: Problem(500, "internal_error", pages=True),
+        OrderMachinesFull: Problem(500, "internal_error", pages=True),
         ExchangeRejected: Problem(502, "exchange_error"),
         ClockDriftBlocked: Problem(503, "clock_drift", retry_after=True),
         StoreUnavailable: Problem(503, "store_unavailable"),
+        ExchangeUnavailable: Problem(503, "exchange_unavailable", retry_after=True),
+        AuditNotDurable: Problem(503, "audit_unavailable"),
     }
 )
 
