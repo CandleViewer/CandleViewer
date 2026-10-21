@@ -101,6 +101,9 @@ def test_design_workspace_link_still_passes() -> None:
         f"page ids {PAGE_ID}",
         f"Page ID: {PAGE_ID.upper()}",
         f"page id {'-' * 11}{PAGE_ID}",  # exactly 12 separator characters
+        f"Page `{'x' * 60}` · id {PAGE_ID}",  # a 60-character name, the longest allowed
+        f"Page `E42-D02`{' ' * 6}id {PAGE_ID}",  # 6 characters between name and `id`
+        f"Page   `E42-D02` · id {PAGE_ID}",  # 3 blanks between `Page` and the name
         PENPOT,  # the workspace link
     ],
 )
@@ -126,6 +129,18 @@ def test_has_penpot_reference_accepts_link_or_page_id(ref: str) -> None:
         f"board ids `{PAGE_ID}`, page id pending",
         f"page\nid {PAGE_ID}",  # label split over two lines
         f"page id {'-' * 12}{PAGE_ID}",  # 13 separator characters, one too many
+        f"page id TBD {PAGE_ID}",
+        f"page id\n{PAGE_ID}",  # a line break between label and UUID
+        f"page id\r{PAGE_ID}",  # a lone carriage return
+        f"page id{chr(0x0B)}{PAGE_ID}",  # a vertical tab
+        f"page id{chr(0x0C)}{PAGE_ID}",  # a form feed
+        f"page id{chr(0x85)}{PAGE_ID}",  # NEL
+        f"page id{chr(0x2028)}{PAGE_ID}",  # LINE SEPARATOR
+        f"Page `X`\nid {PAGE_ID}",  # a line break between the name and `id`
+        f"Page\n`E42-D02` · id {PAGE_ID}",  # a line break between `Page` and the name
+        f"Page    `E42-D02` · id {PAGE_ID}",  # 4 blanks between `Page` and the name
+        f"Page `{'x' * 61}` · id {PAGE_ID}",  # a 61-character name, one too long
+        f"Page `E42-D02`{' ' * 7}id {PAGE_ID}",  # 7 characters between name and `id`
         f"Page `E42-D02` · id pending (file `{PAGE_ID}`)",
         f"Page `E42-D02` · team id {PAGE_ID}",
         "https://design.penpot.app/",  # a bare host mention is not a workspace link

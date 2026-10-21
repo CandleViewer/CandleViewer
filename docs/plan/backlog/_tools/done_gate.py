@@ -40,17 +40,18 @@ PENPOT_RE = re.compile(
 )
 # Self-hosted Penpot (2026-10-21): design PRs name their page by name + page id, no
 # workspace URL. The label is `page id` / `page_id` / `pageid` / `page-id` / `pageId` /
-# `page ids`, or a backticked name then `id` as in "Page `E42-D02` · id" (up to 6 of
-# space, dot, colon, comma, parenthesis, dash in between). A UUID must follow the label
-# directly: at most 12 separator characters, never a letter, digit, underscore or
-# newline. The page name is not checked. So "page id `<uuid>`" and "page-id=<uuid>"
-# count; "page id pending (file `<uuid>`)", "homepage id <uuid>", "file id <uuid>", a
-# bare UUID or a page name alone do not.
+# `page ids`, or a backticked name then `id` as in "Page `E42-D02` · id" (up to 3
+# blanks before the name; up to 6 of space, dot, colon, comma, parenthesis, dash after
+# it). A UUID must follow the label directly: at most 12 blanks or punctuation marks,
+# never a letter, digit, underscore or line break (CR, VT, FF, NEL, U+2028 included).
+# The page name is not checked. So "page id `<uuid>`" and "page-id=<uuid>" count; "page
+# id pending (file `<uuid>`)", "homepage id <uuid>", "file id <uuid>", a bare UUID or a
+# page name alone do not.
 PENPOT_PAGE_ID_RE = re.compile(
     r"(?<![A-Za-z0-9])page"
     r"(?:[ \t_-]?ids?\b"
-    r"|:?\s*[*_]*`[^`\n]{1,60}`[*_]*[\s\u00b7:,(\u2014\u2013-]{0,6}\bids?\b)"
-    r"[^\w\n]{0,12}"
+    r"|:?[ \t]{0,3}[*_]*`[^`\n]{1,60}`[*_]*[ \u00b7:,(\u2014\u2013-]{0,6}\bids?\b)"
+    r"(?:[ \t]|[^\w\s]){0,12}"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
     re.IGNORECASE,
 )
