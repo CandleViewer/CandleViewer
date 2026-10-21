@@ -2,8 +2,7 @@
 
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 2)
 (design PR: the owner approves under C-10.1; the coordinator reviews)
-**Penpot:** file **CandleViewer DS** (`b564c72c-f31f-81ec-8008-b112c6fdc116`), page `10 Components — Atoms`
-(`https://design.penpot.app/#/workspace?team-id=b564c72c-f31f-81ec-8008-b109a9175d0b&file-id=b564c72c-f31f-81ec-8008-b112c6fdc116&page-id=a4fbc4c3-2c4d-80f4-8008-b1248b9e760f`).
+**Penpot:** page `10 Components — Atoms` (page id `a4fbc4c3-2c4d-80f4-8008-b1248b9e760f`) of the CandleViewer DS file.
 **Slices:** #161 ships as several design PRs. Slice 1 (#3914, `E05-D02.md`) covers actions and selection. This slice
 covers the data display and text atoms: CMP-011 Tag, CMP-012 Badge, CMP-013 Avatar, CMP-018 Divider, CMP-020
 Typography primitives, CMP-021 Link, CMP-024 Sparkline, CMP-025 Avatar Group, CMP-030 Divider-Label, CMP-032
@@ -70,7 +69,7 @@ the Penpot-only layout workarounds and Penpot's own variant-set chrome.
 
 ## 2. How to review
 
-1. Open the page link above and switch the colour theme (`theme/dark` → `light` → `high-contrast`) and the density
+1. Open page `10 Components — Atoms` (its page id is in the header) and switch the colour theme (`theme/dark` → `light` → `high-contrast`) and the density
    theme (`density/compact` → `comfortable`) in the token panel. Only colours change with the theme. Density re-points
    only `size.control.height` and `size.row.height` (slice 1 §4), so the chips, the md avatar, the avatar stack, the
    vertical divider, the CopyButton and the legend row grow from 24 to 32 px, and nothing else moves; the 8 px dots
