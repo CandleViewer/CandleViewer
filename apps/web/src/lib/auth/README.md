@@ -17,7 +17,7 @@ route tree, auth/RBAC guards and env badge are E10's scope.
   after `apiFetch` of the logout.
 - `meCache.ts`: the `/me` claims the route guards read.
 
-Known gaps, both server-side (#2712 changes no server code):
+Known gap, server-side (#2712 changes no server code):
 
 - ADR-0020 decision 5 has no rotation leeway: a spent `cv_refresh` presented
   again revokes the whole session family. A refresh leaves
@@ -37,8 +37,3 @@ Known gaps, both server-side (#2712 changes no server code):
   stands. Rows like these from the user's own client after a lost refresh are
   expected and are not by themselves a replay; the auth runbook owns their
   triage.
-- `POST /auth/refresh` refuses an idle-locked session with
-  `refresh_token_invalid`, not the contract's `session_idle_locked`, so a
-  locked tab goes to sign-in at its next refresh instead of to unlock, and so
-  does every sibling tab that holds the token. #3331 makes it answer
-  `session_idle_locked`.

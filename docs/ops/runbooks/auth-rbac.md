@@ -957,19 +957,19 @@ follows (compare its `auth.refresh_reuse_detected` row with that rotation's
 `auth.session_refreshed` row), is most likely a refresh response the user's own client lost: the
 client presented the old token again, the family was revoked, and the user signs in again. That is
 by design. Any re-presentation revokes the family, and there is no server grace window
-(ADR-0020 decision 5, contract `authRefresh`). The SPA's token client (#2712) is expected to
-coalesce its refreshes, one at a time across its tabs, so that one client does not present a token
-twice. Treat a hit from another address, or more than one, as a stolen token.
+(ADR-0020 decision 5, contract `authRefresh`). The SPA's token client (`apps/web/src/lib/auth`,
+#2712) coalesces its refreshes, one at a time across its tabs, so that one client does not present a
+token twice. Treat a hit from another address, or more than one, as a stolen token.
 
 An `auth.refresh_reuse_detected` row at `warning`, with `after_state.family_revoked` `false`, is a
 different event, and `auth_refresh_reuse_total` does not count it: a rotated-out `cv_refresh` cookie
 was presented outside `/auth/refresh`, for example to `GET /auth/session`. Nothing is revoked, the
 answer is the uniform `401`, and `auth_session_fixation_attempts_total{reason="rotated"}` counts it.
 Rows are written within a per-address and a global budget and the writer's in-flight cap, and
-`reason="audit_throttled"` counts the attempts past them. The SPA's token client (#2712) is expected
-to write such rows on purpose: after a refresh whose answer it lost, it asks `GET /auth/session`
-before it presents the possibly spent cookie, and it asks again on each page load until the user
-signs in again. A few of these rows from the user's
+`reason="audit_throttled"` counts the attempts past them. The SPA's token client (#2712) writes such
+rows on purpose: after a refresh whose answer it lost, it asks `GET /auth/session` before it
+presents the possibly spent cookie, and it asks again on each page load until the user signs in
+again. A few of these rows from the user's
 own address, after that user's last `auth.session_refreshed` row, are expected. Rows from another
 address, or across many users' sessions, mean someone holds rotated-out cookies: treat them as
 stolen.
