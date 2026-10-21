@@ -1,5 +1,6 @@
 """#2911: no session is minted or rotated for a disabled (or deleted) user, and a disabled user's
-live session is refused and revoked on its next use (SR-029, E42-T04's in-flight refresh window).
+live session is refused and revoked on its next use (SR-029, E42-T04's in-flight refresh window):
+`require_active`, or a refresh, which revokes it the same way (#3331).
 `locked` and `invited` users are not refused: login refuses `disabled` only, and the issue keeps
 the other two as they are.
 
@@ -31,7 +32,13 @@ from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 
-from .session_fakes import FakeSessionRepository, LostRaceRepository, YieldingFindRepository
+from .session_fakes import (
+    STRAY_ENTRIES,
+    FakeSessionRepository,
+    LostRaceRepository,
+    StrayEntry,
+    YieldingFindRepository,
+)
 
 _NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 _WAIT_S = 5.0  # bounds every wait on the parked refresh: a regression fails instead of hanging
@@ -98,20 +105,30 @@ async def test_mint_still_stores_the_session_of_a_user_who_is_not_disabled(
 
 
 @pytest.mark.parametrize("status", _REFUSED)
-async def test_refresh_refuses_a_disabled_user(status: UserStatus | None) -> None:
-    """Refused before the claim: the presented session is untouched and nothing is minted."""
-    repo, user = FakeSessionRepository(), str(uuid.uuid4())
-    service = _service(repo)
+async def test_refresh_refuses_and_revokes_a_disabled_users_session(
+    status: UserStatus | None,
+) -> None:
+    """#3331 (U45): refused before the claim, nothing rotated or minted, and the presented session
+    revoked as `require_active` revokes it: as `user_disabled`, published, the breach signal
+    counted once and the revocation under `user_disabled`."""
+    repo, published = FakeSessionRepository(), list[tuple[str, str]]()
+    service = _service(repo, published)
+    user = str(uuid.uuid4())
     minted = await service.mint(user)
     repo.user_statuses[user] = status
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
+    revocations = _sample("auth_session_revocations_total", reason="user_disabled")
 
     with pytest.raises(UserDisabled) as refused:
         await service.refresh(minted.refresh_token)
 
+    sid = str(minted.session_id)
     assert refused.value.status == (None if status is None else status.value)
-    presented = repo.sessions[str(minted.session_id)]
-    assert presented.revoked_at is None  # not claimed: nothing changed
-    assert list(repo.sessions) == [str(minted.session_id)] and repo.rotation_next == {}
+    assert repo.sessions[sid].revoked_reason == "user_disabled"
+    assert list(repo.sessions) == [sid] and repo.rotation_next == {}
+    assert published == [(sid, "user_disabled")]
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals + 1
+    assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations + 1
 
 
 @pytest.mark.parametrize("status", _KEPT)
@@ -176,9 +193,10 @@ async def test_require_active_refuses_a_disabled_users_live_session(
     assert (await service.require_active(str(kept.session_id))).id == kept.session_id
 
 
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
 @pytest.mark.parametrize("status", _REFUSED)
-async def test_require_active_logs_the_stray_session_for_the_operator(
-    status: UserStatus | None,
+async def test_the_stray_session_is_logged_for_the_operator(
+    status: UserStatus | None, entry: StrayEntry, refusal: type[Exception], match: str
 ) -> None:
     """The runbook (auth-rbac section 4) sends the operator to this line: a warning that names
     the session, the user and the status read (`None`: the row is gone), and holds no token."""
@@ -188,8 +206,8 @@ async def test_require_active_logs_the_stray_session_for_the_operator(
     minted = await service.mint(user)
     repo.user_statuses[user] = status
 
-    with capture_logs() as logs, pytest.raises(SessionRevoked):
-        await service.require_active(str(minted.session_id))
+    with capture_logs() as logs, pytest.raises(refusal, match=match):
+        await entry(service, minted)
 
     (line,) = [e for e in logs if e["event"] == "auth.disabled_user_session_revoked"]
     assert (line["log_level"], line["session_id"], line["user_id"]) == (
@@ -218,24 +236,28 @@ async def test_require_active_keeps_the_live_session_of_a_user_who_is_not_disabl
     assert _sample("auth_disabled_user_sessions_revoked_total") == signals
 
 
-async def test_require_active_counts_a_stray_session_once_when_requests_race() -> None:
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
+async def test_a_stray_session_is_counted_once_when_requests_race(
+    entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
     """#3029 item 1: three requests on one stray session each see it live, one wins the revoke.
     Only that call counts, logs and publishes: the breach counter, the revocation counter under
     `user_disabled` and the WARNING lines each move once. The other two are refused all the same."""
     repo, published = YieldingFindRepository(), list[tuple[str, str]]()
     service = _service(repo, published)
     user = str(uuid.uuid4())
-    sid = str((await service.mint(user)).session_id)
+    minted = await service.mint(user)
+    sid = str(minted.session_id)
     repo.user_statuses[user] = UserStatus.DISABLED
     signals = _sample("auth_disabled_user_sessions_revoked_total")
     revocations = _sample("auth_session_revocations_total", reason="user_disabled")
 
     with capture_logs() as logs:
         outcomes = await asyncio.gather(
-            *(service.require_active(sid) for _ in range(3)), return_exceptions=True
+            *(entry(service, minted) for _ in range(3)), return_exceptions=True
         )
 
-    assert [o.reason for o in outcomes if isinstance(o, SessionRevoked)] == ["user_disabled"] * 3
+    assert [(type(o), match in str(o)) for o in outcomes] == [(refusal, True)] * 3
     assert _sample("auth_disabled_user_sessions_revoked_total") == signals + 1
     assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations + 1
     assert [
@@ -244,12 +266,13 @@ async def test_require_active_counts_a_stray_session_once_when_requests_race() -
     assert published == [(sid, "user_disabled")]
 
 
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
 @pytest.mark.parametrize("status", _REFUSED)
-async def test_require_active_counts_nothing_when_another_call_revoked_the_row(
-    status: UserStatus | None,
+async def test_a_stray_session_counts_nothing_when_another_call_revoked_the_row(
+    status: UserStatus | None, entry: StrayEntry, refusal: type[Exception], match: str
 ) -> None:
-    """The stale copy is still refused as `user_disabled`, but nothing is counted, logged or
-    published: whoever revoked the row did that."""
+    """The stale copy is still refused (`require_active` as `user_disabled`), but nothing is
+    counted, logged or published: whoever revoked the row did that."""
     repo, published = LostRaceRepository(), list[tuple[str, str]]()
     service = _service(repo, published)
     user = str(uuid.uuid4())
@@ -258,28 +281,30 @@ async def test_require_active_counts_nothing_when_another_call_revoked_the_row(
     signals = _sample("auth_disabled_user_sessions_revoked_total")
     revocations = _sample("auth_session_revocations_total", reason="user_disabled")
 
-    with capture_logs() as logs, pytest.raises(SessionRevoked) as refused:
-        await service.require_active(str(minted.session_id))
+    with capture_logs() as logs, pytest.raises(refusal, match=match):
+        await entry(service, minted)
 
-    assert refused.value.reason == "user_disabled"
     assert _sample("auth_disabled_user_sessions_revoked_total") == signals
     assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations
     assert [e for e in logs if e["event"] == "auth.disabled_user_session_revoked"] == []
     assert published == []
 
 
-async def test_require_active_takes_the_revoked_session_off_the_active_gauge() -> None:
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
+async def test_the_revoked_stray_session_leaves_the_active_gauge(
+    entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
     """The backstop revokes through the row update `revoke` makes, so the gauge of live
     sessions falls with it, as it does for a logout."""
     repo = FakeSessionRepository()
     service = _service(repo)
     user = str(uuid.uuid4())
-    sid = str((await service.mint(user)).session_id)
+    minted = await service.mint(user)
     repo.user_statuses[user] = UserStatus.DISABLED
     live = _sample("auth_sessions_active")
 
-    with pytest.raises(SessionRevoked):
-        await service.require_active(sid)
+    with pytest.raises(refusal, match=match):
+        await entry(service, minted)
 
     assert _sample("auth_sessions_active") == live - 1
 

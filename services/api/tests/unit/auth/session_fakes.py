@@ -1,13 +1,19 @@
-"""In-memory `SessionRepository` and `ViewAsSessionStore` fake for auth unit tests. No database."""
+"""In-memory `SessionRepository` and `ViewAsSessionStore` fakes for auth unit tests, and the two
+calls that meet a stray session. No database."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from candleviewer.auth.models import SessionRecord, UserStatus
+import pytest
+
+from candleviewer.auth.errors import SessionRevoked, UserDisabled
+from candleviewer.auth.models import MintedSession, SessionRecord, UserStatus
 from candleviewer.auth.session_repository import StepUpChange
+from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
 
 
@@ -275,11 +281,17 @@ class FakeSessionRepository:
 
 
 class YieldingFindRepository(FakeSessionRepository):
-    """Yields after each by-id read, so every request of a burst holds the row as it was before
-    the first of them revoked it (on Postgres the read and the revoke are two statements)."""
+    """Yields after each by-id and by-refresh-hash read, so every request of a burst holds the row
+    as it was before the first of them revoked it (on Postgres the read and the revoke are two
+    statements)."""
 
     async def find_by_id(self, session_id: str) -> SessionRecord | None:
         found = await super().find_by_id(session_id)
+        await asyncio.sleep(0)
+        return found
+
+    async def find_by_refresh_hash(self, refresh_token_hash: str) -> SessionRecord | None:
+        found = await super().find_by_refresh_hash(refresh_token_hash)
         await asyncio.sleep(0)
         return found
 
@@ -289,3 +301,29 @@ class LostRaceRepository(FakeSessionRepository):
 
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
         return None
+
+
+#: A call that meets a stray session, a live session of a disabled or deleted user that no disable
+#: revoked: it revokes the session as `user_disabled` and refuses the call (#2911, #3331).
+StrayEntry = Callable[[SessionService, MintedSession], Awaitable[object]]
+
+
+async def require_active_by_id(service: SessionService, minted: MintedSession) -> object:
+    return await service.require_active(str(minted.session_id))
+
+
+async def refresh_by_token(service: SessionService, minted: MintedSession) -> object:
+    return await service.refresh(minted.refresh_token)
+
+
+#: `(entry, refusal, match)`: the two entries revoke the same way (#3331), and each refuses with
+#: its own error, whose message *match* finds.
+STRAY_ENTRIES = [
+    pytest.param(
+        require_active_by_id,
+        SessionRevoked,
+        "session revoked: user_disabled",
+        id="require_active",
+    ),
+    pytest.param(refresh_by_token, UserDisabled, "user is disabled or gone", id="refresh"),
+]

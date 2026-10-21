@@ -43,12 +43,12 @@ auth_idle_locks_total = Counter(
     "auth_idle_locks_total", "Requests refused because the session was idle-locked."
 )
 #: #2911 (SR-029): each is a live session of a disabled or deleted user that no disable revoked,
-#: found by `require_active` and revoked there, so any increase is a breach signal. Counted once
-#: per revoked row, by the call whose conditional revoke changed it (#3029): each one also moves
-#: `auth_session_revocations_total{reason="user_disabled"}` by one, a series that counts a
-#: disable's own revocations too, so the two are not the same number. No label: the log line names
-#: the session. Scraped: in `AUTH_EXPORTED_NAMES`; the `AuthDisabledUserSessionRevoked` ticket
-#: reads it.
+#: found by `require_active` or a refused refresh (#3331) and revoked there, so any increase is a
+#: breach signal. Counted once per revoked row, by the call whose conditional revoke changed it
+#: (#3029): each one also moves `auth_session_revocations_total{reason="user_disabled"}` by one, a
+#: series that counts a disable's own revocations too, so the two are not the same number. No
+#: label: the log line names the session. Scraped: in `AUTH_EXPORTED_NAMES`; the
+#: `AuthDisabledUserSessionRevoked` ticket reads it.
 auth_disabled_user_sessions_revoked_total = Counter(
     "auth_disabled_user_sessions_revoked_total",
     "Live sessions of a disabled or deleted user refused and revoked on use (SR-029).",

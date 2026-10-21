@@ -23,7 +23,8 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
-from candleviewer.api.csrf import AUDIT_TIMEOUT_S
+from candleviewer.api.csrf import AUDIT_TIMEOUT_S, RefusalAuditTracker
+from candleviewer.api.session_backstop_audit import SessionBackstopAudit
 from candleviewer.api.sessions import (
     LOGOUT_INTENT_SESSION_IDS_MAX,
     REFRESH_COOKIE,
@@ -149,6 +150,7 @@ class _World:
         make_error: ErrorFactory | None = None,
         *,
         service: type[SessionService] = SessionService,
+        backstop: bool = False,
     ) -> None:
         self.repo = FakeSessionRepository()
         self.published: list[tuple[str, str]] = []
@@ -160,11 +162,18 @@ class _World:
             if self.on_publish is not None:
                 await self.on_publish()
 
-        # #2272: the service publishes every revocation; the router publishes nothing.
-        self.svc = service(self.repo, HASHER, clock=lambda: NOW, publish_revocation=publish)
         make = make_error or _WRITER_ERRORS[0]
         self.writer = _RefusingWriter(make())
         self.writer.probe = self.live
+        # *backstop*: the service hands a stray session's revocation record to this writer too,
+        # through the port `create_app()` wires (#3120); without it the writer sees route rows only.
+        port = (
+            SessionBackstopAudit(self.writer, tracker=RefusalAuditTracker()) if backstop else None
+        )
+        # #2272: the service publishes every revocation; the router publishes nothing.
+        self.svc = service(
+            self.repo, HASHER, clock=lambda: NOW, publish_revocation=publish, backstop_audit=port
+        )
         self.audit = AuditService()  # active: the writer is what refuses
         self.audit.writer = self.writer
 
@@ -213,12 +222,18 @@ def _h(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+@pytest.mark.parametrize("disabled", [False, True], ids=["active", "disabled"])
 @pytest.mark.parametrize("make_error", _WRITER_ERRORS, ids=_ERROR_IDS)
 async def test_refresh_write_ahead_record_refused_is_503_and_rotates_nothing(
-    make_error: ErrorFactory,
+    make_error: ErrorFactory, disabled: bool
 ) -> None:
-    w = _World(make_error)
+    """The intent record comes first: refused, it is the 503 that changes nothing, for a disabled
+    user's session too, which stays live (#3331: the first refresh after the sink recovers, or a
+    request through `require_active`, revokes it)."""
+    w = _World(make_error, backstop=True)
     m = await w.mint()
+    if disabled:
+        w.repo.user_statuses[str(_USER)] = UserStatus.DISABLED
     w.writer.accept = 0
     with capture_logs() as logs:
         r = w.refresh(m.refresh_token)
@@ -301,24 +316,36 @@ async def test_refresh_race_with_a_healthy_sink_writes_the_critical_denial_row()
 
 
 @pytest.mark.parametrize("make_error", _WRITER_ERRORS, ids=_ERROR_IDS)
-async def test_refresh_refusal_record_of_a_disabled_user_refused_keeps_the_401_and_counts_it(
-    make_error: ErrorFactory,
+@pytest.mark.parametrize(
+    ("accept", "refused"),
+    [
+        (1, ["auth.disabled_user_session_revoked", "auth.session_refreshed"]),
+        (2, ["auth.session_refreshed"]),
+    ],
+    ids=["revocation_and_denial_refused", "denial_refused"],
+)
+async def test_refresh_refusal_records_of_a_disabled_user_refused_keep_the_401_and_the_revocation(
+    make_error: ErrorFactory, accept: int, refused: list[str]
 ) -> None:
-    """#2911: the user was disabled with this session live. The write-ahead intent lands, the
-    refusal record is refused: the 401 stands (never a 500), nothing is rotated, minted or
-    published, and the lost record is counted and logged like any outcome record (#2914)."""
-    w = _World(make_error)
+    """#2911, #3331: the user was disabled with this session live. The write-ahead intent lands,
+    then the writer refuses the rest: the backstop's record of the revocation and the refusal
+    record, or the refusal record alone. The 401 stands (never a 500), nothing is rotated or
+    minted, and the session stays revoked and published. The lost refusal record is counted and
+    logged like any outcome record (#2914); a lost backstop record is logged, never counted
+    (EX-08)."""
+    w = _World(make_error, backstop=True)
     m = await w.mint()
     w.repo.user_statuses[str(_USER)] = UserStatus.DISABLED
-    w.writer.accept = 1  # the write-ahead record lands; the refusal record is refused
+    w.writer.accept = accept  # the write-ahead record lands, and the backstop's with 2
     lost_before = _outcome_lost("auth.session_refreshed")
+    other_before = _count("auth_audit_outcome_lost_total", action="other")
     with capture_logs() as logs:
         r = w.refresh(m.refresh_token)
     assert (r.status_code, r.json()["detail"]) == (401, "refresh_token_invalid")
     assert "set-cookie" not in r.headers
-    assert w.writer.refused == ["auth.session_refreshed"]
-    assert await w.live() == {str(m.session_id)} and len(w.repo.sessions) == 1
-    assert w.published == []
+    assert w.writer.refused == refused
+    assert await w.live() == set() and len(w.repo.sessions) == 1
+    assert w.published == [(str(m.session_id), "user_disabled")]
     (lost,) = [e for e in logs if e["event"] == _LOST_EVENT]
     assert (lost["log_level"], lost["action"], lost["session_id"], lost["error"]) == (
         "error",
@@ -327,18 +354,48 @@ async def test_refresh_refusal_record_of_a_disabled_user_refused_keeps_the_401_a
         type(w.writer.error).__name__,
     )
     assert _outcome_lost("auth.session_refreshed") - lost_before == 1  # counted, so it tickets
+    assert _count("auth_audit_outcome_lost_total", action="other") == other_before
+    failed = [e for e in logs if e["event"] == "auth.disabled_user_session_audit_failed"]
+    error = type(w.writer.error).__name__
+    assert [(e["log_level"], e["error"]) for e in failed] == (
+        [("error", error)] if accept == 1 else []
+    )
+    assert m.refresh_token not in repr(logs)
 
 
-async def test_disabled_user_refresh_with_a_healthy_sink_writes_the_warning_denial_row() -> None:
-    """The same refusal row when the sink works: a WARNING denial of the presented session from
-    the caller's address, after the write-ahead record of the attempt."""
-    w = _World()
+async def test_disabled_user_refresh_with_a_healthy_sink_writes_intent_revocation_and_denial() -> (
+    None
+):
+    """The rows when the sink works (#3331): the write-ahead record of the attempt while the
+    session is live, then, once it is revoked, the backstop's record of the revocation (the
+    session's user as the actor, the status read, no address) and the WARNING denial of the
+    presented session from the caller's address."""
+    w = _World(backstop=True)
     m = await w.mint()
     w.repo.user_statuses[str(_USER)] = UserStatus.DISABLED
     lost_before = _outcome_lost("auth.session_refreshed")
     assert w.refresh(m.refresh_token).status_code == 401
-    intent, outcome = w.writer.events
+    intent, revoked, outcome = w.writer.events
     assert (intent["action"], intent["outcome"]) == ("auth.session_refreshed", AuditOutcome.SUCCESS)
+    assert (revoked["action"], revoked["outcome"], revoked["severity"], revoked["reason"]) == (
+        "auth.disabled_user_session_revoked",
+        AuditOutcome.SUCCESS,
+        Severity.WARNING,
+        "user_disabled",
+    )
+    assert (revoked["object_kind"], revoked["object_id"], revoked["session_id"]) == (
+        "session",
+        str(m.session_id),
+        m.session_id,
+    )
+    assert (revoked["actor_label"], revoked["actor_user_id"]) == (str(_USER), _USER)
+    assert revoked["after_state"] == {"user_status": "disabled"} and "actor_ip" not in revoked
+    sid = frozenset({str(m.session_id)})
+    assert w.writer.live_at == [
+        ("auth.session_refreshed", sid),
+        ("auth.disabled_user_session_revoked", frozenset()),
+        ("auth.session_refreshed", frozenset()),
+    ]
     assert outcome["action"] == "auth.session_refreshed"
     assert (outcome["outcome"], outcome["severity"]) == (AuditOutcome.DENIED, Severity.WARNING)
     assert (outcome["reason"], str(outcome["session_id"])) == ("user_disabled", str(m.session_id))

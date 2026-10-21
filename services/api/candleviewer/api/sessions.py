@@ -1073,9 +1073,10 @@ def make_session_router(
             # The service already closed every family member's sockets (#2272).
             return _unauthorized("refresh_token_invalid")
         except UserDisabled:
-            # #2911: the user is disabled (or deleted); nothing was minted. The intent record
-            # above is followed by the refusal, an outcome record like the reuse one: a lost
-            # record is counted and logged and the 401 stands.
+            # #2911: the user is disabled (or deleted); nothing was minted. The service revoked
+            # the session, counted and published it, and handed its record to the backstop's port
+            # (#3331). The intent record above is followed by the refusal, an outcome record like
+            # the reuse one: a lost record is counted and logged and the 401 stands.
             await _audit_outcomes(
                 "auth.session_refreshed",
                 record=presented_record,

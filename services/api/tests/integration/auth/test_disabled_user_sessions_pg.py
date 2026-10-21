@@ -2,7 +2,7 @@
 
 A refresh parked between its claim and its mint across a disable mints no live session; a mint
 queues behind a disable's lock on the user row and is then refused; a disabled user's live session
-that no disable revoked is refused at refresh, before the claim, and revoked on its next use. A
+that no disable revoked is refused at refresh, before the claim, and revoked there (#3331). A
 `locked` or `invited` user still mints and rotates, and the reads that carry the status populate
 it. The disable is the E42-T04 store's order: lock the user row (`LOCK_USER`), set `disabled`,
 revoke the live sessions, commit. Not run locally (no docker); exercised by CI `integration`.
@@ -177,7 +177,8 @@ async def test_a_disabled_users_live_session_is_refused_at_refresh_and_revoked_o
     pg_dsn: str,
 ) -> None:
     """The status changed with no session revoked (a session no disable saw): an active user
-    rotates; once disabled, refresh refuses before the claim and the next use revokes it."""
+    rotates; once disabled, refresh refuses before the claim and revokes the session (#3331), so
+    the next use finds it revoked as `user_disabled`."""
     async with _env(pg_dsn) as (engine, _repo, service):
         uid = await _user(engine)
         rotated = (await service.refresh((await service.mint(uid)).refresh_token)).minted
@@ -186,7 +187,7 @@ async def test_a_disabled_users_live_session_is_refused_at_refresh_and_revoked_o
 
         with pytest.raises(UserDisabled):
             await service.refresh(rotated.refresh_token)
-        assert await _live(engine, uid) == 1  # refused before the claim: nothing changed
+        assert await _live(engine, uid) == 0  # refused before the claim, and revoked
         with pytest.raises(SessionRevoked) as refused:
             await service.require_active(str(rotated.session_id))
         assert refused.value.reason == "user_disabled"

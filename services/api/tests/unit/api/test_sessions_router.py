@@ -201,7 +201,9 @@ async def test_refresh_reuse_is_401_with_critical_audit(env: _Env) -> None:
 
 async def test_refresh_of_a_disabled_user_is_401_audited_and_rotates_nothing(env: _Env) -> None:
     """#2911: refused before the claim (nothing rotated or minted); the refusal is audited
-    after the write-ahead intent, like the concurrent-reuse outcome."""
+    after the write-ahead intent, like the concurrent-reuse outcome. #3331: the session is revoked
+    as `user_disabled` and its id published, as `require_active` does (this `_Env` wires no
+    backstop audit port, so the route's two rows are all the writer gets)."""
     user = uuid.uuid4()
     m = await env.mint(user)
     env.repo.user_statuses[str(user)] = UserStatus.DISABLED
@@ -218,7 +220,8 @@ async def test_refresh_of_a_disabled_user_is_401_audited_and_rotates_nothing(env
     assert (refused["reason"], refused["severity"]) == ("user_disabled", Severity.WARNING)
     assert refused["session_id"] == m.session_id
     assert list(env.repo.sessions) == [str(m.session_id)]
-    assert env.repo.sessions[str(m.session_id)].revoked_at is None
+    assert env.repo.sessions[str(m.session_id)].revoked_reason == "user_disabled"
+    assert env.revoked == [(str(m.session_id), "user_disabled")]
 
 
 async def test_a_disabled_users_live_session_is_401_and_revoked_on_use(env: _Env) -> None:
@@ -260,7 +263,8 @@ class _SkipsBackstop(ast.NodeVisitor):
       `peek_refresh`, and never call `require_active`. A peek in a helper does not count:
       helpers peek to name a session in an audit record, bind a CSRF token or tell a fixation
       attempt, and act for none. `refresh` clears a peeked refresh token, the refresh route's:
-      `SessionService.refresh` refuses a disabled user's token itself (#2911; U45);
+      `SessionService.refresh` refuses a disabled user's token and revokes its session itself
+      (#2911, #3331; U45);
     - they pass `allow_locked=True` to anything but `require_active`: a call that takes it skips
       `require_active` with it, so a stray session is not revoked there.
       `require_active(..., allow_locked=True)` waives the idle lock and nothing else: its status

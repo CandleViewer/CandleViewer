@@ -23,9 +23,9 @@ Every Gherkin scenario in the ticket maps to a method here:
 
 Audit emission is the router's job, exactly like `LoginService`/
 `MfaService` (`auth` may not import `audit` — `forbidden-M18`); this module
-raises typed errors and returns typed results only. The one exception is the `require_active`
-backstop, which no router wraps (any route and the WS `auth` reach it): it hands each revocation
-to an injected `BackstopAuditSink` (C-2.9, #3120).
+raises typed errors and returns typed results only. The one exception is the backstop of
+`require_active`, which no router wraps (any route and the WS `auth` reach it), and of a refused
+`refresh()` (#3331): it hands each revocation to an injected `BackstopAuditSink` (C-2.9, #3120).
 
 Revocation propagation (#2272, `23-ws-protocol.md` §9.5) is this module's:
 every path that revokes a session publishes its id to the injected
@@ -133,21 +133,22 @@ UnlockWriteAhead = Callable[[UnlockOutcome], Awaitable[None]]
 
 @dataclass(frozen=True, slots=True)
 class BackstopRevocation:
-    """A session `require_active` revoked as `user_disabled` (SR-029, #3120): what the audit
-    record needs, and nothing that could be a credential."""
+    """A session `require_active` or a refused `refresh()` revoked as `user_disabled` (SR-029,
+    #3120, #3331): what the audit record needs, and nothing that could be a credential."""
 
     session_id: uuid.UUID
     user_id: uuid.UUID
     user_status: UserStatus | None  # `None`: the user row is gone
 
 
-#: Awaited once per session `require_active` revoked as `user_disabled`, after the revoke, the
-#: count, the log and the publish. The composition root wires it to the audit writer (`auth` never
-#: imports `audit`, `forbidden-M18`; C-2.9): `AuthService.attach_backstop_audit`.
+#: Awaited once per session `require_active` or a refused `refresh()` revoked as `user_disabled`,
+#: after the revoke, the count, the log and the publish. The composition root wires it to the
+#: audit writer (`auth` never imports `audit`, `forbidden-M18`; C-2.9):
+#: `AuthService.attach_backstop_audit`.
 BackstopAuditSink = Callable[[BackstopRevocation], Awaitable[None]]
 
-#: Longest `require_active` waits for that port before it answers. The record may still land (the
-#: real port shields its write), and the revocation never depends on it.
+#: Longest `require_active` or `refresh()` waits for that port before it answers. The record may
+#: still land (the real port shields its write), and the revocation never depends on it.
 BACKSTOP_AUDIT_TIMEOUT_S = 2.0
 
 
@@ -259,9 +260,10 @@ class SessionClass(StrEnum):
     #: then lost every method). Refused like an expired session: the user signs in again (Q7).
     ENROLMENT_ONLY_EXPIRED = "enrolment_only_expired"
     #: The user is disabled or gone, whatever else holds: #2911 answers, not this class. The
-    #: HTTP guard leaves the request to its route, whose `require_active` revokes the session
-    #: as `user_disabled` and counts the SR-029 breach signal; the WS `auth` is closed
-    #: `bye user_disabled`, 4403, and counted in `cv_ws_revoked_total`, as #3413's close is.
+    #: HTTP guard leaves the request to its route, whose `require_active` (or `refresh()`, #3331)
+    #: revokes the session as `user_disabled` and counts the SR-029 breach signal; the WS `auth`
+    #: is closed `bye user_disabled`, 4403, and counted in `cv_ws_revoked_total`, as #3413's
+    #: close is.
     USER_INACTIVE = "user_inactive"
 
 
@@ -441,7 +443,8 @@ class SessionService:
         `RefreshReuseDetected` (family already revoked as a side effect of
         raising), `SessionRevoked`/`SessionIdleLocked` for a
         non-reuse-but-dead presented session, or `UserDisabled` (#2911): before
-        the claim, which then changes nothing, or from the successor's mint when a
+        the claim, once the presented session is revoked as `require_active` revokes
+        it (#3331; nothing is claimed or minted), or from the successor's mint when a
         disable commits after the claim (the claim stands; no successor exists).
         """
         token_hash = _hash_refresh_token(raw_refresh_token)
@@ -479,6 +482,7 @@ class SessionService:
             raise SessionRevoked("expired")
 
         if presented.user_status in (UserStatus.DISABLED, None):
+            await self._revoke_stray_session(presented)  # as `require_active` does (#3331)
             raise UserDisabled(presented.user_status)  # read with the row (#2911)
 
         if presented.is_idle_locked(now=now):
@@ -568,26 +572,7 @@ class SessionService:
             raise SessionRevoked(session.revoked_reason or "revoked")
 
         if session.user_status in (UserStatus.DISABLED, None):
-            # A session no disable revoked (SR-029 breach signal). Counted, logged and audited only
-            # when this call revoked the row (#3029): a request that read it live while another
-            # revoked it is refused all the same, but adds nothing, so the counter and the log
-            # line move once per row, as the revocation counted under `user_disabled` does, and
-            # the record is written once. Count and log come before the publish, which suspends: a
-            # request cancelled there leaves the row revoked, and its retry would find it so and
-            # count nothing. The record goes last, bounded and isolated (C-2.9, #3120): a port
-            # that fails or hangs can hide neither the revocation nor the signal.
-            revoked = await self._revoke_row(session_id, reason="user_disabled")
-            if revoked is not None:
-                auth_disabled_user_sessions_revoked_total.inc()
-                _log().warning(
-                    "auth.disabled_user_session_revoked",
-                    session_id=session_id,
-                    user_id=str(session.user_id),
-                    user_status=session.user_status,
-                )
-            await self._publish_row(revoked, "user_disabled")
-            if revoked is not None:
-                await self._audit_backstop(session)
+            await self._revoke_stray_session(session)
             raise SessionRevoked("user_disabled")
 
         if session.is_idle_locked(now=now) and not allow_locked:
@@ -597,6 +582,31 @@ class SessionService:
             )
 
         return session
+
+    async def _revoke_stray_session(self, session: SessionRecord) -> None:
+        """Revoke *session*, a live session of a disabled or deleted user that no disable revoked
+        (SR-029 breach signal), as `user_disabled`. `require_active` and a refused `refresh()` call
+        it (#3331), so both revoke, count, log, publish and record the same way; each then raises
+        its own refusal. Counted, logged and audited only when this call revoked the row (#3029):
+        a request that read it live while another revoked it is refused all the same, but adds
+        nothing, so the counter and the log line move once per row, as the revocation counted
+        under `user_disabled` does, and the record is written once. Count and log come before the
+        publish, which suspends: a request cancelled there leaves the row revoked, and its retry
+        would find it so and count nothing. The record goes last, bounded and isolated (C-2.9,
+        #3120): a port that fails or hangs can hide neither the revocation nor the signal."""
+        session_id = str(session.id)
+        revoked = await self._revoke_row(session_id, reason="user_disabled")
+        if revoked is not None:
+            auth_disabled_user_sessions_revoked_total.inc()
+            _log().warning(
+                "auth.disabled_user_session_revoked",
+                session_id=session_id,
+                user_id=str(session.user_id),
+                user_status=session.user_status,
+            )
+        await self._publish_row(revoked, "user_disabled")
+        if revoked is not None:
+            await self._audit_backstop(session)
 
     async def _audit_backstop(self, session: SessionRecord) -> None:
         """Hand the revocation just made to the audit port. The revocation stands whatever the

@@ -16,9 +16,12 @@ a reordering would answer differently pins it:
 
 Every one of the other 23 orders changes the outcome of at least one of them.
 
+`refresh()` checks the stored revocation and the expiry before the user's status, and the status
+before the idle lock, so it revokes a disabled user's session where `require_active` does (#3331).
+
 One level up, `authenticate_access_token` checks the token's life before `require_active`: a
-disabled user's expired token is refused as expired, which is how a socket-only client's row stays
-live (U45, `e09-auth-rbac.md`).
+disabled user's expired token is refused as expired, so a socket-only client's row stays live until
+its refresh revokes it (#3331; U45, `e09-auth-rbac.md`).
 """
 
 from __future__ import annotations
@@ -32,7 +35,12 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
+from candleviewer.auth.errors import (
+    SessionIdleLocked,
+    SessionNotFound,
+    SessionRevoked,
+    UserDisabled,
+)
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, SessionService
@@ -58,9 +66,9 @@ class _RevokeSpy(FakeSessionRepository):
 
 @dataclass(frozen=True)
 class _Effects:
-    """What one `require_active` call did that a client or an operator can see."""
+    """What one `require_active` or `refresh()` call did that a client or an operator can see."""
 
-    refusal: str  # `SessionRevoked:<reason>` or `SessionIdleLocked`
+    refusal: str  # `SessionRevoked:<reason>`, `SessionIdleLocked` or `UserDisabled`
     stored_reason: str | None = None  # `revoked_reason` on the row afterwards
     revokes: tuple[str, ...] = ()  # the reason of each `revoke` the repository was asked for
     published: tuple[str, ...] = ()  # the reason of each revocation pushed to the sockets
@@ -79,14 +87,16 @@ def _sample(name: str) -> float:
 
 async def _require_active(
     *,
+    refresh: bool = False,
     expired: bool = False,
     revoked_as: str | None = None,
     revoked_without_reason: bool = False,
     disabled: bool = False,
     idle: bool = False,
 ) -> _Effects:
-    """Mint a live session, set the given conditions on its row, and call `require_active`.
-    `revoked_without_reason` is a revoked row with no stored `revoked_reason`."""
+    """Mint a live session, set the given conditions on its row, and call `require_active`, or
+    with *refresh* `refresh()` with its token. `revoked_without_reason` is a revoked row with no
+    stored `revoked_reason`."""
     repo, pushed = _RevokeSpy(), list[tuple[str, str]]()
 
     async def publish(session_id: str, reason: str) -> None:
@@ -96,7 +106,8 @@ async def _require_active(
         repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW, publish_revocation=publish
     )
     user = str(uuid.uuid4())
-    sid = str((await service.mint(user)).session_id)
+    minted = await service.mint(user)
+    sid = str(minted.session_id)
     row: dict[str, Any] = {}
     if expired:
         row["expires_at"] = _NOW - timedelta(seconds=1)
@@ -109,8 +120,11 @@ async def _require_active(
         repo.user_statuses[user] = UserStatus.DISABLED
     breach, idle_locks = _sample(_BREACH), _sample(_IDLE_LOCKS)
 
-    with pytest.raises((SessionRevoked, SessionIdleLocked)) as refused:
-        await service.require_active(sid)
+    with pytest.raises((SessionRevoked, SessionIdleLocked, UserDisabled)) as refused:
+        if refresh:
+            await service.refresh(minted.refresh_token)
+        else:
+            await service.require_active(sid)
 
     error = refused.value
     assert {session_id for session_id, _ in pushed} <= {sid}
@@ -118,7 +132,7 @@ async def _require_active(
         refusal=(
             f"SessionRevoked:{error.reason}"
             if isinstance(error, SessionRevoked)
-            else "SessionIdleLocked"
+            else type(error).__name__
         ),
         stored_reason=repo.sessions[sid].revoked_reason,
         revokes=tuple(repo.revoke_reasons),
@@ -162,6 +176,31 @@ async def test_an_expired_session_revoked_with_no_stored_reason_is_refused_as_ex
     assert await _require_active(expired=True, revoked_without_reason=True) == _Effects(
         "SessionRevoked:expired"
     )
+
+
+_REVOKED_AT_REFRESH = _Effects(
+    "UserDisabled", "user_disabled", ("user_disabled",), ("user_disabled",), breach=1
+)
+
+
+@pytest.mark.parametrize(
+    ("row", "effects"),
+    [
+        pytest.param({"expired": True}, _revoked_now("expired"), id="expiry_before_status"),
+        pytest.param({"idle": True}, _REVOKED_AT_REFRESH, id="status_before_idle_lock"),
+        pytest.param(
+            {"revoked_as": "logout"},
+            _Effects("SessionRevoked:logout", "logout"),
+            id="revoked_before_status",
+        ),
+    ],
+)
+async def test_refresh_order_pins_the_backstop(row: dict[str, Any], effects: _Effects) -> None:
+    """#3331: a refresh of a disabled user's session revokes and counts where `require_active`
+    does. An expired one is revoked as `expired` and counts no breach, an idle-locked one is
+    revoked as `user_disabled` and counts one (never left locked), and a revoked one keeps its
+    stored reason and is not revoked again."""
+    assert await _require_active(refresh=True, disabled=True, **row) == effects
 
 
 async def test_an_expired_access_token_of_a_disabled_user_is_refused_before_the_backstop() -> None:
