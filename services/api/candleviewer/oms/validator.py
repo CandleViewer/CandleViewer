@@ -15,13 +15,15 @@ type-alias pattern `admin.wiring` already uses to avoid a direct import edge.
 
 1. the read-only gate (`OrderPlacementRefused`, `403 trading_disabled`);
 2. a price, trigger price, reference price or quantity that is not finite, each listed, before
-   any figure is compared (`validation_failed`); then each figure above the instrument's bounds,
-   listed before any figure meets a step, which cannot judge one that large: a price or trigger
-   price above `max_price`, and a quantity above both quantity ceilings, named by the order's own
-   (`lot_size_violation` if a quantity is listed, else `validation_failed`); then the instrument's
-   trading status, a limit order without its price and any price below `min_price`
-   (`validation_failed`). A figure no step can judge all the same, such as a market order's
-   reference price, is `validation_failed` too, never an unhandled error;
+   any figure is compared (`validation_failed`); then each figure outside the instrument's
+   bounds, listed before any figure meets a step, which cannot judge one of 10**28 steps or more,
+   so a figure however large or negative is named: a price, trigger price or stop above
+   `max_price` or below `min_price`, and a quantity below `min_order_qty` or above both quantity
+   ceilings, named by the order's own (`lot_size_violation` if a quantity is listed, else
+   `validation_failed`); then the instrument's trading status and a limit order without its price
+   (`validation_failed`). Every step on a figure runs under one handler, so a figure no step can
+   judge all the same, such as a market order's reference price or a trigger price of 10**28
+   ticks within `max_price`, is `validation_failed` too, never an unhandled error;
 3. for an entry, any order whose effect is not `REDUCE` (fail closed), the effective profile
    (`403 risk_limit_breached`), as 24-internal-schemas.md Sec.9.3 step 1 reads it: no profile
    allows nothing (D11); a profile not `enabled` or not `trading_enabled` allows nothing
@@ -159,23 +161,23 @@ class Validator:
         non_finite = _non_finite_errors(order)
         if non_finite:
             raise OrderInvalid(errors=non_finite)
-        oversized = _bound_errors(order, instrument)
-        if oversized:
-            _refuse(oversized)
+        out_of_bounds = _bound_errors(order, instrument)
+        if out_of_bounds:
+            _refuse(out_of_bounds)
         priced = order.price if order.price is not None else order.reference_price
-        try:
+        try:  # every step on a figure, under one handler (the module docstring's step 2)
             violations = InstrumentPolicy(instrument).validate(priced, order.qty)
+            status = [v for v in violations if v.code is FilterViolationCode.SYMBOL_NOT_TRADING]
+            if status:
+                raise OrderInvalid(errors=map(_policy_error, status))
+            malformed = _price_errors(order)
+            if malformed:
+                raise OrderInvalid(errors=malformed)
+            if order.order_type == "market":
+                violations = [v for v in violations if v.code not in _NOT_FOR_MARKET]
+            errors = [*map(_policy_error, violations), *_order_path_errors(order, instrument)]
         except InvalidOperation as error:  # a figure no step can judge: DivisionImpossible
             raise OrderInvalid() from error
-        not_trading = [v for v in violations if v.code is FilterViolationCode.SYMBOL_NOT_TRADING]
-        if not_trading:
-            raise OrderInvalid(errors=map(_policy_error, not_trading))
-        malformed = _price_errors(order, instrument)
-        if malformed:
-            raise OrderInvalid(errors=malformed)
-        if order.order_type == "market":
-            violations = [v for v in violations if v.code not in _NOT_FOR_MARKET]
-        errors = [*map(_policy_error, violations), *_order_path_errors(order, instrument)]
         if order.effect is not OrderEffect.REDUCE:
             if profile is None:
                 raise RiskRefused("No profile allows this order.")
@@ -240,16 +242,30 @@ def _non_finite_errors(order: SizedOrder) -> list[FieldError]:
 
 
 def _bound_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
-    """Each figure above the instrument's bounds, judged before any figure meets a step, which
-    cannot judge one of 10**28 steps or more (`decimal.DivisionImpossible`): a price or trigger
-    price above `max_price`, and a quantity above both quantity ceilings, named by the order's
-    own. A quantity within either ceiling goes on to the filters, which judge it against its own."""
-    errors = [
-        FieldError(field, "max_price", f"Price must not exceed {instrument.max_price}.")
-        for field, price in (("price", order.price), ("trigger.price", order.trigger_price))
-        if price is not None and price > instrument.max_price
-    ]
-    if order.qty > max(instrument.max_order_qty, instrument.max_mkt_order_qty):
+    """Each figure outside the instrument's bounds, judged before any figure meets a step, which
+    cannot judge one of 10**28 steps or more (`decimal.DivisionImpossible`), so a figure however
+    large or negative is named: a price, trigger price or stop above `max_price` or below
+    `min_price`, and a quantity below `min_order_qty` or above both quantity ceilings, named by
+    the order's own. A quantity within either ceiling goes on to the filters, which judge it
+    against its own."""
+    above = f"Price must not exceed {instrument.max_price}."
+    below = f"Price must be at least {instrument.min_price}."
+    errors: list[FieldError] = []
+    for field, price in (
+        ("price", order.price),
+        ("trigger.price", order.trigger_price),
+        ("stop_loss", order.stop_loss),
+    ):
+        if price is None:
+            continue
+        if price > instrument.max_price:
+            errors.append(FieldError(field, "max_price", above))
+        elif price < instrument.min_price:
+            errors.append(FieldError(field, "min_price", below))
+    if order.qty < instrument.min_order_qty:
+        message = f"Quantity must be at least {instrument.min_order_qty}."
+        errors.append(FieldError("qty", "min_order_qty", message))
+    elif order.qty > max(instrument.max_order_qty, instrument.max_mkt_order_qty):
         errors.append(_ceiling_error(order, instrument))
     return errors
 
@@ -264,15 +280,10 @@ def _ceiling_error(order: SizedOrder, instrument: Instrument) -> FieldError:
     return FieldError("qty", "max_order_qty", message)
 
 
-def _price_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
-    errors: list[FieldError] = []
+def _price_errors(order: SizedOrder) -> list[FieldError]:
     if order.order_type == "limit" and order.price is None:
-        errors.append(FieldError("price", "required", "A limit order needs a price."))
-    for field, price in (("price", order.price), ("trigger.price", order.trigger_price)):
-        if price is not None and price < instrument.min_price:
-            message = f"Price must be at least {instrument.min_price}."
-            errors.append(FieldError(field, "min_price", message))
-    return errors
+        return [FieldError("price", "required", "A limit order needs a price.")]
+    return []
 
 
 def _order_path_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
