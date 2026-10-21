@@ -110,6 +110,12 @@ function rotatingSession() {
 }
 const later = <T>(ms: number, value: () => T | PromiseLike<T>): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value()), ms));
+/** A `fetch` that never answers: as a browser's, it is rejected once its signal, if it has one, aborts. */
+const stalled = (_url: string, init?: RequestInit): Promise<Response> =>
+  new Promise((_resolve, reject) => {
+    const signal = init?.signal;
+    signal?.addEventListener("abort", () => reject(signal.reason));
+  });
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let toSignIn: Mock<() => void>;
@@ -334,6 +340,25 @@ describe("refresh ahead of expiry, one refresh at a time", () => {
     await expect(holder.refresh()).resolves.toBe("failed");
     expect(fetchMock.mock.calls.filter(([url]) => url === REFRESH_PATH)).toHaveLength(posts);
     expect(toSignIn).not.toHaveBeenCalled();
+  });
+
+  it("a CSRF re-issue that never answers is given up after 10 s: the refresh answers failed and lets the lock go", async () => {
+    const locks = serialLocks();
+    vi.stubGlobal("navigator", { locks });
+    fetchMock
+      .mockResolvedValueOnce(json(403, { code: "csrf_token_invalid" }))
+      .mockImplementation(stalled); // the GET /auth/session that re-issues the CSRF cookie
+    const pending = holder.refresh();
+    await vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS);
+    await expect(pending).resolves.toBe("failed");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      REFRESH_PATH,
+      "/api/v1/auth/session",
+    ]);
+    const next = vi.fn(async () => undefined); // another tab's refresh
+    void locks.request(REFRESH_LOCK, next);
+    await flush();
+    expect(next).toHaveBeenCalledTimes(1);
   });
 
   it("stops waiting for a lock another tab never lets go of: 10 s for a token, or the caller's abort", async () => {
@@ -840,6 +865,22 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
     expect(presented()).toEqual(["csrf-0"]);
   });
 
+  it("a spent cookie the probe found stays marked: the page load after the sign-out probes again, and presents nothing", async () => {
+    await sentThenGone();
+    fetchMock.mockImplementation(async (url: string) =>
+      url === REFRESH_PATH ? refreshed(2) : json(401, {}),
+    );
+    const first = holder.refresh();
+    await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS);
+    await expect(first).resolves.toBe("lost");
+    const signInPage = createAccessTokenHolder(vi.fn()); // /login loads, and its shell refreshes
+    const second = signInPage.refresh();
+    await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS);
+    await expect(second).resolves.toBe("lost");
+    expect(presented()).toEqual(["csrf-0"]); // only the dead tab's
+    expect(probes()).toHaveLength(2);
+  });
+
   it.each([
     ["live, it is presented", 200, "ok", ["csrf-0", "csrf-0"]],
     ["spent, it is not", 401, "lost", ["csrf-0"]],
@@ -905,6 +946,22 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
     await vi.advanceTimersByTimeAsync(100); // so the next look is past the wait
     expect(probes()).toEqual([["/api/v1/auth/session", null]]);
     await expect(reloaded).resolves.toBe("ok");
+  });
+
+  it("a probe that never answers is given up after 10 s: the refresh answers failed, lets the lock go and presents nothing", async () => {
+    await sentThenGone();
+    const locks = serialLocks();
+    vi.stubGlobal("navigator", { locks });
+    fetchMock.mockImplementation(stalled); // the GET /auth/session probe
+    const reloaded = holder.refresh();
+    await vi.advanceTimersByTimeAsync(ORPHAN_WAIT_MS + REFRESH_WAIT_MS);
+    await expect(reloaded).resolves.toBe("failed");
+    expect(probes()).toEqual([["/api/v1/auth/session", null]]);
+    const next = vi.fn(async () => undefined); // another tab's refresh
+    void locks.request(REFRESH_LOCK, next);
+    await flush();
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(presented()).toEqual(["csrf-0"]); // the cookie that refresh may have spent is not presented
   });
 
   it("a document without storage refreshes all the same: the cookie goes once, and nothing escapes", async () => {

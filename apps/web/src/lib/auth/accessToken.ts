@@ -5,8 +5,9 @@
  * - One token per origin. The server keeps one live access token per session: a refresh or a step-up
  *   revokes the one before as `rotated`. So a bundle a tab receives is posted to its same-origin siblings
  *   over the `cv.auth.token` BroadcastChannel (memory to memory, never storage), and each holds it in
- *   place of the older token that rotation revoked. A tab that forgets the token tells them too: each
- *   forgets it, and one that held it routes to sign-in.
+ *   place of the older token that rotation revoked. A tab whose session ends (a logout's `2xx`, a refresh
+ *   or probe that finds it lost, `endSession`) tells its siblings: each forgets the token without telling
+ *   further, and one that held it routes to sign-in.
  * - `send` gives it as `Authorization: Bearer` to same-origin `/api/v1/` URLs and to nothing else.
  * - It is refreshed at `expires_at - 60 s` through `POST /auth/refresh` (the `cv_refresh` cookie and the
  *   CSRF header): one refresh at a time in the tab, and across tabs under the `cv.auth.refresh` Web Lock,
@@ -46,9 +47,11 @@ export const REFRESH_WAIT_MS = 10_000;
 export const SIBLING_WAIT_MS = 1_000;
 /**
  * Set while a refresh is on the wire, to the time it was sent (never the token: ADR-0020 decision 1 keeps
- * the credential out of storage), and removed once an answer shows what became of the cookie. A tab that
+ * the credential out of storage), and removed once its answer shows what became of the cookie. A tab that
  * closes or reloads leaves it, as do a lost answer and a `5xx` (which may follow the rotation), so the next
- * lock holder does not present a cookie that refresh may have spent, however long ago it was sent.
+ * lock holder does not present a cookie that refresh may have spent, however long ago it was sent. Only
+ * `present`'s answers remove it: a probe that finds the cookie spent leaves it on purpose, so the page load
+ * after that sign-out probes again instead of presenting the cookie.
  */
 export const REFRESH_SENT_KEY = "cv.auth.refresh_sent_at";
 /**
@@ -248,6 +251,23 @@ function sentAgo(): number | null {
   }
 }
 
+/**
+ * `GET /auth/session` with the cookie alone, made under the lock. It changes no `cv_refresh` cookie and
+ * its `401` revokes nothing, so unlike the refresh it is aborted once `REFRESH_WAIT_MS` pass: one that
+ * stalled would keep the lock from every tab. The abort rejects it: `begin` answers `failed` and lets the
+ * lock go.
+ */
+async function getSession(): Promise<Response> {
+  const abort = new AbortController();
+  // a timer, not `AbortSignal.timeout`: the same clock as every other wait here
+  const timeout = setTimeout(() => abort.abort(), REFRESH_WAIT_MS);
+  try {
+    return await fetch(SESSION_PATH, { credentials: "same-origin", signal: abort.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder {
   let token: { readonly value: string; readonly expiresAtMs: number } | null = null;
   /** The WS client or a refused call reported it rejected: the next ask refreshes. */
@@ -390,7 +410,7 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
       await new Promise((resolve) => setTimeout(resolve, ORPHAN_POLL_MS));
       if (readCsrfCookie() !== before) return null; // it landed: the cookie in the jar is the live one
     }
-    const res = await fetch(SESSION_PATH, { credentials: "same-origin" });
+    const res = await getSession();
     if (res.ok) return null;
     return res.status === 401 ? "lost" : "failed";
   }
@@ -398,7 +418,7 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
   /** SR-041 recovery: `GET /auth/session`, identified by the `cv_refresh` cookie alone, re-issues the CSRF one. */
   async function reissueCsrf(): Promise<boolean> {
     const before = readCsrfCookie();
-    await fetch(SESSION_PATH, { credentials: "same-origin" });
+    await getSession();
     const after = readCsrfCookie();
     return after !== null && after !== before;
   }
