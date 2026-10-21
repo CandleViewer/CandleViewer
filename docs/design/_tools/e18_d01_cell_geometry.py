@@ -23,7 +23,10 @@ D = Decimal
 PX, ZERO, ONE = D("0.1"), D(0), D(1)
 TICK_BTCUSDT = D("0.10")  # packages/fixtures/bybit/2026-10-05/rest/instruments_after.json
 DISPLAYS = {"2560x1440": (2560, 1440), "1280x800": (1280, 800)}  # E18-D02 artboards
-CHROME_H, CHROME_W = 24 + 24 + 24, 48 + 24  # E11-D02 §2 compact: rows + strip; gutter + rail
+# E11-D02 §2 compact: toolbar + status rows + time strip; the price gutter's FLOOR ("widest label
+# + 8, min 48") + the drawing rail. A wider price label narrows the plot by the difference, so the
+# bar-fit counts are upper bounds (memo §3.0, n1 of the text lens round 2).
+CHROME_H, CHROME_W = 24 + 24 + 24, 48 + 24
 LOD = {"L0": D(12), "L1": D(10), "L2": D(6)}  # E06-D01 §2, LOD_PROFILE_M0 (up-switch heights)
 DOWN = {"L0": D("10.2"), "L1": D("8.5"), "L2": D("5.1")}  # E06-D01 §2; E06-K03 for the L2 step
 GLYPHS = {"bid_ask": 7 + 1 + 7, "delta": 6, "volume": 7, "delta_total": 6 + 1 + 7}  # E06-D01 §4
