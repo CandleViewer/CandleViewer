@@ -4,7 +4,8 @@ Standalone, offline, stdlib only; no exchange host is contacted and nothing here
 evidence. The tool reads the repo's own files and prints, with a source label on every row: (1) the
 funding annualisation `rate x (525600 / interval_min) x 100` (the formula of
 `services/api/candleviewer/domain/funding.py`, whose constant is checked, not imported) at the
-intervals the plan docs name and on the fixture rates, with the settlements per day; (2) the SCR-054
+intervals the plan docs name and on the fixture rates, with the settlements per day, and the
+`fundingCap` sign check (one magnitude for both limits, memo F9); (2) the SCR-054
 imminent-settlement charge with its pay / receive sign; (3) the countdown wording ladder and the
 remaining time in the one recorded ticker capture, the settlement restart taken from the ticker's
 next_funding_time_ms and never from the interval; (4) the cascade arithmetic of SCR-054's 500
@@ -45,6 +46,7 @@ FIX = "packages/fixtures/bybit/2026-10-05/"
 MINUTES_PER_YEAR = 525_600  # mirrors domain/funding.py; the check below reports if it moves
 INTERVALS_MIN = (480, 240, 120, 60)  # 22 /market/funding: "8 h common, some 1/2/4 h"
 RATE = Decimal("0.0001")  # 0.01 % per interval, the 24 section 2.7 worked example
+CAP_EXAMPLE = Decimal("0.005")  # Bybit's WS ticker example: rate "-0.005" at cap "0.005" (F9)
 CHARGE = Decimal("12.40")  # SCR-054 states line: "position will be charged ~ 12.40 USDT"
 WARN_MS = 300_000  # SCR-054: the <5 min warning; announced at 5 min and 1 min only
 LADDER_MS = (11_564_000, 3_599_000, 252_000, 59_000, 0)  # 03:12:44, 00:59:59, 00:04:12, 00:00:59, 0
@@ -113,6 +115,11 @@ def annualised_pct(rate: Decimal, interval_min: int) -> str:
     """`rate x (525600 / interval_min) x 100` in Decimal, as domain/funding.py computes it."""
     value = rate * (Decimal(MINUTES_PER_YEAR) / Decimal(interval_min)) * Decimal(100)
     return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def at_cap(rate: Decimal, cap: Decimal) -> str:
+    """One magnitude for both limits (memo F9): compare |rate| with the cap and keep the sign."""
+    return "within cap" if abs(rate) < cap else ("at upper cap" if rate > 0 else "at lower cap")
 
 
 def hms(ms: int) -> str:
@@ -217,6 +224,8 @@ def fixtures() -> dict[str, object]:
     files = {e["path"]: e["source"] for e in manifest if re.search(r"funding|tickers", e["path"])}
     names = [p.name.lower() for p in (ROOT / "packages/fixtures").rglob("*")]
     first_ts, next_ms = int(recorded[0]["ts"]), int(d.get("nextFundingTime", 0))
+    rate, cap, ih = d.get("fundingRate"), d.get("fundingCap"), d.get("fundingIntervalHour")
+    live = annualised_pct(Decimal(rate), int(ih) * 60) if rate and ih else "NOT FOUND"  # F9
     mark, index = Decimal(d.get("markPrice", "0")), Decimal(d.get("indexPrice", "1"))
     premium = (mark - index) / index * 100
     return {
@@ -233,10 +242,11 @@ def fixtures() -> dict[str, object]:
         "recorded_last_price": d.get("lastPrice"),
         "recorded_basis_mark_minus_index": str(mark - index),
         "recorded_premium_pct": str(premium.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)),
-        "recorded_live_rate": d.get("fundingRate"),
-        "recorded_live_annualised_pct": annualised_pct(Decimal(d.get("fundingRate", "0")), 480),
-        "recorded_interval_hour_field": d.get("fundingIntervalHour"),
-        "recorded_funding_cap_field": d.get("fundingCap"),
+        "recorded_live_rate": rate,
+        "recorded_live_annualised_pct": live,
+        "recorded_interval_hour_field": ih,
+        "recorded_funding_cap_field": cap,
+        "recorded_cap_state": at_cap(Decimal(rate), Decimal(cap)) if rate and cap else "NOT FOUND",
         "recorded_remaining_ms": next_ms - first_ts,
         "recorded_remaining": hms(next_ms - first_ts),
         "symbol_day_with_settlement_and_cascade": False,
@@ -397,6 +407,15 @@ def build() -> dict[str, object]:
             "announce_at_ms": [WARN_MS, 60_000],
             "drift_alarm_ms": 500,
         },
+        "cap_rows": [
+            {
+                "rate": str(r),
+                "cap": str(CAP_EXAMPLE),
+                "pct": str((r * 100).quantize(Decimal("0.001"))),
+                "state": at_cap(r, CAP_EXAMPLE),
+            }
+            for r in (CAP_EXAMPLE, -CAP_EXAMPLE)
+        ],
         "cascade": {
             **c,
             "prints_total": total,
