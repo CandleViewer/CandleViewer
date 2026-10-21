@@ -234,8 +234,11 @@ function openChannel(): BroadcastChannel | null {
 /** Leaves or removes `REFRESH_SENT_KEY`; storage that is blocked or full takes no mark (no guard then). */
 function markSent(sent: boolean): void {
   try {
-    if (sent) localStorage.setItem(REFRESH_SENT_KEY, String(Date.now()));
-    else localStorage.removeItem(REFRESH_SENT_KEY);
+    if (sent) {
+      // The mark is a send time, never a token (ADR-0020 Amendment 1): the rule matches the key's name.
+      // nosemgrep: no-jwt-in-browser-storage reason=stores-a-send-time-never-a-token owner=@CandleViewer/security review=2027-03-25
+      localStorage.setItem(REFRESH_SENT_KEY, String(Date.now()));
+    } else localStorage.removeItem(REFRESH_SENT_KEY);
   } catch {
     // no storage for this document
   }
