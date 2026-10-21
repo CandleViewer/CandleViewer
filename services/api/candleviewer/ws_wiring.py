@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -49,7 +50,9 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
+from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
+from candleviewer.ws.metrics import count_audit_failure
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, SnapshotSource
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
@@ -369,26 +372,44 @@ def loop_call_later(delay: float, callback: Callable[[], None]) -> asyncio.Timer
 
 
 class MachineRevocationAudit:
-    """`MachineStateRegistry.on_revoked` (§6.4): writes a removal's `evicted` rows as a resync
-    does (`audit_revoked`), a task per connection held until done (C-2.18); with no loop it logs."""
+    """`MachineStateRegistry.on_revoked` (§6.4): the `evicted` rows of every removal, written by ONE
+    task, one row at a time, as a resync loop's are. The audit writer appends under one lock with an
+    fsync, so a task per connection or per removal would only time its rows out against each other.
+    At most `MACHINE_AUDIT_PENDING_MAX` frames wait (C-2.18): past it the oldest removal's are
+    dropped, counted and logged. With no loop there is no writer either, and it only logs."""
 
     def __init__(self, registry: ConnectionRegistry) -> None:
         self.registry = registry
-        self.tasks: set[asyncio.Task[None]] = set()
+        self._pending: deque[list[tuple[ConnectionAuthz, dict[str, Any]]]] = deque()
+        self._waiting = 0  # frames in `_pending`
+        self._task: asyncio.Task[None] | None = None
 
     def __call__(self, revoked: list[tuple[ConnectionAuthz, dict[str, Any]]]) -> None:
-        by_conn: dict[int, tuple[ConnectionAuthz, list[dict[str, Any]]]] = {}
-        for authz, frame in revoked:
-            by_conn.setdefault(id(authz), (authz, []))[1].append(frame)
         try:
             asyncio.get_running_loop()
         except RuntimeError:  # a synchronous caller: no loop, so no writer either
             logger().warning("ws machine revocations not audited", count=len(revoked))
             return
-        for authz, frames in by_conn.values():
-            task = spawn(self.registry.audit_revoked(authz, frames), name="ws-revoked-audit")
-            self.tasks.add(task)
-            task.add_done_callback(self.tasks.discard)
+        self._pending.append(revoked)
+        self._waiting += len(revoked)
+        while self._waiting > MACHINE_AUDIT_PENDING_MAX and len(self._pending) > 1:
+            lost = self._pending.popleft()
+            self._waiting -= len(lost)
+            count_audit_failure(len(lost), "abandoned")
+            logger().warning("ws machine revocations not audited", count=len(lost), cause="queue")
+        if self._task is None or self._task.done():
+            self._task = spawn(self._write(), name="ws-machine-revoked-audit")
+
+    async def _write(self) -> None:
+        while self._pending:
+            batch = self._pending.popleft()
+            self._waiting -= len(batch)
+            await self.registry.audit_revoked_many(batch)
+
+    async def drain(self) -> None:
+        """Wait for the rows queued so far (`WsRuntime.stop`, before the audit writer stops)."""
+        if self._task is not None:
+            await asyncio.wait({self._task})
 
 
 class WsRuntime:
@@ -442,6 +463,9 @@ class WsRuntime:
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
                     await self.hub.wait_empty()
+                    audit = None if self.machines is None else self.machines.on_revoked
+                    if isinstance(audit, MachineRevocationAudit):  # before the audit writer stops
+                        await audit.drain()
         if self._sweeper is not None:
             self._sweeper.cancel()
             await asyncio.wait({self._sweeper})  # never raises; our own cancel is consumed

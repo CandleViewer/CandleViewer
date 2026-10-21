@@ -11,9 +11,10 @@ A payload goes out on the init record (`CvMetricsPlugin` skips it, CV-C09; a fee
 state), on every transition, internal ones included, once after a restore (`cv_bring_up`: a restored
 `start()` enters no state) and when `chain_trips` first passes 0. One whose tags hold `terminal`
 goes out as the entity's last (`last=True`); a later one that still holds it replaces it, a parallel
-chart's next step. A stop removes a live entry. Hooks never raise into the interpreter
-(`contained`) and never call `send()` (CV-C25); there is no `on_receipt_dropped` (CV-C69). Only the
-public `value`, `tags`, `chain_trips` and `context` are read, and of the context only `SUMMARY`.
+chart's next step. A stop or the library's `error` status removes a live entry. Hooks never raise
+into the interpreter (`contained`) and never call `send()` (CV-C25); there is no
+`on_receipt_dropped` (CV-C69). Only the public `value`, `tags`, `chain_trips`, `context` and
+`machine.type` are read, and of the context only `SUMMARY`.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Final, Protocol
 from uuid import UUID
 
-from candleviewer.statechart.plugins._base import HookFailureCounter, contained
+from candleviewer.statechart.plugins._base import HookFailureCounter, contained, logger
 from candleviewer.statechart.registry import Registry, default_registry
 
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{2,20}USDT")
@@ -121,6 +122,7 @@ class CvStateFeedPlugin(HookFailureCounter):
         self._hash, self._environment, self._now_ms = machine_hash, environment, now_ms
         self._summary = SUMMARY.get(binding.machine_kind, {})
         self._last: dict[str, Any] | None = None  # what the registry holds
+        self._dropped: set[str] = set()  # summary keys already warned about
 
     @contained
     def on_transition(
@@ -174,10 +176,14 @@ class CvStateFeedPlugin(HookFailureCounter):
         summary: dict[str, Any] = {}
         for key, valid in self._summary.items():
             value = context.get(key)
-            if value is None and key == "symbol":
+            if value is None and key == "symbol" and _symbol(self._binding.entity_id):
                 value = self._binding.entity_id  # `book`, `recording`: the entity is the symbol
-            if valid(value):  # null or off its type: left out, and a value is never logged (C-12.6)
+            if valid(value):
                 summary[key] = value
+            elif value is not None and key not in self._dropped:  # null: left out, silently
+                self._dropped.add(key)  # off its type: one warning a key, never the value (C-12.6)
+                kind = self._binding.machine_kind
+                logger().warning("statechart_feed_summary_dropped", kind=kind, summary_key=key)
         return summary
 
 
@@ -186,13 +192,20 @@ def feed_plugins(
 ) -> tuple[Any, ...]:
     """The entries for one machine's `build(plugins=)` and `restore(extra_plugins=)`: none without
     a port (a module not wired to the gateway; a unit test), else one `CvStateFeedPlugin`. The
-    port's `bind` raises for a chart with no public entity or an id off the §6.4 grammar: a wiring
-    bug, met when the owner builds the plugin. `registry` is the one `build()` gets (tests)."""
+    port's `bind` raises for a chart with no public entity, an id off the §6.4 grammar or a scoped
+    kind with no scope: a wiring bug, logged, and the machine runs without a feed (an owner's own
+    test sees the missing entry), never a login or an ingestion outage. `registry` is the one
+    `build()` gets (tests)."""
     if port is None:
         return ()
     machine_hash = (registry or default_registry()).hash(binding.machine_kind)
+    try:
+        handle = port.bind(binding)
+    except ValueError:  # the kind is logged, never the id
+        logger().error("statechart_feed_unbound", kind=binding.machine_kind)
+        return ()
     feed = CvStateFeedPlugin(
-        port.bind(binding),
+        handle,
         binding,
         machine_hash=machine_hash,
         environment=port.environment,

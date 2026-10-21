@@ -1566,6 +1566,14 @@ class ConnectionRegistry:
         queued (#415, E17-R-13), through the same bounded writer as a fan-out's."""
         await self._write_rows(_revocation_rows(authz, frames))
 
+    async def audit_revoked_many(
+        self, revoked: list[tuple[ConnectionAuthz, dict[str, Any]]]
+    ) -> None:
+        """The rows of one §6.4 removal's `revoked` frames, each with its connection: written as one
+        run, in order, one at a time, under one failure budget (`_write_rows`)."""
+        rows = [r for authz, frame in revoked for r in _revocation_rows(authz, [frame])]
+        await self._write_rows(rows)
+
     async def grants_changed(self, user_id: uuid.UUID) -> None:
         """Account-grant change: same re-evaluation path as a role change."""
         await self.roles_changed(user_id)

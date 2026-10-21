@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 from xstate_statemachine import Interpreter, SimulatedClock
 
 import candleviewer.statechart.bindings.b16_session  # noqa: F401  (registers "session")
@@ -121,6 +122,18 @@ def test_an_error_status_removes_the_entry() -> None:
     assert port.ops == ["remove"] and feed.hook_errors == 0
 
 
+async def test_a_machine_dying_into_the_error_status_removes_its_entry_once() -> None:
+    """The library's own death, its run loop cancelled as a loop's teardown does, sets the `error`
+    status and calls `on_error`, with no `on_interpreter_stop`."""
+    port = Port()
+    interp, feed = await _fixture_machine(port)
+    interp._event_loop_task.cancel()
+    await h.settle()
+    assert interp.status == "error" and port.ops == ["publish", "remove"] and feed.hook_errors == 0
+    await interp.stop()
+    assert port.ops == ["publish", "remove"]
+
+
 async def test_a_session_publishes_regions_and_every_terminal_payload_is_a_last() -> None:
     """B16 `REVOKE` fires two transitions, `elevation` normal then dead, and both hold `terminal`:
     the entity's final payload is the second."""
@@ -203,12 +216,31 @@ def test_a_bring_up_that_raises_is_contained_and_a_plugin_without_one_is_skipped
     assert plugin.hook_errors == 1
 
 
+def test_a_plugin_whose_bring_up_raises_is_logged_by_type_and_the_next_one_still_runs() -> None:
+    """The factory contains each plugin's `cv_bring_up` whatever the plugin does (R1S-02, #3978)."""
+
+    class Broken:
+        def cv_bring_up(self, interpreter: Any) -> None:
+            raise OSError("the registry is gone")
+
+    port, interp = Port(), _stub("open")
+    (feed,) = feed_plugins(port, FeedBinding("leg"))
+    interp.plugins = [Broken(), feed]
+    with capture_logs() as logs:
+        cv_factory.cv_bring_up_restored(interp)  # nothing escapes into the restore
+    assert [p["state"] for p in port.published] == ["open"]
+    assert [(e["event"], e["hook"], e["error"]) for e in logs] == [
+        ("statechart_plugin_hook_failed", "cv_bring_up", "OSError")
+    ]
+
+
 _ORDER = {"symbol": "BTCUSDT", "halted_by_kill": False, "recon_misses": 2}
 _OFF = {"symbol": None, "halted_by_kill": 0, "recon_misses": True}
 _ALERT = {"severity": "critical", "delivery_attempts": 3, "storm_count": -1}
 _BOOK = {"symbol": "BTCUSDT", "resync_count": 0}
 _BAD = {"symbol": "btcusdt", "gap_count_24h": 1.5}
 _KILL = {"scope": "accounts", "cancel_working": True}
+_GLOBAL = {**_KILL, "scope": "global"}
 _SESSION = {"mfa_satisfied": True, "step_up_failures": 0}
 #: id: chart, entity id, context, what is sent (`None`: no field)
 _SUMMARIES = {
@@ -218,6 +250,7 @@ _SUMMARIES = {
     "book-entity-symbol": ("book", "BTCUSDT", {**_BOOK, "symbol": None}, _BOOK),
     "recording-off-type": ("recording", "ETHUSDT", _BAD, None),
     "kill_switch-off-type": ("kill_switch", None, {**_KILL, "flatten": "yes"}, _KILL),
+    "kill_switch-global": ("kill_switch", None, _GLOBAL, _GLOBAL),
     "kill_switch-bad-scope": ("kill_switch", None, {"scope": "all"}, None),
     "leg-none": ("leg", None, {"symbol": "BTCUSDT"}, None),
     "session-no-user": ("session", None, {**_SESSION, "user_id": SID}, _SESSION),
@@ -236,6 +269,20 @@ def test_the_summary_is_allow_listed_and_typed_per_chart(
     assert [p.get("context_summary") for p in port.published] == [sent] and feed.hook_errors == 0
 
 
+def test_a_summary_key_off_its_type_is_warned_once_by_name_and_never_by_value() -> None:
+    port = Port()
+    (feed,) = feed_plugins(port, FeedBinding("order"))
+    off = _stub("x", symbol="btcusdt", halted_by_kill=0, recon_misses=None)  # null is no warning
+    with capture_logs() as logs:
+        for _ in range(2):  # the second payload adds no line
+            feed.on_transition(off, None, None, None)
+    warned = [(e["event"], e["summary_key"]) for e in logs]
+    event = "statechart_feed_summary_dropped"
+    assert warned == [(event, "symbol"), (event, "halted_by_kill")]
+    assert {e["kind"] for e in logs} == {"order"} and "btcusdt" not in str(logs)
+    assert all("context_summary" not in p for p in port.published)
+
+
 def test_a_terminal_payload_is_always_a_last_and_a_trip_before_the_first_payload_waits() -> None:
     port = Port()
     (feed,) = feed_plugins(port, FeedBinding("leg"))
@@ -251,7 +298,10 @@ def test_a_terminal_payload_is_always_a_last_and_a_trip_before_the_first_payload
         feed.on_chain_budget_exceeded(ended, RuntimeError("trip"), None)
     assert port.lasts == [False, True, True, True] and port.published[-1]["degraded"] is True
     assert port.published[-1]["tags"] == ["protected", "terminal"] and feed.hook_errors == 0
-    assert feed_plugins(None, FeedBinding("leg")) == ()  # without a port: no plugin
+
+
+def test_without_a_port_there_is_no_plugin() -> None:
+    assert feed_plugins(None, FeedBinding("leg")) == ()
 
 
 @pytest.mark.parametrize("machine", sorted(MACHINE_ENTITY_KIND))

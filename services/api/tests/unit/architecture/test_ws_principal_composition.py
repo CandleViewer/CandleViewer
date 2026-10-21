@@ -198,7 +198,7 @@ def test_deployed_app_bounds_times_and_audits_machine_registry(deployed: SimpleN
     assert machines._call_later is loop_call_later and state.ws_runtime.machines is machines
     assert isinstance(audit := machines.on_revoked, MachineRevocationAudit)
     assert audit.registry is state.ws_registry
-    assert audit([]) is None and not audit.tasks  # a synchronous caller has no loop: it only logs
+    assert audit([]) is None and audit._task is None  # a synchronous caller has no loop: logs only
 
 
 def test_deployed_app_snaps_a_machine_from_the_registry_sub_reads(

@@ -23,6 +23,7 @@ import pytest
 from fastapi import FastAPI
 from structlog.testing import capture_logs
 
+from candleviewer import main
 from candleviewer.account_fixture_wiring import ACCOUNT_FIXTURE_AUDIT_ACTION, AccountFixtureRefused
 from candleviewer.audit.service import AuditService
 from candleviewer.main import _lifespan
@@ -129,6 +130,23 @@ async def test_lifespan_runs_boot_check_before_yielding_and_starts_the_scheduler
         assert ctx.mesh_self_check.stop_calls == 0
 
     assert ctx.mesh_self_check.stop_calls == 1
+
+
+async def test_lifespan_loads_the_chart_registry_before_any_module_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E17-T08: the 20 charts load and validate once, at boot, not on the first request's path."""
+    app, ctx = FastAPI(), _fake_ctx()
+    app.state.app_context = ctx
+    started_at_load: list[bool] = []
+
+    def load() -> None:
+        started_at_load.append(ctx.storage.started)
+
+    monkeypatch.setattr(main, "default_registry", load)
+
+    async with _lifespan(app):
+        assert started_at_load == [False] and ctx.storage.started is True
 
 
 async def test_lifespan_starts_and_stops_every_supervised_module() -> None:

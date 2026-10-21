@@ -112,6 +112,12 @@ MACHINE_ENTRIES_MAX = 20_000
 #: §6.4: a terminal entry stays this long; at most `MACHINE_TERMINAL_MAX` are kept, oldest first.
 MACHINE_TERMINAL_RETENTION_S = 60.0
 MACHINE_TERMINAL_MAX = 10_000
+#: §6.4: one retention-timer callback removes at most this many terminal entries; each removal
+#: revokes its subscriptions (C-2.17), so the rest wait for the next loop turn.
+MACHINE_SWEEP_BATCH = 256
+#: §6.4: `revoked` frames of removals waiting for their audit writer (C-2.18). Past it the oldest
+#: removal's rows are dropped, counted (`abandoned`) and logged.
+MACHINE_AUDIT_PENDING_MAX = 4_096
 AUTH_TIMEOUT_S = 10.0
 #: #2155 (C-2.18): the bound on each call an `auth` makes (the session service's `authenticate`,
 #: the principal read and its SR-189 re-read). Past it: `bye internal_error` + `1011`. Longer than
