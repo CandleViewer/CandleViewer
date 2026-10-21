@@ -8,6 +8,7 @@ behave as they do in the real checkout. No network, and nothing reads a real
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
@@ -43,11 +44,16 @@ def _never_touch_the_real_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     non-existent tmp file for every test so a test that forgets the `target` fixture cannot write there."""
     monkeypatch.setattr(creds, "TARGET", tmp_path / "unset" / "settings.local.json")
 FAKE_TOKEN = "FAKETOKENxyz"
-FAKE_URL = f"https://relay.candleviewer.com/mcp/{FAKE_CODE}?part=main-orchestrator"
+# The hub origin is private configuration, never a committed literal: every test supplies a
+# synthetic one through CANDLEVIEWER_RELAYROOM_ORIGIN (see the autouse fixture below).
+HUB_HOST = "hub.example.test"
+HUB = f"https://{HUB_HOST}"
+ORIGIN_ENV = "CANDLEVIEWER_RELAYROOM_ORIGIN"
+FAKE_URL = f"{HUB}/mcp/{FAKE_CODE}?part=main-orchestrator"
 FAKE_LABEL = "cv-test-machine-l01"
 FAKE_UUID = "11111111-2222-4333-8444-555555555555"
-# What must never reach stdout/stderr: the fake secrets and any secret-bearing URL path.
-LEAKS = (FAKE_CODE, FAKE_TOKEN, "/mcp/")
+# What must never reach stdout/stderr: the fake secrets, any secret-bearing URL path and the origin.
+LEAKS = (FAKE_CODE, FAKE_TOKEN, "/mcp/", HUB_HOST)
 
 ENV_URL = "CANDLEVIEWER_RELAYROOM_MCP_URL"
 ENV_KEY = "CANDLEVIEWER_RELAYROOM_API_KEY"
@@ -81,6 +87,12 @@ def hermetic_git(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempP
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg")))
+
+
+@pytest.fixture(autouse=True)
+def hub_origin_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test against the synthetic hub; the unset / descriptor tests delete the variable."""
+    monkeypatch.setenv(ORIGIN_ENV, HUB)
 
 
 @pytest.fixture
@@ -236,7 +248,7 @@ def test_doctor_committed_mcp_template_satisfies_the_template_check(cfg_root, ca
 URL_NO_QUERY = FAKE_URL.split("?")[0]
 ENV_FAIL_CASES = [
     pytest.param(
-        {ENV_URL: "https://relay.candleviewer.com/mcp/<CODE>?part=main-orchestrator"},
+        {ENV_URL: f"{HUB}/mcp/<CODE>?part=main-orchestrator"},
         f"env.{ENV_URL} has no placeholder",
         id="placeholder-angle-brackets-in-url",
     ),
@@ -266,7 +278,7 @@ ENV_FAIL_CASES = [
         {ENV_URL: FAKE_URL + "\n"}, f"env.{ENV_URL} has no whitespace", id="whitespace-newline-url"
     ),
     pytest.param(
-        {ENV_URL: FAKE_URL.replace("relay.candleviewer.com", "relay.example.org")},
+        {ENV_URL: FAKE_URL.replace(HUB_HOST, "other.example.org")},
         "MCP URL origin is the hub (https, exact host)",
         id="origin-wrong-host",
     ),
@@ -276,17 +288,27 @@ ENV_FAIL_CASES = [
         id="origin-scheme-downgrade",
     ),
     pytest.param(
-        {ENV_URL: FAKE_URL.replace("candleviewer.com", "candleviewer.com:8443")},
+        {ENV_URL: FAKE_URL.replace(HUB_HOST, HUB_HOST + ":8443")},
         "MCP URL origin is the hub (https, exact host)",
         id="origin-extra-port",
     ),
     pytest.param(
-        {ENV_URL: FAKE_URL.replace("candleviewer.com", "candleviewer.com.evil.example")},
+        {ENV_URL: FAKE_URL.replace(HUB_HOST, HUB_HOST + ".evil.example")},
         "MCP URL origin is the hub (https, exact host)",
         id="origin-suffix-attack",
     ),
     pytest.param(
-        {ENV_URL: FAKE_URL.replace("//relay", "//user:pw@relay")},
+        {ENV_URL: FAKE_URL.replace(HUB_HOST, "evil." + HUB_HOST)},
+        "MCP URL origin is the hub (https, exact host)",
+        id="origin-prefix-attack",
+    ),
+    pytest.param(
+        {ENV_URL: FAKE_URL.replace(HUB_HOST, HUB_HOST.replace(".", "-", 1))},
+        "MCP URL origin is the hub (https, exact host)",
+        id="origin-lookalike-separator",
+    ),
+    pytest.param(
+        {ENV_URL: FAKE_URL.replace("//" + HUB_HOST, "//user:pw@" + HUB_HOST)},
         "MCP URL origin is the hub (https, exact host)",
         id="origin-userinfo",
     ),
@@ -347,6 +369,308 @@ def test_doctor_missing_env_key_reports_pending_activation(cfg_root, capsys, key
     assert_fail(outcome, f"env.{key} present — pending (activation blocked)")
 
 
+# ================= doctor: hub origin (private configuration, fail closed) ==================
+
+NOT_CONFIGURED = (
+    "hub origin resolved — not configured — "
+    f"set {ORIGIN_ENV} or `hubOrigin` in the private descriptor"
+)
+INVALID_IN_ENV = (
+    f"hub origin resolved — invalid in env {ORIGIN_ENV} — "
+    "expected https://host[:port] and nothing else"
+)
+INVALID_IN_DESCRIPTOR = (
+    "hub origin resolved — invalid in identity.hubOrigin — "
+    "expected https://host[:port] and nothing else"
+)
+URL_ORIGIN_CHECK = "MCP URL origin is the hub (https, exact host)"
+OTHER_HUB = "https://other.example.test"
+# Values that are not a bare `https://host[:port]`; the code and token are fake secrets that must
+# never be echoed back, and the last two are lookalikes that would send the code to another host.
+INVALID_ORIGINS = [
+    pytest.param("http://" + HUB_HOST, id="http-scheme"),
+    pytest.param(HUB_HOST, id="no-scheme"),
+    pytest.param(f"{HUB}/mcp/{FAKE_CODE}", id="path-with-connect-code"),
+    pytest.param(f"{HUB}/path", id="path"),
+    pytest.param(f"{HUB}?part=x", id="query"),
+    pytest.param(f"{HUB}#frag", id="fragment"),
+    pytest.param("https://user:" + FAKE_TOKEN + "@" + HUB_HOST, id="userinfo-with-token"),
+    pytest.param(f"{HUB}@evil.example", id="userinfo-lookalike"),
+    pytest.param(f"https://evil.example\\@{HUB_HOST}", id="backslash-lookalike"),
+    pytest.param("https://", id="empty-host"),
+    pytest.param("https://exa mple.test", id="space-in-host"),
+    pytest.param("https://*.example.test", id="wildcard-host"),
+    pytest.param(f"{HUB}:", id="empty-port"),
+    pytest.param(f"{HUB}:123456", id="port-too-long"),
+    pytest.param(f"{HUB}//", id="double-trailing-slash"),
+    pytest.param("*", id="any-origin"),
+]
+
+
+def test_doctor_without_a_hub_origin_fails_closed(cfg_root, capsys, monkeypatch):
+    monkeypatch.delenv(ORIGIN_ENV)
+    outcome = run_doctor(make_root(cfg_root), capsys)  # the descriptor has no hubOrigin key
+
+    assert_fail(outcome, NOT_CONFIGURED)
+    # No origin means no match, never "any origin": the stored URL fails its origin check too.
+    assert f"FAIL  {URL_ORIGIN_CHECK}" in outcome.out
+
+
+def test_doctor_without_a_hub_origin_or_a_descriptor_fails_closed(cfg_root, capsys, monkeypatch):
+    monkeypatch.delenv(ORIGIN_ENV)
+
+    outcome = run_doctor(make_root(cfg_root, ident=None), capsys)
+
+    assert_fail(outcome, NOT_CONFIGURED)
+    assert f"FAIL  {URL_ORIGIN_CHECK}" in outcome.out
+
+
+def test_doctor_reads_the_hub_origin_from_the_descriptor_when_the_env_is_absent(
+    cfg_root, capsys, monkeypatch
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": HUB}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert outcome.code == 0, outcome.out
+    assert "PASS  hub origin resolved — via identity.hubOrigin" in outcome.out
+    assert_allowlisted(outcome)
+    assert_no_leak(outcome)  # only the source is reported, never the origin itself
+
+
+@pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "spaces"])
+def test_doctor_blank_env_origin_counts_as_unset(cfg_root, capsys, monkeypatch, blank):
+    monkeypatch.setenv(ORIGIN_ENV, blank)
+    ident = {**valid_identity(cfg_root), "hubOrigin": HUB}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert outcome.code == 0, outcome.out
+    assert "PASS  hub origin resolved — via identity.hubOrigin" in outcome.out
+
+
+def test_doctor_env_origin_takes_precedence_over_the_descriptor(cfg_root, capsys):
+    ident = {**valid_identity(cfg_root), "hubOrigin": OTHER_HUB}  # the env (HUB) matches the URL
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert outcome.code == 0, outcome.out
+    assert f"PASS  hub origin resolved — via env {ORIGIN_ENV}" in outcome.out
+
+
+def test_doctor_env_origin_wins_even_when_it_disagrees_with_the_stored_url(
+    cfg_root, capsys, monkeypatch
+):
+    monkeypatch.setenv(ORIGIN_ENV, OTHER_HUB)
+    ident = {**valid_identity(cfg_root), "hubOrigin": HUB}  # would match, but the env wins
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, URL_ORIGIN_CHECK)
+
+
+@pytest.mark.parametrize("bad", INVALID_ORIGINS)
+def test_doctor_invalid_env_origin_fails_without_echoing_it(cfg_root, capsys, monkeypatch, bad):
+    monkeypatch.setenv(ORIGIN_ENV, bad)
+
+    outcome = run_doctor(make_root(cfg_root), capsys)
+
+    assert_fail(outcome, INVALID_IN_ENV)
+    assert f"FAIL  {URL_ORIGIN_CHECK}" in outcome.out
+
+
+def test_doctor_invalid_env_origin_is_not_rescued_by_a_valid_descriptor_origin(
+    cfg_root, capsys, monkeypatch
+):
+    monkeypatch.setenv(ORIGIN_ENV, "http://" + HUB_HOST)
+    ident = {**valid_identity(cfg_root), "hubOrigin": HUB}  # valid, and the stored URL matches it
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, INVALID_IN_ENV)  # no silent fall back to the descriptor
+    assert f"FAIL  {URL_ORIGIN_CHECK}" in outcome.out
+
+
+@pytest.mark.parametrize("bad", INVALID_ORIGINS)
+def test_doctor_invalid_descriptor_origin_fails_without_echoing_it(
+    cfg_root, capsys, monkeypatch, bad
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": bad}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, INVALID_IN_DESCRIPTOR)
+    assert f"FAIL  {URL_ORIGIN_CHECK}" in outcome.out
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [7, True, ["https://x.example.test"], {"url": "x"}],
+    ids=["number", "bool", "list", "object"],
+)
+def test_doctor_non_string_descriptor_origin_fails_closed(cfg_root, capsys, monkeypatch, bad):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": bad}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, INVALID_IN_DESCRIPTOR)
+
+
+def test_doctor_origin_comparison_includes_the_port(cfg_root, capsys, monkeypatch):
+    monkeypatch.setenv(ORIGIN_ENV, f"{HUB}:8443")
+
+    # The stored URL has no port: same host, different origin.
+    assert_fail(run_doctor(make_root(cfg_root), capsys), URL_ORIGIN_CHECK)
+
+
+def test_doctor_origin_with_a_port_matches_a_url_with_that_port(cfg_root, capsys, monkeypatch):
+    monkeypatch.setenv(ORIGIN_ENV, f"{HUB}:8443")
+    env = {**valid_env(), ENV_URL: FAKE_URL.replace(HUB_HOST, HUB_HOST + ":8443")}
+
+    outcome = run_doctor(make_root(cfg_root, settings={"env": env}), capsys)
+
+    assert outcome.code == 0, outcome.out
+
+
+def test_doctor_descriptor_origin_is_not_mistaken_for_a_secret_by_its_hostname(
+    cfg_root, capsys, monkeypatch
+):
+    # The identity check rejects the words "token" / "connect"; a validated origin is exempt.
+    monkeypatch.delenv(ORIGIN_ENV)
+    host = "connect.token.example.test"
+    ident = {**valid_identity(cfg_root), "hubOrigin": f"https://{host}"}
+    env = {**valid_env(), ENV_URL: FAKE_URL.replace(HUB_HOST, host)}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident, settings={"env": env}), capsys)
+
+    assert outcome.code == 0, outcome.out
+    assert "FAIL" not in outcome.out
+
+
+# The descriptor's hubOrigin is exempt from the identity secret scan only when it is a valid origin,
+# and a present hubOrigin that is not one fails the doctor whichever of the env var and the
+# descriptor wins in hub_origin().
+SCAN = "identity carries no token/url/connect-code"
+ORIGIN_VALID = "identity.hubOrigin is a bare https origin"
+ORIGIN_PRESENT_INVALID = f"{ORIGIN_VALID} — descriptor hubOrigin present but invalid"
+SCAN_WORDS = ("bearer", "/mcp/", "token", "connect")
+SECRET_BEARING_ORIGINS = [
+    pytest.param(FAKE_URL, id="mcp-url-with-connect-code"),
+    pytest.param("Bearer " + FAKE_TOKEN, id="bearer-token"),
+    pytest.param("token=" + FAKE_TOKEN, id="token-assignment"),
+]
+# Invalid values that carry none of the words the scan looks for: only the origin check can catch them.
+KEYWORD_FREE_INVALID_ORIGINS = [
+    pytest.param(FAKE_CODE, id="raw-code"),
+    pytest.param("https://user:" + "pw1234" + "@" + HUB_HOST, id="userinfo-password"),
+    pytest.param("http://" + HUB_HOST, id="http-scheme"),
+]
+
+
+@pytest.mark.parametrize("secret", SECRET_BEARING_ORIGINS)
+def test_doctor_secret_in_the_descriptor_origin_fails_even_when_the_env_origin_wins(
+    cfg_root, capsys, secret
+):
+    ident = {**valid_identity(cfg_root), "hubOrigin": secret}  # the env (HUB) is set and wins
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, SCAN)  # exit 1, no READY, allowlisted lines, the value is not echoed
+    # Two value-free FAIL lines: the scan catches the secret, the origin check the invalid value.
+    assert [ln for ln in outcome.lines if ln.startswith("FAIL")] == [
+        f"FAIL  {SCAN}",
+        f"FAIL  {ORIGIN_PRESENT_INVALID}",
+    ]
+    assert f"PASS  hub origin resolved — via env {ORIGIN_ENV}" in outcome.out
+
+
+@pytest.mark.parametrize("env_set", [True, False], ids=["env-set", "env-unset"])
+@pytest.mark.parametrize(
+    "host", [HUB_HOST, "connect.token.example.test"], ids=["plain-host", "scan-word-host"]
+)
+def test_doctor_valid_descriptor_origin_passes_the_scan_whichever_source_wins(
+    cfg_root, capsys, monkeypatch, env_set, host
+):
+    origin = f"https://{host}"
+    if env_set:
+        monkeypatch.setenv(ORIGIN_ENV, origin)
+    else:
+        monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": origin}
+    env = {**valid_env(), ENV_URL: FAKE_URL.replace(HUB_HOST, host)}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident, settings={"env": env}), capsys)
+
+    source = f"env {ORIGIN_ENV}" if env_set else "identity.hubOrigin"
+    assert outcome.code == 0, outcome.out
+    assert f"PASS  {SCAN}" in outcome.out
+    assert f"PASS  {ORIGIN_VALID}" in outcome.out
+    assert f"PASS  hub origin resolved — via {source}" in outcome.out
+    assert_allowlisted(outcome)
+    assert_no_leak(outcome)
+
+
+def test_doctor_descriptor_origin_is_the_one_the_stored_url_is_compared_with(
+    cfg_root, capsys, monkeypatch
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": OTHER_HUB}  # valid, but not the URL's origin
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, URL_ORIGIN_CHECK)
+    assert f"PASS  {SCAN}" in outcome.out
+    assert "PASS  hub origin resolved — via identity.hubOrigin" in outcome.out
+
+
+def test_keyword_free_invalid_origins_really_carry_no_scan_word():
+    for param in KEYWORD_FREE_INVALID_ORIGINS:
+        assert not any(word in param.values[0].lower() for word in SCAN_WORDS), param.id
+
+
+@pytest.mark.parametrize("bad", KEYWORD_FREE_INVALID_ORIGINS)
+def test_doctor_keyword_free_invalid_descriptor_origin_fails_when_the_env_origin_wins(
+    cfg_root, capsys, bad
+):
+    ident = {**valid_identity(cfg_root), "hubOrigin": bad}  # the env (HUB) is set and wins
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, ORIGIN_PRESENT_INVALID)  # not READY, though the scan sees nothing wrong
+    assert [ln for ln in outcome.lines if ln.startswith("FAIL")] == [
+        f"FAIL  {ORIGIN_PRESENT_INVALID}"
+    ]
+    assert f"PASS  {SCAN}" in outcome.out
+    assert f"PASS  hub origin resolved — via env {ORIGIN_ENV}" in outcome.out
+
+
+@pytest.mark.parametrize("bad", KEYWORD_FREE_INVALID_ORIGINS)
+def test_doctor_keyword_free_invalid_descriptor_origin_fails_when_the_env_is_unset(
+    cfg_root, capsys, monkeypatch, bad
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": bad}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, ORIGIN_PRESENT_INVALID)
+    # The descriptor is the source here, so the hub origin itself is unresolved too.
+    assert f"FAIL  {INVALID_IN_DESCRIPTOR}" in outcome.out
+
+
+@pytest.mark.parametrize("blank", [None, "", "  "], ids=["null", "empty", "spaces"])
+def test_doctor_blank_descriptor_origin_counts_as_absent(cfg_root, capsys, blank):
+    ident = {**valid_identity(cfg_root), "hubOrigin": blank}  # the env (HUB) is set and wins
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert outcome.code == 0, outcome.out
+    assert "identity.hubOrigin" not in outcome.out  # no origin line at all, as in hub_origin()
+
+
 # ============================ doctor: identity failures =============================
 
 IDENTITY_FAIL_CASES = [
@@ -377,7 +701,7 @@ IDENTITY_FAIL_CASES = [
         id="secret-in-identity-token-word",
     ),
     pytest.param(
-        {"endpoint": f"https://relay.candleviewer.com/mcp/{FAKE_CODE}"},
+        {"endpoint": f"{HUB}/mcp/{FAKE_CODE}"},
         "identity carries no token/url/connect-code",
         id="secret-in-identity-url",
     ),
@@ -755,7 +1079,7 @@ def test_credentials_percent_encode_reserved_characters_in_the_code_once(target,
     enter(monkeypatch, code="FAKE/CODE?x=1", token=FAKE_TOKEN)
 
     url = json.loads(target.read_text(encoding="utf-8"))["env"][ENV_URL]
-    assert url == "https://relay.candleviewer.com/mcp/FAKE%2FCODE%3Fx%3D1?part=main-orchestrator"
+    assert url == f"{HUB}/mcp/FAKE%2FCODE%3Fx%3D1?part=main-orchestrator"
 
 
 def test_credentials_output_is_accepted_by_the_doctor(cfg_root, capsys, monkeypatch):
@@ -767,6 +1091,140 @@ def test_credentials_output_is_accepted_by_the_doctor(cfg_root, capsys, monkeypa
     outcome = run_doctor(root, capsys)
 
     assert outcome.code == 0, outcome.out
+    assert_no_leak(outcome)
+
+
+# ---- hub origin: private configuration, resolved before any secret is asked for ----
+
+
+def descriptor_path(target: Path) -> Path:
+    return target.parent / "relayroom" / "identity.local.json"
+
+
+def refuse_without_prompting(target: Path, capsys, monkeypatch) -> str:
+    """Run the script expecting an up-front refusal: exit 2, no prompt, nothing written."""
+    as_tty(monkeypatch)
+    monkeypatch.setattr(
+        creds.getpass, "getpass", lambda *_a, **_k: pytest.fail("asked for a secret")
+    )
+    before = target.read_bytes()
+
+    with pytest.raises(SystemExit) as exc:
+        creds.main()
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert captured.out == ""
+    assert target.read_bytes() == before
+    assert not [p.name for p in target.parent.iterdir() if p.name.startswith(creds.TMP_PREFIX)]
+    assert_text_has_no_secret(captured.err)
+    return captured.err
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [None, {}, {"project": "candleviewer"}, {"hubOrigin": None}, {"hubOrigin": "  "}, "{ no", "[]"],
+    ids=["absent", "empty-object", "no-key", "null", "blank", "malformed", "not-an-object"],
+)
+def test_credentials_without_a_hub_origin_refuse_before_prompting(
+    target, capsys, monkeypatch, descriptor
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    if descriptor is not None:
+        write(descriptor_path(target), descriptor)
+
+    err = refuse_without_prompting(target, capsys, monkeypatch)
+
+    assert err == (
+        f"refused: hub origin not configured — set {ORIGIN_ENV} or `hubOrigin` "
+        "in the private descriptor\n"
+    )
+
+
+@pytest.mark.parametrize("bad", INVALID_ORIGINS)
+@pytest.mark.parametrize("source", ["env", "descriptor"])
+def test_credentials_refuse_an_invalid_hub_origin_before_prompting(
+    target, capsys, monkeypatch, source, bad
+):
+    if source == "env":
+        monkeypatch.setenv(ORIGIN_ENV, bad)
+    else:
+        monkeypatch.delenv(ORIGIN_ENV)
+        write(descriptor_path(target), {"hubOrigin": bad})
+
+    err = refuse_without_prompting(target, capsys, monkeypatch)
+
+    where = f"env {ORIGIN_ENV}" if source == "env" else "identity.hubOrigin"
+    assert err == (
+        f"refused: hub origin invalid in {where} — expected https://host[:port] and nothing else\n"
+    )
+
+
+def test_credentials_invalid_env_origin_is_not_rescued_by_a_valid_descriptor_origin(
+    target, capsys, monkeypatch
+):
+    monkeypatch.setenv(ORIGIN_ENV, "http://" + HUB_HOST)
+    write(descriptor_path(target), {"hubOrigin": HUB})  # valid, but the env value is what counts
+
+    err = refuse_without_prompting(target, capsys, monkeypatch)
+
+    assert err == (
+        f"refused: hub origin invalid in env {ORIGIN_ENV} — "
+        "expected https://host[:port] and nothing else\n"
+    )
+
+
+def test_credentials_use_the_descriptor_hub_origin_when_the_env_is_absent(target, monkeypatch):
+    monkeypatch.delenv(ORIGIN_ENV)
+    write(descriptor_path(target), {"hubOrigin": HUB})
+
+    enter(monkeypatch, code=FAKE_CODE, token=FAKE_TOKEN, label=FAKE_LABEL)
+
+    assert json.loads(target.read_text(encoding="utf-8"))["env"][ENV_URL] == FAKE_URL
+
+
+def test_credentials_env_hub_origin_takes_precedence_over_the_descriptor(target, monkeypatch):
+    write(descriptor_path(target), {"hubOrigin": OTHER_HUB})  # the env (HUB) wins
+
+    enter(monkeypatch, code=FAKE_CODE, token=FAKE_TOKEN, label=FAKE_LABEL)
+
+    assert json.loads(target.read_text(encoding="utf-8"))["env"][ENV_URL] == FAKE_URL
+
+
+@pytest.mark.parametrize(
+    ("configured", "canonical"),
+    [
+        pytest.param(f"  {HUB} ", HUB, id="whitespace"),
+        pytest.param(f"{HUB}/", HUB, id="trailing-slash"),
+        pytest.param("https://Hub.Example.TEST", HUB, id="host-case-insensitive"),
+        pytest.param(f"{HUB}:8443", f"{HUB}:8443", id="port-kept"),
+    ],
+)
+def test_credentials_build_the_url_from_the_canonical_configured_origin(
+    target, monkeypatch, configured, canonical
+):
+    monkeypatch.setenv(ORIGIN_ENV, configured)
+
+    enter(monkeypatch, code=FAKE_CODE, token=FAKE_TOKEN, label=FAKE_LABEL)
+
+    url = json.loads(target.read_text(encoding="utf-8"))["env"][ENV_URL]
+    assert url == f"{canonical}/mcp/{FAKE_CODE}?part=main-orchestrator"
+
+
+def test_credentials_output_is_accepted_by_the_doctor_with_a_descriptor_only_origin(
+    cfg_root, capsys, monkeypatch
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": HUB}
+    root = make_root(cfg_root, ident=ident, settings={"model": "sonnet"})
+    monkeypatch.setattr(creds, "TARGET", root / ".claude" / "settings.local.json")
+
+    enter(monkeypatch, code=FAKE_CODE, token=FAKE_TOKEN, label=FAKE_LABEL)
+    capsys.readouterr()
+    outcome = run_doctor(root, capsys)
+
+    assert outcome.code == 0, outcome.out
+    assert "PASS  hub origin resolved — via identity.hubOrigin" in outcome.out
     assert_no_leak(outcome)
 
 
@@ -935,3 +1393,69 @@ def test_project_settings_deny_reads_of_the_relayroom_secret_files():
         assert rule in permissions["deny"]
     assert permissions["ask"] == []  # owner policy: deny rules only, never prompts
     assert permissions["defaultMode"] == "bypassPermissions"
+
+
+# ============= hub origin resolver: one contract, kept in step across both scripts ==========
+
+
+@pytest.fixture(params=[doctor, creds], ids=["doctor", "credentials"])
+def script(request):
+    return request.param
+
+
+def test_hub_origin_resolver_prefers_env_then_descriptor_and_has_no_default(script):
+    descriptor = {"hubOrigin": OTHER_HUB}
+
+    assert script.hub_origin({}) == (HUB, f"env {ORIGIN_ENV}")  # reads os.environ by default
+    assert script.hub_origin(descriptor, {ORIGIN_ENV: HUB}) == (HUB, f"env {ORIGIN_ENV}")
+    assert script.hub_origin(descriptor, {}) == (OTHER_HUB, "identity.hubOrigin")
+    assert script.hub_origin(descriptor, {ORIGIN_ENV: "  "}) == (OTHER_HUB, "identity.hubOrigin")
+    for identity in (None, {}, [], "text", {"hubOrigin": None}, {"hubOrigin": ""}):
+        with pytest.raises(ValueError, match="^not configured — set "):
+            script.hub_origin(identity, {})
+
+
+@pytest.mark.parametrize("bad", INVALID_ORIGINS)
+def test_hub_origin_resolver_rejects_invalid_values_without_echoing_them(script, bad):
+    suffix = "expected https://host[:port] and nothing else"
+
+    with pytest.raises(ValueError) as from_env:
+        script.hub_origin({}, {ORIGIN_ENV: bad})
+    with pytest.raises(ValueError) as from_descriptor:
+        script.hub_origin({"hubOrigin": bad}, {})
+
+    assert str(from_env.value) == f"invalid in env {ORIGIN_ENV} — {suffix}"
+    assert str(from_descriptor.value) == f"invalid in identity.hubOrigin — {suffix}"
+
+
+@pytest.mark.parametrize("bad", INVALID_ORIGINS)
+def test_hub_origin_resolver_does_not_fall_back_when_the_env_value_is_invalid(script, bad):
+    # A valid descriptor must not rescue an invalid env value: the env takes precedence, refused.
+    with pytest.raises(ValueError) as exc:
+        script.hub_origin({"hubOrigin": HUB}, {ORIGIN_ENV: bad})
+
+    assert str(exc.value) == (
+        f"invalid in env {ORIGIN_ENV} — expected https://host[:port] and nothing else"
+    )
+
+
+def test_hub_origin_parsing_is_identical_in_both_scripts():
+    samples = [HUB, f"{HUB}/", f" {HUB}:8443 ", "https://Hub.Example.TEST", None, 7, "", "  "]
+    samples += [param.values[0] for param in INVALID_ORIGINS]
+
+    assert doctor.ORIGIN_RE.pattern == creds.ORIGIN_RE.pattern
+    assert (doctor.ORIGIN_ENV, doctor.ORIGIN_KEY) == (creds.ORIGIN_ENV, creds.ORIGIN_KEY)
+    assert (creds.ORIGIN_ENV, creds.ORIGIN_KEY) == (ORIGIN_ENV, "hubOrigin")
+    assert [doctor.parse_origin(s) for s in samples] == [creds.parse_origin(s) for s in samples]
+
+
+@pytest.mark.parametrize("filename", ["relayroom-main-doctor.py", "relayroom-enter-credentials.py"])
+def test_scripts_commit_no_hub_origin_literal(filename):
+    tree = ast.parse((SCRIPTS_DIR / filename).read_text(encoding="utf-8"))
+    strings = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+
+    assert [s for s in strings if doctor.parse_origin(s) is not None] == []

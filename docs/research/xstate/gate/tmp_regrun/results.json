@@ -1077,7 +1077,7 @@
   "script": "issues/post-5e07ba8/new/repro/R4-01_torn-midstep-snapshot.py",
   "status": "FAIL",
   "seconds": 0.46,
-  "tail": "\\Projects\\FullStackProjects\\_ref\\xstate-statemachine\\src\\xstate_statemachine\\base_interpreter.py\", line 1310, in get_persisted_snapshot\n    raise exc\nxstate_statemachine.exceptions.SnapshotMidStepError: Interpreter 't' is mid-macrostep: a transition's actions are still running and the configuration has no leaf. Snapshot it once the step settles (await send(..., wait=True), or from on_transition).\n"
+  "tail": "<path>\\_ref\\xstate-statemachine\\src\\xstate_statemachine\\base_interpreter.py\", line 1310, in get_persisted_snapshot\n    raise exc\nxstate_statemachine.exceptions.SnapshotMidStepError: Interpreter 't' is mid-macrostep: a transition's actions are still running and the configuration has no leaf. Snapshot it once the step settles (await send(..., wait=True), or from on_transition).\n"
  },
  {
   "script": "issues/post-5e07ba8/new/repro/R4-02_from_snapshot_no_validation.py",
