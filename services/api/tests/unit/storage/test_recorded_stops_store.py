@@ -10,7 +10,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import FrozenInstanceError, fields, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, cast
@@ -30,11 +30,13 @@ from candleviewer.storage.repositories.recorded_stops import (
     REFUSED_ENTRY,
     SWEEP_REASON,
     UNSENT_ENTRY,
+    WAITING_ENTRY,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
     SweptStop,
     check_request,
+    request_cutoff,
 )
 
 _ASYNCPG: Dialect = make_url("postgresql+asyncpg://").get_dialect()()
@@ -122,6 +124,9 @@ def _built() -> dict[str, Any]:
         "settle_statement": mod.settle_statement(_ACCOUNT, [_SL, _TP], "answered", _T),
         "for_order_statement": mod.for_order_statement(_ACCOUNT, _ORDER),
         "void_orphans_statement": mod.void_orphans_statement(EVERY_ACCOUNT, _T),
+        "waiting_for_key_statement": mod.waiting_for_key_statement(
+            _ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0
+        ),
     }
 
 
@@ -461,3 +466,128 @@ async def test_a_settle_whose_audit_fails_or_is_late_writes_nothing() -> None:
     with pytest.raises(WriteAheadTimeout):
         await store.settle(_ACCOUNT, [_SL], "answered", at=_T, write_ahead=hangs)
     assert refused.commits == late.commits == 0
+
+
+# -- E29-T04 slice 2b: the request's audit, and the rows that hold a key --------------------------
+
+
+async def test_an_insert_awaits_its_audit_with_the_rows_before_its_commit() -> None:
+    """21 Sec.3.3.11 "Audit" (C-2.9): the request's record lands in the insert's transaction."""
+    rel = _Rel([_row(_SL)])
+    seen: list[tuple[list[uuid.UUID], int]] = []
+
+    async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
+        seen.append(([row.id for row in rows], rel.commits))
+
+    rows = await _store(rel).insert([_stop()], write_ahead=audit)
+    assert [row.id for row in rows] == [_SL] and seen == [([_SL], 0)] and rel.commits == 1
+
+
+async def test_an_insert_whose_audit_fails_or_is_late_commits_nothing() -> None:
+    async def refuses(rows: tuple[RecordedStopRow, ...]) -> None:
+        raise RuntimeError("the audit trail refused the record")
+
+    async def hangs(rows: tuple[RecordedStopRow, ...]) -> None:
+        await asyncio.Event().wait()
+
+    refused = _Rel([_row(_SL)])
+    with pytest.raises(RuntimeError):
+        await _store(refused).insert([_stop()], write_ahead=refuses)
+    late = _Rel([_row(_SL)])
+    store = mod.SqlAlchemyRecordedStopStore(cast(Any, late), audit_timeout_s=0.01)
+    with pytest.raises(WriteAheadTimeout):
+        await store.insert([_stop()], write_ahead=hangs)
+    assert refused.commits == late.commits == 0
+
+
+def test_the_rows_that_hold_a_key_are_its_overdue_unanswered_ones_and_an_ended_entrys() -> None:
+    """21 Sec.3.3.11 and the orchestrator's Q2 ruling: the key's pending rows still unanswered past
+    their request's bound, of any source, and an entry's pending rows, answered or not, whose order
+    of the row's account ended, or is held, with nothing filled (`WAITING_ENTRY`), whatever their
+    age; in the account, oldest first."""
+    stmt = mod.waiting_for_key_statement(_ACCOUNT, "BTCUSDT", 1, now=_T, bound_s=5.0)
+    sql = _sql(stmt)
+    where = sql.split(" WHERE ", 1)[1]
+    for column in ("exchange_account_id", "symbol", "position_idx", "status"):
+        assert f"recorded_stops.{column} = $" in where
+    overdue, ended = where.split("(recorded_stops.answered_at IS NULL AND ", 1)[1].split(
+        " OR recorded_stops.source = $", 1
+    )
+    assert overdue.startswith("recorded_stops.created_at <= $") and "EXISTS" not in overdue
+    assert "EXISTS (SELECT " in ended and "created_at" not in ended.split(" ORDER BY ")[0]
+    assert "FROM orders WHERE orders.id = recorded_stops.order_id" in ended
+    assert "orders.exchange_account_id = recorded_stops.exchange_account_id" in ended
+    states = "orders.state IN ('cancelled', 'expired', 'held', 'killed', 'rejected')"
+    assert states in ended and "orders.cum_exec_qty = $" in ended  # the states as literals
+    assert sql.endswith("ORDER BY recorded_stops.created_at, recorded_stops.id")
+    bound = stmt.compile(dialect=_ASYNCPG).params
+    assert (bound["status_1"], bound["source_1"], bound["cum_exec_qty_1"]) == (
+        "pending",
+        "entry_attach",
+        Decimal(0),
+    )
+    assert bound["created_at_1"] == _T - timedelta(seconds=5)
+
+
+_FIVE = timedelta(seconds=5)
+
+
+@pytest.mark.parametrize(
+    ("bound_s", "cutoff"),
+    [
+        (5.0, _T - _FIVE),
+        (5, _T - _FIVE),
+        (0.0, _T),
+        (None, None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (float("-inf"), None),
+        (-1.0, None),
+        (1e300, None),
+        (10**20, None),  # an int past what a timestamp holds
+        (True, None),
+        ("5", None),
+    ],
+)
+def test_an_unanswered_row_holds_its_key_from_its_requests_bound_on(
+    bound_s: Any, cutoff: datetime | None
+) -> None:
+    """The orchestrator's Q2 ruling: an unanswered row younger than its bound (created after
+    `now - bound`) is not read, as Q4's bounded retry meets it at the insert (`ux_rs_in_flight`);
+    one as old as the bound or older is (`<=` the cutoff); a bound missing or unusable reads every
+    unanswered row (fail closed), with no cutoff in the statement."""
+    assert request_cutoff(_T, bound_s) == cutoff
+    stmt = mod.waiting_for_key_statement(_ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=bound_s)
+    sql, bound = _sql(stmt), stmt.compile(dialect=_ASYNCPG).params
+    if cutoff is None:
+        assert "created_at <=" not in sql and "created_at_1" not in bound
+        assert "(recorded_stops.answered_at IS NULL OR recorded_stops.source = $" in sql
+        return
+    assert "(recorded_stops.answered_at IS NULL AND recorded_stops.created_at <= $" in sql
+    inside, at_the_bound = cutoff + timedelta(microseconds=1), cutoff
+    assert bound["created_at_1"] == cutoff
+    assert not inside <= bound["created_at_1"] and at_the_bound <= bound["created_at_1"]
+
+
+async def test_the_store_reads_the_waiting_rows_and_a_naive_now_runs_nothing() -> None:
+    rel = _Rel([_row(_SL)])
+    rows = await _store(rel).waiting_for_key(_ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0)
+    assert [row.id for row in rows] == [_SL] and rel.commits == 0
+    [stmt] = rel.statements
+    assert stmt.compile(dialect=_ASYNCPG).params["created_at_1"] == _T - _FIVE
+    idle = _Rel()
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await _store(idle).waiting_for_key(
+            _ACCOUNT, "BTCUSDT", 0, now=_T.replace(tzinfo=None), bound_s=5.0
+        )
+    assert idle.statements == []
+
+
+def test_an_entry_waits_once_it_ended_with_nothing_filled() -> None:
+    """The ends 21 Sec.3.3.11's table leaves waiting, held among them; no state an entry stays
+    live in, and none a voiding end reaches only through the step's own settle."""
+    assert dict(WAITING_ENTRY) == {
+        "state": frozenset({"killed", "expired", "cancelled", "rejected", "held"}),
+        "cum_exec_qty": Decimal(0),
+    }
+    assert set(WAITING_ENTRY) <= set(models.orders.c.keys())

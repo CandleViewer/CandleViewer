@@ -6,12 +6,17 @@ driver (ADR-0003); `recorded_stops_sqlalchemy.py` is the Postgres implementation
 attach rows are written with the order by the first persist (`submissions.py`).
 
 A row is one stop the OMS requests for a position (SR-E29-06, 24 Sec.8.8 rule 6), written ahead of
-its request, `pending` and in flight (`answered_at` NULL). `ux_rs_in_flight` admits one request in
-flight per position (account, symbol, `position_idx`), keyed on its stop-loss row; the answer sets
-`answered_at`, and a refusal makes the row `void`. A row never leaves the table, and its request's
-values never change (`trg_rs_guard`). Every read and update takes the exchange account and filters
-on it (C-12.4), so another account's row reads as missing; the one write that does not is the
-insert, which writes the account each row names.
+its request, `pending` and in flight (`answered_at` NULL), with the writer's audit of the request
+in the insert's transaction (`InsertWriteAhead`). `ux_rs_in_flight` admits one request in flight
+per position (account, symbol, `position_idx`), keyed on its stop-loss row; the answer sets
+`answered_at`, and a refusal makes the row `void`. A row left unanswered past its request's bound,
+and an entry's row waiting for the complete read (`WAITING_ENTRY`), hold their key until that read:
+`waiting_for_key` lists them, and no other stop request for the key leaves while it lists any (21
+Sec.3.3.11). A row in flight inside its bound is not listed: a second request meets it at the
+insert (`ux_rs_in_flight`) and retries (the orchestrator's Q2 ruling). A row never leaves the table,
+and its request's values never change (`trg_rs_guard`). Every read and update takes the exchange
+account and filters on it (C-12.4), so another account's row reads as missing; the one write that
+does not is the insert, which writes the account each row names.
 
 Every value a writer gives is refused, before any statement, by the rule the table would refuse it
 with (`rs_px`, `rs_size`, `rs_trail`, `rs_entry`, `rs_restore`, `rs_marker`, the money columns'
@@ -20,9 +25,10 @@ numeric(38,18)), and no error names a value: the prices and sizes are class P1 (
 
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from types import MappingProxyType
@@ -36,15 +42,16 @@ from candleviewer.storage.repositories.orders import (
     OrderStoreError,
     TpslMode,
     check_fields,
+    require_aware,
     typed_fields,
 )
 
 __all__ = [
     "EVERY_ACCOUNT", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY", "SWEEP_REASON",
-    "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "NewRecordedStop", "RecordedStopRow",
-    "RecordedStopStore", "SettleWriteAhead", "StaleRecordedStop", "StopEnd", "StopKind",
-    "StopOutcome", "StopSource", "StopStatus", "SweepScope", "SweepWriteAhead", "SweptStop",
-    "check_request",
+    "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "WAITING_ENTRY", "InsertWriteAhead",
+    "NewRecordedStop", "RecordedStopRow", "RecordedStopStore", "SettleWriteAhead",
+    "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource", "StopStatus",
+    "SweepScope", "SweepWriteAhead", "SweptStop", "check_request", "request_cutoff",
 ]  # fmt: skip
 
 StopKind = Literal["stop_loss", "take_profit"]
@@ -98,6 +105,20 @@ REFUSED_BY: Final[tuple[OrderState, OrderState]] = (
 #: take-profit side, 21 Sec.3.3.11): its entry was never placed. The sweep's write-ahead hook
 #: records it.
 SWEEP_REASON: Final = "unplaced_entry_swept"
+#: The `orders` columns, and the values, of an entry whose pending attach rows, answered or not,
+#: wait for the complete read (21 Sec.3.3.11's table): it ended (`killed`, `expired`, `cancelled`,
+#: `rejected`) or is `held` with nothing filled, on a step that could not tell whether it filled.
+#: The steps that can tell void the rows instead (an end the exchange confirmed unfilled, a KILL
+#: before the send), and a fill makes them its position's stop.
+WAITING_ENTRY: Final[Mapping[str, object]] = MappingProxyType(
+    {
+        "state": frozenset(
+            ORDER_STATE_OF[state]
+            for state in ("killed", "expired", "cancelled", "rejected", "held")
+        ),
+        "cum_exec_qty": Decimal(0),
+    }
+)
 
 
 class SweepScope(Enum):
@@ -184,6 +205,24 @@ def check_request(stops: Sequence[NewRecordedStop]) -> None:
             raise ValueError("a stop request has one source and one order")
 
 
+def request_cutoff(now: datetime, bound_s: float | None) -> datetime | None:
+    """The newest `created_at` of a row past its request's bound at `now`, the app clock read
+    against the stored `created_at` (as an anchor's age is read, Q-N): an unanswered row
+    created then or earlier, `bound_s` seconds old or older, waits for the complete read, and a
+    younger one is in flight inside its bound. None when the bound is missing or unusable (not a
+    number of seconds, finite, zero or more, that a timestamp can hold): fail closed, as every
+    unanswered row then waits (the orchestrator's Q2 ruling). `ValueError` for a naive `now`."""
+    require_aware("now", now)
+    if isinstance(bound_s, bool) or not isinstance(bound_s, int | float):
+        return None
+    try:
+        if not (math.isfinite(bound_s) and bound_s >= 0):
+            return None
+        return now - timedelta(seconds=bound_s)
+    except OverflowError:  # a bound past what a timestamp holds
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class RecordedStopRow:
     """One `recorded_stops` row, every column in table order (pinned to the table by a test)."""
@@ -242,6 +281,12 @@ SweepWriteAhead = Callable[[tuple[SweptStop, ...]], Awaitable[None]]
 #: complete read voids (`sl.modified`, or `tp.modified`, 21 Sec.3.3.11). A hook that raises, or
 #: outlasts the store's audit bound (`WriteAheadTimeout`), leaves every row as it was.
 SettleWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
+#: Awaited once in an insert's transaction, after its rows are written and before its commit, with
+#: the rows as stored: the writer's write-ahead audit of the request (`sl.attached`, and
+#: `tp.modified` for a take-profit side, 21 Sec.3.3.11 "Audit"), whose record ids the rows carry
+#: (`audit_record_id`). A hook that raises, or outlasts the store's audit bound
+#: (`WriteAheadTimeout`), leaves nothing written, so the position stays free for the next request.
+InsertWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
 class StaleRecordedStop(OrderStoreError):
@@ -255,10 +300,14 @@ class StaleRecordedStop(OrderStoreError):
 class RecordedStopStore(Protocol):
     """The recorded stops' writes and reads; no route reaches it (C-12.4)."""
 
-    async def insert(self, stops: Sequence[NewRecordedStop]) -> tuple[RecordedStopRow, ...]:
+    async def insert(
+        self, stops: Sequence[NewRecordedStop], *, write_ahead: InsertWriteAhead | None = None
+    ) -> tuple[RecordedStopRow, ...]:
         """Insert one request's rows in one transaction, all or none, and return them as stored.
         `ValueError` before any statement unless they are one request's (`check_request`);
-        `OrderConstraintError(UX_RS_IN_FLIGHT)` when a request is in flight for the position."""
+        `OrderConstraintError(UX_RS_IN_FLIGHT)` when a request is in flight for the position.
+        `write_ahead`, when given, is awaited with the rows before the commit, bounded;
+        `WriteAheadTimeout` when it outlasts the bound, with nothing written."""
         ...
 
     async def settle(
@@ -280,6 +329,25 @@ class RecordedStopStore(Protocol):
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         """An entry's attach rows, oldest first; empty outside the account."""
+        ...
+
+    async def waiting_for_key(
+        self,
+        account_id: UUID,
+        symbol: str,
+        position_idx: int,
+        *,
+        now: datetime,
+        bound_s: float | None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """The key's rows waiting for the complete read (21 Sec.3.3.11), oldest first: every
+        `pending` row of any source still unanswered past its request's bound of `bound_s` seconds
+        at `now` (`request_cutoff`), and every `pending` entry-attach row of an order of the
+        account `WAITING_ENTRY` holds, answered or not, whatever its age. A row in flight inside
+        its bound is not listed: a second request meets it at the insert (`ux_rs_in_flight`) and
+        retries. A missing or unusable bound lists every unanswered row (fail closed). While any is
+        listed, no other stop request for the key may leave: the complete read (slice 3) resolves
+        them first. Empty outside the account; `ValueError` for a naive `now`, before any read."""
         ...
 
     async def void_orphans(

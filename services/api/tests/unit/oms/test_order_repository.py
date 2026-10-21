@@ -301,6 +301,10 @@ async def _audited(persisted: FirstPersisted) -> None:
     return None  # the caller's write-ahead audit (C-2.9)
 
 
+async def _attached(rows: tuple[RecordedStopRow, ...]) -> None:
+    return None  # the stop request's write-ahead audit (`sl.attached`)
+
+
 FIRST = FirstPersist(
     anchor=NewAnchor(id=ANCHOR, created_by=uuid.UUID(int=4), operation="placeOrder",
                      client_ref=REF, request_sha256=SHA, order_id=ORDER),
@@ -333,7 +337,8 @@ _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]
                             EVENT_IN), PERSISTED),
     "idempotency_anchors": (lambda s, t: IdempotencyAnchorRepository(s, t).record_outcome(ANCHOR,
                             OUTCOME), True),
-    "recorded_stops": (lambda s, t: RecordedStopRepository(s, t).record([STOP]), (STOP_ROW,)),
+    "recorded_stops": (lambda s, t: RecordedStopRepository(s, t).record([STOP],
+                       write_ahead=_attached), (STOP_ROW,)),
     "recorded_stops settle": (lambda s, t: RecordedStopRepository(s, t).settle(ACCOUNT,
                               [STOP.id], "answered", at=T0), (STOP_ROW,)),
 }  # fmt: skip
@@ -510,7 +515,9 @@ async def test_an_entrys_stops_are_read_in_its_account() -> None:
 async def test_a_stop_request_in_flight_refuses_the_next_one_and_logs_nothing() -> None:
     error = OrderConstraintError("ux_rs_in_flight")
     with capture_logs() as logs, pytest.raises(StopRequestInFlight) as err:
-        await RecordedStopRepository(cast(Any, _AnyStore(error=error))).record([STOP])
+        await RecordedStopRepository(cast(Any, _AnyStore(error=error))).record(
+            [STOP], write_ahead=_attached
+        )
     assert (err.value.__cause__, logs) == (None, [])
 
 
@@ -519,7 +526,9 @@ async def test_the_anchor_and_stop_lines_carry_no_key_fingerprint_or_price() -> 
         await IdempotencyAnchorRepository(cast(Any, _AnyStore(True))).record_outcome(
             ANCHOR, OUTCOME
         )
-        await RecordedStopRepository(cast(Any, _AnyStore((STOP_ROW,)))).record([STOP])
+        await RecordedStopRepository(cast(Any, _AnyStore((STOP_ROW,)))).record(
+            [STOP], write_ahead=_attached
+        )
     assert [line["event"] for line in logs] == ["oms_anchor_decided", "oms_stops_recorded"]
     text = repr(logs)
     assert REF not in text and SHA not in text and "62000" not in text
@@ -613,3 +622,57 @@ async def test_a_sweep_whose_audit_did_not_land_voided_nothing() -> None:
             ACCOUNT, at=T0, write_ahead=_no_audit
         )
     assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
+
+
+class _Inserts:
+    """A `RecordedStopStore` whose insert keeps the hook it was handed, then answers or raises."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error, self.hooks = error, list[object]()
+
+    async def insert(self, stops: object, *, write_ahead: object = None) -> object:
+        self.hooks.append(write_ahead)
+        if self.error is not None:
+            raise self.error
+        return (STOP_ROW,)
+
+
+async def test_a_stop_request_hands_its_audit_to_the_store_and_a_late_one_writes_nothing() -> None:
+    """21 Sec.3.3.11 "Audit" (C-2.9): the request's record (`sl.attached`) is awaited in the
+    insert's transaction; one past its bound is `AuditNotDurable`, never an outcome in doubt."""
+    store = _Inserts()
+    assert await RecordedStopRepository(cast(Any, store)).record([STOP], write_ahead=_attached) == (
+        STOP_ROW,
+    )
+    late = _Inserts(WriteAheadTimeout("write-ahead audit exceeded 5.0 s"))
+    with capture_logs() as logs, pytest.raises(AuditNotDurable) as err:
+        await RecordedStopRepository(cast(Any, late)).record([STOP], write_ahead=_attached)
+    assert store.hooks == late.hooks == [_attached] and logs == []
+    assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
+
+
+async def test_a_stop_request_with_no_audit_reaches_no_store() -> None:
+    """C-2.9, as a first persist and a void are: every stop request is audited write-ahead."""
+    store = _Inserts()
+    with pytest.raises(ValueError, match="audited write-ahead"):
+        await RecordedStopRepository(cast(Any, store)).record([STOP], write_ahead=None)
+    assert store.hooks == []
+
+
+async def test_the_rows_that_hold_a_key_are_read_in_its_account_at_the_requests_bound() -> None:
+    """The orchestrator's Q2 ruling: the read takes the caller's clock and the request's bound,
+    as given, and the store decides what an unusable one means (fail closed)."""
+    asked: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class _Stops:
+        async def waiting_for_key(self, *args: object, **kwargs: object) -> tuple[object, ...]:
+            asked.append((args, kwargs))
+            return (STOP_ROW,)
+
+    repo = RecordedStopRepository(cast(Any, _Stops()))
+    rows = await repo.waiting_for_key(ACCOUNT, "BTCUSDT", 0, now=T0, bound_s=5.0)
+    assert await repo.waiting_for_key(ACCOUNT, "BTCUSDT", 0, now=T0, bound_s=None) == rows
+    assert rows == (STOP_ROW,) and asked == [
+        ((ACCOUNT, "BTCUSDT", 0), {"now": T0, "bound_s": 5.0}),
+        ((ACCOUNT, "BTCUSDT", 0), {"now": T0, "bound_s": None}),
+    ]

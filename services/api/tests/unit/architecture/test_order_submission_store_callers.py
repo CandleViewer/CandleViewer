@@ -11,6 +11,11 @@ to that surface anywhere else in `candleviewer` (an `api/` router, a WS topic, a
 each consumer PR (E29-T04's slice 2b and slice 3 among them) adds its file to `ALLOWED` and is
 reviewed as an RBAC bypass first (C-12.4; the `test_trade_group_store_callers.py` precedent,
 CR-2A-04, SEC-2A-04).
+
+Slice 2b: `oms/fakes.py` implements the three stores in memory for the OMS's unit suites, under
+the same contract as the Postgres adapters (`tests/unit/oms/submission_contract.py`). It is a test
+double: it holds no principal and checks none, as the adapters do not, and no composition root
+wires it (slice 3's wiring binds the Postgres adapters), so it opens no route to them.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ NAMES = re.compile(
 )
 ALLOWED = frozenset(
     {
+        "oms/fakes.py",
         "oms/order_steps.py",
         "oms/repository.py",
         "storage/repositories/idempotency_anchors.py",

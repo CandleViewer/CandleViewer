@@ -67,6 +67,7 @@ from candleviewer.storage.repositories.positions import (
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     UX_RS_IN_FLIGHT,
+    InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
     RecordedStopStore,
@@ -398,16 +399,26 @@ class RecordedStopRepository:
         self._store = store
         self._timer = timer
 
-    async def record(self, stops: Sequence[NewRecordedStop]) -> tuple[RecordedStopRow, ...]:
-        """One request's rows, ahead of it: `StopRequestInFlight` when a request is in flight
-        for the position, with nothing written."""
+    async def record(
+        self, stops: Sequence[NewRecordedStop], *, write_ahead: InsertWriteAhead | None
+    ) -> tuple[RecordedStopRow, ...]:
+        """One request's rows, ahead of it, with `write_ahead`, the writer's audit of the request
+        (`sl.attached`, and `tp.modified` for a take-profit side, 21 Sec.3.3.11), awaited before
+        the commit. Raise, with nothing written: `ValueError` before the store when no hook is
+        given, as every stop request is audited (C-2.9), as a first persist is;
+        `StopRequestInFlight` when a request is in flight for the position; `AuditNotDurable`
+        when the audit outlasts its bound."""
+        if write_ahead is None:
+            raise ValueError("a stop request is audited write-ahead (C-2.9): no hook was given")
         try:
             with self._timer.measure("recorded_stops"):
-                rows = await self._store.insert(stops)
+                rows = await self._store.insert(stops, write_ahead=write_ahead)
         except OrderConstraintError as exc:
             if exc.constraint != UX_RS_IN_FLIGHT:
                 raise
             raise StopRequestInFlight("a stop request is in flight for the position") from None
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the stop request's audit did not land in time") from None
         _log_stops("oms_stops_recorded", rows)
         return rows
 
@@ -440,6 +451,25 @@ class RecordedStopRepository:
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         return await self._store.for_order(account_id, order_id)
+
+    async def waiting_for_key(
+        self,
+        account_id: UUID,
+        symbol: str,
+        position_idx: int,
+        *,
+        now: datetime,
+        bound_s: float | None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """The key's rows waiting for the complete read (`RecordedStopStore.waiting_for_key`):
+        the unanswered ones past their request's bound of `bound_s` seconds at `now`, every
+        unanswered one when the bound is missing or unusable (fail closed), and an entry's rows
+        once its order ended, or is held, with nothing filled. While any is listed, no other stop
+        request for the key may leave (21 Sec.3.3.11); a row in flight inside its bound is not
+        listed, as the insert meets it (`StopRequestInFlight`)."""
+        return await self._store.waiting_for_key(
+            account_id, symbol, position_idx, now=now, bound_s=bound_s
+        )
 
     async def void_orphans(
         self, scope: UUID | SweepScope, *, at: datetime, write_ahead: SweepWriteAhead
