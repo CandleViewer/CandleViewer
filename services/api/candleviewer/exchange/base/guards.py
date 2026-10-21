@@ -7,6 +7,8 @@ does. No exchange vocabulary: the ids are this product's (`domain.order_link`).
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from candleviewer.domain.order_link import (
     ENV_LETTER,
     EXT_ID,
@@ -19,7 +21,20 @@ from candleviewer.domain.primitives import OrderLinkId, TsUs
 
 from .models import AccountRef
 
-__all__ = ["check_create_id", "check_exit_ids", "check_lookup_id", "check_window"]
+__all__ = ["check_create_id", "check_exit_ids", "check_key_ref", "check_lookup_id", "check_window"]
+
+
+def check_key_ref(account: AccountRef) -> UUID:
+    """Ruling R13: `key_ref` is the canonical form of the account's active key's `api_keys.id`
+    (lower-case 8-4-4-4-12), its id returned; any other shape is refused with `ValueError`
+    before anything is taken, signed or sent, by every call that names the account."""
+    try:
+        parsed = UUID(account.key_ref)
+    except (ValueError, AttributeError, TypeError):
+        parsed = None
+    if parsed is None or str(parsed) != account.key_ref:
+        raise ValueError("key_ref is not an api_keys id")
+    return parsed
 
 
 def check_create_id(account: AccountRef, link: str) -> None:

@@ -17,16 +17,19 @@ import pytest
 
 from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base import FakeTradingPort, RateHeadroomPort, TradingPort
-from candleviewer.exchange.base.errors import DuplicateClientIdError
+from candleviewer.exchange.base.errors import DuplicateClientIdError, ExchangeError
 from candleviewer.exchange.base.fakes import FakeCall
 from candleviewer.exchange.base.models import (
+    AccountRef,
     AmendOrderRequest,
     CancelOrderRequest,
     Order,
     OrderAck,
     TradingStopRequest,
 )
+from candleviewer.exchange.bybit.trading import ENDPOINTS
 from tests._corpus import rest
+from tests._signing import CREDENTIAL_ID
 from tests.unit.exchange.bybit._trading import (
     ACCOUNT_B,
     NOW_US,
@@ -76,6 +79,7 @@ class Harness:
     prime_missing_cancel: Callable[[], None]
     prime_batch: Callable[[list[str]], None]
     prime_empty_cancel_all: Callable[[], None]
+    prime_position_writes: Callable[[], None]
     acks: list[tuple[str, tuple[OrderAck, ...]]] = field(default_factory=list)
 
 
@@ -162,6 +166,10 @@ def _exchange() -> Harness:
         """The transcribed reply with nothing listed (a test input): nothing to cancel."""
         venue.on("/v5/order/cancel-all", with_result(CANCEL_ALL, list=[]))
 
+    def prime_position_writes() -> None:
+        venue.on("/v5/position/trading-stop", rest("rest/trading-trading-stop-reply.json"))
+        venue.on("/v5/position/set-leverage", rest("rest/trading-set-leverage-reply.json"))
+
     harness = Harness(
         port=make_port(venue, governor=governor),
         sent=lambda: len(venue.sent) + len(governor.acquired),
@@ -175,6 +183,7 @@ def _exchange() -> Harness:
         prime_missing_cancel=prime_missing_cancel,
         prime_batch=prime_batch,
         prime_empty_cancel_all=prime_empty_cancel_all,
+        prime_position_writes=prime_position_writes,
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -213,6 +222,7 @@ def _fake() -> Harness:
         prime_missing_cancel=lambda: None,  # the fake holds no order under the id
         prime_batch=lambda _links: None,  # the fake places every new id
         prime_empty_cancel_all=lambda: None,  # the fake holds no order
+        prime_position_writes=lambda: None,  # the fake writes to whatever position it holds
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -437,8 +447,7 @@ async def test_both_take_a_create_a_batch_or_an_amend_in_its_requests_lane(
     assert harness.lanes() == ["critical"]
 
 
-async def _every_call(port: TradingPort, live: bool) -> AsyncIterator[Callable[[], Any]]:
-    ref = account(environment="live") if live else account()
+async def _every_call(port: TradingPort, ref: AccountRef) -> AsyncIterator[Callable[[], Any]]:
     yield lambda: port.place_order(place(ref))
     yield lambda: port.place_batch([place(ref)])
     yield lambda: port.amend_order(
@@ -461,9 +470,30 @@ async def _every_call(port: TradingPort, live: bool) -> AsyncIterator[Callable[[
 
 
 async def test_both_refuse_another_environments_account_before_anything(harness: Harness) -> None:
-    async for call in _every_call(harness.port, live=True):
+    async for call in _every_call(harness.port, account(environment="live")):
         with pytest.raises(ValueError, match="another environment"):
             await call()
+    assert harness.sent() == 0
+
+
+@pytest.mark.parametrize(
+    "key_ref",
+    ["not-a-uuid", "", "  ", str(CREDENTIAL_ID).upper()],
+    ids=["text", "empty", "blank", "upper-case"],
+)
+async def test_both_refuse_a_key_ref_that_is_not_an_api_keys_id(
+    harness: Harness, key_ref: str
+) -> None:
+    """Ruling R13 on both ports, the headroom reading included: OMS tests on the fake meet the
+    refusal the exchange's port gives, before anything is taken, signed or sent."""
+    ref = account(key_ref=key_ref)
+    async for call in _every_call(harness.port, ref):
+        with pytest.raises(ValueError, match="api_keys id"):
+            await call()
+    port = harness.port
+    assert isinstance(port, RateHeadroomPort)
+    with pytest.raises(ValueError, match="api_keys id"):
+        port.headroom(ref, "critical")
     assert harness.sent() == 0
 
 
@@ -575,7 +605,83 @@ async def test_both_refuse_a_window_that_ends_before_it_starts(harness: Harness)
     assert harness.sent() == 0
 
 
-async def test_both_refuse_a_leverage_that_is_not_positive(harness: Harness) -> None:
+@pytest.mark.parametrize("leverage", ["0", "-2", "NaN", "Infinity"])
+async def test_both_refuse_a_leverage_that_is_not_positive(harness: Harness, leverage: str) -> None:
     with pytest.raises(ValueError, match="positive"):
-        await harness.port.set_leverage(account(), "BTCUSDT", Decimal(0))
+        await harness.port.set_leverage(account(), "BTCUSDT", Decimal(leverage))
     assert harness.sent() == 0
+
+
+async def test_both_accept_a_leverage_of_one_in_the_entry_lane(harness: Harness) -> None:
+    harness.prime_position_writes()
+    await harness.port.set_leverage(account(), "BTCUSDT", Decimal(1))
+    assert harness.lanes() == ["entry"]
+
+
+async def test_both_write_a_stop_in_the_critical_lane(harness: Harness) -> None:
+    """SR-E29-14: the protective write is always critical, on the fake that T04's tests read
+    as on the exchange's port."""
+    harness.prime_position_writes()
+    stop = TradingStopRequest(account=account(), symbol="BTCUSDT", stop_loss=Decimal("58000"))
+    ack = await harness.port.set_trading_stop(stop)
+    assert ack.ok and harness.lanes() == ["critical"]
+
+
+async def test_both_answer_a_cancel_naming_our_id_and_another_exchange_id_not_found(
+    harness: Harness,
+) -> None:
+    """An exit named by both ids is sent by the exchange id alone (24 §14.2 rule 11), so a
+    stale exchange id finds no order even though the link names one held."""
+    request = place()
+    harness.prime_create(request.order_link_id)
+    await harness.port.place_order(request)
+    harness.prime_missing_cancel()
+    stale = CancelOrderRequest(
+        account=account(),
+        symbol="BTCUSDT",
+        order_link_id=request.order_link_id,
+        exchange_order_id="another-order",
+    )
+    ack = await harness.port.cancel_order(stale)
+    assert (ack.ok, ack.error_code, ack.order_link_id) == (
+        False,
+        "ORDER_NOT_FOUND",
+        request.order_link_id,
+    )
+
+
+#: The lane of each call, written out (24 §14.2 rule 12, SR-E29-14): `None` is the request's.
+LANES: dict[str, str | None] = {
+    "place_order": None, "place_batch": None, "amend_order": None,
+    "cancel_order": "critical", "cancel_all": "critical", "set_trading_stop": "critical",
+    "set_leverage": "entry",
+    "open_orders": "poll", "order_history": "poll", "positions": "poll", "executions": "poll",
+    "closed_pnl": "poll", "wallet": "poll", "fee_rate": "poll", "account_info": "poll",
+}  # fmt: skip
+
+
+async def test_the_fakes_lanes_are_the_exchange_ports_endpoint_table() -> None:
+    """The fake records each call's lane, which T04's tests read; it cannot drift from the
+    exchange's port's table. Creates, batches and amends here ask for `critical`, not the
+    default, so a fake that ignored the request's lane would show."""
+    port = FakeTradingPort(environment="demo", now_us=lambda: NOW_US)
+    created = place(lane="critical")
+    await port.place_order(created)
+    await port.place_batch([place(order_link_id=link(seq=1), lane="critical")])
+    amend = AmendOrderRequest(
+        account=account(), symbol="BTCUSDT", order_link_id=created.order_link_id,
+        qty=Decimal("0.02"), lane="critical",
+    )  # fmt: skip
+    await port.amend_order(amend)
+    async for call in _every_call(port, account()):
+        try:
+            await call()
+        except ExchangeError:  # an unseeded account read, or a duplicate: recorded first
+            pass
+    recorded: dict[str, str] = {}
+    for call_made in port.calls:  # each method's first call: a create, batch or amend asked
+        recorded.setdefault(call_made.method, call_made.lane)  # for `critical` above
+    assert set(recorded) == set(LANES) == set(ENDPOINTS)
+    for name, lane in LANES.items():
+        assert recorded[name] == (lane or "critical"), name
+        assert ENDPOINTS[name].lane == lane, name

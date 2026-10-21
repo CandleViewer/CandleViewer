@@ -7,7 +7,7 @@ file covers what only the fake has: scripted outcomes, venue-like state and the 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from decimal import Decimal
 from uuid import UUID
 
@@ -546,3 +546,174 @@ async def test_a_cancel_meets_only_this_accounts_orders_and_can_be_scripted() ->
 async def test_a_batch_is_one_accounts_in_one_lane(second: Callable[[], PlaceOrderRequest]) -> None:
     with pytest.raises(ValueError, match="one account's, in one lane"):
         await _port().place_batch([_place(0), second()])
+
+
+# -- the round-3 fold (#2877): scoping, limits and the exit's order, each a mutant's test --------
+
+
+async def test_cancel_all_takes_only_its_accounts_orders_of_its_symbol() -> None:
+    """The multi-account and per-symbol kill switch of E29-T04 runs on this fake."""
+    port = _port()
+    for order in (
+        _order(_link(0), "a-btc"),
+        _order(_link(1), "a-eth").model_copy(update={"symbol": "ETHUSDT"}),
+        _order(_link(2, OTHER), "b-btc", account_id=OTHER),
+    ):
+        port.seed_order(order, uid="100001")
+    acks = await port.cancel_all(_ref(), "BTCUSDT")
+    assert [a.exchange_order_id for a in acks] == ["a-btc"]
+    assert [o.exchange_order_id for o in await port.open_orders(_ref())] == ["a-eth"]
+    assert [o.exchange_order_id for o in await port.open_orders(_ref(OTHER))] == ["b-btc"]
+
+
+async def test_a_rejected_cancel_all_still_records_its_scope() -> None:
+    """E29-T04 asserts that every cancel-all carries its filter, a rejected one's included: the
+    filter went on the wire whatever the venue answered."""
+    port = _port()
+    port.script("cancel_all", FakeReject(OmsErrorCode.RATE_LIMITED, retryable=True))
+    [refused] = await port.cancel_all(_ref(), "BTCUSDT")
+    assert refused.ok is False
+    assert port.cancel_all_scopes == [(ACCOUNT, "BTCUSDT", CANCEL_ALL_SCOPE)]
+
+
+async def test_history_and_closed_pnl_answer_only_the_accounts_own() -> None:
+    port = _port()
+    port.seed_order(_order(_link(0), "a-done", state="filled"), uid="100001")
+    theirs = _order(_link(1, OTHER), "b-done", account_id=OTHER, state="filled")
+    port.seed_order(theirs, uid="100001")
+    mine_pnl = ClosedPnl(
+        account_id=ACCOUNT, symbol="BTCUSDT", side="sell", qty=Decimal("1"),
+        avg_entry_price=Decimal("60000"), avg_exit_price=Decimal("61000"),
+        closed_pnl=Decimal("1000"), leverage=Decimal("5"), opened_at=T0, closed_at=T0,
+    )  # fmt: skip
+    port.seed_closed_pnl(mine_pnl)
+    port.seed_closed_pnl(mine_pnl.model_copy(update={"account_id": OTHER}))
+    assert [o.exchange_order_id for o in await port.order_history(_ref())] == ["a-done"]
+    assert await port.closed_pnl(_ref(), T0 - 1, T0) == [mine_pnl]
+
+
+async def test_set_leverage_changes_only_its_symbols_position() -> None:
+    port = _port()
+    port.seed_position(_position())
+    port.seed_position(_position().model_copy(update={"symbol": "ETHUSDT"}))
+    await port.set_leverage(_ref(), "ETHUSDT", Decimal("3"))
+    assert {p.symbol: p.leverage for p in await port.positions(_ref())} == {
+        "BTCUSDT": Decimal("5"),
+        "ETHUSDT": Decimal("3"),
+    }
+
+
+async def test_a_position_seeded_twice_on_one_key_is_the_last_one() -> None:
+    port = _port()
+    port.seed_position(_position())
+    resized = _position().model_copy(update={"qty": Decimal("2")})
+    port.seed_position(resized)
+    assert await port.positions(_ref()) == [resized]
+
+
+async def test_a_market_create_lands_with_no_price_and_its_whole_quantity_left() -> None:
+    """As the venue reads a market order: a price the request carried is not its price."""
+    port = _port()
+    await port.place_order(_place(order_type="market", qty=Decimal("3")))
+    [order] = await port.open_orders(_ref())
+    assert (order.order_type, order.price, order.leaves_qty) == ("market", None, Decimal("3"))
+
+
+async def test_an_amend_changes_the_price_and_the_take_profit_too() -> None:
+    port = _port()
+    await port.place_order(_place())
+    amend = AmendOrderRequest(
+        account=_ref(), symbol="BTCUSDT", order_link_id=_link(), price=Decimal("60500"),
+        take_profit=Decimal("65000"),
+    )  # fmt: skip
+    assert (await port.amend_order(amend)).ok
+    [order] = await port.open_orders(_ref())
+    assert (order.price, order.take_profit) == (Decimal("60500"), Decimal("65000"))
+
+
+async def test_an_exit_with_an_empty_exchange_id_is_named_by_its_link() -> None:
+    """An empty exchange id names nothing, as the exchange adapter reads it: the link names the
+    order (24 §14.2 rule 11), for an amend and for a cancel."""
+    port = _port()
+    await port.place_order(_place())
+    amend = AmendOrderRequest(
+        account=_ref(), symbol="BTCUSDT", order_link_id=_link(), exchange_order_id="",
+        qty=Decimal("2"),
+    )  # fmt: skip
+    assert (await port.amend_order(amend)).ok
+    cancel = CancelOrderRequest(
+        account=_ref(), symbol="BTCUSDT", order_link_id=_link(), exchange_order_id=""
+    )
+    ack = await port.cancel_order(cancel)
+    assert (ack.ok, ack.order_link_id) == (True, _link())
+    assert await port.open_orders(_ref()) == []
+
+
+async def test_a_cancel_by_the_second_orders_exchange_id_cancels_the_second() -> None:
+    port = _port()
+    first = await port.place_order(_place(0))
+    second = await port.place_order(_place(1))
+    cancel = CancelOrderRequest(
+        account=_ref(), symbol="BTCUSDT", exchange_order_id=second.exchange_order_id
+    )
+    ack = await port.cancel_order(cancel)
+    assert (ack.order_link_id, ack.exchange_order_id) == (_link(1), second.exchange_order_id)
+    assert [o.exchange_order_id for o in await port.open_orders(_ref())] == [
+        first.exchange_order_id
+    ]
+
+
+async def test_a_refused_cancel_naming_both_ids_is_named_by_its_own_link() -> None:
+    """As the exchange adapter names it: by the request's link, never the exchange id's key."""
+    port = _port()
+    port.script("cancel_order", FakeReject(OmsErrorCode.RATE_LIMITED, retryable=True))
+    request = CancelOrderRequest(
+        account=_ref(), symbol="BTCUSDT", order_link_id=_link(), exchange_order_id="fake-1"
+    )
+    ack = await port.cancel_order(request)
+    assert (ack.ok, ack.order_link_id) == (False, _link())
+
+
+async def test_a_second_subscription_after_the_end_replays_its_seeded_events_and_ends() -> None:
+    """The end is sticky: a reconnect test subscribes again once the first stream has ended."""
+    port = FakeTradingPort(private_events=[_event(ACCOUNT, 1)])
+    port.end_stream()
+    async with asyncio.timeout(5):  # a guard only: the streams end at once
+        first = [event.seq async for event in await port.subscribe_private(_ref())]
+        again = [event.seq async for event in await port.subscribe_private(_ref())]
+    assert first == again == [1]
+
+
+async def _seqs(stream: AsyncIterator[PrivateEvent]) -> list[int]:
+    return [event.seq async for event in stream]
+
+
+async def test_two_subscribers_waiting_on_one_account_both_end() -> None:
+    """One end marker ends every subscriber of the account, however many wait on its queue:
+    the reader that takes it puts it back for the next."""
+    port = FakeTradingPort()
+    streams = [await port.subscribe_private(_ref()) for _ in range(2)]
+    readers = [asyncio.ensure_future(_seqs(stream)) for stream in streams]
+    port.push(_event(ACCOUNT, 1))
+    await asyncio.sleep(0)  # a yield: the first reader takes the event, then both wait
+    port.end_stream()
+    async with asyncio.timeout(5):  # a guard only: both end at once
+        assert await asyncio.gather(*readers) == [[1], []]
+
+
+async def test_ending_a_full_stream_raises_nothing_and_each_ends_once_drained() -> None:
+    """A full queue takes no end marker and drains first; every account's stream still ends."""
+    port = FakeTradingPort(queue_size=1)
+    port.push(_event(ACCOUNT, 1))
+    port.push(_event(OTHER, 2))
+    port.end_stream()
+    async with asyncio.timeout(5):  # a guard only: the streams end at once
+        mine = [event.seq async for event in await port.subscribe_private(_ref())]
+        theirs = [event.seq async for event in await port.subscribe_private(_ref(OTHER))]
+    assert (mine, theirs) == ([1], [2])
+
+
+def test_a_private_queue_must_hold_an_event() -> None:
+    """asyncio's size 0 is an unbounded queue: refused, as every queue is bounded (C-2.18)."""
+    with pytest.raises(ValueError, match="at least one event"):
+        FakeTradingPort(queue_size=0)

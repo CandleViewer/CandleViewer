@@ -35,7 +35,6 @@ from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal
-from uuid import UUID
 
 import httpx
 import structlog
@@ -54,6 +53,7 @@ from candleviewer.exchange.base.errors import (
 from candleviewer.exchange.base.guards import (
     check_create_id,
     check_exit_ids,
+    check_key_ref,
     check_lookup_id,
     check_window,
 )
@@ -266,17 +266,6 @@ def _lane(endpoint: Endpoint, requested: RateLane | None) -> RateLane:
     raise ValueError(f"{endpoint.path}: its lane is the endpoint table's or its request's")
 
 
-def _credential_id(key_ref: str) -> UUID:
-    """Ruling R13: `key_ref` is the canonical form of the active key's `api_keys.id`."""
-    try:
-        parsed = UUID(key_ref)
-    except (ValueError, AttributeError, TypeError):
-        parsed = None
-    if parsed is None or str(parsed) != key_ref:
-        raise ValueError("key_ref is not an api_keys id")
-    return parsed
-
-
 def _windows(start: TsUs, end: TsUs) -> list[tuple[int, int]]:
     """`[start, end]` in ms as consecutive windows of at most 7 days, the venue's longest."""
     low, high = start // 1000, -(-end // 1000)
@@ -337,8 +326,11 @@ class BybitTradingPort:
     # -- clients and calls --------------------------------------------------------------------
 
     def _check_environment(self, account: AccountRef) -> None:
+        """The account is of this port's environment (C-2.11) and names its key by the key's
+        `api_keys.id` (ruling R13), or the call is refused before anything else."""
         if account.environment != self.environment:
             raise ValueError("the account belongs to another environment")
+        check_key_ref(account)
 
     async def _client(self, account: AccountRef) -> BybitRestClient:
         """The account's client on its active key; a new key retires the old key's client."""
@@ -346,7 +338,7 @@ class BybitTradingPort:
         held = self._clients.get(account.account_id)
         if held is not None and held[0] == account.key_ref:
             return held[1]
-        signer = BybitSigner(self._credentials, _credential_id(account.key_ref))
+        signer = BybitSigner(self._credentials, check_key_ref(account))
         client = BybitRestClient(
             self._config,
             uid=account.uid,

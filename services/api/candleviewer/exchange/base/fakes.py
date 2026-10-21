@@ -27,7 +27,7 @@ from candleviewer.domain.primitives import (
 )
 
 from .errors import AmbiguousResultError, DuplicateClientIdError, NotFoundError, OmsErrorCode
-from .guards import check_create_id, check_exit_ids, check_lookup_id, check_window
+from .guards import check_create_id, check_exit_ids, check_key_ref, check_lookup_id, check_window
 from .models import (
     AccountInfo,
     AccountRef,
@@ -303,6 +303,8 @@ class FakeTradingPort:
     ) -> None:
         if cancel_all_limit < 1:
             raise ValueError("a cancel-all cancels at least one order")
+        if queue_size < 1:  # asyncio's 0 is an unbounded queue (C-2.18)
+            raise ValueError("a private queue holds at least one event")
         self.capabilities = (
             capabilities if capabilities is not None else fake_capabilities(environment)
         )
@@ -379,11 +381,13 @@ class FakeTradingPort:
         self._queue(event.account_id).put_nowait(event)
 
     def end_stream(self) -> None:
-        """End every account's `subscribe_private` iteration once its queued events are drained;
-        one opened later ends after its seeded events."""
+        """End every account's `subscribe_private` iteration once its queued events are drained,
+        every subscriber of the account and one opened later included (after its seeded
+        events). The end is sticky, and a full queue drains first: it takes no end marker."""
         self._ended = True
         for queue in self._pushed.values():
-            queue.put_nowait(None)
+            if not queue.full():
+                queue.put_nowait(None)
 
     # -- trade calls ------------------------------------------------------------------------
 
@@ -456,10 +460,11 @@ class FakeTradingPort:
 
     async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
         self._enter("cancel_all", account, symbol, "critical")
+        # Recorded with the call, as `calls` records it: a rejected call's filter was sent too.
+        self.cancel_all_scopes.append((account.account_id, symbol, CANCEL_ALL_SCOPE))
         outcome = self._outcome("cancel_all")
         if isinstance(outcome, FakeReject):
             return [_rejected(None, outcome)]
-        self.cancel_all_scopes.append((account.account_id, symbol, CANCEL_ALL_SCOPE))
         keys = [
             key
             for key, order in self._open.items()
@@ -608,16 +613,19 @@ class FakeTradingPort:
             if seeded.account_id == account_id:
                 yield seeded
         queue = self._queue(account_id)
-        while (pushed := await queue.get()) is not None:
+        while not (self._ended and queue.empty()):
+            pushed = await queue.get()
+            if pushed is None:
+                queue.put_nowait(None)  # sticky: the account's other subscribers end too
+                return
             yield pushed
 
     def _queue(self, account_id: AccountId) -> asyncio.Queue[PrivateEvent | None]:
-        """The account's own queue, made on first use (ended at once after `end_stream`)."""
+        """The account's own queue, made on first use: once the stream has ended, a reader of an
+        empty one ends at once."""
         queue = self._pushed.get(account_id)
         if queue is None:
             queue = self._pushed[account_id] = asyncio.Queue(maxsize=self._queue_size)
-            if self._ended:
-                queue.put_nowait(None)
         return queue
 
     # -- internals --------------------------------------------------------------------------
@@ -625,6 +633,7 @@ class FakeTradingPort:
     def _check_environment(self, account: AccountRef) -> None:
         if account.environment != self.environment:
             raise ValueError("the account belongs to another environment")
+        check_key_ref(account)
 
     def _enter(self, method: str, account: AccountRef, request: object, lane: RateLane) -> None:
         """Refuse another environment's account, then record the call: every refusal comes
@@ -678,12 +687,15 @@ class FakeTradingPort:
     def _find_open(
         self, account: AccountRef, link: str | None, exchange_order_id: str | None
     ) -> str | None:
+        """By the exchange id when one is given, as the exchange adapter names an exit by it
+        alone (an empty one is none); else by the link."""
         for key, order in self._open.items():
             if order.account_id != account.account_id:
                 continue
-            if exchange_order_id is not None and order.exchange_order_id == exchange_order_id:
-                return key
-            if exchange_order_id is None and order.order_link_id == link:
+            if exchange_order_id:
+                if order.exchange_order_id == exchange_order_id:
+                    return key
+            elif order.order_link_id == link:
                 return key
         return None
 
