@@ -21,7 +21,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — shared density table: rows 24 / 32 px
 - [x] **Essential-exceptions log** — none (shared table)
 - [ ] **Tokens used** — the entry cites `space.row.*`, which resolves (`space.row.height.compact` / `.comfortable` in `semantic-dark.tokens.json`, density aliases per `packages/ui/tokens/themes.json`), and `font.size.body/label`, which do not exist; patch A-2 binds `size.row.height` (the density-resolved alias `themes.json` names), `type.ui.body`, `type.num.base`, `type.ui.caption`, `color.text.primary` / `.secondary` / `.tertiary` and the `color.data-confidence.stale.*` set
-- [x] **Data contract confirmed** — `InstrumentDetail` fields (spec §4.1) and `TickerUpdate` fields (§4.2), as decimal strings (spec F1)
+- [ ] **Data contract confirmed** — PENDING spec CR-11 (the 24 h high and low are never sent) and H-7 (no `ticker` producer on main): `InstrumentDetail` fields (spec §4.1) and `TickerUpdate` fields (§4.2, an absent field per its Absent column), as decimal strings (spec F1)
 - [ ] **Contrast and CVD** — computed (spec §13: values, labels, units on `surface.overlay` and `surface.sunken`); the `surface.sunken` pairs join `tools/contrast/pairs.mjs` with the audit script in the boards step
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING: the owner's `approved` on #174 or the merge of the spec PR
