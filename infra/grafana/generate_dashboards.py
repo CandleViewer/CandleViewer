@@ -298,11 +298,35 @@ def market() -> Board:
         "{{engine}}",
     )
     b.ts("Ingest queue depth", f"ingest_queue_depth{{{E}}}", "short", legend="{{stage}}")
+    _ws_gateway(b)
+    _ws_queue(b)
+    _ws_handshake(b)
+    _ws_subscriptions(b)
+    _ws_cost(b)
+    b.flush()
+    return b
+
+
+# --- WS gateway (E17-T06, #571) -------------------------------------------------------------
+# Every series is a live one of the metric catalogue, with its as-built labels; a line is drawn
+# only at a documented value. 23-ws-protocol.md section 16.3: the resync lines, the bandwidth and
+# the re-snapshot budget; 8.3: the class edges of the queue and RTT panels; 16.2: the 200
+# subscriptions and the 4 MiB frame; 4.2: the clock-skew warning; the catalogue: handshake p99.
+#: The default 23-ws-protocol.md 8.4 outbound queue budget (a deployment may only lower it).
+WS_QUEUE_BYTES, WS_QUEUE_FRAMES = 8 * 1024 * 1024, 2000
+KIB, MIB = 1024, 1024 * 1024
+
+
+def _in_range(metric: str, by: str = "") -> str:
+    """Whole events over the dashboard range, as the WS alerts round them."""
+    grouped = f"sum by ({by}) " if by else "sum"
+    return f"round({grouped}(increase({metric}{{{E}}}[$__range])))"
+
+
+def _ws_gateway(b: Board) -> None:
     b.row("WS gateway (client sockets)")
-    # E17-T06 (#571). Only series that exist are plotted. Not yet: connection class, queue depth and
-    # bytes, bandwidth per connection (no series), overflow actions (`cv_ws_overflow_total`, #2873:
-    # the series exists, but nothing increments it until the outbound ladder is wired into the
-    # gateway, E17-T03 #412). The 1 and 5 lines of the resync panel are 23-ws-protocol.md 16.3.
+    # The ticket's row: connections, class, fan-out p95 against 20 ms, resyncs against the 16.3
+    # lines, overflow actions and bandwidth per connection; closes and gaps feed its alerts.
     b.ts("Open client connections", f"sum(cv_ws_connections_in_use{{{E}}})", "short")
     b.ts(
         "WS fan-out latency p95 (budget 20 ms)",
@@ -322,7 +346,7 @@ def market() -> Board:
     _threshold_lines(b)
     b.ts(
         "WS resyncs in the range, by reason (lines: 1 and 5 an hour)",
-        f"round(sum by (reason) (increase(cv_ws_resync_total{{{E}}}[$__range])))",
+        _in_range("cv_ws_resync_total", "reason"),
         "short",
         1,
         5,
@@ -333,20 +357,21 @@ def market() -> Board:
         "Gateway-wide sum over the dashboard range before each point (1 h by default, which the "
         "lines are for: target under 1, hard fail above 5 an hour), rounded to whole events as "
         "WsUpstreamDesyncHigh rounds. Each affected subscription counts once, so one upstream "
-        "desync adds one per subscribed book topic across all connections; 23-ws-protocol.md "
-        "16.3 is per topic, so group the `ws resync` log lines by `ch`. upstream_desync and "
-        "backpressure are the incident reasons (7.4) and the only ones the lines judge; "
-        "reconfigure and client_resync cross them in normal use. Only client_resync and "
-        "reconfigure have a trigger today: upstream_desync, upstream_reconnect, "
-        "instrument_revision, replay_seek and backpressure read zero whatever happens until "
-        "their callers are wired (the outbound ladder, E17-T03 #412, for backpressure; the book "
-        "feed, the instrument cache and the replay engine for the other four), so a flat zero "
-        "here is not coverage. WsUpstreamDesyncHigh fires above 5 upstream_desync in an hour.",
+        "desync adds one per subscribed topic across all connections; 23-ws-protocol.md 16.3 is "
+        "per topic, so group the `ws resync` log lines by `ch`. upstream_desync and backpressure "
+        "are the incident reasons (7.4) and the only ones the lines judge; the other reasons "
+        "cross them in normal use. Moving today: client_resync, reconfigure, the bars and "
+        "indicator series' generation_swap and history_repair, upstream_desync from the alerts "
+        "topic (6.2.1) and from a delta the hub failed to emit, and backpressure with "
+        "CV_WS_BACKPRESSURE_ENABLED on. The book feed does not call the hub's upstream_desync "
+        "trigger yet, and upstream_reconnect, instrument_revision and replay_seek have no caller, "
+        "so a flat zero for those is not coverage. WsUpstreamDesyncHigh fires above 5 "
+        "upstream_desync in an hour.",
     )
     _threshold_lines(b)
     b.ts(
         "WS closes in the range, by reason",
-        f"round(sum by (reason) (increase(cv_ws_closes_total{{{E}}}[$__range])))",
+        _in_range("cv_ws_closes_total", "reason"),
         "short",
         legend="{{reason}}",
     )
@@ -359,8 +384,306 @@ def market() -> Board:
         "the cap on sockets awaiting auth; normal and other have no counting path yet, so they "
         "read zero whatever happens.",
     )
-    b.flush()
-    return b
+    b.ts(
+        "WS connections by class (backpressure flag on)",
+        f"sum by (state) (cv_ws_connection_class{{{E}}})",
+        "short",
+        legend="{{state}}",
+    )
+    _describe(
+        b,
+        "Open client connections per 23-ws-protocol.md 8.3 class (`state`), from the first "
+        "auth_ok to the teardown, summed over processes. Set only with "
+        "CV_WS_BACKPRESSURE_ENABLED on (off by default): with it off every class reads zero, so a "
+        "flat zero is not health. A connection's class is read when its writer runs; a writer "
+        "held in a send keeps its last class, and a stuck socket shows in the overflow and "
+        "closes panels.",
+    )
+    b.ts(
+        "WS overflow actions in the range, by reason",
+        _in_range("cv_ws_overflow_total", "reason"),
+        "short",
+        legend="{{reason}}",
+    )
+    _describe(
+        b,
+        "The 23-ws-protocol.md 8.4 ladder: drop, drop_share, unmergeable and resnapshot count per "
+        "topic; close_budget and close_redrop per close (a slow_consumer close, which the closes "
+        "panel and WsSlowConsumerClosed see too); close_flush_deadline per close whose flush "
+        "expired, beside its step 3; withdrawn per queued frame that a withdrawn grant or "
+        "permission dropped (9.5). The ladder runs only with CV_WS_BACKPRESSURE_ENABLED on; with "
+        "it off only close_flush_deadline and withdrawn move. A reason's series starts at its "
+        "first event, so the first one after a restart may not show.",
+    )
+    b.ts(
+        "WS bandwidth per connection, sampled (lines: 350 KiB/s target, 1 MiB/s hard fail)",
+        f'sum(rate(cv_ws_frame_bytes_sum{{{E},kind=~"json|msgpack"}}[{RI}])) '
+        f"/ clamp_min(sum(cv_ws_connections_in_use{{{E}}}), 1)",
+        "Bps",
+        350 * KIB,
+        MIB,
+    )
+    _describe(
+        b,
+        "Data-frame bytes per second over the open connections: a mean, not the busiest client. "
+        "Estimated from cv_ws_frame_bytes, kind json or msgpack, sampled 1 in 32 with weight 32, "
+        "so each subscription's first 31 frames, control frames and system frames are left out "
+        "and it reads low. Bytes are as encoded for the send, before permessage-deflate and less "
+        "the span id sp; with the backpressure flag on a frame counts at its encode, so one the "
+        "ladder drops later is in it. A connection feeds only its own codec, so json and msgpack "
+        "never count the same frame; the CVWB kinds do, so they are left out. The lines are "
+        "23-ws-protocol.md 16.3's server-to-client budget for the reference workspace.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS client-reported sequence gaps in the range (line: 1)",
+        _in_range("cv_ws_sequence_gaps_detected_total"),
+        "short",
+        None,
+        1,
+    )
+    _describe(
+        b,
+        "Client resync frames with reason sequence_gap (23-ws-protocol.md 7.5). The server "
+        "guarantees gap-free sequences, so any count is a bug to chase, though the server does "
+        "not verify the client's report. WsSequenceGapDetected (ticket) fires on any in 10 "
+        "minutes; the `ws client resync` log lines name the ch and the client's last seq.",
+    )
+    _threshold_lines(b)
+
+
+def _ws_queue(b: Board) -> None:
+    b.row("WS queue, RTT and coalescing (backpressure flag on)")
+    # Per process, flag on only (ruling D6 of #412): read once per connection per
+    # CV_WS_CLASSIFY_INTERVAL_MS (the probe and the depth) or as a merged window leaves.
+    b.ts(
+        "WS outbound queue depth p95, share of the default budget (lines: 25 % and 60 %)",
+        f"{q('cv_ws_queue_bytes')} / {WS_QUEUE_BYTES}",
+        "percentunit",
+        0.25,
+        0.6,
+        "bytes of 8 MiB",
+    )
+    _extra(b, "B", f"{q('cv_ws_queue_frames')} / {WS_QUEUE_FRAMES}", "frames of 2 000")
+    _describe(
+        b,
+        "Depth sampled per connection at each classification, as a share of the default "
+        "23-ws-protocol.md 8.4 budget (8 MiB or 2 000 frames). The class reads the larger share, "
+        "and the lines are its 8.3 edges: lagging from 25 % (throttles x2), x4 from 60 %, "
+        "overflowing above 90 %. A deployment may only lower the budget, so a lowered one "
+        "reaches the edges before this panel does. A writer held in a send takes no sample; a "
+        "stuck socket shows in the overflow and closes panels.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS probe RTT p95 (lines: 150 ms and 500 ms)",
+        q("cv_ws_rtt_seconds"),
+        "s",
+        0.15,
+        0.5,
+    )
+    _describe(
+        b,
+        "One sample per answered 23-ws-protocol.md 9.1 probe, from its queueing to the pong; a "
+        "probe unanswered for 10 s counts its age when it is retired. The lines are the 8.3 class "
+        "edges (lagging, throttles x2, from 150 ms; x4 above 500 ms). A client that never answers "
+        "server pings is classed x4 from its second classification on (8.6).",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS updates merged away per second, by family",
+        rate("cv_ws_conflated_total", "topic"),
+        "ops",
+        legend="{{topic}}",
+    )
+    _describe(
+        b,
+        "Source updates a throttle window merged away, by family (`topic`): a window of n updates "
+        "that left as one frame adds n - 1 (23-ws-protocol.md 8.2). Only families with a merge "
+        "rule are counted, append families never. The pacer's own merges, not a producer's "
+        "carried coalesced_count.",
+    )
+    b.ts(
+        "WS updates per merged window p95",
+        q("cv_ws_coalesced_updates"),
+        "short",
+    )
+    _describe(b, "Source updates (2 and up) in each merged window that left as one frame.")
+
+
+def _ws_handshake(b: Board) -> None:
+    b.row("WS handshake and auth (E17-S01)")
+    b.ts(
+        "WS handshake p99, accept to first auth_ok (line: 2 s)",
+        q("cv_ws_handshake_seconds", pct="0.99"),
+        "s",
+        2,
+    )
+    _describe(
+        b,
+        "From the socket's accept to its first auth_ok; a re-auth is not observed. The line is the "
+        "catalogue's p99 line for this series; it falls between the 1 s and 2.5 s bucket edges, "
+        "so a p99 near it is interpolated. The auth timeout is 10 s (23-ws-protocol.md 16.2).",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS auth failures in the range, by reason",
+        _in_range("cv_ws_auth_failures_total", "reason"),
+        "short",
+        legend="{{reason}}",
+    )
+    _describe(
+        b,
+        "Failed auth frames by bounded reason: missing_token, rejected, token_expired, "
+        "user_mismatch. A sudden rise can mean credential stuffing; the `ws auth failed` log "
+        "lines carry the connection_id and source_ip. A reason's series starts at its first "
+        "failure, so the first one after a restart may not show.",
+    )
+    b.ts(
+        "WS client clock skew p99 (line: 2 000 ms)",
+        q("cv_ws_clock_skew_ms", pct="0.99"),
+        "ms",
+        2000,
+    )
+    _describe(
+        b,
+        "The absolute skew of each welcome: server time minus the hello's clock_ms (a hello "
+        "without a valid one adds no sample). The UI warns above 2 000 ms because a skewed "
+        "client mis-renders bar countdowns (23-ws-protocol.md 4.2).",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS sockets refused by the per-user connect rate, in the range",
+        _in_range("cv_ws_connect_rate_limited_total"),
+        "short",
+    )
+    _describe(
+        b,
+        "Sockets closed client_rate_limited after a valid auth because their user passed 20 "
+        "successful auths in a sliding minute (23-ws-protocol.md 4.3, 16.2). A sustained count "
+        "means a client with no backoff, or one token in use from more places than expected; the "
+        "`ws connect rate limited` log line names the user, once per user per window.",
+    )
+
+
+def _ws_subscriptions(b: Board) -> None:
+    b.row("WS subscriptions and revocation (E17-S02)")
+    b.ts(
+        "WS subscribe results per second, by result",
+        rate("cv_ws_subscribe_total", "result"),
+        "ops",
+        legend="{{result}}",
+    )
+    _describe(
+        b,
+        "Each topic result of a sub_ok: ok, or the 23-ws-protocol.md 10.2 code that refused it. "
+        "The series also carry `topic`, the family (unknown for a name no family owns): split by "
+        "it in Explore when a refusal code rises.",
+    )
+    b.ts(
+        "WS subscriptions per connection, p50 and p95 (line: 200, the cap)",
+        q("cv_ws_client_topics_depth", pct="0.5"),
+        "short",
+        None,
+        200,
+        "p50",
+    )
+    _extra(b, "B", q("cv_ws_client_topics_depth"), "p95")
+    _describe(
+        b,
+        "Observed after each sub_ok and unsub_ok, so a connection that changes its set often "
+        "weighs more than a quiet one. 200 is the per-connection cap (23-ws-protocol.md 16.2). "
+        "The ticket's cv_ws_topics_per_client gauge is built as this histogram (6.2, Metrics as "
+        "built).",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS upstream consumers, by family",
+        f"sum by (topic) (cv_ws_upstream_consumers_in_use{{{E}}})",
+        "short",
+        legend="{{topic}}",
+    )
+    _describe(
+        b,
+        "Consumers of the shared upstream leases, summed over symbols per family (`topic`). The "
+        "series are per symbol for the first 20 symbols and symbol=other after them, and each is "
+        "removed at 0, so an idle family has no line.",
+    )
+    b.ts(
+        "WS subscriptions revoked in the range, by reason",
+        _in_range("cv_ws_revoked_total", "reason"),
+        "short",
+        legend="{{reason}}",
+    )
+    _describe(
+        b,
+        "Subscriptions the server ended mid-connection with a revoked frame (23-ws-protocol.md "
+        "9.5): a withdrawn permission, account scope or key, a disabled user or account, an "
+        "ended session or replay, the resync rate limit or a removed topic. A reason's series "
+        "starts at its first revocation.",
+    )
+
+
+def _ws_cost(b: Board) -> None:
+    b.row("WS frame and snapshot cost")
+    b.ts(
+        "WS frame encode time p95, by kind (sampled 1 in 32)",
+        q("cv_ws_frame_encode_seconds", "kind"),
+        "s",
+        legend="{{kind}}",
+    )
+    _describe(
+        b,
+        "kind is a CVWB body kind (a delta the hub stamped, and every snapshot chunk) or json / "
+        "msgpack (a stamped data frame in its connection's codec; a binary frame's msgpack time "
+        "includes the base64 decode of its p). The same frame counts under its body kind and "
+        "again under its codec, so the kinds are not summed.",
+    )
+    b.ts(
+        "WS frame size p95, by kind (sampled 1 in 32; line: the 4 MiB frame limit)",
+        q("cv_ws_frame_bytes", "kind"),
+        "bytes",
+        None,
+        4 * MIB,
+        "{{kind}}",
+    )
+    _describe(
+        b,
+        "Encoded size before permessage-deflate; json and msgpack leave out the span id sp. 4 MiB "
+        "is the outbound frame limit (23-ws-protocol.md 3.6): a larger frame is logged and sent, "
+        "and a p95 above the top bucket reads as 4 MiB.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS snapshot build p99, by family (lines: 400 ms and 1.5 s)",
+        q("cv_ws_snapshot_build_seconds", "topic", "0.99"),
+        "s",
+        0.4,
+        1.5,
+        "{{topic}}",
+    )
+    _describe(
+        b,
+        "Build and render time of each snapshot the cache builds, by family; one served from the "
+        "cache is not observed. The lines are 23-ws-protocol.md 16.3's budget for a full "
+        "re-snapshot of the reference workspace (target 400 ms, hard fail 1.5 s), so one family "
+        "alone above them breaks it.",
+    )
+    _threshold_lines(b)
+    b.ts(
+        "WS snapshot size p95, by family (lines: 700 KiB and 2 MiB)",
+        q("cv_ws_snapshot_bytes", "topic"),
+        "bytes",
+        700 * KIB,
+        2 * MIB,
+        "{{topic}}",
+    )
+    _describe(
+        b,
+        "All chunks of each snapshot sent, by family. The lines are 16.3's workspace re-snapshot "
+        "budget (target 700 KiB, hard fail 2 MiB), as for the build time.",
+    )
+    _threshold_lines(b)
 
 
 def trading() -> Board:

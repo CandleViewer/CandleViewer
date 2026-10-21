@@ -383,7 +383,7 @@
         "type": "prometheus",
         "uid": "cv-prometheus"
       },
-      "description": "Gateway-wide sum over the dashboard range before each point (1 h by default, which the lines are for: target under 1, hard fail above 5 an hour), rounded to whole events as WsUpstreamDesyncHigh rounds. Each affected subscription counts once, so one upstream desync adds one per subscribed book topic across all connections; 23-ws-protocol.md 16.3 is per topic, so group the `ws resync` log lines by `ch`. upstream_desync and backpressure are the incident reasons (7.4) and the only ones the lines judge; reconfigure and client_resync cross them in normal use. Only client_resync and reconfigure have a trigger today: upstream_desync, upstream_reconnect, instrument_revision, replay_seek and backpressure read zero whatever happens until their callers are wired (the outbound ladder, E17-T03 #412, for backpressure; the book feed, the instrument cache and the replay engine for the other four), so a flat zero here is not coverage. WsUpstreamDesyncHigh fires above 5 upstream_desync in an hour.",
+      "description": "Gateway-wide sum over the dashboard range before each point (1 h by default, which the lines are for: target under 1, hard fail above 5 an hour), rounded to whole events as WsUpstreamDesyncHigh rounds. Each affected subscription counts once, so one upstream desync adds one per subscribed topic across all connections; 23-ws-protocol.md 16.3 is per topic, so group the `ws resync` log lines by `ch`. upstream_desync and backpressure are the incident reasons (7.4) and the only ones the lines judge; the other reasons cross them in normal use. Moving today: client_resync, reconfigure, the bars and indicator series' generation_swap and history_repair, upstream_desync from the alerts topic (6.2.1) and from a delta the hub failed to emit, and backpressure with CV_WS_BACKPRESSURE_ENABLED on. The book feed does not call the hub's upstream_desync trigger yet, and upstream_reconnect, instrument_revision and replay_seek have no caller, so a flat zero for those is not coverage. WsUpstreamDesyncHigh fires above 5 upstream_desync in an hour.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -475,6 +475,1046 @@
         }
       ],
       "title": "WS closes in the range, by reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Open client connections per 23-ws-protocol.md 8.3 class (`state`), from the first auth_ok to the teardown, summed over processes. Set only with CV_WS_BACKPRESSURE_ENABLED on (off by default): with it off every class reads zero, so a flat zero is not health. A connection's class is read when its writer runs; a writer held in a send keeps its last class, and a stuck socket shows in the overflow and closes panels.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "id": 13,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (state) (cv_ws_connection_class{env=\"$env\"})",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS connections by class (backpressure flag on)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "The 23-ws-protocol.md 8.4 ladder: drop, drop_share, unmergeable and resnapshot count per topic; close_budget and close_redrop per close (a slow_consumer close, which the closes panel and WsSlowConsumerClosed see too); close_flush_deadline per close whose flush expired, beside its step 3; withdrawn per queued frame that a withdrawn grant or permission dropped (9.5). The ladder runs only with CV_WS_BACKPRESSURE_ENABLED on; with it off only close_flush_deadline and withdrawn move. A reason's series starts at its first event, so the first one after a restart may not show.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "id": 14,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "round(sum by (reason) (increase(cv_ws_overflow_total{env=\"$env\"}[$__range])))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS overflow actions in the range, by reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Data-frame bytes per second over the open connections: a mean, not the busiest client. Estimated from cv_ws_frame_bytes, kind json or msgpack, sampled 1 in 32 with weight 32, so each subscription's first 31 frames, control frames and system frames are left out and it reads low. Bytes are as encoded for the send, before permessage-deflate and less the span id sp; with the backpressure flag on a frame counts at its encode, so one the ladder drops later is in it. A connection feeds only its own codec, so json and msgpack never count the same frame; the CVWB kinds do, so they are left out. The lines are 23-ws-protocol.md 16.3's server-to-client budget for the reference workspace.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 358400
+              },
+              {
+                "color": "#D55E00",
+                "value": 1048576
+              }
+            ]
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "id": 15,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum(rate(cv_ws_frame_bytes_sum{env=\"$env\",kind=~\"json|msgpack\"}[$__rate_interval])) / clamp_min(sum(cv_ws_connections_in_use{env=\"$env\"}), 1)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WS bandwidth per connection, sampled (lines: 350 KiB/s target, 1 MiB/s hard fail)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Client resync frames with reason sequence_gap (23-ws-protocol.md 7.5). The server guarantees gap-free sequences, so any count is a bug to chase, though the server does not verify the client's report. WsSequenceGapDetected (ticket) fires on any in 10 minutes; the `ws client resync` log lines name the ch and the client's last seq.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#D55E00",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "id": 16,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "round(sum(increase(cv_ws_sequence_gaps_detected_total{env=\"$env\"}[$__range])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WS client-reported sequence gaps in the range (line: 1)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "id": 17,
+      "panels": [],
+      "title": "WS queue, RTT and coalescing (backpressure flag on)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Depth sampled per connection at each classification, as a share of the default 23-ws-protocol.md 8.4 budget (8 MiB or 2 000 frames). The class reads the larger share, and the lines are its 8.3 edges: lagging from 25 % (throttles x2), x4 from 60 %, overflowing above 90 %. A deployment may only lower the budget, so a lowered one reaches the edges before this panel does. A writer held in a send takes no sample; a stuck socket shows in the overflow and closes panels.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 0.25
+              },
+              {
+                "color": "#D55E00",
+                "value": 0.6
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "id": 18,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_ws_queue_bytes_bucket{env=\"$env\"}[$__rate_interval]))) / 8388608",
+          "legendFormat": "bytes of 8 MiB",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_ws_queue_frames_bucket{env=\"$env\"}[$__rate_interval]))) / 2000",
+          "legendFormat": "frames of 2 000",
+          "refId": "B"
+        }
+      ],
+      "title": "WS outbound queue depth p95, share of the default budget (lines: 25 % and 60 %)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "One sample per answered 23-ws-protocol.md 9.1 probe, from its queueing to the pong; a probe unanswered for 10 s counts its age when it is retired. The lines are the 8.3 class edges (lagging, throttles x2, from 150 ms; x4 above 500 ms). A client that never answers server pings is classed x4 from its second classification on (8.6).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 0.15
+              },
+              {
+                "color": "#D55E00",
+                "value": 0.5
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "id": 19,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_ws_rtt_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WS probe RTT p95 (lines: 150 ms and 500 ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Source updates a throttle window merged away, by family (`topic`): a window of n updates that left as one frame adds n - 1 (23-ws-protocol.md 8.2). Only families with a merge rule are counted, append families never. The pacer's own merges, not a producer's carried coalesced_count.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 62
+      },
+      "id": 20,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (topic) (rate(cv_ws_conflated_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS updates merged away per second, by family",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Source updates (2 and up) in each merged window that left as one frame.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 62
+      },
+      "id": 21,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_ws_coalesced_updates_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WS updates per merged window p95",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "id": 22,
+      "panels": [],
+      "title": "WS handshake and auth (E17-S01)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "From the socket's accept to its first auth_ok; a re-auth is not observed. The line is the catalogue's p99 line for this series; it falls between the 1 s and 2.5 s bucket edges, so a p99 near it is interpolated. The auth timeout is 10 s (23-ws-protocol.md 16.2).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 2
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 70
+      },
+      "id": 23,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(cv_ws_handshake_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WS handshake p99, accept to first auth_ok (line: 2 s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Failed auth frames by bounded reason: missing_token, rejected, token_expired, user_mismatch. A sudden rise can mean credential stuffing; the `ws auth failed` log lines carry the connection_id and source_ip. A reason's series starts at its first failure, so the first one after a restart may not show.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 70
+      },
+      "id": 24,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "round(sum by (reason) (increase(cv_ws_auth_failures_total{env=\"$env\"}[$__range])))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS auth failures in the range, by reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "The absolute skew of each welcome: server time minus the hello's clock_ms (a hello without a valid one adds no sample). The UI warns above 2 000 ms because a skewed client mis-renders bar countdowns (23-ws-protocol.md 4.2).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 2000
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 77
+      },
+      "id": 25,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(cv_ws_clock_skew_ms_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WS client clock skew p99 (line: 2 000 ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Sockets closed client_rate_limited after a valid auth because their user passed 20 successful auths in a sliding minute (23-ws-protocol.md 4.3, 16.2). A sustained count means a client with no backoff, or one token in use from more places than expected; the `ws connect rate limited` log line names the user, once per user per window.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 77
+      },
+      "id": 26,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "round(sum(increase(cv_ws_connect_rate_limited_total{env=\"$env\"}[$__range])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "WS sockets refused by the per-user connect rate, in the range",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 84
+      },
+      "id": 27,
+      "panels": [],
+      "title": "WS subscriptions and revocation (E17-S02)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Each topic result of a sub_ok: ok, or the 23-ws-protocol.md 10.2 code that refused it. The series also carry `topic`, the family (unknown for a name no family owns): split by it in Explore when a refusal code rises.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 85
+      },
+      "id": 28,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (result) (rate(cv_ws_subscribe_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS subscribe results per second, by result",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Observed after each sub_ok and unsub_ok, so a connection that changes its set often weighs more than a quiet one. 200 is the per-connection cap (23-ws-protocol.md 16.2). The ticket's cv_ws_topics_per_client gauge is built as this histogram (6.2, Metrics as built).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#D55E00",
+                "value": 200
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 85
+      },
+      "id": 29,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(cv_ws_client_topics_depth_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_ws_client_topics_depth_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "WS subscriptions per connection, p50 and p95 (line: 200, the cap)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Consumers of the shared upstream leases, summed over symbols per family (`topic`). The series are per symbol for the first 20 symbols and symbol=other after them, and each is removed at 0, so an idle family has no line.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 92
+      },
+      "id": 30,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (topic) (cv_ws_upstream_consumers_in_use{env=\"$env\"})",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS upstream consumers, by family",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Subscriptions the server ended mid-connection with a revoked frame (23-ws-protocol.md 9.5): a withdrawn permission, account scope or key, a disabled user or account, an ended session or replay, the resync rate limit or a removed topic. A reason's series starts at its first revocation.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 92
+      },
+      "id": 31,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "round(sum by (reason) (increase(cv_ws_revoked_total{env=\"$env\"}[$__range])))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS subscriptions revoked in the range, by reason",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 99
+      },
+      "id": 32,
+      "panels": [],
+      "title": "WS frame and snapshot cost",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "kind is a CVWB body kind (a delta the hub stamped, and every snapshot chunk) or json / msgpack (a stamped data frame in its connection's codec; a binary frame's msgpack time includes the base64 decode of its p). The same frame counts under its body kind and again under its codec, so the kinds are not summed.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 100
+      },
+      "id": 33,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(cv_ws_frame_encode_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS frame encode time p95, by kind (sampled 1 in 32)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Encoded size before permessage-deflate; json and msgpack leave out the span id sp. 4 MiB is the outbound frame limit (23-ws-protocol.md 3.6): a larger frame is logged and sent, and a p95 above the top bucket reads as 4 MiB.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#D55E00",
+                "value": 4194304
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 100
+      },
+      "id": 34,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(cv_ws_frame_bytes_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS frame size p95, by kind (sampled 1 in 32; line: the 4 MiB frame limit)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Build and render time of each snapshot the cache builds, by family; one served from the cache is not observed. The lines are 23-ws-protocol.md 16.3's budget for a full re-snapshot of the reference workspace (target 400 ms, hard fail 1.5 s), so one family alone above them breaks it.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 0.4
+              },
+              {
+                "color": "#D55E00",
+                "value": 1.5
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 107
+      },
+      "id": 35,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, topic) (rate(cv_ws_snapshot_build_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS snapshot build p99, by family (lines: 400 ms and 1.5 s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "All chunks of each snapshot sent, by family. The lines are 16.3's workspace re-snapshot budget (target 700 KiB, hard fail 2 MiB), as for the build time.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 716800
+              },
+              {
+                "color": "#D55E00",
+                "value": 2097152
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 107
+      },
+      "id": 36,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, topic) (rate(cv_ws_snapshot_bytes_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "WS snapshot size p95, by family (lines: 700 KiB and 2 MiB)",
       "type": "timeseries"
     }
   ],
