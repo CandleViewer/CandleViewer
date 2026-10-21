@@ -164,6 +164,7 @@ from candleviewer.api.users import (
     make_user_admin_router,
     make_users_router,
 )
+from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
@@ -1742,6 +1743,19 @@ def create_app(
     )
     # Flush cadence and shutdown drain for the budget's counts; the lifespan runs it.
     app.state.audit_budget_flush = AuditBudgetFlushTask(audit_budget, _LazyAuditEmitter(ctx.audit))
+    # #3085: `admin.view_as_refused` records under the viewers' own cap, never a slot of the
+    # budget above, whose other settings they share. Inert until the view-as guard, sockets and
+    # start call it; the lifespan runs its flush task as it runs the one above.
+    view_as_refusals = ViewAsRefusalRecorder(
+        _LazyAuditEmitter(ctx.audit),
+        operations=declared_operations(spec),
+        per_hour=resolved.view_as_refusal_budget_per_hour,
+        tracked_users=resolved.audit_budget_tracked_users,
+        inflight_cap=resolved.audit_inflight_writes,
+        flush_seconds=resolved.audit_read_flush_seconds,
+    )
+    app.state.view_as_refusals = view_as_refusals
+    app.state.view_as_refusal_flush = view_as_refusals.flush
     # A chain break also raises a critical system event, as the recorder's job does: from the
     # on-demand route and from the scheduled verify run (#2966).
     chain_break_events = (

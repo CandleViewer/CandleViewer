@@ -84,6 +84,28 @@ auth_csrf_refused_total = Counter(
 # subtract, so the first refusal or audit failure after every restart would never alert.
 for _csrf_reason in (*CSRF_REFUSAL_REASONS, *CSRF_AUDIT_REASONS):
     auth_csrf_refused_total.labels(reason=_csrf_reason)
+#: `auth_view_as_refused_total{reason}` (#3085, Q9): one per view-as refusal, counted before its
+#: `admin.view_as_refused` record, so also when the viewer's refusal budget suppresses the record
+#: or it cannot be written. `reason` is the problem code, a closed set: the two of a write or a
+#: held session (REST; a WS action frame's is `view_as_read_only`), then a refused start's five.
+VIEW_AS_REFUSAL_REASONS: tuple[str, ...] = (
+    "view_as_read_only",
+    "view_as_expired",
+    "view_as_active",
+    "view_as_self_target",
+    "not_found",
+    "conflict",
+    "view_as_owner_target",
+)
+auth_view_as_refused_total = Counter(
+    "auth_view_as_refused_total",
+    "View-as refusals (#3085): writes, held sessions, WS action frames and refused starts, "
+    "by problem code.",
+    ["reason"],
+)
+# Bound now, as above: the first refusal after a restart is a visible 0 -> 1 `increase()`.
+for _view_as_reason in VIEW_AS_REFUSAL_REASONS:
+    auth_view_as_refused_total.labels(reason=_view_as_reason)
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
 #: `auth_audit_outcome_lost_total{action}` (#2914, 04-security-program.md section 8.3 rule 2): an
 #: outcome audit record that could not be written after the action was taken. The answer stands;
@@ -332,6 +354,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
     {
         "auth_audit_outcome_lost_total",
         "auth_csrf_refused_total",
+        "auth_view_as_refused_total",  # #3085
         "auth_session_fixation_attempts_total",
         "auth_enrolment_refused_total",
         "auth_enrolment_only_sessions_total",

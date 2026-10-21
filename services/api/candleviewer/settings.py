@@ -467,6 +467,9 @@ class Settings(BaseSettings):
     audit_read_flush_seconds: float = Field(default=300.0, gt=0.0)
     audit_budget_tracked_users: int = Field(default=1024, ge=64)
     audit_inflight_writes: int = Field(default=64, ge=1)
+    # #3085: the view-as refusal records' own hourly cap per viewer, the Owner's too (22 "View-as
+    # session"); never a slot of the budget above, whose other settings they share.
+    view_as_refusal_budget_per_hour: int = Field(default=120, ge=1)
     # E42-T02 verify (contract #2392/#2446): the most ids one `POST /admin/audit/verify` spans.
     audit_verify_max_span: int = Field(default=1_000_000, ge=1)
     # Runs per user in a rolling hour (only runs that start count), and each run's time bounds:

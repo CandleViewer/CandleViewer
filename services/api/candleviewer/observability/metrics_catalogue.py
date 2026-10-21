@@ -3158,6 +3158,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_view_as_refused_total",
+        "counter",
+        "refusals",
+        ("reason",),
+        "View-as refusals (#3085): writes, held sessions, WS action frames and refused starts, "
+        "by problem code.",
+        "none yet (#2746); audited as admin.view_as_refused, within the viewer's refusal budget",
+        _L,
+        "E42",
+        max_series=7,  # VIEW_AS_REFUSAL_REASONS
+        exported=True,
+    ),
+    _s(
         "auth_recovery_codes_used_total",
         "counter",
         "codes",

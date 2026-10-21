@@ -1,7 +1,10 @@
 """Per-user audit-record budget for `/admin/audit*` (contract #2392, "Audit budget").
 
 The component handles the read and refusal records for `/admin/audit*`, so that reads and
-refusals cannot crowd the audit log, which also carries order intents.
+refusals cannot crowd the audit log, which also carries order intents. The actions and the
+object kind its records name are constructor parameters, `/admin/audit*`'s by default: the
+view-as refusals (#3085, `api/view_as_refusals.py`) are an instance of their own, of refusals
+alone (`read_action=None`).
 
 * Capped records (`per_hour`, or `owner_per_hour` for the Owner, over a sliding hour per
   user): `admin.audit_read` for the first read of a filter set or a due continuation, and
@@ -59,6 +62,7 @@ from candleviewer.observability.context import spawn
 
 READ_ACTION = "admin.audit_read"
 DENIAL_ACTION = "admin.audit_denied"
+OBJECT_KIND = "audit_log"  # of the out-of-cap records
 SUMMARY_REASON = "suppressed_summary"
 FLUSH_REASON = "continuation_flush"
 SYSTEM_ACTOR = "system:audit-budget"
@@ -150,6 +154,7 @@ class _Write:
     slot: bool = False  # a capped record
     page: str | None = None  # digest of the page a read record serves
     at: float = 0.0
+    own: int = 0  # the refusal itself, counted (`suppressed`) if this write fails
 
 
 @dataclass(slots=True)
@@ -196,7 +201,12 @@ class AuditRecordBudget:
         flush_seconds: float = 300.0,
         write_timeout_s: float = WRITE_TIMEOUT_S,
         clock: Callable[[], float] = time.monotonic,
+        read_action: str | None = READ_ACTION,
+        denial_action: str = DENIAL_ACTION,
+        object_kind: str = OBJECT_KIND,
     ) -> None:
+        self._read_action, self._denial_action = read_action, denial_action  # None: no reads
+        self._object_kind = object_kind
         self._per_hour, self._owner_per_hour = per_hour, owner_per_hour
         self._tracked, self._inflight_cap = tracked_users, inflight_cap
         self._flush_pages, self._flush_s = flush_pages, flush_seconds
@@ -222,6 +232,10 @@ class AuditRecordBudget:
     @property
     def flush_seconds(self) -> float:
         return self._flush_s
+
+    @property
+    def denial_action(self) -> str:
+        return self._denial_action
 
     def emitter(self, raw: _Raw, actor: BudgetActor) -> BudgetedEmitter:
         return BudgetedEmitter(self, raw, actor)
@@ -295,6 +309,8 @@ class AuditRecordBudget:
             st.suppressed += 1
 
     def plan_read(self, actor: BudgetActor, digest: str) -> ReadReservation:
+        if self._read_action is None:
+            raise ValueError("a budget of refusals alone plans no read")
         st = self._track(actor)
         if st is not None and digest in st.pages:
             due = (
@@ -319,28 +335,38 @@ class AuditRecordBudget:
     ) -> None:
         """Write the `admin.audit_read` a `record` plan reserved, carrying its page and every
         count outstanding for the user. `BudgetWriteFailed`: answer 503, serve nothing."""
-        st = res._user
-        if res.action != "record" or not res._open or st is None:
+        st, action = res._user, self._read_action  # only `plan_read` opens one: never None
+        if res.action != "record" or not res._open or st is None or action is None:
             raise ValueError("write_read needs an open `record` reservation")
         res._open = False  # the write settles the slot and the page from here on
         take = self._take(st, pages=True)
         after = {**detail, "filters_sha256": res.digest, **take.detail(current=res.digest)}
-        w = _Write(READ_ACTION, st, take, slot=True, page=res.digest)
+        w = _Write(action, st, take, slot=True, page=res.digest)
         await self._write(raw, {**fields, "after_state": after}, w)
 
-    async def write_denial(self, actor: BudgetActor, raw: _Raw, fields: dict[str, Any]) -> bool:
-        """A capped `admin.audit_denied` refusal record. True: written. False: over the cap,
+    async def write_denial(
+        self,
+        actor: BudgetActor,
+        raw: _Raw,
+        fields: dict[str, Any],
+        *,
+        count_if_unwritten: bool = False,
+    ) -> bool:
+        """A capped refusal record (`denial_action`). True: written. False: over the cap,
         counted (return the refusal unchanged, with `Retry-After`). `BudgetWriteFailed`:
-        due but unwritable (answer 503)."""
+        due but unwritable (answer 503). `count_if_unwritten`, for a refusal answered all the
+        same: an unwritable one is also counted, and carried as one over the cap is."""
         st = self._track(actor)
         if st is None:
+            if count_if_unwritten:
+                self._untracked += 1
             raise BudgetWriteFailed("user not tracked")
         if not self._admit(st):
             st.suppressed += 1
             return False
         take = self._take(st, pages=False)
         after = {**(fields.get("after_state") or {}), **take.detail()}
-        w = _Write(DENIAL_ACTION, st, take, slot=True)
+        w = _Write(self._denial_action, st, take, slot=True, own=int(count_if_unwritten))
         await self._write(raw, {**fields, "after_state": after or None}, w)
         return True
 
@@ -395,14 +421,14 @@ class AuditRecordBudget:
                 while len(st.pages) > FILTER_SETS_PER_USER:
                     st.other_pages += st.pages.popitem(last=False)[1]
         if not ok:  # give the counts back
-            st.suppressed += w.take.suppressed
+            st.suppressed += w.take.suppressed + w.own
             st.other_pages += w.take.other_pages
             for d, n in w.take.pages.items():
                 if d in st.pages:
                     st.pages[d] += n
                 else:
                     st.other_pages += n
-        elif w.action == READ_ACTION:
+        elif w.action == self._read_action:
             st.last_read_record = w.at
 
     # -- out of the cap ------------------------------------------------------------------
@@ -411,14 +437,14 @@ class AuditRecordBudget:
         docstring), then one for the users that could not be tracked. Returns how many
         records were attempted."""
         now = self._clock()
-        attempted = 0
+        attempted, reads = 0, self._read_action
         for st in self._entries():
             if now - st.last_oob < self._flush_s:
                 continue
-            if st.pending_pages() and now - st.last_read_record >= self._flush_s:
-                action = READ_ACTION
+            if reads and st.pending_pages() and now - st.last_read_record >= self._flush_s:
+                action = reads
             elif st.suppressed:
-                action = DENIAL_ACTION
+                action = self._denial_action
             else:
                 continue
             st.last_oob = now  # before the write: one attempt per window, even if it fails
@@ -427,7 +453,7 @@ class AuditRecordBudget:
         if self._untracked and now - self._system_oob >= self._flush_s:
             self._system_oob = now
             attempted += 1
-            await self._out_of_cap(raw, None, DENIAL_ACTION)
+            await self._out_of_cap(raw, None, self._denial_action)
         if self._untracked_calls:  # the bound was full of busy users
             _log().warning("audit.budget.untracked", calls=self._untracked_calls)
             self._untracked_calls = 0
@@ -437,15 +463,16 @@ class AuditRecordBudget:
         """At shutdown: write every outstanding count, whatever the window, then wait for the
         writes in flight, all within `timeout_s`, so a clean restart loses none. Returns how
         many users still hold counts (logged)."""
+        reads = self._read_action
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(timeout_s):
                 for st in self._entries():
-                    if st.pending_pages():
-                        await self._out_of_cap(raw, st, READ_ACTION)
+                    if reads and st.pending_pages():
+                        await self._out_of_cap(raw, st, reads)
                     if st.suppressed:
-                        await self._out_of_cap(raw, st, DENIAL_ACTION)
+                        await self._out_of_cap(raw, st, self._denial_action)
                 if self._untracked:
-                    await self._out_of_cap(raw, None, DENIAL_ACTION)
+                    await self._out_of_cap(raw, None, self._denial_action)
                 if self._tasks:
                     await asyncio.wait(set(self._tasks))
         left = sum(1 for st in self._entries() if st.suppressed or st.pending_pages())
@@ -457,7 +484,7 @@ class AuditRecordBudget:
         """A flush (`continuation_flush`) or summary (`suppressed_summary`) record. It has no
         request of its own, so it carries no session, IP or request id; `st=None` is the
         record for users that could not be tracked (system actor, no user id)."""
-        reading = action == READ_ACTION
+        reading = action == self._read_action
         if st is None:
             take, self._untracked = _Take(suppressed=self._untracked), 0
             actor: dict[str, Any] = {"actor_label": SYSTEM_ACTOR, "actor_user_id": None}
@@ -468,7 +495,7 @@ class AuditRecordBudget:
             extra = {}
         fields = {
             **actor,
-            "object_kind": "audit_log",
+            "object_kind": self._object_kind,
             "outcome": AuditOutcome.SUCCESS if reading else AuditOutcome.DENIED,
             "severity": Severity.INFO if reading else Severity.WARNING,
             "reason": FLUSH_REASON if reading else SUMMARY_REASON,
@@ -483,8 +510,9 @@ def _prune(st: _User, now: float) -> None:
 
 
 class BudgetedEmitter:
-    """The writer `authorize()` sees on `/admin/audit*`: `admin.audit_denied` goes through
-    the budget; any other action goes straight to the writer and is never budgeted."""
+    """The writer `authorize()` sees on `/admin/audit*`: the budget's refusal action
+    (`admin.audit_denied`) goes through the budget; any other action goes straight to the writer
+    and is never budgeted."""
 
     def __init__(self, budget: AuditRecordBudget, raw: _Raw, actor: BudgetActor) -> None:
         self._budget, self._raw, self._actor = budget, raw, actor
@@ -492,7 +520,7 @@ class BudgetedEmitter:
         self.suppressed = False
 
     async def emit(self, action: str, **kwargs: Any) -> None:
-        if action != DENIAL_ACTION:
+        if action != self._budget.denial_action:
             await self._raw.emit(action, **kwargs)
             return
         self.suppressed = not await self._budget.write_denial(self._actor, self._raw, kwargs)
