@@ -402,25 +402,55 @@ def search_of(args: list[str]) -> str:
     return args[args.index("--search") + 1]
 
 
-def test_fetch_reads_100_prs_and_adds_a_closing_search_when_saturated() -> None:
-    """A ticket cited by many other PRs' review records fills the best-match search and
-    pushes its closing PR past the limit; the closing-phrase search finds it, and a PR
-    found by both queries is linked once."""
-    both = {"number": 8, "body": "Closes #5", "mergedAt": None}
-    crowd = [{"number": 100 + n, "body": "review of #5"} for n in range(99)]
-    narrow_only = {"number": 7, "body": "Closes #5", "mergedAt": None}
-    searches: list[list[str]] = []
+def search_gh(answers: dict[str, Any], searches: list[list[str]]) -> Any:
+    """A `gh` stub: an empty issue view; each PR search answers from `answers`."""
 
     def fake_gh(args: list[str]) -> Any:
         if args[0] == "issue":
             return issue([QA_PASS])
         searches.append(args)
-        return [both, narrow_only] if "closes" in search_of(args) else [both, *crowd]
+        return answers.get(search_of(args), [])
 
-    _, linked = dg.fetch("5", fake_gh)
-    assert [search_of(a) for a in searches] == ["#5 in:body", '"closes #5" in:body']
+    return fake_gh
+
+
+@pytest.mark.parametrize("kw", ["closes", "fixes", "resolves"])
+def test_fetch_finds_a_closing_pr_by_keyword_when_saturated(kw: str) -> None:
+    """A ticket cited by many other PRs' review records fills the best-match search and
+    pushes its closing PR past the limit; the search for that PR's own closing keyword
+    finds it, and every search reads 100 PRs."""
+    crowd = [{"number": 100 + n, "body": "review of #5"} for n in range(100)]
+    closer = {"number": 7, "body": f"{kw.title()} #5", "mergedAt": None}
+    searches: list[list[str]] = []
+    answers = {"#5 in:body": crowd, f'"{kw} #5" in:body': [closer]}
+
+    _, linked = dg.fetch("5", search_gh(answers, searches))
+    assert [search_of(a) for a in searches] == [
+        "#5 in:body",
+        '"closes #5" in:body',
+        '"fixes #5" in:body',
+        '"resolves #5" in:body',
+    ]
     assert {a[a.index("--limit") + 1] for a in searches} == {"100"}
-    assert [p["number"] for p in linked] == [8, 7]
+    assert [p["number"] for p in linked] == [7]
+
+
+def test_fetch_merges_the_closing_searches_by_number_first_search_first() -> None:
+    """A PR found by two searches is linked once; the first search's results come
+    first, then each keyword search's new ones, in keyword order."""
+    in_first = {"number": 8, "body": "Closes #5", "mergedAt": None}
+    closes_only = {"number": 6, "body": "Closes #5", "mergedAt": None}
+    two_keywords = {"number": 9, "body": "Fixes #5, Resolves #5", "mergedAt": None}
+    crowd = [{"number": 100 + n, "body": "review of #5"} for n in range(99)]
+    answers = {
+        "#5 in:body": [in_first, *crowd],
+        '"closes #5" in:body': [in_first, closes_only],
+        '"fixes #5" in:body': [two_keywords],
+        '"resolves #5" in:body': [two_keywords],
+    }
+
+    _, linked = dg.fetch("5", search_gh(answers, []))
+    assert [p["number"] for p in linked] == [8, 6, 9]
 
 
 @pytest.mark.parametrize(
@@ -435,14 +465,7 @@ def test_fetch_reads_100_prs_and_adds_a_closing_search_when_saturated() -> None:
 )
 def test_fetch_adds_no_closing_search_below_the_limit(found: Any) -> None:
     searches: list[list[str]] = []
-
-    def fake_gh(args: list[str]) -> Any:
-        if args[0] == "issue":
-            return issue([QA_PASS])
-        searches.append(args)
-        return found
-
-    dg.fetch("5", fake_gh)
+    dg.fetch("5", search_gh({"#5 in:body": found}, searches))
     assert [search_of(a) for a in searches] == ["#5 in:body"]
 
 

@@ -34,6 +34,7 @@ REPO = "CandleViewer/CandleViewer"
 OWNER = "basiltt"
 WAIVER_REF = "#1778"
 PR_SEARCH_LIMIT = 100  # PRs read per `gh pr list --search` (one GraphQL page)
+CLOSING_KEYWORDS = ("closes", "fixes", "resolves")  # what a linked PR's body may say
 GhFn = Callable[[list[str]], Any]
 
 PENPOT_RE = re.compile(
@@ -516,15 +517,18 @@ def fetch(issue_no: str, gh: GhFn) -> tuple[dict[str, Any], list[dict[str, Any]]
     prs = search_prs(gh, f"#{issue_no} in:body")
     if len(prs) >= PR_SEARCH_LIMIT:
         # Saturated: other PRs' review records cite the issue too, and best-match
-        # order can push the linked PR past the limit. Also search for the closing
+        # order can push the linked PR past the limit. Also search for each closing
         # phrase and merge by number, keeping the first query's results first.
-        seen = {p.get("number") for p in prs}
-        closers = search_prs(gh, f'"closes #{issue_no}" in:body')
-        prs = prs + [p for p in closers if p.get("number") not in seen]
+        for kw in CLOSING_KEYWORDS:
+            seen = {p.get("number") for p in prs}
+            closers = search_prs(gh, f'"{kw} #{issue_no}" in:body')
+            prs = prs + [p for p in closers if p.get("number") not in seen]
     # The linked PR carries `Closes|Fixes|Resolves #N` in its body (C-4.7). Multi-PR tickets
     # (parts land with `Refs #N` and QA closes the ticket, e.g. E17-T02) also count — but only
     # PRs that are already MERGED, so an open `Refs` PR can never satisfy the security gate.
-    closing = re.compile(rf"(?:closes|fixes|resolves)\s+#{issue_no}\b", re.IGNORECASE)
+    closing = re.compile(
+        rf"(?:{'|'.join(CLOSING_KEYWORDS)})\s+#{issue_no}\b", re.IGNORECASE
+    )
     # `Refs #N` must start a line (footer style); an in-prose mention never links.
     refs = re.compile(rf"^\s*refs?\s+#{issue_no}\b", re.IGNORECASE | re.MULTILINE)
     linked = [
