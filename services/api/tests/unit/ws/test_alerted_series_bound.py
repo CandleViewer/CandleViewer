@@ -26,6 +26,7 @@ from typing import Any, get_args
 import pytest
 from prometheus_client import REGISTRY
 from starlette.websockets import WebSocketDisconnect
+from structlog.testing import capture_logs
 
 from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
 from candleviewer.ws.metrics import WITHHELD_REASONS
@@ -155,7 +156,8 @@ def test_a_connection_fault_is_counted_as_internal_error() -> None:
     """An authenticator that reports no tz-aware expiry is a server fault: `bye` and 1011."""
     before = _closes("internal_error")
     client = _bare_gateway(("sess", _USER), _Clock()).client
-    with client, client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+    # Captured, not rendered: the fault's traceback costs seconds on a loaded host (#3938).
+    with capture_logs(), client, client.websocket_connect("/ws", subprotocols=_JSON) as ws:
         bye = _open(ws, "any")
         code = _closed(ws)
     assert (bye["p"]["reason"], code) == ("internal_error", 1011)
@@ -176,7 +178,12 @@ def test_a_fault_after_a_close_counts_under_both_reasons() -> None:
         return ("sess", _USER)  # no expiry: the server fault of the test above
 
     bare = _bare_gateway(close_then_report_no_expiry, _Clock())
-    with bare.client, bare.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+    # Captured, not rendered: the fault's traceback costs seconds on a loaded host (#3938).
+    with (
+        capture_logs(),
+        bare.client,
+        bare.client.websocket_connect("/ws", subprotocols=_JSON) as ws,
+    ):
         bye = _open(ws, "any")
         code = _closed(ws)
     assert (bye["p"]["reason"], code) == ("internal_error", 1011)  # the one close the wire shows
