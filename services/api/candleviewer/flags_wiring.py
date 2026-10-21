@@ -15,9 +15,9 @@ composes the one that adds the account check (`compose_order_entry_gate`, #837 W
 holds the maintenance check alone, and the store:
 Postgres on the real backend, in memory at the registry defaults on the fake one. `start()` reads
 `flags.read_budget_ms` (500 ms when unset or unreadable; anything but a whole number of ms from 50
-to 2000 refuses boot), ensures every flag's row, reads `audit.lane_journal_first` (`LaneFlag`) and
-`desktop.backend_connection` (`BackendConnectionFlag`) once each and starts the maintenance poll;
-`stop()` cancels the poll and both flags' refreshes.
+to 2000 refuses boot), ensures every flag's row, reads `desktop.backend_connection`
+(`BackendConnectionFlag`) once and starts the maintenance poll; `stop()` cancels the poll and the
+flag's refresh.
 """
 
 from __future__ import annotations
@@ -33,11 +33,7 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.admin.flags.catalogue import (
-    AUDIT_LANE_JOURNAL_FIRST,
-    DESKTOP_BACKEND_CONNECTION,
-    default_registry,
-)
+from candleviewer.admin.flags.catalogue import DESKTOP_BACKEND_CONNECTION, default_registry
 from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
 from candleviewer.admin.flags.push import FlagPush, Session, SessionDirectory
 from candleviewer.admin.flags.registry import FlagSpec, FlagValue
@@ -246,7 +242,6 @@ class FeatureFlagsRuntime:
         self._audit, self._step_up, self._users, self._sessions = audit, step_up, users, sessions
         self._poll: asyncio.Task[None] | None = None
         self._build(DEFAULT_READ_BUDGET_MS)
-        self.lane_flag = LaneFlag(self)
         self.backend_connection = BackendConnectionFlag(self)
 
     @property
@@ -289,10 +284,8 @@ class FeatureFlagsRuntime:
         if budget_ms != self.budget_ms:
             self._build(budget_ms)  # the service refuses a budget outside 50-2000 ms
         await self.service.start()
-        self.lane_flag.reopen()  # after a `stop()`, calls refresh in the background again
-        await self.lane_flag.refresh()  # a boot during an outage keeps the catalogue default
         self.backend_connection.reopen()  # closed until here, so a never-started runtime is off
-        await self.backend_connection.refresh()  # the priming read, on the lane's snapshot
+        await self.backend_connection.refresh()  # the priming read; an outage keeps the default
         if self._poll is None:
             self._poll = spawn(self.controller.run(), name="feature-flag-maintenance-poll")
 
@@ -301,58 +294,18 @@ class FeatureFlagsRuntime:
         if poll is not None:
             poll.cancel()
             await asyncio.wait({poll})
-        await self.lane_flag.close()  # before the engine its refresh reads goes
-        await self.backend_connection.close()  # also before the engine goes
+        await self.backend_connection.close()  # before the engine its refresh reads goes
         if self._relational is not None:
             await self._relational.dispose()
-
-
-class LaneFlag:
-    """`audit.lane_journal_first` for `AuditService.use_lane_flag` (ADR-0037 decision 12, READY-21):
-    a call returns the last value read at once, so it never spends a caller's deadline, and starts
-    a refresh unless one runs. Read with no principal, from the service `start()` may rebuild; it
-    is the catalogue default until a read succeeds, and an outage or an unreadable row keeps it."""
-
-    def __init__(self, runtime: FeatureFlagsRuntime) -> None:
-        self._runtime, self._spec = runtime, runtime.registry[AUDIT_LANE_JOURNAL_FIRST]
-        self.value = self._spec.default is True
-        self._task: asyncio.Task[None] | None = None
-        self._closed = False
-
-    def __call__(self) -> bool:
-        if not self._closed and (self._task is None or self._task.done()):
-            self._task = spawn(self.refresh(), name="audit-lane-flag")
-        return self.value
-
-    def reopen(self) -> None:
-        """`FeatureFlagsRuntime.start()`: undo a `close()`, so calls refresh again."""
-        self._closed = False
-
-    async def close(self) -> None:
-        """`FeatureFlagsRuntime.stop()`: cancel the refresh task in flight and start no other
-        until `start()` runs again (C-2.18); a later call returns the last value read. A load
-        the flag service shields runs on, within its read budget, as for the maintenance poll."""
-        self._closed, task = True, self._task
-        if task is not None:
-            task.cancel()
-            await asyncio.wait({task})
-
-    async def refresh(self) -> None:
-        service = self._runtime.service
-        row = await service.stored(self._spec)
-        flag = None if row is None else service.resolved(self._spec, row, None, frozenset())
-        if flag is not None and not flag.unreadable:
-            self.value = flag.value is True
 
 
 class BackendConnectionFlag:
     """`desktop.backend_connection` for the CORS layer and the CSRF guard (ADR-0038 2e): a call
     returns the last value read at once, so no request waits on the flag store, and starts a refresh
     only when none runs and the last began `TTL_S` or more ago: at most one per 30 s, outage or not.
-    Unlike `LaneFlag` it is closed until `start()`, so a runtime that never starts answers off and
-    starts no task. Read with no principal, from the service `start()` may rebuild; it is the
-    catalogue default until a read succeeds, and an outage or an unreadable row keeps the last
-    value (BC-D3)."""
+    It is closed until `start()`, so a runtime that never starts answers off and starts no task.
+    Read with no principal, from the service `start()` may rebuild; it is the catalogue default
+    until a read succeeds, and an outage or an unreadable row keeps the last value (BC-D3)."""
 
     def __init__(
         self, runtime: FeatureFlagsRuntime, *, clock: Callable[[], float] = time.monotonic

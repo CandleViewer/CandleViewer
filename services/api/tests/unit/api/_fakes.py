@@ -85,8 +85,9 @@ class RecordingWriter:
 
 
 class WriterLane:
-    """`AuditService.lane` with `audit.lane_journal_first` off (ADR-0037): each record goes to the
-    writer of *audit*, read per call; `actions` lists what came this way."""
+    """A stand-in for `AuditService.lane` (ADR-0037) in route tests that run no lane: each record
+    goes to the writer of *audit*, read per call, as the façade's fallback hands it; `actions`
+    lists what came this way."""
 
     def __init__(self, audit: Any) -> None:
         self._audit, self.actions = audit, list[str]()

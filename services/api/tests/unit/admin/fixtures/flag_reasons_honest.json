@@ -12,7 +12,7 @@
   "Enable algo.iceberg on demo only; live stays off until the pen-test closes",
   "Turn algo.oco back on, the native stop-loss attach is verified on all legs",
   "Keep the recorder running during maintenance, the replay drill needs the capture",
-  "Ramp the lane journal to 100%: audit.lane_journal_first has been clean for a week",
+  "Ramp the desktop connection to 100%: desktop.backend_connection has been clean for a week",
   "rollout",
   "pen test passed",
   "revert",
@@ -134,7 +134,7 @@
   "token bucket",
   "Rotated the demo account key (masked id ****AB12) after the drill",
   "Pen-test PT-2026-11 closed with no highs/criticals",
-  "Re-enable audit.lane_journal_first, owner @basiltt, removal tracked in #3009",
+  "Re-enable desktop.backend_connection, owner @basiltt, removal tracked in #3931",
   "Order link ids are deterministic per intent, so retries reuse them; enabling the retry path",
   "Native SL attach verified before the fan-out on all three legs"
 ]

@@ -200,7 +200,7 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
     exported that value as a gauge, `cv_audit_lane_journal_first` (SR-S2B2A-02), which S4b-1b removed: the evidence
     that journal-first is in force is `cv_audit_lane_appended_total{class}` moving past a boot's own frames
     (`audit.lane_resumed`, plus `audit.lane_started` on a new lane) and `audit.lane.appended` lines naming record
-    actions, read with the stored value from `GET /admin/feature-flags`.
+    actions. S4b-1c removed the flag itself, so there is no stored value to read beside them.
     A change is audited like any flag's (`flags.change`). The journal and drain run whenever a real audit
     backend is wired, so records journaled while the flag was on still drain after it goes off. Order: S3 wires
     the call sites, and the Owner turns the flag on in staging; live gets the lane only when S4b removes the flag,
@@ -221,11 +221,11 @@ Option (b), built from the proven patterns of (a) and (c) without sharing their 
     on the existing `auth_refresh_reuse_total` (route refusals cannot reach `cv_audit_lane_anomalies_total`, which
     counts the drain's anomalies), and the first replay refusal per family per window is logged
     (`auth.refresh_reuse.replay_refused`, the session id only), so a flood is visible. The `401`, and the `503` when
-    the lane and the sink both refuse, are unchanged. The action id, the `warning` severity and the memo apply
-    whether or not `audit.lane_journal_first` is on: the route never reads the flag, and off, the façade hands the
-    row to the writer, as decision 12 says. A replay flood now shares the `shared` class (64 waiters) with the login
-    outcome rows, which under a sink outage fall back and are counted lost, as decision 1 already accepts (its bound
-    is decision 4's).
+    the lane and the sink both refuse, are unchanged. The action id, the `warning` severity and the memo do not
+    depend on the lane taking the row: the route never reads a flag, and a lane that refuses it or is not wired
+    hands it to the writer, as decision 1 says. A replay flood now shares the `shared` class (64 waiters) with the
+    login outcome rows, which under a sink outage fall back and are counted lost, as decision 1 already accepts (its
+    bound is decision 4's).
 
 ## How E27 KV-D04 joins the lane
 
@@ -249,7 +249,7 @@ adds no mechanism:
 - Good: EX-07 exits. Sign-out, revoke-my-session and reuse containment work while the sink refuses, and RR-16
   narrows to refresh and sign-in. §8.3 rule 2 gets one durable-retry mechanism, which its pointer names. Lane
   frames are MAC'd and hash-linked, stronger than the WAL's CRC; the exclusive `lane.lock` also keeps a second
-  cv-api off the shared WAL; and the journal runs in production even while the flag is off, carrying its own
+  cv-api off the shared WAL; and the journal runs wherever a real audit backend is wired, carrying its own
   `audit.lane_started` and `audit.lane_resumed` records.
 - Bad: a lane record costs two fsyncs (the lane, then the WAL through the drain) and reaches `audit_log` a
   moment after an `emit()` record would; tests that read rows after a lane write await

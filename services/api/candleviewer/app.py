@@ -1690,8 +1690,6 @@ def create_app(
         users=user_role_store,
     )
     app.state.feature_flags = feature_flags
-    # ADR-0037 decision 12: the lane flag for the audit module, which may not import `admin`.
-    ctx.audit.use_lane_flag(feature_flags.lane_flag)
     app.state.flag_metrics = export_flag_metrics(ctx.metrics, env=resolved.environment.value)
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
     app.include_router(

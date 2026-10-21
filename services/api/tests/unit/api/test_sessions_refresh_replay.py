@@ -115,7 +115,7 @@ class _Lane:
         files = lj.LaneFiles(path / "lane")
         self.journal = lj.LaneJournal(files, _KEYS, shared_max_bytes=shared, lane_max_bytes=total)
         self.drain = AuditLane(self.journal, self.writer, **_FAST)
-        self.lane = LaneFacade(self.writer, self.drain, lambda: True)
+        self.lane = LaneFacade(self.writer, self.drain)
         self.svc = SessionService(FakeSessionRepository(), HASHER, clock=lambda: NOW)
         self.http = _client(self.svc, self)
 

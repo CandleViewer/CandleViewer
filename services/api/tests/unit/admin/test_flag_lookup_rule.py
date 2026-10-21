@@ -1,9 +1,8 @@
 """The catalogue drift check of Semgrep's `cv-admin-no-flag-lookup` (E42-X03, SR-E42-07, AD-F09).
 
 The rule refuses each catalogue key, as an exact string, in the safety modules. Its key list is
-exactly `catalogue.FLAGS`, so a flag added there fails here until the rule names it. ADR-0037's
-`audit.lane_journal_first` is in it like every other key: the flag reaches `audit/` only as an
-injected callable, which the rule's metadata records as decision D3's residual (until #3009).
+exactly `catalogue.FLAGS`, so a flag added there fails here until the rule names it, and a flag
+removed from it fails here until the rule drops it.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from candleviewer.admin.flags.catalogue import AUDIT_LANE_JOURNAL_FIRST, FLAGS
+from candleviewer.admin.flags.catalogue import FLAGS
 
 _RULE = Path(__file__).resolve().parents[5] / ".semgrep" / "cv-admin-no-flag-lookup.yml"
 #: The rule's key pattern: `"=~/^(a\.b|c\.d)$/"`, each key escaped and spelled out whole.
@@ -47,13 +46,7 @@ def test_the_rule_names_every_catalogue_key() -> None:
     keys = _rule_keys(rule)
     assert len(keys) == len(set(keys))
     assert set(keys) == {spec.key for spec in FLAGS}
-    assert AUDIT_LANE_JOURNAL_FIRST in keys
     assert "exempt-flag-keys" not in rule["metadata"]  # no key is let through
-
-
-def test_the_d3_residual_is_recorded_in_the_rule() -> None:
-    residual = _rule()["metadata"]["residual"]
-    assert AUDIT_LANE_JOURNAL_FIRST in residual and "use_lane_flag" in residual
 
 
 def test_the_key_pattern_matches_a_key_whole_and_nothing_longer() -> None:

@@ -85,19 +85,7 @@ def _runtime(settings: _Settings | None = None) -> wiring.FeatureFlagsRuntime:
     )
 
 
-_LANE = "audit.lane_journal_first"
-
-
-def _lane_flag(default: bool) -> tuple[wiring.LaneFlag, SimpleNamespace, FakeFlagStore, Clock]:
-    """A `LaneFlag` over a fake store, as `FeatureFlagsRuntime` builds it (READY-21)."""
-    spec = FlagSpec(_LANE, FlagKind.BOOLEAN, "d", Category.FEATURE_ROLLOUT, default,
-                    Visibility.OWNER_ONLY, restrictive=False)  # fmt: skip
-    registry, store, clock = FlagRegistry([spec]), FakeFlagStore(), Clock()
-    runtime = SimpleNamespace(registry=registry, service=FlagService(registry, store, clock=clock))
-    return wiring.LaneFlag(cast(wiring.FeatureFlagsRuntime, runtime)), runtime, store, clock
-
-
-async def _settled(flag: wiring.LaneFlag | wiring.BackendConnectionFlag) -> None:
+async def _settled(flag: wiring.BackendConnectionFlag) -> None:
     assert flag._task is not None
     await asyncio.wait_for(flag._task, 5)
 
@@ -115,122 +103,6 @@ def _connection_flag(
     flag = wiring.BackendConnectionFlag(cast(wiring.FeatureFlagsRuntime, runtime), clock=clock)
     flag.reopen()
     return flag, store, clock
-
-
-async def test_a_boot_during_an_outage_reads_the_lane_flag_as_its_catalogue_default() -> None:
-    """The default is on here, so a value that stays on is no implicit off."""
-    flag, _, store, _ = _lane_flag(default=True)
-    store.down = True
-    await flag.refresh()
-    assert flag.value is True
-
-
-async def test_the_lane_flag_is_read_with_no_principal_from_the_service_start_rebuilt() -> None:
-    flag, runtime, _, clock = _lane_flag(default=True)
-    store = FakeFlagStore()
-    runtime.service = FlagService(runtime.registry, store, clock=clock)  # `start()` rebuilt it
-    store.rows[_LANE] = StoredFlag(False, role_overrides={"owner": True})
-    await flag.refresh()
-    assert flag.value is False  # no role applies
-
-
-async def test_the_lane_flag_keeps_its_last_value_when_its_row_is_unreadable() -> None:
-    flag, _, store, clock = _lane_flag(default=False)
-    store.rows[_LANE] = StoredFlag(True)
-    await flag.refresh()
-    store.rows[_LANE], clock.now = StoredFlag("on"), clock.now + 30  # not a boolean
-    await flag.refresh()
-    assert flag.value is True
-
-
-async def test_the_lane_flag_keeps_its_last_value_through_an_outage() -> None:
-    flag, _, store, clock = _lane_flag(default=False)
-    store.rows[_LANE] = StoredFlag(True)
-    await flag.refresh()
-    store.down, clock.now = True, clock.now + 30
-    await flag.refresh()
-    assert flag.value is True  # kept, not failed closed
-
-
-async def test_a_lane_flag_call_answers_at_once_and_refreshes_in_the_background() -> None:
-    flag, _, store, _ = _lane_flag(default=True)
-    store.rows[_LANE], store.hold = StoredFlag(False), asyncio.Event()
-    assert flag() is True  # the refresh waits on the slow store in its own task
-    store.hold.set()
-    await _settled(flag)
-    assert flag.value is False
-
-
-async def test_a_later_lane_flag_call_refreshes_again() -> None:
-    """A call after the last refresh ended starts the next one."""
-    flag, _, store, clock = _lane_flag(default=False)
-    flag()
-    await _settled(flag)
-    store.rows[_LANE], clock.now = StoredFlag(True), clock.now + 30
-    flag()
-    await _settled(flag)
-    assert flag.value is True
-
-
-async def test_the_lane_flag_runs_one_refresh_at_a_time() -> None:
-    """While a refresh runs, a call starts no other (C-2.18)."""
-    flag, _, store, _ = _lane_flag(default=False)
-    store.hold = asyncio.Event()
-    flag()
-    first = flag._task
-    flag()
-    named = [t for t in asyncio.all_tasks() if t.get_name() == "audit-lane-flag"]
-    assert flag._task is first and named == [first]
-    store.hold.set()
-    await _settled(flag)
-
-
-async def test_stop_cancels_the_lane_flags_refresh_and_starts_no_other() -> None:
-    """A refresh in flight at stop is cancelled before the engine goes (C-2.18)."""
-    runtime, ended = _runtime(), list[bool]()
-    await runtime.start()
-    store = FakeFlagStore()
-    store.hold = asyncio.Event()  # the refresh is still reading when the runtime stops
-    runtime.service = FlagService(runtime.registry, store, clock=Clock())
-    runtime.lane_flag()
-    task = runtime.lane_flag._task
-
-    async def dispose() -> None:  # the real backend's engine
-        ended.append(task is not None and task.done())
-
-    runtime._relational = cast(Any, SimpleNamespace(dispose=dispose))
-    await runtime.stop()
-    assert task is not None and task.cancelled() and ended == [True]
-    assert runtime.lane_flag() is False and runtime.lane_flag._task is task
-
-
-async def test_a_restarted_runtime_refreshes_the_lane_flag_again() -> None:
-    """SR-S2B2B1-02: `stop()` closes the flag, and a `start()` after it opens it again."""
-    runtime = _runtime()
-    await runtime.start()
-    await runtime.stop()
-    await runtime.start()
-    try:
-        runtime.lane_flag()
-        assert runtime.lane_flag._task is not None
-    finally:
-        await runtime.stop()
-
-
-async def test_start_reads_the_lane_flag_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime, reads = _runtime(), list[None]()
-    runtime.lane_flag.value, refresh = True, runtime.lane_flag.refresh
-
-    async def counted() -> None:
-        reads.append(None)
-        await refresh()
-
-    monkeypatch.setattr(runtime.lane_flag, "refresh", counted)
-    await runtime.start()
-    try:
-        assert runtime.lane_flag.value is False and len(reads) == 1  # the stored value, read once
-    finally:
-        await runtime.stop()
 
 
 async def test_backend_connection_flag_before_start_answers_off_and_starts_no_refresh() -> None:

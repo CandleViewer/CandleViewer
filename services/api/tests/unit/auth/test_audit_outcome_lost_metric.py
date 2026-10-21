@@ -55,6 +55,15 @@ def test_the_label_is_a_closed_set_of_registered_audit_actions() -> None:
         assert normalise_outcome_action(hostile) == "other", hostile
 
 
+def test_the_backstop_labels_a_member_of_the_closed_set() -> None:
+    """The backstop port labels the counter directly (not through `normalise_outcome_action`), so
+    its action must be in the closed set, or a lost backstop record would count on no series."""
+    from candleviewer.api.session_backstop_audit import ACTION
+
+    assert ACTION in AUDIT_OUTCOME_ACTIONS
+    assert normalise_outcome_action(ACTION) == ACTION
+
+
 def test_a_fresh_process_has_every_action_series_at_zero() -> None:
     """What Prometheus's first scrape sees. (Another test in this process may already have
     created a series, so only a fresh interpreter proves they exist from the start.)"""

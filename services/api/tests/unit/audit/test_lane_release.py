@@ -357,7 +357,7 @@ async def test_segment_planted_past_the_next_seq_while_running_stops_the_lane_an
     repo, path = FakeAuditRepository(), audit / "lane"
     writer, files = await sink(audit, repo), Unlinks(path)
     lane, _ = await boot(audit, writer, files=files, **caps)  # frames 1 and 2
-    facade = LaneFacade(writer, lane, lambda: True)
+    facade = LaneFacade(writer, lane)
 
     async def emit(n: int) -> None:
         await facade.emit("auth.logout", actor_label="owner", object_id=str(n))

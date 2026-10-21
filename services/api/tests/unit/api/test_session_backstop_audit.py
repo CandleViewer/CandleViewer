@@ -4,7 +4,8 @@
 (`tests/unit/auth/test_backstop_audit_port.py`). This side writes `auth.disabled_user_session_
 revoked` through the app's shared `RefusalAuditTracker` (C-2.18): at most its cap in flight, never
 cancelled mid-append (a shielded, tracked task), drained at shutdown. A write it cannot start or
-finish raises, so the service logs the loss. `create_app` gives it `_LazyLaneEmitter`: the audit
+finish raises, so the service logs the loss, and a record lost by any path adds one, once, to
+`auth_audit_outcome_lost_total` (#3009 S4b-1c). `create_app` gives it `_LazyLaneEmitter`: the audit
 lane's façade, or the writer while there is none (ADR-0037)."""
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.api.csrf import AuditEmitterLike, RefusalAuditTracker
@@ -38,6 +40,12 @@ from tests.unit.audit.audit_waits import virtual
 
 _USER, _SESSION = uuid.uuid4(), uuid.uuid4()
 _ACTION = "auth.disabled_user_session_revoked"
+
+
+def _lost() -> float:
+    """`auth_audit_outcome_lost_total` of the backstop's action."""
+    sample = REGISTRY.get_sample_value("auth_audit_outcome_lost_total", {"action": _ACTION})
+    return float(sample or 0.0)
 
 
 class _Emitter:
@@ -206,27 +214,23 @@ class _BrokenLookup(_Audit):
         raise RuntimeError("the lane lookup is broken")
 
 
-@pytest.mark.parametrize("journal_first", [True, False], ids=["flag_on", "flag_off"])
 @virtual
-async def test_through_the_real_facade_the_record_is_journaled_first_only_with_the_flag_on(
-    journal_first: bool, tmp_path: Path
-) -> None:
-    """EX-08's exit (ADR-0037, #3009): with the flag on the record is a `reserved` lane frame and
-    the drain hands it to the chain once; off, the default until S4b-1c, the façade hands it to the
-    writer, no lane frame is written for it, and the same three rows reach the sink."""
+async def test_through_the_real_facade_the_record_is_journaled_first(tmp_path: Path) -> None:
+    """EX-08's exit (ADR-0037, #3009): the record is a `reserved` lane frame and the drain hands it
+    to the chain once, after the lane's own two rows."""
     repo = FakeAuditRepository()
     audit = AuditService(repo, lane_keys=lambda: (bytes(range(32)), None))  # a test vector
-    audit.use_lane_flag(lambda: journal_first)  # S4b-1c deletes this line and the parameter
     wal = str(tmp_path / "a.wal")
     settings = SimpleNamespace(audit_wal_path=wal, audit_page_structure_budget=50_000)
     await audit.start(cast(Any, SimpleNamespace(settings=settings)))
     await audit.lane.flush(60.0)  # fake seconds; the lane's own two rows reach the chain first
+    lost = _lost()
     with capture_logs() as logs:
         await _call(_LazyLaneEmitter(audit), RefusalAuditTracker())
     await audit.lane.flush(60.0)
     await audit.stop(1.0)
     framed = [(e["cls"], e["action"]) for e in logs if e["event"] == "audit.lane.appended"]
-    assert framed == ([("reserved", _ACTION)] if journal_first else [])
+    assert framed == [("reserved", _ACTION)] and _lost() == lost  # journaled: nothing lost
     assert [r["action"] for r in repo.rows] == ["audit.lane_started", "audit.lane_resumed", _ACTION]
 
 
@@ -283,10 +287,111 @@ async def test_a_record_the_lane_and_the_writer_both_refuse_still_raises_to_the_
     """The façade refuses only once its writer fallback has refused too: the emitter never writes
     the record again, and the port raises to the service, which logs the loss, as before."""
     lane, writer = _Emitter(AuditUnavailable("the writer refused the fallback")), _Emitter()
-    tracker = RefusalAuditTracker()
+    tracker, lost = RefusalAuditTracker(), _lost()
     with pytest.raises(AuditUnavailable):
         await _call(_LazyLaneEmitter(cast(Any, _Audit(writer, lane))), tracker)
     assert writer.calls == [] and len(tracker) == 0
+    assert _lost() - lost == 1  # and the loss is counted, once
+
+
+@virtual
+async def test_a_record_the_real_lane_and_writer_both_refuse_is_counted_lost_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EX-08's alert half (#3009 S4b-1c): the lane refuses (`held`), the writer refuses its
+    fallback, the façade raises to the service, and `auth_audit_outcome_lost_total` moves by one,
+    which a later drain or a second look at the tracker does not repeat."""
+    repo = FakeAuditRepository()
+    audit = AuditService(repo, lane_keys=lambda: (bytes(range(32)), None))  # a test vector
+    settings = SimpleNamespace(
+        audit_wal_path=str(tmp_path / "a.wal"), audit_page_structure_budget=50_000
+    )
+    await audit.start(cast(Any, SimpleNamespace(settings=settings)))
+    await audit.lane.flush(60.0)
+    assert audit._lane is not None
+    audit._lane.journal.hold()  # every append is refused `held`, so the façade falls back
+
+    async def refused(record: Any) -> int:
+        raise AuditUnavailable("the writer refused the fallback")
+
+    monkeypatch.setattr(audit.writer, "ingest_counted", refused)
+    tracker, lost = RefusalAuditTracker(), _lost()
+    with pytest.raises(AuditUnavailable):
+        await _call(_LazyLaneEmitter(audit), tracker)
+    assert _lost() - lost == 1
+    assert await tracker.drain() == 0 and len(tracker) == 0
+    assert _lost() - lost == 1
+    await audit.stop(1.0)
+
+
+async def test_a_record_that_lands_counts_nothing_lost() -> None:
+    emitter, tracker, lost = _Emitter(), RefusalAuditTracker(), _lost()
+    await _call(emitter, tracker)
+    assert len(emitter.calls) == 1 and await tracker.drain() == 0
+    assert _lost() == lost
+
+
+@pytest.mark.parametrize(
+    "held", [True, False], ids=["after_the_cancel", "in_the_cancels_loop_turn"]
+)
+async def test_a_write_that_fails_after_its_caller_stopped_waiting_is_counted_lost_once(
+    held: bool,
+) -> None:
+    """The tracker's late report calls the port's `on_lost`, whether the write is still running
+    when the caller is cancelled or fails in the cancel's own loop turn (#3054)."""
+    emitter, tracker = _Emitter(RuntimeError("wal unavailable"), held), RefusalAuditTracker()
+    lost = _lost()
+    request = asyncio.create_task(_call(emitter, tracker))
+    if held:
+        await asyncio.wait_for(emitter.started.wait(), 5.0)
+    else:
+        await asyncio.sleep(0)  # the request has started the write, which has not run yet
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    emitter.gate.set()
+    assert await tracker.drain() == 0
+    assert _lost() - lost == 1
+
+
+async def test_a_write_that_lands_after_its_caller_stopped_waiting_counts_nothing_lost() -> None:
+    emitter, tracker = _Emitter(held=True), RefusalAuditTracker()
+    lost = _lost()
+    request = asyncio.create_task(_call(emitter, tracker))
+    await asyncio.wait_for(emitter.started.wait(), 5.0)
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    emitter.gate.set()
+    assert await tracker.drain() == 0 and len(emitter.calls) == 1
+    assert _lost() == lost
+
+
+@virtual
+async def test_a_write_the_shutdown_drain_leaves_running_is_counted_lost_once() -> None:
+    """`drain()` counts a write it gives up on (it may be lost); if that write then fails while its
+    caller still waits, the caller's report is not a second count."""
+    emitter, tracker = _Emitter(AuditUnavailable("refused"), held=True), RefusalAuditTracker()
+    lost = _lost()
+    request = asyncio.create_task(_call(emitter, tracker))
+    await asyncio.wait_for(emitter.started.wait(), 5.0)
+    assert await tracker.drain(1.0) == 1  # one fake second, then it gives up
+    assert _lost() - lost == 1
+    emitter.gate.set()
+    with pytest.raises(AuditUnavailable):
+        await request
+    assert _lost() - lost == 1
+
+
+async def test_a_record_dropped_at_the_in_flight_cap_is_counted_lost() -> None:
+    emitter, tracker, parked = _Emitter(), RefusalAuditTracker(cap=1), _Emitter(held=True)
+    tracker.track(parked.emit("parked"))  # one write in flight fills the cap
+    lost = _lost()
+    with pytest.raises(BackstopAuditSaturated):
+        await _call(emitter, tracker)
+    assert not emitter.started.is_set() and _lost() - lost == 1
+    parked.gate.set()
+    assert await tracker.drain() == 0
 
 
 def test_create_app_hands_the_port_the_lane_emitter(monkeypatch: pytest.MonkeyPatch) -> None:

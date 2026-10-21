@@ -41,10 +41,6 @@ if TYPE_CHECKING:
 LaneKeyLoader = Callable[[], tuple[bytes, bytes | None] | None]
 
 
-def _flag_off() -> bool:
-    return False
-
-
 class LaneNotWired(RuntimeError):
     """`AuditService.lane` while there is no façade: before `start()` wires one, and from the moment
     `stop()` drops it, while `writer` may still run (ADR-0037, #3009 S3)."""
@@ -71,7 +67,6 @@ class AuditService:
         self._run_lock: FileIO | None = None
         #: ADR-0037: no lane without a key loader (unit tests) or a real backend.
         self._lane_keys = lane_keys
-        self._journal_first: Callable[[], bool] = _flag_off
         self.lane_lock_failures = 0  # READY-21: a `lane.lock` that held the lane (S4a's metric)
         self.lane_link_failures = 0  # a failed hard-link probe that held the lane (S4a's metric)
         self._lane: AuditLane | None = None
@@ -101,11 +96,6 @@ class AuditService:
         if self._facade is None:
             raise LaneNotWired("AuditService.start() has not wired a real backend")
         return self._facade
-
-    def use_lane_flag(self, journal_first: Callable[[], bool]) -> None:
-        """Decision 12: the composition root's cached read of `audit.lane_journal_first`, with no
-        principal (`audit` may not import `admin`); unwired (unit tests), it reads off."""
-        self._journal_first = journal_first
 
     async def start(self, ctx: AppContext) -> None:
         """Start the module. Wires `AuditWriter`/`AuditQueryService` only when
@@ -158,7 +148,7 @@ class AuditService:
                 lane = self._lane = build_lane(wal, keys, self._writer)
                 self._lane_closed = False
                 await boot_lane(lane, held)
-            self._facade = LaneFacade(self._writer, self._lane, lambda: self._journal_first())
+            self._facade = LaneFacade(self._writer, self._lane)
 
     async def stop(self, grace_s: float) -> None:
         """Stop the module within `grace_s` seconds: the lane first (its drain hands records to

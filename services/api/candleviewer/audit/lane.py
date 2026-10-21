@@ -354,24 +354,24 @@ async def boot_lane(lane: AuditLane, held: bool) -> None:
 
 
 class LaneFacade:
-    """`AuditService.lane` (decisions 1, 2 and 12): `emit()`'s keywords and `deadline_s`, the
-    caller's deadline, shared by the lane's wait and the fallback. `build()` validates and redacts
-    once. With `journal_first` on, a record `LANE_ACTIONS` admits goes to the lane first; a refusal
-    or no answer within `wait_s` hands the same record to `ingest()`, which takes all else. One
-    rule: `audit.lane_*` comes from the lane only, a `LaneNotAdmitted` never reaches the sink, and
-    a lane that cannot boot holds, so an action fails closed (C-2.9) only if `ingest()` refuses too:
-    the caller gets what it raises, or `AuditUnavailable` past the deadline."""
+    """`AuditService.lane` (decisions 1 and 2): `emit()`'s keywords and `deadline_s`, the caller's
+    deadline, shared by the lane's wait and the fallback. `build()` validates and redacts once. A
+    record `LANE_ACTIONS` admits goes to the lane first, unconditionally; a refusal or no answer
+    within `wait_s` hands the same record to `ingest()`, which takes all else: an action or an
+    outcome the registry does not admit, and every record while there is no lane. One rule:
+    `audit.lane_*` comes from the lane only, a `LaneNotAdmitted` never reaches the sink,
+    and a lane that cannot boot holds, so an action fails closed (C-2.9) only if `ingest()` refuses
+    too: the caller gets what it raises, or `AuditUnavailable` past the deadline."""
 
     def __init__(
         self,
         writer: aw.AuditWriter,
         lane: AuditLane | None,
-        journal_first: Callable[[], bool],
         *,
         wait_s: float = lj.APPEND_WAIT_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._writer, self._lane, self._journal_first = writer, lane, journal_first
+        self._writer, self._lane = writer, lane
         self._wait_s, self._clock = wait_s, clock
         self._fallbacks: dict[str, tuple[float, int]] = {}  # per reason: last line, since then
         #: S4a: the records the lane refused or left unanswered past `wait_s`, by class and reason.
@@ -416,8 +416,6 @@ class LaneFacade:
         """Decision 1: True once the lane holds the record; False sends it to `ingest()`."""
         row = LANE_ACTIONS.get(record.action)
         if self._lane is None or row is None or record.outcome not in row[1]:
-            return False
-        if not self._journal_first():  # a cached read: never the caller's deadline (READY-21)
             return False
         try:
             async with asyncio.timeout(self._wait_s):
