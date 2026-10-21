@@ -1,7 +1,7 @@
 # E11-D01 — Session protocol: chart navigation, scale control and keyboard-first charting
 
 - **Ticket:** E11-D01 (#239) · **Companion of:** `e11-chart-navigation-research.md` (the heuristic report; this file is its "protocol" and
-  "walkthrough" deliverables, plus the paste-ready post texts and principles in §10) · **Status:** In Review — boards and PNGs pending ·
+  "walkthrough" deliverables, plus the paste-ready post texts and principles in §10) · **Status:** In Review — the nine boards drawn 2026-10-21 (board script `r6`) and exported to `docs/design/E11/img/` (report §Research boards) ·
   **Ready to run: partly.** Phase A runs today: §2 recruiting, §3 context and competitive walkthrough on the participant's own tools, §8 consent, most
   of §9. Phase B waits: T1–T3 need the gesture prototype P-B (report O2a), T4–T6 the keyboard HTML mock P-C (report O2b); no interactive surface exists
   today (report Method note, Q1-f, O2).
@@ -212,7 +212,7 @@ Q4 also records each participant's seven-card needs order from the T4 sort **and
 - [ ] Recruit and schedule S2-a…c (report O11, by 2026-10-29) ahead of the gesture sessions; recruit and schedule S3 and S4 (report O1, results
       by 2026-10-29); send consent forms and the format sample only; run them with the participant's own AT configuration
 - [ ] Fill §7 from the sessions only; append S3/S4 results to the report §Findings Q4–Q6; flag every contradiction with doc:section
-- [ ] Connect the Penpot file, draw the `E11-D01` page boards, pin board 3 as the one-page principles summary; export PNGs
+- [ ] _Optional, not done:_ pin board 3 in the Penpot UI (first frame and file thumbnail) as the one-page principles summary — the nine `E11-D01` page boards are drawn and exported (2026-10-21, board script `r6`; report §Research boards), so only this pin remains here
 - [ ] **Stage 2:** comment `approved` on #239 for the confirmed, amended or overturned decisions; they are re-posted on E11-S04/S05/S07/S12/S13/S14
       with a link to the filled §7
 
