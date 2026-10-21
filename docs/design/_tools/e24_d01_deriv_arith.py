@@ -6,16 +6,19 @@ funding annualisation `rate x (525600 / interval_min) x 100` (the formula of
 `services/api/candleviewer/domain/funding.py`, whose constant is checked, not imported) at the
 intervals the plan docs name and on the fixture rates, with the settlements per day; (2) the SCR-054
 imminent-settlement charge with its pay / receive sign; (3) the countdown wording ladder and the
-remaining time in the one recorded ticker capture; (4) the cascade arithmetic of SCR-054's 500
-prints/s target against the 250 ms client bucket, Bybit's 500 ms batching and the WS topic cadence
-read from `ws/topics.py`; (5) the quadrant, OI-delta and basis definitions per source, the two names
-of the quadrant metric code, the `22` `MetricCode` members the derivatives descriptors lack and the
-component token bindings F30 names; (6) the `deriv.*` keys of the E24 epic against the `22`
-`Settings` schema; (7) the fixture inventory (which derivative captures exist,
-which are assembled from documented shapes, and that no liquidation or open-interest capture
-exists); (8) the Sprint 10 / 12 / 13 dates from `calendar_cv.py`; (9) WCAG contrast of the token
-pairs the memo names in the three themes. A row reads NOT FOUND when an anchor moved; the tool never
-guesses and never raises on a moved anchor.
+remaining time in the one recorded ticker capture, the settlement restart taken from the ticker's
+next_funding_time_ms and never from the interval; (4) the cascade arithmetic of SCR-054's 500
+prints/s target against the 250 ms client bucket, Bybit's 500 ms batching (a cadence, not a loss)
+and the WS topic cadence read from `ws/topics.py`, and the covered span of the header readout when
+the recorder's coverage is shorter than its window; (5) the quadrant, OI-delta and basis definitions
+per source, the two names of the quadrant metric code, the OI unit the classification runs on, the
+liquidation wire's note / batching / side sentences per source (23, 24, 22, research 06 and 08), the
+`22` `MetricCode` members the derivatives descriptors lack and the component token bindings F30
+names; (6) the `deriv.*` keys of the E24 epic against the `22` `Settings` schema; (7) the fixture
+inventory (which derivative captures exist, which are assembled from documented shapes, and that no
+liquidation or open-interest capture exists); (8) the Sprint 10 / 12 / 13 dates from
+`calendar_cv.py`; (9) WCAG contrast of the token pairs the memo names in the three themes. A row
+reads NOT FOUND when an anchor moved; the tool never guesses and never raises on a moved anchor.
 
 Usage: python3 -I docs/design/_tools/e24_d01_deriv_arith.py          (Markdown)
        python3 -I docs/design/_tools/e24_d01_deriv_arith.py --json   (the boards' numbers)
@@ -35,6 +38,9 @@ PLAN = "docs/plan/"
 FUNDING_PY = "services/api/candleviewer/domain/funding.py"
 METRICS_PY = "services/api/candleviewer/rules/vocabulary/metrics.py"
 TOPICS_PY = "services/api/candleviewer/ws/topics.py"
+TICKER_DELTA_PY = "services/api/candleviewer/exchange/base/ticker_delta.py"
+RESEARCH_06 = "docs/research/06-bybit-api.md"
+RESEARCH_08 = "docs/research/08-crypto-data-metrics.md"
 FIX = "packages/fixtures/bybit/2026-10-05/"
 MINUTES_PER_YEAR = 525_600  # mirrors domain/funding.py; the check below reports if it moves
 INTERVALS_MIN = (480, 240, 120, 60)  # 22 /market/funding: "8 h common, some 1/2/4 h"
@@ -43,6 +49,10 @@ CHARGE = Decimal("12.40")  # SCR-054 states line: "position will be charged ~ 12
 WARN_MS = 300_000  # SCR-054: the <5 min warning; announced at 5 min and 1 min only
 LADDER_MS = (11_564_000, 3_599_000, 252_000, 59_000, 0)  # 03:12:44, 00:59:59, 00:04:12, 00:00:59, 0
 CASCADE = {"prints_per_s": 500, "seconds": 10, "bucket_ms": 250, "bybit_push_ms": 500}
+RESTART_MS = 28_800_000  # ticker next_funding_time_ms minus the settlement instant; 8 h example
+COVERAGE_WINDOW_MIN = 60  # memo F25: the header readout "Liq 1 h"
+COVERAGE_START_UTC = "09:14"  # the recorder's first available timestamp in the memo's example
+COVERAGE_READ_AT_UTC = "09:48"  # when the readout is read in that example
 DERIV_24 = [  # 24 section 7.2 Derivatives table, in order
     "open_interest",
     "open_interest_value",
@@ -75,14 +85,16 @@ COMPONENT_TOKENS = (  # (component, token name as 15 binds it) - memo F30; "reso
 PAIRS = (  # (foreground token, background token, bar, what the memo uses the pair for)
     ("color.text.primary", "color.surface.raised", 4.5, "readouts and legend words"),
     ("color.text.secondary", "color.surface.raised", 4.5, "interval, source"),
-    ("color.text.tertiary", "color.surface.raised", 4.5, "chip text, the lower-bound note"),
+    ("color.text.tertiary", "color.surface.raised", 4.5, "chip text, the completeness note"),
     ("color.status.info.strong", "color.status.info.subtle", 4.5, "the (estimated) chip text"),
     ("color.status.warning.strong", "color.status.warning.subtle", 4.5, "<5 min warning chip"),
     ("color.text.primary", "color.status.info.subtle", 4.5, "chip text that passes everywhere"),
     ("color.text.primary", "color.status.warning.subtle", 4.5, "warning body text"),
     ("color.status.info.default", "color.surface.raised", 3.0, "chip outline, hatched zone edge"),
-    ("color.buy.default", "color.surface.raised", 3.0, "short-liquidation / price-up bar fill"),
-    ("color.sell.default", "color.surface.raised", 3.0, "long-liquidation / price-down bar fill"),
+    ("color.buy.default", "color.surface.raised", 3.0, "short-liquidation bar fill"),
+    ("color.sell.default", "color.surface.raised", 3.0, "long-liquidation bar fill"),
+    ("color.candle.up", "color.surface.raised", 3.0, "price-up quadrant bar fill"),
+    ("color.candle.down", "color.surface.raised", 3.0, "price-down quadrant bar fill"),
     ("color.neutral.default", "color.surface.raised", 3.0, "the unclassified-bar hatch"),
     ("color.data-confidence.stale.text", "color.data-confidence.stale.surface", 4.5, "stale text"),
 )
@@ -110,20 +122,22 @@ def hms(ms: int) -> str:
     return f"{h:02d}:{m:02d}:{sec:02d}"
 
 
-def ladder(ms: int, interval_min: int = 480) -> dict[str, object]:
+def ladder(ms: int, restart_ms: int = RESTART_MS) -> dict[str, object]:
     """The PROPOSED countdown wording ladder (memo section 3.3), one fixed-width hh:mm:ss form.
 
     At settlement two states run independently: the countdown restarts at once from the ticker's
-    advanced next_funding_time_ms (23 section 14.8), while the header rate reads 'settled rate
-    pending' until the /market/funding row arrives; the restart never waits for that fetch.
+    advanced next_funding_time_ms (23 section 14.8) - `restart_ms` is that field minus the
+    settlement instant, 8 h in the worked example, and never interval x 60 000, because Bybit can
+    switch a contract's interval at that very settlement (memo F9) - while the header rate reads
+    'settled rate pending' until the /market/funding row arrives; the restart never waits for it.
     """
     if ms <= 0:
         return {
             "ms": ms,
             "band": "settlement",
-            "form": f"next in {hms(interval_min * 60_000)}",
+            "form": f"next in {hms(restart_ms)}",
             "rate": "settled rate pending",
-            "restart": "at once, from the ticker's advanced next_funding_time_ms",
+            "restart": "at once, from the ticker's next_funding_time_ms; never interval x 60 000",
         }
     if ms < WARN_MS:
         return {
@@ -222,6 +236,7 @@ def fixtures() -> dict[str, object]:
         "recorded_live_rate": d.get("fundingRate"),
         "recorded_live_annualised_pct": annualised_pct(Decimal(d.get("fundingRate", "0")), 480),
         "recorded_interval_hour_field": d.get("fundingIntervalHour"),
+        "recorded_funding_cap_field": d.get("fundingCap"),
         "recorded_remaining_ms": next_ms - first_ts,
         "recorded_remaining": hms(next_ms - first_ts),
         "symbol_day_with_settlement_and_cascade": False,
@@ -230,7 +245,7 @@ def fixtures() -> dict[str, object]:
 
 def definitions() -> dict[str, object]:
     p24, p22 = PLAN + "24-internal-schemas.md", PLAN + "22-api-openapi.yaml"
-    p11 = PLAN + "11-user-stories.md"
+    p11, p23 = PLAN + "11-user-stories.md", PLAN + "23-ws-protocol.md"
     prose = grab(p24, r"(OI-price quadrant table \(research 08 §6\): [^\n]+)") or ""
     quad = {
         "24 section 7.2": grab(p24, r"`oi_price_quadrant`\s*\|\s*enum `([^`]+)`"),
@@ -264,6 +279,7 @@ def definitions() -> dict[str, object]:
             {"component": c, "token": t, "defined": t in keys} for c, t in COMPONENT_TOKENS
         ],
         "undefined_component_tokens": sorted({t for _, t in COMPONENT_TOKENS if t not in keys}),
+        "oi_unit_24": grab(p24, r"open_interest: Qty \| None\s+# ([^\n]+)"),
         "oi_delta_24": grab(p24, r"`open_interest_delta`\s*\|\s*`([^`]+)`"),
         "oi_delta_shipped": grab(
             METRICS_PY, r'"open_interest_delta", "OI change", "([^"]+)", "oi", "([^"]+)"'
@@ -297,6 +313,19 @@ def definitions() -> dict[str, object]:
         "ws_liquidations_throttle_ms": grab(
             TOPICS_PY, r'_md\(\s*"liquidations",\s*\(\("symbol",\),\s*\(\)\),\s*(\d+),'
         ),
+        "liq_note_23": grab(p23, r'"note": \{\s*"type": "string",\s*"description": "([^"]+)"'),
+        "liq_batching_24": grab(
+            p24,
+            r"(the topic batches at most one push per symbol per 500 ms with a `data\[\]` array)",
+        ),
+        "liq_side_24": grab(p24, r"class LiquidationEvent.*?side: Side\s+# ([^\n]+)"),
+        "liq_side_22": grab(p22, r'description: "(Side of the liquidated position[^"]+)"'),
+        "liq_side_research06": grab(RESEARCH_06, r"(`S` \(position side[^\n]*?liquidated\))"),
+        "liq_side_research08": grab(
+            RESEARCH_08,
+            r"(`S` \(side\) in the liquidation payload is the side of the \*\*liquidated position's"
+            r" closing order\*\*)",
+        ),
         "scr054_mock_text": grab(
             PLAN + "14-screens-catalogue.md",
             r"(Funding\s+0\.0100% next in [0-9:]+ \(annl [0-9]+%\))",
@@ -307,8 +336,8 @@ def definitions() -> dict[str, object]:
         "scr054_announce_rule": grab(
             PLAN + "14-screens-catalogue.md", r"(the funding countdown is announced at [^.]+)"
         ),
-        "ticker_fields_have_interval": "fundingIntervalHour"
-        in text("services/api/candleviewer/exchange/base/ticker_delta.py"),
+        "ticker_fields_have_interval": "fundingIntervalHour" in text(TICKER_DELTA_PY),
+        "ticker_fields_have_cap": "fundingCap" in text(TICKER_DELTA_PY),
     }
 
 
@@ -318,6 +347,9 @@ def build() -> dict[str, object]:
     c = CASCADE
     total, buckets = c["prints_per_s"] * c["seconds"], c["seconds"] * 1000 // c["bucket_ms"]
     themes = {t: tokens(t) for t in ("dark", "light", "hc")}
+    h0, m0 = (int(x) for x in COVERAGE_START_UTC.split(":"))
+    h1, m1 = (int(x) for x in COVERAGE_READ_AT_UTC.split(":"))
+    covered = min(COVERAGE_WINDOW_MIN, (h1 * 60 + m1) - (h0 * 60 + m0))
     pairs = []
     for fg, bg, bar, use in PAIRS:
         ratios = {t: contrast(themes[t][fg], themes[t][bg]) for t in themes}
@@ -372,6 +404,15 @@ def build() -> dict[str, object]:
             "prints_per_bucket": total // buckets,
             "bybit_pushes_max": c["seconds"] * 1000 // c["bybit_push_ms"],
             "client_buckets_per_push": c["bybit_push_ms"] // c["bucket_ms"],
+        },
+        "coverage": {
+            "window_min": COVERAGE_WINDOW_MIN,
+            "coverage_start_utc": COVERAGE_START_UTC,
+            "read_at_utc": COVERAGE_READ_AT_UTC,
+            "covered_min": covered,
+            "readout": f"Liq {covered} min" if covered < COVERAGE_WINDOW_MIN else "Liq 1 h",
+            "rule": "covered span < window: state the span and carry the chip; "
+            "no coverage in the window: not recorded",
         },
         "definitions": definitions(),
         "fixtures": fixtures(),
