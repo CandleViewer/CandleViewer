@@ -107,9 +107,9 @@ the copy's example prices are re-set to that range when the stimuli are built.
 - **ST6 — monitor, SCR-070 (D, F).** TWAP, iceberg, chase and OCO rows: running, paused by you, paused after the Bybit
   link dropped, a TWAP whose window ended while paused (report SC-3, PROPOSED), halted by risk control, failed,
   completed, and the two orphan order rows of report M10a and M10b; the degraded banner; the empty state; one row
-  under view-as (report SC-15: every control disabled with SCR-124's reason except a kill switch the viewed user may
-  engage); content per the report; field cards for D-b. Exported for 1920×1080 at 100 %, so a magnifier's zoom is
-  real, and at 125 % (`10` §3), in greyscale and in the high-contrast theme for F (7).
+  under view-as (report SC-15: every control disabled with SCR-124's A11y text as the reason except a kill switch the
+  viewed user may engage); content per the report; field cards for D-b. Exported for 1920×1080 at 100 %, so a
+  magnifier's zoom is real, and at 125 % (`10` §3), in greyscale and in the high-contrast theme for F (7).
 - **ST7 — pre-submit cards (E):** one per item listed in Probe E, plus a blank card.
 - **ST8 — keyboard build (F).** The E33-D02/D03 clickable prototype with the SCR-076 algo confirmation, else a
   Wizard-of-Oz deck (the participant names each key; the moderator shows the next focus). Signals only, until E33-D05
