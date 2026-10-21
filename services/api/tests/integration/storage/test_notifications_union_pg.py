@@ -87,10 +87,10 @@ def _rule_events(c: Conn, owner: str, account: str | None) -> tuple[str, list[in
     return rule, ids
 
 
-def _system(c: Conn, component: str, account: str | None) -> int:
+def _system(c: Conn, component: str, account: str | None, recipient: str | None = None) -> int:
     row: dict[str, object] = {"component": component, "kind": "k", "event_ts": _TS}
     row |= {"message": f"{component} event", "exchange_account_id": account}
-    return int(_insert(c, "system_events", row))
+    return int(_insert(c, "system_events", row | {"recipient_user_id": recipient}))
 
 
 @pytest.fixture(scope="module")
@@ -130,6 +130,8 @@ def world(pg_dsn: str) -> dict[str, Any]:
         w["se_acc1"] = _system(c, "exchange", acc1)
         w["se_acc2"] = _system(c, "exchange", acc2)
         w["se_live"] = _system(c, "exchange", live)
+        w["se_to_a"] = _system(c, "auth", None, recipient=user_a)  # #3085: a view-as notice
+        w["se_to_b"] = _system(c, "auth", None, recipient=user_b)
     return w
 
 
@@ -220,6 +222,19 @@ async def test_the_owner_sees_the_system_stream_and_every_account_of_its_environ
         ("alert", w["d_other"]),  # another user's deliveries, even for the Owner
         ("order", w["oe_live"]), ("system", w["se_live"]), ("rule", w["re_live"][0]),
     }  # fmt: skip
+
+
+async def test_a_system_row_addressed_to_a_user_reaches_them_and_the_owner_only(
+    world: dict[str, Any], union: Union
+) -> None:
+    """#3085: a view-as notice is its target's (`system_addressed`, any role); every other system
+    row, another user's notice included, stays the Owner's."""
+    w = world
+    mine = await _all(union, _manager(w, system_addressed=True))
+    assert {k for k in mine if k[0] == "system"} == {("system", w["se_to_a"])}
+    assert not {k for k in await _all(union, _manager(w)) if k[0] == "system"}
+    owner = await _all(union, _owner(w))
+    assert {("system", w["se_to_a"]), ("system", w["se_to_b"])} <= owner
 
 
 async def test_ties_keep_one_total_order_and_pages_neither_skip_nor_repeat(

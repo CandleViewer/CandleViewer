@@ -697,7 +697,8 @@ instrument_versions = Table(
     Index("ix_instrument_versions_symbol", "symbol", text("metadata_version DESC")),
 )
 
-#: `system_events` (E04-T04, revision 0008_system_events).
+#: `system_events` (E04-T04, revision 0008_system_events; `recipient_user_id`, revision
+#: 0047_system_events_recipient, #3085: the user a row is addressed to).
 system_events = Table(
     "system_events",
     metadata,
@@ -714,6 +715,7 @@ system_events = Table(
     Column("resolved_at", TIMESTAMP(timezone=True)),
     Column("resolved_by", ForeignKey("users.id", ondelete="SET NULL")),
     Column("event_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("recipient_user_id", ForeignKey("users.id", ondelete="SET NULL")),
     CheckConstraint(
         "component IN ('ingestion','book_engine','bars','orderflow','oms','rules','recorder',"
         "'replay','api','ws','db','exchange','auth','backup')",
@@ -732,6 +734,12 @@ system_events = Table(
         "symbol",
         text("event_ts DESC"),
         postgresql_where=text("symbol IS NOT NULL"),
+    ),
+    Index(
+        "ix_se_recipient",
+        "recipient_user_id",
+        text("event_ts DESC"),
+        postgresql_where=text("recipient_user_id IS NOT NULL"),
     ),
 )
 

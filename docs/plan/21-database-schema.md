@@ -3522,6 +3522,23 @@ CREATE INDEX ix_se_component ON system_events (component, event_ts DESC);
 CREATE INDEX ix_se_symbol    ON system_events (symbol, event_ts DESC) WHERE symbol IS NOT NULL;
 ```
 
+```sql
+-- 0047_system_events_recipient (#3085 S13a): the user a row is addressed to
+ALTER TABLE system_events
+  ADD COLUMN recipient_user_id uuid REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX ix_se_recipient ON system_events (recipient_user_id, event_ts DESC)
+  WHERE recipient_user_id IS NOT NULL;
+```
+
+**Addressed rows (#3085, the Q1 ruling).** `recipient_user_id` names the one user a row is
+addressed to; it is NULL on every other row. The view-as start writes one
+`auth`/`view_as_started`/`info` row addressed to the target (no incident, §3.10.2a), in the start's
+own transaction, whose `message` names the viewer and the window and never the reason.
+`GET /notifications` serves a caller the rows addressed to them as `system` notifications
+(`04-security-program.md` §7.2.2 row 34b); the whole stream stays the Owner's alone.
+`ix_se_recipient` serves that read. A purged user's rows lose their address (`ON DELETE SET NULL`,
+as `resolved_by`) and stay the Owner's. The downgrade refuses while any row is addressed.
+
 The offline break-glass Owner reset (E09-S11, SR-023) writes `component='auth'`,
 `kind='break_glass_used'`, `severity='critical'`, unresolved, in the same transaction that revokes
 the Owner's MFA methods and sessions (`revoked_reason='break_glass'`). The same transaction also
@@ -4599,6 +4616,7 @@ NAMING_CONVENTION = {
 | `0045_audit_chain_hardening`    | `audit_chain()` gets its own `search_path` and draws `audit_log.id` under the chain lock (§3.10.1), so no session's path or insert path forks the chain while `CACHE 1` and READ COMMITTED hold — **#889 S3** (SR-E42-10), **#4032**; the downgrade restores 0003's function                                                            |
 | `0046_audit_signing_keys`       | `audit_signing_keys`, the audit export signing keys (§3.1.5b, ADR-0039): sealed seeds, KEK-wrapped DEKs, one active key per environment, trigger `trg_audit_signing_keys_write_once`, no DELETE for `cv_app` — **#889 S4**; the downgrade refuses while any row exists                                                                  |
 | `0043_order_submission`         | `idempotency_anchors` (§3.3.10), `recorded_stops` (§3.3.11) and `orders.provenance` (§3.3.4), their guard and TRUNCATE triggers; no `DELETE` or `TRUNCATE` for `cv_app` — **E29-T04 #913**; the downgrade refuses while an anchor, a recorded stop or an order not `placed` exists; on `0046_audit_signing_keys` by merge order (C-5.3) |
+| `0047_system_events_recipient`  | `system_events.recipient_user_id` (nullable, `REFERENCES users(id) ON DELETE SET NULL`) and the partial index `ix_se_recipient` (§3.10.2): a row addressed to one user, the view-as start's notice — **#3085 S13a**; the downgrade refuses while a row is addressed                                                                     |
 
 ---
 
@@ -4940,6 +4958,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `recorded_stops`                                       | `actor_user_id`                         | P0         | plaintext                                       | A user id (0043), never a name, email or IP; `ON DELETE RESTRICT` keeps the attribution, as `trade_groups.created_by`                           |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
 | `system_events` (`dms_hook_owed` rows)                 | `details`                               | P0         | jsonb                                           | Only the closed `from_state` and `reason` codes (E27-T04, §3.10.2); any other value is refused, so these rows need no redaction serializer      |
+| `system_events` (addressed rows)                       | `recipient_user_id`                     | P0         | uuid                                            | An internal user id, the row's one reader besides the Owner (#3085); the row's `message` names the viewer and the window, never the reason      |
 | `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |
 | `backups`                                              | `deleted_by`                            | P0         | plaintext                                       | A user id (0032), never a name, email or IP; `ON DELETE SET NULL` detaches it, and the delete's audit record keeps the actor                    |
 | `settings`                                             | `value` where `is_secret`               | S          | AES-256-GCM                                     | `is_secret=true` rows are returned masked by the API                                                                                            |

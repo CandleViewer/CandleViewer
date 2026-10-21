@@ -10,7 +10,8 @@ rules module's own visibility predicate (`RulesManager.visible_rule_ids`), so a 
 visible here exactly when the rule itself is. `system_events` is the Owner's alone
 (04-security-program.md §7.2.2 row 34b, C-12.4): the role-neutral view row 48 and SR-188 give
 Managers and Viewers on the `system` topic is not defined for these rows, so nothing of it is
-served to them. The Owner's `message` passes the shared redaction first, as
+served to them, but for a row addressed to the caller (`recipient_user_id`: #3085's view-as
+notice, row 34b's one exception). A system `message` passes the shared redaction first, as
 `admin/ops/incidents.py` does, off the event loop once a page holds more than
 `OFFLOAD_SYSTEM_ROWS` of them (C-2.17).
 
@@ -86,7 +87,8 @@ def notification_scope(
     actor: Actor, kinds: Sequence[str], rule_ids: frozenset[str]
 ) -> NotificationScope:
     """The caller's view per source: its permission, then its grants (Owner: all accounts).
-    `system` is the Owner's alone (04 §7.2.2 row 34b, C-12.4); no role is a way around it."""
+    `system` is the Owner's alone (04 §7.2.2 row 34b, C-12.4); no role is a way around it, and
+    a row addressed to the caller is theirs whatever their role (#3085)."""
     want = frozenset(kinds or KINDS)
     perms, owner = actor.perms, actor.is_owner
     return NotificationScope(
@@ -97,6 +99,7 @@ def notification_scope(
         orders="order" in want and "orders:read" in perms,
         accounts=None if owner else frozenset(actor.granted_accounts),
         system="system" in want and owner,
+        system_addressed="system" in want,
     )
 
 
@@ -110,7 +113,7 @@ def source_id(src: int, src_id: int) -> str:
 
 
 def _system_title(r: NotificationRow) -> str:
-    """The Owner's system `message` after the shared redaction, then the cut (a cut first could
+    """A system `message` after the shared redaction, then the cut (a cut first could
     split a secret into an unmatched stub); a message that cannot be redacted is not shown."""
     try:
         return redact_text(r.title or "")[:SYSTEM_TITLE_MAX] or f"System event ({r.event})"

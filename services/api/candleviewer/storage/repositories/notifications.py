@@ -44,7 +44,9 @@ class NotificationScope:
     - `orders` / `accounts`: order events on these accounts (`orders:read`); `accounts` None is
       every account (the Owner), an empty set none;
     - `system`: the whole `system_events` stream, the Owner's alone (04 §7.2.2 row 34b: no
-      role-neutral view of these rows is approved for Managers or Viewers, C-12.4).
+      role-neutral view of these rows is approved for Managers or Viewers, C-12.4);
+    - `system_addressed`: the `system_events` rows addressed to the caller (`recipient_user_id`,
+      #3085's view-as notice), for any role (row 34b's one exception).
     """
 
     user_id: str
@@ -54,10 +56,17 @@ class NotificationScope:
     orders: bool = False
     accounts: frozenset[str] | None = frozenset()
     system: bool = False
+    system_addressed: bool = False
 
     @property
     def empty(self) -> bool:
-        return not (self.alerts or (self.rules and self.rule_ids) or self.orders or self.system)
+        return not (
+            self.alerts
+            or (self.rules and self.rule_ids)
+            or self.orders
+            or self.system
+            or self.system_addressed
+        )
 
 
 @dataclass(frozen=True, slots=True)

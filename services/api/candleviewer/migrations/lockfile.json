@@ -226,6 +226,11 @@
       "path": "services/api/candleviewer/migrations/versions/0043_order_submission.py",
       "sha256": "c2e0c6d8485fe50d75467b66750336a3114582a1371fe8200ae6bca0676bbbeb",
       "down_revision": "0046_audit_signing_keys"
+    },
+    "0047_system_events_recipient": {
+      "path": "services/api/candleviewer/migrations/versions/0047_system_events_recipient.py",
+      "sha256": "28f94dd5057d3d1a393e7b81ed86487f52d74a544300894642ea34c67834a4d4",
+      "down_revision": "0046_audit_signing_keys"
     }
   }
 }

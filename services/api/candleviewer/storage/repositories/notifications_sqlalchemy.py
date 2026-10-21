@@ -102,12 +102,15 @@ _LIST = sa.text(
     "(CAST(:after_ts AS timestamptz), CAST(:after_src AS integer), CAST(:after_id AS bigint))) "
     "ORDER BY oe.event_ts DESC, oe.id DESC LIMIT :limit) "
     "UNION ALL "
-    # system: the Owner's alone; an account-scoped row only for this environment's accounts
+    # system: the Owner's alone, and a row addressed to the caller theirs too (#3085); an
+    # account-scoped row only for this environment's accounts
     "(SELECT 'system', 4, se.id, se.event_ts, se.severity::text, se.message, NULL::text, "
     "NULL::timestamptz, se.symbol::text, se.exchange_account_id::text, "
     "se.correlation_id::text, se.kind, NULL::text "
     "FROM system_events se "
-    "WHERE CAST(:system AS boolean) AND (se.exchange_account_id IS NULL OR EXISTS ("
+    "WHERE (CAST(:system AS boolean) OR (CAST(:system_addressed AS boolean) "
+    "AND se.recipient_user_id = CAST(:user AS uuid))) "
+    "AND (se.exchange_account_id IS NULL OR EXISTS ("
     "SELECT 1 FROM exchange_accounts ea WHERE ea.id = se.exchange_account_id "
     "AND ea.env::text = :env)) "
     "AND se.event_ts <= COALESCE(CAST(:after_ts AS timestamptz), 'infinity'::timestamptz) "
@@ -149,6 +152,7 @@ class SqlAlchemyNotificationRepository:
             "accounts": sorted(scope.accounts or ()),
             "order_kinds": list(ORDER_EVENT_KINDS),
             "system": scope.system,
+            "system_addressed": scope.system_addressed,
             "env": self._env,
             "unread_only": unread_only,
             "after_ts": after[0],
