@@ -1,7 +1,7 @@
 """`POST /auth/refresh`, `GET /auth/session`, `GET /auth/sessions`,
 `POST /auth/logout` and `DELETE /me/sessions/{sessionId}` (E09-S03,
-US-ONB-004/009; QA defect #1634), and the idle-lock route `POST /auth/unlock`
-(#2300).
+US-ONB-004/009; QA defect #1634), and the idle-lock routes `POST /auth/unlock`
+and `POST /auth/session/extend` (#2300).
 
 Thin HTTP adapter over `candleviewer.auth.session_service.SessionService`,
 same shape as `api/auth.py`: structural Protocols, RFC 7807 problems, audit
@@ -79,7 +79,8 @@ the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origi
 and SR-041 checks here); every other operation of a locked session is refused by
 `api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
 `POST /auth/refresh` answers a locked session `401 session_idle_locked` itself, before its
-write-ahead record (#3331).
+write-ahead record (#3331). `POST /auth/session/extend` re-stamps it only after its write-ahead
+record, and never lifts a lock.
 """
 
 from __future__ import annotations
@@ -200,6 +201,8 @@ class SessionServiceLike(Protocol):
     ) -> SessionRecord: ...
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
+
+    async def touch(self, session_id: str) -> SessionRecord: ...
 
     async def require_active(
         self, session_id: str, *, allow_locked: bool = False
@@ -903,23 +906,28 @@ def make_session_router(
         return response
 
     async def _authenticate(
-        request: Request, *, allow_locked: bool = False
-    ) -> SessionRecord | None:
+        request: Request, *, allow_locked: bool = False, activity: bool = True
+    ) -> SessionRecord | JSONResponse:
+        """The bearer's session, or the answer: `401 session_idle_locked` for a locked one
+        (contract "Idle lock"), else the uniform 401. With *activity* False the check moves
+        no deadline (extend re-stamps only after its write-ahead record)."""
         token = _bearer(request)
         if token is None:
-            return None
+            return _unauthorized()
         try:
             return await auth_service.sessions.authenticate_access_token(
-                token, touch=not allow_locked, allow_locked=allow_locked
+                token, touch=activity and not allow_locked, allow_locked=allow_locked
             )
         except SessionNotFound:
             # Unknown and expired handles share this error. Only a handle this server never
             # issued is an attempt; an expired one is the client's normal refresh trigger.
             if await auth_service.sessions.peek_access_token(token) is None:
                 await _fixation_attempt(request, "bearer")
-            return None
-        except (SessionRevoked, SessionIdleLocked):
-            return None
+            return _unauthorized()
+        except SessionIdleLocked as exc:
+            return idle_lock.idle_locked_problem(exc.idle_locked_at)
+        except SessionRevoked:
+            return _unauthorized()
 
     async def _identify(request: Request) -> tuple[SessionRecord, bool] | None:
         """The session of an operation allowed while idle-locked (contract "Idle lock"):
@@ -1290,6 +1298,30 @@ def make_session_router(
             expose_csrf_token(request, response, present)
         return response
 
+    @router.post("/auth/session/extend")
+    async def extend_session(request: Request) -> Response:
+        """CMP-098 "Extend": the explicit activity call (contract `authExtendSession`). It
+        never lifts a lock and never moves `expires_at`."""
+        if not auth_service.sessions_is_active:
+            return _problem(503, "Service unavailable", "session backend is not wired")
+        record = await _authenticate(request, activity=False)  # its activity is `touch()`
+        if isinstance(record, JSONResponse):
+            return record
+        try:  # C-2.9 write-ahead: audit down => 503 and the deadline does not move
+            await _audit("auth.session_extended", record=record, ip=_source_ip(request))
+        except AuditUnavailableError:
+            return _audit_down()
+        try:
+            extended = await auth_service.sessions.touch(str(record.id))
+        except SessionIdleLocked as exc:  # locked since the check: extend never lifts it
+            return idle_lock.idle_locked_problem(exc.idle_locked_at)
+        except (SessionNotFound, SessionRevoked):
+            return _unauthorized()
+        at = now()
+        return JSONResponse(
+            {"session": idle_lock.session_state(extended, now=at), "server_time": at.isoformat()}
+        )
+
     @router.post("/auth/unlock")
     async def unlock(request: Request) -> Response:
         """SCR-005: lift the idle lock with the password only (contract `authUnlock`)."""
@@ -1440,8 +1472,8 @@ def make_session_router(
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
         record = await _authenticate(request)
-        if record is None:
-            return _unauthorized()
+        if isinstance(record, JSONResponse):
+            return record
         if (refusal := undeclared_query_refusal(request, LIST_SESSIONS_QUERY)) is not None:
             return refusal  # SR-026: before any session data is read
         try:
@@ -1577,8 +1609,8 @@ def make_session_router(
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
         record = await _authenticate(request, allow_locked=True)
-        if record is None:
-            return _unauthorized()
+        if isinstance(record, JSONResponse):
+            return record
         if (refusal := undeclared_query_refusal(request, REVOKE_MY_SESSION_QUERY)) is not None:
             return refusal  # SR-026: before the session list is read or anything is revoked
         # IDOR guard: only sessions of the caller's own user are addressable;

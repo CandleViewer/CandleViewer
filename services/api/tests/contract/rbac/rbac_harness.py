@@ -196,6 +196,9 @@ class _Sessions:
         actor = next(a for a, u in _USER_IDS.items() if str(uuid.uuid5(u, "session")) == session_id)
         return await self.authenticate_access_token(token_of(actor))
 
+    async def touch(self, session_id: str) -> Any:  # `POST /auth/session/extend` (#2300)
+        return await self.require_active(session_id)
+
     def now(self) -> datetime:  # the session routes judge deadlines by it (#2300)
         return datetime.now(UTC)
 
