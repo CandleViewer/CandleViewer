@@ -140,15 +140,19 @@ info:
       record). The problem `detail` never echoes token or cookie values.
     * **Token response header (ADR-0038).** With the `desktop.backend_connection` flag on (see
       "Cross-origin (CORS)"), every response that issues a new `__Host-cv_csrf` value (not an
-      expiry) also carries that value in an `X-CSRF-Token` response header
-      (`components.headers.CsrfTokenIssued`), in the request header's `<nonce>.<mac>` format.
-      Today only the three operations that issue the token in code declare it, on their `200`:
-      `POST /auth/mfa/verify`, `POST /auth/refresh` and `GET /auth/session`. Each other operation
-      in the issue list above declares it in the change that makes it issue one (ADR-0038 F5).
-      `GET /auth/session` then always carries the current session's token: the re-issued value
-      when it re-issues the cookie, else the verified cookie value. The header is declared but
-      never `required`: with the flag off no response carries it. Every response that carries it
-      is `Cache-Control: no-store`. The validation above does not change.
+      expiry) to a request whose `Origin` is listed also carries that value in an `X-CSRF-Token`
+      response header (`components.headers.CsrfTokenIssued`), in the request header's
+      `<nonce>.<mac>` format. Today the six operations that issue the token in code declare it,
+      on their `200`: `POST /auth/login` (its enrolment-only answer, `status=authenticated`),
+      `POST /auth/mfa/verify`, `POST /auth/mfa/recovery`, `POST /auth/mfa/enroll/confirm`,
+      `POST /auth/refresh` and `GET /auth/session`. `POST /auth/step-up`, which the issue list
+      above says rotates both cookies, issues none in code yet (its route does not rotate the
+      session yet, #2101; ADR-0038 F5): it declares the header in the change that makes it issue
+      one. `GET /auth/session` then always carries the current session's token: the re-issued
+      value when it re-issues the cookie, else the verified cookie value. The header is declared
+      but never `required`: with the flag off, or for a request whose `Origin` is absent or not
+      listed, no response carries it. Every response that carries it is
+      `Cache-Control: no-store`. The validation above does not change.
     * **Client modes.** A page that can read the backend's cookie (the browser deployment, on the
       backend's own origin) reads the token from the cookie at send time. A page that cannot (the
       desktop shell's `app://candleviewer` page) reads it from the `X-CSRF-Token` response header:
@@ -1030,6 +1034,7 @@ paths:
             Set-Cookie:
               description: "`cv_refresh` and `__Host-cv_csrf` (SR-041) cookies; present only when `status=authenticated`."
               schema: { type: string }
+            X-CSRF-Token: { $ref: "#/components/headers/CsrfTokenIssued" }
             Server-Timing:
               description: "#2097 (SR-011 measurement): `argon2;dur=<ms>`, the wall time of this login's one Argon2id verification in milliseconds with one decimal. Present only when `status=mfa_required` and `CV_AUTH_PERF_ENABLED` is on (keyless testnet, never live or demo). No refusal ever carries it, so it cannot tell an unknown user from a wrong password (SR-014)."
               schema: { type: string, pattern: "^argon2;dur=[0-9]+\\.[0-9]$" }
@@ -1231,6 +1236,7 @@ paths:
                 description: "Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041)",
                 schema: { type: string },
               }
+            X-CSRF-Token: { $ref: "#/components/headers/CsrfTokenIssued" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MfaEnrollConfirmResponse" }
@@ -10998,6 +11004,7 @@ paths:
                 description: "`cv_refresh` cookie and a fresh `__Host-cv_csrf` cookie (SR-041)",
                 schema: { type: string },
               }
+            X-CSRF-Token: { $ref: "#/components/headers/CsrfTokenIssued" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/AuthUnavailable" }
@@ -13392,10 +13399,11 @@ components:
         SR-041 token for the session, in the request header's session-bound `<nonce>.<mac>`
         format (`components.parameters.CsrfToken`): the new `__Host-cv_csrf` value on a response
         that issues one, the current session's token on `GET /auth/session` (see the CSRF section
-        of `info.description`). Sent only while the `desktop.backend_connection` flag is on, so
-        never `required`. Every response that carries it is `Cache-Control: no-store`. Sensitive
-        in logs (SR-006): the redaction filter withholds it, as must any proxy or access log that
-        records response headers.
+        of `info.description`). Sent only while the `desktop.backend_connection` flag is on, and
+        only on a response to a request whose `Origin` is listed (see "Cross-origin (CORS)" in
+        `info.description`), so never `required`. Every response that carries it is
+        `Cache-Control: no-store`. Sensitive in logs (SR-006): the redaction filter withholds it,
+        as must any proxy or access log that records response headers.
       schema: { type: string, minLength: 1, maxLength: 256 }
 
   # ---------------------------------------------------------------------------

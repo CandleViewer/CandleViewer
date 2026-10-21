@@ -369,6 +369,8 @@ credential that outlives the page.
   (`api/sessions.py:1052-1055`), otherwise the verified cookie value.
   - The header is the same in every deployment: a same-origin page can read the cookie anyway, and CORS
     hides the header from unlisted origins.
+  - Since S4.1 (2026-10-21): six operations issue the token in code (F5), and the header goes only to a
+    request whose `Origin` is listed; an absent or unlisted `Origin` gets none (2e, `22-api-openapi.yaml` CSRF).
   - The value is a session-bound MAC, not a credential (`api/csrf.py:162-164`). The redaction filter
     (SR-006) adds this response header to its list. Any reverse proxy or access log in front of the
     backend that records response headers must treat it as sensitive too (SR-006): such tools often
@@ -402,6 +404,9 @@ credential that outlives the page.
     `POST /auth/login`, `/auth/mfa/recovery`, `/auth/mfa/enroll/confirm` and `/auth/step-up`
     (`22-api-openapi.yaml:121-128`), which issue no token in code today (F5). Each gains the reference in
     the PR that makes it issue one; the header then follows from `set_csrf_cookie` (3b).
+  - Since S4.1 (2026-10-21): the enrolment-only work (#3839, #3845) made login's enrolment-only answer,
+    recovery and enroll/confirm issue the token, and they now declare the reference too; only step-up
+    remains (F5).
   - The WS loopback wording also covers the packaged shell's backend, not only local development
     (SR-049; `23-ws-protocol.md:66`). S0 does the same for the cookie text (`22-api-openapi.yaml:107-109`).
   - `23-ws-protocol.md` §2.1: the endpoint is on the REST backend origin. That is the page's origin in a
@@ -559,6 +564,11 @@ second rebases and resolves the block, keeping the other's text.
 
 2026-10-20: S3 ships as two PRs (C-4.8): S3a, the flag, its reader and the CORS policy;
 S3b, the gate, the guard's refusals and the mount.
+
+2026-10-21: S4 ships as three PRs (C-4.8): S4.1, the contract: the token header on the three issuing operations
+that S1 left out (F5), and its audience, a request whose `Origin` is listed (2e); S4.2, the token header and
+`GET /auth/session`'s always-present token, behind the flag; S4.3, the desktop cookie attributes for issue and
+expiry, after S0 (D2).
 
 `security-review` (C-10.2): S0, S1, S4 and S5 take it by hand, because their paths are outside the
 security-path labeller's rules (`tools/ci/security_review_label.py:86-100`) while they change cookie,
@@ -804,12 +814,30 @@ scope of Amendment 1's measurement. S1 (#3712) merged after the decisions were t
 - **F5.** The contract's issue list names seven operations that issue the CSRF token
   (`22-api-openapi.yaml:121-128`), while code issues it at three (`api/auth.py:479`,
   `api/sessions.py:1035`, `1055`). This needs a contract or code clean-up issue (3f).
+  - 2026-10-21 (S4.1): the three missing declarations are fixed. The enrolment-only work (#3839, #3845) has
+    since made login's enrolment-only answer, `POST /auth/mfa/recovery` and `POST /auth/mfa/enroll/confirm`
+    issue it too (`_signed_in`, `api/auth.py:427-436`), so code issues it at six operations, and the contract
+    now declares `CsrfTokenIssued` on the `200` of all six.
+  - Still open: `POST /auth/step-up`. The contract says it rotates both cookies, but its route does not rotate
+    the session yet (#2101), so it issues no token and declares no header; it gains the header in the change
+    that makes it issue one.
 - **F6.** C-16.1 step 2 titles an amendment PR `docs(repo)!: …`, but `repo` is not in commitlint's
   `scope-enum` (`commitlint.config.cjs:66`), which pr-metadata enforces (C-4.10), so S0 uses `docs` (4b).
   The owners of C-16.1 and `commitlint.config.cjs` align them: C-16.1's text or the scope list.
 - **F7.** The three existing IPC handlers check no sender (`main/index.ts:250-254`); only the new channel
   does (1d). Giving all four the same sender rule is defence in depth for a separate hardening ticket;
   today `nodeIntegrationInSubFrames: false` and `sandbox: true` bound them (`main/shellPort.ts:35-36`).
+- **F8.** Residual, recorded on 2026-10-21 (the orchestrator's S4 ruling 7, #3519 issuecomment-6316470594).
+  Every response that carries `X-CSRF-Token` is `Cache-Control: no-store` (3b). The access-token JSON body
+  (`AuthenticatedResponse`), and enroll/confirm's `recovery_codes`, carry no `no-store` on a response without
+  the header today. These are POST responses with no freshness, which caches may not store, and no shared
+  cache sits on the loopback or tailnet path (C-12.9). Owner: S4.2, which writes the header in
+  `set_csrf_cookie` and may set `no-store` there unconditionally, closing F8; review when S4.2 lands.
+- **F9.** Follow-up, recorded on 2026-10-21 (S4 ruling 10, the same comment). S2 measured `Partitioned` only
+  on a `Path=/`, non-`__Host-`, non-`HttpOnly` cookie. The cookie shapes S4.3 issues are not measured:
+  `__Host-cv_csrf` and `cv_refresh` (`HttpOnly; Path=/api/v1/auth`), both with `Partitioned`, and their
+  expiries. S9a asserts the headers and S9b the cookie jar, so S9b is the first to see them in Chromium. A
+  probe pin for each shape in S2's spec is the follow-up.
 
 ## References
 

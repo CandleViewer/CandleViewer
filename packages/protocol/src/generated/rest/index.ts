@@ -10430,10 +10430,11 @@ export interface components {
      * @description SR-041 token for the session, in the request header's session-bound `<nonce>.<mac>`
      *     format (`components.parameters.CsrfToken`): the new `__Host-cv_csrf` value on a response
      *     that issues one, the current session's token on `GET /auth/session` (see the CSRF section
-     *     of `info.description`). Sent only while the `desktop.backend_connection` flag is on, so
-     *     never `required`. Every response that carries it is `Cache-Control: no-store`. Sensitive
-     *     in logs (SR-006): the redaction filter withholds it, as must any proxy or access log that
-     *     records response headers.
+     *     of `info.description`). Sent only while the `desktop.backend_connection` flag is on, and
+     *     only on a response to a request whose `Origin` is listed (see "Cross-origin (CORS)" in
+     *     `info.description`), so never `required`. Every response that carries it is
+     *     `Cache-Control: no-store`. Sensitive in logs (SR-006): the redaction filter withholds it,
+     *     as must any proxy or access log that records response headers.
      */
     CsrfTokenIssued: string;
     /** @description Opaque version of the returned representation, for `If-Match`. */
@@ -12280,6 +12281,7 @@ export interface operations {
           "Server-Timing"?: string;
           /** @description `cv_refresh` and `__Host-cv_csrf` (SR-041) cookies; present only when `status=authenticated`. */
           "Set-Cookie"?: string;
+          "X-CSRF-Token": components["headers"]["CsrfTokenIssued"];
           [name: string]: unknown;
         };
         content: {
@@ -12409,6 +12411,7 @@ export interface operations {
         headers: {
           /** @description Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041) */
           "Set-Cookie"?: string;
+          "X-CSRF-Token": components["headers"]["CsrfTokenIssued"];
           [name: string]: unknown;
         };
         content: {
@@ -12478,6 +12481,7 @@ export interface operations {
         headers: {
           /** @description `cv_refresh` cookie and a fresh `__Host-cv_csrf` cookie (SR-041) */
           "Set-Cookie"?: string;
+          "X-CSRF-Token": components["headers"]["CsrfTokenIssued"];
           [name: string]: unknown;
         };
         content: {
