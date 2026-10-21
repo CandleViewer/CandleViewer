@@ -251,6 +251,19 @@ async def test_create_session_binds_the_activity_stamp_the_record_carries() -> N
     assert insert_params["last_seen_at"] == session.last_seen_at != session.issued_at
 
 
+async def test_create_session_binds_the_step_up_penalty_the_record_carries() -> None:
+    """#4051: a refresh carries the step-up penalty to its successor (SR-025), so the insert
+    binds the record's strikes and read-only window, never the columns' defaults."""
+    repo, rel = _repo([SimpleNamespace(_mapping={"status": "active"})])
+    until = _NOW + timedelta(minutes=5)
+    session = SimpleNamespace(**row_to_fields(_row(step_up_failures=3, readonly_until=until)))
+
+    await repo.create_session(session)
+
+    _, (_, insert_params) = rel.session.calls
+    assert (insert_params["step_up_failures"], insert_params["readonly_until"]) == (3, until)
+
+
 @pytest.mark.parametrize("status", ["disabled", None])
 async def test_create_session_for_a_disabled_user_inserts_nothing(status: str | None) -> None:
     """`None`: no such user, or a soft-deleted one."""

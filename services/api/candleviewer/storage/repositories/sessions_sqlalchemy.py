@@ -63,13 +63,15 @@ _INSERT_SQL = sa.text("""
         last_seen_at, expires_at, revoked_at, revoked_reason, ip, user_agent, device_label,
         is_electron, mfa_satisfied_at, idle_timeout_s, view_as_context_id,
         view_as_target_user_id, view_as_started_at, view_as_expires_at, view_as_ended_at,
-        view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason)
+        view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason, step_up_failures,
+        readonly_until)
     VALUES (CAST(:id AS uuid), CAST(:user_id AS uuid), :refresh_token_hash,
         CAST(:access_token_jti AS uuid), :issued_at, :last_seen_at, :expires_at, NULL, NULL,
         CAST(:ip AS inet), :user_agent, :device_label, :is_electron, :mfa_satisfied_at,
         :idle_timeout_s, CAST(:view_as_context_id AS uuid),
         CAST(:view_as_target_user_id AS uuid), :view_as_started_at, :view_as_expires_at,
-        :view_as_ended_at, :view_as_end_recorded_at, :view_as_cleared_at, :view_as_end_reason)
+        :view_as_ended_at, :view_as_end_recorded_at, :view_as_cleared_at, :view_as_end_reason,
+        :step_up_failures, :readonly_until)
     """)
 
 
@@ -358,6 +360,10 @@ class SqlAlchemySessionRepository:
                     "is_electron": session.is_electron,
                     "mfa_satisfied_at": session.mfa_satisfied_at,
                     "idle_timeout_s": session.idle_timeout_s,
+                    # #4051: a refresh carries the step-up penalty (SR-025), so the insert binds
+                    # the record's, never the columns' defaults.
+                    "step_up_failures": session.step_up_failures,
+                    "readonly_until": session.readonly_until,
                     **_view_as_params(session.view_as),
                 },
             )

@@ -35,6 +35,7 @@ from candleviewer.auth.errors import SessionReadOnly, StepUpCodeInvalid
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
 from candleviewer.auth.session_repository import StepUpState
+from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -304,3 +305,23 @@ async def test_a_revoked_session_is_not_rewritten(
     assert await s.repo.update_step_up_state(s.sid, change) is None
     final = await s.repo.find_by_id(s.sid)
     assert seen == [] and final is not None and _GRANT in final.step_up_elevations
+
+
+async def test_a_refresh_carries_the_step_up_penalty_to_its_successor_row(
+    pg_dsn: str, rel: SqlAlchemyRelationalRepository
+) -> None:
+    """#4051 (SR-025): the successor's INSERT binds the claimed row's strikes and read-only
+    window, so a rotation never lifts the downgrade; grants are not carried."""
+    s = await _live_session(
+        pg_dsn, rel, {_GRANT: _GRANT_UNTIL}, failures=3, readonly_until=_NOW + timedelta(minutes=5)
+    )
+    sessions = SessionService(s.repo, _HASHER, clock=lambda: _NOW)
+    minted = await sessions.mint(s.user)
+    assert await s.repo.update_step_up_state(
+        str(minted.session_id),
+        lambda _row: ({_GRANT: _GRANT_UNTIL}, 3, _NOW + timedelta(minutes=5)),
+    )
+    successor = (await sessions.refresh(minted.refresh_token)).minted
+    row = await s.repo.find_by_id(str(successor.session_id))
+    assert row is not None and row.step_up_elevations == {}
+    assert (row.step_up_failures, row.readonly_until) == (3, _NOW + timedelta(minutes=5))

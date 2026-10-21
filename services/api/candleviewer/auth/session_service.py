@@ -375,6 +375,8 @@ class SessionService:
         session_id: uuid.UUID | None = None,
         view_as: ViewAsState | None = None,
         last_seen_at: datetime | None = None,
+        step_up_failures: int = 0,
+        readonly_until: datetime | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -395,6 +397,10 @@ class SessionService:
         successor (#4012): a token rotation is no user activity, so it never
         restarts the idle clock. A sign-in never passes it and starts the
         clock at `now`.
+
+        *step_up_failures* and *readonly_until* are the step-up penalty `refresh()`
+        carries to the successor (#4051, SR-025): a rotation never lifts the read-only
+        downgrade or forgets a strike. Grants are never carried. A sign-in starts clean.
 
         Raises `UserDisabled` when the user is `disabled` or gone (#2911):
         the repository reads `users.status` under the user-row lock in the
@@ -426,6 +432,8 @@ class SessionService:
             mfa_satisfied_at=now if mfa_satisfied else None,
             idle_timeout_s=clamp_idle_timeout_s(idle_timeout_s),
             view_as=view_as,
+            step_up_failures=step_up_failures,
+            readonly_until=readonly_until,
         )
         created = await self._repository.create_session(session)
         if created is None:
@@ -587,6 +595,10 @@ class SessionService:
             # landed after `presented` was read still counts; a tab that only refreshes locks
             # after its idle timeout, and its next refresh is refused `SessionIdleLocked` above.
             last_seen_at=claimed.last_seen_at,
+            # #4051 SR-025: the step-up brake survives a rotation, read from the claim's row
+            # (as `last_seen_at` is), so a strike recorded after `presented` was read counts.
+            step_up_failures=claimed.step_up_failures,
+            readonly_until=claimed.readonly_until,
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)

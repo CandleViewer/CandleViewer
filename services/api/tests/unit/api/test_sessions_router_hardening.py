@@ -5,6 +5,7 @@ session audit (C-2.9), Settings-injected origin allow-list and the
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from candleviewer.audit.models import Severity
@@ -107,6 +108,25 @@ async def test_refresh_audit_record_precedes_rotation() -> None:
     order = _record_order(env)
     assert _refresh(env, m.refresh_token).status_code == 200
     assert order == ["audit:auth.session_refreshed", "revoke:rotated"]
+
+
+async def test_a_refresh_record_names_the_step_up_penalty_the_successor_carries() -> None:
+    """#4051 (SR-025): counts only, as the presented row holds them; a clean session's record
+    carries no `after_state`."""
+    env = _Env()
+    m = await env.mint(uuid.uuid4())
+    until = env.svc.now() + timedelta(minutes=5)
+    await env.repo.save_step_up_state(
+        str(m.session_id), elevations={}, failures=3, readonly_until=until
+    )
+    assert _refresh(env, m.refresh_token).status_code == 200
+    clean = await env.mint(uuid.uuid4())
+    assert _refresh(env, clean.refresh_token).status_code == 200
+    penalised, plain = [
+        e for e in env.audit.writer.events if e["action"] == "auth.session_refreshed"
+    ]
+    assert penalised["after_state"] == {"step_up_failures": 3, "readonly_until": until.isoformat()}
+    assert plain.get("after_state") is None
 
 
 async def test_logout_intent_record_precedes_revocation_and_the_outcome_record_follows_it() -> None:

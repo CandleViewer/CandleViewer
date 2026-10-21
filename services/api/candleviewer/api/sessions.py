@@ -559,6 +559,18 @@ class ContainedFamilies:
         return True
 
 
+def _step_up_penalty(record: SessionRecord) -> dict[str, Any] | None:
+    """#4051 (SR-025): the step-up penalty a refresh carries to the successor, for its record,
+    as the presented row holds it before the claim; counts only. `None` for a clean session."""
+    if record.step_up_failures == 0 and record.readonly_until is None:
+        return None
+    until = record.readonly_until
+    return {
+        "step_up_failures": record.step_up_failures,
+        "readonly_until": until.isoformat() if until is not None else None,
+    }
+
+
 def make_session_router(
     auth_service: AuthServiceLike,
     audit_service: AuditServiceLike | None = None,
@@ -1164,7 +1176,12 @@ def make_session_router(
                     lane=True,
                 )
             elif not presented_record.is_revoked:
-                await _audit("auth.session_refreshed", record=presented_record, ip=ip)
+                await _audit(
+                    "auth.session_refreshed",
+                    record=presented_record,
+                    ip=ip,
+                    after_state=_step_up_penalty(presented_record),
+                )
         except AuditUnavailableError:
             return _audit_down()
         try:

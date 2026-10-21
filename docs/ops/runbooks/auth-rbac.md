@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -33,8 +33,8 @@ reads (`/market/bars`, `/market/trades`, `/market/orderbook`, `/instruments` and
 routes, and owner user management. Find the resolvers with
 `grep -rn 'touch=True' services/api/candleviewer` and their routers in `candleviewer/app.py`
 (`audit_resolver`, `owner_resolver`). `POST /auth/session/extend` re-stamps it through
-`SessionService.touch()`, after its write-ahead record, and so does a successful
-`POST /auth/unlock`.
+`SessionService.touch()`, after its write-ahead record; a successful `POST /auth/unlock` re-stamps
+it too, in the write that lifts the lock.
 Nothing else does: not `GET /auth/session`, `DELETE /me/sessions/{sessionId}`, `POST /auth/logout`,
 the idle-lock middleware, the step-up and read-only guards, WS traffic, nor a token refresh, which
 carries the presented session's `last_seen_at` to its successor. A tab whose only traffic is its
@@ -45,6 +45,11 @@ the lock (§1); `POST /auth/logout` and a new sign-in end it instead. The contra
 explicit" model, in which only `POST /auth/session/extend` and `POST /auth/unlock` count, is not
 what ships yet: activity stays implicit on the routes above until #2300's last slice, which waits
 for the client (#1640).
+
+**A token refresh keeps the step-up penalty (#4051, SR-025).** The successor session carries the
+presented one's strike count and read-only window (`step_up_failures`, `readonly_until`), so a
+refresh never lifts the downgrade. Step-up grants are never carried. The refresh's
+`auth.session_refreshed` record names a penalty in `after_state` (counts only).
 
 ## 1. Unlock a locked account (SR-016)
 
