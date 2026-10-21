@@ -410,9 +410,13 @@ _CONFLICT_CONSTRAINTS = frozenset(
     {"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label", "ux_api_keys_active",
      "api_key_rotations_pkey"}
 )  # fmt: skip
+#: The CHECKs, and the two `exchange_accounts.env` guards (0039 `trg_ea_env_in_use`, 0041
+#: `trg_ea_env_write_once`, #2333), which refuse naming themselves as the constraint. Only the
+#: INSERT (`_CREATE`) sets `env`; an UPDATE that changed it would meet them as a typed rule error,
+#: not a raw IntegrityError.
 _RULE_CONSTRAINTS = frozenset(
     {"ea_parent_shape", "ea_no_self_parent", "ea_uid_fmt", "ea_posmode", "ea_marginmode",
-     "akr_distinct", "akr_grace"}
+     "akr_distinct", "akr_grace", "trg_ea_env_in_use", "trg_ea_env_write_once"}
 )  # fmt: skip
 
 

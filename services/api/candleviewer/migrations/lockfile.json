@@ -196,6 +196,11 @@
       "path": "services/api/candleviewer/migrations/versions/0040_indicator_presets.py",
       "sha256": "7f3c3afae0039d7dea6091c3bd59354391e88a63ca37ed8ceb328eb9d3c45c0e",
       "down_revision": "0039_trade_groups"
+    },
+    "0041_account_env_write_once": {
+      "path": "services/api/candleviewer/migrations/versions/0041_account_env_write_once.py",
+      "sha256": "f122588c74c611f11d83669bd1b6537bff4b4ec630f50cc671839065309b4cf8",
+      "down_revision": "0040_indicator_presets"
     }
   }
 }
