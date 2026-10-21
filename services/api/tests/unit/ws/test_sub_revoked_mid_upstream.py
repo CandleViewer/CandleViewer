@@ -22,6 +22,7 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.bars.errors import BarsError
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.series_store import Hold
+from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -30,9 +31,11 @@ from candleviewer.ws.permissions import (
     cv_ws_subscribe_total,
     handle_sub,
 )
+from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.topics import EntityScope
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, USER, Book, Conn, Source, principal
+from tests.unit.ws.test_machines import OID, ON_A, _attach, _payload
 
 BARS, BOOK = "bars.BTCUSDT.time.5", "book.BTCUSDT.50"
 #: A §6.4 entity on account A (`_Machines`), and a replay session (§11).
@@ -286,6 +289,33 @@ async def test_a_topic_ended_while_the_denial_record_is_written_is_refused_too()
     revoked, denied = ("ws.subscription.revoked", "positions"), ("ws.subscribe.denied", "orders")
     assert w.audit.rows == [revoked, denied]  # the record lists `admit`'s refusal only
     assert w.counted() == {(ch, "account_scope_denied"): 1 for ch in ("orders", "positions")}
+
+
+@pytest.mark.parametrize(
+    ("entity", "resubscribe", "code"),
+    [
+        (MachineEntity("order", OID, ON_A), False, "account_scope_denied"),
+        (MachineEntity("kill_switch"), True, "forbidden"),
+    ],
+)
+async def test_a_machine_removed_while_the_denial_record_is_written_is_refused_after_its_revoked(
+    entity: MachineEntity, resubscribe: bool, code: str
+) -> None:
+    """§6.4 removal in that await: its `revoked`, then the #2896 refusal, never `ok: true`. An
+    unscoped kind's `revoked` allows a resubscribe, yet its reply is `forbidden` (a known gap)."""
+    w, hub = _World(), SequencingHub()
+    _attach(w, machines := MachineStateRegistry(hub=hub, wall_ms=lambda: 9), hub)
+    machines.publish(entity, _payload(entity.kind))
+    w.audit.hold = go = asyncio.Event()
+    orders = {"ch": "orders", "opts": {"exchange_account_ids": [str(uuid.UUID(int=0xC))]}}
+    task = w.subscribe(orders, entity.ch)
+    await _within(w.audit.entered.wait())
+    assert machines.remove(entity)
+    go.set()
+    assert await w.answered(task) == [("revoked", entity.ch), ("sub_ok", None)]
+    revoked, reply = w.out
+    refusals = [_refused("orders", "account_scope_denied"), _refused(entity.ch, code)]
+    assert (revoked["p"]["resubscribe_allowed"], reply["p"]["results"]) == (resubscribe, refusals)
 
 
 @pytest.mark.parametrize("fault", [RuntimeError, asyncio.CancelledError])

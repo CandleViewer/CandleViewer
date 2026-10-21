@@ -1,10 +1,9 @@
 """`machines.{entity}.state` registry (E17-T08; `23-ws-protocol.md` §6.4): `sub` is authorised
 synchronously against an entry (SR-189) and `snap`/`resync` are answered only from it, never from
 an `Interpreter` (C-2.20). An entry keeps its first payload's `EntityScope` (immutable, §6.4).
-A payload is copied and checked against §15.10 (`check_machine_payload`) before it is recorded.
 
 Fan-out: a recorded payload reaches its topic's subscriptions through `SequencingHub.publish`, in
-the publisher's own call: one synchronous pass over the live connections, with no task, await or
+the publisher's own call, or its window timer's: one synchronous pass, with no task, await or
 queue of its own. A subscription still pending its `snap` gets that `snap` (the first publish
 wakes it, never an inbound frame); the others get a `d`. Each frame goes into its connection's
 bounded outbound queue, which closes a slow consumer rather than wait (C-2.18), so a client never
@@ -15,14 +14,13 @@ Coalescing (§6.4), whatever the backpressure flag: with `call_later`, the first
 quiet window of `coalesce_s` (100 ms) goes out at once; a later one is recorded at once, so a `snap`
 reads it, and goes out in the call of the one timer that closes the window, the latest only.
 
-Retention (§6.4): a terminal entry stays `retention_s`, at most `terminal_max` of them (the oldest
-removed first); `remove` takes a live one out when its machine stops. A removal sends what waits
-for its window, then revokes each live subscription with `topic_removed` and hands the frames to
-`on_revoked`, which audits them (`evicted`).
+Retention (§6.4): a terminal entry stays `retention_s`, at most `terminal_max` of them (oldest
+first); `remove` ends a live one when its machine stops. A removal sends what waits for its window,
+revokes each live subscription (`topic_removed`) and hands the frames to `on_revoked` to audit.
 
 Bound (C-2.18): `MACHINE_ENTRIES_MAX` entries; a payload for a new entity past it is refused and
 counted (no live state is evicted), so a `sub` to that entity gets the refusal a foreign one gets.
-Each refusal, a scope-less entry of a scoped kind and a scope change log at most one line per
+A refusal, a scope-less entry of a scoped kind and a scope change each log at most one line per
 kind per `LOG_INTERVAL_S`; only a full registry and a scope-less entry are counted.
 """
 
@@ -117,12 +115,10 @@ class _Entry:
     scope: EntityScope
     payload: Mapping[str, Any] = field(default_factory=dict)
     terminal: bool = False
-    #: The token the payload was recorded with (`remove` needs it); when the window closes
-    #: (`clock`), and the timer armed while a payload waits for it; when a terminal entry ends.
-    owner: object = None
-    due: float = -math.inf
-    timer: asyncio.Handle | None = None
-    expires: float = math.inf
+    owner: object = None  # the token the payload was recorded with (`remove` needs it)
+    due: float = -math.inf  # when the window closes (`clock`)
+    timer: asyncio.Handle | None = None  # armed while a payload waits for the window
+    expires: float = math.inf  # when a terminal entry ends
 
 
 class MachineStateRegistry:
@@ -200,9 +196,8 @@ class MachineStateRegistry:
         return removed
 
     def close(self) -> None:
-        """Cancel every armed timer (`WsRuntime.stop`, the sockets closed): a payload waiting for
-        its window is dropped. A later payload arms its window again; a terminal one or `sweep`,
-        the retention timer."""
+        """Cancel every armed timer (`WsRuntime.stop`): a payload waiting for its window is dropped.
+        A later payload arms its window again, a terminal one or `sweep` the retention timer."""
         for entry in self._entries.values():
             if entry.timer is not None:
                 entry.timer.cancel()
@@ -237,21 +232,20 @@ class MachineStateRegistry:
         if kind in _SCOPE_MISSING and entry.scope == _UNSCOPED:  # a binding defect (§6.4)
             _SCOPE_MISSING[kind].inc()
             self._note("warning", "machine state without a scope: refused to every role", kind)
-        if terminal:  # indexed first, so a fan-out that raises cannot keep the entry forever
+        if terminal:  # indexed and timed first: a fan-out that raises cannot keep the entry forever
             entry.expires = self._clock() + self.retention_s
             self._terminal.pop(entity.ch, None)  # a stale index entry: this one goes last
             self._terminal[entity.ch] = entry
-            while len(self._terminal) > self.terminal_max:  # the oldest goes first, at once
-                ch, old = self._terminal.popitem(last=False)
-                if self._entries.get(ch) is old:
-                    self._remove(ch, old)
             self._arm_sweep()
-        self._fan_out(entity.ch, entry)
+        self._fan_out(entity.ch, entry)  # before the cap's removals: one that raises skips no `d`
+        while len(self._terminal) > self.terminal_max:  # the oldest goes first, at once
+            ch, old = self._terminal.popitem(last=False)
+            if self._entries.get(ch) is old:
+                self._remove(ch, old)
         return True
 
     def _fan_out(self, ch: str, entry: _Entry) -> None:
-        """Send `entry` now if its window is closed, else when it closes: one timer per window,
-        which sends the payload recorded last."""
+        """Send `entry` now, or when its window closes: one timer per window, the latest payload."""
         if entry.timer is None:
             delay = entry.due - self._clock()
             if self._call_later is None or delay <= 0:

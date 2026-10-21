@@ -188,9 +188,7 @@ def test_owner_sees_an_account_no_grant_row_lists(deployed: SimpleNamespace, fam
     assert _subscribe_once(deployed.app, "owner", sample, UNLISTED) == "sub_ok"
 
 
-def test_deployed_app_bounds_times_and_audits_the_machine_registry(
-    deployed: SimpleNamespace,
-) -> None:
+def test_deployed_app_bounds_times_and_audits_machine_registry(deployed: SimpleNamespace) -> None:
     """23 §16.2 and §6.4 as deployed (R2-n6): the literal bounds; the loop's timers, so each entity
     is coalesced whatever the backpressure flag; the `evicted` audit; and the runtime closes it."""
     state = deployed.app.state
@@ -200,6 +198,7 @@ def test_deployed_app_bounds_times_and_audits_the_machine_registry(
     assert machines._call_later is loop_call_later and state.ws_runtime.machines is machines
     assert isinstance(audit := machines.on_revoked, MachineRevocationAudit)
     assert audit.registry is state.ws_registry
+    assert audit([]) is None and not audit.tasks  # a synchronous caller has no loop: it only logs
 
 
 def test_deployed_app_snaps_a_machine_from_the_registry_sub_reads(

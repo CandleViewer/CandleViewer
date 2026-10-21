@@ -687,8 +687,7 @@ class ConnectionAuthz:
     def revoke(
         self, sub: Subscription, reason: RevokedReason, now_ms: int, *, resubscribe: bool = False
     ) -> dict[str, Any]:
-        """Drop one subscription and return its `revoked` frame (e.g. §7.5 resync loop; §6.4
-        `topic_removed`, which allows a resubscribe to an unscoped kind)."""
+        """Drop one subscription and return its `revoked` frame (§7.5 resync loop, §6.4 removal)."""
         self._drop(sub)
         self._dropped([sub])
         return self._revoked(sub, reason, now_ms, resubscribe=resubscribe)

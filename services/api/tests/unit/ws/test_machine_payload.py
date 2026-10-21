@@ -1,7 +1,6 @@
 """E17-T08 (`23-ws-protocol.md` §6.4, §15.10): the registry's hand-written payload check agrees with
-the bundled §15.10 schema on a valid and an invalid corpus for every `machine_kind`, and is
-stricter only where its docstring says. Its chart table is the schema's, the registry's kind set
-and the admin read API's."""
+the bundled schema on a valid and an invalid corpus for every `machine_kind`, and is stricter only
+where its docstring says. Its chart table matches the schema, the kind set and the admin API."""
 
 from __future__ import annotations
 
@@ -14,6 +13,7 @@ from candleviewer.api.admin_statecharts import entity_kind
 from candleviewer.ws.machine_payload import check_machine_payload
 from candleviewer.ws.topics import MACHINE_ENTITY_KIND, MACHINE_KINDS
 from tests.unit.ws._seq_support import _REGISTRY, _SCHEMAS
+from tests.unit.ws.test_machines import _payload
 
 _MACHINES: dict[str, Any] = _SCHEMAS["cv://ws/v1/machines.schema.json"]
 _BUNDLE = Draft202012Validator(_MACHINES, registry=_REGISTRY)
@@ -54,14 +54,9 @@ _CHANGES: list[dict[str, Any]] = [
 ]
 
 
-def _base(machine_kind: str) -> dict[str, Any]:
-    return {"machine_kind": machine_kind, "state": "working", "tags": [], "degraded": False,
-            "machine_hash": "0" * 64, "environment": "live", "updated_at_ms": 1}  # fmt: skip
-
-
 @pytest.mark.parametrize("machine_kind", sorted(MACHINE_ENTITY_KIND))
 def test_the_check_agrees_with_the_bundled_schema(machine_kind: str) -> None:
-    base, kind = _base(machine_kind), MACHINE_ENTITY_KIND[machine_kind]
+    base, kind = _payload(machine_kind), MACHINE_ENTITY_KIND[machine_kind]
     corpus = [{**base, **change} for change in _CHANGES]
     corpus += [{k: v for k, v in base.items() if k != gone} for gone in base]
     for payload in corpus:
@@ -73,7 +68,7 @@ def test_a_payload_is_refused_to_every_other_kind() -> None:
     """`machine_kind` names the entity's own chart (`algo`: B4-B7), which §15.10 cannot check."""
     for machine_kind, kind in MACHINE_ENTITY_KIND.items():
         for other in set(MACHINE_KINDS) - {kind}:
-            assert check_machine_payload(other, _base(machine_kind)) == "machine_kind"
+            assert check_machine_payload(other, _payload(machine_kind)) == "machine_kind"
 
 
 @pytest.mark.parametrize(
@@ -81,7 +76,7 @@ def test_a_payload_is_refused_to_every_other_kind() -> None:
 )
 def test_the_check_is_stricter_than_the_bundle_only_where_it_says(change: dict[str, Any]) -> None:
     """Sorted `tags` (§6.4), no float for an integer, and an ECMA-262 `$` (no trailing newline)."""
-    payload = {**_base("order"), **change}
+    payload = {**_payload("order"), **change}
     assert _BUNDLE.is_valid(payload) and check_machine_payload("order", payload) is not None
 
 

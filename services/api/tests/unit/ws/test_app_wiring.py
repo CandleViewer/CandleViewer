@@ -47,6 +47,7 @@ from candleviewer.ws_wiring import (
     WsEvents,
     WsRuntime,
     ingestion_streams,
+    loop_call_later,
 )
 from tests.unit.ws.test_machines import _payload
 
@@ -471,14 +472,26 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
 
 
 async def test_runtime_stop_cancels_the_machine_registry_timers() -> None:
-    """E17-T08: once the sockets are closed, no `machines` window or retention timer is left."""
+    """E17-T08: once the notice ends, no `machines` window or retention timer is left armed."""
     machines = MachineStateRegistry(call_later=asyncio.get_running_loop().call_later)
     switch = MachineEntity("kill_switch")
     machines.publish(switch, _payload("kill_switch", "clear"))
     machines.terminal(switch, _payload("kill_switch", "engaged"))  # waits for its window
     timers = [machines._entries[switch.ch].timer, machines._sweep_timer]
-    await WsRuntime(GatewayHub(), UpstreamRefs(), _settings(), machines=machines).stop()
+    runtime = WsRuntime(GatewayHub(), UpstreamRefs(), _settings(), machines=machines)
+    await runtime.stop()
     assert all(t is not None and t.cancelled() for t in timers) and machines._sweep_timer is None
+    book = MachineEntity("book", "BTCUSDT")  # a window armed after the notice: a later call ends it
+    machines.publish(book, _payload("book", "live")), machines.publish(book, _payload("book", "x"))
+    timer = machines._entries[book.ch].timer
+    await runtime.stop()
+    assert timer is not None and timer.cancelled()
+
+
+async def test_loop_call_later_runs_its_callback_on_the_running_loop() -> None:
+    fired = asyncio.Event()
+    loop_call_later(0, fired.set)
+    await asyncio.wait_for(fired.wait(), 5)
 
 
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:

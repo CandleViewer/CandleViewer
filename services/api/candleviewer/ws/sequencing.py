@@ -915,13 +915,12 @@ def in_scope(
 
 class Sink(Protocol):
     """One connection's frames from the hub: its `TopicEmitter`, or with the flag on its
-    `ConnectionPipeline`, which paces the deltas (§8.1) and never raises into the fan-out. `push`
-    queues a control frame as is (a `revoked`)."""
+    `ConnectionPipeline`, which paces the deltas (§8.1) and never raises into the fan-out."""
 
     @property
     def cache(self) -> SnapshotCache: ...
 
-    def push(self, frame: dict[str, Any]) -> None: ...
+    def push(self, frame: dict[str, Any]) -> None: ...  # a control frame as is (a `revoked`)
 
     @property
     def on_rebuild(self) -> Callable[[list[Subscription]], None] | None: ...
@@ -1040,8 +1039,7 @@ class SequencingHub:
     ) -> list[tuple[ConnectionAuthz, dict[str, Any]]]:
         """End every live subscription of `ch` (§6.4: its `machines` entry was removed), whatever
         its scope, dropped first (flag on, `on_drop` discards its window), then queue its `revoked`.
-        Returns the frames with their connections, for the caller's audit rows. What a sink's
-        `push` raises is contained to its connection, as in `publish`."""
+        Returns (connection, frame) pairs for the audit rows; a `push` that raises is contained."""
         revoked: list[tuple[ConnectionAuthz, dict[str, Any]]] = []
         for authz, sink in list(self._conns.values()):
             if (sub := authz.find(ch)) is None:

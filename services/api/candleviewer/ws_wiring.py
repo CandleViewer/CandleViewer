@@ -360,9 +360,8 @@ def loop_call_later(delay: float, callback: Callable[[], None]) -> asyncio.Timer
 
 
 class MachineRevocationAudit:
-    """`MachineStateRegistry.on_revoked` (§6.4): a removal's `topic_removed` rows (`evicted`), as
-    a resync loop's (`ConnectionRegistry.audit_revoked`, bounded), one task per connection held
-    until done (C-2.18). Never raises: with no running loop to write on, it only logs."""
+    """`MachineStateRegistry.on_revoked` (§6.4): writes a removal's `evicted` rows as a resync
+    does (`audit_revoked`), a task per connection held until done (C-2.18); with no loop it logs."""
 
     def __init__(self, registry: ConnectionRegistry) -> None:
         self.registry = registry
@@ -411,8 +410,7 @@ class WsRuntime:
 
     async def stop(self) -> int:
         """§9.4: `shutdown_notice`, grace, `bye` + `1001`; then wait (bounded) for the sockets
-        to flush, stop the sweeper and cancel the `machines` registry's timers. Returns the number
-        of connections offered the notice.
+        to flush and stop the sweeper. Returns the number of connections offered the notice.
 
         The notice and grace run once (#2546): the server runs this before uvicorn's own
         shutdown closes the sockets, and the lifespan teardown's later call only stops the
@@ -429,6 +427,9 @@ class WsRuntime:
             except asyncio.CancelledError:
                 self._notified = False  # cut short (force_exit): a later call may notify again
                 raise
+            finally:
+                if self.machines is not None:  # the sockets are closing, cut short or not
+                    self.machines.close()
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
                     await self.hub.wait_empty()
@@ -436,6 +437,6 @@ class WsRuntime:
             self._sweeper.cancel()
             await asyncio.wait({self._sweeper})  # never raises; our own cancel is consumed
             self._sweeper = None
-        if self.machines is not None:
+        if self.machines is not None:  # every call: a timer armed since the notice is cancelled too
             self.machines.close()
         return notified

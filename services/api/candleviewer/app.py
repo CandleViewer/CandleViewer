@@ -1505,8 +1505,7 @@ def create_app(
     ws_wallet = wallet_topic(ws_sequencing)
     snapshot_adapters["wallet"] = ws_wallet
     # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them, and a
-    # publish fans out through the sequencing hub, waking a pending subscription, at most once per
-    # entity per 100 ms window. The loop's timers close a window and end a terminal entry (§6.4).
+    # publish fans out through the hub, coalesced per entity (§6.4), waking a pending subscription.
     machine_states = MachineStateRegistry(
         hub=ws_sequencing, call_later=loop_call_later, wall_ms=_now_ms
     )

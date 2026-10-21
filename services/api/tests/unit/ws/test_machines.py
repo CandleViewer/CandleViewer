@@ -1,7 +1,7 @@
 """E17-T08 `machines.{entity}.state` (`23-ws-protocol.md` §6.4): the entity grammar, the per-entity
 refusal with no existence oracle, the bounded registry that answers `sub` and fans each publish
-out, coalesced, its retention and removal, its metrics, entity-scoped matching and the §9.5
-re-check on the stored scope. No network, no clock reads, no sleeps: timers run on a fake loop."""
+out, its metrics, entity-scoped matching and the §9.5 re-check on the stored scope. No network, no
+clock reads, no sleeps: coalescing, retention and removal run on a fake loop."""
 
 from __future__ import annotations
 
@@ -663,8 +663,8 @@ class _Timer:
 
 
 class _Loop:
-    """A fake clock and `call_later`: `advance` moves the clock and runs each timer that falls due,
-    in order. `kw` is a registry's: its clock, timers and a fixed wall clock."""
+    """A fake clock and `call_later`: `advance` runs each timer that falls due, in order; `kw` is a
+    registry's clock, timers and fixed wall clock."""
 
     def __init__(self, clock: Clock | None = None) -> None:
         self.clock, self.timers = clock or Clock(), list[_Timer]()
@@ -691,13 +691,14 @@ def _states(conn: Conn) -> list[tuple[str, str | None]]:
 
 
 def test_a_burst_leaves_at_once_then_as_one_d_with_the_latest_state() -> None:
-    """The first payload after a quiet window leaves at once; the rest are recorded at once, so a
-    `sub` mid-burst is snapped with the latest, and leave as one `d` when the window closes.
-    `cv_machine_ws_publish_total` counts each recorded payload, not each frame."""
+    """The first payload after a quiet window leaves at once; the rest are recorded at once (a `sub`
+    mid-burst is snapped with the latest) and leave as one `d` at its close."""
     loop = _Loop()
     conn, registry, hub = _world(**loop.kw)
     switch, late = MachineEntity("kill_switch"), Conn(Source())
+    book = MachineEntity("book", "BTCUSDT")
     registry.publish(switch, _payload("kill_switch", "clear"))
+    registry.publish(book, _payload("book", "live"))
     conn.sub(switch.ch)
     loop.advance(1.0)
     before = _count("cv_machine_ws_publish_total", "kill_switch")
@@ -706,10 +707,13 @@ def test_a_burst_leaves_at_once_then_as_one_d_with_the_latest_state() -> None:
     _attach(late, registry, hub)
     late.sub(switch.ch)
     assert _states(late) == [("snap", "engaged")]
+    late.sub(book.ch)  # `book`'s window is its own: its `d` leaves while `switch`'s is open
+    registry.publish(book, _payload("book", "stale"))
+    assert _states(late) == [("snap", "live"), ("d", "stale")]
     assert _states(conn) == [("snap", "clear"), ("d", "engaging")] and loop.armed() == 1
     loop.advance(1.1)
     assert _states(conn) == _states(late) == [("d", "engaged")]
-    assert _count("cv_machine_ws_publish_total", "kill_switch") - before == 3
+    assert _count("cv_machine_ws_publish_total", "kill_switch") - before == 3  # per payload
     registry.publish(switch, _payload("kill_switch", "clear"))  # inside the window that `d` opened
     assert _states(conn) == [] and loop.armed() == 1
 
@@ -766,12 +770,14 @@ def test_past_the_cap_the_oldest_terminal_entry_is_removed_at_once() -> None:
     conn, registry, _ = _world(terminal_max=2, **loop.kw)
     orders = [MachineEntity("order", str(uuid.UUID(int=n)), ON_A) for n in (1, 2, 3)]
     registry.publish(orders[0], _payload())
+    registry.publish(orders[2], _payload())
     conn.sub(orders[0].ch)
+    conn.sub(orders[2].ch)  # its terminal `d` goes out before the cap removes the oldest
     for n, order in enumerate(orders):
         loop.advance(n)
         registry.terminal(order, _payload(state="filled"))
     assert [registry.scope(o.ch) for o in orders] == [None, ON_A, ON_A]
-    assert [f["t"] for f in conn.take()] == ["snap", "d", "revoked"]
+    assert [f["t"] for f in conn.take()] == ["snap", "snap", "d", "d", "revoked"]
 
 
 def test_a_cleared_registry_leaves_a_stale_retention_index_harmless() -> None:
@@ -811,8 +817,7 @@ def test_a_removal_sends_what_waits_for_the_window_before_the_revocation() -> No
 
 
 async def test_a_removal_is_audited_as_evicted() -> None:
-    """The deployed `on_revoked` writes each `topic_removed` frame's row, as a resync loop's, with
-    the full `ch` and the internal reason `evicted` (§6.4)."""
+    """Deployed, `on_revoked` audits each `topic_removed` like a resync: full `ch`, `evicted`."""
     conn, registry, _ = _world()
     conn.authz.services.audit = audit = _Audit()
 

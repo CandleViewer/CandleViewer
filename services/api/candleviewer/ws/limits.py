@@ -103,8 +103,7 @@ REBUILD_MAX_PER_USER = 4 * REBUILD_MAX_PER_CONNECTION
 #: new entity is refused, counted and logged (rate-limited); no live entry is evicted, so no live
 #: machine's state is lost.
 MACHINE_ENTRIES_MAX = 20_000
-#: §6.4, §16.2: an entity's terminal entry (its last payload's `tags` hold `terminal`) stays this
-#: long, and at most `MACHINE_TERMINAL_MAX` of them are kept, the oldest removed first.
+#: §6.4: a terminal entry stays this long; at most `MACHINE_TERMINAL_MAX` are kept, oldest first.
 MACHINE_TERMINAL_RETENTION_S = 60.0
 MACHINE_TERMINAL_MAX = 10_000
 AUTH_TIMEOUT_S = 10.0
