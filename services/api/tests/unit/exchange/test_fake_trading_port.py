@@ -249,7 +249,8 @@ async def test_one_cancel_all_takes_at_most_its_limit_the_oldest_first() -> None
     assert [a.order_link_id for a in first] == [_link(0), _link(1)]
     assert [o.order_link_id for o in await port.open_orders(_ref())] == [_link(2)]
     assert [a.order_link_id for a in await port.cancel_all(_ref(), None)] == [_link(2)]
-    assert await port.cancel_all(_ref(), None) == []
+    [empty] = await port.cancel_all(_ref(), None)  # accepted, nothing cancelled: no order named
+    assert (empty.ok, empty.order_link_id, empty.exchange_order_id) == (True, None, None)
 
 
 def test_the_cancel_all_limit_is_the_venues_by_default_and_never_below_one() -> None:

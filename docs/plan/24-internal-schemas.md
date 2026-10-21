@@ -3989,7 +3989,11 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
     (SR-E29-06); the OMS cancels conditional entries one by one. A `cancel-all` is no proof of a
     flat book: the venue cancels at most 500 orders a call on futures, picking them at random
     beyond that, and answers only those, so the OMS repeats it until `open_orders` is empty
-    (`FakeTradingPort` caps a call the same way, `cancel_all_limit`). Every row a read returns
+    (`FakeTradingPort` caps a call the same way, `cancel_all_limit`). A `cancel-all` the venue
+    accepts with none of the account's orders cancelled (nothing to cancel, or only another
+    account's rows, dropped as below) answers one `ok` ack that names no order and carries the
+    call's record, so every cancel-all leaves the adapter's evidence (C-2.9, SR-E29-08), and
+    `FakeTradingPort` answers the same. Every row a read returns
     that carries one of our ids (`OUR_ID`) of another environment or account (`acct4`) is dropped
     and counted in `bybit_rows_refused_total` (`reason` `environment` or `account`), never raised
     (SR-E29-02). An execution row is read as an `Execution` when its type has an `exec_type`
@@ -4004,12 +4008,14 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
     A portfolio-margin account is outside that set: `account_info` reports it (`margin_mode`
     `portfolio`), and its position read fails closed (`UnknownStateError`), because the venue
     writes no position leverage there (`""` in `GET /v5/position/list`). A row of another
-    instrument, such as a dated future (`BTCUSDT-26DEC25`), fails its read closed as well; that a
-    `settleCoin=USDT` read lists none is assumed pending E29-K01. The closed-PnL read
-    (`GET /v5/position/closed-pnl`) takes no settle coin, and its documented example is a USDC
-    perpetual's (`ETHPERP`), so `closed_pnl` sets aside a row whose symbol does not end in
-    `USDT`, counted as `not_usdt` and logged with its symbol, rather than return it as a USDT
-    record.
+    instrument, such as a dated future (`BTCUSDT-26DEC25`), fails the reads that name the settle
+    coin `USDT` or a symbol (open orders, history, executions and positions) closed as well;
+    that they list none is assumed pending E29-K01. The closed-PnL read
+    (`GET /v5/position/closed-pnl`) names neither, so it can list any linear contract (its
+    documented example is a USDC perpetual's, `ETHPERP`): `closed_pnl` sets aside, before the
+    strict parse, a row whose symbol is a contract name that does not end in `USDT` (a USDC
+    perpetual, or a dated future such as `BTC-27MAR26`), counted as `not_usdt` and logged with
+    its symbol, rather than return it as a USDT record or fail the read on a field of its own.
 
 ### 14.3 Bybit implementation notes
 
@@ -4139,7 +4145,8 @@ class AmendOrderRequest(BaseModel):        # an ext- order by exchange_order_id 
 class OrderAck(BaseModel):
     ok: bool
     order_link_id: OrderLinkId | None      # None only when no order is named: a trading-stop
-                                           # write, or a refused cancel_all
+                                           # write, a refused cancel_all, or the one ack of a
+                                           # cancel_all that cancelled none (§14.2 rule 12)
     exchange_order_id: str | None          # Bybit's orderId; always set on an ok create (§14.2 rule 2)
     error_code: OmsErrorCode | None
     exchange_ret_code: int | None

@@ -2,7 +2,8 @@
 port, over transcribed replies (ruling R2), and `FakeTradingPort`. Each case asks of both what
 the OMS relies on: what they refuse, before anything is sent, and how they answer. Every ack
 either port returns in any case here is checked as it leaves (the orchestrator's ruling 3 on
-#3972): one that is `ok` names the exchange's order, and only a stop write names none.
+#3972): one that is `ok` names the exchange's order and its `order_link_id`, and only a stop
+write, or the one ack of a cancel-all that cancelled nothing, names none.
 """
 
 from __future__ import annotations
@@ -74,32 +75,38 @@ class Harness:
     prime_amend: Callable[[str], None]
     prime_missing_cancel: Callable[[], None]
     prime_batch: Callable[[list[str]], None]
-    acks: list[tuple[str, OrderAck]] = field(default_factory=list)
+    prime_empty_cancel_all: Callable[[], None]
+    acks: list[tuple[str, tuple[OrderAck, ...]]] = field(default_factory=list)
 
 
-def _watch(port: TradingPort, seen: list[tuple[str, OrderAck]]) -> None:
-    """Record every ack `port` returns, by the call that returned it: an instance attribute over
-    each acking method, so the port itself runs unchanged."""
+def _watch(port: TradingPort, seen: list[tuple[str, tuple[OrderAck, ...]]]) -> None:
+    """Record the acks of every call `port` answers, by the call that returned them: an instance
+    attribute over each acking method, so the port itself runs unchanged."""
     for name in ACKING:
         call: Callable[..., Awaitable[OrderAck | Sequence[OrderAck]]] = getattr(port, name)
 
         async def watched(*args: Any, _name: str = name, _call: Any = call, **kwargs: Any) -> Any:
             answer = await _call(*args, **kwargs)
-            acks = [answer] if isinstance(answer, OrderAck) else list(answer)
-            seen.extend((_name, ack) for ack in acks)
+            seen.append((_name, (answer,) if isinstance(answer, OrderAck) else tuple(answer)))
             return answer
 
         setattr(port, name, watched)
 
 
-def check_acks_name_their_orders(seen: Sequence[tuple[str, OrderAck]]) -> None:
-    """The orchestrator's ruling 3 on #3972, as a property of every ack a port returns: one that
-    is `ok` names the exchange's order, never empty; a stop write names no order at all."""
-    for name, ack in seen:
-        if name == "set_trading_stop":
-            assert (ack.order_link_id, ack.exchange_order_id) == (None, None)
-        elif ack.ok:
-            assert ack.exchange_order_id, (name, ack)
+def check_acks_name_their_orders(seen: Sequence[tuple[str, Sequence[OrderAck]]]) -> None:
+    """The orchestrator's ruling 3 on #3972, as a property of every call's acks: one that is
+    `ok` names the exchange's order and its `order_link_id`, never empty; a stop write names no
+    order at all, and so does a cancel-all that cancelled nothing, in its one ack (24 §14.2
+    rule 12)."""
+    for name, acks in seen:
+        for ack in acks:
+            named = (ack.order_link_id, ack.exchange_order_id)
+            if name == "set_trading_stop":
+                assert named == (None, None), (name, ack)
+            elif name == "cancel_all" and ack.ok and named == (None, None):
+                assert len(acks) == 1, (name, acks)
+            elif ack.ok:
+                assert ack.exchange_order_id and ack.order_link_id, (name, ack)
 
 
 def _exchange() -> Harness:
@@ -151,6 +158,10 @@ def _exchange() -> Harness:
             {**with_result(BATCH, list=items), "retExtInfo": {"list": codes}},
         )
 
+    def prime_empty_cancel_all() -> None:
+        """The transcribed reply with nothing listed (a test input): nothing to cancel."""
+        venue.on("/v5/order/cancel-all", with_result(CANCEL_ALL, list=[]))
+
     harness = Harness(
         port=make_port(venue, governor=governor),
         sent=lambda: len(venue.sent) + len(governor.acquired),
@@ -163,6 +174,7 @@ def _exchange() -> Harness:
         prime_amend=prime_amend,
         prime_missing_cancel=prime_missing_cancel,
         prime_batch=prime_batch,
+        prime_empty_cancel_all=prime_empty_cancel_all,
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -200,6 +212,7 @@ def _fake() -> Harness:
         prime_amend=lambda _link: None,  # the fake amends the order a create landed
         prime_missing_cancel=lambda: None,  # the fake holds no order under the id
         prime_batch=lambda _links: None,  # the fake places every new id
+        prime_empty_cancel_all=lambda: None,  # the fake holds no order
     )
     _watch(harness.port, harness.acks)
     return harness
@@ -287,7 +300,7 @@ async def test_every_ok_ack_of_an_order_call_names_its_exchange_order(harness: H
     )
     harness.prime_cancel_all()
     await harness.port.cancel_all(account(), None)
-    answered = {name for name, ack in harness.acks if ack.ok}
+    answered = {name for name, acks in harness.acks for ack in acks if ack.ok}
     assert answered == set(ACKING) - {"set_trading_stop"}
     check_acks_name_their_orders(harness.acks)
 
@@ -298,12 +311,27 @@ def test_the_ack_check_fails_an_ok_ack_without_its_order_and_a_stop_write_naming
         ok=True, order_link_id=link(), exchange_order_id=None, latency_ms=0, transport="rest"
     )
     with pytest.raises(AssertionError):
-        check_acks_name_their_orders([("place_order", ok)])
-    named = ok.model_copy(update={"order_link_id": None, "exchange_order_id": "e-1"})
+        check_acks_name_their_orders([("place_order", (ok,))])
+    unlinked = ok.model_copy(update={"order_link_id": None, "exchange_order_id": "e-1"})
+    for name in ("place_order", "place_batch", "amend_order", "cancel_order", "cancel_all"):
+        with pytest.raises(AssertionError):
+            check_acks_name_their_orders([(name, (unlinked,))])
     with pytest.raises(AssertionError):
-        check_acks_name_their_orders([("set_trading_stop", named)])
+        check_acks_name_their_orders([("set_trading_stop", (unlinked,))])
     refused = ok.model_copy(update={"ok": False})
-    check_acks_name_their_orders([("place_order", refused)])
+    check_acks_name_their_orders([("place_order", (refused,))])
+
+
+def test_the_ack_check_takes_one_unnamed_ack_from_a_cancel_all_that_cancelled_nothing() -> None:
+    nothing = OrderAck(
+        ok=True, order_link_id=None, exchange_order_id=None, latency_ms=0, transport="rest"
+    )
+    named = nothing.model_copy(update={"order_link_id": link(), "exchange_order_id": "e-1"})
+    check_acks_name_their_orders([("cancel_all", (nothing,))])
+    with pytest.raises(AssertionError):
+        check_acks_name_their_orders([("cancel_all", (named, nothing))])
+    with pytest.raises(AssertionError):
+        check_acks_name_their_orders([("cancel_order", (nothing,))])
 
 
 async def test_both_cancel_an_ext_order_by_its_exchange_id(harness: Harness) -> None:
@@ -334,6 +362,17 @@ async def test_both_cancel_all_in_the_critical_lane(harness: Harness) -> None:
     harness.prime_cancel_all()
     acks = await harness.port.cancel_all(account(), None)
     assert len(acks) == 2 and all(a.ok for a in acks)
+    assert harness.lanes() == ["critical"]
+
+
+async def test_both_answer_a_cancel_all_that_cancels_nothing_with_one_ack_naming_no_order(
+    harness: Harness,
+) -> None:
+    """24 §14.2 rule 12: accepted with nothing to cancel, the call still answers, so the OMS
+    has the call's evidence (C-2.9; the exchange's ack carries its record, SR-E29-08)."""
+    harness.prime_empty_cancel_all()
+    [ack] = await harness.port.cancel_all(account(), "BTCUSDT")
+    assert (ack.ok, ack.order_link_id, ack.exchange_order_id) == (True, None, None)
     assert harness.lanes() == ["critical"]
 
 

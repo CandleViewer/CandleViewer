@@ -531,8 +531,9 @@ class OrderAck(BaseModel):
     """§14.4. `exchange_ret_code`/`exchange_ret_msg` travel beside the internal `error_code` into
     the call's stored record, redacted (§8.6 code-only rule): an order route answers with the code
     and `retCode`, never the exchange's `retMsg`. `order_link_id` is `None` only where no order is
-    named: a position-level stop write, or a refused `cancel_all`. `record` is the call's
-    allow-listed record (SR-E29-08)."""
+    named: a position-level stop write, a refused `cancel_all`, or the one ack of an accepted
+    `cancel_all` that cancelled none of the account's orders. `record` is the call's allow-listed
+    record (SR-E29-08)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

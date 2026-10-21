@@ -788,15 +788,17 @@ def test_a_page_past_the_venues_limit_fails_the_reply(
 
 @pytest.mark.parametrize(
     ("model", "row"),
-    [(tp.OrderRow, _row()), (tp.PositionRow, POSITION_ROW), (tp.ClosedPnlRow, CLOSED_ROW)],
-    ids=["order", "position", "closed_pnl"],
+    [(tp.OrderRow, _row()), (tp.PositionRow, POSITION_ROW)],
+    ids=["order", "position"],
 )
 def test_a_dated_futures_row_fails_the_read_as_rule_12_says(
     model: type[tp._Venue], row: dict[str, Any]
 ) -> None:
     """24 §14.2 rule 12: the port reads USDT linear perpetuals only (C-1.2 item 3). A dated
-    future's symbol (`BTCUSDT-26DEC25`) fails the read, closed, rather than being read as a
-    perpetual's; that `settleCoin=USDT` lists none is assumed pending E29-K01."""
+    future's symbol (`BTCUSDT-26DEC25`) fails a read that names the settle coin or a symbol,
+    closed, rather than being read as a perpetual's; that such a read lists none is assumed
+    pending E29-K01. The closed-PnL read names neither and sets such a row aside before this
+    parse (`other_contract`, pinned in `test_trading_port_reads.py`)."""
     assert tp.parse(model, row, "row") is not None
     with pytest.raises(UnknownStateError):
         tp.parse(model, row | {"symbol": "BTCUSDT-26DEC25"}, "row")

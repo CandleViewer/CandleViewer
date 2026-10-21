@@ -193,7 +193,7 @@ def test_the_execution_row_maps_a_fill_with_an_empty_id() -> None:
 @pytest.mark.usefixtures("no_unknown_fields")
 def test_the_closed_pnl_row_maps_its_closed_size() -> None:
     page = tp.parse(tp.ClosedPnlPage, rest("rest/trading-closed-pnl.json")["result"], "pnl")
-    record = tp.to_closed_pnl(page.rows[0], account())
+    record = tp.to_closed_pnl(tp.parse(tp.ClosedPnlRow, page.rows[0], "pnl"), account())
     assert (record.qty, record.avg_entry_price, record.avg_exit_price) == (
         Decimal("3"),
         Decimal("1194.97516667"),

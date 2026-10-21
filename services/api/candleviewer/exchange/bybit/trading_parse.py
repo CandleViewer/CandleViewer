@@ -69,8 +69,10 @@ __all__ = [
     "PositionPage",
     "RowRefusal",
     "WalletPage",
+    "envelope_ms",
     "kept",
     "normalised_link",
+    "other_contract",
     "parse",
     "set_aside",
     "to_account_info",
@@ -99,6 +101,9 @@ _MS_MIN: Final = 1_514_764_800_000
 _MS_DIGITS: Final = re.compile(r"[0-9]{1,19}")
 #: The longest cursor the port passes back: the documented ones are well under it.
 MAX_CURSOR_LEN: Final = 512
+#: A contract's name as the venue writes one, of any product (`BTCUSDT`, `ETHPERP`,
+#: `BTC-27MAR26`): bounded, so a name set aside before the parse is logged as it is.
+_CONTRACT: Final = re.compile(r"[A-Z0-9][A-Z0-9-]{1,31}")
 
 
 def _decimal(value: object) -> Decimal:
@@ -496,7 +501,10 @@ class PositionPage(_Page):
 
 
 class ClosedPnlPage(_Page):
-    rows: Annotated[list[ClosedPnlRow], Field(max_length=100)] = Field(alias="list")
+    """Raw rows: another contract's row is set aside before the strict parse (`other_contract`),
+    as the read takes no settle coin."""
+
+    rows: Annotated[list[dict[str, Any]], Field(max_length=100)] = Field(alias="list")
 
 
 class WalletPage(_Venue):
@@ -702,6 +710,25 @@ def set_aside(raw: Mapping[str, Any]) -> RowRefusal | None:
     if kind in NOT_FILLS:
         return "not_a_fill"
     return "unmapped_type" if kind in UNMAPPED_TYPES else None
+
+
+def other_contract(raw: Mapping[str, Any], coin: str) -> str | None:
+    """The symbol of a closed-PnL row whose contract name does not end in `coin`, so no `coin`
+    perpetual's (C-1.2 item 3), set aside before the parse: the read takes no settle coin, so it
+    can list a USDC perpetual (`ETHPERP`) or a dated future (`BTC-27MAR26`). Anything else is
+    parsed, so a symbol that is no contract's name fails the read (E8-8)."""
+    symbol = raw.get("symbol")
+    if not isinstance(symbol, str) or _CONTRACT.fullmatch(symbol) is None:
+        return None
+    return None if symbol.endswith(coin) else symbol
+
+
+def envelope_ms(value: object, reply: str) -> int:
+    """A reply envelope's `time`: a JSON integer of ms within the window every other venue time
+    is read in (`Millis`), else the reply is unread (`UnknownStateError`)."""
+    if type(value) is not int or not _MS_MIN <= value <= MAX_TS_MS:
+        raise unknown_reply(reply, f"malformed {reply} reply: no plausible server time")
+    return value
 
 
 def to_execution(row: ExecutionRow, account: AccountRef, ts_ingest: TsUs) -> Execution:

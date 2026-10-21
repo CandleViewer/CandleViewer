@@ -274,22 +274,22 @@ def fake_capabilities(
 class FakeTradingPort:
     """Satisfies `TradingPort` structurally, in memory (G-8, #2877).
 
-    It refuses what the exchange adapter refuses (another environment's account, an `ext-`
-    key on the wire, a create without a generated id of its account, a bad window), records
-    every call as a `FakeCall` with its lane, and behaves like the venue where the OMS depends
-    on it: a reused id is rejected as a duplicate even after the order is terminal, exchange
-    ids are deterministic, `cancel_all` cancels plain orders only, at most `cancel_all_limit`
-    of them per call (the venue picks them at random; the fake takes the oldest first, so a
-    caller repeats it until `open_orders` is empty), and records its scope in
-    `cancel_all_scopes`. Each method can be scripted (`script`): an exception is raised (a
-    transport error before the send, an auth, clock or rate error, `RateBudgetExceededError`),
-    a `FakeReject` comes back as `OrderAck(ok=False)`, and `LandedThenAmbiguous` lands a
-    create and raises `AmbiguousResultError`. `subscribe_private` replays the seeded events
-    of the account, then what `push` queues for it, until `end_stream`: each account has its
-    own bounded queue, so one account's event never reaches another account's subscriber (one
-    subscriber per account, as the exchange's private stream has one stream per account). It
-    does not model a refusal the venue gives on its own (a stop on a flat position, a margin
-    shortfall): script it."""
+    It refuses what the exchange adapter refuses (another environment's account, an `ext-` key
+    on the wire, a create without a generated id of its account, a bad window), records every
+    call as a `FakeCall` with its lane, and behaves like the venue where the OMS depends on it:
+    a reused id is rejected as a duplicate even after the order is terminal, exchange ids are
+    deterministic, `cancel_all` cancels plain orders only, at most `cancel_all_limit` of them
+    per call (the venue picks them at random; the fake takes the oldest first, so a caller
+    repeats it until `open_orders` is empty), answers one ack naming no order when it cancels
+    none, and records its scope in `cancel_all_scopes`. Each method can be scripted (`script`):
+    an exception is raised (a transport error before the send, an auth, clock or rate error,
+    `RateBudgetExceededError`), a `FakeReject` comes back as `OrderAck(ok=False)`, and
+    `LandedThenAmbiguous` lands a create and raises `AmbiguousResultError`. `subscribe_private`
+    replays the seeded events of the account, then what `push` queues for it, until
+    `end_stream`: each account has its own bounded queue, so one account's event never reaches
+    another account's subscriber (one subscriber per account, as the exchange's private stream
+    has one stream per account). It does not model a refusal the venue gives on its own (a stop
+    on a flat position, a margin shortfall): script it."""
 
     def __init__(
         self,
@@ -471,7 +471,7 @@ class FakeTradingPort:
         for key in keys:
             order = self._close(key, "cancelled")
             acks.append(_ack(order.order_link_id, order.exchange_order_id))
-        return acks
+        return acks or [_ack(None, None)]  # accepted, nothing cancelled: names no order
 
     async def set_trading_stop(self, req: TradingStopRequest) -> OrderAck:
         self._enter("set_trading_stop", req.account, req, "critical")

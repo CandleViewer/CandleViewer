@@ -127,8 +127,11 @@ WEEK_MS = 604_800_000
     [
         (NOW_US - DAY_US, None, ((NOW_US - DAY_US) // 1000, (NOW_US - DAY_US) // 1000 + WEEK_MS)),
         (None, NOW_US, (NOW_US // 1000 - WEEK_MS, NOW_US // 1000)),
+        # a bound inside a millisecond (any time taken from a datetime): one call all the same
+        (NOW_US + 1, None, (NOW_US // 1000, NOW_US // 1000 + WEEK_MS)),
+        (None, NOW_US + 1, (NOW_US // 1000 + 1 - WEEK_MS, NOW_US // 1000 + 1)),
     ],
-    ids=["start-only", "end-only"],
+    ids=["start-only", "end-only", "start-inside-a-ms", "end-inside-a-ms"],
 )
 async def test_one_bound_reads_the_venues_own_7_days_from_the_start_or_to_the_end(
     start: int | None, end: int | None, window: tuple[int, int]
@@ -319,6 +322,26 @@ async def test_a_cancel_all_row_of_another_account_is_dropped() -> None:
     assert [a.exchange_order_id for a in acks] == [cancelled[1]["orderId"]]
 
 
+@pytest.mark.parametrize("listed", ["nothing", "another-accounts-only"])
+async def test_a_cancel_all_cancelling_none_of_the_accounts_orders_answers_one_record(
+    listed: str,
+) -> None:
+    """C-2.9, SR-E29-08: a call signed, sent and accepted leaves its record even when it names
+    no order of the account (nothing to cancel, or only rows another account's ids name)."""
+    reply = rest("rest/trading-cancel-all-reply.json")
+    foreign = {**reply["result"]["list"][0], "orderLinkId": link(ACCOUNT_B)}
+    answer = with_result(reply, list=[] if listed == "nothing" else [foreign])
+    venue = Venue().on("/v5/order/cancel-all", answer)
+    [ack] = await make_port(venue).cancel_all(account(), "BTCUSDT")
+    assert (ack.ok, ack.order_link_id, ack.exchange_order_id) == (True, None, None)
+    assert ack.record is not None and len(venue.sent) == 1
+    assert (ack.record.endpoint, ack.record.ret_code, ack.record.response_redacted) == (
+        "/v5/order/cancel-all",
+        0,
+        None,
+    )
+
+
 async def test_a_cancel_all_the_venue_reports_failed_is_unknown() -> None:
     failed = with_result(rest("rest/trading-cancel-all-reply.json"), success="0")
     port = make_port(Venue().on("/v5/order/cancel-all", failed))
@@ -367,6 +390,29 @@ async def test_the_wallet_needs_the_server_time() -> None:
     port = make_port(Venue().on("/v5/account/wallet-balance", timeless))
     with pytest.raises(UnknownStateError, match="server time"):
         await port.wallet(account())
+
+
+@pytest.mark.parametrize(
+    "server_time",
+    [-1, 0, 1_514_764_799_999, 4_102_444_800_001, True, "1790000000000", 1.79e12],
+    ids=["negative", "zero", "before-2018", "after-2100", "bool", "text", "float"],
+)
+async def test_a_wallet_time_outside_the_plausible_window_fails_the_read(
+    server_time: object,
+) -> None:
+    """E8-8: the envelope's `time` becomes `Wallet.updated_at`, so it is read in the window
+    every other venue time is (2018 to 2100), never an absurd or negative figure."""
+    reply = {**_usdt_wallet(), "time": server_time}
+    port = make_port(Venue().on("/v5/account/wallet-balance", reply))
+    with pytest.raises(UnknownStateError, match="server time"):
+        await port.wallet(account())
+
+
+@pytest.mark.parametrize("server_time", [1_514_764_800_000, 4_102_444_800_000], ids=str)
+async def test_a_wallet_time_on_the_plausible_windows_edges_is_read(server_time: int) -> None:
+    reply = {**_usdt_wallet(), "time": server_time}
+    wallet = await make_port(Venue().on("/v5/account/wallet-balance", reply)).wallet(account())
+    assert wallet.updated_at == server_time * 1000
 
 
 async def test_the_fee_rate_refuses_another_products_rates() -> None:
@@ -513,13 +559,36 @@ async def test_a_page_of_positions_is_read_whole_and_in_order() -> None:
 
 
 async def test_a_closed_pnl_page_sets_a_usdc_row_aside_and_keeps_every_usdt_one() -> None:
-    page = _page(CLOSED, {}, {"symbol": "BTCUSDT"}, {"symbol": "ETHUSDT"})  # first: ETHPERP
+    """Every other contract's row is set aside before the strict parse: a USDC perpetual (the
+    transcribed `ETHPERP`, and one with a figure the strict model would refuse), a USDC dated
+    future and a USDT one (test inputs), so no such row fails the read."""
+    page = _page(
+        CLOSED, {}, {"symbol": "BTCUSDT"}, {"symbol": "BTC-27MAR26"},
+        {"symbol": "ETHPERP", "leverage": ""}, {"symbol": "BTCUSDT-26DEC25"},
+        {"symbol": "ETHUSDT"},
+    )  # fmt: skip
     before = _refused("not_usdt")
-    records = await make_port(Venue().on("/v5/position/closed-pnl", page)).closed_pnl(
-        account(), NOW_US - DAY_US, NOW_US
-    )
+    with capture_logs() as logs:
+        records = await make_port(Venue().on("/v5/position/closed-pnl", page)).closed_pnl(
+            account(), NOW_US - DAY_US, NOW_US
+        )
     assert [r.symbol for r in records] == ["BTCUSDT", "ETHUSDT"]
-    assert _refused("not_usdt") == before + 1
+    assert _refused("not_usdt") == before + 4
+    assert [e["symbol"] for e in logs if e["event"] == "bybit_row_refused"] == [
+        "ETHPERP", "BTC-27MAR26", "ETHPERP", "BTCUSDT-26DEC25",
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize("symbol", ["ethperp", "ETH PERP", "", 7, None], ids=repr)
+async def test_a_closed_pnl_symbol_that_is_no_contract_name_fails_the_read(symbol: object) -> None:
+    """E8-8: only a contract's name is set aside unread; anything else meets the strict parse."""
+    page = _page(CLOSED, {"symbol": symbol})
+    before = _refused("not_usdt")
+    with pytest.raises(UnknownStateError, match="malformed closed-pnl reply"):
+        await make_port(Venue().on("/v5/position/closed-pnl", page)).closed_pnl(
+            account(), NOW_US - DAY_US, NOW_US
+        )
+    assert _refused("not_usdt") == before
 
 
 async def test_a_history_page_of_two_orders_lists_both_in_order() -> None:
@@ -620,7 +689,7 @@ async def test_executions_carry_the_ports_ingest_time() -> None:
     assert (fill.ts_ingest, fill.ts_exec) == (NOW_US + 7, int(transcribed["execTime"]) * 1000)
 
 
-async def test_a_unified_usdt_wallet_maps_every_figure_at_the_replys_time() -> None:
+def _usdt_wallet() -> dict[str, Any]:
     """The transcribed reply's account and envelope with a USDT coin row whose figures all
     differ (test inputs: the documentation's example holds a BTC row only), so a swap shows."""
     reply = rest("rest/trading-wallet-balance.json")
@@ -633,7 +702,12 @@ async def test_a_unified_usdt_wallet_maps_every_figure_at_the_replys_time() -> N
         "accountIMRate": "0.01", "accountMMRate": "0.005", "totalAvailableBalance": "900",
         "totalInitialMargin": "90",
     }  # fmt: skip
-    answer = with_result(reply, list=[{**unified, **figures, "coin": [usdt]}])
+    return with_result(reply, list=[{**unified, **figures, "coin": [usdt]}])
+
+
+async def test_a_unified_usdt_wallet_maps_every_figure_at_the_replys_time() -> None:
+    reply = rest("rest/trading-wallet-balance.json")
+    answer = _usdt_wallet()
 
     wallet = await make_port(Venue().on("/v5/account/wallet-balance", answer)).wallet(account())
 

@@ -88,6 +88,7 @@ from candleviewer.exchange.bybit.trading_parse import (
     BatchReply,
     CancelAllResult,
     ClosedPnlPage,
+    ClosedPnlRow,
     ExecutionPage,
     ExecutionRow,
     FeeRatePage,
@@ -95,8 +96,10 @@ from candleviewer.exchange.bybit.trading_parse import (
     OrderReply,
     PositionPage,
     WalletPage,
+    envelope_ms,
     kept,
     normalised_link,
+    other_contract,
     parse,
     refuse_row,
     set_aside,
@@ -611,7 +614,10 @@ class BybitTradingPort:
 
     async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
         """One call cancels at most the venue's cap and only what it lists: no proof of a flat
-        book, so the OMS repeats it until `open_orders` is empty (24 §14.2 rule 12)."""
+        book, so the OMS repeats it until `open_orders` is empty (24 §14.2 rule 12). A call the
+        venue accepts with none of the account's orders cancelled answers one `ok` ack that
+        names no order and carries the call's record, so every cancel-all leaves evidence of
+        the call (C-2.9, SR-E29-08)."""
         self._check_environment(account)
         body = _cancel_all_body(symbol)
         answer = await self._trade("cancel_all", account, body=body)
@@ -626,6 +632,8 @@ class BybitTradingPort:
             lambda pair: pair[0],
             account,
         )
+        if not rows:
+            return [self._accepted(None, None, answer, "cancel_all", fields, None)]
         return [
             self._accepted(
                 link,
@@ -773,9 +781,10 @@ class BybitTradingPort:
 
     async def closed_pnl(self, account: AccountRef, start: TsUs, end: TsUs) -> Sequence[ClosedPnl]:
         """The account's USDT records only (C-1.2 item 3): the venue's read takes no settle coin,
-        and its documented example is a USDC perpetual's, so a row whose symbol does not end in
-        the settle coin is set aside and counted (`not_usdt`), never read as USDT (24 §14.2
-        rule 12)."""
+        so it can list a USDC perpetual (its documented example) or a dated future. A row of a
+        contract whose name does not end in the settle coin is set aside before the strict
+        parse and counted (`not_usdt`), never read as USDT and never failing the read on a
+        field of its own (24 §14.2 rule 12)."""
         self._check_environment(account)
         check_window(start, end)
         params = {"category": "linear", "limit": _PAGE_LIMIT["closed_pnl"]}
@@ -783,11 +792,11 @@ class BybitTradingPort:
         def read(result: object) -> tuple[Sequence[ClosedPnl], str]:
             page = parse(ClosedPnlPage, result, "closed-pnl")
             usdt: list[ClosedPnl] = []
-            for row in page.rows:
-                if not row.symbol.endswith(_SETTLE):
-                    refuse_row("not_usdt", "", symbol=row.symbol)
+            for raw in page.rows:
+                if (other := other_contract(raw, _SETTLE)) is not None:
+                    refuse_row("not_usdt", "", symbol=other)
                     continue
-                usdt.append(to_closed_pnl(row, account))
+                usdt.append(to_closed_pnl(parse(ClosedPnlRow, raw, "closed-pnl"), account))
             return usdt, page.nextPageCursor
 
         records: list[ClosedPnl] = []
@@ -799,9 +808,7 @@ class BybitTradingPort:
         self._check_environment(account)
         # The wallet takes no category (an account endpoint), only the account type and coin.
         reply = await self._read("wallet", account, {"accountType": "UNIFIED", "coin": _SETTLE})
-        at_ms = reply.get("time")
-        if type(at_ms) is not int:
-            raise unknown_reply("wallet", "malformed wallet reply: no server time")
+        at_ms = envelope_ms(reply.get("time"), "wallet")
         page = parse(WalletPage, reply.get("result"), "wallet")
         return to_wallet(page, account, _SETTLE, at_ms)
 
@@ -991,13 +998,18 @@ def _window(window: tuple[int, int]) -> dict[str, int]:
 
 
 def _maybe_windows(start: TsUs | None, end: TsUs | None) -> list[dict[str, int]]:
-    """No bound: one call, the venue's own default window. One bound: the venue's span for it
-    (7 days from `start` or to `end`), sent as both bounds. Both: 7-day windows covering them."""
-    if start is None and end is None:
-        return [{}]
-    low = start if start is not None else (end or 0) - _WINDOW_MS * 1000
-    high = end if end is not None else low + _WINDOW_MS * 1000
-    return [_window(w) for w in _windows(low, high)]
+    """No bound: one call, the venue's own default window. One bound: one call over the venue's
+    span for it, the 7 days from `start` or to `end` in whole ms (`start` rounded down, `end`
+    up, as `_windows` rounds them), sent as both bounds. Both: 7-day windows covering them."""
+    if start is not None and end is not None:
+        return [_window(w) for w in _windows(start, end)]
+    if start is not None:
+        low = start // 1000
+        return [_window((low, low + _WINDOW_MS))]
+    if end is not None:
+        high = -(-end // 1000)
+        return [_window((high - _WINDOW_MS, high))]
+    return [{}]
 
 
 def _unique[T](items: Sequence[T], key: Callable[[T], str]) -> list[T]:
