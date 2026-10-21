@@ -1,0 +1,139 @@
+<!doctype html><meta charset=utf-8><body><div id=out>RUNNING</div>
+<div style="position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden"><table id=t><tbody id=b></tbody></table></div>
+<script>
+// Throwaway prototype for E06-D03: visually-hidden table, windowed bar data, per-frame sync.
+// Strategies: naive = rewrite every cell every frame (rows keyed by SLOT: row r always shows bars[first+r]);
+// diff = write only cells whose string changed (slot-keyed too, so a pan still rewrites every row);
+// recycle = rows keyed by BAR (spec D4's structure: a <tr> pool, identity preserved). A shift of k bars moves |k| <tr>
+//   nodes to the other end and rewrites 7|k| cells + their absolute aria-rowindex; unmoved rows are diff-scanned (so
+//   live updates still land) unless noScan; |k| >= rows rewrites every row in place (no moves); aria-current follows
+//   the centre row. Added 2026-10-20 for design-review finding F-01.
+// ?set=main runs the 2026-10-14 matrix; ?set=recycle runs the recycling matrix with its same-binary controls;
+// ?set=recycle60 runs the default-window (60-row) fast-pan / storm / jump rows; ?set=jumpfixed the hard jump with
+// table-layout: fixed at both sizes.
+const COLS=7, TOTAL=100000;
+const bars=new Array(TOTAL);let s=1;const rnd=()=>(s=(s*1664525+1013904223)>>>0)/4294967296;
+for(let i=0;i<TOTAL;i++){const o=64000+rnd()*200;bars[i]={t:i*60,o,h:o+rnd()*50,l:o-rnd()*50,c:o+rnd()*40-20,v:Math.round(rnd()*500),d:Math.round(rnd()*200-100)};}
+function mk(rows,fixed){const t=document.getElementById('t');t.style.tableLayout=fixed?'fixed':'';t.style.width=fixed?'700px':'';
+  const b=document.getElementById('b');b.textContent='';const tr=[];
+  for(let r=0;r<rows;r++){const row=document.createElement('tr');row.setAttribute('aria-rowindex',r+1);row._c=new Array(COLS).fill('');
+    for(let c=0;c<COLS;c++){const td=document.createElement(c?'td':'th');td.appendChild(document.createTextNode(''));row.appendChild(td);}
+    b.appendChild(row);tr.push(row);}
+  return tr;}
+function cells(bar){return[bar.t,bar.o.toFixed(1),bar.h.toFixed(1),bar.l.toFixed(1),bar.c.toFixed(1),bar.v,bar.d];}
+let cache;
+// slot-keyed strategies (2026-10-14 code path, unchanged)
+function sync(rows,first,mode,dirtyOnly){
+  for(let r=0;r<rows.length;r++){
+    if(dirtyOnly&&!dirtyOnly(r))continue;
+    const v=cells(bars[first+r]);const tds=rows[r].children;
+    for(let c=0;c<COLS;c++){const str=String(v[c]);
+      if(mode==='naive'){tds[c].firstChild.data=str;}
+      else{ const k=r*COLS+c; if(cache[k]!==str){cache[k]=str;tds[c].firstChild.data=str;} }}
+  }
+}
+// bar-keyed recycling (spec D4 structure; review F-01)
+function writeRow(tr,bar){const v=cells(bars[bar]);const tds=tr.children;
+  for(let c=0;c<COLS;c++){const str=String(v[c]);tr._c[c]=str;tds[c].firstChild.data=str;}
+  tr.setAttribute('aria-rowindex',bar+2); /* absolute bar index, 1-based, +1 for the header row (F-06) */ }
+function scanRow(tr,bar){const v=cells(bars[bar]);const tds=tr.children;
+  for(let c=0;c<COLS;c++){const str=String(v[c]);if(tr._c[c]!==str){tr._c[c]=str;tds[c].firstChild.data=str;}}}
+function syncRecycle(pool,first,scan){
+  const rows=pool.rows,n=rows.length,b=document.getElementById('b');
+  if(pool.first===null||Math.abs(first-pool.first)>=n){ for(let r=0;r<n;r++)writeRow(rows[r],first+r); /* hard jump: full rewrite, no moves */ }
+  else{ const k=first-pool.first;
+    if(k>0){ const moved=rows.splice(0,k); for(let i=0;i<k;i++){const tr=moved[i];b.appendChild(tr);/* moves the existing node */rows.push(tr);writeRow(tr,first+n-k+i);} }
+    else if(k<0){ const m=-k;const moved=rows.splice(n-m,m); for(let i=m-1;i>=0;i--){const tr=moved[i];b.insertBefore(tr,b.firstChild);rows.unshift(tr);writeRow(tr,first+i);} }
+    if(scan){ const lo=k<0?-k:0,hi=k>0?n-k:n; for(let r=lo;r<hi;r++)scanRow(rows[r],first+r); }
+  }
+  pool.first=first;
+  const cur=rows[n>>1]; if(pool.cur!==cur){ if(pool.cur)pool.cur.removeAttribute('aria-current'); cur.setAttribute('aria-current','true'); pool.cur=cur; }
+}
+const p95=a=>{a=[...a].sort((x,y)=>x-y);return a[Math.floor(a.length*0.95)]};
+const med=a=>{a=[...a].sort((x,y)=>x-y);return a[a.length>>1]};
+function run(cfg){return new Promise(res=>{
+  const rows=mk(cfg.rows,cfg.fixed);cache=new Array(cfg.rows*COLS).fill('');let first=1000,frame=0,t0=performance.now(),samples=[],last=t0,ft=[];
+  const rec=cfg.mode==='recycle';const pool={rows,first:null,cur:null};
+  if(rec)syncRecycle(pool,first,true);else sync(rows,first,'diff');
+  // storm: 20 msg/s -> last row changes every 50 ms; jump: Home/End-class hard jump once per second
+  let lastStorm=t0,lastJump=t0;
+  function f(now){
+    ft.push(now-last);last=now;
+    if(now-t0>=cfg.ms){res({cfg,p95:p95(samples),med:med(samples),max:Math.max(...samples),n:samples.length,frameP95:p95(ft)});return;}
+    frame++;
+    const a=performance.now();
+    if(cfg.scn==='static'){ if(rec)syncRecycle(pool,first,true); else if(cfg.mode==='naive') sync(rows,first,'naive'); else sync(rows,first,'diff'); }
+    else if(cfg.scn==='pan'){ first=1000+Math.floor((now-t0)/1000*cfg.barsPerSec); // pan ~ barsPerSec bars/s
+      if(rec) syncRecycle(pool,first,!cfg.noScan);
+      else if(cfg.coalesceHz){ const per=1000/cfg.coalesceHz; if(now-(cfg._lc||0)>=per){cfg._lc=now;sync(rows,first,cfg.mode);} else {/*cursor row only*/ sync(rows,first,cfg.mode,r=>r===(cfg.rows>>1));} }
+      else if(cfg.slice){ // time-sliced: refresh a rolling slice of rows per frame + cursor row
+        const n=Math.ceil(cfg.rows/cfg.slice); const st=(frame%cfg.slice)*n; sync(rows,first,cfg.mode,r=>(r>=st&&r<st+n)||r===(cfg.rows>>1)); }
+      else sync(rows,first,cfg.mode); }
+    else if(cfg.scn==='storm'){ if(now-lastStorm>=50){lastStorm=now;bars[first+cfg.rows-1].c+=0.5;bars[first+cfg.rows-1].v+=1;}
+      if(rec)syncRecycle(pool,first,true); else sync(rows,first,cfg.mode); }
+    else if(cfg.scn==='jump'){ if(now-lastJump>=1000){lastJump=now;first+=4000;} /* |k| >= rows: full rewrite of the window (06 §4.1 settling allowance) */
+      syncRecycle(pool,first,true); }
+    void document.getElementById("t").offsetHeight; /* force style+layout so cost is not deferred */ samples.push(performance.now()-a);
+    requestAnimationFrame(f);
+  }
+  requestAnimationFrame(f);
+});}
+(async()=>{
+  const params=new URLSearchParams(location.search);
+  const MS=+(params.get('ms')||20000), REPS=+(params.get('reps')||3);
+  // 2026-10-14 matrix (bench-results-main.json + bench-results-sliced.json)
+  const MAIN=[
+   {name:'200r naive static',scn:'static',rows:200,mode:'naive'},
+   {name:'200r diff static',scn:'static',rows:200,mode:'diff'},
+   {name:'200r naive pan 30 bars/s',scn:'pan',rows:200,mode:'naive',barsPerSec:30},
+   {name:'200r diff pan 30 bars/s',scn:'pan',rows:200,mode:'diff',barsPerSec:30},
+   {name:'200r diff pan 30 bars/s, coalesce 4Hz+cursor row',scn:'pan',rows:200,mode:'diff',barsPerSec:30,coalesceHz:4},
+   {name:'60r diff pan 30 bars/s',scn:'pan',rows:60,mode:'diff',barsPerSec:30},
+   {name:'200r naive storm 20msg/s',scn:'storm',rows:200,mode:'naive'},
+   {name:'200r diff storm 20msg/s',scn:'storm',rows:200,mode:'diff'},
+   {name:'200r diff pan 30 bars/s, time-sliced 8 frames+cursor row',scn:'pan',rows:200,mode:'diff',barsPerSec:30,slice:8},
+   {name:'200r diff pan 30 bars/s, time-sliced 16 frames+cursor row',scn:'pan',rows:200,mode:'diff',barsPerSec:30,slice:16},
+   {name:'60r diff pan 30 bars/s, time-sliced 8 frames+cursor row',scn:'pan',rows:60,mode:'diff',barsPerSec:30,slice:8},
+  ];
+  // 2026-10-20 recycling matrix (bench-results-recycle.json): slot-keyed controls re-run on the same binary first,
+  // then the bar-keyed pool under static / pan / storm / jump.
+  const RECYCLE=[
+   {name:'200r diff static',scn:'static',rows:200,mode:'diff'},
+   {name:'200r diff pan 30 bars/s',scn:'pan',rows:200,mode:'diff',barsPerSec:30},
+   {name:'60r diff pan 30 bars/s',scn:'pan',rows:60,mode:'diff',barsPerSec:30},
+   {name:'200r diff pan 30 bars/s, time-sliced 8 frames+cursor row',scn:'pan',rows:200,mode:'diff',barsPerSec:30,slice:8},
+   {name:'60r diff pan 30 bars/s, time-sliced 8 frames+cursor row',scn:'pan',rows:60,mode:'diff',barsPerSec:30,slice:8},
+   {name:'200r recycle static',scn:'static',rows:200,mode:'recycle'},
+   {name:'200r recycle pan 30 bars/s',scn:'pan',rows:200,mode:'recycle',barsPerSec:30},
+   {name:'200r recycle pan 30 bars/s, dirty-only (no diff scan)',scn:'pan',rows:200,mode:'recycle',barsPerSec:30,noScan:true},
+   {name:'60r recycle pan 30 bars/s',scn:'pan',rows:60,mode:'recycle',barsPerSec:30},
+   {name:'200r recycle pan 120 bars/s',scn:'pan',rows:200,mode:'recycle',barsPerSec:120},
+   {name:'200r recycle pan 600 bars/s',scn:'pan',rows:200,mode:'recycle',barsPerSec:600},
+   {name:'200r recycle pan 30 bars/s, table-layout fixed',scn:'pan',rows:200,mode:'recycle',barsPerSec:30,fixed:true},
+   {name:'200r recycle pan 600 bars/s, table-layout fixed',scn:'pan',rows:200,mode:'recycle',barsPerSec:600,fixed:true},
+   {name:'200r recycle storm 20msg/s',scn:'storm',rows:200,mode:'recycle'},
+   {name:'200r recycle jump 1/s (Home/End-class, full rewrite)',scn:'jump',rows:200,mode:'recycle'},
+  ];
+  // 2026-10-20, second invocation (bench-results-recycle-60r.json): the D1 default window under the fast pans,
+  // the storm and the hard jump.
+  const RECYCLE60=[
+   {name:'60r recycle pan 120 bars/s',scn:'pan',rows:60,mode:'recycle',barsPerSec:120},
+   {name:'60r recycle pan 600 bars/s',scn:'pan',rows:60,mode:'recycle',barsPerSec:600},
+   {name:'60r recycle storm 20msg/s',scn:'storm',rows:60,mode:'recycle'},
+   {name:'60r recycle jump 1/s (Home/End-class, full rewrite)',scn:'jump',rows:60,mode:'recycle'},
+  ];
+  // 2026-10-20, third invocation (bench-results-recycle-jumpfixed.json): the Home/End-class hard jump with
+  // table-layout: fixed, at both window sizes (orchestrator review, Minor 8).
+  const JUMPFIXED=[
+   {name:'200r recycle jump 1/s (Home/End-class, full rewrite), table-layout fixed',scn:'jump',rows:200,mode:'recycle',fixed:true},
+   {name:'60r recycle jump 1/s (Home/End-class, full rewrite), table-layout fixed',scn:'jump',rows:60,mode:'recycle',fixed:true},
+  ];
+  const set=params.get('set')||'main';
+  const cfgs=set==='recycle'?RECYCLE:set==='recycle60'?RECYCLE60:set==='jumpfixed'?JUMPFIXED:MAIN;
+  const only=params.get('only');
+  const out=[];
+  for(const c of cfgs){if(only&&!c.name.includes(only))continue;const r=[];for(let i=0;i<REPS;i++){r.push(await run({...c,ms:MS,_lc:0}));}
+    out.push({name:c.name,p95_per_rep:r.map(x=>+x.p95.toFixed(3)),median_of_p95:+med(r.map(x=>x.p95)).toFixed(3),med_ms:+med(r.map(x=>x.med)).toFixed(3),max_ms:+Math.max(...r.map(x=>x.max)).toFixed(2),frames:r[0].n,frameP95:+med(r.map(x=>x.frameP95)).toFixed(1)});}
+  document.getElementById('out').textContent='RESULT'+JSON.stringify({ua:navigator.userAgent,cores:navigator.hardwareConcurrency,ms:MS,reps:REPS,set,out});
+})();
+</script>
