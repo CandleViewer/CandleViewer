@@ -38,6 +38,7 @@ from candleviewer.bars.rows import (
 )
 from candleviewer.bars.series_store import SeriesStore
 from candleviewer.domain.sql_names import ts_param, ts_us_from_row
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws.topics import FAMILIES
 
 SPEC = BarSpec(kind="time", interval_ms=60_000)
@@ -530,7 +531,7 @@ def _bounded_reads(kind: str | None = None) -> float:
 
 
 async def test_the_bound_counts_the_reads_it_started_later_than_their_window_only() -> None:
-    before = _bounded_reads()
+    before, renko, time_reads = _bounded_reads(), _bounded_reads("renko"), _bounded_reads("time")
     await _read_k(_busy_table(), RSPEC, k=7)  # moved, a tail read: counted
     sparse = BarSpec(kind="renko", range_ticks=3)
     await _read_k(_busy_table(), sparse, k=5)  # moved past all its rows, an empty read: counted
@@ -540,6 +541,29 @@ async def test_the_bound_counts_the_reads_it_started_later_than_their_window_onl
     time_reader = BarReader(_Conn([_row(0)]), _sched, now_us=lambda: NOW)
     await time_reader.read_tail(SYM, SPEC, 2)  # a time read on a table below k: not
     assert _bounded_reads() == before + 2
+    assert (_bounded_reads("renko"), _bounded_reads("time")) == (renko + 2, time_reads)
+
+
+@pytest.mark.parametrize(("k", "logged"), [(7, 7), (10**12, MAX_TAIL_SCAN_ROWS)])
+async def test_a_truncated_read_logs_its_kind_and_the_clamped_rows_its_bound_scanned(
+    k: int, logged: int
+) -> None:
+    """#399 OD2: the log line names the read's own kind and the K its bound used, a K past
+    `MAX_TAIL_SCAN_ROWS` logged as that pin."""
+    conn = _Steps(_stamps(RSINCE + MIN), [])  # bounded, then no row from the bound on
+    reader = BarReader(conn, _sched, now_us=lambda: NOW, tail_scan_rows=k)
+    with capture_logs() as logs:
+        tail = await reader.read_tail(SYM, RSPEC, 3)
+    (line,) = [e for e in logs if e["event"] == "bars_tail_scan_truncated"]
+    assert (line["kind"], line["scanned_rows"]) == ("renko", logged)
+    assert (
+        (line["window_start_us"], line["since_us"])
+        == (RSINCE, RSINCE + MIN)
+        == (
+            RSINCE,
+            tail.since_us,
+        )
+    )
 
 
 @pytest.mark.parametrize("error_type", [OSError, TimeoutError], ids=["os-error", "timeout"])
@@ -558,6 +582,29 @@ async def test_a_failed_statement_fails_the_read_with_no_fallback_and_no_count(
         await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, RSPEC, 3)
     assert len(conn.calls) == at and _is_scan_bound(conn.calls[0][0])
     assert _bounded_reads() == before
+
+
+@pytest.mark.parametrize("error_type", [OSError, TimeoutError], ids=["os-error", "timeout"])
+async def test_a_failed_time_bound_fails_the_read_with_no_fallback_and_no_count(
+    error_type: type[Exception],
+) -> None:
+    """#399 R1: a time read's bound fails as a non-time one's does: one statement, no count."""
+    conn = _Fails(error_type("questdb down"), 1, _stamps(NOW - 3 * MIN), [_row(1)])
+    before = _bounded_reads("time")
+    with pytest.raises(error_type):
+        await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, SPEC, 2)
+    assert len(conn.calls) == 1 and _is_scan_bound(conn.calls[0][0])
+    assert _bounded_reads("time") == before
+
+
+def test_the_counter_declares_one_series_per_bar_kind() -> None:
+    """#399 OD2: `kind` is a closed set; the catalogue's cardinality follows `BUILD_VERSIONS`."""
+    (entry,) = [s for s in CATALOGUE if s.name == "bars_tail_scan_bounded_total"]
+    assert entry.labels == ("kind",) and entry.max_series == len(BUILD_VERSIONS)
+    assert all(
+        REGISTRY.get_sample_value("bars_tail_scan_bounded_total", {"kind": k}) is not None
+        for k in BUILD_VERSIONS
+    )  # each series exists from import, at 0 until a read is truncated
 
 
 async def test_a_time_read_takes_its_table_bound_then_one_tail_statement() -> None:

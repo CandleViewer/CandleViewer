@@ -61,6 +61,8 @@ bars_tail_scan_bounded_total = Counter(
     "WS tail reads the table-row bound started later than their window (D2-M4; time too, #399).",
     ["kind"],
 )
+for _kind in BUILD_VERSIONS:  # bound now, so each series exists at 0 from the start
+    bars_tail_scan_bounded_total.labels(kind=_kind)
 bars_rebuild_scheduled_total = Counter(
     "bars_rebuild_scheduled_total", "Background rebuilds requested (post single-flight/dedup)."
 )
@@ -443,6 +445,8 @@ class BarReader:
         `MAX_TAIL` whatever a subscriber's `history` (a 0 too) and bounds every read with a
         timeout, degrading when it expires (SR-E12-01). `BarTail` says what `since_us` and
         `fetched` tell of a tail shorter than `limit`, and what they do not."""
+        if not 1 <= limit <= MAX_TAIL:  # before any statement, as `_tail_sql` refuses it
+            raise ValueError(f"limit must be between 1 and {MAX_TAIL}")
         now = self._now_us()
         window = since = start = now - tail_window_us(spec, limit)
         bar_param = bar_param_for(spec)
@@ -518,7 +522,8 @@ class BarTail:
     `bars` can hold fewer, since rows are dropped, skipped or malformed. They do not say whether
     older bars exist below `since_us`, nor why a short tail is short: the series' first bar, or
     the window ending the read (`tail_window_us`: for a time kind `TAIL_SPAN_FACTOR` times the
-    span of `limit` bars, within the SR-E12-02 cap; for other kinds the cap, or `bounded`). Telling
+    span of `limit` bars, within the SR-E12-02 cap; for other kinds the cap; for either kind, or
+    `bounded`, the table-row bound, #399 R1). Telling
     an exhausted series apart needs its recording start (REST `meta.recording_started_at`)
     compared with `since_us`.
     """

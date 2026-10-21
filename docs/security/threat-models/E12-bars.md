@@ -466,10 +466,12 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     whose window spans twice `MAX_TAIL` bars, sorts at most about twice that. No statement visits more than
     `MAX_TAIL_SCAN_ROWS` (500 000 as built) rows and those tied with the last; a sparse series' snapshot may start later than its
     window, or be empty (23 §6.1). The bound is global to the kind's table, so the depth of that snapshot
-    depends on the write rate of every series in it, within the spec caps: accepted with the D2-M4 ruling
+    depends on the write rate of every series in it, within the spec caps, and for `bars_time` on its kline
+    rows too, which WS never serves (a kline backfill makes time snapshots shallower): accepted with the D2-M4 ruling
     (#2787; owner E12-T06, revisited when `MAX_TAIL_SCAN_ROWS` is re-sized on the target host). The time read's
     bound closes the revisit #399's flag checklist held (R1, 2026-10-21): its row estimate (#399,
-    issuecomment-6325977199) found that a 240 m or longer window reaches the 400 d cap and scans a year of every
+    issuecomment-6325977199) found that a 240 m or longer window spans 333 d up to the 400 d cap (reached from
+    360 m) and so scans about a year of every
     interval's rows of every symbol, about 0.88 M a symbol, past G3's 100 ms mark at five symbols, and kline rows
     add to that once they are written to `bars_time`. A read the bound starts later is counted by kind
     (`bars_tail_scan_bounded_total{kind}`) and logged once with the rows it scanned (`bars_tail_scan_truncated`).
@@ -510,3 +512,4 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
 | 2026-10-18 | author (SR-E12-07, #3476)                               | SR-E12-07 subscribe rate per user built                  |
 | 2026-10-19 | author (SR-E12-02, #2787 D2-M4)                         | WS non-time scan bounded by table rows                   |
 | 2026-10-20 | code + security review r1 (#2787 D2-M4)                 | APPROVE ×2; minors folded                                |
+| 2026-10-21 | author (SR-E12-02, #399 R1)                             | WS time scan bounded by table rows                       |
