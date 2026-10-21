@@ -235,6 +235,7 @@ class SqlAlchemyIndicatorPresetRepository:
 
     async def create(self, owner: str, preset_id: str, fields: PresetFields) -> PresetRow:
         params = _write_params(preset_id, owner, fields)
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_OWNER, {"owner": owner})
@@ -250,6 +251,7 @@ class SqlAlchemyIndicatorPresetRepository:
     async def update(self, owner: str, preset_id: str, fields: PresetFields) -> PresetRow:
         params = _write_params(preset_id, owner, fields)
         del params["indicator_code"]  # immutable: never written by an UPDATE
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 row = (await uow.session.execute(_UPDATE, params)).mappings().first()
@@ -274,6 +276,7 @@ class SqlAlchemyIndicatorPresetRepository:
         if not items:
             return []
         rows: list[Any] = []
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_OWNER, {"owner": owner})

@@ -467,6 +467,7 @@ class SqlAlchemySessionRepository:
             "started_at": state.started_at,
             "view_as_expires_at": state.expires_at,
         }
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             return await self._one(_VIEW_AS_START_SQL, params)
         except sa.exc.IntegrityError as exc:

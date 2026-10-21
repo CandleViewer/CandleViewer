@@ -102,6 +102,7 @@ def _is_outage(exc: BaseException) -> bool:
 @contextmanager
 def _outage() -> Iterator[None]:
     """A database that cannot serve the call becomes `StorageTierUnavailable`; a bug stays one."""
+    # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
     try:
         yield
     except WriteAheadTimeout:

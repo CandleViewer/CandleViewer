@@ -118,6 +118,7 @@ class SqlAlchemyUserLifecycleStore:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)
         counted = _NO_ROLES  # the roles the owner floor counts: an active user's
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session

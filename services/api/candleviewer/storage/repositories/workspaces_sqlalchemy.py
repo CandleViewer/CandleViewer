@@ -374,6 +374,7 @@ class SqlAlchemyWorkspaceRepository:
         self, owner: str, workspace_id: str, fields: WorkspaceFields
     ) -> WorkspaceRow:
         params = {"wid": workspace_id, "owner": owner, **ws_params(fields)}
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_USER, {"owner": owner})
@@ -407,6 +408,7 @@ class SqlAlchemyWorkspaceRepository:
         *,
         if_match: datetime | None,
     ) -> WriteResult[WorkspaceRow]:
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_LOCK_USER, {"owner": owner})
@@ -451,6 +453,7 @@ class SqlAlchemyWorkspaceRepository:
         self, owner: str, workspace_id: str, layout_id: str, fields: LayoutFields
     ) -> LayoutRow:
         ids = {"wid": workspace_id, "owner": owner}
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._lock_workspace(uow, owner, workspace_id)
@@ -487,6 +490,7 @@ class SqlAlchemyWorkspaceRepository:
         if_match: datetime | None,
     ) -> WriteResult[LayoutRow]:
         ids = {"wid": workspace_id, "owner": owner}
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._lock_workspace(uow, owner, workspace_id)

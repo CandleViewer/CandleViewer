@@ -116,6 +116,7 @@ class SqlAlchemyUserRoleStore:
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
         counted = current  # what the floor counts of `current` (`counted_roles`)
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session

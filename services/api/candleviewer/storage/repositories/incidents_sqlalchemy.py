@@ -152,6 +152,7 @@ class SqlAlchemyIncidents:
     async def page(
         self, *, status: str | None, after: Position | None, limit: int
     ) -> list[IncidentRow]:
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._rel.unit_of_work() as uow:  # read-only: no commit
                 await uow.session.execute(_TIMEOUT, {"timeout": READ_TIMEOUT})
@@ -177,6 +178,7 @@ class SqlAlchemyIncidents:
     async def acknowledge(
         self, incident_id: UUID, *, by: UUID, write_ahead: AckWriteAhead
     ) -> AckResult:
+        # nosemgrep: cv-storage-driver-chain reason=2748-s2 owner=@basiltt review=2026-12-31
         try:
             async with self._rel.unit_of_work() as uow:
                 session = uow.session

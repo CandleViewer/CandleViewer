@@ -1,0 +1,59 @@
+rules:
+  - id: cv-storage-driver-chain
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A relational adapter chains a database driver error (`raise ... from exc`) or re-raises it
+      as it is. Its text and cause chain carry the server's `DETAIL` (`Failing row contains (...)`,
+      `Key (col)=(val)`: P1 and S values), which `hide_parameters=True` leaves (C-12.6, C-5.9,
+      #2748). Raise a typed error `from None`, or after the handler, carrying only
+      `sqlstate_of(exc)` / `constraint_of(exc)` (relational_sqlalchemy). Reported on the `try`.
+    metadata:
+      rule-id: cv-storage-driver-chain
+      references: ["#2748 (C-12.6, C-5.9)"]
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except $EXC as $E:
+                  ...
+                  raise $X from $E
+          - pattern: |
+              try:
+                  ...
+              except $EXC as $E:
+                  ...
+                  raise $X from $E
+              finally:
+                  ...
+          - pattern: |
+              try:
+                  ...
+              except $EXC as $E:
+                  ...
+                  raise $E
+          - pattern: |
+              try:
+                  ...
+              except $EXC as $E:
+                  ...
+                  raise
+          - pattern: |
+              try:
+                  ...
+              except $EXC:
+                  ...
+                  raise
+          - pattern: |
+              try:
+                  ...
+              except (..., $EXC, ...):
+                  ...
+                  raise
+      - metavariable-regex:
+          metavariable: $EXC
+          regex: '(?s)^.*\b(SQLAlchemyError|StatementError|DBAPIError|IntegrityError|DataError|OperationalError|ProgrammingError|InterfaceError|InternalError|DatabaseError|NotSupportedError|PostgresError)\b'
+    paths:
+      include:
+        - "services/api/candleviewer/storage/repositories/**"
