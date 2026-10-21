@@ -24,9 +24,9 @@ Restore (E50-T49, 29 §1.3) is `Restorer.restore`: `open_sealed` (HMAC-SHA256
 over chart bytes + blob + machine key, CV-C53) -> the three `cv_` keys checked and removed ->
 `from_snapshot(minimum_version=3, expected_machine_hash=, plugins=)` (CV-C52, MUST-12, R13-W1)
 -> pre-start asserts (C45'', C60, C27', C54) -> `_cv_bring_up` -> bounded `start()` ->
-`cv_bring_up_restored` (a restored `start()` enters no state) -> `journal.replay_once` (only the
-rows the seal names, verified; one P1 page for the rest; a failure stops the machine) ->
-`chain_trips` latch (C63). Any refusal writes a
+`cv_bring_up_restored` (a restored `start()` enters no state; a failure stops the machine) ->
+`journal.replay_once` (only the rows the seal names, verified; one P1 page for the rest; a failure
+stops the machine) -> `chain_trips` latch (C63). Any refusal writes a
 quarantine row and fires a P1 alert; a tampered blob is never loaded. A machine that starts
 without a verified snapshot calls `Restorer.page_unclaimed` instead: no sealed set can claim its
 key's unreplayed rows. `from_snapshot(` appears only in this module (CV-LINT-RESTORE).
@@ -34,8 +34,9 @@ key's unreplayed rows. `from_snapshot(` appears only in this module (CV-LINT-RES
 E50-T63: `Restorer.prepare(key)` (the `machine_events` chain seed) is awaited before anything that
 can write a row or call `plugins(key)`; a failure is `ChainSeedError`. Every `persist()` exception
 pages P1 (a refusal through its fault row's writer), and every page and every `stop()` of a machine
-a restore started is bounded (`PAGE_TIMEOUT_S`, `STOP_TIMEOUT_S`); a start that does not settle is
-stopped and paged as a failed replay is. `ops` counts each persist's and restore's outcome.
+a restore started is bounded (`PAGE_TIMEOUT_S`, `STOP_TIMEOUT_S`); a start that does not settle,
+or a bring-up that raises after it, is stopped and paged as a failed replay is. `ops` counts each
+persist's and restore's outcome.
 
 Storage and audit are injected Protocols: `statechart` may not import
 `audit` or `storage` directly (import-linter, forbidden-M18). The Postgres
@@ -877,6 +878,29 @@ class Restorer:
         )
         raise failure from None
 
+    async def _bring_up(self, key: MachineKey, interp: Interpreter[Any]) -> None:
+        """`cv_bring_up_restored` once a restored `start()` settled (CV-C66'). A plugin's bring-up
+        that raises stops the machine, which would otherwise run with no owner and its rows
+        unreplayed, pages P1 by the error's type only and is raised again without its chain, as a
+        failed `_replay` is; a cancellation stops the machine and passes through (review round 2).
+        Containing each plugin's bring-up inside the factory is #414's slice 2c."""
+        try:
+            factory.cv_bring_up_restored(interp)  # CV-C66': a restored start() enters no state
+            return
+        except asyncio.CancelledError:
+            await self._stop(key, interp)
+            raise
+        except Exception as exc:
+            failure = exc
+        stopped = await self._stop(key, interp)
+        await self._page(
+            key,
+            "restore bring-up failed",
+            f"restore bring-up failed ({type(failure).__name__}): the restored machine "
+            f"{_STOPPED[stopped]} and its rows stay unreplayed for the next restore",
+        )
+        raise failure from None
+
     async def page_unclaimed(self, key: MachineKey) -> int:
         """The start of a machine without a verified snapshot (fresh, after a refused restore,
         after a reset): no sealed set can claim its key's unreplayed rows, such as those of a
@@ -977,7 +1001,7 @@ class Restorer:
                 f"restore({key.machine_kind}) start() did not settle within "
                 f"{CV_START_TIMEOUT}s (CV-C56)"
             ) from exc
-        factory.cv_bring_up_restored(interp)  # CV-C66': a restored start() enters no state
+        await self._bring_up(key, interp)
         report = await self._replay(key, interp, drain)
         if report.skipped or report.missing:
             await self._page(key, "drain journal rows skipped or missing", _skipped_page(report))
