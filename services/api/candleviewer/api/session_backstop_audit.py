@@ -27,6 +27,7 @@ from typing import Final
 from candleviewer.api.csrf import AuditEmitterLike, RefusalAuditTracker
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.session_service import BackstopRevocation
+from candleviewer.observability.context import current_request_uuid
 
 #: Logged when a write fails after its caller stopped waiting.
 LATE_FAILURE_EVENT: Final = "auth.disabled_user_session_audit_failed_late"
@@ -59,6 +60,7 @@ class SessionBackstopAudit:
                 severity=Severity.WARNING,
                 reason="user_disabled",
                 after_state={"user_status": "gone" if status is None else status.value},
+                request_id=current_request_uuid(),
             ),
             late_failure_event=LATE_FAILURE_EVENT,
         )

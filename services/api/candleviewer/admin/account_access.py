@@ -25,7 +25,7 @@ import structlog
 from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total
 from candleviewer.auth.step_up import PositionStateProvider
-from candleviewer.observability.context import current_request_id, spawn
+from candleviewer.observability.context import current_request_uuid, spawn
 from candleviewer.storage.repositories import account_access as aa
 
 COUNT_TIMEOUT_S: Final = 2.0  # AC7: how long the open-position count may take, then unknown
@@ -67,10 +67,6 @@ class GrantsNotifier(Protocol):  # `WsEvents`, which admin may not import (CONST
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
-
-
-def _request_uuid() -> uuid.UUID | None:  # `CorrelationMiddleware` binds a UUID4, if any
-    return uuid.UUID(rid) if (rid := current_request_id()) else None
 
 
 async def _count(read: Awaitable[int | None], timeout_s: float) -> int | None:
@@ -123,7 +119,7 @@ class AccountAccessService:
     ) -> aa.AccessChange:
         """Raises the store's refusals (nothing changed) or its failure. `actor_ip` and
         `session_id` name the caller in the change's audit records (C-2.9)."""
-        rid = _request_uuid()  # first: a bad id must not strand the count read built below
+        rid = current_request_uuid()
         read = self._positions.open_position_count(str(user_id))
         removal = aa.RemovalContext(
             open_position_count=await _count(read, self._count_timeout_s),

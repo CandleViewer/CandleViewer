@@ -45,6 +45,7 @@ from candleviewer.admin.backups.limits import STREAM_READ_BUDGET_S
 from candleviewer.admin.errors import AdminError, OpsAuditUnavailable, OpsNotWired, OpsUnavailable
 from candleviewer.admin.http import PrincipalResolver
 from candleviewer.api.csrf import route_path, source_ip
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.backup_artefacts import ArtefactUnreadable
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
@@ -164,10 +165,9 @@ def make_admin_backup_download_router(
             if bearer is None:
                 return _problem(401, ErrorCode.UNAUTHENTICATED, "no verified session")
         backup = uuid.UUID(backup_id) if _UUID.fullmatch(backup_id) else None
-        rid = request.headers.get("x-request-id", "")
-        request_id = uuid.UUID(rid) if _UUID.fullmatch(rid) else None
         fetch_token = token if _TOKEN.fullmatch(token) else None
-        ask = Fetch(backup, fetch_token, bearer, source_ip(request.scope), request_id)
+        # #3990: the id `CorrelationMiddleware` bound and the response echoes; no header is read
+        ask = Fetch(backup, fetch_token, bearer, source_ip(request.scope), current_request_uuid())
 
         # Each record is the service's own `audit_serve`, called from the handler (SR-112's shape).
         async def write_ahead(record: ServeRecord) -> None:

@@ -44,6 +44,7 @@ from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.invite_service import InviteService, InviteTamperReason
 from candleviewer.auth.models import CreatedInvite, InviteCreateRequest, InviteRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.errors import WriteAheadTimeout
 
 _TOKEN = Path(alias="inviteToken", min_length=16, max_length=128)
@@ -158,7 +159,14 @@ def make_invites_router(
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
         try:
-            await enforce(principal, Permission.USERS_WRITE, scope=Scope.NONE, emitter=emitter)
+            await enforce(
+                principal,
+                Permission.USERS_WRITE,
+                scope=Scope.NONE,
+                emitter=emitter,
+                actor_ip=_actor_ip(request),
+                request_id=current_request_uuid(),
+            )
         except ForbiddenError as exc:
             return _problem(
                 403, "Forbidden", "forbidden", code="forbidden", reason=exc.deny.reason.value
@@ -176,6 +184,7 @@ def make_invites_router(
             object_kind="user",
             object_id=str(target),
             after_state={"role": role},
+            request_id=current_request_uuid(),
         )
 
     async def _reject_audit(reason: str, request: Request) -> None:
@@ -186,6 +195,7 @@ def make_invites_router(
             outcome=AuditOutcome.DENIED,
             severity=Severity.WARNING if reason in _WARNING_REASONS else Severity.INFO,
             reason=reason,
+            request_id=current_request_uuid(),
         )
 
     async def _json_body(request: Request) -> dict[str, Any] | None:
@@ -230,6 +240,7 @@ def make_invites_router(
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="invalid_invite_request",
+                request_id=current_request_uuid(),
             )
             return _problem(422, "Unprocessable entity", "invalid invite request")
         try:
@@ -414,6 +425,7 @@ def make_invites_router(
                 severity=Severity.WARNING,
                 before_state={"role": stored_role},
                 after_state={"role": "viewer"},
+                request_id=current_request_uuid(),
             )
 
         try:
@@ -437,6 +449,7 @@ def make_invites_router(
             object_kind="user",
             object_id=str(record.user_id),
             after_state={"role": record.role},
+            request_id=current_request_uuid(),
         )
         return JSONResponse(
             status_code=200,

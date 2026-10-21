@@ -32,6 +32,7 @@ from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import StepUpChallenge
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor, RuleAuditUnavailable, RuleError
 
 STEP_UP_CLASS = "live_enablement"
@@ -112,6 +113,7 @@ def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
             object_id=str(payload.get("rule_id", "")),
             before_state=_before(payload),
             after_state={k: v for k, v in payload.items() if k != "actor"} | {"event": action},
+            request_id=current_request_uuid(),
         )
 
     return audit

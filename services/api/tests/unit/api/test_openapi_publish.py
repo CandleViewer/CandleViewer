@@ -370,7 +370,7 @@ def test_openapi_json_is_a_redacted_500_for_a_refused_or_failed_publish_then_rec
         "status": 500,
         "code": "internal_error",
     }
-    assert set(refused.headers) <= {"content-length", "content-type"}
+    assert set(refused.headers) <= {"content-length", "content-type", "x-content-type-options"}
     list_drawings = SUBSET["paths"]["/drawings"]["get"]["operationId"]
     for fragment in (*leaks, "/drawings", list_drawings):
         assert fragment not in refused.text, fragment

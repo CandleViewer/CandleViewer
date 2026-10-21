@@ -97,7 +97,7 @@ class Problem(BaseModel):
     instance: Annotated[
         str | None,
         Field(
-            description="Correlation id, `urn:cv:req:{uuid}`; matches the `X-Request-Id` header and the audit entry."
+            description="Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry."
         ),
     ] = None
     code: Annotated[

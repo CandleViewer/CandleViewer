@@ -121,6 +121,7 @@ from candleviewer.auth.models import (
     UserStatus,
 )
 from candleviewer.auth.recovery_codes import RECOVERY_CODE_COUNT
+from candleviewer.observability.context import current_request_uuid
 
 #: `sessions.revoked_reason` and audit `reason` of the sessions a confirmed enrolment ends:
 #: every session of the user, the caller's own included (rotation, SR-013) (#2295).
@@ -245,6 +246,7 @@ class AuditWriterLike(Protocol):
         session_id: str | uuid.UUID | None = None,
         reason: str | None = None,
         after_state: dict[str, Any] | None = None,
+        request_id: str | uuid.UUID | None = None,
     ) -> None: ...
 
 
@@ -268,7 +270,12 @@ async def _audit(
     if audit_service is None or not audit_service.is_active:
         return
     await audit_service.writer.emit(
-        action, actor_label=actor_label, actor_ip=actor_ip, outcome=outcome, severity=severity
+        action,
+        actor_label=actor_label,
+        actor_ip=actor_ip,
+        outcome=outcome,
+        severity=severity,
+        request_id=current_request_uuid(),
     )
 
 
@@ -374,6 +381,7 @@ def make_auth_router(
                     severity=Severity.WARNING,
                     reason=reason,
                     after_state=after,
+                    request_id=current_request_uuid(),
                 )
             except AuditError as exc:
                 auth_session_fixation_attempts_total.labels(reason="audit_failed").inc()
@@ -406,6 +414,7 @@ def make_auth_router(
                 reason="user_disabled",
                 session_id=session_id,
                 after_state=after_state,
+                request_id=current_request_uuid(),
             )
         except AuditError as exc:
             _log().error("auth.login_failed.audit_unavailable", error=type(exc).__name__)
@@ -453,7 +462,11 @@ def make_auth_router(
         ip, session_id, only = _client_ip(request), uuid.uuid4(), {"enrolment_only": True}
         try:
             await writer.emit(
-                "auth.login", actor_label=identifier, actor_user_id=user_id, actor_ip=ip
+                "auth.login",
+                actor_label=identifier,
+                actor_user_id=user_id,
+                actor_ip=ip,
+                request_id=current_request_uuid(),
             )
             await writer.emit(
                 "auth.session_created",
@@ -462,6 +475,7 @@ def make_auth_router(
                 actor_ip=ip,
                 session_id=session_id,
                 after_state={**only, "mfa_satisfied": False},
+                request_id=current_request_uuid(),
             )
         except AuditError:
             return unaudited
@@ -654,6 +668,7 @@ def make_auth_router(
                 session_id=minted.session_id,
                 outcome=AuditOutcome.SUCCESS,
                 after_state={"mfa_method": "totp", "mfa_satisfied": True},
+                request_id=current_request_uuid(),
             )
         response = JSONResponse(
             status_code=200,
@@ -702,7 +717,13 @@ def make_auth_router(
             one that cannot be written is logged and the answer stands, the same either way."""
             auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
             try:
-                await writer.emit(action, actor_ip=ip, outcome=outcome, **row)
+                await writer.emit(
+                    action,
+                    actor_ip=ip,
+                    outcome=outcome,
+                    request_id=current_request_uuid(),
+                    **row,
+                )
             except AuditError as exc:
                 _log().error(
                     "auth.recovery.audit_unavailable", action=action, error=type(exc).__name__
@@ -767,6 +788,7 @@ def make_auth_router(
                 session_id=sid,
                 reason=reason,
                 after_state=after,
+                request_id=current_request_uuid(),
             )
 
         try:
@@ -849,6 +871,7 @@ def make_auth_router(
                 actor_ip=_client_ip(request),
                 session_id=record.id,
                 after_state={"method": MfaMethodKind.TOTP.value},
+                request_id=current_request_uuid(),
             )
         except AuditError:
             return _problem(503, "Service unavailable", "audit sink not active")
@@ -909,6 +932,7 @@ def make_auth_router(
                     session_id=sid,
                     reason=reason,
                     after_state=after,
+                    request_id=current_request_uuid(),
                 )
         except AuditError:
             return _problem(503, "Service unavailable", "audit sink not active")
@@ -942,6 +966,7 @@ def make_auth_router(
                 session_id=new_id,
                 reason=reason,
                 after_state=void,
+                request_id=current_request_uuid(),
             )
 
         try:

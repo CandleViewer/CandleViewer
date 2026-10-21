@@ -21,6 +21,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
+from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.storage.errors import WriteAheadTimeout
 
 OWNER = uuid.uuid4()
@@ -601,3 +602,60 @@ def test_put_roles_without_a_bearer_is_401_unauthenticated() -> None:
     )
     r = TestClient(app).put(f"/users/{TARGET}/roles", json={"roles": ["manager"]})
     assert (r.status_code, r.json()["code"]) == (401, "unauthenticated")
+
+
+# ---- #3990: every role-change record names the id `CorrelationMiddleware` bound ---------------
+
+_BOUND = "3f2b8c1e-9d4a-4b7e-8a51-0c6d2e7f9a10"
+
+
+def _correlated(
+    store: _Store, snap: PrincipalSnapshot, em: _Emitter, n: _Notifier, *, elevated: bool = True
+) -> TestClient:
+    app = FastAPI()
+    app.add_middleware(CorrelationMiddleware)
+    app.include_router(make_users_router(store, em, _Resolver(snap), n, auth=_Auth(elevated)))
+    return TestClient(app, client=("100.64.0.9", 50000), headers={"Authorization": "Bearer tok"})
+
+
+def test_put_roles_denial_names_the_minted_request_id_and_the_address() -> None:
+    em = _Emitter()
+    c = _correlated(_Store({"viewer"}, 1), _manager(), em, _Notifier())
+    r = c.put(f"/users/{TARGET}/roles", json={"roles": ["owner"]})
+    assert r.status_code == 403
+    (denied,) = em.calls
+    assert denied["action"] == "rbac.denied"
+    assert str(denied["request_id"]) == r.headers["x-correlation-id"]
+    assert denied["actor_ip"] == "100.64.0.9"
+
+
+def test_put_roles_self_target_refusal_names_the_request_and_the_address() -> None:
+    em = _Emitter()
+    c = _correlated(_Store({"owner"}, 2), _admin(), em, _Notifier())
+    sent = {"X-Correlation-Id": _BOUND}
+    r = c.put(f"/users/{OWNER}/roles", json={"roles": ["viewer"]}, headers=sent)
+    assert r.status_code == 403
+    (denied,) = em.calls
+    assert (denied["reason"], str(denied["request_id"])) == ("self_target", _BOUND)
+    assert denied["actor_ip"] == "100.64.0.9"
+
+
+def test_put_roles_change_records_carry_the_inbound_correlation_id() -> None:
+    store, em = _Store({"viewer"}, 2), _Emitter()
+    c = _correlated(store, _admin(), em, _Notifier())
+    r = c.put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}, headers={"X-Correlation-Id": _BOUND}
+    )
+    assert r.status_code == 200
+    assert {c_["action"] for c_ in em.calls} == {"roles.grant", "roles.revoke"}
+    assert {str(c_["request_id"]) for c_ in em.calls} == {_BOUND}
+
+
+def test_put_roles_owner_floor_refusal_carries_the_minted_request_id() -> None:
+    em = _Emitter()
+    c = _correlated(_Store({"owner"}, 1), _admin(), em, _Notifier())
+    r = c.put(f"/users/{TARGET}/roles", json={"roles": ["viewer"]})
+    assert r.status_code == 409
+    (denied,) = em.calls
+    assert (denied["action"], denied["reason"]) == ("rbac.denied", "owner_floor")
+    assert str(denied["request_id"]) == r.headers["x-correlation-id"]

@@ -8,7 +8,9 @@ which the router maps to 401. Permissions are read server-side per request
 `actor_ip` of every route that resolves one) is the address MeshOnly admitted,
 as the auth audit records it: behind the configured trusted proxy, the client's
 hop, never the proxy (#2275). `last_step_up_at` is read from the same session row, so the
-resolver makes no query of its own for it (#2754).
+resolver makes no query of its own for it (#2754). Its `request_id` is the id
+`CorrelationMiddleware` bound for the request, the one the response echoes as `X-Correlation-Id`
+(#3990): never a request header read here, so no record written with it carries NULL.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import last_step_up_at
+from candleviewer.observability.context import current_request_uuid
 
 
 def _is_owner(user_id: uuid.UUID, roles: Any) -> bool:
@@ -78,11 +81,6 @@ class SessionAuditPrincipalResolver:
             return None
         if user.get("status") != "active":
             return None
-        rid = request.headers.get("x-request-id")
-        try:
-            request_id = uuid.UUID(rid) if rid else None
-        except ValueError:
-            request_id = None
         return AuditPrincipal(
             user_id=record.user_id,
             username=str(user["username"]),
@@ -91,5 +89,5 @@ class SessionAuditPrincipalResolver:
             last_step_up_at=_last_step_up_at(record),
             session_id=record.id,
             ip=source_ip(request.scope),
-            request_id=request_id,
+            request_id=current_request_uuid(),
         )

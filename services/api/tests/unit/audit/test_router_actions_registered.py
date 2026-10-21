@@ -22,7 +22,7 @@ _MODULES = sorted(
     [p.relative_to(_ROOT).as_posix() for p in (_ROOT / "api").glob("*.py")]
     + ["ws/gateway.py", "ws/origin_audit.py", "ws/permissions.py"]
 )
-_EMITTERS = frozenset({"emit", "_audit", "_audit_owner"})
+_EMITTERS = frozenset({"emit", "_audit", "_audit_owner", "audit_event"})
 _ACTION = re.compile(r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$")
 
 
@@ -36,9 +36,11 @@ def _emitted(module: str) -> set[str]:
         if name not in _EMITTERS:
             continue
         for arg in node.args[:2]:  # `emit(action, ...)` or `_audit(service, action, ...)`
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                if _ACTION.match(arg.value):
-                    found.add(arg.value)
+            # `"a.on" if flag else "a.off"`: both actions are emitted.
+            for value in (arg.body, arg.orelse) if isinstance(arg, ast.IfExp) else (arg,):
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    if _ACTION.match(value.value):
+                        found.add(value.value)
     return found
 
 
@@ -54,6 +56,7 @@ def test_the_scan_still_finds_the_actions_it_guards() -> None:
         | _emitted("api/invites.py")
         | _emitted("api/onboarding.py")
         | _emitted("ws/origin_audit.py")
+        | _emitted("api/alerts.py")
     )
     assert {
         "auth.login",
@@ -61,4 +64,6 @@ def test_the_scan_still_finds_the_actions_it_guards() -> None:
         "users.invite_refused",
         "onboarding.checklist_tamper_rejected",
         "auth.ws_origin_refused",
+        "alert.created",
+        "alert.disabled",
     } <= found

@@ -43,6 +43,7 @@ from candleviewer.api.csrf import (
     ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
     SESSION_REFUSALS_PER_WINDOW,
+    source_ip,
 )
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.api.storage_outage import is_storage_outage
@@ -72,6 +73,7 @@ from candleviewer.auth.step_up import (
     StepUpService,
 )
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.redaction import redact_text
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
@@ -336,6 +338,7 @@ async def spend_bound_grant(
                     "bound_request_sha256": exc.bound,
                     "refused_request_sha256": fingerprint,
                 },
+                request_id=current_request_uuid(),
             )
         )
     except StepUpRequired:
@@ -707,6 +710,7 @@ def make_step_up_router(
             actor_label=str(record.user_id),
             actor_user_id=record.user_id,
             session_id=record.id,
+            request_id=current_request_uuid(),
             **kw,
         )
 
@@ -816,7 +820,9 @@ def make_step_up_router(
                 Permission.USERS_WRITE,
                 scope=Scope.NONE,
                 emitter=emitter,
+                actor_ip=source_ip(request.scope),
                 session_id=record.id,
+                request_id=current_request_uuid(),
             )
         except ForbiddenError:
             return _problem(403, "forbidden", "Forbidden", "owner only")

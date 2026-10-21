@@ -53,6 +53,7 @@ from candleviewer.alerts.dispatcher import Metric
 from candleviewer.api.alerts import READ, WRITE
 from candleviewer.api.alerts_http import AuditEmitter, Problem, ProblemRoute, Resolver, caller
 from candleviewer.audit.models import AuditOutcome
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor
 
 #: SR-026: the declared query parameters of `listAlertDeliveries`; any other key is refused.
@@ -311,7 +312,7 @@ def make_alert_deliveries_router(
                      **fields: Any) -> None:  # fmt: skip
         await audit.emit(
             action, actor_label=actor.user_id, actor_user_id=actor.user_id,
-            object_kind=kind, object_id=object_id, **fields,
+            object_kind=kind, object_id=object_id, request_id=current_request_uuid(), **fields,
         )  # fmt: skip
 
     async def _deny(actor: Actor, kind: str, object_id: str, reason: str) -> None:

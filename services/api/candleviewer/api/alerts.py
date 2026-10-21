@@ -32,6 +32,7 @@ from candleviewer.api.alerts_http import ProblemRoute as _ProblemRoute
 from candleviewer.api.alerts_http import caller
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.domain.text import refuse_unstorable_text
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary.registry import MetricRegistry
 from candleviewer.storage.repositories.alerts import (
@@ -125,10 +126,10 @@ class _Deps:
             raise _Problem(503, "service_unavailable", "Unavailable", "metric registry unavailable")
         return AlertCompiler(reg)
 
-    async def emit(self, action: str, actor: Actor, alert_id: str, **kw: Any) -> None:
+    async def audit_event(self, action: str, actor: Actor, alert_id: str, **kw: Any) -> None:
         await self.audit.emit(
             action, actor_label=actor.user_id, actor_user_id=actor.user_id,
-            object_kind="alert", object_id=alert_id, **kw,
+            object_kind="alert", object_id=alert_id, request_id=current_request_uuid(), **kw,
         )  # fmt: skip
 
     def dump(self, row: AlertRow) -> dict[str, Any]:
@@ -177,8 +178,9 @@ def make_alerts_router(
             if row is None:
                 raise _not_found()
             if row.owner_user_id != actor.user_id:
-                await d.emit("alert.denied", actor, str(alertId), outcome=AuditOutcome.DENIED,
-                             reason="alert owned by another user")  # fmt: skip
+                await d.audit_event("alert.denied", actor, str(alertId),
+                                    outcome=AuditOutcome.DENIED,
+                                    reason="alert owned by another user")  # fmt: skip
                 raise _not_found()
             return actor, row
 
@@ -262,7 +264,7 @@ def make_alerts_router(
         body, compiled = await parse(request, actor)
         alert_id = str(uuid4())
         # Write-ahead (C-2.9): the audit record lands first; if it fails nothing is persisted.
-        await d.emit("alert.created", actor, alert_id, after_state={
+        await d.audit_event("alert.created", actor, alert_id, after_state={
             "name": body.name, "condition_hash": compiled.condition_hash,
             "enabled": body.enabled, "channels": list(body.channels)})  # fmt: skip
         try:
@@ -291,10 +293,11 @@ def make_alerts_router(
         body, compiled = await parse(request, actor)
         if if_match != row.updated_at:  # stale: refuse before auditing (store re-checks atomically)
             raise _stale()
-        await d.emit("alert.updated", actor, row.id, before_state=_audit_view(row),
-                     after_state={"name": body.name, "condition_hash": compiled.condition_hash,
-                                  "enabled": body.enabled,
-                                  "channels": list(body.channels)})  # fmt: skip
+        await d.audit_event("alert.updated", actor, row.id, before_state=_audit_view(row),
+                            after_state={"name": body.name,
+                                         "condition_hash": compiled.condition_hash,
+                                         "enabled": body.enabled,
+                                         "channels": list(body.channels)})  # fmt: skip
         try:
             new = await d.store().update(
                 row.id, if_match=if_match, **update_fields(body, compiled, row)
@@ -309,7 +312,7 @@ def make_alerts_router(
     @router.delete("/alerts/{alertId}")
     async def delete_alert(got: Annotated[tuple[Actor, AlertRow], Depends(owned_w)]) -> Response:
         actor, row = got
-        await d.emit("alert.deleted", actor, row.id, before_state={"name": row.name})
+        await d.audit_event("alert.deleted", actor, row.id, before_state={"name": row.name})
         if not await d.store().soft_delete(row.id):
             raise _not_found()
         await d.on_change(row.id)
@@ -325,9 +328,9 @@ def make_alerts_router(
         except (ValueError, ValidationError):
             raise _Problem(422, "validation_failed", "Invalid body",
                            "Body must be {\"enabled\": true|false}.") from None  # fmt: skip
-        await d.emit("alert.enabled" if body.enabled else "alert.disabled", actor, row.id,
-                     before_state={"enabled": row.enabled},
-                     after_state={"enabled": body.enabled})  # fmt: skip
+        await d.audit_event("alert.enabled" if body.enabled else "alert.disabled", actor, row.id,
+                            before_state={"enabled": row.enabled},
+                            after_state={"enabled": body.enabled})  # fmt: skip
         new = await d.store().set_enabled(row.id, body.enabled)
         if new is None:
             raise _not_found()

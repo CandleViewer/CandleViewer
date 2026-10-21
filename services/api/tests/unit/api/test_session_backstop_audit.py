@@ -31,6 +31,7 @@ from candleviewer.audit.service import AuditService, LaneNotWired
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.models import UserStatus
 from candleviewer.auth.session_service import BackstopRevocation
+from candleviewer.observability.context import bind_context
 from candleviewer.settings import Environment, Settings
 from tests.unit.audit.audit_fakes import FakeAuditRepository
 from tests.unit.audit.audit_waits import virtual
@@ -92,9 +93,19 @@ async def test_the_record_names_the_session_its_user_and_the_status_read(
                 "severity": Severity.WARNING,
                 "reason": "user_disabled",
                 "after_state": {"user_status": read},
+                "request_id": None,  # no request is bound here (#3990)
             },
         )
     ]
+
+
+async def test_the_record_carries_the_id_the_correlation_middleware_bound() -> None:
+    emitter, bound = _Emitter(), uuid.uuid4()
+
+    with bind_context(request_id=str(bound)):  # as `CorrelationMiddleware` binds it
+        await _call(emitter, RefusalAuditTracker())
+
+    assert [kwargs["request_id"] for _, kwargs in emitter.calls] == [bound]
 
 
 async def test_a_failed_write_reaches_the_caller_and_leaves_nothing_in_flight() -> None:

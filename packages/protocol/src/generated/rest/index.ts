@@ -8229,7 +8229,7 @@ export interface components {
        * @description `session_idle_locked` only: when the session idle-locked (its `idle_deadline`).
        */
       idle_locked_at?: string;
-      /** @description Correlation id, `urn:cv:req:{uuid}`; matches the `X-Request-Id` header and the audit entry. */
+      /** @description Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry. */
       instance?: string;
       required_permissions?: string[];
       retry_after_seconds?: number;

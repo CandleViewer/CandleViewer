@@ -83,7 +83,7 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, is_live_session
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.net import RESOLVED_SOURCE_KEY
-from candleviewer.observability.context import spawn
+from candleviewer.observability.context import current_request_uuid, spawn
 
 CSRF_ERROR_CODE = "csrf_token_invalid"
 CSRF_PROBLEM_TYPE = f"https://candleviewer.local/errors/{CSRF_ERROR_CODE}"
@@ -593,7 +593,8 @@ class CsrfMiddleware:
         `TimeoutError` itself (the task's own outcome decides, not the clock). A failure after
         the caller stopped waiting, or its request was cancelled, is the tracker's to report."""
         task = self.tracker.track(
-            self._audit.emit("auth.csrf_refused", **fields), on_lost=_count_audit_unavailable
+            self._audit.emit("auth.csrf_refused", request_id=current_request_uuid(), **fields),
+            on_lost=_count_audit_unavailable,
         )
         try:
             await asyncio.wait_for(asyncio.shield(task), self._audit_timeout_s)

@@ -7,13 +7,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.audit import make_audit_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
 from candleviewer.net import CidrAllowList, MeshOnlyMiddleware
+from candleviewer.observability.correlation import CorrelationMiddleware
 from tests.unit.api.test_audit_router import _FakeAuditService
 
 _OWNER = uuid.uuid4()
@@ -171,3 +172,43 @@ def test_resolver_unknown_role_fails_closed_not_owner() -> None:
     from candleviewer.api.audit_principal import _is_owner
 
     assert _is_owner(uuid.uuid4(), ["owner", "superadmin"]) is False
+
+
+# ---- #3990: the principal's `request_id` is the id `CorrelationMiddleware` bound ------------
+
+_BOUND = "3f2b8c1e-9d4a-4b7e-8a51-0c6d2e7f9a10"
+_OLD_CLIENT = "00000000-0000-4000-8000-0000000000aa"
+
+
+def _resolved(headers: dict[str, str]) -> tuple[str | None, str]:
+    """`(the principal's request_id, the X-Correlation-Id the response echoes)` for one request."""
+    app = FastAPI()
+    app.add_middleware(CorrelationMiddleware)
+    resolver = SessionAuditPrincipalResolver(lambda: _Sessions(), _Identity())
+
+    @app.get("/probe")
+    async def probe(request: Request) -> dict[str, str | None]:
+        principal = await resolver.resolve(request)
+        assert principal is not None
+        return {"request_id": None if principal.request_id is None else str(principal.request_id)}
+
+    r = TestClient(app).get("/probe", headers={"Authorization": "Bearer owner-tok", **headers})
+    return r.json()["request_id"], r.headers["X-Correlation-Id"]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"X-Request-Id": _OLD_CLIENT}, {"X-Correlation-Id": "'; DROP TABLE audit_log;--"}],
+    ids=["neither_header", "old_client_x_request_id", "hostile_correlation_id"],
+)
+def test_principal_request_id_is_the_minted_id_when_no_valid_one_is_sent(
+    headers: dict[str, str],
+) -> None:
+    seen, echoed = _resolved(headers)  # the web client sends neither header
+    assert seen == echoed != _OLD_CLIENT
+    assert uuid.UUID(echoed).version == 4
+
+
+@pytest.mark.parametrize("old", [{}, {"X-Request-Id": _OLD_CLIENT}], ids=["alone", "with_old"])
+def test_principal_request_id_is_the_inbound_correlation_id(old: dict[str, str]) -> None:
+    assert _resolved({"X-Correlation-Id": _BOUND, **old}) == (_BOUND, _BOUND)

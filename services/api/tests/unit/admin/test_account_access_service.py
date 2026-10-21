@@ -172,12 +172,13 @@ async def test_replace_names_the_request_in_the_record_written_ahead(
     assert record["request_id"] == bound
 
 
-async def test_replace_refuses_a_malformed_request_id_before_asking_for_a_count() -> None:
-    """The id is parsed first: a count read built before it would be left never awaited."""
+async def test_replace_writes_a_request_id_that_is_no_uuid_as_none() -> None:
+    """The shared helper never raises: a bad id cannot fail the change it would name (#3990)."""
     w = _World()
-    with bind_context(request_id="not-a-uuid"), pytest.raises(ValueError, match="UUID"):
-        await w.service.replace(TARGET, {}, **_ACKNOWLEDGED)
-    assert w.positions.asked == [] and w.unchanged()
+    with bind_context(request_id="not-a-uuid"):
+        await w.service.replace(TARGET, {_B: "trade"}, **_ACKNOWLEDGED)
+    ((_, record, _, _),) = w.audit.calls
+    assert record["request_id"] is None
 
 
 async def test_noop_writes_nothing_and_pushes_nothing() -> None:

@@ -27,6 +27,7 @@ from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService, LaneKeyLoader, LaneNotWired
 from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
     AuthKeyStore,
@@ -103,6 +104,7 @@ def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any
         "object_id": fields.get("key_id"),
         "severity": Severity.ERROR if action in _SECRETS_ERRORS else Severity.INFO,
         "after_state": dict(fields),
+        "request_id": current_request_uuid(),  # the request the change is part of (#3990)
     }
     if action == _SECRETS_REFUSED:
         columns |= {"outcome": AuditOutcome.DENIED, "severity": Severity.WARNING}
@@ -232,6 +234,7 @@ def audit_writer_sink(writer: Any) -> Callable[[str, dict[str, str]], Awaitable[
             severity=Severity.ERROR if data.get("severity") == "high" else Severity.WARNING,
             before_state=_before(data),
             after_state={k: v for k, v in data.items() if k != "scope_before"},
+            request_id=current_request_uuid(),
         )
 
     return sink
