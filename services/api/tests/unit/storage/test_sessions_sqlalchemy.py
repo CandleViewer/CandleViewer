@@ -239,6 +239,18 @@ async def test_create_session_inserts_under_the_users_row_lock_in_one_transactio
     assert (rel.units, rel.commits) == (1, 1) and got is session
 
 
+async def test_create_session_binds_the_activity_stamp_the_record_carries() -> None:
+    """#4012: a refresh carries `last_seen_at` to its successor, so the insert binds the record's
+    stamp, never the column's `DEFAULT now()`."""
+    repo, rel = _repo([SimpleNamespace(_mapping={"status": "active"})])
+    session = SimpleNamespace(**row_to_fields(_row(last_seen_at=_NOW - timedelta(minutes=7))))
+
+    await repo.create_session(session)
+
+    _, (_, insert_params) = rel.session.calls
+    assert insert_params["last_seen_at"] == session.last_seen_at != session.issued_at
+
+
 @pytest.mark.parametrize("status", ["disabled", None])
 async def test_create_session_for_a_disabled_user_inserts_nothing(status: str | None) -> None:
     """`None`: no such user, or a soft-deleted one."""

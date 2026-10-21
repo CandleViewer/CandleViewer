@@ -15,7 +15,7 @@ import pytest
 
 from candleviewer.auth.errors import SessionIdleLocked
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import MintedSession
+from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.session_service import DEFAULT_IDLE_TIMEOUT_S, SessionService
 
 from .session_fakes import FakeSessionRepository
@@ -76,3 +76,30 @@ async def test_a_sign_in_starts_the_idle_clock_at_its_own_time() -> None:
     clock.now += timedelta(hours=1)
     session = await svc.mint(_USER)
     assert repo.sessions[str(session.session_id)].last_seen_at == clock.now
+
+
+class _TouchBeforeClaim(FakeSessionRepository):
+    """An interactive request lands between refresh()'s read and its claim: the claim's row
+    holds the newer stamp, `presented` the older one."""
+
+    def __init__(self, at: datetime) -> None:
+        super().__init__()
+        self.at = at
+
+    async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
+        if reason == "rotated":
+            await self.touch_last_seen(session_id, now=self.at)
+        return await super().revoke(session_id, reason=reason, now=now)
+
+
+async def test_the_successor_carries_the_claims_stamp_not_the_read_one() -> None:
+    clock = _Clock()
+    touched = _T0 + timedelta(minutes=5)
+    repo = _TouchBeforeClaim(touched)
+    svc = SessionService(repo, Hasher(), clock=clock)
+    session = await svc.mint(_USER)
+    clock.now += timedelta(minutes=6)
+
+    successor = (await svc.refresh(session.refresh_token)).minted
+
+    assert repo.sessions[str(successor.session_id)].last_seen_at == touched  # not _T0

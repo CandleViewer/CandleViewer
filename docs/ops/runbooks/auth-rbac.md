@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -23,14 +23,21 @@ Quick facts the procedures rely on:
 | Audit volume     | `cv-audit-data` at `/var/lib/candleviewer/audit`; back it up with Postgres          | `infra/compose/docker-compose.yml`, §3                                           |
 
 **What counts as activity for the idle lock (#4012).** The idle clock runs from the session's
-`last_seen_at`, and only a request that authenticates its bearer with
-`authenticate_access_token(touch=True)` re-stamps it: `GET /me`, `GET /auth/session` with a
-bearer, the session routes outside the idle-locked set, MFA enrolment, and the rules and audit
-reads. The idle-lock middleware authenticates without re-stamping, and a token refresh carries the
-presented session's `last_seen_at` to its successor instead of starting the clock again. A tab
-whose only requests are its token refreshes (about every 11 minutes) therefore locks after its idle
-timeout, 15 minutes by default, and its next refresh is answered `401 session_idle_locked`; the
-user unlocks with their password (`POST /auth/unlock`).
+`last_seen_at`. A request re-stamps it only when its handler authenticates the bearer with
+`authenticate_access_token(touch=True)`: the `/me` routes (`GET /me`, `/me/preferences`,
+`/me/keymap`), `GET /auth/sessions`, MFA enrolment, and the routes behind the session-backed
+principal resolvers (the rules, audit and admin routes and owner user management; list them with
+`rg 'touch=True' services/api/candleviewer`). A successful `POST /auth/unlock` re-stamps it too.
+Nothing else does: not `GET /auth/session`, `DELETE /me/sessions/{sessionId}`, `POST /auth/logout`,
+the idle-lock middleware, the step-up and read-only guards, WS traffic, nor a token refresh, which
+carries the presented session's `last_seen_at` to its successor. A tab whose only requests are its
+token refreshes (about every 11 minutes) therefore locks after its idle timeout, 15 minutes by
+default: its next refresh is answered `401 session_idle_locked`, and its socket ends
+`token_expired` within one access-token lifetime. `POST /auth/unlock` is dark until #2300's last
+slice (§1), so until then the way out of a lock is `POST /auth/logout` and a new sign-in. The
+contract's "Activity is explicit" model, in which only `POST /auth/session/extend` and
+`POST /auth/unlock` count, is not what ships: `extend` is not served yet, and activity is implicit
+on the routes above.
 
 ## 1. Unlock a locked account (SR-016)
 
