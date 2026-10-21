@@ -3918,8 +3918,11 @@ The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends
    adapter (which may not import `ingestion`); a registry test fails on any drift. As shipped:
    `bybit_rest_requests_total{endpoint,result}`, `bybit_rest_latency_seconds{endpoint}`,
    `bybit_rate_limit_remaining{scope,endpoint_class}` (`scope` ∈ `public|account` — **never a UID**,
-   which is an account identifier), `bybit_rate_limited_total{code}`, `exchange_errors_total{class}`.
-   Clock thresholds in §14.3 are unchanged: warn > 500 ms, block > 2000 ms (`recv_window/2`).
+   which is an account identifier), `bybit_rate_limited_total{code}`, `exchange_errors_total{class}`,
+   `bybit_rows_refused_total{reason}` (a trading read's row set aside, rule 12) and
+   `cv_bybit_unknown_fields_total{model}` (reply fields the strict trading models do not know, #2877
+   ruling R7). Clock thresholds in §14.3 are unchanged: warn > 500 ms, block > 2000 ms
+   (`recv_window/2`).
 10. **Ingest-boundary validation (#1889 / #1890 / #1892).** Parsers check market plausibility
     _before_ building a domain event; checks are O(1) per field (no regex per frame, C-2.20).
     Shared primitives live in `exchange/base/frame_guard.py`; a failure raises
@@ -5340,7 +5343,7 @@ These are contract-test obligations created by this pass; they belong in the CI 
 
 ### 19.21 2026-10-21 — §8.6, §8.7, §14 the exchange `TradingPort` (G-8, #2877)
 
-- §14.1: `open_orders` takes a keyword-only `order_link_id` and `order_history` a keyword-only `exchange_order_id` (#846 ruling Q5, §8.5); `supports_ws_order_entry` describes the venue, and v1 builds no trade socket (SR-040a). §14.2 rule 2 now says the adapter surfaces a create's duplicate and the OMS adopts it (#2877 ruling R9), and rule 12 fixes endpoint classes and lanes, the `cancel-all` filter and the per-row account check.
+- §14.1: `open_orders` takes a keyword-only `order_link_id` and `order_history` a keyword-only `exchange_order_id` (#846 ruling Q5, §8.5); `supports_ws_order_entry` describes the venue, and v1 builds no trade socket (SR-040a). §14.2 rule 2 now says the adapter surfaces a create's duplicate and the OMS adopts it (#2877 ruling R9); rule 9 lists the two new adapter series; and rule 12 fixes endpoint classes and lanes, the `cancel-all` filter and its 500-order cap, the per-row account check and the execution rows that fill no order.
 - §14.4: `RateLane` and `lane` on the place and amend requests (ruling R3); `key_ref` is the active key's `api_keys.id` (ruling R13); the read models `Order` and `Execution` are listed, with `order_id` optional on them and on `ClosedPnl` and the fields B1's full match reads (ruling R8); `OrderAck.order_link_id` is optional and the ack carries the allow-listed `ExchangeRecord` (SR-E29-08); `AccountInfo` gains `isolated` and an optional `position_mode`, and `Wallet.available_to_withdraw` is optional, because the venue's account and wallet reads do not report them; `RateBudgetExceededError` and the error surface (ruling 11), with M2's refusals, `place_batch`'s item contract and `AmbiguousResultError.order_link_ids`; the record is built from the wire and dumps no null.
 - §8.6: a duplicate is a create's only, and the exact text of a duplicate `10001` is assumed until E29-K01. §8.7: the lanes are the priority classes; each attempt of a request takes its own token, and the lane's wait bounds the whole request, retries included.
 
