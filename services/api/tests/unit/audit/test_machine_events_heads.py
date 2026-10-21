@@ -15,7 +15,17 @@ from types import SimpleNamespace
 import pytest
 from audit_waits import virtual
 from structlog.testing import capture_logs
-from test_machine_events import T0, FakeStore, chain, frames, row, settle, sink_for
+from test_machine_events import (
+    T0,
+    Clock,
+    FakeStore,
+    chain,
+    frames,
+    not_running_pages,
+    row,
+    settle,
+    sink_for,
+)
 
 from candleviewer.audit import machine_events
 from candleviewer.audit.machine_events import SEED_DRAIN_S, MachineEventUnavailable
@@ -173,6 +183,23 @@ async def test_seed_before_start_is_refused(tmp_path: Path) -> None:
     sink = sink_for(tmp_path, FakeStore())
     with pytest.raises(MachineEventUnavailable, match="not running"):
         await sink.seed(KEY)
+
+
+@virtual
+async def test_a_seed_refused_before_start_pages_in_one_window_with_the_appends(
+    tmp_path: Path,
+) -> None:
+    """Review round 2 (security-3): `seed`'s refusal by a sink that is not running pages as
+    `append`'s does, in the same window: a refused seed and then a refused append page once."""
+    sink = sink_for(tmp_path, FakeStore(), clock=Clock())
+    with capture_logs() as logs:
+        with pytest.raises(MachineEventUnavailable, match="not running"):
+            await sink.seed(KEY)
+        with pytest.raises(MachineEventUnavailable, match="not running"):
+            sink.append(row(0))
+    assert not_running_pages(logs) == [
+        ("machine_events.append_refused_not_running", "critical", "seed")
+    ]
 
 
 @virtual

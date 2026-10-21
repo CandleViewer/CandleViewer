@@ -21,6 +21,7 @@ from wal_double import record_wal_io
 
 from candleviewer.audit import machine_events
 from candleviewer.audit.machine_events import (
+    APPEND_FAILURE_COOLDOWN_S,
     MAX_FRAME_BYTES,
     RETRY_INITIAL_S,
     RETRY_MAX_S,
@@ -248,6 +249,35 @@ async def test_append_before_start_or_after_stop_is_refused(tmp_path: Path) -> N
     await sink.stop()
     with pytest.raises(MachineEventUnavailable, match="not running"):
         sink.append(row(1))
+
+
+def not_running_pages(logs: Sequence[Mapping[str, Any]]) -> list[tuple[str, str, str]]:
+    """The paged lines of a sink that is not running: (event, level, operation)."""
+    return [(e["event"], e["log_level"], e["operation"]) for e in logs if e.get("cv_page")]
+
+
+@virtual
+async def test_appends_after_stop_page_once_per_window(tmp_path: Path) -> None:
+    """Review round 2 (security-3): a row refused because the sink is not running is a lost audit
+    row that nothing else pages, so the refusal is one CRITICAL `cv_page` line per
+    `APPEND_FAILURE_COOLDOWN_S` window, as a full WAL's is (on the injected clock)."""
+    clock = Clock()
+    sink = sink_for(tmp_path, FakeStore(), clock=clock)
+    await sink.start()
+    sink.append(row(0))
+    await sink.stop()
+    with capture_logs() as logs:
+        for i in (1, 2):
+            with pytest.raises(MachineEventUnavailable, match="not running"):
+                sink.append(row(i))
+    refused = ("machine_events.append_refused_not_running", "critical", "append")
+    assert not_running_pages(logs) == [refused]
+    assert not sink.append_failure_active  # #2510's latch stays the WAL's, as AuditWriter's
+    clock.now += timedelta(seconds=APPEND_FAILURE_COOLDOWN_S)
+    with capture_logs() as later:
+        with pytest.raises(MachineEventUnavailable, match="not running"):
+            sink.append(row(3))
+    assert not_running_pages(later) == [refused]
 
 
 @virtual

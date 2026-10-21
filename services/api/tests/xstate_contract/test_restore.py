@@ -1084,26 +1084,67 @@ async def test_a_start_that_does_not_settle_is_stopped_paged_and_raised(
 
 
 class _BringUp(PluginBase[Any]):
-    """An owner's extra plugin with a bring-up, in the machines feed's slot (#3978)."""
+    """An owner's extra plugin with a bring-up, in the machines feed's slot (#3978). It keeps the
+    interpreter it was handed and, given `error`, raises it (review round 2)."""
 
-    def __init__(self, steps: _Steps) -> None:
-        self.order = steps
+    def __init__(self, steps: _Steps, error: BaseException | None = None) -> None:
+        self.order, self.error = steps, error
+        self.interp: Interpreter[Any] | None = None
 
     def cv_bring_up(self, interpreter: Any) -> None:
         self.order.steps.append("bring_up")
+        self.interp = interpreter
+        if self.error is not None:
+            raise self.error
 
 
-def _record_start(monkeypatch: pytest.MonkeyPatch, steps: _Steps, *, settles: bool) -> None:
+def _record_start(
+    monkeypatch: pytest.MonkeyPatch, steps: _Steps, *, settles: bool
+) -> asyncio.Event:
+    """Records `start()` in the steps: `start` once a start that settles has returned, and
+    `start_entered` on entry to one that never settles (review round 2, security-4). That one
+    sets the returned event once the real `start()` is done, then hangs."""
     real_start = Interpreter.start
+    hanging = asyncio.Event()
 
     async def start(self: Interpreter[Any]) -> Any:
-        result = await real_start(self)
-        steps.steps.append("start")
         if not settles:
+            steps.steps.append("start_entered")
+        result = await real_start(self)
+        if not settles:  # cut by the start's deadline, or cancelled
+            hanging.set()
             await asyncio.Event().wait()
+        steps.steps.append("start")
         return result
 
     monkeypatch.setattr(Interpreter, "start", start)
+    return hanging
+
+
+def _record_stops(monkeypatch: pytest.MonkeyPatch) -> list[Interpreter[Any]]:
+    """Each interpreter `stop()` is called on, in call order (the real `stop()` still runs)."""
+    real_stop = Interpreter.stop
+    stops: list[Interpreter[Any]] = []
+
+    async def stop(self: Interpreter[Any], **kwargs: Any) -> None:
+        stops.append(self)
+        await real_stop(self, **kwargs)
+
+    monkeypatch.setattr(Interpreter, "stop", stop)
+    return stops
+
+
+def _spy_replay(
+    monkeypatch: pytest.MonkeyPatch, journal: InMemoryDrainJournal, steps: _Steps
+) -> None:
+    """Records `replay` in the steps when the journal's replay is called."""
+    replay = journal.replay_once
+
+    async def spy(*args: Any) -> ReplayReport:
+        steps.steps.append("replay")
+        return await replay(*args)
+
+    monkeypatch.setattr(journal, "replay_once", spy)
 
 
 async def test_a_seeded_restore_brings_up_extra_plugins_after_start_before_the_replay(
@@ -1114,13 +1155,7 @@ async def test_a_seeded_restore_brings_up_extra_plugins_after_start_before_the_r
     keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
     journal = InMemoryDrainJournal()
     env = await _sealed(registry, keys, journal)
-    replay = journal.replay_once
-
-    async def spy(*args: Any) -> ReplayReport:
-        steps.steps.append("replay")
-        return await replay(*args)
-
-    monkeypatch.setattr(journal, "replay_once", spy)
+    _spy_replay(monkeypatch, journal, steps)
     _record_start(monkeypatch, steps, settles=True)
     restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
     res = await restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)])
@@ -1144,8 +1179,79 @@ async def test_a_start_that_does_not_settle_never_brings_up_the_extra_plugins(
     restorer = _seeded(_restorer(registry, keys, audit, pager), steps)
     with pytest.raises(TimeoutError, match="CV-C56"):
         await restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)])
-    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start"]
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start_entered"]
     assert [s for s, _ in pager.pages] == ["P1"] and steps.outcomes == [("restore", "error")]
+
+
+@virtual
+async def test_a_cancelled_start_is_stopped_once_never_paged_or_brought_up_and_passes_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2 (code-1): a restore cancelled while `start()` does not settle (replay's own
+    deadline can cut one there) stops the machine it started exactly once, sends no page, never
+    brings it up and passes the cancellation through; its steps end at the start."""
+    registry = Registry(machines_dir=_FIXTURES)
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    hanging = _record_start(monkeypatch, steps, settles=False)
+    stops = _record_stops(monkeypatch)
+    restorer = _seeded(_restorer(registry, keys, audit, pager), steps)
+    task = asyncio.ensure_future(restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)]))
+    await hanging.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    [interp] = stops
+    assert interp.status == "stopped" and pager.pages == []
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start_entered"]
+    assert steps.outcomes == []  # a cancellation is not an outcome
+
+
+async def test_a_bring_up_that_raises_stops_the_machine_pages_once_and_never_replays(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2 (security-1, code-2): an extra plugin whose `cv_bring_up` raises after a
+    settled start leaves no started machine without an owner, as a failed replay does: the
+    machine is stopped, one P1 page names the error's type only, the journal is never replayed
+    (its rows stay for the next restore) and the same error is raised without its chain."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    _record_start(monkeypatch, steps, settles=True)
+    failure = RuntimeError("the owner's registry is gone")
+    bring_up = _BringUp(steps, failure)
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with pytest.raises(RuntimeError) as raised:
+        await restorer.restore(KEY, env, extra_plugins=[bring_up])
+    assert bring_up.interp is not None and bring_up.interp.status == "stopped"
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start", "bring_up"]
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and text.startswith("restore bring-up failed (RuntimeError)")
+    assert "is stopped" in text and str(failure) not in text
+    assert raised.value is failure
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert [e.send_id for e in await journal.list_unreplayed(KEY)] == env.snapshot["cv_drained"]
+    assert steps.outcomes == [("restore", "error")]
+
+
+async def test_a_bring_up_that_raises_a_cancellation_stops_the_machine_and_passes_it_through(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2 (security-1): a cancellation out of a bring-up stops the machine and passes
+    through, with no page and no replay."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    bring_up = _BringUp(steps, asyncio.CancelledError())
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with pytest.raises(asyncio.CancelledError):
+        await restorer.restore(KEY, env, extra_plugins=[bring_up])
+    assert bring_up.interp is not None and bring_up.interp.status == "stopped"
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "bring_up"]
+    assert pager.pages == [] and steps.outcomes == []
+    assert [e.send_id for e in await journal.list_unreplayed(KEY)] == env.snapshot["cv_drained"]
 
 
 async def test_a_hanging_pager_is_cut_by_its_deadline(
