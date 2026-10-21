@@ -12,7 +12,9 @@ written only from a read taken under the row lock (`update_step_up_state`)
 or by one conditional statement (`consume_step_up_key`), never from a stale
 copy of the row (#2304). A session is inserted only for a user who exists and is
 not `disabled`, read under the user-row lock in the insert's transaction, and the
-reads by id and by refresh hash carry the user's status (#2911).
+reads by id and by refresh hash carry the user's status (#2911). Every record read
+carries the row's view-as context (#3085, `0042_sessions_view_as`); nothing here
+writes it yet.
 """
 
 from __future__ import annotations
@@ -32,13 +34,17 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 #: `auth.session_repository.StepUpState`, restated: storage may not import `auth` (C-3.1).
 _StepUpState = tuple[dict[str, datetime], int, datetime | None]
 
-# Static column list (no caller data is ever interpolated into any statement).
+# Static column list (no caller data is ever interpolated into any statement). Every read and
+# every `RETURNING` that builds a record selects all of it, the view-as columns (#3085) included.
 _COLUMNS = (
     "id::text AS id, user_id::text AS user_id, refresh_token_hash, "
     "access_token_jti::text AS access_token_jti, issued_at, last_seen_at, expires_at, "
     "revoked_at, revoked_reason, ip::text AS ip, user_agent, device_label, is_electron, "
     "mfa_satisfied_at, idle_timeout_s, step_up_elevations::text AS step_up_elevations, "
-    "step_up_failures, readonly_until"
+    "step_up_failures, readonly_until, view_as_context_id::text AS view_as_context_id, "
+    "view_as_target_user_id::text AS view_as_target_user_id, view_as_started_at, "
+    "view_as_expires_at, view_as_ended_at, view_as_end_recorded_at, view_as_cleared_at, "
+    "view_as_end_reason"
 )
 
 # #2911: the user row's status, read `FOR SHARE` in the insert's own transaction. It conflicts
@@ -145,6 +151,24 @@ def _elevations(stored: str | None) -> dict[str, datetime]:
     return {k: datetime.fromisoformat(v) for k, v in json.loads(stored or "{}").items()}
 
 
+def _view_as(m: Any) -> dict[str, Any] | None:
+    """The `view_as_*` columns as `ViewAsState`'s fields, which `SessionRecord` validates, or
+    `None` while the row holds no context (storage never imports `auth`, C-3.1). Every column
+    is read by key, so a read that missed one raises instead of reporting no context."""
+    if m["view_as_context_id"] is None:
+        return None
+    return {
+        "context_id": uuid.UUID(m["view_as_context_id"]),
+        "target_user_id": uuid.UUID(m["view_as_target_user_id"]),
+        "started_at": m["view_as_started_at"],
+        "expires_at": m["view_as_expires_at"],
+        "ended_at": m["view_as_ended_at"],
+        "end_reason": m["view_as_end_reason"],
+        "end_recorded_at": m["view_as_end_recorded_at"],
+        "cleared_at": m["view_as_cleared_at"],
+    }
+
+
 def row_to_fields(row: Any) -> dict[str, Any]:
     """Map a result row (see `_COLUMNS`) to `SessionRecord` constructor kwargs."""
     m = row._mapping
@@ -168,6 +192,7 @@ def row_to_fields(row: Any) -> dict[str, Any]:
         step_up_failures=m["step_up_failures"],
         readonly_until=m["readonly_until"],
         user_status=m.get("user_status"),
+        view_as=_view_as(m),
     )
 
 

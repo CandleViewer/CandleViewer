@@ -357,12 +357,60 @@ sessions = Table(
             "Read-only downgrade expiry after 3 failed step-up codes (E09-S04); NULL = writable."
         ),
     ),
+    # #3085 (`0042_sessions_view_as`): the session's view-as context (`auth/view_as.py`), ids and
+    # times only (21 Sec.12, class P0). The target FK is ON DELETE RESTRICT (21 Sec.3.1.4).
+    Column("view_as_context_id", UUID(as_uuid=True)),
+    Column("view_as_target_user_id", ForeignKey("users.id", ondelete="RESTRICT")),
+    Column("view_as_started_at", TIMESTAMP(timezone=True)),
+    Column("view_as_expires_at", TIMESTAMP(timezone=True)),
+    Column("view_as_ended_at", TIMESTAMP(timezone=True)),
+    Column("view_as_end_recorded_at", TIMESTAMP(timezone=True)),
+    Column("view_as_cleared_at", TIMESTAMP(timezone=True)),
+    Column("view_as_end_reason", Text),
     CheckConstraint("expires_at > issued_at", name="sessions_expiry"),
     CheckConstraint("idle_timeout_s BETWEEN 300 AND 3600", name="sessions_idle_timeout_range"),
     CheckConstraint("step_up_failures BETWEEN 0 AND 3", name="sessions_step_up_failures_range"),
+    # `ViewAsState._shape` and `SessionRecord`'s self-target rule; `IS TRUE`: a NULL would pass.
+    CheckConstraint(
+        "((view_as_context_id IS NULL AND view_as_target_user_id IS NULL "
+        "AND view_as_started_at IS NULL AND view_as_expires_at IS NULL "
+        "AND view_as_ended_at IS NULL AND view_as_end_recorded_at IS NULL "
+        "AND view_as_cleared_at IS NULL AND view_as_end_reason IS NULL) "
+        "OR (view_as_context_id IS NOT NULL AND view_as_target_user_id IS NOT NULL "
+        "AND view_as_started_at IS NOT NULL AND view_as_expires_at IS NOT NULL "
+        "AND view_as_expires_at = view_as_started_at + interval '30 minutes' "
+        "AND view_as_target_user_id <> user_id "
+        "AND (view_as_ended_at IS NULL) = (view_as_end_reason IS NULL) "
+        "AND (view_as_ended_at IS NOT NULL "
+        "OR (view_as_end_recorded_at IS NULL AND view_as_cleared_at IS NULL)) "
+        "AND (view_as_ended_at IS NULL OR (view_as_ended_at <= view_as_expires_at "
+        "AND (view_as_end_reason = 'expired') = (view_as_ended_at = view_as_expires_at))))) "
+        "IS TRUE",
+        name="sessions_view_as_shape",
+    ),
+    CheckConstraint(
+        "view_as_end_reason IS NULL OR view_as_end_reason IN "
+        "('ended','expired','viewer_ineligible','target_ineligible','session_ended')",
+        name="sessions_view_as_end_reason",
+    ),
     UniqueConstraint("refresh_token_hash", name="sessions_refresh_token_hash_key"),
     Index("ix_sessions_user_live", "user_id", postgresql_where=text("revoked_at IS NULL")),
     Index("ix_sessions_expiry", "expires_at", postgresql_where=text("revoked_at IS NULL")),
+    Index(
+        "ix_sessions_view_as_due",
+        "view_as_expires_at",
+        postgresql_where=text("view_as_context_id IS NOT NULL AND view_as_end_recorded_at IS NULL"),
+    ),
+    Index(
+        "ix_sessions_view_as_target",
+        "view_as_target_user_id",
+        postgresql_where=text("view_as_context_id IS NOT NULL AND view_as_ended_at IS NULL"),
+    ),
+    Index(
+        "ix_sessions_view_as_context",
+        "view_as_context_id",
+        postgresql_where=text("view_as_context_id IS NOT NULL"),
+    ),
 )
 
 sessions_rotation = Table(

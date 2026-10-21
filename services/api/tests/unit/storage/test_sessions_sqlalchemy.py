@@ -3,15 +3,21 @@ real-Postgres round trip is an integration test, not run locally: no docker)."""
 
 from __future__ import annotations
 
+import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 
+from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
+from candleviewer.storage.repositories import sessions_sqlalchemy
 from candleviewer.storage.repositories.sessions_sqlalchemy import (
+    _COLUMNS,
     SqlAlchemySessionRepository,
     row_to_fields,
 )
@@ -19,6 +25,8 @@ from candleviewer.storage.repositories.sessions_sqlalchemy import (
 _NOW = datetime(2026, 9, 30, tzinfo=UTC)
 #: `(step_up_elevations, step_up_failures, readonly_until)` as `update_step_up_state` passes it.
 StepUpColumns = tuple[dict[str, datetime], int, datetime | None]
+#: #3085: the `sessions` view-as columns (`0042_sessions_view_as`), one per `ViewAsState` field.
+_VIEW_AS_COLUMNS = tuple(f"view_as_{name}" for name in ViewAsState.model_fields)
 
 
 def _row(**over: Any) -> SimpleNamespace:
@@ -41,6 +49,7 @@ def _row(**over: Any) -> SimpleNamespace:
         "step_up_elevations": "{}",
         "step_up_failures": 0,
         "readonly_until": None,
+        **dict.fromkeys(_VIEW_AS_COLUMNS),
     }
     m.update(over)
     return SimpleNamespace(_mapping=m)
@@ -272,3 +281,73 @@ async def test_touch_last_seen_is_conditional_on_the_lock() -> None:
     assert "revoked_at IS NULL" in condition and "RETURNING" in condition
     assert "last_seen_at + make_interval(secs => idle_timeout_s) > :now" in condition
     assert params == {"id": "sid", "now": _NOW}
+
+
+# -- #3085: the view-as columns (`0042_sessions_view_as`) on every record the repository builds.
+
+_T0 = datetime(2026, 10, 20, 12, tzinfo=UTC)
+_LIVE = ViewAsState.start(uuid.UUID(int=1), uuid.UUID(int=2), now=_T0)
+_END, _CLEAR = _T0 + timedelta(minutes=10), _T0 + timedelta(minutes=40)
+
+
+def _revised(**changes: Any) -> ViewAsState:
+    """`_LIVE` with `changes`, validated as the row's CHECK validates it."""
+    return ViewAsState.model_validate({**dict(_LIVE), **changes})
+
+
+_AT_EXPIRY = {"ended_at": _LIVE.expires_at, "end_reason": ViewAsEndReason.EXPIRED}
+#: case id -> the state a row holds: none, each phase, and an end whose record is still owed.
+_STATES: dict[str, ViewAsState | None] = {
+    "none": None,
+    "live": _LIVE,
+    "held": _revised(ended_at=_END, end_reason=ViewAsEndReason.ENDED, end_recorded_at=_END),
+    "cleared": _revised(**_AT_EXPIRY, end_recorded_at=_CLEAR, cleared_at=_CLEAR),
+    "pending-end": _revised(ended_at=_END, end_reason="session_ended", cleared_at=_CLEAR),
+}
+
+
+def _view_as_columns(state: ViewAsState | None) -> dict[str, Any]:
+    """The columns as `_COLUMNS` reads them: uuids and the reason as text; none: no context."""
+    text = {"context_id", "target_user_id", "end_reason"}
+    return {
+        f"view_as_{name}": str(value) if name in text and value is not None else value
+        for name, value in (state.model_dump() if state else {}).items()
+    }
+
+
+@pytest.mark.parametrize("state", list(_STATES.values()), ids=list(_STATES))
+def test_row_to_fields_reads_the_view_as_columns_into_the_state_the_row_holds(
+    state: ViewAsState | None,
+) -> None:
+    """None for a row holding no context, else a plain dict of `ViewAsState`'s fields (storage
+    never imports `auth`, C-3.1): `SessionRecord` validates it into the very state the row holds."""
+    fields = row_to_fields(_row(**_view_as_columns(state)))
+    assert fields["view_as"] == (None if state is None else state.model_dump())
+    assert SessionRecord.model_validate(fields).view_as == state
+
+
+@pytest.mark.parametrize("column", _VIEW_AS_COLUMNS)
+def test_row_to_fields_refuses_a_row_read_without_a_view_as_column(column: str) -> None:
+    """Fail closed: a read that misses a view-as column raises; it never reports no context for a
+    session whose row holds one (which would let a viewing session act as the viewer)."""
+    row = _row(**_view_as_columns(_LIVE))
+    del row._mapping[column]
+    with pytest.raises(KeyError, match=column):
+        row_to_fields(row)
+
+
+def test_every_statement_on_sessions_selects_the_columns_or_builds_no_record() -> None:
+    """Every statement whose row becomes a record (`RETURNING` included) selects `_COLUMNS`, the
+    view-as uuids as text like the others; the insert and the step-up lock read build none."""
+    statements = {
+        name: str(value)
+        for name, value in vars(sessions_sqlalchemy).items()
+        if isinstance(value, sa.TextClause)
+        and re.search(r"\b(?:FROM|UPDATE|INTO) sessions\b", str(value))
+    }
+    build_none = {"_INSERT_SQL", "_LOCK_STEP_UP_SQL"}
+    assert build_none < set(statements)
+    assert {name for name, sql in statements.items() if _COLUMNS not in sql} == build_none
+    assert all(column in _COLUMNS for column in _VIEW_AS_COLUMNS)
+    for column in ("view_as_context_id", "view_as_target_user_id"):
+        assert f"{column}::text AS {column}" in _COLUMNS
