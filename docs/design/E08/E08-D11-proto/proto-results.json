@@ -1,0 +1,41 @@
+{
+  "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.8059.12 Safari/537.36",
+  "cores": 28,
+  "host": "development laptop (WSL2, software rendering), not the 06 §3.1 reference machine",
+  "win_ms": 400,
+  "reps": 5,
+  "flap_columns": [
+    "changes",
+    "appearances",
+    "suppressed",
+    "fill_changes",
+    "text_flips",
+    "earliest_collapse_s",
+    "min_visible_s"
+  ],
+  "flap": {
+    "ac1": [10, 1, 4, 2, 10, 24, 24],
+    "ac1_announcements": ["0 s alert", "2 s unstable", "14 s recovered"],
+    "flap2hz": [120, 1, 59, 2, 120, 44.75, 44.75],
+    "flap2hz_announcements": ["0 s alert", "0.5 s unstable", "34.75 s recovered"]
+  },
+  "mass_columns": [
+    "arm",
+    "rows",
+    "toggle_ms_p95",
+    "toggle_ms_med",
+    "toggle_ms_max",
+    "frame_ms_p95",
+    "frame_ms_max",
+    "frames",
+    "over_20_ms",
+    "over_33_3_ms",
+    "idle_frame_ms_p95"
+  ],
+  "mass": [
+    ["per-row 200", 200, 42.1, 29, 42.1, 16.8, 33.3, 119, 2, 0, 16.7],
+    ["container 200", 200, 13.4, 11.7, 13.4, 16.8, 16.8, 121, 0, 0, 16.8],
+    ["container 60 (virtualised window)", 60, 4.5, 3.5, 4.5, 16.7, 16.8, 122, 0, 0, 16.8],
+    ["container 200 + 4 Hz ticks, 20 emphases", 200, 16.7, 14.5, 16.7, 16.7, 16.8, 120, 0, 0, 16.8]
+  ]
+}

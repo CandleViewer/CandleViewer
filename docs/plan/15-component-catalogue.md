@@ -302,6 +302,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.callout.*`, `color.data-confidence.reconnecting.indicator`, `color.data-confidence.disconnected.indicator`.
 - **Storybook**: AllTones, Dismissible, ConnectionReconnecting, ConnectionDisconnected.
 - **Tests**: unit, visual, axe, live-region announcement test (assertive vs polite, flap-collapse).
+- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the `connection-*` tones appear at 0 ms and dismiss with a `fast` opacity fade; fill and announcements are debounced on the clearing side only — PROPOSED).
 
 ### CMP-029 Skeleton-Chart placeholder
 
@@ -374,6 +375,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `space.row.*`, `font.size.body/label`.
 - **Storybook**: Default, Emphasis, LiveFreshness.
 - **Tests**: unit, visual, axe.
+- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; a live field settles once through CMP-239; no value-change emphasis while stale).
 
 ### CMP-037 SwatchLegendItem
 
@@ -1831,6 +1833,7 @@ interface WatchlistRowData {
 
 - **Storybook**: Default, Gainer, Loser, CustomColumns, StaleCell, DisconnectedRow.
 - **Tests**: unit, visual, axe, keyboard.
+- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the per-cell settle vs the container-class mass transition; the value-change emphasis cap — PROPOSED).
 
 ### CMP-162 WatchlistGroupTabs
 
@@ -2697,6 +2700,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Escalation process for an undefined state**: a later epic needing a data-confidence state not in the eight above raises a design-system change request against this entry (comment on the `16-design-system-brief.md` token PR or open a new `E08-D*`-scoped ticket) — it must **not** add a local one-off variant on a consuming screen. The precedence table in `docs/design/E08/E08-D01.md` §2 is the single source for state ordering and must be updated in the same change.
 - **Storybook**: Live, Stale, Reconnecting, Disconnected, Resyncing, Gapped, Backfilling, Delisted, WithEstimatedBadgeComposition.
 - **Tests**: unit (precedence/never-stacked assertion, CSS-class-only render), visual (both themes), axe (redundant non-colour channel present for every non-live state), live-region collapse test (flapping within 5s → one announcement).
+- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the single flip's timing: chip at 0 ms, one `normal` settle of the dim, instant under reduce; contract lines proposed as A-rows).
 
 ---
 

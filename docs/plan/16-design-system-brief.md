@@ -179,6 +179,25 @@ These rules bind every chart-engine primitive (CMP-180..199) and every non-canva
   - Loading shimmer (Skeleton): `slow` looping shimmer, reduce → static two-tone fill, no loop.
 - **Respects `prefers-reduced-motion`** at the OS/browser level automatically, plus an explicit in-app override (Settings → Appearance → Reduce Motion) for users on shared/unconfigured machines (Electron shell) where the OS-level signal may not be set.
 
+### 7.1 Connection, resync and freshness motion (E08-D11; PROPOSED until the owner's prototype run)
+
+Spec: `docs/design/E08/E08-D11.md` (hysteresis table §3, motion table §4, reduced-motion twins §5, the
+mass transition §6). Tokens used by name, none added: `motion.duration.{instant,fast,normal,slow}` and
+`motion.easing.{standard,accelerate}`; the hold constants below are timing constants, PROPOSED there as a
+`motion.hold.*` group for §2.6 and bound to no token here.
+
+| Surface                                  | Enter                                                    | Hold / clear                                                                                                                                                        | Source                               |
+| ---------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| SCR-152 banner (CMP-028 `connection-*`)  | content at 0 ms, both modes                              | the fill steps down only after 5 s of continuous `up` (PROPOSED); `recovered` holds ≥ 10 s and until dismissed; dismissal = `fast` opacity fade, then one slot flip | `23` §9.2; E17-D01 T5; E08-D03 §3    |
+| per-panel / per-row stale (T1, T2)       | at T1 (book 2 s, ticker 5 s, trades 10 s); chip 0 ms     | clears on the first fresh frame; the 85 % dim settles once over `normal` / `standard` (PROPOSED); a stale cell never animates                                       | E17-D01 A2 (ruled), D16; E11-D06 D13 |
+| resync scrim (SCR-050, SCR-053)          | 0 ms on the published B14 flag; routine `snap`: none     | lifts in the frame the `snap` applies, no minimum; ≤ 5 resyncs per stream per minute bounds it                                                                      | `23` §7.4–7.5; E17-D01 D15           |
+| `degraded` banner (E08-D03)              | 0 ms at the first topic ≥ T1                             | clears after every topic has been fresh for 5 s (PROPOSED)                                                                                                          | E08-D03 §3                           |
+| value-change emphasis (CMP-161, CMP-036) | opacity overlay at peak 0.25, decaying `fast` (PROPOSED) | ≥ 500 ms between starts per cell and ≤ 20 cells per frame (PROPOSED); latest wins, nothing queues; never while stale                                                | `05` §7 item 3; the ticket's rule    |
+
+Rules: no transition runs continuously (every one is one-shot); only `opacity` and `transform` animate on hot
+surfaces, colours flip; words flip at 0 ms and only fills and announcements are debounced, on the clearing side;
+every row has a `motion-reduce` twin (instant style change plus text) and no state becomes invisible under it.
+
 ---
 
 ## 8. Layout grid, docking rules, responsive & minimum sizes (desktop-only)

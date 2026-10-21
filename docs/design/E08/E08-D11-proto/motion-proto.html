@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>E08-D11 motion prototype</title>
+    <style>
+      /* E08-D11 prototype: only `opacity` animates (the backfill bar would add `transform`); every colour flips. */
+      :root {
+        --sunken: #000;
+        --text: #e8eaed;
+        --danger: #4e1518;
+        --success: #0e3d1f;
+        --buy: #2ebd59;
+        --sell: #e5484d;
+      }
+      body {
+        margin: 0;
+        background: #11151a;
+        color: var(--text);
+        font:
+          12px/1.4 system-ui,
+          sans-serif;
+      }
+      #out {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 2;
+      }
+      #slot {
+        width: 1280px;
+        height: 96px;
+      }
+      #banner {
+        height: 96px;
+        opacity: 0;
+        transition: opacity 100ms cubic-bezier(0.3, 0, 1, 1);
+      }
+      #banner.on {
+        opacity: 1;
+        transition: none;
+      } /* appears at 0 ms; the dismissal fades `fast` */
+      #banner.danger {
+        background: var(--danger);
+      }
+      #banner.success {
+        background: var(--success);
+      }
+      .panel {
+        position: relative;
+        width: 1280px;
+      }
+      .panel::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--sunken);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1);
+      }
+      .panel.stale::after {
+        opacity: 0.15;
+      } /* the one container-level settle */
+      .panel.stale tr,
+      tr.stale {
+        background: var(--sunken);
+      } /* a flip, never a transition */
+      table {
+        border-collapse: collapse;
+        width: 1280px;
+      }
+      td {
+        height: 24px;
+        padding: 0 8px;
+        font-variant-numeric: tabular-nums;
+        position: relative;
+      }
+      td.v {
+        transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1);
+      }
+      tr.stale td.v {
+        opacity: 0.85;
+      } /* the per-row settle */
+      td.v::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        pointer-events: none;
+      }
+      td.up::before {
+        background: var(--buy);
+      }
+      td.down::before {
+        background: var(--sell);
+      }
+      td.flash::before {
+        animation: emph 100ms cubic-bezier(0.3, 0, 1, 1) 1;
+      }
+      tr.stale td.flash::before,
+      .panel.stale td.flash::before {
+        animation: none;
+      } /* a stale cell never animates */
+      @keyframes emph {
+        from {
+          opacity: 0.25;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="out">RUNNING</div>
+    <div id="slot">
+      <div id="banner"><span id="title"></span></div>
+    </div>
+    <div id="panel" class="panel">
+      <table>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <script>
+      // Scene A: the flapping connection against the hysteresis table on a virtual clock — the same arithmetic
+      // as docs/design/_tools/e08_d11_motion_audit.py, driving the real banner slot so the technique runs.
+      const STABLE_S = 5,
+        HOLD_S = 10,
+        FLAP_WINDOW_S = 5,
+        FLAP_CHANGES = 3;
+      const banner = document.getElementById("banner"),
+        title = document.getElementById("title");
+      function flap(drops) {
+        const ch = [...drops.map(([d]) => [d, "down"]), ...drops.map(([, u]) => [u, "up"])].sort(
+          (a, b) => a[0] - b[0],
+        );
+        let appearances = 0,
+          collapse = Infinity,
+          occupied = false,
+          unstable = false,
+          fills = 0,
+          lastFill = "";
+        const ann = [];
+        banner.className = "";
+        for (const [t, kind] of ch) {
+          if (occupied && t >= collapse) {
+            occupied = false;
+            unstable = false;
+            banner.classList.remove("on");
+          }
+          if (kind === "down") {
+            if (!occupied) {
+              appearances++;
+              occupied = true;
+              banner.classList.add("on");
+              ann.push(`${t} s alert`);
+            }
+            if (lastFill !== "danger") {
+              fills++;
+              lastFill = "danger";
+              banner.classList.remove("success");
+              banner.classList.add("danger");
+            }
+            collapse = Infinity;
+            title.textContent = "Disconnected — reconnecting";
+          } else {
+            const nxt = ch.filter((c) => c[0] > t),
+              step = t + STABLE_S;
+            title.textContent = "Reconnected — reconciling";
+            if (!nxt.length || nxt[0][0] >= step) {
+              fills++;
+              lastFill = "success";
+              banner.classList.replace("danger", "success");
+              ann.push(`${step} s recovered`);
+              collapse = step + HOLD_S;
+            }
+          }
+          if (
+            ch.filter((c) => t - FLAP_WINDOW_S < c[0] && c[0] <= t).length >= FLAP_CHANGES &&
+            !unstable
+          ) {
+            unstable = true;
+            ann.push(`${t} s unstable`);
+          }
+        }
+        return {
+          row: [
+            ch.length,
+            appearances,
+            drops.length - appearances,
+            fills,
+            ch.length,
+            collapse,
+            collapse - ch[0][0],
+          ],
+          ann,
+        };
+      }
+      // Scene B: 200 watchlist rows going stale in one frame — per-row vs container technique, the 60-row
+      // virtualised window, and the QA-assertion arm (container 200 under 4 Hz ticks with 20 emphasised cells).
+      const panel = document.getElementById("panel"),
+        tbody = document.getElementById("rows");
+      let s = 7;
+      const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+      function build(n) {
+        tbody.textContent = "";
+        for (let r = 0; r < n; r++) {
+          const tr = document.createElement("tr");
+          const cells = [
+            `SYM${r}USDT`,
+            (60000 + rnd() * 5000).toFixed(1),
+            (rnd() * 4 - 2).toFixed(2) + "%",
+            (rnd() * 900).toFixed(0) + "M",
+            (rnd() * 0.02).toFixed(3),
+            (rnd() * 10 - 5).toFixed(1) + "%",
+            (rnd() * 2).toFixed(2),
+            "",
+          ];
+          cells.forEach((c, i) => {
+            const td = document.createElement("td");
+            td.className = i ? "v" : "sym";
+            td.appendChild(document.createTextNode(c));
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        }
+        return [...tbody.children];
+      }
+      const chip = (tr, on) => {
+        tr.lastChild.firstChild.data = on ? "Stale 5s" : "";
+      };
+      const p95 = (a) => {
+        a = [...a].sort((x, y) => x - y);
+        return a[Math.floor(a.length * 0.95)] || 0;
+      };
+      const med = (a) => {
+        a = [...a].sort((x, y) => x - y);
+        return a[a.length >> 1];
+      };
+      const raf = () => new Promise(requestAnimationFrame);
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function frames(ms) {
+        const d = [];
+        let last = await raf();
+        const end = last + ms;
+        while (last < end) {
+          const now = await raf();
+          d.push(now - last);
+          last = now;
+        }
+        return d;
+      }
+      function tick(rows) {
+        for (let i = 0; i < 20; i++) {
+          const td = rows[i * 10].children[1];
+          td.firstChild.data = (60000 + rnd() * 5000).toFixed(1);
+          td.className = "v " + (rnd() < 0.5 ? "up" : "down");
+          void td.offsetWidth;
+          td.classList.add("flash");
+        }
+      }
+      async function arm(cfg, winMs, reps) {
+        const rows = build(cfg.rows),
+          toggle = [],
+          frame = [],
+          idle = [];
+        const ticker = cfg.ticks ? setInterval(() => tick(rows), 250) : null;
+        const set = (on) => {
+          if (cfg.perRow) rows.forEach((tr) => tr.classList.toggle("stale", on));
+          else panel.classList.toggle("stale", on);
+          rows.forEach((tr) => chip(tr, on));
+        };
+        for (let i = 0; i < reps; i++) {
+          idle.push(...(await frames(winMs)));
+          await raf();
+          const t0 = performance.now();
+          set(true);
+          void panel.offsetHeight; /* force style + layout so the cost is not deferred */
+          toggle.push(performance.now() - t0);
+          frame.push(...(await frames(winMs)));
+          set(false);
+          await wait(300);
+        }
+        if (ticker) clearInterval(ticker);
+        const r2 = (x) => +x.toFixed(2);
+        return [
+          cfg.name,
+          cfg.rows,
+          r2(p95(toggle)),
+          r2(med(toggle)),
+          r2(Math.max(...toggle)),
+          r2(p95(frame)),
+          r2(Math.max(...frame)),
+          frame.length,
+          frame.filter((x) => x > 20).length,
+          frame.filter((x) => x > 33.3).length,
+          r2(p95(idle)),
+        ];
+      }
+      (async () => {
+        const q = new URLSearchParams(location.search),
+          winMs = +(q.get("ms") || 400),
+          reps = +(q.get("reps") || 5);
+        const ac1 = flap([0, 2, 4, 6, 8].map((d) => [d, d + 1])),
+          f2 = flap(Array.from({ length: 60 }, (_, k) => [k * 0.5, k * 0.5 + 0.25]));
+        banner.className = "";
+        const arms = [
+          { name: "per-row 200", rows: 200, perRow: true },
+          { name: "container 200", rows: 200 },
+          { name: "container 60 (virtualised window)", rows: 60 },
+          { name: "container 200 + 4 Hz ticks, 20 emphases", rows: 200, ticks: true },
+        ];
+        const mass = [];
+        for (const a of arms) mass.push(await arm(a, winMs, reps));
+        const out = {
+          ua: navigator.userAgent,
+          cores: navigator.hardwareConcurrency,
+          host: "development laptop (WSL2, software rendering), not the 06 §3.1 reference machine",
+          win_ms: winMs,
+          reps,
+        };
+        out.flap_columns = [
+          "changes",
+          "appearances",
+          "suppressed",
+          "fill_changes",
+          "text_flips",
+          "earliest_collapse_s",
+          "min_visible_s",
+        ];
+        out.flap = {
+          ac1: ac1.row,
+          ac1_announcements: ac1.ann,
+          flap2hz: f2.row,
+          flap2hz_announcements: f2.ann,
+        };
+        out.mass_columns = [
+          "arm",
+          "rows",
+          "toggle_ms_p95",
+          "toggle_ms_med",
+          "toggle_ms_max",
+          "frame_ms_p95",
+          "frame_ms_max",
+          "frames",
+          "over_20_ms",
+          "over_33_3_ms",
+          "idle_frame_ms_p95",
+        ];
+        out.mass = mass;
+        document.getElementById("out").textContent = "RESULT" + JSON.stringify(out);
+      })();
+    </script>
+  </body>
+</html>
