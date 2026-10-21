@@ -163,6 +163,58 @@ async def test_inv_b1_g_every_step_is_written_before_it_is_seen(book: Book, char
         assert book.commands.kinds() == ["place"]
 
 
+#: Accepted creates that name no exchange order id, no non-empty text: ruling 3 on #3972.
+_UNNAMED: list[dict[str, Any]] = [
+    {"ok": True, "exchange_order_id": None},
+    {"ok": True, "exchange_order_id": ""},
+    {"ok": True},
+    {"ok": True, "exchange_order_id": 1},
+]
+_UNNAMED_IDS = ["none", "empty", "absent", "not_text"]
+_NAMED = {"ok": True, "exchange_order_id": "x1"}
+_MISSING = ("error", {"error": "ExchangeOrderIdMissingError"})  # the error's class, no ack
+
+
+@pytest.mark.parametrize(
+    ("ack", "leaf", "recorded", "bound"),
+    [
+        (_NAMED, "submitted", ("ack", _NAMED), "x1"),
+        *[(ack, "unknown", _MISSING, None) for ack in _UNNAMED],
+    ],
+    ids=["named", *_UNNAMED_IDS],
+)
+async def test_an_accepted_place_is_submitted_only_when_it_names_its_order(
+    ack: dict[str, Any],
+    leaf: str,
+    recorded: tuple[str, dict[str, Any]],
+    bound: str | None,
+    book: Book,
+    charts: Charts,
+) -> None:
+    """Ruling 3 on #3972: an accepted create names its order (24 Sec.8.6 "Order creates"). One
+    that names none is an ambiguous outcome: `place` raises `ExchangeOrderIdMissingError`, so
+    `onError` lands the order in `unknown` for reconciliation (S1), never in `submitted` unbound,
+    and its row records the error's class, no ack. A named one is submitted and bound."""
+
+    async def _accepted(_command: b01.Command) -> Mapping[str, Any]:
+        return ack
+
+    book.commands.on_place = _accepted
+    async with _machine(charts, "lifecycle.draft", AuditTap(), _Seen(book.trail)) as interp:
+        await _send(interp, "VALIDATE", **VALIDATE)
+        await _send(interp, "SEND")
+        assert f"order.lifecycle.{leaf}" in interp.current_state_ids
+        assert interp.context["exchange_order_id"] == bound
+    leaves = ["validated", "submitting", leaf]
+    assert book.trail == [("seen", "draft")] + [(w, s) for s in leaves for w in ("written", "seen")]
+    row = await book.store.get(ACCOUNT, ORDER_ID)
+    events = await book.store.list_for_order(ACCOUNT, ORDER_ID)
+    assert row is not None and (row.lifecycle_state, row.exchange_order_id) == (leaf, bound)
+    assert [e.kind for e in events[:2]] == ["local_create", "submit_attempt"]
+    assert [(e.kind, e.payload) for e in events[2:]] == [recorded]
+    assert book.commands.kinds() == ["place"]
+
+
 class _Pager:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -286,6 +338,39 @@ async def test_a_failed_command_fails_again_with_nothing_resent(commands: Comman
     with pytest.raises(b01.RecordedFailureError, match="TimeoutError"):
         await b01.place_order(None, ctx, None)
     assert commands.kinds() == ["place"]
+
+
+@pytest.mark.parametrize("ack", _UNNAMED, ids=_UNNAMED_IDS)
+async def test_an_accepted_place_that_names_no_order_fails_its_attempt(
+    ack: dict[str, Any], commands: Commands
+) -> None:
+    """Ruling 3 on #3972: the attempt records the failure and keeps no result, so the re-entered
+    invoke fails again (to `unknown`) with nothing resent, and no ack is ever answered."""
+
+    async def _unnamed(_command: b01.Command) -> Mapping[str, Any]:
+        return ack
+
+    commands.on_place = _unnamed
+    ctx = _ctx()
+    _begun(ctx, "place")
+    with pytest.raises(b01.ExchangeOrderIdMissingError):
+        await b01.place_order(None, ctx, None)
+    with pytest.raises(b01.RecordedFailureError, match="ExchangeOrderIdMissingError"):
+        await b01.place_order(None, ctx, None)
+    assert commands.kinds() == ["place"] and b01._ATTEMPTS[(LINK, "place:1")].result is None
+
+
+async def test_a_resumed_place_whose_create_names_no_order_fails_too(commands: Commands) -> None:
+    """SR-E29-15, then ruling 3 on #3972: the lookup finds nothing, so the create is sent, and its
+    accepted answer that names no order fails the attempt all the same."""
+
+    async def _unnamed(_command: b01.Command) -> Mapping[str, Any]:
+        return {"ok": True}
+
+    commands.on_place = _unnamed
+    with pytest.raises(b01.ExchangeOrderIdMissingError):
+        await b01.place_order(None, _ctx(), None)
+    assert commands.kinds() == ["lookup", "place"]
 
 
 @pytest.mark.parametrize("invoke", ["place", "cancel", "amend"])

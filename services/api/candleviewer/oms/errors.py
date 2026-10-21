@@ -254,8 +254,8 @@ class OrderNotAmendable(OrderRefused):
 
 
 class RateBudgetExceeded(OrderRefused):
-    """`RATE_BUDGET_EXCEEDED` (24 Sec.8.7): the per-UID budget granted no reservation within its
-    bounded wait, so nothing is written or sent. `retry_after_s` is the answer's `Retry-After`."""
+    """`RATE_BUDGET_EXCEEDED` (24 Sec.8.7): the per-UID budget gave no token within its bounded
+    wait, so nothing was sent. `retry_after_s` is the answer's `Retry-After`."""
 
     default_detail = "The exchange rate budget is spent; retry later."
 
