@@ -376,7 +376,7 @@ async def test_the_record_follows_a_failed_hung_or_cancelled_close(close: str, e
     with capture_logs() as logs:
         end = rig.service.end(record, reason=ViewAsEndReason.ENDED, now=_at(5))
         ending = asyncio.create_task(end)
-        await rig.ports.closing.wait()
+        await asyncio.wait_for(rig.ports.closing.wait(), 5)
         if close == "cancel":
             ending.cancel()
         await asyncio.wait({ending}, timeout=5)  # a guard only: the bound ends a hung close

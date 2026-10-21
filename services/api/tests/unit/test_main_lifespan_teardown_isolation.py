@@ -59,6 +59,7 @@ _STEPS = (
     "bars_runtime",
     "mesh_self_check",
     "account_access_service",
+    "view_as_sweeper",
     "csrf_refusal_audits",
     "audit_budget_flush",
     "view_as_refusal_flush",

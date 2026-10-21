@@ -221,6 +221,28 @@ async def test_lifespan_starts_and_stops_the_users_purge_task() -> None:
     task.stop.assert_awaited_once_with()
 
 
+async def test_lifespan_runs_the_view_as_sweeper_and_stops_it_before_its_records_drain() -> None:
+    """#3085: started once the session store and audit are up; stopped before the refusal-audit
+    tracker drains, so the end records of its last tick land before audit stops."""
+    app = FastAPI()
+    app.state.app_context = ctx = _fake_ctx()
+    seen: list[str] = []
+    up = (ctx.storage, ctx.auth, ctx.audit)
+    app.state.view_as_sweeper = SimpleNamespace(
+        start=lambda: seen.append(f"start, up={all(m.started for m in up)}"),
+        stop=AsyncMock(side_effect=lambda: seen.append("stop")),
+    )
+
+    def drain() -> int:
+        seen.append(f"drain, audit stopped={ctx.audit.stopped}")
+        return 0
+
+    app.state.csrf_refusal_audits = SimpleNamespace(drain=AsyncMock(side_effect=drain))
+    async with _lifespan(app):
+        assert seen == ["start, up=True"]
+    assert seen == ["start, up=True", "stop", "drain, audit stopped=False"]
+
+
 async def test_lifespan_loads_the_backup_freshness_once_before_serving() -> None:
     """E42-T05 BK-5: the ages the stale-backup alert reads; `start` bounds its own load."""
     app = FastAPI()

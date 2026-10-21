@@ -61,6 +61,7 @@ _BOOT = (
     "users_purge_task.start",
     "audit_budget_flush.start",
     "view_as_refusal_flush.start",
+    "view_as_sweeper.start",
     "log_level_overrides.start",
     "health_registry.start",
     "account_health.start",

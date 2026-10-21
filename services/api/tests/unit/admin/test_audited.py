@@ -222,6 +222,7 @@ def test_every_public_method_of_an_admin_class_is_declared() -> None:
         ("view_as", "ViewAsService.evaluate", {"admin.view_as_ended"}),
         ("view_as", "ViewAsService.leave", {"admin.view_as_ended"}),
         ("view_as", "ViewAsService.write_end_record", {"admin.view_as_ended"}),
+        ("view_as_sweeper", "ViewAsSweeper.tick", {"admin.view_as_ended"}),
         (
             "service",
             "AdminService.rewrap_kek",
@@ -238,6 +239,19 @@ def test_the_admin_mutations_declare_the_records_they_write(
     found = declaration(owner)
     assert found is not None
     assert actions <= set(found.actions)
+
+
+def test_contract_unrecorded_is_declared_only_where_a_review_allowed_it() -> None:
+    """A write the contract records nothing for is an exemption from C-2.9, so each new use is a
+    reviewed edit of this set (C-10.2), not a declaration that passes on its own (S4-SEC-09)."""
+    found = {
+        (cls.__module__, f"{cls.__qualname__}.{name}")
+        for cls in _admin_classes()
+        for name, member in _public_methods(cls)
+        if (declared := declaration(member)) is not None
+        and declared.exempt == "contract_unrecorded"
+    }
+    assert found == {("candleviewer.admin.view_as", "ViewAsService.clear")}
 
 
 _PACKAGE = Path(candleviewer.__file__).resolve().parent

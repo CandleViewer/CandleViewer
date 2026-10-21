@@ -109,7 +109,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # one, would otherwise wait out its grace for a server that never served.
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
-    account_health = ws_runtime = lost_jobs = view_as_flush = None
+    account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
     alert_tasks: list[Any] = []
     metrics_runtime: MetricsRuntime | None = None
     try:
@@ -184,6 +184,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         view_as_flush = getattr(app.state, "view_as_refusal_flush", None)
         if view_as_flush is not None:  # #3085: the view-as refusal budget's own
             view_as_flush.start()
+        view_as_sweeper = getattr(app.state, "view_as_sweeper", None)
+        if view_as_sweeper is not None:  # #3085: once the session store and audit are up
+            view_as_sweeper.start()
         overrides = getattr(app.state, "log_level_overrides", None)
         if overrides is not None:
             overrides.start()
@@ -276,6 +279,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # #2648: wait (bounded) for grant pushes before audit stops: they write WS
                 # audit rows
                 await teardown.run("account_access_service", access.drain)
+            if view_as_sweeper is not None:  # #3085: its ends' records go to the drain below
+                await teardown.run("view_as_sweeper", view_as_sweeper.stop)
             csrf_audits = getattr(app.state, "csrf_refusal_audits", None)
             if csrf_audits is not None:
                 # #2090: let in-flight CSRF-refusal audits land (bounded) before audit stops.

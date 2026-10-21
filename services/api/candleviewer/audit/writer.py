@@ -453,10 +453,12 @@ class AuditWriter:
         """`emit()` of a keyed `action` under the id `uuid5(KEYED_ACTIONS[action], name)` ("Keyed
         records" above): `build()` with the keywords of `emit()`, then `ingest()`, so a refusal is
         counted and raised as `emit()`'s, only after `build()` checked the record. `ValueError`
-        for an action `KEYED_ACTIONS` does not list."""
+        for an action `KEYED_ACTIONS` does not list, or a blank `name`."""
         namespace = KEYED_ACTIONS.get(action)
         if namespace is None:
             raise ValueError(f"{action!r} is not a keyed audit action")
+        if not name.strip():  # one blank key would fold an action's records into one row
+            raise ValueError("a keyed audit record needs a name")  # never echoes the name
         keyed = {"record_id": uuid.uuid5(namespace, name)}
         await self.ingest_counted(self.build(action, **fields).model_copy(update=keyed))
 

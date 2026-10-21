@@ -66,3 +66,15 @@ async def test_writer_keyed_emit_refuses_an_unkeyed_action_and_raises_every_refu
         assert writer.refused_by_domain["admin"] == 1
     await dead.stop(1)
     assert stopped.buffer_depth == 0 and dead.buffer_depth == 1 and repo.rows == []
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_writer_keyed_emit_refuses_a_blank_name_without_echoing_it(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, name: str
+) -> None:
+    """`uuid5(namespace, "")` would fold every blank-keyed record of an action into one row; the
+    refusal names no input (S4-SEC-10) and nothing is appended."""
+    writer = _writer(repo, tmp_path, clock)
+    with pytest.raises(ValueError, match=r"^a keyed audit record needs a name$"):
+        await writer.emit_keyed(_ACTION, name, actor_label="ana")
+    assert writer.buffer_depth == 0
