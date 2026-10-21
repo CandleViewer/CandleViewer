@@ -47,6 +47,7 @@ from candleviewer.storage.repositories.break_glass_sqlalchemy import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    sqlstate_of,
 )
 
 pytestmark = pytest.mark.integration
@@ -222,8 +223,9 @@ async def test_failed_reset_changes_zero_rows(pg_dsn: str) -> None:
                 )
             )
         try:  # the crash hits the last statement, after every revoke ran
-            with pytest.raises(DBAPIError, match="injected crash"):
+            with pytest.raises(DBAPIError) as raised:
                 await _reset(store, uid, code)
+            assert sqlstate_of(raised.value) == "P0001"  # the injected RAISE, text stripped (#2748)
         finally:
             async with engine.begin() as conn:
                 await conn.execute(sa.text("DROP TRIGGER bg_crash ON system_events"))

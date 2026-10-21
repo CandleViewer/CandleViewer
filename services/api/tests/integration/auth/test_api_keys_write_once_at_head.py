@@ -28,6 +28,7 @@ from testcontainers.postgres import PostgresContainer
 
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    sqlstate_of,
 )
 
 pytestmark = pytest.mark.integration
@@ -36,7 +37,6 @@ _ROOT = Path(__file__).resolve().parents[3]
 _SNAP: dict[str, Any] = {"uid": "1", "permissions": {"ContractTrade": ["Order"], "Wallet": []}}
 _MARK = b"bound-value-mark"  # bound into the refused write; stands in for SECRET ciphertext
 _RESEAL = sa.text("UPDATE api_keys SET secret_enc = :sealed WHERE id = :id")
-_REFUSAL = "trg_api_keys_write_once: api_keys.secret_enc is write-once; store a new row (SR-003)"
 
 
 @pytest.fixture(scope="module")
@@ -113,6 +113,6 @@ async def test_a_refused_write_through_the_app_engine_renders_no_bound_value(pg:
         await rel.dispose()
         await default.dispose()
     bound = [_MARK.decode(), str(key_id)]
-    assert _REFUSAL in _rendered(hidden.value)
+    assert sqlstate_of(hidden.value) == "23514"  # the trigger refused; text stripped (#2748)
     assert [value for value in bound if value in _rendered(hidden.value)] == []
     assert [value for value in bound if value in _rendered(shown.value)] == bound
