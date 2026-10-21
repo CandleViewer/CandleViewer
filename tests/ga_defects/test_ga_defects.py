@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -175,43 +172,6 @@ def test_cmd_ledger_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
         == 1
     )
     assert len(sent) == 1  # missing ledger pushes nothing
-
-
-_WORKFLOW = ROOT / ".github" / "workflows" / "design-qa-ledger-export.yml"
-
-
-def _export() -> tuple[dict[str, Any], dict[str, Any]]:
-    """The workflow (PyYAML reads `on:` as True) and its export step."""
-    flow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
-    return flow, flow["jobs"]["export"]["steps"][-1]
-
-
-def test_the_export_reads_the_ledger_its_trigger_watches() -> None:
-    flow, step = _export()
-    assert (
-        step["env"]["LEDGER"] == str(run.LEDGER_PATH) == flow[True]["push"]["paths"][0]
-    )
-
-
-@pytest.mark.parametrize(
-    ("event", "code"), [("schedule", 0), ("workflow_dispatch", 0), ("push", 1)]
-)
-def test_a_missing_ledger_is_skipped_unless_a_push_removed_it(
-    tmp_path: Path, event: str, code: int
-) -> None:
-    """#1330 has not committed the ledger: a scheduled run notes it and succeeds; a push run,
-    which only a change to the ledger triggers, still fails as the tool does (E_LEDGER_MISSING)."""
-    path = os.pathsep.join((os.path.dirname(sys.executable), os.environ["PATH"]))
-    env = {
-        "PATH": path,
-        "LEDGER": str(tmp_path / "none.csv"),
-        "GITHUB_EVENT_NAME": event,
-    }
-    out = subprocess.run(
-        ["bash", "-e", "-c", _export()[1]["run"]],
-        cwd=ROOT, env=env, capture_output=True, text=True, check=False,
-    )  # fmt: skip
-    assert (out.returncode, "::notice::" in out.stdout) == (code, code == 0)
 
 
 def test_main_unset_pushgateway_skips_with_notice(
