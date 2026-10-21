@@ -60,17 +60,20 @@ Owner calls with dates: O2 prototypes (2026-10-22), O3 — ruled 2026-10-20 (orc
 
 ## Research boards (Penpot)
 
-Per `docs/design/README.md` ("UX-research tickets still design in Penpot") the **nine** boards (ruled 2026-10-20 (orchestrator, owner delegation)) go on a **clean page `E11-D01`** in the CandleViewer file
-(team `b564c72c-f31f-81ec-8008-b109a9175d0b`, file `b564c72c-f31f-81ec-8008-b112c6fdc116`); the 2026-10-14 page ("E11-D01 Chart navigation
-research") holds other agents' boards and is left untouched. Exports land in `docs/design/E11/img/E11-D01-<nn>-<board>.png` (one PNG
-per board, `01-method-personas` … `09-prioritised-implications`) via `docs/design/_tools/penpot_export.py`; no image is embedded until it
-exists. Planned boards: **1 Method and personas** (P1/P2/P3 cards from `10`);
-**2 Findings cards Q1–Q6** (finding, basis, contradiction flag); **3 Decisions at a glance and principles** (the one-pager); **4 Key-map wireframe** (D4
-vocabulary and legend; E11-S13, E11-D02); **5 Data-table column comparison** (US-CHART-014 vs SCR-045 vs E11-S14 vs `05` §6.3; E11-S14, E11-D04);
-**6 Aggregation disclosure options** (W1–W4 and placements; E11-S12, E11-D02); **7 Competitive teardown** (scale menus and go-to-date in TradingView,
-DeepCharts, Bookmap; pending the owner's live, redacted screenshots, protocol §3/§9; E11-D03); **8 Contradictions with planned
-behaviour** (the §Contradictions table as a frame: id, the two sources, the recommended side, who decides); **9 Prioritised implications** (the
-§Prioritised implications Must/Should/Could table per consumer — #239's "prioritised issues list"; E11-D09).
+Per `docs/design/README.md` ("UX-research tickets still design in Penpot") the **nine** boards (ruled 2026-10-20 (orchestrator, owner delegation)) are
+drawn on the **self-hosted Penpot**, on the clean page `E11-D01` · id `667f2233-c049-8068-8008-d2e04f1c1eab`; the 2026-10-14 page ("E11-D01 Chart navigation
+research") holds other agents' boards and is left untouched. Each board is exported once to `docs/design/E11/img/E11-D01-<nn>-<board>.png`
+(board script `r6`; the footer of every board reads `page E11-D01 · board <nn> · r6`):
+
+- **1 Method and personas** (P1/P2/P3 cards from `10`) — board `667f2233-c049-8068-8008-d2e480ce75fe` → `docs/design/E11/img/E11-D01-01-method-personas.png`
+- **2 Findings cards Q1–Q6** (finding, basis, contradiction flag) — board `667f2233-c049-8068-8008-d2e48547a430` → `docs/design/E11/img/E11-D01-02-findings-q1-q6.png`
+- **3 Decisions at a glance and principles** (the one-pager) — board `667f2233-c049-8068-8008-d2e48a79173c` → `docs/design/E11/img/E11-D01-03-decisions-principles.png`
+- **4 Key-map wireframe** (D4 vocabulary and legend; E11-S13, E11-D02) — board `667f2233-c049-8068-8008-d2e34b2e887d` → `docs/design/E11/img/E11-D01-04-key-map.png`
+- **5 Data-table column comparison** (US-CHART-014 vs SCR-045 vs E11-S14 vs `05` §6.3; E11-S14, E11-D04) — board `667f2233-c049-8068-8008-d2e48eda39a6` → `docs/design/E11/img/E11-D01-05-table-columns.png`
+- **6 Aggregation disclosure options** (W1–W4 and placements; E11-S12, E11-D02) — board `667f2233-c049-8068-8008-d2e3731f9a51` → `docs/design/E11/img/E11-D01-06-aggregation-options.png`
+- **7 Competitive teardown** (scale menus and go-to-date in TradingView, DeepCharts, Bookmap; pending the owner's live, redacted screenshots, protocol §3/§9; E11-D03) — board `667f2233-c049-8068-8008-d2e3ace9824c` → `docs/design/E11/img/E11-D01-07-competitive-teardown.png`
+- **8 Contradictions with planned behaviour** (the §Contradictions table as a frame: id, the two sources, the recommended side, who decides) — board `667f2233-c049-8068-8008-d2e3e83c1729` → `docs/design/E11/img/E11-D01-08-contradictions.png`
+- **9 Prioritised implications** (the §Prioritised implications Must/Should/Could table per consumer — #239's "prioritised issues list"; E11-D09) — board `667f2233-c049-8068-8008-d2e42dad75ca` → `docs/design/E11/img/E11-D01-09-prioritised-implications.png`
 
 ## Method note
 
