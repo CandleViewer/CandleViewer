@@ -7,6 +7,7 @@ additive, ambiguous batch operations) per the ticket's test plan.
 from __future__ import annotations
 
 import sys
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -900,3 +901,301 @@ def test_main_warns_for_unquoted_sensitive_table_without_failing(
     )
     assert main(["--versions-dir", str(versions)]) == 0
     assert "WARN CI-MIG-006" in capsys.readouterr().err
+
+
+# --- #4024: CI-MIG-003 reads statements, not one spelling per verb ---------------
+
+_CORE_DELETE = """import sqlalchemy as sa
+from alembic import op
+
+
+def upgrade() -> None:
+    op.execute(sa.table("audit_log").delete())
+"""
+
+_CORE_UPDATE_BY_NAME = """import sqlalchemy as sa
+from alembic import op
+
+
+def upgrade() -> None:
+    log = sa.table("audit_log", sa.column("outcome"))
+    op.execute(sa.update(log).values(outcome="x"))
+"""
+
+_WRAPPED_DROP = """from alembic import op
+
+
+def upgrade() -> None:
+    # cv:contract-phase: R2
+    op.drop_table(
+        "audit_log"
+    )
+"""
+
+
+def _audit_hits(tmp_path: Path, source: str, name: str = "0050_audit.py") -> list[str]:
+    """Each CI-MIG-003 message the revision `source`, saved as `name`, gives, in
+    report order."""
+    path = _write(tmp_path, name, source)
+    findings = check_audit_table_integrity([path]) + check_destructive_annotations(
+        [path]
+    )
+    assert {finding.code for finding in findings} <= {"CI-MIG-003"}
+    return [finding.message for finding in findings]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP TABLE IF EXISTS audit_log",
+        "DELETE FROM ONLY audit_log",
+        "UPDATE ONLY audit_log SET outcome = 'success'",
+        "ALTER TABLE ONLY audit_log DROP COLUMN note",
+        "TRUNCATE orders, audit_log",
+        "DROP TABLE orders, audit_checkpoints",
+        "MERGE INTO audit_log a USING x ON a.id = x.id WHEN MATCHED THEN DELETE",
+        "DROP TRIGGER trg_audit_append ON audit_log",
+        "DO $$ BEGIN EXECUTE format('DELETE FROM %I', 'audit_log'); END $$",
+        "DELETE /* the old rows */ FROM audit_log",
+        "DELETE FROM\n\naudit_log WHERE event_ts < now()",
+        "WITH gone AS (DELETE FROM audit_log RETURNING id) SELECT count(*) FROM gone",
+        "EXPLAIN ANALYZE DELETE FROM audit_log",
+        "INSERT INTO audit_log (record_id) VALUES ('x')"
+        " ON CONFLICT (record_id) DO UPDATE SET outcome = 'x'",
+    ],
+)
+def test_audit_mutation_spelled_any_valid_way_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """Each statement mutates an audit table, which C-5.7 forbids however it is spelled."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "append-only table 'audit_" in message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DO $$ BEGIN DELETE FROM audit_log; END $$",
+        "DO $$ BEGIN IF true THEN DELETE FROM audit_log; END IF; END $$",
+        "DO $$ BEGIN IF false THEN NULL; ELSE DELETE FROM audit_log; END IF; END $$",
+        "DO $$ BEGIN FOR i IN 1..2 LOOP UPDATE audit_log SET note = 'x'; END LOOP; END $$",
+        "DO $$ BEGIN PERFORM 1; EXCEPTION WHEN others THEN DELETE FROM audit_log; END $$",
+        "DO $$ DECLARE r record; BEGIN"
+        " FOR r IN DELETE FROM audit_log RETURNING id LOOP END LOOP; END $$",
+        "DO $$ BEGIN WITH gone AS (DELETE FROM audit_log RETURNING id)"
+        " INSERT INTO orders_archive SELECT * FROM gone; END $$",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql"
+        " AS $$ BEGIN DELETE FROM audit_log; END $$; SELECT f()",
+        "CREATE FUNCTION f() RETURNS SETOF audit_log LANGUAGE plpgsql"
+        " AS $$ BEGIN RETURN QUERY DELETE FROM audit_log RETURNING *; END $$",
+        "CREATE PROCEDURE p() LANGUAGE plpgsql"
+        " AS $$ DECLARE n int; BEGIN TRUNCATE audit_log; END $$; CALL p()",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE sql"
+        " BEGIN ATOMIC DELETE FROM audit_log; END",
+        "PREPARE purge AS DELETE FROM audit_log; EXECUTE purge",
+        "CREATE RULE r AS ON INSERT TO orders DO ALSO DELETE FROM audit_log",
+        "CREATE RULE r AS ON INSERT TO orders DO INSTEAD UPDATE audit_log SET note = 'x'",
+        "COPY (DELETE FROM audit_log RETURNING *) TO STDOUT",
+    ],
+)
+def test_a_mutation_a_body_or_rule_starts_mid_statement_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """plpgsql and SQL-standard bodies, rules, prepared statements and `COPY` start
+    the mutation after another word, with no `;` before it."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "append-only table 'audit_log'" in message
+
+
+def test_a_chunk_of_many_block_openers_is_read_in_linear_memory(tmp_path: Path) -> None:
+    """Each opener starts a clause; they are read one at a time, never all held."""
+    sql = "DO $$ " + "BEGIN " * 4000 + "DELETE FROM audit_log; END $$"
+    tracemalloc.start()
+    try:
+        (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert "append-only table 'audit_log'" in message
+    assert peak < 16 * 2**20
+
+
+def test_a_mutating_grant_on_every_table_of_a_schema_is_flagged(tmp_path: Path) -> None:
+    """It names no table, and reaches the audit ones all the same."""
+    sql = "GRANT DELETE ON ALL TABLES IN SCHEMA public TO cv_app"
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "every table of a schema" in message
+
+
+@pytest.mark.parametrize("source", [_CORE_DELETE, _CORE_UPDATE_BY_NAME])
+def test_a_core_delete_or_update_of_an_audit_table_is_flagged(
+    tmp_path: Path, source: str
+) -> None:
+    (message,) = _audit_hits(tmp_path, source)
+    assert "append-only table 'audit_log'" in message
+
+
+def test_a_drop_whose_table_name_is_on_the_next_line_is_flagged(tmp_path: Path) -> None:
+    """The call's arguments, not its first line, name the table."""
+    (message,) = _audit_hits(tmp_path, _WRAPPED_DROP)
+    assert "append-only table 'audit_log'" in message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TRIGGER trg BEFORE UPDATE OR DELETE ON audit_log"
+        " FOR EACH ROW EXECUTE FUNCTION forbid_mutation()",
+        "REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM cv_app",
+        "DO $$ BEGIN EXECUTE 'REVOKE UPDATE, DELETE ON audit_log FROM cv_ro'; END $$",
+        "COMMENT ON COLUMN audit_log.note IS 'Update and delete are refused'",
+        "INSERT INTO audit_log (record_id) VALUES ('x') ON CONFLICT DO NOTHING",
+        "CREATE INDEX ix_audit_time ON audit_log (event_ts DESC)",
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM audit_log) THEN"
+        " RAISE EXCEPTION 'audit_log holds rows'; END IF; END $$",
+        "SELECT id FROM audit_log WHERE outcome = 'x' FOR UPDATE",
+        "SELECT count(*) FROM audit_log",
+        "LOCK TABLE audit_log IN SHARE MODE",
+        "GRANT SELECT ON ALL TABLES IN SCHEMA public TO cv_ro",
+        "DELETE FROM orders WHERE note = 'audit_log rows are kept'",
+    ],
+)
+def test_a_statement_that_mutates_no_audit_table_is_not_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """The append-only guards themselves, reads, inserts and another table's rows."""
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+@pytest.mark.parametrize(
+    ("revision", "flagged"), [("0003_audit_log", False), ("0099_other", True)]
+)
+def test_only_the_revision_that_creates_the_audit_tables_may_drop_them(
+    tmp_path: Path, revision: str, flagged: bool
+) -> None:
+    """0003's downgrade drops what its upgrade created, behind its refusal to drop a
+    table that holds a row; any other revision dropping them is a finding."""
+    sql = "DROP TRIGGER IF EXISTS trg_audit_append ON audit_log; DROP TABLE audit_log"
+    source = f'revision: str = "{revision}"\n' + _raw_sql_revision(sql)
+    assert bool(_audit_hits(tmp_path, source, f"{revision}.py")) is flagged
+
+
+def test_the_owner_revision_may_not_change_audit_rows(tmp_path: Path) -> None:
+    source = 'revision = "0003_audit_log"\n' + _raw_sql_revision(
+        "DELETE FROM audit_log"
+    )
+    assert len(_audit_hits(tmp_path, source, "0003_audit_log.py")) == 1
+
+
+_OWNER_DROPS = (
+    "DROP TRIGGER IF EXISTS trg_audit_append ON audit_log; DROP TABLE audit_log;"
+    " DROP FUNCTION IF EXISTS forbid_mutation()"
+)
+_UPGRADE = f"\n\ndef upgrade() -> None:\n    op.execute({_OWNER_DROPS!r})\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        pytest.param(
+            "0099_other.py",
+            'from alembic import op\n\nrevision = "0003_audit_log"\n' + _UPGRADE,
+            id="the-owner-id-in-another-file",
+        ),
+        pytest.param(
+            "0003_audit_log.py",
+            'from alembic import op\n\nrevision = "0099_other"\n' + _UPGRADE,
+            id="the-owner-file-name-with-another-id",
+        ),
+        pytest.param(
+            "0099_other.py",
+            'from alembic import op\n\nREV = "0099_other"\nrevision = REV\n'
+            + _UPGRADE.replace(
+                "-> None:\n", '-> None:\n    revision = "0003_audit_log"\n'
+            ),
+            id="a-function-scope-claim",
+        ),
+        pytest.param(
+            "0099_other.py",
+            'from alembic import op\n\nrevision = "0003_audit_log"\n'
+            'revision = "0099_other"\n' + _UPGRADE,
+            id="an-earlier-module-level-claim",
+        ),
+        pytest.param(
+            "0099_other.py",
+            'from alembic import op\n\nREV = "0099_other"\nrevision = REV\n\n\n'
+            'class _Meta:\n    revision = "0003_audit_log"\n' + _UPGRADE,
+            id="a-class-body-claim",
+        ),
+    ],
+)
+def test_no_other_revision_can_claim_the_owner_exemption(
+    tmp_path: Path, name: str, source: str
+) -> None:
+    """The owner is the file the migrations lockfile pins by name and bytes, with the
+    id Alembic reads: the last module-level `revision`, a string constant."""
+    assert _audit_hits(tmp_path, source, name)
+
+
+def test_the_shipped_migrations_have_no_audit_mutation() -> None:
+    paths = sorted(p for p in _VERSIONS_DIR.glob("*.py") if p.name != "__init__.py")
+    assert len(paths) > 40
+    assert check_audit_table_integrity(paths) == []
+    assert check_destructive_annotations(paths) == []
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE OR REPLACE FUNCTION forbid_mutation() RETURNS trigger"
+        " LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+        "DROP FUNCTION audit_refuse_truncate() CASCADE",
+        "CREATE OR REPLACE FUNCTION public.audit_chain() RETURNS trigger"
+        " LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+        "DROP FUNCTION IF EXISTS audit_field(text)",
+        'ALTER FUNCTION "forbid_mutation"() OWNER TO cv_app',
+        "DO $$ BEGIN EXECUTE 'DROP FUNCTION audit_chain()'; END $$",
+        "DO $$ BEGIN DROP FUNCTION forbid_mutation() CASCADE; END $$",
+        "DO $$ BEGIN IF true THEN DROP FUNCTION IF EXISTS audit_chain() CASCADE;"
+        " END IF; END $$",
+        "DO $$ BEGIN ALTER FUNCTION audit_field(text) RENAME TO x; END $$",
+        "DO $o$ BEGIN CREATE OR REPLACE FUNCTION audit_refuse_truncate()"
+        " RETURNS trigger LANGUAGE plpgsql AS $i$ BEGIN RETURN NULL; END $i$; END $o$",
+    ],
+)
+def test_redefining_or_dropping_an_audit_guard_function_is_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """The append-only triggers and the hash chain run these: replacing one neuters
+    them without naming an audit table."""
+    (message,) = _audit_hits(tmp_path, _raw_sql_revision(sql))
+    assert "append-only guard function '" in message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE FUNCTION rule_events_forbid_mutation() RETURNS trigger"
+        " LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+        "CREATE OR REPLACE FUNCTION audit_view() RETURNS int"
+        " LANGUAGE sql AS $$ SELECT audit_field('x')::int $$",
+        "CREATE TRIGGER trg BEFORE TRUNCATE ON orders"
+        " FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate()",
+    ],
+)
+def test_a_function_that_only_shares_or_calls_a_guard_function_is_not_flagged(
+    tmp_path: Path, sql: str
+) -> None:
+    """A sibling's name, a body that calls one, and a trigger that runs one."""
+    assert _audit_hits(tmp_path, _raw_sql_revision(sql)) == []
+
+
+@pytest.mark.parametrize(
+    ("revision", "flagged"), [("0003_audit_log", False), ("0099_other", True)]
+)
+def test_only_the_revision_that_defines_the_guard_functions_may_drop_them(
+    tmp_path: Path, revision: str, flagged: bool
+) -> None:
+    sql = "DROP FUNCTION IF EXISTS forbid_mutation()"
+    source = f'revision: str = "{revision}"\n' + _raw_sql_revision(sql)
+    assert bool(_audit_hits(tmp_path, source, f"{revision}.py")) is flagged

@@ -713,16 +713,35 @@ index alone, removing nothing.
   operation with no phase annotation. Split the change into
   expand → migrate → contract across separate releases (C-5.1), and
   annotate the destructive statement with the phase comment the linter
-  expects once you are genuinely in the contract phase.
+  expects once you are genuinely in the contract phase. The same code also
+  refuses, with no annotation or exemption, any statement or Alembic call
+  that mutates an append-only audit table (C-5.7): a `DELETE`, `UPDATE`,
+  `TRUNCATE`, `DROP`, `ALTER`, `MERGE` or mutating `GRANT` that names one,
+  however it is spelled or nested (a plpgsql or SQL-standard body, a rule, a
+  prepared statement, `EXECUTE`), a mutating grant on every table of a
+  schema, and any statement that defines, replaces, alters or drops one of
+  the tables' guard functions. It is fail-closed: a mutating statement that
+  names an audit table anywhere counts, so a foreign key onto one or a
+  backfill that reads one is refused as well. Declare such a key in
+  `CREATE TABLE` or with `op.create_foreign_key`, and stage what a backfill
+  reads in a temporary table first. In a plpgsql body a statement runs from
+  the previous `;`, so an `IF`, `FOR` or `WITH` header that reads an audit
+  table counts with the statement it opens: read the condition into a
+  variable first. A string literal that opens with an SQL command word is
+  read as SQL. Only `0003_audit_log`, which creates the
+  tables and the functions, drops them, in its own downgrade: the exemption
+  holds for that file alone, which the migrations lockfile pins by name and
+  content.
 - **CI-MIG-004** (upgrade-path failure): running the migration chain up
   from the previous release tag's schema failed. Reproduce locally
   (`alembic upgrade head` from a DB seeded at the previous tag) and fix the
   migration; this is separate from the round-trip check in CI-COV/CI-INT
   and exists specifically to catch assumptions about pre-existing data.
 - **CI-MIG-005** (`IF NOT EXISTS` used in a migration): a migration file
-  uses `IF NOT EXISTS`/`IF EXISTS` guards, which mask a wrong `down_revision`
-  or a genuinely missing prior migration instead of failing loudly. Remove
-  the guard and fix the actual ordering problem.
+  uses an `IF NOT EXISTS` guard (`CREATE EXTENSION IF NOT EXISTS` excepted),
+  which masks a wrong `down_revision` or a genuinely missing prior migration
+  instead of failing loudly. Remove the guard and fix the actual ordering
+  problem.
 - **CI-MIG-006** (informational, non-blocking): a migration names a table
   listed in `tools/ci/security-sensitive-tables.txt`, in SQL or as an
   Alembic argument, quoted or not (docstrings, comments and prose literals

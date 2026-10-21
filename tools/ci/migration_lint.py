@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import argparse
 import ast
+import itertools
 import re
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,17 +65,10 @@ _CREATE_EXTENSION_RE = re.compile(
 # (`audit_log`, `audit_checkpoints` — no `audit_entries` table exists).
 _FORBIDDEN_DESTRUCTIVE_TABLES = frozenset({"audit_log", "audit_checkpoints"})
 
-# Raw-SQL statements that mutate or reshape an audit table bypass the
-# `op.drop_*`/`op.alter_column` AST-level checks above. Case-insensitive:
-# DDL/DML keywords (and Postgres identifiers, since unquoted identifiers are
-# folded to lower case) are not case-sensitive. Each pattern binds the
-# keyword directly to the table name (rather than "keyword anywhere in the
-# literal, table name anywhere in the literal") so prose — e.g. a module
-# docstring that separately mentions `audit_log` in one sentence and
-# `ALTER TABLE` in another about a different table — is never conflated with
-# an actual SQL statement. `GRANT ALL` implicitly includes UPDATE/DELETE/
-# TRUNCATE; a grant list may name a mutating verb alongside harmless
-# privileges (e.g. `GRANT SELECT, DELETE ON ...`).
+# An optional schema and quotes before a table name, for the dynamic-target
+# check below. The static check reads statements (`_audit_mutations`), not
+# patterns. `GRANT ALL` implicitly includes UPDATE/DELETE/TRUNCATE; a grant
+# list may name a mutating verb alongside harmless privileges.
 _TABLE_QUALIFIER = r"(?:\"?\w+\"?\.)?\"?'?"
 
 # Sentinel substituted for an f-string placeholder whose value could not be
@@ -92,26 +87,12 @@ _DYNAMIC_MUTATION_RE = re.compile(
 )
 
 
-def _mutation_pattern_for(table: str) -> re.Pattern[str]:
-    t = re.escape(table)
-    q = _TABLE_QUALIFIER
-    return re.compile(
-        rf"\b(?:DELETE\s+FROM|UPDATE|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|ALTER\s+TABLE)"
-        rf"\s+{q}{t}\b"
-        rf"|\bGRANT\s+(?:ALL(?:\s+PRIVILEGES)?|"
-        rf"[A-Za-z, ]*?\b(?:UPDATE|DELETE|TRUNCATE)\b[A-Za-z, ]*?)"
-        rf"\s+ON\s+{q}{t}\b",
-        re.IGNORECASE,
-    )
-
-
 # There is deliberately no escape hatch for audit-table mutations: C-5.7
 # forbids UPDATE/DELETE/DROP/TRUNCATE/ALTER/mutating GRANT on an audit table
 # unconditionally, so no annotation (however spelled) may suppress a genuine
 # finding. A previous `# cv:audit-exempt:` marker was removed because it was
 # indistinguishable, at review time, from a bypass of a real mutation — see
 # PR #1518 review history.
-_CREATE_ONLY_RE = re.compile(r"^\s*CREATE\s+(TABLE|INDEX)\b", re.IGNORECASE)
 
 
 def _resolve_simple_name_constants(tree: ast.AST) -> dict[str, str]:
@@ -197,20 +178,6 @@ def _normalise_sql(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _sql_statements(text: str) -> list[str]:
-    """Split a (possibly multi-statement, possibly prose) literal into
-    individual SQL-statement-sized chunks so a mutation keyword in one
-    sentence/statement is never combined with an unrelated table name
-    mentioned elsewhere in the same literal (e.g. a module docstring listing
-    several tables in prose). Splits on `;` and on blank lines, which is
-    conservative — a real single SQL statement never spans a blank line in
-    this codebase's migrations."""
-    chunks: list[str] = []
-    for para in re.split(r"\n\s*\n", text):
-        chunks.extend(part for part in para.split(";") if part.strip())
-    return chunks or [text]
-
-
 # CI-MIG-006 reads a revision for the identifiers it names, not for substrings:
 # `orders`, `positions`, `executions` and `backups` are also plain words, and a
 # table that only a comment or a message mentions is not touched. One scan, left
@@ -273,6 +240,286 @@ def _sql_identifiers(sql: str) -> set[str]:
             if _BARE_NAME_RE.fullmatch(text) or _SQL_COMMAND_RE.match(text):
                 names |= _sql_identifiers(text)
     return names
+
+
+def _sql_split(sql: str) -> list[str]:
+    """`sql` split into statements at each `;` outside a comment, a quote and a `$$`
+    body; a blank line never splits one."""
+    cuts: list[int] = []
+    pos = 0
+    for token in _SQL_TOKEN_RE.finditer(sql):
+        cuts += [
+            pos + i for i, char in enumerate(sql[pos : token.start()]) if char == ";"
+        ]
+        pos = token.end()
+    cuts += [pos + i for i, char in enumerate(sql[pos:]) if char == ";"]
+    bounds = [-1, *cuts, len(sql)]
+    parts = (sql[start + 1 : end] for start, end in itertools.pairwise(bounds))
+    return [part for part in parts if part.strip()]
+
+
+def _code_words(statement: str) -> list[str]:
+    """The statement's words outside comments, quotes and `$$` bodies, upper-cased."""
+    return [
+        token["word"].upper()
+        for token in _SQL_TOKEN_RE.finditer(statement)
+        if token["word"] is not None
+    ]
+
+
+def _nested_sql(statement: str) -> list[str]:
+    """The SQL inside `statement`: each `$$` body, and each `'...'` literal that is
+    SQL (it opens with one of `SQL_COMMANDS`, as `EXECUTE '...'` writes it)."""
+    nested: list[str] = []
+    for token in _SQL_TOKEN_RE.finditer(statement):
+        literal = token["string"] or token["estring"]
+        if token["body"] is not None:
+            nested.append(token["body"])
+        elif literal is not None:
+            text = literal[literal.index("'") + 1 : -1].replace("''", "'")
+            if _SQL_COMMAND_RE.match(text):
+                nested.append(text)
+    return nested
+
+
+# A statement mutates when its first word does, or when a `GRANT` hands out a
+# mutating privilege; fail-closed for the forms that hide the verb further in: a
+# data-modifying `WITH`, an `EXPLAIN ANALYZE`, which runs its statement, a prepared
+# statement, a `COPY` of a `RETURNING` query, a rule's action, and an upsert's
+# `DO UPDATE`.
+_MUTATING = frozenset({"DELETE", "UPDATE", "TRUNCATE", "DROP", "ALTER", "MERGE"})
+_CARRIERS = frozenset({"WITH", "EXPLAIN", "PREPARE", "COPY"})
+# A plpgsql or SQL-standard body, or a rule, starts a statement after these words
+# without a `;` before it: `BEGIN DELETE ...`, `IF c THEN DELETE ...`, `LOOP UPDATE
+# ...`, `FOR r IN DELETE ... RETURNING ...`, `RETURN QUERY DELETE ...`, `BEGIN ATOMIC
+# DELETE ...`, `DO ALSO DELETE ...`. So the chunk's first word is not its only verb.
+_BLOCK_OPENERS = frozenset(
+    {"BEGIN", "THEN", "ELSE", "LOOP", "IN", "QUERY", "ATOMIC", "ALSO", "INSTEAD"}
+)
+_MUTATING_GRANTS = frozenset({"UPDATE", "DELETE", "TRUNCATE", "ALL"})
+# A placeholder in dynamic SQL: its target is an argument, read where it is passed.
+_PLACEHOLDER_RE = re.compile(r"%[IsL]|\$\d+")
+#: The revision that creates the audit tables and their guard functions (21 §3.10).
+#: It is exempt for exactly two statement kinds: its downgrade's `DROP TABLE` and
+#: `DROP TRIGGER` on the audit tables, behind its refusal to drop a table that holds a
+#: row, and the definition and drop of the guard functions. No other revision may do
+#: either. It is merged and pinned by the migrations lockfile (C-5.4).
+_AUDIT_OWNER_REVISION = "0003_audit_log"
+#: The functions the audit tables' append-only triggers and hash chain run: replacing,
+#: altering or dropping one neuters them without naming a table. `audit_field` encodes
+#: each field `audit_chain` hashes.
+_AUDIT_FUNCTIONS = frozenset(
+    {"forbid_mutation", "audit_refuse_truncate", "audit_chain", "audit_field"}
+)
+_FUNCTION_DDL = (["CREATE", "FUNCTION"], ["DROP", "FUNCTION"], ["ALTER", "FUNCTION"])
+
+
+def _mutates(words: list[str]) -> bool:
+    if not words:
+        return False
+    first = words[0]
+    if first in _MUTATING:
+        return True
+    if first == "GRANT":
+        privileges = words[1 : words.index("ON")] if "ON" in words else words[1:]
+        return bool(_MUTATING_GRANTS & set(privileges))
+    rule = words[:2] == ["CREATE", "RULE"] or words[:4] == [
+        "CREATE",
+        "OR",
+        "REPLACE",
+        "RULE",
+    ]
+    if first in _CARRIERS or rule:
+        return bool({"DELETE", "UPDATE", "MERGE", "TRUNCATE"} & set(words))
+    if first == "INSERT":
+        return ("DO", "UPDATE") in itertools.pairwise(words)
+    return False
+
+
+def _clauses(words: list[str]) -> Iterator[list[str]]:
+    """The statements a `;`-chunk starts: at its first word, and after each block
+    opener (`_BLOCK_OPENERS`), each running to the chunk's end. One at a time, so a
+    chunk of many openers holds one clause, not all of them."""
+    yield words
+    for i, word in enumerate(words[:-1]):
+        if word in _BLOCK_OPENERS:
+            yield words[i + 1 :]
+
+
+def _schema_wide(words: list[str]) -> bool:
+    """`... ON ALL TABLES IN SCHEMA ...`: it reaches every table, the audit ones too."""
+    seq = ["ALL", "TABLES", "IN", "SCHEMA"]
+    return any(words[i : i + len(seq)] == seq for i in range(len(words)))
+
+
+def _head_identifiers(statement: str) -> set[str]:
+    """The names `statement` itself uses, outside its quotes and `$$` bodies."""
+    names: set[str] = set()
+    for token in _SQL_TOKEN_RE.finditer(statement):
+        if token["word"] is not None:
+            names.add(token["word"].lower())
+        elif token["quoted"] is not None:
+            names.add(token["quoted"].replace('""', '"'))
+    return names
+
+
+def _redefined_functions(words: list[str], statement: str) -> set[str]:
+    """The guard functions the clause `words` of `statement` defines, replaces, alters
+    or drops."""
+    if words[:2] in _FUNCTION_DDL or words[:4] == [
+        "CREATE",
+        "OR",
+        "REPLACE",
+        "FUNCTION",
+    ]:
+        return _head_identifiers(statement) & _AUDIT_FUNCTIONS
+    return set()
+
+
+def _audit_mutations(sql: str, tables: frozenset[str], *, owner: bool) -> set[str]:
+    """The audit tables a statement in `sql` mutates (or `*`: every table, by a
+    schema-wide grant; `fn:<name>`: a guard function it redefines or drops). A
+    statement counts when a clause of it mutates (`_clauses`, `_mutates`: a body or
+    a rule starts one mid-statement) and it names an audit table as an identifier
+    (`_sql_identifiers`, fail-closed: a subquery's table counts too), or
+    when SQL nested in it mutates a placeholder's target and the statement names an
+    audit table (`EXECUTE format('DELETE FROM %I', ...)`). Nested SQL is read the
+    same way. In the owner revision, its downgrade's drops of the audit tables and
+    their triggers, and the guard functions' definitions, are not findings."""
+    hits: set[str] = set()
+    for statement in _sql_split(sql):
+        words = _code_words(statement)
+        dynamic = False
+        for nested in _nested_sql(statement):
+            found = _audit_mutations(nested, tables, owner=owner)
+            hits |= found
+            if (
+                not found
+                and _mutates(_code_words(nested))
+                and _PLACEHOLDER_RE.search(nested)
+            ):
+                dynamic = True
+        if not owner:
+            hits |= {
+                f"fn:{name}"
+                for clause in _clauses(words)
+                for name in _redefined_functions(clause, statement)
+            }
+        clauses = [clause for clause in _clauses(words) if _mutates(clause)]
+        if any(clause[:1] == ["GRANT"] and _schema_wide(clause) for clause in clauses):
+            hits.add("*")
+            continue
+        if owner:
+            clauses = [
+                clause
+                for clause in clauses
+                if not (
+                    clause[:1] == ["DROP"] and clause[1:2] in (["TABLE"], ["TRIGGER"])
+                )
+            ]
+        if clauses or dynamic:
+            hits |= _sql_identifiers(statement) & tables
+    return hits
+
+
+def _revision_id(tree: ast.Module) -> str | None:
+    """The module's `revision`, its Alembic id, read as Alembic and the migrations
+    lockfile read it: the last module-level assignment wins. A value that is not a
+    string constant reads as `None`, and an assignment in a function or class body
+    is not the module's."""
+    revision: str | None = None
+    for node in tree.body:
+        targets: list[ast.expr]
+        if isinstance(node, ast.AnnAssign):
+            targets, value = [node.target], node.value
+        elif isinstance(node, ast.Assign):
+            targets, value = list(node.targets), node.value
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == "revision" for t in targets):
+            revision = None
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                revision = value.value
+    return revision
+
+
+def _op_targets(
+    tree: ast.AST, ops: frozenset[str], tables: frozenset[str]
+) -> dict[int, str]:
+    """`{line: audit table}` of each `op.<one of ops>(...)` call that names an audit
+    table in any argument (a literal or a name bound to one), by the line the call
+    starts on, so a name on a later line of the call still counts."""
+    names = _resolve_simple_name_constants(tree)
+    hits: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ops
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "op"
+        ):
+            continue
+        for arg in [*node.args, *(keyword.value for keyword in node.keywords)]:
+            if isinstance(arg, ast.Constant):
+                value = arg.value
+            else:
+                value = names.get(arg.id) if isinstance(arg, ast.Name) else None
+            if isinstance(value, str) and value in tables:
+                hits.setdefault(node.lineno, value)
+    return hits
+
+
+def _core_mutations(tree: ast.AST, tables: frozenset[str]) -> dict[int, str]:
+    """`{line: audit table}` of each SQLAlchemy Core `delete`/`update` of a
+    `table(...)`/`Table(...)` object on an audit table, called on it
+    (`sa.table("<t>").delete()`, through a name or not) or given to it
+    (`sa.delete(t)`)."""
+    names = _resolve_simple_name_constants(tree)
+
+    def audit_table(node: ast.AST) -> str | None:
+        if not isinstance(node, ast.Call) or not node.args:
+            return None
+        func = node.func
+        callee = (
+            func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        )
+        first = node.args[0]
+        if isinstance(first, ast.Constant):
+            value = first.value
+        else:
+            value = names.get(first.id) if isinstance(first, ast.Name) else None
+        if callee in {"table", "Table"} and isinstance(value, str) and value in tables:
+            return value
+        return None
+
+    bound: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and (table := audit_table(node.value)):
+            bound.update({t.id: table for t in node.targets if isinstance(t, ast.Name)})
+
+    def target(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return bound.get(node.id)
+        return audit_table(node)
+
+    hits: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        callee = (
+            func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        )
+        if callee not in {"delete", "update"}:
+            continue
+        on = func.value if isinstance(func, ast.Attribute) else None
+        table = (target(on) if on is not None else None) or next(
+            (found for arg in node.args if (found := target(arg))), None
+        )
+        if table is not None:
+            hits.setdefault(node.lineno, table)
+    return hits
 
 
 # Populated from `tools/ci/security-sensitive-tables.txt` when present;
@@ -353,81 +600,94 @@ def check_audit_table_integrity(
     """C-5.7: audit tables are append-only — no `UPDATE`/`DELETE` grants, no
     dropping/mutating audit history, however the operation is spelled.
 
-    Scans every string literal in the file (via `ast`, so multi-line
+    Reads every string literal in the file (via `ast`, so multi-line
     `op.execute(\n "...")`, an indirected `SQL = "..."; op.execute(SQL)`, and
-    f-string literal parts are all covered — not just a single-line
-    `op.execute("...")` regex) for a mutation keyword co-occurring with an
-    audit table name, both compared case-insensitively (Postgres folds
-    unquoted identifiers to lower case). Also keeps the `op.alter_column` /
-    `op.rename_table` line-level checks the AST-level destructive-op check
-    above does not see.
+    f-string literal parts are all covered) as SQL statements, split at each `;`
+    outside quotes, comments and `$$` bodies, never at a blank line. A statement
+    that mutates and names an audit table as an identifier (quoted, qualified,
+    after `ONLY`, second in a list) is a finding, and so is SQL nested in one: a
+    `DO` body, `EXECUTE '...'`, or `format(...)` with the table as an argument
+    (`_audit_mutations`). A mutating grant on `ALL TABLES IN SCHEMA` is always
+    one. `op.rename_table`/`op.alter_column` calls and SQLAlchemy Core
+    `delete`/`update` on an audit `table(...)` are read from the AST.
 
     There is no escape hatch: a genuine `CREATE TABLE`/`CREATE INDEX` on an
-    audit table is allowed through unconditionally (it never mutates
-    existing rows), but any mutation keyword is always forbidden — no
-    comment, marker or annotation of any kind suppresses a finding here."""
+    audit table never mutates existing rows, so it is no mutation, but any
+    mutation is always forbidden — no comment, marker or annotation of any kind
+    suppresses a finding here. Defining, replacing, altering or dropping one of the
+    guard functions (`_AUDIT_FUNCTIONS`) is a finding too. The one revision that creates
+    the audit tables and those functions, `_AUDIT_OWNER_REVISION` (`0003_audit_log`), is
+    exempt for exactly two statement kinds: its downgrade's `DROP TABLE` and
+    `DROP TRIGGER` on the audit tables, and the definition and drop of the functions.
+    It is the file of that name whose module-level `revision` says so, the file the
+    migrations lockfile pins. Every other statement in it is checked."""
     findings: list[LintFinding] = []
     for path in paths:
         source = _read_revision(path)
-        lines = source.splitlines()
+        try:
+            tree: ast.Module | None = ast.parse(source, filename=str(path))
+        except SyntaxError:
+            tree = None
+        # The owner is the file the migrations lockfile pins by name and bytes, and
+        # it says so as Alembic reads it: another revision cannot claim its exemption.
+        owner = (
+            tree is not None
+            and path.stem == _AUDIT_OWNER_REVISION
+            and _revision_id(tree) == _AUDIT_OWNER_REVISION
+        )
 
         for lineno, literal, unresolved in _iter_string_literals(path, source):
-            for statement in _sql_statements(literal):
-                normalised = _normalise_sql(statement)
-                if unresolved and _DYNAMIC_MUTATION_RE.search(normalised):
-                    findings.append(
-                        LintFinding(
-                            code="CI-MIG-003",
-                            path=path,
-                            message=(
-                                f"line {lineno}: dynamic table name in an "
-                                "audit-sensitive statement (mutation keyword "
-                                "with an unresolved interpolated target) — "
-                                "forbidden, resolve to a literal table name "
-                                "or refactor (C-5.7, ADR-0013 rule 9)"
-                            ),
-                        )
-                    )
-                    continue
-                forbidden_hit = next(
-                    (
-                        table
-                        for table in forbidden_tables
-                        if _mutation_pattern_for(table).search(normalised)
-                    ),
-                    None,
-                )
-                if forbidden_hit is None:
-                    continue
-                if _CREATE_ONLY_RE.match(normalised):
-                    continue
+            statements = [_normalise_sql(s) for s in _sql_split(literal)]
+            if unresolved and any(_DYNAMIC_MUTATION_RE.search(s) for s in statements):
                 findings.append(
                     LintFinding(
                         code="CI-MIG-003",
                         path=path,
                         message=(
-                            f"line {lineno}: raw-SQL statement targets append-only "
-                            f"table '{forbidden_hit}' — forbidden regardless of "
-                            "annotation (C-5.7, ADR-0013 rule 9)"
+                            f"line {lineno}: dynamic table name in an "
+                            "audit-sensitive statement (mutation keyword "
+                            "with an unresolved interpolated target) — "
+                            "forbidden, resolve to a literal table name "
+                            "or refactor (C-5.7, ADR-0013 rule 9)"
+                        ),
+                    )
+                )
+                continue
+            for table in sorted(
+                _audit_mutations(literal, forbidden_tables, owner=owner)
+            ):
+                if table == "*":
+                    target = "every table of a schema, the append-only ones too"
+                elif table.startswith("fn:"):
+                    target = f"the append-only guard function '{table[3:]}'"
+                else:
+                    target = f"append-only table '{table}'"
+                findings.append(
+                    LintFinding(
+                        code="CI-MIG-003",
+                        path=path,
+                        message=(
+                            f"line {lineno}: raw-SQL statement targets {target} — "
+                            "forbidden regardless of annotation (C-5.7, ADR-0013 rule 9)"
                         ),
                     )
                 )
 
-        for idx, line in enumerate(lines):
-            is_rename = bool(re.search(r"\bop\.rename_table\s*\(", line))
-            is_alter_shape = bool(re.search(r"\bop\.alter_column\s*\(", line))
-            if not (is_rename or is_alter_shape):
-                continue
-            forbidden_hit = _table_mentioned(line, forbidden_tables)
-            if forbidden_hit is None:
-                continue
+        if tree is None:
+            continue
+        reshapes = _op_targets(
+            tree, frozenset({"rename_table", "alter_column"}), forbidden_tables
+        )
+        for line, table in sorted(
+            {**reshapes, **_core_mutations(tree, forbidden_tables)}.items()
+        ):
             findings.append(
                 LintFinding(
                     code="CI-MIG-003",
                     path=path,
                     message=(
-                        f"line {idx + 1}: operation targets append-only "
-                        f"table '{forbidden_hit}' — forbidden regardless of "
+                        f"line {line}: operation targets append-only "
+                        f"table '{table}' — forbidden regardless of "
                         "annotation (C-5.7, ADR-0013 rule 9)"
                     ),
                 )
@@ -440,8 +700,14 @@ def check_destructive_annotations(
     forbidden_tables: frozenset[str] = _FORBIDDEN_DESTRUCTIVE_TABLES,
 ) -> list[LintFinding]:
     findings: list[LintFinding] = []
+    drops = frozenset({"drop_column", "drop_table", "drop_index", "drop_constraint"})
     for path in paths:
-        lines = _read_revision(path).splitlines()
+        source = _read_revision(path)
+        lines = source.splitlines()
+        try:  # the call's arguments, from the line it starts on, however it wraps
+            audit_drops = _op_targets(ast.parse(source), drops, forbidden_tables)
+        except SyntaxError:
+            audit_drops = {}
         for idx, line in enumerate(lines):
             is_destructive = bool(_DESTRUCTIVE_OP_RE.search(line))
             is_narrowing_type = bool(_ALTER_COLUMN_TYPE_RE.search(line))
@@ -454,7 +720,9 @@ def check_destructive_annotations(
             if not (is_destructive or is_narrowing_type or is_non_nullable_add):
                 continue
 
-            forbidden_hit = _table_mentioned(line, forbidden_tables)
+            forbidden_hit = audit_drops.get(idx + 1) or _table_mentioned(
+                line, forbidden_tables
+            )
             if is_destructive and forbidden_hit is not None:
                 findings.append(
                     LintFinding(
