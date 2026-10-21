@@ -12,8 +12,9 @@ fraction, and reconstructed rows at their best case of one row per side per 250 
 bubble radius under linear, area-linear ("sqrt" in CMP-112 terms: r squared linear in notional
 between the anchors) and log scaling over the range that is actually drawn (the class's big
 threshold, where r_min sits, to its tier-2 threshold at 4x, where r_max sits), the area one
-threshold step adds, the sell mark's equal-area square side and the share of prints above the
-cap; the WCAG contrast of every tape
+threshold step adds, the sell mark's equal-area square side, the shape floor (the radius from
+which a disc and an equal-area square read apart, with the share of flagged prints under it)
+and the share of prints above the cap, counted directly; the WCAG contrast of every tape
 colour pair over the real token JSON, layered per `themes.json` (dark, light, high-contrast)
 with the formula of `contrast_check.py`; and the same tape colours under the greyscale and
 deuteranopia simulation of `cvd_sim.py` (its Rec. 601 weights and Machado 2009 matrix, quoted
@@ -56,6 +57,8 @@ WPM, TOKENS_FULL = 238, 5  # Brysbaert 2019; a full row = Time, Price, Size, Not
 READ_ROWS_PER_S = {"full": round(WPM / 60 / TOKENS_FULL, 1), "scan": 4.0}  # scan = heuristic
 R_MIN_PX, R_MAX_PX, WHALE_MULTIPLE = 3.0, 24.0, 4  # PROPOSED: r_min at big, r_max at tier 2 (4x)
 GLYPH_R_PX = 10.0  # the side glyph is drawn inside a mark from this radius (memo F16)
+SHAPE_FLOOR_R_PX = 5.0  # (heuristic) under this radius a disc and an equal-area square read alike
+SHAPE_FLOOR_PROBE_R_PX = (4.0, 5.0, 10.0)  # the flagged share under each radius (memo F16, 3.5)
 MULTIPLES = (1, 1.5, 2, 3, 4)  # of the class's big threshold; 4x = the tier-2 threshold = the cap
 RECON_WINDOW_S, RECON_SIDES = 0.25, 2  # US-BIG-004 250 ms / 1 tick; best case one row per side
 KIND3_RECORD_B, CVWB_HEADER_B, TRADES_THROTTLE_MS = 22, 24, 100  # 23 §3.4 body_kind 3; §6.1
@@ -193,13 +196,23 @@ def file_stats(path: Path, prov: str, note: str) -> dict:
     gaps = sorted((b[0] - a[0]) / 1000 for a, b in pairwise(prints))
     sizes = sorted(p[2] for p in prints)
     notionals = sorted(p[1] * p[2] for p in prints)
-    flagged = {}
+    flagged: dict[str, dict[str, object]] = {}
     for thr in (*THRESHOLDS_USDT, 99, 80):  # absolute USDT values, then the p99 and p80 modes
         value = pct(notionals, thr) if thr <= 100 else Decimal(thr)
-        frac = Decimal(sum(1 for v in notionals if v >= value)) / n  # `>=`, as the engine flags
+        above = [v for v in notionals if v >= value]  # `>=`, as the engine flags
+        count = len(above)  # kept as a count: a 4-decimal fraction rebuilds 329 as 320 (memo F14)
+        frac = Decimal(count) / n
         advisory = n >= OVERFLAG_MIN_SAMPLES and frac > OVERFLAG_FRACTION
         key = f"p{thr}" if thr <= 100 else str(thr)
-        flagged[key] = {"thr_usdt": str(value), "fraction": f"{frac:.4f}", "advisory": advisory}
+        row: dict[str, object] = {"thr_usdt": str(value), "count": count}
+        row |= {"fraction": f"{frac:.4f}", "advisory": advisory}
+        if thr > 100 and count:  # memo F16's shape floor: the flagged share under r 4 / 5 / 10 px
+            under = {
+                f"{r:g}": sum(1 for v in above if v < value * Decimal(str(multiple_at(r))))
+                for r in SHAPE_FLOOR_PROBE_R_PX
+            }
+            row["below_r_pct"] = {k: round(100 * c / count, 1) for k, c in under.items()}
+        flagged[key] = row
     q3 = (("p50", 50), ("p90", 90), ("p99", 99))
     return {
         "file": str(path.relative_to(ROOT)),
@@ -228,6 +241,12 @@ def radius(k: float, mode: str) -> float:
     elif mode == "sqrt":
         return round(math.sqrt(R_MIN_PX**2 + x * (R_MAX_PX**2 - R_MIN_PX**2)), 1)
     return round(R_MIN_PX + x * (R_MAX_PX - R_MIN_PX), 1)
+
+
+def multiple_at(r_px: float) -> float:
+    """The multiple of the big threshold at which the area-linear law reaches r_px (unrounded)."""
+    x = (r_px**2 - R_MIN_PX**2) / (R_MAX_PX**2 - R_MIN_PX**2)
+    return 1 + x * (WHALE_MULTIPLE - 1)
 
 
 def worked(files: list[dict]) -> dict:
@@ -265,6 +284,7 @@ def worked(files: list[dict]) -> dict:
         for a, b in (("sqrt", "log"), ("linear", "sqrt"))
     }
     cap = dense["flagged"][str(CLASS_BIG["majors"] * WHALE_MULTIPLE)]  # prints at or above 1 M
+    big_row = dense["flagged"][str(CLASS_BIG["majors"])]  # the flagged prints and the shape floor
     bubble = {
         "r_min_px": R_MIN_PX,
         "r_max_px": R_MAX_PX,
@@ -279,7 +299,7 @@ def worked(files: list[dict]) -> dict:
         # what "area proportional to notional" would need at the floor with r_max kept at the cap
         "r_floor_if_area_proportional_px": round(R_MAX_PX / math.sqrt(WHALE_MULTIPLE), 1),
         "above_cap_dense": {  # how often the above-cap treatment is needed (synthetic, shape only)
-            "count": round(float(cap["fraction"]) * dense["prints"]),
+            "count": cap["count"],  # counted directly, never rebuilt from the 4-decimal fraction
             "fraction": cap["fraction"],
             "max_usdt": dense["notional_usdt"]["max"],
         },
@@ -293,6 +313,15 @@ def worked(files: list[dict]) -> dict:
                 "cap": round(R_MAX_PX * math.sqrt(math.pi), 1),
             },
             "diameter_square_area_bias_pct": round(100 * (4 / math.pi - 1)),
+        },
+        # F16's shape floor (heuristic): under r 5 px a disc and an equal-area square read alike,
+        # so the shape carries the side only from there; the dense tape's flagged share under it
+        "shape_floor": {
+            "r_px": SHAPE_FLOOR_R_PX,
+            "side_px": round(SHAPE_FLOOR_R_PX * math.sqrt(math.pi), 1),
+            "multiple": round(multiple_at(SHAPE_FLOOR_R_PX), 3),
+            "r_at_1_1x_px": radius(1.1, "sqrt"),  # T5's greyscale still: 1.0x (r_min) and 1.1x
+            "flagged_below_pct": big_row.get("below_r_pct", {}),
         },
     }
     reading = {"wpm": WPM, "tokens_full": TOKENS_FULL, "rows_per_s": READ_ROWS_PER_S}
@@ -536,7 +565,13 @@ def main(argv: list[str]) -> int:
     print(
         f"sell mark = a filled square of equal area: side / r {sq['side_over_r']}, side px "
         f"{sq['side_px']}; a square on the diameter carries "
-        f"+{sq['diameter_square_area_bias_pct']} %\n"
+        f"+{sq['diameter_square_area_bias_pct']} %"
+    )
+    sf = b["shape_floor"]
+    print(
+        f"shape carries the side from r {sf['r_px']:g} px (side {sf['side_px']} px, "
+        f"{sf['multiple']}x the threshold; r {sf['r_at_1_1x_px']} px at 1.1x); the dense tape's "
+        f"flagged prints under r 4 / 5 / 10 px: {sf['flagged_below_pct']} %\n"
     )
     print("| class | big | tier 2 | " + " | ".join(f"{m}x USDT" for m in b["radii_px"]) + " |")
     print("|---|---:|---:|" + "---:|" * len(MULTIPLES))
