@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { transform } from "esbuild";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -130,14 +130,19 @@ describe("token build CSS check (copied fixture tree)", { timeout: 30_000 }, () 
     sandbox = undefined;
   });
 
-  /** The output of a build whose semantic-dark set also carries `tokens`; it must fail. */
+  /**
+   * The output of a build whose semantic-dark set also carries `tokens`; it must fail before it
+   * writes the dark theme's CSS, the first it builds: a file is checked before it is written.
+   */
   function failingBuildWith(tokens: Record<string, Token>): string {
     sandbox = makeSandbox();
     const ui = path.join(sandbox, "packages", "ui");
     const file = path.join(ui, "tokens", "semantic-dark.tokens.json");
     const dark: Record<string, unknown> = JSON.parse(readFileSync(file, "utf-8"));
     writeFileSync(file, JSON.stringify({ ...dark, ...tokens }, null, 2));
-    return failedBuildOutput(ui);
+    const output = failedBuildOutput(ui);
+    expect(existsSync(path.join(ui, "build", "css", "tokens.dark.css"))).toBe(false);
+    return output;
   }
 
   it("fails with TOKENS-E004 naming a custom property esbuild warns about", () => {

@@ -36,11 +36,14 @@ describe("shadow tokens as a box-shadow value", () => {
 
   it.each([
     ["has no blur", { ...layer, blur: undefined }, /"elevation\.x" has no blur/],
-    ["has a field with no CSS form", { ...layer, type: "inner" }, /no CSS form: type/],
+    ["has a field with no CSS form", { ...layer, type: "inner" }, /no CSS form: "type"/],
     ["has no layer", [], /"elevation\.x" has no layer/],
     ["has a length with no CSS form (`1.`)", { ...layer, offsetX: "1." }, /no CSS form: "1\."/],
     ["has a signed length (`+1`)", { ...layer, offsetY: "+1" }, /no CSS form: "\+1"/],
     ["has a null blur", { ...layer, blur: null }, /no CSS form: "null"/],
+    ["has a `calc()` length", { ...layer, offsetX: "calc(1px)" }, /no CSS form: "calc\(1px\)"/],
+    ["has a `ch` length", { ...layer, spread: "1ch" }, /no CSS form: "1ch"/],
+    ["has a percentage, which box-shadow does not take", { ...layer, blur: "10%" }, /"10%"/],
     [
       "has an inset that is not a boolean",
       { ...layer, inset: "True" },
@@ -83,6 +86,8 @@ describe("typography tokens as one custom property per field", () => {
 
   it.each([
     ["fontSize", "0.75rem", "0.75rem"],
+    ["fontSize", "50%", "50%"],
+    ["fontSize", ".5", ".5px"],
     ["letterSpacing", "0.2", "0.2px"],
     ["letterSpacing", "0", "0px"],
     ["letterSpacing", "0.01em", "0.01em"],
@@ -94,7 +99,7 @@ describe("typography tokens as one custom property per field", () => {
   });
 
   it.each([
-    ["a field with no CSS part", { ...label, textCase: "upper" }, /with no CSS part: textCase/],
+    ["a field with no CSS part", { ...label, textCase: "upper" }, /with no CSS part: "textCase"/],
     ["no field", {}, /"type\.x" has no field/],
     ["a value that is not an object", "{type.ui.label}", /is not an object of fields/],
   ])("fail with TOKENS-E004 for a typography token with %s", (_, value, message) => {
@@ -119,10 +124,12 @@ describe("other tokens", () => {
       $value: { color: "#FFF", width: "1", style: "solid" },
     };
     expect(() => cssDeclarations("border.card", border)).toThrow(/^TOKENS-E004.*"border\.card"/);
+    const list: Token = { $type: "fontFamilies", $value: ["Inter", { name: "x" }] };
+    expect(() => cssValue(list, "font.x")).toThrow(/"font\.x" .* is a list holding an object/);
   });
 });
 
-describe("a value that would end or escape its declaration (the minifier accepts it)", () => {
+describe("a value the minifier accepts but the browser would misread", () => {
   const color = (value: string): Token => ({ $type: "color", $value: value });
 
   it.each([
@@ -130,21 +137,37 @@ describe("a value that would end or escape its declaration (the minifier accepts
     ["closes the theme block and opens a rule", "#fff } .evil { color: red"],
     ["breaks the line", "#fff\n  --evil: 1"],
     ["opens a comment", "#fff /* --evil: 1 */"],
+    ["ends in a backslash, which escapes the `;` after it", "#fff\\"],
   ])("fails with TOKENS-E004 when a colour %s", (_, value) => {
     expect(() => cssValue(color(value), "color.x")).toThrow(
       /^TOKENS-E004 invalid CSS output: token "color\.x" has a value that would end or escape/,
     );
   });
 
-  it("fails the same way through a shadow colour, a typography part and a token name", () => {
+  it.each([
+    ["holds a `!`, which would make the declaration important", "#fff !important", /a "!"/],
+    ["holds a `)` that closes nothing", "#fff )", /brackets do not pair up/],
+    ["holds a `]` that closes nothing", "#fff ]", /brackets do not pair up/],
+    ["leaves a `[` open", "[#fff", /brackets do not pair up/],
+    ["closes a `(` with a `]`", "rgb(0 0 0]", /brackets do not pair up/],
+  ])("fails with TOKENS-E004 when a colour %s", (_, value, message) => {
+    expect(() => cssValue(color(value), "color.x")).toThrow(/^TOKENS-E004.*"color\.x"/);
+    expect(() => cssValue(color(value), "color.x")).toThrow(message);
+  });
+
+  it("keeps brackets that pair up", () => {
+    expect(cssValue(color("rgb(0 0 0 / 40%)"), "color.x")).toBe("rgb(0 0 0 / 40%)");
+  });
+
+  it("fails the same way through a shadow colour and a typography part", () => {
     expect(() => cssValue(shadow({ ...layer, color: "#000; --x: 1" }), "elevation.x")).toThrow(
       /"elevation\.x" has a value that would end or escape/,
     );
     expect(() => cssDeclarations("type.x", typography({ ...label, fontWeight: "500}" }))).toThrow(
       /"type\.x" has a value that would end or escape/,
     );
-    expect(() => cssDeclarations("color.x}", color("#fff"))).toThrow(
-      /"color\.x}" has a name that would end or escape/,
+    expect(() => cssDeclarations("type.x", typography({ ...label, lineHeight: "1.2\\" }))).toThrow(
+      /"type\.x" has a value that would end or escape/,
     );
   });
 
@@ -155,7 +178,27 @@ describe("a value that would end or escape its declaration (the minifier accepts
   });
 });
 
+describe("a token name", () => {
+  const color: Token = { $type: "color", $value: "#fff" };
+
+  it.each([
+    ["re-targets its declaration with a `:`", "color.danger:x"],
+    ["would close the theme block", "color.x}"],
+    ["holds a space", "color.x y"],
+  ])("fails with TOKENS-E004 when it %s", (_, name) => {
+    expect(() => cssDeclarations(name, color)).toThrow(
+      /^TOKENS-E004 invalid CSS output: token ".*" has a name that is not a custom-property name/,
+    );
+  });
+
+  it("is shown escaped in the message, so a control character never reaches the build log", () => {
+    expect(() => cssDeclarations("color.\u001b[31mx", color)).toThrow(/"color\.\\u001b\[31mx"/);
+  });
+});
+
 describe("the check's esbuild", () => {
+  // The premise: apps/web keeps Vite's default CSS minifier, esbuild (its vite.config.ts sets
+  // neither `build.cssMinify` nor `css.transformer`). Under another minifier this match means nothing.
   it("is the version Vite minifies the production CSS with, so it reads CSS as the bundle does", () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const ui = createRequire(path.resolve(here, "../../package.json"));

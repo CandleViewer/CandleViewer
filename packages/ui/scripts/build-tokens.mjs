@@ -17,9 +17,9 @@
 //   TOKENS-E002 unresolved alias reference — a `{token.path}` that never resolves.
 //   TOKENS-E003 unknown category for the engine filter — a chart-category token
 //               resolved to something other than a hex colour string.
-//   TOKENS-E004 invalid CSS output — a composite token the CSS writer cannot serialise
-//               (token-css.mjs), or a written token CSS file that esbuild warns about or
-//               minifies to an empty custom property.
+//   TOKENS-E004 invalid CSS output — a token the CSS writer cannot serialise or would let
+//               the browser misread (token-css.mjs), or a theme's CSS that esbuild warns
+//               about or minifies to an empty custom property, checked before it is written.
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -150,7 +150,7 @@ function checkThemeParity(resolvedThemes) {
  * of `--category-subcategory-...: value;` custom properties, one per
  * resolved token (a typography token: one per field), name-sorted for
  * determinism (ticket AC: byte-identical on a second run). Each file is
- * checked after it is written (TOKENS-E004, token-css.mjs).
+ * checked before it is written (TOKENS-E004, token-css.mjs).
  */
 async function buildCss(themeName, resolved) {
   const header =
