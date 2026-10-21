@@ -317,10 +317,10 @@ class AuthService:
         self._started = True
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the module within `grace_s` seconds. The backstop units still in flight are waited
-        for first (#3332): auth stops before audit and storage, so their records still land."""
-        if self._sessions is not None:
-            await self._sessions.drain(grace_s)
+        """Stop the module within `grace_s` seconds. Last, the backstop units still in flight are
+        waited for, up to half of it (#3332): auth stops before audit and storage, so their records
+        still land, and a hung unit cannot take the whole bound."""
+        sessions = self._sessions
         self._login = None
         self._mfa = None
         self._invites = None
@@ -333,6 +333,8 @@ class AuthService:
         self._step_up = None
         self._sessions = None
         self._started = False
+        if sessions is not None:
+            await sessions.drain(grace_s / 2)
 
     def health(self) -> HealthReport:
         """Report module health. Scaffold modules report `ok` when constructed."""

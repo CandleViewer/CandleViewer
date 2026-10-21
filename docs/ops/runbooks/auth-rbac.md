@@ -664,10 +664,12 @@ it (login refuses `disabled` only):
   cancelled anywhere in it (a client that disconnects, a route timeout) still leaves the row
   revoked, counted, logged, published and recorded once. The cancelled request waits for the
   unit up to the same 2 seconds, then ends; a unit that runs on finishes by itself, and auth's
-  shutdown waits for it before audit and storage stop (a `WARNING`
-  `auth.backstop_units_in_flight_at_shutdown` gives the count of any still running). A unit that
-  fails once its request has left logs `auth.disabled_user_session_revoke_failed` (ERROR, with
-  `session_id`, `user_id` and `error`, the failure's class). What remains is the process dying
+  shutdown waits for it, up to half of auth's stop bound, before audit and storage stop (a
+  `WARNING` `auth.backstop_units_in_flight_at_shutdown` gives the count of any still running).
+  A failed unit logs `auth.disabled_user_session_revoke_failed` (ERROR, with `session_id`,
+  `user_id` and `error`, the failure's class) whether or not its request still waits; a request
+  that still waits also gets the error and is refused `503` or `500`, as before. Once the request
+  has left, that line is the failure's only trace. What remains is the process dying
   after the `UPDATE` committed: the row is revoked as `user_disabled` with no count, no `WARNING`,
   no publish (its sockets end at their token deadline instead of at once) and no record, and the
   retry finds the row revoked and adds nothing. The `sessions` row with
@@ -683,13 +685,14 @@ it (login refuses `disabled` only):
   then fails, `auth.disabled_user_session_audit_failed_late` follows with `error` only and no
   session, so count those lines. Three losses leave no log line that names the session and says
   its record is missing (the `WARNING`, logged as soon as `revoke` returns, names it in the last
-  two but cannot say the record failed): the process dies between the revoke and the write (the
-  bullet above); it shuts down while a unit or its write is still running (each drain waits, then
-  logs only a count); or the write outlives the 2-second bound and then fails (its `_audit_slow`
-  line names the session but says the record may still land, and the `_audit_failed_late` line
-  that follows names none). A cancelled request is no longer one of them (#3332). Only the
-  reconcile step finds all three, and what each `_audit_failed_late` line lost. To reconcile, after an outage or any restart, list the sessions revoked as
-  `user_disabled` in that window (UTC; `psql` runs inside the `postgres` container, as the user
+  two, and in the first when the process dies after it, but cannot say the record failed): the
+  process dies between the revoke and the write (the bullet above); it shuts down while a unit or
+  its write is still running (each drain waits, then logs only a count); or the write outlives the
+  2-second bound and then fails (its `_audit_slow` line names the session but says the record may
+  still land, and the `_audit_failed_late` line that follows names none). A cancelled request is
+  no longer one of them (#3332). Only the reconcile step finds all three, and what each
+  `_audit_failed_late` line lost. To reconcile, after an outage or any restart, list the sessions
+  revoked as `user_disabled` in that window (UTC; `psql` runs inside the `postgres` container, as the user
   and database it was started with, in a read-only session):
 
   ```bash

@@ -293,6 +293,7 @@ async def test_a_cancel_inside_a_step_still_completes_it_once(
     assert rig.received == [BackstopRevocation(row.id, row.user_id, _DISABLED)]
     assert held.finished == (0 if step == "commit" else 1)  # the held step itself ran to its end
     assert _events(logs, _FAILED) == [] and _events(logs, _SLOW) == []
+    assert rig.service._backstop_units == set()  # a finished unit is untracked
 
 
 async def test_a_cancel_while_the_record_is_written_writes_it_once() -> None:
@@ -403,6 +404,56 @@ async def test_a_unit_that_fails_after_its_caller_left_is_logged_by_class_name()
         user,
     )
     assert "canary-text" not in str(logs) and rig.received == []
+
+
+@pytest.mark.parametrize(("entry", "refusal", "match"), STRAY_ENTRIES)
+async def test_a_unit_error_reaches_a_waiting_request_unchanged_and_is_logged(
+    entry: StrayEntry, refusal: type[Exception], match: str
+) -> None:
+    """A store that fails under a request that still waits: the request gets the unit's own error
+    (the boundary refuses it 503 or 500, as before #3332), and the unit's line is logged as well."""
+    repo = CommitParkedRepository(fail_with=RuntimeError("down: canary-text"))
+    rig = _Rig(repo)
+    minted = await rig.stray()
+
+    with capture_logs() as logs:
+        request = asyncio.ensure_future(entry(rig.service, minted))
+        await asyncio.wait_for(repo.parked.wait(), 5.0)
+        repo.release.set()
+        with pytest.raises(RuntimeError, match="canary-text"):
+            await asyncio.wait_for(request, 5.0)
+
+    failed = _events(logs, "auth.disabled_user_session_revoke_failed")
+    assert [e["error"] for e in failed] == ["RuntimeError"] and "canary-text" not in str(logs)
+    assert rig.service._backstop_units == set()
+
+
+async def test_drain_waits_no_longer_than_its_bound_and_never_cancels_a_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shutdown with a unit still in its publish: `drain` gives up at its bound, says how many are
+    left, and leaves the unit running; the unit then finishes every step once."""
+    rig, clock, held = _Rig(), LoopClock(monkeypatch), _Parked()
+    rig.on_publish = held
+    minted = await rig.stray()
+
+    with capture_logs() as logs:
+        request = asyncio.create_task(require_active_by_id(rig.service, minted))
+        await _cancel_inside(request, held.parked)
+        clock.advance(2.0)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request, 5.0)
+        draining = asyncio.create_task(rig.service.drain(1.0))
+        await asyncio.sleep(0)  # the drain is waiting on its bound
+        clock.advance(1.0)
+        assert await asyncio.wait_for(draining, 5.0) == 1
+        held.release.set()
+        assert await rig.service.drain(5.0) == 0
+
+    (left,) = _events(logs, "auth.backstop_units_in_flight_at_shutdown")
+    assert (left["log_level"], left["units"]) == ("warning", 1)
+    assert (held.finished, len(rig.received)) == (1, 1)  # never cancelled: it ran to its end
+    assert rig.service._backstop_units == set()
 
 
 async def _auth_service_with_a_stray_session() -> tuple[AuthService, FakeSessionRepository, str]:

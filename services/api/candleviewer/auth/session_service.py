@@ -639,7 +639,8 @@ class SessionService:
         The cancelled request still waits for the unit up to the audit bound, then lets the
         cancel through; a unit that runs on is drained at shutdown (`drain`). Finishing the
         revocation after the request left is the safe direction: the row update is conditional.
-        An error of the unit reaches a request that still waits, unchanged."""
+        An error of the unit reaches a request that still waits, unchanged, and is logged either
+        way (`_backstop_unit_done`)."""
         unit = spawn(self._revoke_stray_session(session), name="session-backstop-revoke")
         self._backstop_units.add(unit)
         ids = {"session_id": str(session.id), "user_id": str(session.user_id)}
@@ -652,9 +653,10 @@ class SessionService:
             raise
 
     def _backstop_unit_done(self, unit: asyncio.Task[None], ids: dict[str, str]) -> None:
-        """Untrack a finished unit. A raise is logged here, by class name only: once its request
-        has left, nobody awaits the unit, and the shield has marked the error retrieved, so this
-        line is its only trace."""
+        """Untrack a finished unit. A failed one is logged here, by class name only, whether or not
+        its request still waits (a waiting request also gets the error and is refused 503 or
+        500): once the request has left, nobody awaits the unit, and the shield has marked the
+        error retrieved, so this line is the only trace."""
         self._backstop_units.discard(unit)
         if not unit.cancelled() and (exc := unit.exception()) is not None:
             with contextlib.suppress(Exception):  # a log sink must not raise out of a callback
