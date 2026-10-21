@@ -2905,7 +2905,8 @@ recorded_stops = Table(
     CheckConstraint("status IN ('pending','in_force','replaced','ended','void')", name="rs_status"),
     CheckConstraint(
         "(closed_at IS NOT NULL) = (status IN ('replaced','ended','void')) "
-        "AND (in_force_at IS NOT NULL OR status NOT IN ('in_force','ended')) "
+        "AND (in_force_at IS NOT NULL OR status <> 'in_force') "
+        "AND (status <> 'ended' OR num_nonnulls(in_force_at, answered_at) > 0) "
         "AND (in_force_at IS NULL OR status IN ('in_force','replaced','ended'))",
         name="rs_times",
     ),

@@ -190,8 +190,10 @@ async def test_a_recorded_stops_row_is_created_submitted_with_its_bound_id(
 
     with pytest.raises(ValueError, match="no registered order"):
         await writer(first("SEND"))  # no other trigger creates a `submitted` row
+    writer.expect(_order(**stop, exchange_order_id="x8"))  # a refused step spent it (CR-2A-06)
     with pytest.raises(ValueError, match="not the order the machine holds"):
         await writer(first("MATERIALISED", exchange_order_id="x9"))
+    writer.expect(_order(**stop, exchange_order_id="x8"))
     assert await writer(first("MATERIALISED")) == 0
     row = await db.get(ACCOUNT, UUID(int=8))
     assert row is not None and (row.state, row.lifecycle_state) == ("accepted", "submitted")
