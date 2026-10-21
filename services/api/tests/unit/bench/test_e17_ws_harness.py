@@ -827,8 +827,11 @@ def test_the_runner_takes_only_the_pinned_k6_from_k6_bin(
     monkeypatch.setenv("K6_BIN", fake("v1.9.0"))
     with pytest.raises(SystemExit, match=r"pinned to k6 v2\.3\.0"):
         runner.k6_binary()
-    monkeypatch.setenv("K6_BIN", fake("v2.3.0"))
-    assert runner.k6_binary().endswith("k6-v2.3.0")
+    pinned = fake("v2.3.0")
+    monkeypatch.setenv("K6_BIN", pinned)
+    assert runner.k6_binary() == pinned
+    monkeypatch.setenv("K6_BIN", pinned + "/")  # the checks normalise the slash away
+    assert runner.k6_binary() == pinned  # and the path they checked is the one run and returned
 
 
 @pytest.mark.parametrize(
@@ -839,24 +842,32 @@ def test_the_runner_takes_only_the_pinned_k6_from_k6_bin(
         ("directory", "not a regular file"),  # absolute and searchable, but not a file
         ("missing file", "not a regular file"),
         ("not executable", "not executable"),  # a regular file whose mode has no x bit
+        pytest.param(  # stat fails with EACCES, not ENOENT
+            "unsearchable parent",
+            "cannot be checked",
+            marks=pytest.mark.skipif(os.geteuid() == 0, reason="root searches any directory"),
+        ),
+        ("over-long path", "cannot be checked"),  # stat fails with ENAMETOOLONG
     ],
 )
 def test_a_k6_bin_that_is_not_an_absolute_executable_file_is_refused_before_anything_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, why: str
 ) -> None:
     script = "#!/bin/sh\necho 'k6 v2.3.0 (commit/abc, go1.26.8, linux/amd64)'\n"
-    real = tmp_path / "k6"
-    real.write_text(script, encoding="utf-8")
-    real.chmod(0o755)
-    plain = tmp_path / "plain"
-    plain.write_text(script, encoding="utf-8")
-    plain.chmod(0o644)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    files = {tmp_path / "k6": 0o755, tmp_path / "plain": 0o644, locked / "k6": 0o755}
+    for path, mode in files.items():
+        path.write_text(script, encoding="utf-8")
+        path.chmod(mode)
     value = {
         "bare name": "k6",
         "relative path": "./k6",
         "directory": str(tmp_path),
         "missing file": str(tmp_path / "gone"),
-        "not executable": str(plain),
+        "not executable": str(tmp_path / "plain"),
+        "unsearchable parent": str(locked / "k6"),
+        "over-long path": "/" + "k" * 5000,
     }[kind]
     started: list[object] = []
 
@@ -867,8 +878,13 @@ def test_a_k6_bin_that_is_not_an_absolute_executable_file_is_refused_before_anyt
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("K6_BIN", value)
     monkeypatch.setattr(subprocess, "run", spy)  # the one runner.k6_binary calls
-    with pytest.raises(SystemExit, match=why):
-        runner.k6_binary()
+    if kind == "unsearchable parent":
+        locked.chmod(0o600)  # no x bit: the k6 inside cannot be reached
+    try:
+        with pytest.raises(SystemExit, match=why):
+            runner.k6_binary()
+    finally:
+        locked.chmod(0o700)  # so that tmp_path can be removed
     assert started == []  # no process was started for a path that failed the check
 
 
@@ -1294,6 +1310,16 @@ def test_a_baseline_taken_on_another_event_loop_is_not_compared(
     path.write_text(json.dumps(data))
     g = runner.compare(res, facts, 0.05, 3)
     assert not g.gated and g.failures == [] and "not recorded" in g.reason
+    g = runner.compare(res, {k: v for k, v in facts.items() if k != "loop"}, 0.05, 3)
+    assert not g.gated and g.failures == [] and "not recorded" in g.reason  # nor is either side
+
+
+def without_loop(out: Path) -> Path:
+    """`out`'s run as an artefact from before the loop was recorded."""
+    facts = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    del facts["loop"]
+    (out / "run.json").write_text(json.dumps(facts), encoding="utf-8")
+    return out
 
 
 def test_runs_that_record_no_loop_are_not_compared_with_ones_that_do(
@@ -1301,11 +1327,26 @@ def test_runs_that_record_no_loop_are_not_compared_with_ones_that_do(
 ) -> None:
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "none")
     dirs = [make_run(tmp_path / f"run{i}") for i in range(3)]
-    facts = json.loads((dirs[1] / "run.json").read_text(encoding="utf-8"))
-    del facts["loop"]  # an artefact from before the loop was recorded
-    (dirs[1] / "run.json").write_text(json.dumps(facts), encoding="utf-8")
+    without_loop(dirs[1])
     assert runner.cmd_gate(argparse.Namespace(dirs=[str(d) for d in dirs], tolerance=0.05)) == 2
     assert "differ in loop: asyncio, not recorded" in capsys.readouterr().out
+    for d in (dirs[0], dirs[2]):  # nor with each other: three runs without one share no loop
+        without_loop(d)
+    assert runner.cmd_gate(argparse.Namespace(dirs=[str(d) for d in dirs], tolerance=0.05)) == 2
+    assert "run0 does not record its event loop" in capsys.readouterr().out
+
+
+def test_a_run_that_records_no_loop_is_refused_as_a_baseline_never_a_key_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(runner, "BASELINES", tmp_path / "base")
+    monkeypatch.delenv("CI", raising=False)
+    old = without_loop(make_run(tmp_path / "old"))  # full length and PASS: only the loop is missing
+    assert runner.main(["record", str(old)]) == 1  # the command's refusal, not a traceback
+    assert runner.finish(old, runner.TOLERANCE, record=True) == 0  # judged, and not recorded
+    out = capsys.readouterr().out
+    assert out.count("not recorded: the run does not record its event loop") == 2
+    assert not (tmp_path / "base").exists()
 
 
 def test_a_w5_dispatch_with_no_answer_says_so_and_exits_red(
@@ -1472,22 +1513,54 @@ def test_a_run_directory_is_cleared_of_what_an_earlier_run_left(tmp_path: Path) 
     assert left == sorted(["tokens.json", runner.MARKER])  # the backend writes its own tokens
 
 
-def test_a_directory_the_harness_did_not_make_is_never_cleared(tmp_path: Path) -> None:
-    """`--out-dir candleviewer` would otherwise delete a source tree's `bars/`: without the marker
-    of an earlier run the runner refuses, says why and deletes nothing."""
+def test_a_cleared_link_goes_and_what_it_points_at_stays(tmp_path: Path) -> None:
+    out, elsewhere = tmp_path / "run", tmp_path / "elsewhere"
+    runner._fresh(out)
+    elsewhere.mkdir()
+    (elsewhere / "BTCUSDT.state").write_text("{}", encoding="utf-8")
+    (out / "bars").symlink_to(elsewhere, target_is_directory=True)
+    runner._fresh(out)  # a `bars` link left in place would hand its target to the next backend
+    assert not os.path.lexists(out / "bars") and (elsewhere / "BTCUSDT.state").exists()
+
+
+@pytest.mark.parametrize("name", [*runner.STALE, "bars", "notes.txt"])
+def test_a_directory_the_harness_did_not_make_is_never_cleared(tmp_path: Path, name: str) -> None:
+    """`--out-dir candleviewer` would otherwise delete a source tree's `bars/`, and an operator's
+    folder its `report.md`: a directory without an earlier run's marker that holds anything, one
+    entry is enough, is refused, says why, deletes nothing and is not marked."""
     foreign = tmp_path / "candleviewer"
-    (foreign / "bars").mkdir(parents=True)
-    (foreign / "bars" / "series.py").write_text("SERIES = 1\n", encoding="utf-8")
-    (foreign / "report.md").write_text("a report that is not ours\n", encoding="utf-8")
+    foreign.mkdir()
+    entry = foreign / name
+    if name == "bars":
+        entry.mkdir()
+        (entry / "series.py").write_text("SERIES = 1\n", encoding="utf-8")
+    else:
+        entry.write_text("not ours\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="not made by this harness") as refused:
         runner._fresh(foreign)
-    assert "bars" in str(refused.value) and "nothing was deleted" in str(refused.value)
-    assert (foreign / "bars" / "series.py").read_text(encoding="utf-8") == "SERIES = 1\n"
-    assert (foreign / "report.md").exists()
-    assert not (foreign / runner.MARKER).exists()  # and it did not take the directory either
+    assert name in str(refused.value) and "nothing was deleted" in str(refused.value)
+    assert [x.name for x in foreign.iterdir()] == [name]  # as it was, and no marker
     (foreign / runner.MARKER).write_text("e17-q03/1\n", encoding="utf-8")  # the operator's say-so
     runner._fresh(foreign)
-    assert not (foreign / "bars").exists() and not (foreign / "report.md").exists()
+    assert entry.exists() is (name == "notes.txt")  # then only the harness's own names go
+
+
+@pytest.mark.parametrize("name", ["report.md", runner.MARKER])
+def test_a_symlink_makes_a_directory_foreign_and_is_left_as_it_is(
+    tmp_path: Path, name: str
+) -> None:
+    """Neither the check nor the clear follows a link: a dangling one named like an artefact is
+    held, not missing, and a link named like the marker is not the marker a run wrote."""
+    target, foreign = tmp_path / "operator.txt", tmp_path / "foreign"
+    if name == runner.MARKER:
+        target.write_text("kept\n", encoding="utf-8")  # a run would write its marker into it
+    foreign.mkdir()
+    (foreign / name).symlink_to(target)
+    with pytest.raises(SystemExit, match="not made by this harness"):
+        runner._fresh(foreign)
+    assert (foreign / name).is_symlink() and [x.name for x in foreign.iterdir()] == [name]
+    if name == runner.MARKER:
+        assert target.read_text(encoding="utf-8") == "kept\n"  # never written through the link
 
 
 def test_a_backend_that_never_gets_ready_is_stopped_before_the_runner_gives_up(
@@ -1537,18 +1610,21 @@ async def session(be: fixture_app.Backend, path: str = "/ws") -> AsyncIterator[A
         yield ws
 
 
-async def test_the_gateway_is_served_at_the_configured_path_and_nowhere_else(
-    tmp_path: Path,
+@pytest.mark.parametrize("ws_path", ["/ws", "/api/v1/ws", "/bench/ws"])
+async def test_the_fixture_serves_both_gateway_paths_as_the_app_does(
+    ws_path: str, tmp_path: Path
 ) -> None:
+    """#3916: `create_app` serves the gateway at `/ws` and `/api/v1/ws` (`include_ws_router`), and
+    so does the fixture, whichever path k6 is given; another prefix is served as well."""
     cfg = fixture_app.BackendConfig(
-        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=False,
-        ws_path="/api/v1/ws",
-    )  # fmt: skip
+        symbols=("BTCUSDT",), hot=1, warm=0, users=1, connections=1, flag=False, ws_path=ws_path
+    )
     async with fixture_app.Backend(cfg, TABLE, tmp_path) as be:
-        async with session(be, "/api/v1/ws"):
-            pass
+        for path in dict.fromkeys(("/ws", "/api/v1/ws", ws_path)):
+            async with session(be, path):
+                pass
         with pytest.raises(websockets.exceptions.InvalidStatus):
-            async with session(be, "/ws"):
+            async with session(be, "/other/ws"):
                 pass
 
 

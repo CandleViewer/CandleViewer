@@ -790,12 +790,22 @@ def test_a_w5_dispatch_with_no_usable_answer_is_red() -> None:
 
 def test_a_w5_headline_says_every_rule_met_only_for_an_answer_with_a_table() -> None:
     row = [{"family": "book"}]
-    met = {"recommendation": "keep_fixed", "reasons": [], "rows": row}
+    met = {"recommendation": "keep_fixed", "reasons": [], "rows": row, "skipped": []}
     assert w5.headline(met) == "W5: keep_fixed: every rule met"
-    split = {"recommendation": "per_family", "reasons": ["a", "b"], "rows": row}
+    split = {"recommendation": "per_family", "reasons": ["a", "b"], "rows": row, "skipped": []}
     assert w5.headline(split) == "W5: per_family: a; b"
-    nothing = {"recommendation": "no_data", "reasons": [], "rows": []}
+    nothing = {"recommendation": "no_data", "reasons": [], "rows": [], "skipped": []}
     assert w5.headline(nothing) == "W5: no usable answer"
+    assert w5.headline(met | {"rows": []}) == "W5: no usable answer"  # no table, whatever it says
+
+
+def test_a_red_w5_answer_leads_with_the_red_line_even_with_a_table() -> None:
+    """A table from two of the three mixed phases is red (`exit_code`), so a log of that dispatch
+    must open with that, never with a recommendation the missing class could have changed."""
+    healthy = mixed("mixed-healthy", 0, None, hold=50.0)
+    short = w5.analyze([healthy, mixed("mixed-saturated", 700, "saturated", hold=200.0)])
+    assert short["rows"] and w5.exit_code(short) == 1
+    assert w5.headline(short) == "W5: no usable answer (mixed-lagging left out)"
 
 
 def mixed(name: str, rtt: int, cls: str | None, *, hold: float | None) -> w5.Phase:
