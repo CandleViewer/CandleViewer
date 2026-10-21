@@ -240,3 +240,32 @@ Adds one application secret to the key inventory (Design §8; Amendment 4, "Unch
   previous key, which only verifies, is in `CV_AUDIT_LANE_PREVIOUS_KEY_FILE`. The composition root
   reads both once at boot and hands the bytes to `audit` (C-3.2); logs carry only each key's `kid`.
   The file rules and the boot refusals: `24-internal-schemas.md` §15.6 and ADR-0037 decision 6.
+
+## Amendment 8 (2026-10-21, #889; ADR-0039, from decision D1 under the owner's delegation, veto venue #2701)
+
+Adds one key class to M2 (Design §8): the audit export signing key, which ADR-0039 decides.
+
+- **The key.** An Ed25519 key that signs the audit export (ADR-0039 decision 1), one per
+  environment (C-2.11). M2 generates it at boot, after the KEK is verified, when the environment
+  has none, and stores only its 32-byte seed, sealed under the row's own DEK, which the
+  environment's KEK wraps, like an exchange key (Design §2, Amendment 3), under AADs of its own.
+  Its public key, SHA-256 fingerprint and key id are public.
+- **Use.** The seed is opened inside M2 for one signing call, never cached, and zeroed after it;
+  nothing outside `secrets` sees it (C-2.7, C-12.2). M2's export signer holds only a closure, like
+  `CredentialBorrower` (Amendment 2). It is minted once in `admin/wiring.py`, a site the M2 AST
+  guard pins, and injected into `audit`'s export job, which never imports `secrets`, so the
+  import-linter contracts do not change (C-3.2, C-3.4; Amendment 4's pattern). It signs
+  `cv.audit.export.v1:` and the hex of a 32-byte digest with the active key only, after its
+  write-ahead `security.audit_export_signed`, and fails closed.
+- **Unavailable degrades export only.** A signing key that is missing or cannot be opened makes
+  export unavailable and nothing else: `start()` latches no order entry for it, while a KEK failure
+  still does (Amendment 1). A key that exists but cannot be opened is never generated over.
+- **Rotation.** `POST /admin/keys/audit-signing/rotate`, beside `rewrapKek`: Owner only
+  (`keys:manage`), step-up class `keys`, CSRF, idempotent and audited ahead. The old key stays
+  listed for verification (`GET /admin/audit/signing-keys`) and never signs again.
+- **KEK rotation and backups.** M2 re-wraps the signing-key rows at the rotation boot, as it does
+  `auth_keys` (Amendment 4), and the call counts them; the KCV trial unwrap covers them, and
+  `security.kek_rotated` (retired rows whose seed is destroyed aside, ADR-0039 Q3) waits until none is left at the
+  previous version. Database backups hold only the sealed seed (Design §7). Losing the KEK loses
+  the key, an accepted loss: exports signed before still verify with the listed public key, and a
+  rotation provides the next key.
