@@ -43,7 +43,14 @@ from candleviewer.exchange.bybit.key_info import (
 )
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from tests._corpus import rest
-from tests.unit.accounts._permission_cases import BASE, KNOWN_GAPS, REFUSED, non_json_cases
+from tests.unit.accounts._permission_cases import (
+    BASE,
+    DOCS_REPLY,
+    KNOWN_GAPS,
+    RECORDED,
+    REFUSED,
+    non_json_cases,
+)
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "key_verification"
 NOW = datetime(2026, 10, 15, 9, tzinfo=UTC)
@@ -201,7 +208,10 @@ async def test_withdraw_right_is_reported_as_withdraw_enabled() -> None:
 
 #: Withdraw or transfer named in any letter case at any depth, and a value or key JSON cannot carry
 #: exactly (the deny-list refuses it whatever it says, fail closed): `key_withdraw_permission`.
-_DENIED_CASES: list[tuple[str, Any]] = [(c[0], c[1]) for c in REFUSED]
+#: The documented reply and the recorded captures also hold rights that only the allow-list
+#: refuses, so they have their own tests (below; `test_key_info_drift.py`).
+_OWN_TESTS = {"docs_example", *(c[0] for c in RECORDED)}
+_DENIED_CASES: list[tuple[str, Any]] = [(c[0], c[1]) for c in REFUSED if c[0] not in _OWN_TESTS]
 _DENIED_CASES += [*non_json_cases(), ("non_text_group_granting_nothing", {**BASE, b"Wallet": []})]
 _DENIED_CASES += [("integer_group", {**BASE, 1: ["Order"]})]
 #: Every other right outside the allow-list: `key_permission_not_allowed`. A right that may move
@@ -281,6 +291,22 @@ async def test_fund_rights_come_first_and_each_rules_failures_are_sorted_by_mess
         (Rule.PERMISSION_NOT_ALLOWED, "permissions.Zeta contains 'Z1'"),
     ]
     assert (calls, result.withdraw_enabled) == (["key_info"], True)
+
+
+async def test_the_docs_example_reply_fails_key_withdraw_permission_first() -> None:
+    """Bybit's documented reply (docs-transcribed, #2240): its two Wallet rights fail
+    `key_withdraw_permission` ahead of every right that is only outside the allow-list, it reports
+    `withdraw_enabled`, and no signed call follows the key-info call."""
+    result, calls = await run(parse_key_info(DOCS_REPLY))
+    fund = [("Wallet", "AccountTransfer"), ("Wallet", "SubMemberTransfer")]
+    other = [("BitCard", "BitCard"), ("ByXPost", "ByXPost"), ("Earn", "Earn")]
+    other += [("Exchange", "ExchangeHistory"), ("FiatBitPay", "FaitPayOrder")]
+    other += [("FiatConvertBroker", "FiatConvertBrokerOrder"), ("FiatP2P", "Advertising")]
+    other += [("FiatP2P", "FiatP2POrder"), ("Spot", "SpotTrade")]
+    expected = [(Rule.WITHDRAW_PERMISSION, f"permissions.{g} contains '{r}'") for g, r in fund]
+    expected += [(Rule.PERMISSION_NOT_ALLOWED, f"permissions.{g} contains '{r}'") for g, r in other]
+    assert [(f.rule, f.message) for f in result.failures] == expected
+    assert (result.passed, result.withdraw_enabled, calls) == (False, True, ["key_info"])
 
 
 LOOKALIKE_RIGHT = {**BASE, "Wallet": ["With\u200bdraw"]}

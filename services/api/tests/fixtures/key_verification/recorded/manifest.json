@@ -1,0 +1,17 @@
+{
+  "fixtures": [
+    {
+      "path": "../key_info_docs_example.json",
+      "symbol": "*",
+      "stream": "GET /v5/user/query-api",
+      "host": "bybit-exchange.github.io",
+      "capture_date": "2026-10-21",
+      "source": "docs-transcribed",
+      "notable_event": "the documented reply: a read-only key whose Wallet holds AccountTransfer and SubMemberTransfer",
+      "http_status": null,
+      "retrieved": "2026-10-21",
+      "source_url": "https://bybit-exchange.github.io/docs/v5/user/apikey-info",
+      "source_ref": "github.com/bybit-exchange/docs@19518b90fb36e1527eaf99ff692076487a977921:docs/v5/user/apikey-info.mdx"
+    }
+  ]
+}

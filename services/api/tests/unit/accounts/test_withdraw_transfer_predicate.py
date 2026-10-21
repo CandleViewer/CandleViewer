@@ -8,8 +8,8 @@ whose JSON round trip let `{None: ["Withdraw"], "null": []}` pass as `{"null": [
 Shape source: Bybit v5 "Get API Key Information" (`GET /v5/user/query-api`,
 https://bybit-exchange.github.io/docs/v5/user/apikey-info) returns the key's `permissions` as
 groups whose values are the granted rights; SR-030a names the `Wallet` rights to refuse:
-`AccountTransfer`, `SubMemberTransfer`, `Withdraw`. No recorded, redacted capture exists yet, so
-the cases in `_permission_cases.py` are structural.
+`AccountTransfer`, `SubMemberTransfer`, `Withdraw`. The corpus in `_permission_cases.py` holds the
+page's reply as transcribed (the `docs_*` cases); no recorded, redacted capture exists yet (#2701).
 """
 
 from __future__ import annotations

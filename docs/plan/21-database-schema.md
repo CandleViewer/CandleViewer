@@ -981,7 +981,7 @@ Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; th
 | `kek_version`               | integer     | no   | `1`             | Bumped on KEK rotation; drives re-wrap job                  |
 | `permission_snapshot`       | jsonb       | no   | —               | As reported by Bybit `/v5/user/query-api` at import/refresh |
 | `permission_snapshot_at`    | timestamptz | no   | `now()`         | Freshness for admin UI ("checked 3 min ago")                |
-| `can_trade`                 | boolean     | no   | `false`         | Derived from snapshot, denormalised for fast gate           |
+| `can_trade`                 | boolean     | no   | `false`         | Snapshot-derived at insert (#2240); each key check rewrites |
 | `can_withdraw`              | boolean     | no   | `false`         | **CHECK (can_withdraw = false)** — hard invariant           |
 | `can_transfer`              | boolean     | no   | `false`         | **CHECK (can_transfer = false)** (0019) — transfer refused  |
 | `read_only`                 | boolean     | no   | `false`         |                                                             |
@@ -1124,14 +1124,16 @@ ALTER TABLE api_keys ADD CONSTRAINT ak_no_transfer CHECK (can_transfer = false);
 > `VALIDATE` it against existing rows, drop 0017's, rename the new one to `ak_snapshot_shape`. It adds
 > `ak_no_transfer` the same way. The migration sets `lock_timeout` to 5 s. NOT VALID gives no lock
 > relief here, because every pending revision runs in one transaction. The rule
-> is the same as `PermissionSnapshot` in `accounts/models.py` (M13) and the M2 credential gate (C-2.8,
+> is the one predicate of the shared kernel `candleviewer/domain/key_permissions.py` (#2240), which
+> `PermissionSnapshot` in `accounts/models.py` (M13) and the M2 credential gate both call (C-2.8,
 > SR-030a): `withdraw` or `transfer`, ignoring case, as a value or a key at any depth, except a group
-> named for a right that grants nothing. There is one difference: the legacy `Withdraw` key keeps
+> named for a right that grants nothing. The kernel also refuses a key that is not a string, which
+> jsonb cannot hold. There is one difference: the legacy `Withdraw` key keeps
 > 0017's conjunct, so a non-array value there (`null`, `""`, a scalar, an object) raises SQLSTATE
 > 22023 instead of a check violation. The model refuses it too. It is a substring deny-list: case and
 > leading/trailing whitespace only, so inner spacing and lookalike characters pass (allow-list
-> follow-up #2270). One shared corpus tests the model and the CHECK
-> (`tests/unit/accounts/_permission_cases.py`).
+> follow-up #2270). One shared corpus, which holds the exchange's documented key-info reply, tests
+> the model and the CHECK (`tests/unit/accounts/_permission_cases.py`).
 
 Additional invariant, enforced by trigger `trg_api_keys_write_once` (BEFORE UPDATE, per row,
 `ENABLE ALWAYS`; function `api_keys_write_once_check()`): `id`, `exchange_account_id`,

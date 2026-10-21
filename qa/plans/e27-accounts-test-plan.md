@@ -519,9 +519,12 @@ are this plan's additions. Rules for every scenario:
 
 - Replies are documented-shape stand-ins under the owner's exception (#1778 item A): a private
   endpoint cannot be recorded without a real key, so every reply follows the documented shape and
-  nothing beyond it is invented (C-13.5). #2240's recorded, redacted `query-api` capture replaces
-  the key-info replies, and #2893 (scope item 10) verifies the other stand-ins against the v5 docs
-  or that capture. Its S15 confirmed, against the official v5 error table (page dated 2026-10-14;
+  nothing beyond it is invented (C-13.5). The owner's recorded, redacted `query-api` capture (on
+  the #2701 owner queue, "#2240 recorded fixture via demo key") replaces the key-info replies; until
+  then #2240's transcription of the documented reply
+  (`services/api/tests/fixtures/key_verification/key_info_docs_example.json`) and its drift check
+  stand in. #2893 (scope item 10) verifies the other stand-ins against the v5 docs or that
+  capture. Its S15 confirmed, against the official v5 error table (page dated 2026-10-14;
   #3005), three scenarios' refusal codes, `wallet_probe_error` (`10005`), `close_rejected`
   (`110017`) and `leverage_refused_open_position` (`110013`), and the two overlays' position-mode
   refusals (`110024`, `110028`); a case or row that still calls one of these unconfirmed predates
