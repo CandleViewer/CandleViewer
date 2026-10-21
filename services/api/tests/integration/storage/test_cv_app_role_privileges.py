@@ -265,3 +265,26 @@ def test_trade_group_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
         assert held[("cv_ro", table)] == ("SELECT",)
     assert held[("cv_app", "trade_group_definition_members")] == ("DELETE INSERT SELECT UPDATE",)
     assert held[("cv_ro", "trade_group_definition_members")] == ("SELECT",)
+
+
+def test_account_and_key_grants_are_pinned_at_head(cv_app_dsn: str) -> None:
+    """#2758: `cv_app` can delete neither table a key's guarantee rests on. `api_keys` lost DELETE
+    in 0024 and `exchange_accounts` in 0044: a delete of the parent cascades to the keys and lets
+    the id be inserted again (another environment, an older key row), which no UPDATE guard sees.
+    It keeps INSERT, SELECT and UPDATE (the store inserts, patches and soft-deletes), holds no
+    TRUNCATE (the bootstrap never granted it), and `cv_ro` reads."""
+    probe = (
+        "SELECT string_agg(p, ' ' ORDER BY p) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', "
+        "'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p "
+        "WHERE has_table_privilege(%s, %s, p)"
+    )
+    tables = ("exchange_accounts", "api_keys")
+    with psycopg.connect(cv_app_dsn) as conn:
+        held = {
+            (role, table): conn.execute(probe, (role, table)).fetchone()
+            for role in ("cv_app", "cv_ro")
+            for table in tables
+        }
+    for table in tables:
+        assert held[("cv_app", table)] == ("INSERT SELECT UPDATE",), table
+        assert held[("cv_ro", table)] == ("SELECT",), table
