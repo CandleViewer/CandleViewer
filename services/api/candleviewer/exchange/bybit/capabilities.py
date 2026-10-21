@@ -20,7 +20,7 @@ from typing import Final
 from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.base.models import ExchangeCapabilities
 
-__all__ = ["ENVIRONMENTS", "capabilities_for"]
+__all__ = ["capabilities_for"]
 
 #: §8.7's defaults per endpoint class; no default is given for `batch`, so none is set.
 _ORDER_RATES: Final[Mapping[str, int]] = MappingProxyType(
@@ -73,8 +73,6 @@ def _record(environment: Environment, *, demo: bool) -> ExchangeCapabilities:
 _RECORDS: Final[Mapping[str, ExchangeCapabilities]] = MappingProxyType(
     {"live": _record("live", demo=False), "demo": _record("demo", demo=True)}
 )
-#: The environments the port trades, the ones with a record (ruling R6).
-ENVIRONMENTS: Final = frozenset(_RECORDS)
 
 
 def capabilities_for(environment: str) -> ExchangeCapabilities:

@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.errors import UnknownStateError
 from candleviewer.exchange.base.models import Wallet
 from candleviewer.exchange.bybit import trading
@@ -76,6 +77,18 @@ async def test_a_walk_past_the_page_bound_is_unknown(monkeypatch: pytest.MonkeyP
     venue = Venue().on("/v5/order/realtime", *pages)
     with pytest.raises(UnknownStateError, match="more pages"):
         await make_port(venue).open_orders(account())
+    assert len(venue.sent) == 2  # the bound's pages, and no page past them
+
+
+async def test_a_walk_of_exactly_the_page_bound_reads_every_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(trading, "_MAX_PAGES", 2)
+    first = with_result(_rows(REALTIME, orderId="order-0"), nextPageCursor="c0")
+    venue = Venue().on("/v5/order/realtime", first, _last(_rows(REALTIME, orderId="order-1")))
+    orders = await make_port(venue).open_orders(account())
+    assert [o.exchange_order_id for o in orders] == ["order-0", "order-1"]
+    assert len(venue.sent) == 2
 
 
 async def test_history_without_a_window_is_one_call_in_the_venues_default() -> None:
@@ -103,6 +116,35 @@ async def test_a_history_window_is_split_into_the_venues_7_days(
     assert len(sent) == windows
     assert all(0 <= high - low <= 7 * 86_400_000 for low, high in sent)
     assert all(b[0] == a[1] + 1 for a, b in itertools.pairwise(sent))
+
+
+#: The venue's 7 days in ms, written out here (the port's own figure is `_WINDOW_MS`).
+WEEK_MS = 604_800_000
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "window"),
+    [
+        (NOW_US - DAY_US, None, ((NOW_US - DAY_US) // 1000, (NOW_US - DAY_US) // 1000 + WEEK_MS)),
+        (None, NOW_US, (NOW_US // 1000 - WEEK_MS, NOW_US // 1000)),
+    ],
+    ids=["start-only", "end-only"],
+)
+async def test_one_bound_reads_the_venues_own_7_days_from_the_start_or_to_the_end(
+    start: int | None, end: int | None, window: tuple[int, int]
+) -> None:
+    """As the venue answers a call with one bound (24 §14.1): sent as both bounds, never a
+    window of no width or one reaching back to the epoch."""
+    venue = Venue().on("/v5/order/history", _last(HISTORY))
+    await make_port(venue).order_history(account(), start=start, end=end)
+    [query] = venue.queries()
+    assert (int(query["startTime"]), int(query["endTime"])) == window
+
+
+async def test_an_order_on_every_window_of_a_history_range_is_listed_once() -> None:
+    venue = Venue().on("/v5/order/history", _last(HISTORY))
+    orders = await make_port(venue).order_history(account(), start=NOW_US - 15 * DAY_US, end=NOW_US)
+    assert len(venue.sent) == 3 and len(orders) == 1
 
 
 async def test_executions_walk_every_window_of_the_range() -> None:
@@ -270,12 +312,24 @@ async def test_positions_take_the_settle_coin_and_refuse_another_category() -> N
     assert venue.queries() == [{"category": "linear", "settleCoin": "USDT", "limit": "200"}]
 
 
-async def test_closed_pnl_maps_the_transcribed_row() -> None:
+async def test_closed_pnl_sets_the_transcribed_usdc_row_aside_and_counts_it() -> None:
+    """The documentation's example is a USDC perpetual's (`ETHPERP`): the read takes no settle
+    coin, so the port, which reads USDT records only (C-1.2 item 3), never returns it as one."""
     venue = Venue().on("/v5/position/closed-pnl", _last(CLOSED))
-    [record] = await make_port(venue).closed_pnl(account(), NOW_US - DAY_US, NOW_US)
-    assert (record.symbol, record.side, record.qty) == ("ETHPERP", "sell", Decimal("3"))
-    assert record.closed_pnl == Decimal("-47.4065323") and record.order_id is None
+    before = _refused("not_usdt")
+    with capture_logs() as logs:
+        records = await make_port(venue).closed_pnl(account(), NOW_US - DAY_US, NOW_US)
+    assert records == [] and _refused("not_usdt") == before + 1
+    [line] = [e for e in logs if e["event"] == "bybit_row_refused"]
+    assert (line["reason"], line["symbol"]) == ("not_usdt", "ETHPERP")
     assert "settleCoin" not in venue.queries()[0]
+
+
+async def test_closed_pnl_maps_a_usdt_row_of_the_transcribed_shape() -> None:
+    venue = Venue().on("/v5/position/closed-pnl", _last(_rows(CLOSED, symbol="ETHUSDT")))
+    [record] = await make_port(venue).closed_pnl(account(), NOW_US - DAY_US, NOW_US)
+    assert (record.symbol, record.side, record.qty) == ("ETHUSDT", "sell", Decimal("3"))
+    assert record.closed_pnl == Decimal("-47.4065323") and record.order_id is None
 
 
 async def test_the_wallet_needs_one_unified_usdt_row() -> None:
@@ -388,6 +442,70 @@ async def test_a_walk_returns_every_pages_rows_in_order(
     assert [q.get("cursor") for q in venue.queries()] == [None, "c1"]
 
 
+# -- several rows in one page: every row is read, and only the ones set aside are dropped ----------
+
+
+def _page(page: dict[str, Any], *rows: dict[str, Any]) -> dict[str, Any]:
+    """The transcribed page holding `rows`, each its first row with fields changed, as the last
+    page of the walk (test inputs)."""
+    first = page["result"]["list"][0]
+    return with_result(page, list=[{**first, **row} for row in rows], nextPageCursor="")
+
+
+async def test_a_page_mixing_a_funding_row_among_fills_reads_every_fill() -> None:
+    """Funding rows sit between fills on the venue's pages: the one set aside is the one
+    counted, and every fill after it on the page is read."""
+    page = _page(
+        EXECUTIONS, {"execType": "Funding", "execId": "exec-f"}, {"execId": "exec-a"},
+        {"execId": "exec-b"},
+    )  # fmt: skip
+    before = _refused("not_a_fill")
+    fills = await make_port(Venue().on("/v5/execution/list", page)).executions(
+        account(), NOW_US - DAY_US, NOW_US
+    )
+    assert [f.exec_id for f in fills] == ["exec-a", "exec-b"]
+    assert _refused("not_a_fill") == before + 1
+
+
+async def test_a_page_mixing_another_accounts_order_keeps_every_order_of_this_account() -> None:
+    """One row under another account's id, one under this account's and an order placed
+    outside the product (no `orderLinkId`): only the first is dropped and counted."""
+    page = _page(
+        REALTIME, {"orderId": "order-b", "orderLinkId": link(ACCOUNT_B)},
+        {"orderId": "order-a", "orderLinkId": link()}, {"orderId": "order-x", "orderLinkId": ""},
+    )  # fmt: skip
+    before = _refused("account")
+    orders = await make_port(Venue().on("/v5/order/realtime", page)).open_orders(account())
+    assert [(o.exchange_order_id, o.order_link_id) for o in orders] == [
+        ("order-a", link()),
+        ("order-x", ext_key("order-x")),
+    ]
+    assert _refused("account") == before + 1
+
+
+async def test_a_page_of_positions_is_read_whole_and_in_order() -> None:
+    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    page = _page(LINEAR_POSITIONS, *({"symbol": symbol} for symbol in symbols))
+    positions = await make_port(Venue().on("/v5/position/list", page)).positions(account())
+    assert [p.symbol for p in positions] == symbols
+
+
+async def test_a_closed_pnl_page_sets_a_usdc_row_aside_and_keeps_every_usdt_one() -> None:
+    page = _page(CLOSED, {}, {"symbol": "BTCUSDT"}, {"symbol": "ETHUSDT"})  # first: ETHPERP
+    before = _refused("not_usdt")
+    records = await make_port(Venue().on("/v5/position/closed-pnl", page)).closed_pnl(
+        account(), NOW_US - DAY_US, NOW_US
+    )
+    assert [r.symbol for r in records] == ["BTCUSDT", "ETHUSDT"]
+    assert _refused("not_usdt") == before + 1
+
+
+async def test_a_history_page_of_two_orders_lists_both_in_order() -> None:
+    page = _page(HISTORY, {"orderId": "order-a"}, {"orderId": "order-b"})
+    orders = await make_port(Venue().on("/v5/order/history", page)).order_history(account())
+    assert [o.exchange_order_id for o in orders] == ["order-a", "order-b"]
+
+
 @pytest.mark.parametrize(
     ("path", "answer", "read", "query"),
     [
@@ -443,7 +561,7 @@ async def test_open_orders_of_a_symbol_keep_only_that_symbols_rows() -> None:
 
 
 async def test_closed_pnl_walks_every_window_of_the_range() -> None:
-    venue = Venue().on("/v5/position/closed-pnl", _last(CLOSED))
+    venue = Venue().on("/v5/position/closed-pnl", _last(_rows(CLOSED, symbol="ETHUSDT")))
     records = await make_port(venue).closed_pnl(account(), NOW_US - 15 * DAY_US, NOW_US)
     sent = [(int(q["startTime"]), int(q["endTime"])) for q in venue.queries()]
     assert len(sent) == 3 and len(records) == 3  # one record a window: no dedupe by design
@@ -460,6 +578,11 @@ def test_a_range_takes_at_most_106_windows_of_7_days() -> None:
     assert len(windows) == 106 and windows[0][0] == start_ms and windows[-1][1] == end_ms
     with pytest.raises(ValueError, match="longer than the exchange keeps"):
         trading._windows((start_ms - 1) * 1000, NOW_US)
+
+
+def test_a_window_starts_on_the_millisecond_that_holds_its_start() -> None:
+    """The start rounds down: a range starting 1 µs into a millisecond still reads it."""
+    assert trading._windows(NOW_US + 1, NOW_US + 2_000) == [(NOW_US // 1000, NOW_US // 1000 + 2)]
 
 
 def test_a_window_ends_on_the_millisecond_that_holds_its_end() -> None:

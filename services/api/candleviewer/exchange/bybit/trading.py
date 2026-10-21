@@ -700,6 +700,9 @@ class BybitTradingPort:
         start: TsUs | None = None,
         end: TsUs | None = None,
     ) -> Sequence[Order]:
+        """The orders the venue's history read lists: with no bound, its default window; with
+        one, the venue's span for it, the 7 days from `start` or to `end`; with both, every 7-day
+        window between them (24 §14.1)."""
         self._check_environment(account)
         check_lookup_id(order_link_id)
         check_window(start, end)
@@ -769,13 +772,23 @@ class BybitTradingPort:
         return kept(_unique(fills, lambda e: e.exec_id), lambda e: e.order_link_id, account)
 
     async def closed_pnl(self, account: AccountRef, start: TsUs, end: TsUs) -> Sequence[ClosedPnl]:
+        """The account's USDT records only (C-1.2 item 3): the venue's read takes no settle coin,
+        and its documented example is a USDC perpetual's, so a row whose symbol does not end in
+        the settle coin is set aside and counted (`not_usdt`), never read as USDT (24 §14.2
+        rule 12)."""
         self._check_environment(account)
         check_window(start, end)
         params = {"category": "linear", "limit": _PAGE_LIMIT["closed_pnl"]}
 
         def read(result: object) -> tuple[Sequence[ClosedPnl], str]:
             page = parse(ClosedPnlPage, result, "closed-pnl")
-            return [to_closed_pnl(row, account) for row in page.rows], page.nextPageCursor
+            usdt: list[ClosedPnl] = []
+            for row in page.rows:
+                if not row.symbol.endswith(_SETTLE):
+                    refuse_row("not_usdt", "", symbol=row.symbol)
+                    continue
+                usdt.append(to_closed_pnl(row, account))
+            return usdt, page.nextPageCursor
 
         records: list[ClosedPnl] = []
         for window in _windows(start, end):
@@ -978,7 +991,8 @@ def _window(window: tuple[int, int]) -> dict[str, int]:
 
 
 def _maybe_windows(start: TsUs | None, end: TsUs | None) -> list[dict[str, int]]:
-    """No bound: one call, the venue's own default window. A bound: 7-day windows."""
+    """No bound: one call, the venue's own default window. One bound: the venue's span for it
+    (7 days from `start` or to `end`), sent as both bounds. Both: 7-day windows covering them."""
     if start is None and end is None:
         return [{}]
     low = start if start is not None else (end or 0) - _WINDOW_MS * 1000

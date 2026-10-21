@@ -543,7 +543,7 @@ def parse[M: BaseModel](model: type[M], data: object, what: str) -> M:
 
 # -- normalisation (24 §14.2 rule 11) and the per-row check (SR-E29-02) ------------------------
 
-type RowRefusal = Literal["environment", "account", "not_a_fill", "unmapped_type"]
+type RowRefusal = Literal["environment", "account", "not_a_fill", "unmapped_type", "not_usdt"]
 
 _SIDE: Final[Mapping[str, Literal["buy", "sell"]]] = {"Buy": "buy", "Sell": "sell"}
 _STATE: Final[Mapping[str, str]] = {
@@ -638,10 +638,15 @@ def owner_refusal(link: str, account: AccountRef) -> RowRefusal | None:
     return None
 
 
-def refuse_row(reason: RowRefusal, link: str, *, exec_type: str | None = None) -> None:
-    """Count and log a row set aside: its id, or the documented type that set it aside."""
+def refuse_row(
+    reason: RowRefusal, link: str, *, exec_type: str | None = None, symbol: str | None = None
+) -> None:
+    """Count and log a row set aside: its id, the documented type that set it aside, or the
+    symbol of a contract the product does not trade."""
     bybit_rows_refused_total.labels(reason=reason).inc()
-    logger().warning("bybit_row_refused", reason=reason, order_link_id=link, exec_type=exec_type)
+    logger().warning(
+        "bybit_row_refused", reason=reason, order_link_id=link, exec_type=exec_type, symbol=symbol
+    )
 
 
 def kept[T](rows: Sequence[T], link_of: Callable[[T], str], account: AccountRef) -> list[T]:

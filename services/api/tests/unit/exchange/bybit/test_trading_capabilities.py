@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from candleviewer.exchange.bybit.capabilities import ENVIRONMENTS, capabilities_for
+from candleviewer.exchange.bybit.capabilities import capabilities_for
 from candleviewer.exchange.bybit.config import EndpointClass
 from candleviewer.exchange.bybit.trading import CANCEL_ALL_FILTER, ENDPOINTS
 from candleviewer.oms.order_link_resolution import HistoryRetentionPolicy
@@ -22,7 +22,8 @@ from tests.unit.exchange.bybit._trading import DAY_US, NOW_US
 
 
 def test_there_is_a_live_and_a_demo_record_and_no_other() -> None:
-    assert ENVIRONMENTS == {"live", "demo"}
+    """The port and the service's factory rely on the refusal: testnet trades nothing (R6)."""
+    assert [capabilities_for(env).environment for env in ("live", "demo")] == ["live", "demo"]
     for environment in ("testnet", "mainnet", ""):
         with pytest.raises(ValueError, match="no trading capability record"):
             capabilities_for(environment)

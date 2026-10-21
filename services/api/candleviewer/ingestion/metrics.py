@@ -205,7 +205,7 @@ SPECS: Final[tuple[MetricSpec, ...]] = (
     ),
     _c(
         "bybit_rows_refused_total",
-        "Trading-read rows set aside, by reason (other env or account, no fill, unmapped type).",
+        "Trading-read rows set aside, by reason (env, account, no fill, unmapped type, not USDT).",
         "reason",
         owner="adapter",
     ),
