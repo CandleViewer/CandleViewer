@@ -175,19 +175,19 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Density notes** — rows 24 / 32 px
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — the entry inherits CMP-023 for the admin row; patch A-6 binds the CMP-036 row tokens and `color.text.secondary` for the state word; no new token
-- [x] **Data contract confirmed** — the E16-S02 store (`recorder` topic, `23` §15.8; `GET /recording/symbols`) and `GET /market/data-coverage` (spec §4.3); `role_restricted` read as "restricted"
+- [ ] **Data contract confirmed** — PENDING spec CR-8 (the first recorded time), CR-12 (archive windows), CR-13 (symbols not trading) and #2216 (the 90-day window): the E16-S02 store (`recorder` topic, `23` §15.8; `GET /recording/symbols`) and `GET /market/data-coverage` (spec §4.3); `role_restricted` read as "restricted"
 - [x] **Contrast and CVD** — words carry every state; glyphs are decorative (spec §13)
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — attached at the end
 - [ ] **Sign-off** — PENDING
 
 ### Table 1 — Variants × States
 
-| Variant           | State                                                                 | Penpot variant   | Story name                 | Notes                                   |
-| ----------------- | --------------------------------------------------------------------- | ---------------- | -------------------------- | --------------------------------------- |
-| summary, Owner    | recording (5 reasons), lingering, starting, stopping, degraded, error | B17 / owner      | `SummaryStates` (new)      | words per spec §4.3; final copy E16-D05 |
-| summary, Owner    | not recorded, symbol cap, disk pressure, gated                        | B17 / owner-not  | `SummaryNotRecorded` (new) | "Record this symbol…" (Q6) and the link |
-| summary, others   | the same states; no internals; one sentence                           | B12, B13, B17    | `SummaryNonOwner` (new)    | "Recording is set up by the owner."     |
-| summary, any role | restricted (absent from a `role_restricted` set)                      | B17 / restricted | `SummaryRestricted` (new)  | never "Not recorded"                    |
+| Variant           | State                                                                                                       | Penpot variant   | Story name                 | Notes                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- | ---------------- | -------------------------- | --------------------------------------- |
+| summary, Owner    | recording (5 reasons), lingering, starting, stopping, degraded, error                                       | B17 / owner      | `SummaryStates` (new)      | words per spec §4.3; final copy E16-D05 |
+| summary, Owner    | not recorded, symbol cap, disk pressure, gated                                                              | B17 / owner-not  | `SummaryNotRecorded` (new) | "Record this symbol…" (Q6) and the link |
+| summary, others   | the same states, gated as "may be gated" in a `role_restricted` set (spec §4.3); no internals; one sentence | B12, B13, B17    | `SummaryNonOwner` (new)    | "Recording is set up by the owner."     |
+| summary, any role | restricted (absent from a `role_restricted` set)                                                            | B17 / restricted | `SummaryRestricted` (new)  | never "Not recorded"                    |
 
 ### Table 3 — Accessible name / role
 
