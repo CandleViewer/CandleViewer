@@ -480,6 +480,18 @@ def test_doctor_invalid_env_origin_fails_without_echoing_it(cfg_root, capsys, mo
     assert f"FAIL  {URL_ORIGIN_CHECK}" in outcome.out
 
 
+def test_doctor_invalid_env_origin_is_not_rescued_by_a_valid_descriptor_origin(
+    cfg_root, capsys, monkeypatch
+):
+    monkeypatch.setenv(ORIGIN_ENV, "http://" + HUB_HOST)
+    ident = {**valid_identity(cfg_root), "hubOrigin": HUB}  # valid, and the stored URL matches it
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, INVALID_IN_ENV)  # no silent fall back to the descriptor
+    assert f"FAIL  {URL_ORIGIN_CHECK}" in outcome.out
+
+
 @pytest.mark.parametrize("bad", INVALID_ORIGINS)
 def test_doctor_invalid_descriptor_origin_fails_without_echoing_it(
     cfg_root, capsys, monkeypatch, bad
@@ -536,6 +548,67 @@ def test_doctor_descriptor_origin_is_not_mistaken_for_a_secret_by_its_hostname(
 
     assert outcome.code == 0, outcome.out
     assert "FAIL" not in outcome.out
+
+
+# The descriptor's hubOrigin is exempt from the identity secret scan only when it is a valid origin,
+# whichever of the env var and the descriptor wins in hub_origin().
+SCAN = "identity carries no token/url/connect-code"
+SECRET_BEARING_ORIGINS = [
+    pytest.param(FAKE_URL, id="mcp-url-with-connect-code"),
+    pytest.param("Bearer " + FAKE_TOKEN, id="bearer-token"),
+    pytest.param("token=" + FAKE_TOKEN, id="token-assignment"),
+]
+
+
+@pytest.mark.parametrize("secret", SECRET_BEARING_ORIGINS)
+def test_doctor_secret_in_the_descriptor_origin_fails_even_when_the_env_origin_wins(
+    cfg_root, capsys, secret
+):
+    ident = {**valid_identity(cfg_root), "hubOrigin": secret}  # the env (HUB) is set and wins
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, SCAN)  # exit 1, no READY, allowlisted lines, the value is not echoed
+    assert [ln for ln in outcome.lines if ln.startswith("FAIL")] == [f"FAIL  {SCAN}"]
+    assert f"PASS  hub origin resolved — via env {ORIGIN_ENV}" in outcome.out
+
+
+@pytest.mark.parametrize("env_set", [True, False], ids=["env-set", "env-unset"])
+@pytest.mark.parametrize(
+    "host", [HUB_HOST, "connect.token.example.test"], ids=["plain-host", "scan-word-host"]
+)
+def test_doctor_valid_descriptor_origin_passes_the_scan_whichever_source_wins(
+    cfg_root, capsys, monkeypatch, env_set, host
+):
+    origin = f"https://{host}"
+    if env_set:
+        monkeypatch.setenv(ORIGIN_ENV, origin)
+    else:
+        monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": origin}
+    env = {**valid_env(), ENV_URL: FAKE_URL.replace(HUB_HOST, host)}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident, settings={"env": env}), capsys)
+
+    source = f"env {ORIGIN_ENV}" if env_set else "identity.hubOrigin"
+    assert outcome.code == 0, outcome.out
+    assert f"PASS  {SCAN}" in outcome.out
+    assert f"PASS  hub origin resolved — via {source}" in outcome.out
+    assert_allowlisted(outcome)
+    assert_no_leak(outcome)
+
+
+def test_doctor_descriptor_origin_is_the_one_the_stored_url_is_compared_with(
+    cfg_root, capsys, monkeypatch
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": OTHER_HUB}  # valid, but not the URL's origin
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, URL_ORIGIN_CHECK)
+    assert f"PASS  {SCAN}" in outcome.out
+    assert "PASS  hub origin resolved — via identity.hubOrigin" in outcome.out
 
 
 # ============================ doctor: identity failures =============================
@@ -1027,6 +1100,20 @@ def test_credentials_refuse_an_invalid_hub_origin_before_prompting(
     )
 
 
+def test_credentials_invalid_env_origin_is_not_rescued_by_a_valid_descriptor_origin(
+    target, capsys, monkeypatch
+):
+    monkeypatch.setenv(ORIGIN_ENV, "http://" + HUB_HOST)
+    write(descriptor_path(target), {"hubOrigin": HUB})  # valid, but the env value is what counts
+
+    err = refuse_without_prompting(target, capsys, monkeypatch)
+
+    assert err == (
+        f"refused: hub origin invalid in env {ORIGIN_ENV} — "
+        "expected https://host[:port] and nothing else\n"
+    )
+
+
 def test_credentials_use_the_descriptor_hub_origin_when_the_env_is_absent(target, monkeypatch):
     monkeypatch.delenv(ORIGIN_ENV)
     write(descriptor_path(target), {"hubOrigin": HUB})
@@ -1279,6 +1366,17 @@ def test_hub_origin_resolver_rejects_invalid_values_without_echoing_them(script,
 
     assert str(from_env.value) == f"invalid in env {ORIGIN_ENV} — {suffix}"
     assert str(from_descriptor.value) == f"invalid in identity.hubOrigin — {suffix}"
+
+
+@pytest.mark.parametrize("bad", INVALID_ORIGINS)
+def test_hub_origin_resolver_does_not_fall_back_when_the_env_value_is_invalid(script, bad):
+    # A valid descriptor must not rescue an invalid env value: the env takes precedence, refused.
+    with pytest.raises(ValueError) as exc:
+        script.hub_origin({"hubOrigin": HUB}, {ORIGIN_ENV: bad})
+
+    assert str(exc.value) == (
+        f"invalid in env {ORIGIN_ENV} — expected https://host[:port] and nothing else"
+    )
 
 
 def test_hub_origin_parsing_is_identical_in_both_scripts():

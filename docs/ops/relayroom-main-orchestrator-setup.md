@@ -75,8 +75,9 @@ file.
   `.claude/settings.local.json` and any shell command naming `settings.local.json`. This is a
   guard against accidental reads, not an isolation boundary: a differently written shell command
   can still read the file as the same Windows user. The identity and run records under
-  `.claude/relayroom/` are nonsecret by design (the doctor checks they carry no token, URL or
-  connect code) and stay readable.
+  `.claude/relayroom/` are nonsecret by design: the doctor checks that they carry no token, URL or
+  connect code, apart from the descriptor's optional non-secret `hubOrigin` (a bare
+  `https://host[:port]`, which the doctor validates); both stay readable.
 - **Session wake-up:** plain MCP does not wake an idle session; no background delivery is claimed.
 - **Exclusive ownership:** `whoami` proves the binding, not exclusivity. Owner confirmed this
   session is the sole `main-orchestrator` client (2026-10-14). Agents B and C use their own parts.
@@ -91,10 +92,11 @@ step 4 pending, step 5 in progress (`[SETUP-CHECK]` sent, owner ACK pending).
    owner kept the existing token, see "Token decision" above.)
 2. `cp docs/ops/relayroom-mcp.template.json .mcp.json` (once; the root file is git-ignored and
    machine-local), then `python scripts/relayroom-enter-credentials.py` (masked input; nothing
-   echoed). Both scripts need the hub origin, which is private and never written in this repository:
-   set `CANDLEVIEWER_RELAYROOM_ORIGIN` in your shell, or add a `hubOrigin` key (a bare
-   `https://host[:port]`) to the git-ignored `.claude/relayroom/identity.local.json`; without it they
-   refuse (fail closed) and never print it.
+   echoed). Both scripts need the hub origin, which is private and never written in this repository.
+   For a human-run session set `CANDLEVIEWER_RELAYROOM_ORIGIN` in your shell; for a doctor run by an
+   agent, which does not see your shell environment, add a `hubOrigin` key (a bare
+   `https://host[:port]`) to the git-ignored `.claude/relayroom/identity.local.json` instead. Without
+   either they refuse (fail closed) and never print it.
    Transition (checkouts that pulled this change over a `.mcp.json` from the tracked era): the pull
    deletes an unmodified root copy and the skill file — re-run the `cp` half of this step and the
    skill `cp` (credentials live in `.claude/settings.local.json`, which the pull never touches). A plain

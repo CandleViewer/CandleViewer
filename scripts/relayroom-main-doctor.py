@@ -136,8 +136,11 @@ def run(root: Path) -> int:
         check("identity.configRoot matches this checkout",
               isinstance(config_root, str) and config_root.strip() != ""
               and Path(config_root).resolve() == root)
-        # `hubOrigin` has its own strict check below: a bare https origin cannot carry a secret.
-        secretish = json.dumps({k: v for k, v in ident.items() if k != ORIGIN_KEY}).lower()
+        # A `hubOrigin` that parse_origin() accepts is a bare https origin: it cannot carry a secret, but
+        # its hostname may contain a scanned word, so only such a value is exempt. Any other value stays
+        # in the scan, even when the env var takes precedence over it in hub_origin() below.
+        scanned = {k: v for k, v in ident.items() if k != ORIGIN_KEY or parse_origin(v) is None}
+        secretish = json.dumps(scanned).lower()
         check("identity carries no token/url/connect-code", not any(s in secretish for s in ("bearer", "/mcp/", "token", "connect")))
 
     # --- hub origin (private: env or identity.hubOrigin; only the source is printed, never the value) ---
