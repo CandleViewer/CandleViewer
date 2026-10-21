@@ -20,6 +20,12 @@ from typing import Any
 
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.lane_journal import key_id
+from candleviewer.audit.machine_events import (
+    MachineEventStore,
+    MachineEventUnavailable,
+    MachineEventWalSink,
+    SinkMetrics,
+)
 from candleviewer.audit.metrics import export_audit_lane_metrics
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
 from candleviewer.audit.redact import redact
@@ -67,6 +73,9 @@ __all__ = [
     "AuditHandle",
     "AuditVerifyRunner",
     "LaneNotWired",
+    "MachineEventSinkHandle",
+    "MachineEventSinkMetrics",
+    "MachineEventSinkUnavailable",
     "SecretsBundle",
     "SecretsHandle",
     "SecretsMeta",
@@ -74,6 +83,7 @@ __all__ = [
     "audit_writer_sink",
     "build_audit_service",
     "build_audit_verify_job",
+    "build_machine_event_sink",
     "build_secrets_service",
     "export_audit_lane_metrics",
     "export_secrets_metrics",
@@ -84,6 +94,11 @@ __all__ = [
 AuditHandle = AuditService
 #: The scheduled verify run's port (#2111), so `app` can type an injected runner.
 AuditVerifyRunner = VerifyRunner
+#: The `machine_events` sink (E50-T63), its metric handles and its fail-closed error, for the
+#: statechart composition root, which may not import M19 (C-3.3).
+MachineEventSinkHandle = MachineEventWalSink
+MachineEventSinkMetrics = SinkMetrics
+MachineEventSinkUnavailable = MachineEventUnavailable
 
 
 #: The M2 records that page: a KEK that failed to load or re-wrap, and stranded rows (#2266).
@@ -195,6 +210,20 @@ def build_audit_verify_job(
         metrics,
         hour_utc=settings.audit_verify_nightly_hour_utc,
         deadline_s=settings.audit_verify_nightly_deadline_s,
+    )
+
+
+def build_machine_event_sink(
+    settings: Settings, store: MachineEventStore, *, metrics: SinkMetrics | None = None
+) -> MachineEventSinkHandle:
+    """The WAL-backed `machine_events` sink (E50-T63) over the composition root's events store
+    adapter, its WAL at `settings.machine_event_wal_path` (beside the audit WAL unless set). No
+    I/O: `start()` locks and opens the WAL."""
+    return MachineEventWalSink(
+        store,
+        settings.machine_event_wal_path,
+        max_bytes=settings.machine_event_wal_max_bytes,
+        metrics=metrics,
     )
 
 

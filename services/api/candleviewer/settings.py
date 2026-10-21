@@ -123,11 +123,12 @@ DATABASE_DATA_DIRS: Final = ("/var/lib/postgresql", "/var/lib/questdb")
 
 def _data_directories(data: Mapping[str, Any]) -> dict[str, Path]:
     """E42-T05: what `CV_BACKUP_ROOT` stays apart from, each resolved as the code that opens it
-    takes it: the audit WAL's and checkpoints' directories, the recordings (the Parquet lake and
-    the spill WAL), the bar state, the directories of the KEK handles, the KEK ack and the audit
-    lane keys, and `DATABASE_DATA_DIRS`. A path is taken as written (a padded one keeps its spaces,
-    a `~` is a directory name), except the spill WAL and the bar state: their `_anchor_*` rules
-    strip and `~`-expand them, derive their defaults from the `~`-expanded lake, and so does this.
+    takes it: the audit WAL's, the machine-event WAL's and checkpoints' directories, the
+    recordings (the Parquet lake and the spill WAL), the bar state, the directories of the KEK
+    handles, the KEK ack and the audit lane keys, and `DATABASE_DATA_DIRS`. A path is taken as
+    written (a padded one keeps its spaces, a `~` is a directory name), except the spill WAL and
+    the bar state: their `_anchor_*` rules strip and `~`-expand them, derive their defaults from
+    the `~`-expanded lake, and so does this.
     An unknown `~user` there is a `ValueError` naming the setting, never its value."""
 
     def written(name: str) -> Path | None:
@@ -162,6 +163,7 @@ def _data_directories(data: Mapping[str, Any]) -> dict[str, Path]:
     found = {
         "the directory of CV_AUDIT_WAL_PATH": parent("audit_wal_path"),
         "the directory of CV_AUDIT_CHECKPOINT_PATH": parent("audit_checkpoint_path"),
+        "the directory of CV_MACHINE_EVENT_WAL_PATH": parent("machine_event_wal_path"),
         "CV_PARQUET_ROOT": lake,
         "CV_RECORDER_WAL_DIR": spill,
         "CV_BARS_STATE_ROOT": bars,
@@ -446,6 +448,12 @@ class Settings(BaseSettings):
     # volume so tail truncation is detectable even if Postgres data is lost.
     audit_wal_path: str = "var/audit/audit.wal"
     audit_checkpoint_path: str = "var/audit/checkpoints.ndjson"
+    # E50-T63: the WAL of the `machine_events` sink (`audit.machine_events`). Empty (default) =
+    # beside `audit_wal_path` (`<its directory>/machine_events.wal`): compose's root filesystem is
+    # read-only and the audit volume is the writable one. An explicit path's directory is a data
+    # directory `CV_BACKUP_ROOT` stays apart from. Capped like the audit WAL, at least 1 MiB.
+    machine_event_wal_path: str = ""
+    machine_event_wal_max_bytes: int = Field(default=64 * 1024 * 1024, ge=1024 * 1024)
     # ADR-0037 decision 6 (#3009): the audit lane's key files, read once at boot by the composition
     # root (`candleviewer.audit_lane_wiring`). The key makes every lane frame, marker and note; the
     # previous key, set during a rotation, only verifies. Paths, not secrets: their names stay
@@ -781,6 +789,14 @@ class Settings(BaseSettings):
         if resolved == root or not resolved.is_relative_to(root):
             raise RecorderWalDirError(f"CV_RECORDER_WAL_DIR must be inside the data dir {root}")
         object.__setattr__(self, "recorder_wal_dir", str(resolved))
+        return self
+
+    @model_validator(mode="after")
+    def _anchor_machine_event_wal(self) -> Settings:
+        """E50-T63: an empty `CV_MACHINE_EVENT_WAL_PATH` sits beside the audit WAL."""
+        if not self.machine_event_wal_path.strip():
+            beside = Path(self.audit_wal_path).parent / "machine_events.wal"
+            object.__setattr__(self, "machine_event_wal_path", str(beside))
         return self
 
     @model_validator(mode="after")

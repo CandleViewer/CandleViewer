@@ -114,6 +114,21 @@ def _is_torn_tail(data: bytes, pos: int) -> bool:
     return nl + 1 + length + 1 + _CRC_FIELD >= len(data)
 
 
+def _read_at(fh: Any, offset: int, size: int) -> bytes:
+    """`size` bytes of an open file from `offset` (one bounded read)."""
+    fh.seek(offset)
+    data: bytes = fh.read(size)
+    return data
+
+
+def _good_end(data: bytes) -> int:
+    """The end of the last whole, valid frame from the start of `data`."""
+    pos = 0
+    while (parsed := _parse_frame(data, pos)) is not None:
+        pos = parsed[0]
+    return pos
+
+
 def _scan(data: bytes, start: int) -> tuple[list[tuple[int, dict[str, Any]]], int]:
     """Good frames from `start` and the last good boundary; raises
     `AuditWalCorrupt` on a bad frame that is not a torn tail."""
@@ -208,6 +223,11 @@ class AuditWal:
     def committed_offset(self) -> int:
         return int(self._cursor_path.read_text(encoding="utf-8").strip() or "0")
 
+    @property
+    def acknowledged_end(self) -> int:
+        """The byte offset just past the last acknowledged frame (`read_window`'s bound)."""
+        return self._end
+
     def mark_committed(self, offset: int) -> None:
         """Record that every byte up to `offset` is durably in Postgres.
         `fsync`'d so a crash right after does not replay committed records."""
@@ -241,6 +261,55 @@ class AuditWal:
             out.append(item)
             if len(out) >= max_records:
                 break
+        return out
+
+    def read_window(self, max_records: int, max_bytes: int) -> list[tuple[int, dict[str, Any]]]:
+        """Up to `max_records` uncommitted `(end_offset, record)` pairs from one bounded read
+        (E50-T63): it seeks to the committed offset and reads at most `max_bytes`, never past the
+        acknowledged end, so a torn tail is never read. Whole frames only: a frame the window cuts
+        is left for the next call, and a first frame larger than the window is read whole, with
+        its header first. A bad frame inside the acknowledged end raises `AuditWalCorrupt` at its
+        offset, as `replay()` does; so does a file shorter than its acknowledged end."""
+        start, end = self.committed_offset(), self._end
+        if start >= end:
+            return []
+        with open(self._path, "rb") as fh:
+            fh.seek(start)
+            data = fh.read(min(max_bytes, end - start))
+            if len(data) < min(max_bytes, end - start):  # acknowledged bytes are gone
+                raise AuditWalCorrupt(start + _good_end(data))
+            out = self._window_frames(data, start, end, max_records)
+            if out:
+                return out
+            # The first frame is larger than the window: its header gives its size.
+            header = _header(data, 0) or _header(_read_at(fh, start, _MAX_LEN_DIGITS + 1), 0)
+            if header is None:
+                raise AuditWalCorrupt(start)
+            nl, length = header
+            size = nl + 1 + length + 1 + _CRC_FIELD
+            if start + size > end:
+                raise AuditWalCorrupt(start)
+            parsed = _parse_frame(_read_at(fh, start, size), 0)
+        if parsed is None:
+            raise AuditWalCorrupt(start)
+        return [(start + parsed[0], parsed[1])]
+
+    @staticmethod
+    def _window_frames(
+        data: bytes, start: int, end: int, max_records: int
+    ) -> list[tuple[int, dict[str, Any]]]:
+        """The whole frames of one window read at `start`; a frame the window cuts ends it, unless
+        the window reached the acknowledged `end`, where nothing may be cut (corruption)."""
+        out: list[tuple[int, dict[str, Any]]] = []
+        pos = 0
+        while pos < len(data) and len(out) < max_records:
+            parsed = _parse_frame(data, pos)
+            if parsed is None:
+                if _is_torn_tail(data, pos) and start + len(data) < end:
+                    break
+                raise AuditWalCorrupt(start + pos)
+            pos, record = parsed
+            out.append((start + pos, record))
         return out
 
     def compact(self) -> None:
