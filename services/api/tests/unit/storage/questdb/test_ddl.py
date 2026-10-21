@@ -9,7 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from candleviewer.storage.questdb.ddl import parse_ddl_dir, parse_ddl_file
+import pytest
+
+from candleviewer.storage.questdb.ddl import (
+    add_column_target,
+    drop_target,
+    parse_ddl_dir,
+    parse_ddl_file,
+)
 
 DDL_DIR = Path(__file__).resolve().parents[6] / "backend" / "db" / "questdb"
 
@@ -89,3 +96,46 @@ def test_alter_add_column_symbol_is_reported_as_symbol(tmp_path: Path) -> None:
     (table,) = parse_ddl_dir(tmp_path)
     assert table.columns == ("ts", "a", "source", "note", "n")
     assert table.symbol_columns == ("a", "source")
+
+
+@pytest.mark.parametrize(
+    ("stmt", "table"),
+    [("DROP TABLE IF EXISTS bars_time;", "bars_time"), ("drop table Bars_Tick ;", "bars_tick")],
+)
+def test_drop_target_names_the_table_of_a_drop_table_statement(stmt: str, table: str) -> None:
+    assert drop_target(stmt) == table
+
+
+@pytest.mark.parametrize(
+    "stmt", ["ALTER TABLE t DROP COLUMN c;", "DROP TABLE a, b;", "DROP TABLE t; DROP TABLE u;"]
+)
+def test_drop_target_is_none_for_every_other_statement(stmt: str) -> None:
+    assert drop_target(stmt) is None
+
+
+@pytest.mark.parametrize(
+    ("stmt", "target"),
+    [
+        (
+            "ALTER TABLE bars_time ADD COLUMN source SYMBOL CAPACITY 8 CACHE;",
+            ("bars_time", "source", "SYMBOL"),
+        ),
+        ("alter table T add column IF NOT EXISTS Note varchar(32);", ("t", "note", "VARCHAR")),
+    ],
+)
+def test_add_column_target_gives_the_table_column_and_type_in_lower_and_upper_case(
+    stmt: str, target: tuple[str, str, str]
+) -> None:
+    assert add_column_target(stmt) == target
+
+
+@pytest.mark.parametrize(
+    "stmt",
+    [
+        "ALTER TABLE t DEDUP ENABLE UPSERT KEYS(ts, symbol);",
+        "ALTER TABLE t ADD COLUMN a LONG, b LONG;",  # two columns are not one target
+        "DROP TABLE t;",
+    ],
+)
+def test_add_column_target_is_none_for_every_other_statement(stmt: str) -> None:
+    assert add_column_target(stmt) is None

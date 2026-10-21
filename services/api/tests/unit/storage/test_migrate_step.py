@@ -136,6 +136,8 @@ _FAILURES = [  # (failing step, its error, its status, the number the runbook gi
     ("run_migrations", StorageTierUnavailable("dropped"), MigrateExit.QUESTDB_UNAVAILABLE, 6, {}),
     ("run_migrations", _REFUSED, MigrateExit.DDL_REFUSED, 7, {"sqlstate": "42000"}),
     ("run_migrations", _WAL, MigrateExit.WAL_NOT_APPLIED, 8, {"reason": "suspended"}),
+    # A column the DDL adds exists with another type: the runner's resume guard (#3093) raises it.
+    ("run_migrations", _DRIFT, MigrateExit.SCHEMA_DRIFT, 9, {"detail": str(_DRIFT)}),
     ("drift_guard", _DRIFT, MigrateExit.SCHEMA_DRIFT, 9, {"detail": str(_DRIFT)}),
     ("drift_guard", KeyError(_LEAKY), MigrateExit.UNEXPECTED, 1, {}),
 ]

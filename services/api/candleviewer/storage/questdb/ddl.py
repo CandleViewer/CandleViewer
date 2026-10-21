@@ -4,7 +4,8 @@ Parses `backend/db/questdb/*.sql` into a small, structured representation the
 migration runner and the column-drift guard both use. Deliberately minimal:
 only the shapes the DDL files actually use (`CREATE TABLE IF NOT EXISTS`,
 column defs, `TIMESTAMP(...)`, `PARTITION BY`, `WAL`, `DEDUP UPSERT KEYS`).
-This is not a general SQL parser.
+This is not a general SQL parser. It also names the target of the two statements the runner guards
+when it resumes a file a crash cut short: `add_column_target` and `drop_target` (#3093).
 """
 
 from __future__ import annotations
@@ -33,6 +34,27 @@ _ALTER_ADD_RE = re.compile(
     r"(?P<col>\w+)\s+(?P<type>[A-Z0-9_]+)(?:\(\d+\))?(?:\s+CAPACITY\s+\d+)?(?:\s+CACHE)?\s*;",
     re.IGNORECASE,
 )
+
+#: `DROP TABLE [IF EXISTS] t;` (0004 drops and re-creates the six `bars_*` tables).
+_DROP_RE = re.compile(r"DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<table>\w+)\s*;", re.IGNORECASE)
+
+
+def drop_target(stmt: str) -> str | None:
+    """The table (lower case) a `DROP TABLE` statement names, else `None`."""
+    m = _DROP_RE.fullmatch(stmt.strip())
+    return m.group("table").lower() if m else None
+
+
+def add_column_target(stmt: str) -> tuple[str, str, str] | None:
+    """`(table, column, TYPE)` of one `ALTER TABLE ... ADD COLUMN` statement, else `None`.
+
+    Table and column are lower case, the type upper case with its `(n)`, `CAPACITY` and `CACHE`
+    options dropped. A statement that adds two columns is not one target: it gives `None`.
+    """
+    m = _ALTER_ADD_RE.fullmatch(stmt.strip())
+    if m is None:
+        return None
+    return m.group("table").lower(), m.group("col").lower(), m.group("type").upper()
 
 
 @dataclass(frozen=True, slots=True)
