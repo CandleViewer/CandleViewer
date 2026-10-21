@@ -333,7 +333,7 @@ flowchart TD
   T --> U
 ```
 
-**UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) (E36-D01; heuristic, pending owner approval; the route is `/rules/:id?mode=form` as drawn here against `14`'s `/rules/:ruleId/form`, with `form` proposed as the default editor — its C9 / Q7; the "conditions AND/OR list" is "all of" with one any-of level, its R3).
+**UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) (E36-D01; heuristic, pending owner approval; the route is `/rules/:id?mode=form` as drawn here against `14`'s `/rules/:ruleId/form`, with `form` proposed as the default editor — its C9 / Q7; the "conditions AND/OR list" is "all of" with one any-of level, or a flat "any of", its R3).
 
 ---
 
