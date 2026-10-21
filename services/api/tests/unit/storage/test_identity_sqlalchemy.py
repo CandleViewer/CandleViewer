@@ -161,3 +161,18 @@ async def test_accounts_owner_branch_matches_the_account_stores_owner_predicate(
     ):
         assert conjunct in accounts_sqlalchemy._OWNER_PRED
         assert conjunct in sql
+
+
+async def test_active_users_selects_only_ids_of_active_undeleted_users_in_one_statement() -> None:
+    rel = _Rel([[("u1",), ("u3",)]])
+    assert await _provider(rel).active_users({"u3", "u2", "u1"}) == frozenset({"u1", "u3"})
+    sql, params = rel.calls[0]
+    assert params == {"ids": ["u1", "u2", "u3"]}, "the only bind is the ids asked about"
+    # The permission readers' test (`_PERMS_SQL`): a user who is not `active`, or is deleted.
+    assert "u.status = 'active'" in sql and "u.deleted_at IS NULL" in sql
+    assert re.search(r"\b(email|username|display_name|password_hash)\b", sql) is None, "ids only"
+
+
+async def test_active_users_with_no_ids_reads_nothing() -> None:
+    rel = _Rel([])
+    assert await _provider(rel).active_users(()) == frozenset() and rel.calls == []
