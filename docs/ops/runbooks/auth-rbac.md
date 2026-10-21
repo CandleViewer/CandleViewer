@@ -621,8 +621,8 @@ it (login refuses `disabled` only):
   `auth.disabled_user_session_revoked` and the refusal, `auth.session_refreshed` (`denied`, reason
   `user_disabled`). While the audit sink refuses the write-ahead record the refresh answers `503`
   and revokes nothing; the first refresh after it recovers, or any strict-path use, revokes the
-  session. Nothing is revoked without its record (C-2.9), and no refresh issues a token while the
-  sink refuses, so the user gains nothing; the outage shows as
+  session. A refresh revokes nothing before its write-ahead record is written (C-2.9), and no
+  refresh issues a token while the sink refuses, so the user gains nothing; the outage shows as
   `cv_audit_writer_refused_total{domain="auth"}` (alert `AuditSinkRefusing`) and as
   `auth.session_audit.writer_refused` log lines naming the action. A disable that commits after
   the claim leaves no live successor either: the mint reads the status under a lock on the user
@@ -965,7 +965,8 @@ An `auth.refresh_reuse_detected` row at `warning`, with `after_state.family_revo
 different event, and `auth_refresh_reuse_total` does not count it: a rotated-out `cv_refresh` cookie
 was presented outside `/auth/refresh`, for example to `GET /auth/session`. Nothing is revoked, the
 answer is the uniform `401`, and `auth_session_fixation_attempts_total{reason="rotated"}` counts it.
-Rows are written within a per-address and a global budget and the writer's in-flight cap, and
+Rows are written within a per-address and a global budget and the refusal-audit tracker's in-flight
+cap, and
 `reason="audit_throttled"` counts the attempts past them. The SPA's token client (#2712) writes such
 rows on purpose: after a refresh whose answer it lost, it asks `GET /auth/session` before it
 presents the possibly spent cookie, and it asks again on each page load until the user signs in
@@ -1159,7 +1160,8 @@ nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal e
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). A refresh of an
 idle-locked session is answered `401 session_idle_locked` before its record, whether or not the
 sink accepts it, and changes nothing either (#3331). A lock that engages between the route's check
-and the service's own leaves the attempt's intent record with no outcome record, and nothing is
+and the service's own leaves the attempt's intent record with no outcome record and no
+`outcome_lost` line, and nothing is
 rotated. The unlock that follows writes its own record first, so it answers `503` until the sink
 recovers. The break-glass
 reset (section 3, E09-S11 #2119) is the Owner's emergency path: it runs only with cv-api stopped

@@ -471,7 +471,7 @@ describe("a lost session goes back to sign-in", () => {
   });
 
   it("an unlock's 2xx after a refresh that called a locked session lost lets the next ask refresh", async () => {
-    fetchMock.mockResolvedValueOnce(refused("refresh_token_invalid")); // the server's idle-lock gap
+    fetchMock.mockResolvedValueOnce(refused("refresh_token_invalid")); // a server from before #3331
     await expect(holder.refresh()).resolves.toBe("lost");
     transport.mockResolvedValueOnce(json(200, {})); // SCR-005 unlocks with the cookie
     await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);

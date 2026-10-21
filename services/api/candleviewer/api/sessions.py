@@ -1110,11 +1110,11 @@ def make_session_router(
             # The service commits a family's revocation before it publishes it to the sockets, so
             # a request cancelled in there (a shutdown) may have ended the family of a token the
             # lookup saw live, and its critical outcome record can no longer be written. So may a
-            # disabled user's session revoked as `user_disabled` (#3331), whose lost records are
-            # the denial and the backstop's (runbook section 10). The route cannot tell these
-            # from a cancellation elsewhere in `refresh()`: counted as lost either way, a false
-            # loss being the safe direction. A spent token wrote its record ahead (above), so it
-            # loses none.
+            # disabled user's session revoked as `user_disabled` (#3331), which may lose the
+            # denial and the backstop's record (runbook sections 4 and 10). The route cannot tell
+            # these from a cancellation elsewhere in `refresh()`: counted as lost either way, a
+            # false loss being the safe direction. A spent token wrote its record ahead (above), so
+            # it loses none.
             if not reuse:
                 _outcome_lost("auth.refresh_reuse_detected", presented_record.id, "cancelled")
             raise
