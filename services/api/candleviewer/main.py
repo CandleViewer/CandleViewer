@@ -27,6 +27,7 @@ from candleviewer.observability.logging import configure_logging
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_server import MetricsRuntime
 from candleviewer.settings import Settings
+from candleviewer.statechart.registry import default_registry
 
 # E04-T01: logging must be configured before anything else logs a line, and
 # exactly once per process (`configure_logging()`'s own docstring). Every
@@ -97,6 +98,7 @@ class _Teardown:
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ctx: AppContext = app.state.app_context
+    default_registry()  # E17-T08: load and validate the 20 charts once, before a module builds one
     fixture_boot = await account_fixture_guard(ctx.settings)  # #2893 S8: before any module starts
     supervisor = Supervisor(ctx)
     await supervisor.start_all()

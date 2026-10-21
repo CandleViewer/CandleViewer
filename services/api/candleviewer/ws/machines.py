@@ -18,6 +18,7 @@ Retention (§6.4): a terminal entry stays `retention_s` from its first terminal 
 replaces the payload, a parallel chart's next step), at most `terminal_max` of them (oldest first);
 `remove` ends a live one when its machine stops. A removal sends what waits for its window (flag
 on, §8.6 drops it with the queue), revokes each subscription, hands `on_revoked` the frames.
+A sweep removes at most `MACHINE_SWEEP_BATCH` a loop turn, the rest the next (C-2.17).
 
 Bound (C-2.18): `MACHINE_ENTRIES_MAX` entries; a payload for a new entity past it is refused and
 counted (no live state is evicted), so a `sub` to that entity gets the refusal a foreign one gets.
@@ -42,6 +43,7 @@ from candleviewer.auth.generated_permissions import Scope
 from candleviewer.observability.metrics import Counter
 from candleviewer.ws.limits import (
     MACHINE_ENTRIES_MAX,
+    MACHINE_SWEEP_BATCH,
     MACHINE_TERMINAL_MAX,
     MACHINE_TERMINAL_RETENTION_S,
 )
@@ -166,7 +168,8 @@ class MachineStateRegistry:
         self, entity: MachineEntity, payload: Mapping[str, Any], *, owner: object = None
     ) -> bool:
         """Record `payload` as the entity's state and fan it out (coalesced). False when refused:
-        invalid, after the terminal one, or past the bound. `owner` is the publisher's token. These
+        invalid, after the terminal one, or past the bound. `owner` is the publisher's token. A
+        payload whose `tags` hold `terminal` is the entity's last whichever method carries it. These
         methods run on the event-loop thread: the fan-out queues onto `asyncio.Queue`s."""
         return self._record(entity, payload, owner, terminal=False)
 
@@ -174,7 +177,7 @@ class MachineStateRegistry:
         self, entity: MachineEntity, payload: Mapping[str, Any], *, owner: object = None
     ) -> bool:
         """Record the entity's last payload (its `tags` hold `terminal`): a `publish` after it is
-        refused, a further `terminal` (a parallel chart's later step) replaces it."""
+        refused unless it holds `terminal` too; a further one (a parallel step) replaces it."""
         return self._record(entity, payload, owner, terminal=True)
 
     def remove(self, entity: MachineEntity, *, owner: object = None) -> bool:
@@ -187,14 +190,20 @@ class MachineStateRegistry:
         return True
 
     def sweep(self) -> int:
-        """Remove each terminal entry whose retention ended (how many), then re-arm the timer."""
+        """Remove the terminal entries whose retention ended, at most `MACHINE_SWEEP_BATCH` of them
+        (how many), then re-arm the timer, at once for the rest: one callback never holds the loop
+        for every revocation of a mass expiry (C-2.17), and a raise leaves the timer armed."""
         now, removed = self._clock(), 0
-        while self._terminal and next(iter(self._terminal.values())).expires <= now:
-            ch, entry = self._terminal.popitem(last=False)
-            if self._entries.get(ch) is entry:  # else stale: `ch` holds another entry, or none
-                self._remove(ch, entry)
-                removed += 1
-        self._arm_sweep()
+        try:
+            for _ in range(MACHINE_SWEEP_BATCH):
+                if not self._terminal or next(iter(self._terminal.values())).expires > now:
+                    break
+                ch, entry = self._terminal.popitem(last=False)
+                if self._entries.get(ch) is entry:  # else stale: `ch` holds another entry, or none
+                    self._remove(ch, entry)
+                    removed += 1
+        finally:
+            self._arm_sweep()
         return removed
 
     def close(self) -> None:
@@ -212,6 +221,8 @@ class MachineStateRegistry:
         self, entity: MachineEntity, payload: Mapping[str, Any], owner: object, *, terminal: bool
     ) -> bool:
         kind, entry = entity.kind, self._entries.get(entity.ch)
+        tags = payload.get("tags")  # the payload's own tags decide, whichever call carried it
+        terminal = terminal or (isinstance(tags, list) and "terminal" in tags)
         ended = entry is not None and entry.terminal
         if ended and not terminal:
             self._note("warning", "machine state after terminal ignored", kind)

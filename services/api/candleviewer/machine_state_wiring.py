@@ -15,9 +15,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from candleviewer.auth.generated_permissions import Scope
 from candleviewer.statechart.plugins.state_feed import FeedBinding, MachineStateHandle
 from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
-from candleviewer.ws.topics import MACHINE_ENTITY_KIND, EntityScope
+from candleviewer.ws.topics import MACHINE_ENTITY_KIND, MACHINE_KINDS, EntityScope
 
 
 class RegistryFeed:
@@ -30,11 +31,18 @@ class RegistryFeed:
 
     def bind(self, binding: FeedBinding) -> MachineStateHandle:
         """The machine's slot. `ValueError` for a chart with no public entity (B8, B9, B13, B15:
-        §16.6 W9) or an id off the §6.4 grammar: a wiring bug, met when the owner builds it."""
+        §16.6 W9), an id off the §6.4 grammar, or a scoped kind bound without the scope its rule
+        reads, accounts or its user (the registry would refuse that entry to every role): a wiring
+        bug, met when the owner builds it, and `feed_plugins` logs it."""
         kind = MACHINE_ENTITY_KIND.get(binding.machine_kind)
         if kind is None:
             raise ValueError(f"chart {binding.machine_kind!r} has no machines.{{entity}}.state")
         entity = MachineEntity(kind, binding.entity_id, EntityScope(binding.accounts, binding.user))
+        scope = MACHINE_KINDS[kind].scope
+        if scope == Scope.GRANTED_ACCOUNTS and not binding.accounts:
+            raise ValueError(f"a {kind} entity needs its accounts bound")
+        if scope == Scope.SELF and binding.user is None:
+            raise ValueError(f"a {kind} entity needs its user bound")
         return _Handle(self.registry, entity)
 
 

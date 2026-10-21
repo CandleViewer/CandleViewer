@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from hypothesis import given
@@ -19,12 +20,15 @@ from hypothesis import strategies as st
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
+from candleviewer import ws_wiring
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.ws.limits import (
+    MACHINE_AUDIT_PENDING_MAX,
     MACHINE_ENTRIES_MAX,
+    MACHINE_SWEEP_BATCH,
     MACHINE_TERMINAL_MAX,
     MACHINE_TERMINAL_RETENTION_S,
 )
@@ -375,7 +379,7 @@ def test_registry_bound_keeps_updating_the_others() -> None:
     assert registry.publish(one, _payload(state="filled")) and len(registry) == 1
 
 
-def test_terminal_payload_is_the_entitys_last() -> None:
+def test_a_publish_after_the_terminal_payload_is_refused() -> None:
     conn, registry, _ = _world()
     order = MachineEntity("order", OID, ON_A)
     assert registry.terminal(order, _payload(state="filled"))
@@ -831,10 +835,138 @@ async def test_a_removal_is_audited_as_evicted() -> None:
     registry.publish(order, _payload())
     conn.sub(order.ch)
     registry.remove(order)
-    await asyncio.gather(*on_revoked.tasks)
+    await on_revoked.drain()
     assert [(r["action"], r["object_id"], r["reason"]) for r in audit.rows] == [
         ("ws.subscription.revoked", order.ch, "evicted")
     ]
+
+
+def _abandoned() -> float:
+    return REGISTRY.get_sample_value("cv_ws_audit_failures_total", {"reason": "abandoned"}) or 0.0
+
+
+class _Peak(_Audit):
+    """An audit sink that records how many of its writes overlapped."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.live = self.peak = 0
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        self.live += 1
+        self.peak = max(self.peak, self.live)
+        await asyncio.sleep(0)
+        await super().emit(action, **kw)
+        self.live -= 1
+
+
+def _writer(conn: Conn, registry: MachineStateRegistry, audit: _Audit) -> MachineRevocationAudit:
+    """The deployed `on_revoked`, over `conn`'s services with `audit` as their sink."""
+    conn.authz.services.audit = audit
+
+    async def resolve(_user: uuid.UUID) -> PrincipalSnapshot:
+        return conn.authz.principal
+
+    registry.on_revoked = writer = MachineRevocationAudit(
+        ConnectionRegistry(resolve, lambda: 7, conn.authz.services)
+    )
+    return writer
+
+
+async def test_the_audit_queue_is_bounded_and_the_oldest_removal_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removals queue for one writer, whose rows land one at a time (the audit lock would time
+    concurrent ones out); past 6 frames the first removal's are dropped, with their users logged."""
+    monkeypatch.setattr(ws_wiring, "MACHINE_AUDIT_PENDING_MAX", 6)
+    monkeypatch.setattr("candleviewer.ws.permissions._ABANDONED_USERS_LOGGED", 1)
+    conn, registry, hub = _world()
+    services = conn.authz.services
+    peers = [Conn(Source(), services=services, user=u) for u in (USER, uuid.UUID(int=0x101))]
+    for peer in peers:
+        _attach(peer, registry, hub)
+    audit = _Peak()
+    writer = _writer(conn, registry, audit)
+    idents, before = [str(uuid.UUID(int=n)) for n in (1, 2, 3)], _abandoned()
+    with capture_logs() as logs:
+        for ident in idents:  # three removals of three frames queue before the writer runs
+            order = MachineEntity("order", ident, ON_A)
+            registry.publish(order, _payload())
+            for c in (conn, *peers):
+                c.sub(order.ch)
+            registry.remove(order)
+        assert (
+            len([t for t in asyncio.all_tasks() if t.get_name() == "ws-machine-revoked-audit"]) == 1
+        )
+        await writer.drain()
+    assert [r["object_id"] for r in audit.rows] == [
+        f"machines.order:{i}.state" for i in idents[1:] for _ in "abc"
+    ]
+    assert audit.peak == 1 and {r["reason"] for r in audit.rows} == {"evicted"}
+    assert _abandoned() - before == 3
+    (lost,) = logs  # the first removal's frames: two users, one named
+    assert (lost["count"], lost["cause"]) == (3, "queue")
+    assert (lost["users"], lost["actor_user_ids"]) == (2, [USER])
+
+
+async def test_a_batch_that_raises_ends_only_itself_and_a_cancel_abandons_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn, registry, _ = _world()
+    writer = _writer(conn, registry, _Audit())
+    audit = AsyncMock(side_effect=[KeyError("frame"), asyncio.CancelledError])
+    monkeypatch.setattr(writer.registry, "audit_revoked_many", audit)
+    before = _abandoned()
+    for _ in range(3):
+        writer([(conn.authz, {})])
+    (task,) = [t for t in asyncio.all_tasks() if t.get_name() == "ws-machine-revoked-audit"]
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await task
+    assert _abandoned() - before == 1 and (writer._waiting, len(writer._pending)) == (0, 0)
+    assert [(e["event"], e.get("error") or e["cause"]) for e in logs] == [
+        ("ws machine revocation audit failed", "KeyError"),
+        ("ws machine revocations not audited", "cancelled"),
+    ]
+
+
+def _expired(registry: MachineStateRegistry, count: int) -> None:
+    for n in range(1, count + 1):
+        order = MachineEntity("order", str(uuid.UUID(int=n)), ON_A)
+        registry.terminal(order, _payload(state="filled"))
+
+
+def test_a_sweep_removes_at_most_a_batch_and_leaves_the_rest_to_the_next_turn() -> None:
+    """R1S-03: a batch and 44 more entries expire together; the retention timer's one callback
+    removes the batch (a revocation each) and arms a timer at once for the other 44."""
+    loop = _Loop()
+    registry = MachineStateRegistry(**loop.kw)
+    _expired(registry, MACHINE_SWEEP_BATCH + 44)
+    loop.clock.now = 60.0
+    (timer,) = loop.timers  # the one retention timer: run its callback alone
+    loop.timers.clear()
+    timer.callback()
+    assert len(registry) == 44 and loop.armed() == 1
+    loop.advance(60.0)
+    assert len(registry) == 0
+    _expired(registry, MACHINE_SWEEP_BATCH + 44)  # #3988 R1C-03: a stale index costs the same pops
+    registry._entries.clear()
+    loop.clock.now = 120.0
+    assert registry.sweep() == 0 and len(registry._terminal) == 44
+
+
+def test_a_sweep_that_raises_leaves_its_timer_armed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R1S-02: a removal that raises ends that callback, not the retention of every entry after."""
+    loop = _Loop()
+    registry = MachineStateRegistry(**loop.kw)
+    _expired(registry, 2)
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("removal failed")
+
+    monkeypatch.setattr(registry, "_remove", refuse)
+    with pytest.raises(RuntimeError):
+        loop.advance(60.0)  # the retention timer fires, and its callback raises
+    assert loop.armed() == 1
 
 
 def test_a_refused_payload_changes_nothing() -> None:
@@ -882,9 +1014,24 @@ def test_a_further_terminal_payload_replaces_the_last_one_and_keeps_its_retentio
     assert _states(conn) == [("revoked", None)]
 
 
+def test_a_payload_whose_tags_hold_terminal_is_the_last_whichever_call_carried_it() -> None:
+    """R1S-04: a `publish` of a terminal-tagged payload is retained for 60 s and is the last."""
+    loop = _Loop()
+    conn, registry, _ = _world(**loop.kw)
+    order = MachineEntity("order", OID, ON_A)
+    assert registry.publish(order, {**_payload(state="filled"), "tags": ["terminal"]})
+    conn.sub(order.ch)
+    assert not registry.publish(order, _payload())  # refused: it is the last
+    assert registry.scope(order.ch) == ON_A and not registry.remove(order)  # retained, not live
+    loop.advance(60.0)
+    assert registry.scope(order.ch) is None  # and the retention timer ends it
+    assert [f["t"] for f in conn.take()] == ["snap", "revoked"]
+
+
 def test_the_registry_bounds_are_pinned() -> None:
     """R2-n6: the §16.2 values as literals, and a registry's defaults (the 100 ms window, §6.4)."""
     limits = (MACHINE_ENTRIES_MAX, MACHINE_TERMINAL_MAX, MACHINE_TERMINAL_RETENTION_S)
     assert limits == (20_000, 10_000, 60.0)
+    assert (MACHINE_SWEEP_BATCH, MACHINE_AUDIT_PENDING_MAX) == (64, 4_096)
     r = MachineStateRegistry()
     assert (r.max_entries, r.terminal_max, r.retention_s, r.coalesce_s) == (*limits, 0.1)

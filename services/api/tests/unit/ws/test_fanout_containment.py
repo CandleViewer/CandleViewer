@@ -357,6 +357,19 @@ def test_a_raising_revoke_is_contained_to_its_connection(monkeypatch: pytest.Mon
     assert [(e["event"], e["log_level"]) for e in logs] == [("ws revoke failed", "warning")]
 
 
+def test_a_raising_authz_revoke_is_contained_to_its_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1S-02: `authz.revoke` that raises costs its own connection its `revoked`, not the others."""
+    hub = SequencingHub()
+    _, order, ((bad, _), (good, _)) = _machines(hub)
+    monkeypatch.setattr(bad.authz, "revoke", _raises)
+    with capture_logs() as logs:
+        revoked = hub.revoke_topic(order.ch, "topic_removed", resubscribe=False, now_ms=7)
+    assert [a for a, _ in revoked] == [good.authz] and good.take() == [revoked[0][1]]
+    assert [(e["event"], e["log_level"]) for e in logs] == [("ws revoke failed", "warning")]
+
+
 def test_a_failure_that_repeats_logs_once_an_interval_with_a_count_but_orders_every_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

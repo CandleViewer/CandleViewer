@@ -575,6 +575,7 @@ interpreter = Interpreter.from_snapshot(machine, blob, minimum_version=3,
 assert interpreter.last_transition_ok is not None                    # before start() (CV-C60)
 _cv_bring_up(interpreter)                                            # CV-C66'
 await interpreter.start()   # on_interpreter_start fires; branch on restored_from_snapshot
+cv_bring_up_restored(interpreter)   # CV-C66': each plugin's cv_bring_up (the feed), before the replay
 
 # supervision
 if interpreter.chain_trips > 0: page_operator(interpreter.last_chain_error)

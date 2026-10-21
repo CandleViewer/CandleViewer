@@ -227,6 +227,8 @@ LIMIT_ROWS: Final[dict[str, str | Sequence[str | Callable[[], float]]]] = {
     ],
     "Machine registry entries": "limits.MACHINE_ENTRIES_MAX",
     "Terminal machine retention": "limits.MACHINE_TERMINAL_RETENTION_S limits.MACHINE_TERMINAL_MAX",
+    "Terminal sweep batch": "limits.MACHINE_SWEEP_BATCH",
+    "Machine audit queue": "limits.MACHINE_AUDIT_PENDING_MAX",
 }
 
 

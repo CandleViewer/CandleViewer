@@ -49,7 +49,7 @@ from candleviewer.ws_wiring import (
     ingestion_streams,
     loop_call_later,
 )
-from tests.unit.ws.test_machines import _payload
+from tests.unit.ws.test_machines import OID, ON_A, _Audit, _payload, _world, _writer
 
 USER = uuid.uuid4()
 ACC = uuid.uuid4()
@@ -486,6 +486,33 @@ async def test_runtime_stop_cancels_the_machine_registry_timers() -> None:
     timer = machines._entries[book.ch].timer
     await runtime.stop()
     assert timer is not None and timer.cancelled()
+
+
+async def test_runtime_stop_drains_the_machine_revocation_audit() -> None:
+    """R1S-01: `stop` waits for the rows of a removal still queued for a slow audit writer, which
+    only stops after it."""
+    release = asyncio.Event()
+
+    class Held(_Audit):
+        async def emit(self, action: str, **kw: Any) -> None:
+            await release.wait()
+            await super().emit(action, **kw)
+
+    conn, registry, _ = _world()
+    audit = Held()
+    _writer(conn, registry, audit)
+    order = MachineEntity("order", OID, ON_A)
+    registry.publish(order, _payload())
+    conn.sub(order.ch)
+    assert registry.remove(order)
+    runtime = WsRuntime(GatewayHub(), UpstreamRefs(), _settings(), machines=registry)
+    stopping = asyncio.create_task(runtime.stop())
+    for _ in range(20):  # it runs to its drain, and waits there
+        await asyncio.sleep(0)
+    assert not stopping.done() and audit.rows == []
+    release.set()
+    await stopping
+    assert [r["reason"] for r in audit.rows] == ["evicted"]
 
 
 async def test_loop_call_later_runs_its_callback_on_the_running_loop() -> None:

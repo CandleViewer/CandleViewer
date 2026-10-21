@@ -10,6 +10,8 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from candleviewer.api.admin_statecharts import entity_kind
+from candleviewer.statechart.plugins.state_feed import SUMMARY as FEED_SUMMARY
+from candleviewer.ws import machine_payload
 from candleviewer.ws.machine_payload import check_machine_payload
 from candleviewer.ws.topics import MACHINE_ENTITY_KIND, MACHINE_KINDS
 from tests.unit.ws._seq_support import _REGISTRY, _SCHEMAS
@@ -85,3 +87,18 @@ def test_the_chart_table_is_the_schemas_the_kind_sets_and_the_admin_apis() -> No
     assert set(MACHINE_ENTITY_KIND.values()) == set(MACHINE_KINDS)
     assert all(entity_kind(chart) == kind for chart, kind in MACHINE_ENTITY_KIND.items())
     assert set(_SUMMARY) == set(_MACHINES["properties"]["context_summary"]["properties"])
+
+
+def test_both_summary_allow_lists_are_the_schemas_keys_for_each_chart() -> None:
+    """The registry's allow-list (what it accepts) and the feed's (what it sends) are §15.10's
+    `context_summary` keys per chart, both ways. The feed omits `severity`: B10 never writes it."""
+    schema = {
+        b["if"]["properties"]["machine_kind"]["const"]: set(
+            b["then"]["properties"]["context_summary"]["propertyNames"]["enum"]
+        )
+        for b in _MACHINES["allOf"]
+        if "properties" in b["if"]
+    }
+    assert {chart: set(keys) for chart, keys in machine_payload._SUMMARY.items()} == schema
+    fed = {chart: set(keys) for chart, keys in FEED_SUMMARY.items()}
+    assert fed == {**schema, "alert": schema["alert"] - {"severity"}}
