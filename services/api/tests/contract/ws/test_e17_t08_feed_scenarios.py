@@ -117,7 +117,9 @@ async def test_subscribe_to_a_machines_live_state(rig: Rig) -> None:
     late = rig.join(ACC_A)  # a `sub` mid-burst is snapped with the latest, not the last sent
     late.sub(ch)
     assert _states(late) == [("snap", 1, "submitted")]
-    rig.loop.advance(1.2)  # the window closes: one `d`, and `submitting` was never sent
+    rig.loop.advance(1.05)  # the window closes at 1.1: nothing is sent before it, one timer waits
+    assert rig.conn.take() == [] and rig.loop.armed() == 1
+    rig.loop.advance(1.15)  # just after it: one `d`, and `submitting` was never sent
     assert _states(rig.conn) == [("d", 3, "submitted")]
     rig.loop.advance(2.0)
     await _send(order, "KILL")  # terminal: its tags are sorted, and `halted_by_kill` is summarised
@@ -167,6 +169,9 @@ async def test_no_interpreter_query_on_the_hot_path(
     late = rig.join(ACC_A)
     with monkeypatch.context() as spy:
         spy.setattr(type(order), "__getattribute__", counting)
+        _ = order.tags  # a positive control: the spy counts a read, so the zero below means none
+        assert reads["tags"] == 1
+        reads.clear()
         late.sub(ch)
         resync = {"t": "resync", "ch": ch, "p": {"reason": "sequence_gap", "last_seq": 1}}
         rig.conn.emitter.client_resync(rig.conn.authz, resync)

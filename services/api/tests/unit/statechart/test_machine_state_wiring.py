@@ -52,7 +52,9 @@ def test_bind_names_the_entity_kind_and_binds_the_scope(
     [(FeedBinding(c), "has no machines") for c in ("position_protection", "rule_instance")]
     + [(FeedBinding(c), "has no machines") for c in ("ws_conn", "paper_account", "nope")]  # W9
     + [(FeedBinding("order", OID.upper()), "machine entity")]
-    + [(FeedBinding("order", OID), "accounts or its user"), (FeedBinding("alert", OID), "user")],
+    + [(FeedBinding("order", OID), "its accounts"), (FeedBinding("alert", OID), "its user")]
+    + [(FeedBinding("order", OID, user=U), "its accounts")]  # the wrong axis: B1 reads accounts
+    + [(FeedBinding("alert", OID, frozenset({A})), "its user")],  # B10 reads its owner
 )
 def test_a_chart_with_no_public_entity_a_bad_id_or_no_scope_is_refused_at_bind(
     binding: FeedBinding, message: str
@@ -75,6 +77,7 @@ def test_a_feed_that_cannot_bind_builds_no_plugin_and_logs_the_kind() -> None:
         ("statechart_feed_unbound", "position_protection"),
         ("statechart_feed_unbound", "order"),
     ]
+    assert OID not in str(logs).lower()  # the kind, never the id, in either spelling (C-12.6)
 
 
 def test_a_terminal_entry_outlives_its_machine_and_an_older_stop_spares_a_newer_one() -> None:

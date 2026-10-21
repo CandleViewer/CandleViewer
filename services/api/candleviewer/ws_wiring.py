@@ -48,6 +48,7 @@ from candleviewer.book.snapshot_source import BookSnapshotSource, Record
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
+from candleviewer.ws import permissions as ws_permissions
 from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
@@ -376,7 +377,7 @@ class MachineRevocationAudit:
     task, one row at a time, as a resync loop's are. The audit writer appends under one lock with an
     fsync, so a task per connection or per removal would only time its rows out against each other.
     At most `MACHINE_AUDIT_PENDING_MAX` frames wait (C-2.18): past it the oldest removal's are
-    dropped, counted and logged. With no loop there is no writer either, and it only logs."""
+    dropped, as are those queued when the task ends: counted, logged. With no loop it only logs."""
 
     def __init__(self, registry: ConnectionRegistry) -> None:
         self.registry = registry
@@ -393,18 +394,38 @@ class MachineRevocationAudit:
         self._pending.append(revoked)
         self._waiting += len(revoked)
         while self._waiting > MACHINE_AUDIT_PENDING_MAX and len(self._pending) > 1:
-            lost = self._pending.popleft()
-            self._waiting -= len(lost)
-            count_audit_failure(len(lost), "abandoned")
-            logger().warning("ws machine revocations not audited", count=len(lost), cause="queue")
+            self._abandon(1, "queue")
         if self._task is None or self._task.done():
             self._task = spawn(self._write(), name="ws-machine-revoked-audit")
 
+    def _abandon(self, batches: int, cause: str) -> None:
+        """Drop the `batches` oldest removals: counted `abandoned`, logged with their users' ids."""
+        frames = [frame for _ in range(batches) for frame in self._pending.popleft()]
+        users = list(dict.fromkeys(authz.principal.user_id for authz, _ in frames))
+        self._waiting -= len(frames)
+        count_audit_failure(len(frames), "abandoned")
+        logger().warning(
+            "ws machine revocations not audited",
+            count=len(frames),
+            cause=cause,
+            actor_user_ids=users[: ws_permissions._ABANDONED_USERS_LOGGED],
+            users=len(users),
+        )
+
     async def _write(self) -> None:
-        while self._pending:
-            batch = self._pending.popleft()
-            self._waiting -= len(batch)
-            await self.registry.audit_revoked_many(batch)
+        try:
+            while self._pending:
+                batch = self._pending.popleft()
+                self._waiting -= len(batch)
+                try:
+                    await self.registry.audit_revoked_many(batch)
+                except Exception as exc:  # outside the row writes, which contain their own errors
+                    logger().error("ws machine revocation audit failed", error=type(exc).__name__)
+        except BaseException as exc:  # a cancel or any other end: what is still queued is lost
+            cause = "cancelled" if isinstance(exc, asyncio.CancelledError) else "writer_stopped"
+            if self._pending:
+                self._abandon(len(self._pending), cause)
+            raise
 
     async def drain(self) -> None:
         """Wait for the rows queued so far (`WsRuntime.stop`, before the audit writer stops)."""

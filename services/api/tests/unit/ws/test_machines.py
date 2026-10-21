@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from hypothesis import given
@@ -872,46 +873,60 @@ def _writer(conn: Conn, registry: MachineStateRegistry, audit: _Audit) -> Machin
     return writer
 
 
-async def test_one_task_writes_the_rows_of_every_removal_one_at_a_time() -> None:
-    """R1S-01: three connections on two entities, both removed before the writer runs, are six
-    rows and one task: the audit writer's lock would only time concurrent rows out."""
+async def test_the_audit_queue_is_bounded_and_the_oldest_removal_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removals queue for one writer, whose rows land one at a time (the audit lock would time
+    concurrent ones out); past 6 frames the first removal's are dropped, with their users logged."""
+    monkeypatch.setattr(ws_wiring, "MACHINE_AUDIT_PENDING_MAX", 6)
+    monkeypatch.setattr("candleviewer.ws.permissions._ABANDONED_USERS_LOGGED", 1)
     conn, registry, hub = _world()
-    peers = [Conn(Source(), services=conn.authz.services) for _ in range(2)]
+    services = conn.authz.services
+    peers = [Conn(Source(), services=services, user=u) for u in (USER, uuid.UUID(int=0x101))]
     for peer in peers:
         _attach(peer, registry, hub)
     audit = _Peak()
     writer = _writer(conn, registry, audit)
-    orders = [MachineEntity("order", ident, ON_A) for ident in (OID, OTHER)]
-    for order in orders:
-        registry.publish(order, _payload())
-        for c in (conn, *peers):
-            c.sub(order.ch)
-    assert all(registry.remove(order) for order in orders)
-    tasks = [t for t in asyncio.all_tasks() if t.get_name() == "ws-machine-revoked-audit"]
-    assert len(tasks) == 1
-    await writer.drain()
-    assert len(audit.rows) == 6 and audit.peak == 1
-    assert {r["reason"] for r in audit.rows} == {"evicted"}
-
-
-async def test_the_audit_queue_is_bounded_and_the_oldest_removal_is_dropped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(ws_wiring, "MACHINE_AUDIT_PENDING_MAX", 2)
-    conn, registry, _ = _world()
-    audit = _Audit()
-    writer = _writer(conn, registry, audit)
     idents, before = [str(uuid.UUID(int=n)) for n in (1, 2, 3)], _abandoned()
     with capture_logs() as logs:
-        for ident in idents:  # three removals queue before the writer runs: the first is dropped
+        for ident in idents:  # three removals of three frames queue before the writer runs
             order = MachineEntity("order", ident, ON_A)
             registry.publish(order, _payload())
-            conn.sub(order.ch)
+            for c in (conn, *peers):
+                c.sub(order.ch)
             registry.remove(order)
+        assert (
+            len([t for t in asyncio.all_tasks() if t.get_name() == "ws-machine-revoked-audit"]) == 1
+        )
         await writer.drain()
-    assert [r["object_id"] for r in audit.rows] == [f"machines.order:{i}.state" for i in idents[1:]]
-    assert _abandoned() - before == 1
-    assert [(e["count"], e["cause"]) for e in logs] == [(1, "queue")]
+    assert [r["object_id"] for r in audit.rows] == [
+        f"machines.order:{i}.state" for i in idents[1:] for _ in "abc"
+    ]
+    assert audit.peak == 1 and {r["reason"] for r in audit.rows} == {"evicted"}
+    assert _abandoned() - before == 3
+    (lost,) = logs  # the first removal's frames: two users, one named
+    assert (lost["count"], lost["cause"]) == (3, "queue")
+    assert (lost["users"], lost["actor_user_ids"]) == (2, [USER])
+
+
+async def test_a_batch_that_raises_ends_only_itself_and_a_cancel_abandons_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn, registry, _ = _world()
+    writer = _writer(conn, registry, _Audit())
+    audit = AsyncMock(side_effect=[KeyError("frame"), asyncio.CancelledError])
+    monkeypatch.setattr(writer.registry, "audit_revoked_many", audit)
+    before = _abandoned()
+    for _ in range(3):
+        writer([(conn.authz, {})])
+    (task,) = [t for t in asyncio.all_tasks() if t.get_name() == "ws-machine-revoked-audit"]
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await task
+    assert _abandoned() - before == 1 and (writer._waiting, len(writer._pending)) == (0, 0)
+    assert [(e["event"], e.get("error") or e["cause"]) for e in logs] == [
+        ("ws machine revocation audit failed", "KeyError"),
+        ("ws machine revocations not audited", "cancelled"),
+    ]
 
 
 def _expired(registry: MachineStateRegistry, count: int) -> None:
@@ -921,11 +936,11 @@ def _expired(registry: MachineStateRegistry, count: int) -> None:
 
 
 def test_a_sweep_removes_at_most_a_batch_and_leaves_the_rest_to_the_next_turn() -> None:
-    """R1S-03: 300 entries expire together; the retention timer's one callback removes 256 (a
-    revocation each) and arms a timer at once for the other 44."""
+    """R1S-03: a batch and 44 more entries expire together; the retention timer's one callback
+    removes the batch (a revocation each) and arms a timer at once for the other 44."""
     loop = _Loop()
     registry = MachineStateRegistry(**loop.kw)
-    _expired(registry, 300)
+    _expired(registry, MACHINE_SWEEP_BATCH + 44)
     loop.clock.now = 60.0
     (timer,) = loop.timers  # the one retention timer: run its callback alone
     loop.timers.clear()
@@ -933,6 +948,10 @@ def test_a_sweep_removes_at_most_a_batch_and_leaves_the_rest_to_the_next_turn() 
     assert len(registry) == 44 and loop.armed() == 1
     loop.advance(60.0)
     assert len(registry) == 0
+    _expired(registry, MACHINE_SWEEP_BATCH + 44)  # #3988 R1C-03: a stale index costs the same pops
+    registry._entries.clear()
+    loop.clock.now = 120.0
+    assert registry.sweep() == 0 and len(registry._terminal) == 44
 
 
 def test_a_sweep_that_raises_leaves_its_timer_armed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1013,6 +1032,6 @@ def test_the_registry_bounds_are_pinned() -> None:
     """R2-n6: the §16.2 values as literals, and a registry's defaults (the 100 ms window, §6.4)."""
     limits = (MACHINE_ENTRIES_MAX, MACHINE_TERMINAL_MAX, MACHINE_TERMINAL_RETENTION_S)
     assert limits == (20_000, 10_000, 60.0)
-    assert (MACHINE_SWEEP_BATCH, MACHINE_AUDIT_PENDING_MAX) == (256, 4_096)
+    assert (MACHINE_SWEEP_BATCH, MACHINE_AUDIT_PENDING_MAX) == (64, 4_096)
     r = MachineStateRegistry()
     assert (r.max_entries, r.terminal_max, r.retention_s, r.coalesce_s) == (*limits, 0.1)

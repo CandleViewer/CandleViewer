@@ -80,7 +80,7 @@ class MachineStateHandle(Protocol):
 
 
 class MachineStatePort(Protocol):
-    """Where the feed publishes. `bind` raises `ValueError` for a chart with no public entity."""
+    """Where the feed publishes. `bind` raises `ValueError` (no entity, a bad id, or no scope)."""
 
     @property
     def environment(self) -> str: ...

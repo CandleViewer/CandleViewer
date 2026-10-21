@@ -177,7 +177,7 @@ class MachineStateRegistry:
         self, entity: MachineEntity, payload: Mapping[str, Any], *, owner: object = None
     ) -> bool:
         """Record the entity's last payload (its `tags` hold `terminal`): a `publish` after it is
-        refused, a further `terminal` (a parallel chart's later step) replaces it."""
+        refused unless it holds `terminal` too; a further one (a parallel step) replaces it."""
         return self._record(entity, payload, owner, terminal=True)
 
     def remove(self, entity: MachineEntity, *, owner: object = None) -> bool:
