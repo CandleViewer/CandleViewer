@@ -504,7 +504,7 @@ Determinism: given the same stored data and the same `BarSpec`/engine config, re
 ```mermaid
 flowchart TB
     HTTP["REST routers /api/v1<br/>auth, accounts, symbols, bars,<br/>orders, rules, journal, admin"] --> DEPS["Dependency chain<br/>session -> scope -> rate limit -> validate"]
-    WSIN["WS /api/v1/ws (application route /ws)<br/>one socket per origin"] --> HS["Handshake<br/>Origin check, subprotocol,<br/>hello/welcome, first-frame bearer auth"]
+    WSIN["WS /api/v1/ws (and /ws)<br/>one socket per origin"] --> HS["Handshake<br/>Origin check, subprotocol,<br/>hello/welcome, first-frame bearer auth"]
     HS --> SUBM["SubscriptionManager<br/>per-connection subscription set, scope-checked"]
     SUBM --> SNAP["SnapshotService<br/>builds the snapshot of each topic"]
     SUBM --> FEED["FeedMultiplexer<br/>owning modules -> per-connection streams"]
@@ -514,7 +514,7 @@ flowchart TB
     DEPS --> MOD["Module service calls"]
 ```
 
-**As built (E17-T07, #572).** The roles below are the ones this section named, plus a registry and a watchdog that the code has, and each row says which module of `services/api/candleviewer/ws/` plays it. The limits, frames and close codes are `23-ws-protocol.md`'s and are not restated here. The external URL is `/api/v1/ws`; the application mounts the route at `/ws` (23 §2.1). The web client holds one socket per origin through a `SharedWorker`, and one per tab in a browser without one; the gateway caps the sockets of a user (23 §4.3).
+**As built (E17-T07, #572).** The roles below are the ones this section named, plus a registry and a watchdog that the code has, and each row says which module of `services/api/candleviewer/ws/` plays it. The limits, frames and close codes are `23-ws-protocol.md`'s and are not restated here. The gateway serves `/api/v1/ws`, the external URL, and the same route as `/ws` (23 §2.1). The web client holds one socket per origin through a `SharedWorker`, and one per tab in a browser without one; the gateway caps the sockets of a user (23 §4.3).
 
 | Component             | Responsibility                                                                                                                                                                                                                                                                                                 | Detail                                                                                                                                                                                                                                                                                                                           |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

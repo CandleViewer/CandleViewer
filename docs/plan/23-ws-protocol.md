@@ -67,8 +67,6 @@ The endpoint is on the REST backend's origin: the page's own origin in a browser
 
 **As built (#3907).** The gateway serves this path, the external URL the web client opens, and the same route without the server base, `/ws`, which the in-process test rigs and the chaos rig use (the conformance harness serves both). Both are one route of one gateway: the router is included twice (`include_ws_router`), so both run the same handshake, Origin check, limits and audit, and a refusal record names the contract-relative path `/ws` for either. Any other WebSocket path is refused before `accept`. The alias assumes the app is served without an ASGI `root_path`; if the external `/api/v1` mapping for REST (#3519) mounts the app under one, the alias is revisited there.
 
-**As built (#572).** The application registers the route at `/ws`; `/api/v1` is the edge's prefix, and nothing in the repository maps `/api/v1/ws` to it yet, as nothing maps a REST path (E10 owns the routing, ADR-0038). `/api/v1/ws` stays the external URL; a mention of `/ws` elsewhere in this document, or in `20-architecture.md`, is the application's own route.
-
 ### 2.2 Subprotocol negotiation
 
 The client lists the subprotocols it can speak in `Sec-WebSocket-Protocol`, and the server picks by its own order (below):
