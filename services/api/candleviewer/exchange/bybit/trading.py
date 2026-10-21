@@ -93,11 +93,11 @@ from candleviewer.exchange.bybit.trading_parse import (
     OrderReply,
     PositionPage,
     WalletPage,
-    is_fill,
     kept,
     normalised_link,
     parse,
     refuse_row,
+    set_aside,
     to_account_info,
     to_closed_pnl,
     to_execution,
@@ -737,8 +737,8 @@ class BybitTradingPort:
             page = parse(ExecutionPage, result, "executions")
             fills: list[Execution] = []
             for raw in page.rows:
-                if not is_fill(raw):
-                    refuse_row("not_a_fill", "")
+                if (reason := set_aside(raw)) is not None:
+                    refuse_row(reason, "", exec_type=raw["execType"])
                     continue
                 fills.append(
                     to_execution(parse(ExecutionRow, raw, "executions"), account, ingested)

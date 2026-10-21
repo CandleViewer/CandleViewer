@@ -316,9 +316,10 @@ async def test_position_writes_change_the_seeded_position() -> None:
 async def test_reads_answer_the_seeded_state_by_account_and_window() -> None:
     port = _port()
     fill = Execution(
-        exec_id="x-1", order_link_id=_link(), account_id=ACCOUNT, symbol="BTCUSDT", side="buy",
-        price=Decimal("60000"), qty=Decimal("1"), fee=Decimal("0.1"), fee_currency="USDT",
-        is_maker=False, closed_pnl=None, ts_exec=T0, ts_ingest=T0, seq=1,
+        exec_id="x-1", exchange_order_id="fake-000000000001", order_link_id=_link(),
+        account_id=ACCOUNT, symbol="BTCUSDT", side="buy", price=Decimal("60000"),
+        qty=Decimal("1"), fee=Decimal("0.1"), fee_rate=Decimal("0.00055"), fee_currency="USDT",
+        is_maker=False, exec_type="trade", closed_pnl=None, ts_exec=T0, ts_ingest=T0, seq=1,
     )  # fmt: skip
     closed = ClosedPnl(
         account_id=ACCOUNT, symbol="BTCUSDT", side="sell", qty=Decimal("1"),

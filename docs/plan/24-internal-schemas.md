@@ -3981,9 +3981,14 @@ The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends
     (`FakeTradingPort` caps a call the same way, `cancel_all_limit`). Every row a read returns
     that carries one of our ids (`OUR_ID`) of another environment or account (`acct4`) is dropped
     and counted in `bybit_rows_refused_total` (`reason` `environment` or `account`), never raised
-    (SR-E29-02). An execution row that fills no order, a `Funding` fee or a classic account's
-    `UNKNOWN`, is set aside and counted there as `not_a_fill`; every other documented execution
-    type moves a position and is read as a fill.
+    (SR-E29-02). An execution row is read as an `Execution` when its type has an `exec_type`
+    (§14.4: `Trade`, `AdlTrade`, `BustTrade`, `Settle`, and 21 §3.3.6's `SessionSettlePnl`, which
+    §8.1 does not list), with the exchange's `orderId` and `feeRate`. A `Funding` fee, set aside
+    until E29-K01 records its row, and a classic account's `UNKNOWN` fill no order and are
+    counted there as `not_a_fill`; every other documented type (a delisting's `Delivery`,
+    `BlockTrade`, `MovePosition`, `FutureSpread` and the four stock-split types) has no
+    `exec_type` in §8.1 or 21 §3.3.6 and is counted as `unmapped_type`, never mapped by guess.
+    Each is logged by its type, and an undocumented type fails the read.
 
 ### 14.3 Bybit implementation notes
 
@@ -4149,8 +4154,9 @@ class Order(BaseModel):                    # a read's row (§8.5); the OMS aggre
     position_idx: Literal[0,1,2] = 0
     time_in_force: Literal["gtc","ioc","fok","post_only","rpi"] = "gtc"
 
-class Execution(BaseModel):
+class Execution(BaseModel):                # a read's row: §8.1's fields, order_id aside
     exec_id: str
+    exchange_order_id: str                 # the exchange's orderId, never empty (§8.1)
     order_id: OrderId | None = None        # as on Order; ClosedPnl.order_id likewise
     order_link_id: OrderLinkId             # normalised, §14.2 rule 11
     account_id: AccountId
@@ -4159,8 +4165,11 @@ class Execution(BaseModel):
     price: Px
     qty: Qty
     fee: Notional
+    fee_rate: Decimal                      # numeric(18,10), as 21 §3.3.6 stores it
     fee_currency: str
     is_maker: bool
+    exec_type: Literal["trade","funding","adl_trade","bust_trade","settle",
+                       "session_settle_pnl"]  # §8.1's five, and 21 §3.3.6's SessionSettlePnl
     closed_pnl: Notional | None
     ts_exec: TsUs
     ts_ingest: TsUs

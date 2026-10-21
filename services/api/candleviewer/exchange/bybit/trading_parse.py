@@ -16,7 +16,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Annotated, Any, ClassVar, Final, Literal, get_args
+from types import MappingProxyType
+from typing import Annotated, Any, ClassVar, Final, Literal
 
 import structlog
 from pydantic import (
@@ -37,8 +38,10 @@ from candleviewer.exchange.base.models import (
     AccountInfo,
     AccountRef,
     ClosedPnl,
+    ExecType,
     Execution,
     FeeRate,
+    FeeRateValue,
     Order,
     OrderKind,
     Position,
@@ -50,9 +53,10 @@ from candleviewer.exchange.bybit.metrics import (
 )
 
 __all__ = [
-    "FILL_TYPES",
+    "EXEC_TYPES",
     "MODEL_LABELS",
     "NOT_FILLS",
+    "UNMAPPED_TYPES",
     "AccountInfoResult",
     "BatchReply",
     "CancelAllResult",
@@ -67,6 +71,7 @@ __all__ = [
     "kept",
     "normalised_link",
     "parse",
+    "set_aside",
     "to_account_info",
     "to_closed_pnl",
     "to_execution",
@@ -152,6 +157,9 @@ Amount = Annotated[Decimal, BeforeValidator(_decimal)]
 Price = Annotated[Decimal, BeforeValidator(_price)]
 OptPrice = Annotated[Decimal | None, BeforeValidator(_optional_price)]
 OptAmount = Annotated[Decimal | None, BeforeValidator(_optional_amount)]
+#: The venue's fee rate as `21-database-schema.md` §3.3.6 stores it (numeric(18,10)); a rate past
+#: it fails the reply here, never the neutral model after the parse.
+FeeRateText = Annotated[FeeRateValue, BeforeValidator(_decimal)]
 Quantity = Annotated[Decimal, BeforeValidator(_qty)]
 #: A non-negative price, `0` included: a market order's row may carry one.
 Unsigned = Annotated[Decimal, BeforeValidator(_qty)]
@@ -327,7 +335,7 @@ class ExecutionRow(_Venue):
     documented = frozenset(
         {
             "orderPrice", "orderQty", "leavesQty", "createType", "orderType", "stopOrderType",
-            "execFeeV2", "execValue", "feeRate", "tradeIv", "markIv", "markPrice", "indexPrice",
+            "execFeeV2", "execValue", "tradeIv", "markIv", "markPrice", "indexPrice",
             "underlyingPrice", "blockTradeId", "closedSize", "extraFees",
         }
     )  # fmt: skip
@@ -337,15 +345,13 @@ class ExecutionRow(_Venue):
     orderLinkId: RawLink
     side: Side
     execFee: Amount
+    feeRate: FeeRateText
     execId: VenueId
     execPrice: Price
     execQty: Quantity
-    #: Every documented type that moves a position (`FILL_TYPES`); the others are set aside.
-    execType: Literal[
-        "Trade", "AdlTrade", "BustTrade", "Delivery", "Settle", "BlockTrade", "MovePosition",
-        "FutureSpread", "ForwardSplitSettle", "ForwardSplitOpen", "ReverseSplitSettle",
-        "ReverseSplitOpen",
-    ]  # fmt: skip
+    #: The types read as an `Execution` (`EXEC_TYPES`); every other documented one is set aside
+    #: before this parse (`set_aside`), so a type outside both fails the reply.
+    execType: Literal["Trade", "AdlTrade", "BustTrade", "Settle", "SessionSettlePnl"]
     execTime: Millis
     feeCurrency: Annotated[str, StringConstraints(max_length=16)]
     isMaker: bool
@@ -518,7 +524,7 @@ def parse[M: BaseModel](model: type[M], data: object, what: str) -> M:
 
 # -- normalisation (24 §14.2 rule 11) and the per-row check (SR-E29-02) ------------------------
 
-type RowRefusal = Literal["environment", "account", "not_a_fill"]
+type RowRefusal = Literal["environment", "account", "not_a_fill", "unmapped_type"]
 
 _SIDE: Final[Mapping[str, Literal["buy", "sell"]]] = {"Buy": "buy", "Sell": "sell"}
 _STATE: Final[Mapping[str, str]] = {
@@ -566,14 +572,32 @@ _MARGIN: Final[Mapping[str, Literal["regular", "portfolio", "isolated"]]] = {
 }
 #: `unifiedMarginStatus` values of a unified trading account; `1` is classic.
 _UNIFIED: Final = frozenset({3, 4, 5, 6})
-#: The documented `execType` values (enum page, `bybit-exchange/docs@19518b90fb36`) that fill no
-#: order: a funding fee, and the type a classic account may return, which says nothing of what
-#: the row is (the product trades unified accounts only). Set aside and counted (`not_a_fill`).
+#: The `execType` values read as an `Execution`, by the `exec_type` 24 §8.1 and
+#: `21-database-schema.md` §3.3.6 give them: a trade, and the venue's own closes (ADL, takeover
+#: liquidation, settlement). `SessionSettlePnl` is 21's; the enum page at the transcriptions'
+#: docs commit (`bybit-exchange/docs@19518b90fb36`) does not list it.
+EXEC_TYPES: Final[Mapping[str, ExecType]] = MappingProxyType(
+    {
+        "Trade": "trade",
+        "AdlTrade": "adl_trade",
+        "BustTrade": "bust_trade",
+        "Settle": "settle",
+        "SessionSettlePnl": "session_settle_pnl",
+    }
+)
+#: The documented types that fill no order: a funding fee, which waits for E29-K01 to show its
+#: row, and the type a classic account may return, which says nothing of what the row is (the
+#: product trades unified accounts only). Set aside and counted (`not_a_fill`).
 NOT_FILLS: Final = frozenset({"Funding", "UNKNOWN"})
-#: The documented types that move a position, each parsed into an `Execution`: trades, the
-#: venue's own closes (ADL, takeover liquidation, delivery, settlement) and the stock-split
-#: settle-and-reopen pairs.
-FILL_TYPES: Final = frozenset(get_args(ExecutionRow.model_fields["execType"].annotation))
+#: The documented types that 24 §8.1 and 21 give no `exec_type`: a delisting's delivery, block
+#: trades, moved positions, spread legs and the stock-split settle-and-reopen pairs. Set aside
+#: and counted (`unmapped_type`), never mapped by guess and never failing the read.
+UNMAPPED_TYPES: Final = frozenset(
+    {
+        "Delivery", "BlockTrade", "MovePosition", "FutureSpread", "ForwardSplitSettle",
+        "ForwardSplitOpen", "ReverseSplitSettle", "ReverseSplitOpen",
+    }
+)  # fmt: skip
 
 
 def normalised_link(raw: str, exchange_order_id: str) -> OrderLinkId:
@@ -595,9 +619,10 @@ def owner_refusal(link: str, account: AccountRef) -> RowRefusal | None:
     return None
 
 
-def refuse_row(reason: RowRefusal, link: str) -> None:
+def refuse_row(reason: RowRefusal, link: str, *, exec_type: str | None = None) -> None:
+    """Count and log a row set aside: its id, or the documented type that set it aside."""
     bybit_rows_refused_total.labels(reason=reason).inc()
-    logger().warning("bybit_row_refused", reason=reason, order_link_id=link)
+    logger().warning("bybit_row_refused", reason=reason, order_link_id=link, exec_type=exec_type)
 
 
 def kept[T](rows: Sequence[T], link_of: Callable[[T], str], account: AccountRef) -> list[T]:
@@ -643,15 +668,22 @@ def to_order(row: OrderRow, account: AccountRef) -> Order:
     )
 
 
-def is_fill(raw: Mapping[str, Any]) -> bool:
-    """Whether an execution row is parsed as a fill: every documented type but `NOT_FILLS`. An
-    undocumented type is parsed too, and fails the read (the documented set, E8-8)."""
-    return raw.get("execType") not in NOT_FILLS
+def set_aside(raw: Mapping[str, Any]) -> RowRefusal | None:
+    """Why an execution row is set aside before the parse: a documented type that fills no
+    order (`NOT_FILLS`) or has no `exec_type` (`UNMAPPED_TYPES`). Anything else is parsed, so an
+    undocumented type, or one that is no text at all, fails the read (E8-8)."""
+    kind = raw.get("execType")
+    if not isinstance(kind, str):
+        return None
+    if kind in NOT_FILLS:
+        return "not_a_fill"
+    return "unmapped_type" if kind in UNMAPPED_TYPES else None
 
 
 def to_execution(row: ExecutionRow, account: AccountRef, ts_ingest: TsUs) -> Execution:
     return Execution(
         exec_id=row.execId,
+        exchange_order_id=row.orderId,
         order_link_id=normalised_link(row.orderLinkId, row.orderId),
         account_id=account.account_id,
         symbol=row.symbol,
@@ -659,8 +691,10 @@ def to_execution(row: ExecutionRow, account: AccountRef, ts_ingest: TsUs) -> Exe
         price=row.execPrice,
         qty=row.execQty,
         fee=row.execFee,
+        fee_rate=row.feeRate,
         fee_currency=row.feeCurrency,
         is_maker=row.isMaker,
+        exec_type=EXEC_TYPES[row.execType],
         closed_pnl=None,
         ts_exec=row.execTime * 1000,
         ts_ingest=ts_ingest,

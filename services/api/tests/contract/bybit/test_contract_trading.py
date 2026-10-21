@@ -166,7 +166,7 @@ def test_the_history_row_maps_a_cancelled_post_only_order() -> None:
 def test_the_execution_row_maps_a_fill_with_an_empty_id() -> None:
     page = tp.parse(tp.ExecutionPage, rest("rest/trading-execution-list.json")["result"], "fills")
     [raw] = page.rows
-    assert tp.is_fill(raw)
+    assert tp.set_aside(raw) is None
     fill = tp.to_execution(tp.parse(tp.ExecutionRow, raw, "fills"), account(), 7)
     assert (fill.exec_id, fill.symbol, fill.side, fill.price, fill.qty) == (
         "e0cbe81d-0f18-5866-9415-cf319b5dab3b",
@@ -182,6 +182,11 @@ def test_the_execution_row_maps_a_fill_with_an_empty_id() -> None:
         4688002127,
     )
     assert fill.order_link_id == ext_key("8c065341-7b52-4ca9-ac2c-37e31ac55c94")
+    assert (fill.exchange_order_id, fill.exec_type, fill.fee_rate) == (
+        "8c065341-7b52-4ca9-ac2c-37e31ac55c94",
+        "trade",
+        Decimal("0.0006"),
+    )
     assert (fill.ts_exec, fill.ts_ingest) == (1672282722429000, 7)
 
 

@@ -46,7 +46,7 @@ bybit_rate_limited_total = Counter(
 
 bybit_rows_refused_total = Counter(
     "bybit_rows_refused_total",
-    "Rows a trading read dropped, by reason (another environment or account, or no fill).",
+    "Trading-read rows set aside, by reason (other env or account, no fill, unmapped type).",
     ["reason"],
 )
 

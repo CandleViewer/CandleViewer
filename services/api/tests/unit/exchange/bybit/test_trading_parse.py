@@ -341,8 +341,9 @@ def test_account_info_maps_every_margin_mode(
 #: A unit input with every field the execution parser reads (names as documented).
 EXEC_ROW: dict[str, Any] = {
     "symbol": "BTCUSDT", "orderId": "e-1", "orderLinkId": link(), "side": "Sell",
-    "execFee": "-0.01", "execId": "x-1", "execPrice": "60000", "execQty": "0.01",
-    "execType": "Trade", "execTime": T_MS, "feeCurrency": "USDT", "isMaker": True, "seq": 7,
+    "execFee": "-0.01", "feeRate": "0.00055", "execId": "x-1", "execPrice": "60000",
+    "execQty": "0.01", "execType": "Trade", "execTime": T_MS, "feeCurrency": "USDT",
+    "isMaker": True, "seq": 7,
 }  # fmt: skip
 #: Every `execType` of the enum page at the transcriptions' docs commit (`docs/v5/enum.mdx`,
 #: `bybit-exchange/docs@19518b90fb36`), as listed there.
@@ -353,28 +354,51 @@ DOCUMENTED_EXEC_TYPES = frozenset(
         "ReverseSplitSettle", "ReverseSplitOpen", "UNKNOWN",
     }
 )  # fmt: skip
+#: `exec_type` as 24 §8.1 and `21-database-schema.md` §3.3.6 name it (the CHECK `ex_type`).
+STORED_EXEC_TYPES = {
+    "Trade": "trade", "AdlTrade": "adl_trade", "Funding": "funding", "BustTrade": "bust_trade",
+    "Settle": "settle", "SessionSettlePnl": "session_settle_pnl",
+}  # fmt: skip
 
 
-def test_the_parser_knows_every_documented_execution_type_and_no_other() -> None:
-    assert tp.FILL_TYPES | tp.NOT_FILLS == DOCUMENTED_EXEC_TYPES
-    assert not tp.FILL_TYPES & tp.NOT_FILLS
+def test_the_parser_reads_21s_execution_types_and_sets_every_other_documented_one_aside() -> None:
+    """Every venue type 21 stores is read under its `exec_type`, but `Funding`, set aside until
+    E29-K01 shows its row; every other documented type is set aside, none is mapped by guess."""
+    known = tp.EXEC_TYPES.keys() | tp.NOT_FILLS | tp.UNMAPPED_TYPES
+    assert known == DOCUMENTED_EXEC_TYPES | {"SessionSettlePnl"}
+    assert len(known) == len(tp.EXEC_TYPES) + len(tp.NOT_FILLS) + len(tp.UNMAPPED_TYPES)
+    assert dict(tp.EXEC_TYPES) == {k: v for k, v in STORED_EXEC_TYPES.items() if k != "Funding"}
+    assert "Funding" in tp.NOT_FILLS
 
 
-@pytest.mark.parametrize("exec_type", sorted(DOCUMENTED_EXEC_TYPES))
-def test_every_documented_execution_type_is_read_as_a_fill_or_set_aside(exec_type: str) -> None:
-    """A documented type never fails the read (it would halt fill reconciliation): it moves a
-    position and is a fill, or it is a fee or unnamed and is set aside before the parse."""
+@pytest.mark.parametrize("exec_type", sorted(DOCUMENTED_EXEC_TYPES | {"SessionSettlePnl"}))
+def test_every_known_execution_type_is_read_with_its_exec_type_or_set_aside(
+    exec_type: str,
+) -> None:
+    """A documented type never fails the read (it would halt fill reconciliation)."""
     row = EXEC_ROW | {"execType": exec_type}
-    if exec_type in tp.NOT_FILLS:
-        assert not tp.is_fill(row)
-    else:
+    reason = tp.set_aside(row)
+    if exec_type in tp.EXEC_TYPES:
         fill = tp.to_execution(tp.parse(tp.ExecutionRow, row, "executions"), account(), 42)
-        assert tp.is_fill(row) and (fill.exec_id, fill.qty) == ("x-1", Decimal("0.01"))
+        assert reason is None and fill.exec_type == STORED_EXEC_TYPES[exec_type]
+    else:
+        expected = "not_a_fill" if exec_type in {"Funding", "UNKNOWN"} else "unmapped_type"
+        assert reason == expected
 
 
 def test_an_undocumented_execution_type_fails_the_read() -> None:
     row = EXEC_ROW | {"execType": "NotInTheEnumPage"}
-    assert tp.is_fill(row)
+    assert tp.set_aside(row) is None
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, row, "executions")
+
+
+@pytest.mark.parametrize("kind", [["Trade"], {"x": 1}, 1.5, None])
+def test_an_execution_type_that_is_no_text_fails_the_read_as_unknown_state(kind: object) -> None:
+    """A list or an object is unhashable: the set-aside check never meets it as a set member,
+    so it is parsed and fails as `UnknownStateError`, never a builtin `TypeError`."""
+    row = EXEC_ROW | {"execType": kind}
+    assert tp.set_aside(row) is None
     with pytest.raises(UnknownStateError):
         tp.parse(tp.ExecutionRow, row, "executions")
 
@@ -389,7 +413,36 @@ def test_an_execution_row_maps_with_the_ingest_time() -> None:
         42,
         7,
     )
-    assert tp.is_fill(row) and not tp.is_fill(row | {"execType": "Funding"})
+    assert (fill.exchange_order_id, fill.exec_type, fill.fee_rate) == (
+        "e-1",
+        "trade",
+        Decimal("0.00055"),
+    )
+    assert tp.set_aside(row) is None and tp.set_aside(row | {"execType": "Funding"})
+
+
+@pytest.mark.parametrize("rate", ["-0.000025", "0.0006", "0.0006000000000", "12345678.1234567890"])
+def test_a_fee_rate_numeric_18_10_holds_is_read(rate: str) -> None:
+    fill = tp.to_execution(
+        tp.parse(tp.ExecutionRow, EXEC_ROW | {"feeRate": rate}, "executions"), account(), 42
+    )
+    assert fill.fee_rate == Decimal(rate)
+
+
+@pytest.mark.parametrize(
+    "rate", ["0.00000000001", "123456789", "", "abc", 0.0006, None],
+    ids=["eleven-places", "nine-whole-digits", "empty", "text", "json-number", "null"],
+)  # fmt: skip
+def test_a_fee_rate_numeric_18_10_cannot_hold_fails_the_read(rate: object) -> None:
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, EXEC_ROW | {"feeRate": rate}, "executions")
+
+
+@pytest.mark.parametrize("order_id", ["", None, 7])
+def test_an_execution_without_its_order_id_fails_the_read(order_id: object) -> None:
+    """24 §8.1: an execution names the exchange order it fills; none is no execution."""
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, EXEC_ROW | {"orderId": order_id}, "executions")
 
 
 @pytest.mark.parametrize(

@@ -140,15 +140,68 @@ async def test_a_row_that_fills_no_order_is_set_aside_and_counted(exec_type: str
     assert fills == [] and _refused("not_a_fill") == before + 1
 
 
-@pytest.mark.parametrize("exec_type", ["Settle", "ForwardSplitSettle", "ReverseSplitOpen"])
-async def test_a_documented_type_that_moves_the_position_is_read_as_a_fill(
-    exec_type: str,
+@pytest.mark.parametrize(
+    ("exec_type", "stored"),
+    [
+        ("Trade", "trade"),
+        ("AdlTrade", "adl_trade"),
+        ("BustTrade", "bust_trade"),
+        ("Settle", "settle"),
+        ("SessionSettlePnl", "session_settle_pnl"),
+    ],
+)
+async def test_a_type_21_stores_is_read_with_its_order_id_type_and_fee_rate(
+    exec_type: str, stored: str
 ) -> None:
+    """24 §8.1: the execution carries the exchange's id of its order, its type as 21 stores it
+    and its fee rate, all from the row (`orderId`, `execType`, `feeRate`)."""
     row = _last(_rows(EXECUTIONS, execType=exec_type, symbol="ETHUSDT"))
-    fills = await make_port(Venue().on("/v5/execution/list", row)).executions(
+    [fill] = await make_port(Venue().on("/v5/execution/list", row)).executions(
         account(), NOW_US - DAY_US, NOW_US
     )
-    assert [fill.symbol for fill in fills] == ["ETHUSDT"]
+    transcribed = EXECUTIONS["result"]["list"][0]
+    assert (fill.symbol, fill.exec_type) == ("ETHUSDT", stored)
+    assert (fill.exchange_order_id, fill.fee_rate) == (
+        transcribed["orderId"],
+        Decimal(transcribed["feeRate"]),
+    )
+
+
+@pytest.mark.parametrize(
+    "exec_type",
+    [
+        "Delivery", "BlockTrade", "MovePosition", "FutureSpread", "ForwardSplitSettle",
+        "ForwardSplitOpen", "ReverseSplitSettle", "ReverseSplitOpen",
+    ],
+)  # fmt: skip
+async def test_a_documented_type_21_does_not_store_is_set_aside_and_counted(
+    exec_type: str,
+) -> None:
+    """No `exec_type` names it (24 §8.1, `21-database-schema.md` §3.3.6), so it is neither
+    mapped by guess nor allowed to fail the read: set aside, counted and logged by type."""
+    row = _last(_rows(EXECUTIONS, execType=exec_type))
+    before = _refused("unmapped_type")
+    with capture_logs() as logs:
+        fills = await make_port(Venue().on("/v5/execution/list", row)).executions(
+            account(), NOW_US - DAY_US, NOW_US
+        )
+    assert fills == [] and _refused("unmapped_type") == before + 1
+    [line] = [e for e in logs if e["event"] == "bybit_row_refused"]
+    assert (line["reason"], line["exec_type"]) == ("unmapped_type", exec_type)
+
+
+@pytest.mark.parametrize("kind", [["Trade"], {}, 1.5], ids=["list", "object", "number"])
+async def test_an_execution_type_that_is_no_text_fails_the_read_as_unknown_state(
+    kind: object,
+) -> None:
+    """A malformed type is the strict model's to refuse (E8-8): never a builtin `TypeError`."""
+    row = _last(_rows(EXECUTIONS, execType=kind))
+    before = (_refused("not_a_fill"), _refused("unmapped_type"))
+    with pytest.raises(UnknownStateError, match="malformed executions reply"):
+        await make_port(Venue().on("/v5/execution/list", row)).executions(
+            account(), NOW_US - DAY_US, NOW_US
+        )
+    assert (_refused("not_a_fill"), _refused("unmapped_type")) == before
 
 
 @pytest.mark.parametrize(

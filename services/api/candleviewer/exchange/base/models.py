@@ -58,10 +58,13 @@ __all__ = [
     "CancelOrderRequest",
     "ClosedPnl",
     "ExchangeCapabilities",
+    "ExchangeOrderId",
     "ExchangeRecord",
     "ExchangeRecordFields",
+    "ExecType",
     "Execution",
     "FeeRate",
+    "FeeRateValue",
     "FundingEvent",
     "Instrument",
     "KlineEvent",
@@ -104,6 +107,20 @@ type OrderKind = Literal[
 ]
 """What an exchange order is: a plain order, a conditional order, or one of the take-profit,
 stop-loss and trailing orders the exchange holds for a position."""
+
+type ExecType = Literal[
+    "trade", "funding", "adl_trade", "bust_trade", "settle", "session_settle_pnl"
+]
+"""What an execution is (24 §8.1's five, and `21-database-schema.md` §3.3.6's `SessionSettlePnl`,
+which §8.1 does not list): a `trade` fills an order; the others are the venue's own (a funding
+fee, auto-deleveraging, a takeover liquidation, a settlement) and fill none."""
+
+ExchangeOrderId = Annotated[str, StringConstraints(min_length=1, max_length=64)]
+"""The exchange's own id of an order, never empty: every order and execution a read returns
+carries it (24 §14.2 rule 11)."""
+
+FeeRateValue = Annotated[Decimal, Field(max_digits=18, decimal_places=10)]
+"""A fee rate as `21-database-schema.md` §3.3.6 stores it, numeric(18,10)."""
 
 
 class TradeSide(StrEnum):
@@ -573,11 +590,16 @@ class Order(BaseModel):
 class Execution(BaseModel):
     """§8.2 immutable fill record. **Deviation, noted in the PR**: read-only
     subset for `TradingPort.executions`; the full record lives with the OMS.
-    `order_id` is the OMS's local id: an adapter leaves it `None`."""
+    `order_id` is the OMS's local id: an adapter leaves it `None`. The rest
+    follows 24 §8.1's `Execution`: `exchange_order_id` is the exchange's id of
+    the order the execution fills, which B1 pairs it on (SR-E29-03), and
+    `exec_type` and `fee_rate` are as `21-database-schema.md` §3.3.6 stores
+    them."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     exec_id: str
+    exchange_order_id: ExchangeOrderId
     order_id: OrderId | None = None
     order_link_id: OrderLinkId
     account_id: AccountId
@@ -586,8 +608,10 @@ class Execution(BaseModel):
     price: Px
     qty: Qty
     fee: Notional
+    fee_rate: FeeRateValue
     fee_currency: str
     is_maker: bool
+    exec_type: ExecType
     closed_pnl: Notional | None
     ts_exec: TsUs
     ts_ingest: TsUs
