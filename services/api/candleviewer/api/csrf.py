@@ -56,7 +56,8 @@ beside the refusal's own reason (`auth.metrics.CSRF_AUDIT_REASONS`), and the
 There is no bearer exemption and no test bypass, and no flag changes a check (C-4.14): with
 `desktop.backend_connection` on, a token refusal whose `Origin` is listed also carries the CORS
 headers of a simple response, from the CORS layer's own policy (`api/cors.py`, ADR-0038 2c); a
-`cross_origin` refusal never does.
+`cross_origin` refusal never does. A response that issues the token also gives it, under the
+same condition, in an `X-CSRF-Token` header (`set_csrf_cookie`, `expose_csrf_token`; ADR-0038 3b).
 """
 
 from __future__ import annotations
@@ -67,15 +68,15 @@ import weakref
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 import structlog
 from starlette.datastructures import Headers
-from starlette.requests import cookie_parser
+from starlette.requests import Request, cookie_parser
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from candleviewer.api.cors import CorsPolicy, Enabled, cors_app, cors_on
+from candleviewer.api.cors import FLAG_STATE_KEY, CorsPolicy, Enabled, cors_app, cors_on
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict, tokens_equal
 from candleviewer.auth.metrics import auth_csrf_refused_total
@@ -162,11 +163,33 @@ def is_exempt(method: str, path: str) -> bool:
     return method.upper() == "POST" and _EXEMPT_PATH.fullmatch(route_path(path)) is not None
 
 
-def set_csrf_cookie(response: Response, token: str, *, max_age: int) -> None:
+#: Every response that issues the token, and every one that carries it in the header (ADR-0038 F8).
+_NO_STORE: Final = "no-store"
+
+
+def expose_csrf_token(request: Request, response: Response, token: str) -> None:
+    """ADR-0038 3b (#3519): *token* in an `X-CSRF-Token` response header, with
+    `Cache-Control: no-store`, for a page that cannot read the backend's cookie. Only when the
+    CORS gate kept the flag as exactly `True` for this request (`cors_on`: its one `Origin` is
+    listed and `desktop.backend_connection` is on); anything else adds nothing. *token* is one
+    `csrf.issue` minted, or one `csrf.verify` accepted for this request's session, never an
+    unverified client value. It never goes into a body or a log (the redaction filter lists the
+    header, SR-006)."""
+    if (request.scope.get("state") or {}).get(FLAG_STATE_KEY) is True:
+        response.headers[CSRF_HEADER] = token
+        response.headers["Cache-Control"] = _NO_STORE
+
+
+def set_csrf_cookie(request: Request, response: Response, token: str, *, max_age: int) -> None:
     """`__Host-` prefix: Secure, Path=/, no Domain. Deliberately NOT HttpOnly: the client
     must read it (contract `csrfCookie`, SR-041). The value is a session-bound MAC, not a
-    credential, so it is the one documented exception to SR-012's HttpOnly rule."""
+    credential, so it is the one documented exception to SR-012's HttpOnly rule. A response that
+    sets the token is `no-store` whatever the flag (ADR-0038 F8): five of the six issuing
+    operations carry the access token or recovery codes. `expose_csrf_token` runs here, so no
+    issuing path misses the header (3b)."""
     response.set_cookie(CSRF_COOKIE, token, max_age=max_age, path="/", secure=True, httponly=False, samesite="strict")  # nosem: cookie-flags reason=SR-041-double-submit-cookie-must-be-script-readable owner=@CandleViewer/security review=2027-03-31  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    response.headers["Cache-Control"] = _NO_STORE
+    expose_csrf_token(request, response, token)
 
 
 def clear_csrf_cookie(response: Response) -> None:

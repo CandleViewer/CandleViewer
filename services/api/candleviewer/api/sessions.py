@@ -106,6 +106,7 @@ from candleviewer.api.csrf import (
     RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
+    expose_csrf_token,
     set_csrf_cookie,
     source_ip,
     verify_refresh_csrf,
@@ -1239,7 +1240,7 @@ def make_session_router(
         )
         _set_refresh_cookie(response, minted.refresh_token, max_age=lifetime)
         # SR-041: validated above, rotated with the session
-        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=lifetime)
+        set_csrf_cookie(request, response, csrf.issue(str(minted.session_id)), max_age=lifetime)
         return response
 
     @router.get("/auth/session")
@@ -1284,7 +1285,9 @@ def make_session_router(
             max_age = (
                 remaining_lifetime_s(record, now=at) if enrolment_only else REFRESH_EXPIRES_IN_S
             )
-            set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=max_age)
+            set_csrf_cookie(request, response, csrf.issue(str(record.id)), max_age=max_age)
+        else:  # ADR-0038 3b: the verified cookie's own value, with no `Set-Cookie`
+            expose_csrf_token(request, response, present)
         return response
 
     @router.post("/auth/unlock")
