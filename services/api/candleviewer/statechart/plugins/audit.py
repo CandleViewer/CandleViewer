@@ -16,12 +16,20 @@ WAL-backed `audit.machine_events.MachineEventWalSink`.
 
 Chain continuity (E50-T63): one chain per machine key, advanced by every writer
 and continuous across restarts. An optional `head` provider returns the sink's
-held head for this machine, or `None` when the sink does not hold it (then the
-plugin's own last hash applies); it is asked on every row, so the fault rows
-other writers appended are picked up. An optional `redactor` (the shared audit
-serializer) runs on the payload before it is hashed, so the stored payload is
-the hashed one. Without either, the behaviour is the earlier one, from
-`GENESIS_HASH`.
+held head for this machine, or `None` when the sink does not hold it; the plugin
+starts from it and asks it on every row, so the fault rows other writers
+appended are picked up. While the head was never held, the plugin's own last
+hash applies. Once it has been held, a `None` means the sink evicted it from its
+bounded map: the row is refused (`ChainHeadEvicted`, a counted and paged sink
+failure), never chained to an older hash, which would fork the chain. An
+optional `redactor` (the shared audit serializer) runs on the payload before it
+is hashed, so the stored payload is the hashed one. Without either, the
+behaviour is the earlier one, from `GENESIS_HASH`.
+
+A sink failure is counted (`sink_failures`) and logged CRITICAL; a refused row
+(the WAL sink's `MachineEventRejected`, a `ValueError`) or a lost head is a lost
+audit row nothing else pages, so its line is a page (`cv_page`); an unavailable
+sink pages on its own, once per window.
 """
 
 from __future__ import annotations
@@ -99,6 +107,11 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class ChainHeadEvicted(RuntimeError):
+    """The sink held this machine's chain head and holds it no more (its bounded map evicted
+    it): the row is refused, never chained to an older hash (E50-T63)."""
+
+
 #: The payload redactor's shape: the audit serializer (`audit.redact.redact`), injected.
 Redactor = Callable[[dict[str, Any] | None], dict[str, Any] | None]
 #: The sink's held head for one machine, or `None` when it does not hold it.
@@ -140,11 +153,31 @@ class CvAuditPlugin(HookFailureCounter):
         self._clock = clock
         self._head = head
         self._redactor = redactor
-        self._prev = GENESIS_HASH
+        held = head() if head is not None else None
+        #: Whether the provider ever returned this machine's head: once it has, a `None` means
+        #: the sink evicted it.
+        self._held = held is not None
+        self._prev = held or GENESIS_HASH
         self._event: Any = None
         self._ahead_written = False
         self._actions: list[str] = []
         self.sink_failures = 0
+
+    def _prev_hash(self) -> str:
+        """The next row's `prev_hash`: the sink's held head (which refreshes the plugin's own),
+        the plugin's own last hash while the head was never held, and `ChainHeadEvicted` once a
+        held head is gone."""
+        if self._head is None:
+            return self._prev
+        held = self._head()
+        if held is not None:
+            self._held, self._prev = True, held
+            return held
+        if self._held:
+            raise ChainHeadEvicted(
+                f"{self.machine_kind}/{self.entity_id}: the sink no longer holds its chain head"
+            )
+        return self._prev
 
     def _append(
         self,
@@ -155,27 +188,30 @@ class CvAuditPlugin(HookFailureCounter):
         fault: dict[str, Any] | None = None,
         event_name: str | None = None,
     ) -> None:
-        row = MachineEventRow(
-            machine_kind=self.machine_kind,
-            entity_id=self.entity_id,
-            env=self.env,
-            event_type=event_name if event_name is not None else event_type(self._event),
-            payload=_safe_payload(self._event, self._redactor),
-            from_states=from_states,
-            to_states=to_states,
-            actions_run=list(self._actions),
-            fault=fault,
-            occurred_at=self._clock().isoformat(),
-            phase=phase,
-            prev_hash=(self._head() if self._head is not None else None) or self._prev,
-        )
-        row = MachineEventRow(**{**asdict(row), "row_hash": row_digest(row)})
         try:
+            row = MachineEventRow(
+                machine_kind=self.machine_kind,
+                entity_id=self.entity_id,
+                env=self.env,
+                event_type=event_name if event_name is not None else event_type(self._event),
+                payload=_safe_payload(self._event, self._redactor),
+                from_states=from_states,
+                to_states=to_states,
+                actions_run=list(self._actions),
+                fault=fault,
+                occurred_at=self._clock().isoformat(),
+                phase=phase,
+                prev_hash=self._prev_hash(),
+            )
+            row = MachineEventRow(**{**asdict(row), "row_hash": row_digest(row)})
             self.sink.append(row)
         except Exception as exc:
             self.sink_failures += 1
             logger().critical(
-                "statechart_audit_sink_failed", kind=self.machine_kind, error=type(exc).__name__
+                "statechart_audit_sink_failed",
+                kind=self.machine_kind,
+                error=type(exc).__name__,
+                cv_page=isinstance(exc, ValueError | ChainHeadEvicted),
             )
             raise
         self._prev = row.row_hash

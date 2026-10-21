@@ -40,10 +40,9 @@ lifespan starts it before `Supervisor.start_all` and stops it last, after `stop_
 from __future__ import annotations
 
 import asyncio
-import functools
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any, Final, Protocol
@@ -81,6 +80,7 @@ from candleviewer.statechart.persistence import (
     Pager,
     PersistAudit,
     Persister,
+    PluginsFactory,
     RestoreAudit,
     Restorer,
     RowStoreDrainJournal,
@@ -90,7 +90,13 @@ from candleviewer.statechart.persistence import (
     SnapshotRepo,
     seal,
 )
-from candleviewer.statechart.plugins import LogPager, cv_plugins
+from candleviewer.statechart.plugins import (
+    CvAuditPlugin,
+    CvErrorHooks,
+    CvMetricsPlugin,
+    LogPager,
+    cv_plugins,
+)
 from candleviewer.statechart.plugins._base import Pager as AlertPager
 from candleviewer.statechart.plugins._base import Severity
 from candleviewer.statechart.plugins.audit import GENESIS_HASH, MachineEventRow, Phase, row_digest
@@ -556,9 +562,11 @@ DISPOSE_TIMEOUT_S: Final = 5.0
 
 @dataclass(slots=True)
 class StatechartPersistence:
-    """The persistence bundle (see the module docstring); on `app.state.statechart_persistence`."""
+    """The persistence bundle (see the module docstring); on `app.state.statechart_persistence`.
+    Its repr leaves out the key provider and the pool's repository (defence in depth: a debug line
+    or an exception group that formats the bundle shows neither, C-2.7, C-12.6)."""
 
-    relational: SqlAlchemyRelationalRepository
+    relational: SqlAlchemyRelationalRepository = field(repr=False)
     snapshots: SnapshotAdapter
     journal: RowStoreDrainJournal
     events: EventsAdapter
@@ -569,7 +577,7 @@ class StatechartPersistence:
     admission: LatchAdmission
     pager: PagerAdapter
     faults: FaultRows
-    keys: HmacKeys
+    keys: HmacKeys = field(repr=False)
     registry: Registry
     ops: PersistOps
     metrics: Metrics
@@ -577,16 +585,24 @@ class StatechartPersistence:
     def restorer(self, lane: Lane) -> Restorer:
         return self.restorers[lane]
 
-    def plugins(self, key: MachineKey, lane: Lane) -> tuple[Any, ...]:
-        """The mandatory triple for `key`: the audit plugin chains from the sink's held head and
-        redacts payloads with the shared audit serializer before hashing."""
+    def plugins(
+        self, key: MachineKey, lane: Lane
+    ) -> tuple[CvErrorHooks, CvMetricsPlugin, CvAuditPlugin]:
+        """The mandatory triple for `key`, once its chain is seeded (`plugins_for` seeds it; a
+        restore's `prepare` does): the audit plugin chains from the sink's held head and redacts
+        payloads with the shared audit serializer before hashing. An unseeded key raises
+        `ChainSeedError`: its first row would chain from the genesis and fork a stored chain."""
+        if self.sink.head(key) is None:
+            raise ChainSeedError(key, "unseeded")
         return cv_plugins(
             machine_kind=key.machine_kind, lane=lane, entity_id=key.entity_id, env=key.env,
             metrics=self.metrics, sink=self.sink, head=lambda: self.sink.head(key),
             redactor=system_event_redactor(),
         )  # fmt: skip
 
-    async def plugins_for(self, key: MachineKey, lane: Lane) -> tuple[Any, ...]:
+    async def plugins_for(
+        self, key: MachineKey, lane: Lane
+    ) -> tuple[CvErrorHooks, CvMetricsPlugin, CvAuditPlugin]:
         """For an owner's fresh build (`factory.build(plugins=...)`), a start without a verified
         snapshot: seeds the key's chain, runs the orphan scan (`Restorer.page_unclaimed`, 24
         §17.6), then builds the triple. A failed seed raises `ChainSeedError`; a failed scan its
@@ -613,6 +629,16 @@ class StatechartPersistence:
                     await self.relational.dispose()
             except Exception as exc:
                 _logger().critical("statechart_pool_dispose_failed", error=type(exc).__name__)
+
+
+def _restore_plugins(bundle: StatechartPersistence, lane: Lane) -> PluginsFactory:
+    """`Restorer.plugins` for one lane, called after `prepare` seeded the key. The plugins are
+    duck-typed (the runtime resolves their hooks by name), hence the untyped tuple."""
+
+    def plugins(key: MachineKey) -> tuple[Any, ...]:
+        return bundle.plugins(key, lane)
+
+    return plugins
 
 
 def build_statechart_persistence(
@@ -653,7 +679,7 @@ def build_statechart_persistence(
     for lane in LANES:
         restorers[lane] = Restorer(
             registry=charts, keys=hmac_keys, journal=journal, audit=faults, pager=pager,
-            latch=latch, plugins=functools.partial(bundle.plugins, lane=lane),
+            latch=latch, plugins=_restore_plugins(bundle, lane),
             clock=default_clock(), lane=lane, prepare=sink.seed, ops=ops.record,
         )  # fmt: skip
     return bundle

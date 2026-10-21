@@ -805,10 +805,11 @@ async def _page_best_effort(pager: Pager, key: MachineKey, reason: str, message:
 
 @dataclass(slots=True)
 class Restorer:
-    """The only path from sealed bytes to a live machine (29 §1.3)."""
+    """The only path from sealed bytes to a live machine (29 §1.3). Its repr leaves out the key
+    provider (E50-T63, defence in depth: C-2.7, C-12.6)."""
 
     registry: Registry
-    keys: HmacKeys
+    keys: HmacKeys = field(repr=False)
     journal: DrainJournal
     audit: RestoreAudit
     pager: Pager
