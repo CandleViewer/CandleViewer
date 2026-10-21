@@ -263,13 +263,17 @@ class AuditWal:
                 break
         return out
 
-    def read_window(self, max_records: int, max_bytes: int) -> list[tuple[int, dict[str, Any]]]:
+    def read_window(
+        self, max_records: int, max_bytes: int, max_frame: int | None = None
+    ) -> list[tuple[int, dict[str, Any]]]:
         """Up to `max_records` uncommitted `(end_offset, record)` pairs from one bounded read
         (E50-T63): it seeks to the committed offset and reads at most `max_bytes`, never past the
         acknowledged end, so a torn tail is never read. Whole frames only: a frame the window cuts
         is left for the next call, and a first frame larger than the window is read whole, with
-        its header first. A bad frame inside the acknowledged end raises `AuditWalCorrupt` at its
-        offset, as `replay()` does; so does a file shorter than its acknowledged end."""
+        its header first, unless its declared size passes `max_frame` (a writer's own bound): that
+        is corruption at the window's start, raised before the frame is read. A bad frame inside
+        the acknowledged end raises `AuditWalCorrupt` at its offset, as `replay()` does; so does a
+        file shorter than its acknowledged end."""
         start, end = self.committed_offset(), self._end
         if start >= end:
             return []
@@ -287,7 +291,7 @@ class AuditWal:
                 raise AuditWalCorrupt(start)
             nl, length = header
             size = nl + 1 + length + 1 + _CRC_FIELD
-            if start + size > end:
+            if start + size > end or (max_frame is not None and size > max_frame):
                 raise AuditWalCorrupt(start)
             parsed = _parse_frame(_read_at(fh, start, size), 0)
         if parsed is None:

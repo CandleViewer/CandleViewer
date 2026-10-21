@@ -9,7 +9,8 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   table would refuse, or whose frame is over `MAX_FRAME_BYTES`, raises `MachineEventRejected` and
   writes nothing, so it never becomes a poison row: `occurred_at` must be the `+00:00` UTC form the
   row digest covers, the frame strict JSON (`json` refuses NaN and the infinities), and the CHECKs
-  of `machine_events` and `sha256_hex` must hold.
+  of `machine_events` and `sha256_hex` must hold. A rejection is counted (`event_flush`,
+  `refused`); the plugin's CRITICAL line for it is a page.
 - One supervised flusher, woken by `append`, waits `FLUSH_COALESCE_S`, reads one window
   (`AuditWal.read_window`: at most `FLUSH_BATCH_ROWS` rows and `FLUSH_WINDOW_BYTES`), inserts it
   (idempotent on `row_hash`), commits the cursor, and compacts only when that is O(1) (nothing
@@ -19,20 +20,32 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   WAL is the buffer, so an outage with room in it loses nothing and blocks nothing. A data
   exception or integrity violation (class 22 or 23), a frame the store adapter refuses, or a
   corrupt frame is poison: the flusher stops (no in-process restart, as in `AuditWriter`), a P1
-  page goes out (a CRITICAL `cv_page=true` line) and every later `append` fails closed.
+  page goes out (a CRITICAL `cv_page=true` line) and every later `append` fails closed. So does
+  any error a WAL call raises (`read_window`, `mark_committed`, `compact`), an `OSError` such as
+  ENOSPC included: the flusher fails closed rather than retry a disk it cannot trust, and the WAL
+  keeps every accepted row for the next start. An insert that keeps failing without a commit for
+  `FLUSH_STALL_PAGE_S` pages once per such window (the WAL has room, so `append` would not page
+  until it fills). A frame declared larger than `MAX_FRAME_BYTES` is corruption, refused unread.
 - `append` raises `MachineEventUnavailable` when the WAL is full or unwritable, or the flusher has
   died; the plugin counts it (`sink_failures`), logs and re-raises, and the machine keeps running.
+  A known bound, the ticket's policy: compaction runs only between batches, so a WAL whose
+  committed prefix is reclaimable but whose remainder stays above `COMPACT_COPY_MAX_BYTES` (Postgres
+  up but slower than the appends) still reaches its cap and fails closed until a batch compacts.
 - The failure latch is `AuditWriter`'s (#2510): `append_failure_active` is true for
   `APPEND_FAILURE_COOLDOWN_S` after a failed append and false afterwards even if nothing appended
   since (a clock stepped back reads as expired). It never refuses an append and never waits for
   one; the next append re-probes the WAL. Its consumer is the order family's (E29-T03).
 - `start()` takes an exclusive lock on `<wal>.lock` (one writer per file) and opens the WAL, whose
-  open scans the whole file, in a worker thread; the flusher then replays the leftover frames. It
-  never waits on Postgres. `stop()` stops accepting, drains for at most `STOP_GRACE_S` and leaves
-  the rest durable in the WAL, replayed at the next start (a kill during the drain loses nothing).
+  open scans the whole file, in a worker thread, where the WAL and its cursor are made owner-only
+  (0600: they hold the table's P1 payloads; a commit or a compaction replaces the files, so it is
+  re-applied after each); the flusher then replays the leftover frames. It never waits on
+  Postgres. `stop()` stops accepting, drains for at most `STOP_GRACE_S` and leaves the rest
+  durable in the WAL, replayed at the next start (a kill during the drain loses nothing).
 - Chain continuity: one hash chain per machine key, advanced by every writer (the audit plugin
   and the fault-row writers) and continuous across restarts. `head(key)` is the last accepted
-  `row_hash`, O(1) from a map bounded at `HEAD_KEYS_MAX` (least recently used evicted).
+  `row_hash`, O(1) from a map bounded at `HEAD_KEYS_MAX` (least recently used evicted; a live
+  machine whose key was evicted refuses its next row, as `CvAuditPlugin` fails closed on a head it
+  saw held and no longer finds, until its key is seeded again).
   `seed(key)` returns at once for a held key; otherwise it waits for the WAL to drain (rows of the
   key may still be in it) and reads the head through the store, both within `SEED_DRAIN_S`; a
   timeout or a read error raises `MachineEventUnavailable`, so no machine starts a chain that
@@ -99,6 +112,10 @@ HEAD_KEYS_MAX: Final = 10_000
 #: The bound on one `insert_batch` (#3898's deadline carry). The store's own client deadline is
 #: 3 s, so this cuts only a hang outside it.
 INSERT_TIMEOUT_S: Final = 5.0
+#: Inserts failing for this long with no commit page, once per such window (review round 1).
+FLUSH_STALL_PAGE_S: Final = 60.0
+#: The WAL's and its cursor's mode: owner-only.
+_OWNER_ONLY: Final = 0o600
 
 #: SQLSTATE classes of a poison batch: a data exception, an integrity violation.
 _POISON_CLASSES: Final = frozenset({"22", "23"})
@@ -146,9 +163,10 @@ def _ignore(_value: Any) -> None:
 
 @dataclass(frozen=True, slots=True)
 class SinkMetrics:
-    """The sink's injected metric handles: each flush outcome (`ok`, `error`), which the
-    composition root counts as `cv_machine_persist_ops_total{operation="event_flush"}`, and the
-    WAL depth (`cv_machine_event_wal_pending`)."""
+    """The sink's injected metric handles: each outcome, which the composition root counts as
+    `cv_machine_persist_ops_total{operation="event_flush"}` (`ok`: a batch committed; `error`: an
+    insert failed, or the flusher stopped; `refused`: a row rejected at `append`), and the WAL
+    depth (`cv_machine_event_wal_pending`)."""
 
     flushed: Callable[[str], None] = _ignore
     pending: Callable[[int], None] = _ignore
@@ -234,6 +252,20 @@ def _lock_wal(path: Path) -> FileIO:
     return FileIO(fd, "r")
 
 
+def _owner_only(path: Path) -> None:
+    """The WAL and its cursor, 0600 (they hold the table's P1 payloads)."""
+    for file in (path, path.with_suffix(path.suffix + ".committed")):
+        if file.exists():
+            os.chmod(file, _OWNER_ONLY)
+
+
+def _open_wal(path: Path, max_bytes: int) -> AuditWal:
+    """Open (and scan) the WAL in a worker thread, owner-only."""
+    wal = AuditWal(path, max_bytes)
+    _owner_only(path)
+    return wal
+
+
 def _log_task_failure(task: asyncio.Task[None]) -> None:
     """The flusher's done-callback: anything it did not handle is logged by its type only."""
     if not task.cancelled() and task.exception() is not None:
@@ -273,8 +305,11 @@ class MachineEventWalSink:
         self._uncommitted: deque[int] = deque()
         #: Bytes compactions removed from the front of the file.
         self._base = 0
-        #: Each machine key's chain head, the last accepted `row_hash`; least recently used last
-        #: evicted past `HEAD_KEYS_MAX` (an evicted key is seeded again before its next writer).
+        #: Since when inserts fail with no commit, and when that last paged (`_insert`).
+        self._stalled_since: datetime | None = None
+        self._stall_paged_at: datetime | None = None
+        #: Each machine key's chain head, the last accepted `row_hash`; the least recently used is
+        #: evicted past `HEAD_KEYS_MAX` (its live plugin then fails closed until it is seeded).
         self._heads: OrderedDict[tuple[str, str, str], str] = OrderedDict()
 
     @property
@@ -356,7 +391,7 @@ class MachineEventWalSink:
             self._lock = await run_in_thread(_lock_wal, self.wal_path)
         if self._wal is None:
             try:
-                self._wal = await run_in_thread(AuditWal, self.wal_path, self.max_bytes)
+                self._wal = await run_in_thread(_open_wal, self.wal_path, self.max_bytes)
             except BaseException:
                 self._release_lock()
                 raise
@@ -400,7 +435,11 @@ class MachineEventWalSink:
         wal = self._wal
         if not self._accepting or wal is None:
             raise MachineEventUnavailable("the machine-event sink is not running")
-        frame = _frame(row)
+        try:
+            frame = _frame(row)
+        except MachineEventRejected:
+            self._metrics.flushed("refused")
+            raise
         try:
             end = wal.append(frame)
         except (AuditWalFull, OSError) as exc:
@@ -435,13 +474,16 @@ class MachineEventWalSink:
             await self._wake.wait()  # idle until an append (or stop's cancel)
             self._wake.clear()
             await self._sleep(FLUSH_COALESCE_S)
-            while batch := wal.read_window(FLUSH_BATCH_ROWS, FLUSH_WINDOW_BYTES):
+            while batch := wal.read_window(
+                FLUSH_BATCH_ROWS, FLUSH_WINDOW_BYTES, max_frame=MAX_FRAME_BYTES
+            ):
                 await self._insert([record for _end, record in batch])
                 end = batch[-1][0]
                 wal.mark_committed(end)
                 self._confirm(end)
                 self._metrics.flushed("ok")
                 self._compact(wal)
+                _owner_only(self.wal_path)  # the commit and a compaction replaced the files
             self._idle.set()
 
     async def _insert(self, frames: list[dict[str, Any]]) -> None:
@@ -451,6 +493,7 @@ class MachineEventWalSink:
             try:
                 async with asyncio.timeout(INSERT_TIMEOUT_S):
                     await self._store.insert_batch(frames)
+                self._stalled_since = self._stall_paged_at = None
                 return
             except Exception as exc:
                 if _is_poison(exc):
@@ -459,8 +502,29 @@ class MachineEventWalSink:
                 logger().warning(
                     "machine_events.insert_failed", error=type(exc).__name__, retry_in_s=delay
                 )
+                self._page_if_stalled(exc)
             await self._sleep(delay)
             delay = min(delay * 2, RETRY_MAX_S)
+
+    def _page_if_stalled(self, exc: Exception) -> None:
+        """Inserts failing for `FLUSH_STALL_PAGE_S` with no commit: one CRITICAL `cv_page=true`
+        line per such window, by the error's type (the injected clock decides)."""
+        now = self._clock()
+        since = self._stalled_since
+        if since is None:
+            self._stalled_since = now
+            return
+        window = timedelta(seconds=FLUSH_STALL_PAGE_S)
+        paged = self._stall_paged_at
+        if now - since >= window and (paged is None or now - paged >= window):
+            self._stall_paged_at = now
+            logger().critical(
+                "machine_events.flush_stalled",
+                cv_page=True,
+                error=type(exc).__name__,
+                failing_for_s=round((now - since).total_seconds(), 1),
+                pending=self.pending,
+            )
 
     def _confirm(self, end: int) -> None:
         """Every frame up to `end` is in Postgres (the flusher inserts in WAL order)."""
