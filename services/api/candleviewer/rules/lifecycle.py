@@ -27,7 +27,7 @@ from typing import Any, Final
 import candleviewer.statechart.bindings.b09_rule_instance  # noqa: F401  (registers B9 logic)
 from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
-from candleviewer.statechart.gateway import Gateway, receipt_is_conclusive
+from candleviewer.statechart.gateway import ALWAYS_ADMIT, Gateway, receipt_is_conclusive
 
 MACHINE: Final = "rule_instance"
 MAX_CHARTS: Final = 4096
@@ -83,7 +83,7 @@ class RuleLifecycle:
     def __init__(self, *, max_charts: int = MAX_CHARTS) -> None:
         self._charts: OrderedDict[str, Any] = OrderedDict()
         self._hydrating: dict[str, Any] = {}
-        self._gateway = Gateway()
+        self._gateway = Gateway(admission=ALWAYS_ADMIT)  # E50-T63: until it adopts the bundle
         self.refusals = _Refusals()
         self._lock = asyncio.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -96,7 +96,7 @@ class RuleLifecycle:
         if loop is not self._loop:
             self._loop = loop
             self._charts = OrderedDict()
-            self._gateway = Gateway()
+            self._gateway = Gateway(admission=ALWAYS_ADMIT)
             self._lock = asyncio.Lock()
 
     @staticmethod

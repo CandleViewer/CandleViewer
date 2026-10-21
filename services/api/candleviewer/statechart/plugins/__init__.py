@@ -18,9 +18,11 @@ from typing import TYPE_CHECKING
 from candleviewer.statechart.plugins._base import LogPager, Pager
 from candleviewer.statechart.plugins.audit import (
     CvAuditPlugin,
+    HeadProvider,
     InMemoryMachineEventSink,
     MachineEventRow,
     MachineEventSink,
+    Redactor,
 )
 from candleviewer.statechart.plugins.errors import CvErrorHooks
 from candleviewer.statechart.plugins.metrics import CvMetricsPlugin
@@ -47,10 +49,13 @@ def cv_plugins(
     sink: MachineEventSink,
     pager: Pager | None = None,
     write_ahead: bool | None = None,
+    head: HeadProvider | None = None,
+    redactor: Redactor | None = None,
 ) -> tuple[CvErrorHooks, CvMetricsPlugin, CvAuditPlugin]:
     """The mandatory plugin triple, in order, for `factory.build(plugins=...)`
     and (E50-T49) `from_snapshot(plugins=...)`. Write-ahead defaults to the
-    order lane (24-internal-schemas.md §17.6)."""
+    order lane (24-internal-schemas.md §17.6). `head` and `redactor` go to the
+    audit plugin (E50-T63: chain continuity, payload redaction)."""
     return (
         CvErrorHooks(machine_kind=machine_kind, lane=lane, pager=pager),
         CvMetricsPlugin(machine_kind=machine_kind, metrics=metrics),
@@ -60,6 +65,8 @@ def cv_plugins(
             env=env,
             sink=sink,
             write_ahead=(lane == "order") if write_ahead is None else write_ahead,
+            head=head,
+            redactor=redactor,
         ),
     )
 
@@ -70,6 +77,7 @@ __all__ = [
     "CvMetricsPlugin",
     "CvStateFeedPlugin",
     "FeedBinding",
+    "HeadProvider",
     "InMemoryMachineEventSink",
     "LogPager",
     "MachineEventRow",
@@ -77,6 +85,7 @@ __all__ = [
     "MachineStateHandle",
     "MachineStatePort",
     "Pager",
+    "Redactor",
     "cv_plugins",
     "feed_plugins",
 ]

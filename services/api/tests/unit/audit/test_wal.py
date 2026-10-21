@@ -12,7 +12,10 @@ from typing import Any
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from structlog.testing import capture_logs
+from wal_double import record_wal_io
 
 from candleviewer.audit.wal import AuditWal, AuditWalCorrupt, AuditWalFull, encode_frame
 from candleviewer.audit.writer import AuditWriter, _log_task_failure
@@ -180,3 +183,144 @@ async def test_writer_flusher_death_fails_closed_then_recovers(
     await w.stop(1)
     assert [r["actor_label"] for r in repo.rows] == ["kept"]
     assert w.failure is None
+
+
+# --- E50-T63: `read_window`, one bounded read per call ------------------------------------------
+
+
+def _filled(path: Path, records: list[dict[str, Any]]) -> AuditWal:
+    """A WAL whose frames were all acknowledged (written at once: no fsync per frame)."""
+    path.write_bytes(b"".join(encode_frame(r) for r in records))
+    return AuditWal(path)
+
+
+def _padded(n: int, width: int = 60) -> list[dict[str, Any]]:
+    return [{"i": i, "pad": "x" * width} for i in range(n)]
+
+
+def test_read_window_returns_whole_frames_within_the_byte_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A frame the window cuts is left for the next call; nothing past the bound is read."""
+    records = _padded(10)
+    wal = _filled(tmp_path / "w.wal", records)
+    frame = len(encode_frame(records[0]))
+    bound = 3 * frame + frame // 2
+    recorded = record_wal_io(monkeypatch)
+    window = wal.read_window(100, bound)
+    assert window == wal.read_pending(3) and [r for _, r in window] == records[:3]
+    assert recorded.read_sizes("w.wal") == [bound]
+    wal.mark_committed(window[-1][0])
+    assert [r for _, r in wal.read_window(100, bound)] == records[3:6]
+
+
+def test_read_window_returns_a_first_frame_larger_than_the_window_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    big = {"pad": "y" * 5000}
+    wal = _filled(tmp_path / "w.wal", [big, {"a": 1}])
+    recorded = record_wal_io(monkeypatch)
+    assert [r for _, r in wal.read_window(10, 100)] == [big]
+    frame = len(encode_frame(big))
+    assert max(recorded.read_sizes("w.wal")) == frame  # the window, its header, then the frame
+
+
+def test_read_window_returns_at_most_max_records(tmp_path: Path) -> None:
+    records = _padded(8, width=1)
+    wal = _filled(tmp_path / "w.wal", records)
+    assert [r for _, r in wal.read_window(2, 1 << 20)] == records[:2]
+
+
+def test_read_window_reads_nothing_when_nothing_is_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wal = AuditWal(tmp_path / "w.wal")
+    end = wal.append({"a": 1})
+    wal.mark_committed(end)
+    recorded = record_wal_io(monkeypatch)
+    assert wal.read_window(10, 1 << 16) == []
+    assert recorded.reads == []
+
+
+def test_read_window_never_reads_past_the_acknowledged_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A torn tail (an append that never returned) is never read or returned."""
+    path = tmp_path / "w.wal"
+    wal = AuditWal(path)
+    end = wal.append({"a": 1})
+    with open(path, "ab") as fh:
+        fh.write(encode_frame({"a": "torn"})[:-3])
+    recorded = record_wal_io(monkeypatch)
+    assert wal.read_window(10, 1 << 16) == [(end, {"a": 1})]
+    assert sum(recorded.read_sizes("w.wal")) == end
+
+
+@pytest.mark.parametrize("victim", [0, 1, 2])
+def test_read_window_raises_on_a_corrupt_frame_inside_the_acknowledged_end(
+    tmp_path: Path, victim: int
+) -> None:
+    path = tmp_path / "w.wal"
+    wal = AuditWal(path)
+    ends = [0] + [wal.append({"a": i}) for i in range(3)]
+    data = bytearray(path.read_bytes())
+    data[ends[victim] + 3] ^= 0x01  # inside that frame's JSON body: its CRC no longer matches
+    path.write_bytes(bytes(data))
+    with pytest.raises(AuditWalCorrupt) as exc:
+        while window := wal.read_window(1, 1 << 16):
+            wal.mark_committed(window[-1][0])
+    assert exc.value.offset == ends[victim]
+
+
+def test_read_window_raises_when_the_file_is_shorter_than_its_acknowledged_end(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "w.wal"
+    wal = AuditWal(path)
+    first = wal.append({"a": 1})
+    wal.append({"a": 2})
+    with open(path, "r+b") as fh:
+        fh.truncate(first + 4)  # acknowledged bytes lost under the WAL
+    with pytest.raises(AuditWalCorrupt) as exc:  # as `replay()`: before anything is returned
+        wal.read_window(1, 1 << 16)
+    assert exc.value.offset == first
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    sizes=st.lists(st.integers(0, 300), min_size=0, max_size=25),
+    max_bytes=st.integers(1, 2048),
+    max_records=st.integers(1, 30),
+)
+def test_read_window_is_a_bounded_prefix_of_read_pending(
+    tmp_path_factory: pytest.TempPathFactory, sizes: list[int], max_bytes: int, max_records: int
+) -> None:
+    """Agreement with `read_pending`: the window is its first frames, at least one when anything
+    is pending, at most `max_records`, and within `max_bytes` unless it is one larger frame."""
+    records = [{"i": i, "pad": "z" * n} for i, n in enumerate(sizes)]
+    wal = _filled(tmp_path_factory.mktemp("w") / "w.wal", records)
+    window = wal.read_window(max_records, max_bytes)
+    assert window == wal.read_pending(len(window))
+    assert bool(window) == bool(records) and len(window) <= max_records
+    span = window[-1][0] if window else 0
+    assert span <= max_bytes or len(window) == 1
+    if window and len(window) < min(max_records, len(records)):  # the next frame did not fit
+        assert window[-1][0] + len(encode_frame(records[len(window)])) > max_bytes
+
+
+def test_read_window_refuses_a_first_frame_declared_larger_than_max_frame_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 1, code-7: with `max_frame`, a first frame whose header declares more is
+    corruption at the window's start, raised before the frame is read; `read_pending` and a
+    call without `max_frame` read it as before."""
+    big = {"pad": "y" * 5000}
+    wal = _filled(tmp_path / "w.wal", [big, {"a": 1}])
+    frame = len(encode_frame(big))
+    recorded = record_wal_io(monkeypatch)
+    with pytest.raises(AuditWalCorrupt) as exc:
+        wal.read_window(10, 100, max_frame=frame - 1)
+    assert exc.value.offset == 0 and max(recorded.read_sizes("w.wal")) < frame
+    assert [r for _, r in wal.read_window(10, 100, max_frame=frame)] == [big]
+    assert [r for _, r in wal.read_window(10, 100)] == [big]
+    assert [r for _, r in wal.read_pending(1)] == [big]

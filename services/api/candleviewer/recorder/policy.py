@@ -61,7 +61,7 @@ from candleviewer.recorder.models import (
 from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.factory import restore as restore_chart
-from candleviewer.statechart.gateway import Gateway
+from candleviewer.statechart.gateway import ALWAYS_ADMIT, Gateway
 from candleviewer.statechart.persistence import MachineKey, Restorer, SealedSnapshot
 
 MACHINE: Final = "recording"
@@ -216,7 +216,7 @@ class RecordingPolicy:
         self._syms: dict[str, _Sym] = {}
         self._charts: dict[str, _Interp] = {}
         self._published: dict[str, Reason] = {}
-        self._gateway = Gateway()
+        self._gateway = Gateway(admission=ALWAYS_ADMIT)  # E50-T63: until it adopts the bundle
         self.refusals = _Refusals()
         self._lock = asyncio.Lock()
         self._topic = Topic(env=env, domain="recorder", detail="set_changed")

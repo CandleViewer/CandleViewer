@@ -37,6 +37,7 @@ from xstate_statemachine.events import persist_event
 from candleviewer.statechart import build, persistence
 from candleviewer.statechart import factory as cv_factory
 from candleviewer.statechart.persistence import (
+    ChainSeedError,
     ChainTripLatch,
     DegradedLatchError,
     DrainJournal,
@@ -65,6 +66,7 @@ from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
 )
+from tests.unit.audit.audit_waits import virtual
 from tests.xstate_contract.persist_fixtures import binding_persist  # noqa: F401
 from tests.xstate_contract.persist_fixtures.journals import (
     JOURNALS,
@@ -720,10 +722,20 @@ class _DownPager(FakePager):
 
 
 class _Capturing:
-    """A `DrainJournal` that keeps the interpreter its replay was handed."""
+    """A `DrainJournal` that keeps the interpreter its replay was handed. `stop_raises` gives it
+    a `stop()` that raises `stop_error` (a `RuntimeError` unless set), `stop_hangs` one that
+    never returns (E50-T63)."""
 
-    def __init__(self, inner: DrainJournal, hang: bool = False, stop_raises: bool = False) -> None:
+    def __init__(
+        self,
+        inner: DrainJournal,
+        hang: bool = False,
+        stop_raises: bool = False,
+        stop_error: BaseException | None = None,
+        stop_hangs: bool = False,
+    ) -> None:
         self.inner, self.hang, self.stop_raises = inner, hang, stop_raises
+        self.stop_error, self.stop_hangs = stop_error, stop_hangs
         self.interp: Interpreter[Any] | None = None
         self.entered = asyncio.Event()
 
@@ -738,10 +750,14 @@ class _Capturing:
     ) -> ReplayReport:
         self.interp = interp
         self.entered.set()
-        if self.stop_raises:  # an instance attribute shadows the method; the test removes it
+        if self.stop_raises or self.stop_hangs:  # an instance attribute shadows the method
+            error = self.stop_error or RuntimeError("stop() failed")
+            hangs = self.stop_hangs
 
             async def stop(**_: object) -> None:
-                raise RuntimeError("stop() failed")
+                if hangs:
+                    await asyncio.Event().wait()
+                raise error
 
             interp.stop = stop  # type: ignore[method-assign]  # a raising stop, for this test
         if self.hang:
@@ -899,10 +915,11 @@ async def test_a_raising_stop_during_a_failed_replay_still_raises_the_original_f
         assert stops == [
             {"event": "statechart_restore_stop_failed", "log_level": "critical",
              "machine_kind": KEY.machine_kind, "entity_id": KEY.entity_id, "env": KEY.env,
-             "error": "RuntimeError"}
+             "error": "RuntimeError", "cv_page": True}
         ]  # fmt: skip
-        [(severity, text)] = pager.pages  # the page still goes out
+        [(severity, text)] = pager.pages  # the page still goes out, and says it did not stop
         assert severity == "P1" and "StorageQueryFailed" in text
+        assert "could not be stopped, see the log" in text and "is stopped" not in text
     finally:
         assert journal.interp is not None
         del journal.interp.stop  # the instance override; the real stop() ends the test cleanly
@@ -939,3 +956,491 @@ async def test_a_restore_page_names_the_missing_sealed_ids_before_the_skipped_on
         assert [s in text for s in planted] == [True] * 19 + [False] * 6
     finally:
         await res.interpreter.stop()
+
+
+# --- E50-T63: chain seeding (`prepare`), outcomes, the start-timeout stop, deadlines, mutants ---
+
+
+class _Steps:
+    """The order of the restore steps the chain depends on (scenario 1's first clause)."""
+
+    def __init__(self) -> None:
+        self.steps: list[str] = []
+        self.outcomes: list[tuple[str, str]] = []
+
+    async def prepare(self, key: MachineKey) -> None:
+        self.steps.append(f"prepare:{key.entity_id}")
+
+    def plugins(self, key: MachineKey) -> list[PluginBase[Any]]:
+        self.steps.append("plugins")
+        return [CvErrorHooks(), CvMetricsPlugin(), CvAuditPlugin()]
+
+    def ops(self, operation: str, outcome: str) -> None:
+        self.outcomes.append((operation, outcome))
+
+
+class _StepAudit(FakeAudit):
+    def __init__(self, steps: _Steps) -> None:
+        super().__init__()
+        self.order = steps
+
+    async def quarantine(self, key: MachineKey, envelope: SealedSnapshot, reason: str) -> None:
+        self.order.steps.append("quarantine")
+        await super().quarantine(key, envelope, reason)
+
+
+def _seeded(restorer: Restorer, steps: _Steps) -> Restorer:
+    return dataclasses.replace(
+        restorer, prepare=steps.prepare, plugins=steps.plugins, ops=steps.ops
+    )
+
+
+async def test_restore_awaits_prepare_before_the_plugins_factory(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, journal)
+    res = await _seeded(_restorer(registry, keys, audit, pager, journal), steps).restore(KEY, env)
+    try:
+        assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins"]
+        assert steps.outcomes == [("restore", "ok")]
+    finally:
+        await res.interpreter.stop()
+
+
+async def test_restore_awaits_prepare_before_a_refusals_quarantine_row(registry: Registry) -> None:
+    keys, pager, steps = FakeKeys(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    restorer = _seeded(_restorer(registry, keys, _StepAudit(steps), pager), steps)
+    with pytest.raises(RestoreRefusedError):
+        await restorer.restore(KEY, _bad_hmac(env, keys, registry.get(_KIND)))
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "quarantine"]
+    assert steps.outcomes == [("restore", "refused")]
+
+
+async def test_a_prepare_that_fails_is_a_chain_seed_error_and_nothing_is_restored(
+    registry: Registry,
+) -> None:
+    """No machine starts a chain that could fork: no plugins, no quarantine row, no page."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+
+    async def prepare(key: MachineKey) -> None:
+        raise ConnectionError("the chain head could not be read")
+
+    restorer = _seeded(_restorer(registry, keys, audit, pager), steps)
+    restorer.prepare = prepare
+    with pytest.raises(ChainSeedError, match="ConnectionError") as raised:
+        await restorer.restore(KEY, env)
+    assert raised.value.__cause__ is None and raised.value.key == KEY
+    assert steps.steps == [] and audit.quarantined == [] and pager.pages == []
+    assert steps.outcomes == [("restore", "error")]
+
+
+async def test_a_degraded_restore_is_counted_degraded(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, journal, chain_trips=1)
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    res = await restorer.restore(KEY, env)
+    await res.interpreter.stop()
+    assert steps.outcomes == [("restore", "degraded")]
+
+
+async def test_a_failed_replay_is_counted_as_an_error(registry: Registry) -> None:
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = _Capturing(RowStoreDrainJournal(_StampFails(StorageQueryFailed("40001"))))
+    env = await _sealed(registry, keys, journal)
+    with pytest.raises(StorageQueryFailed):
+        await _seeded(_restorer(registry, keys, audit, pager, journal), steps).restore(KEY, env)
+    assert steps.outcomes == [("restore", "error")]
+
+
+@virtual
+async def test_a_start_that_does_not_settle_is_stopped_paged_and_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3898: the start timeout stops the interpreter it started, as a failed replay does; the
+    bound runs on the virtual loop's fake seconds."""
+    registry = Registry(machines_dir=_FIXTURES)
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    started: list[Interpreter[Any]] = []
+    real_start = Interpreter.start
+
+    async def start_that_never_settles(self: Interpreter[Any]) -> Any:
+        await real_start(self)
+        started.append(self)
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(Interpreter, "start", start_that_never_settles)
+    with pytest.raises(TimeoutError, match="CV-C56"):
+        await _restorer(registry, keys, audit, pager).restore(KEY, env)
+    [interp] = started
+    assert interp.status == "stopped"
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and "did not settle" in text and "is stopped" in text
+
+
+class _BringUp(PluginBase[Any]):
+    """An owner's extra plugin with a bring-up, in the machines feed's slot (#3978). It keeps the
+    interpreter it was handed and, given `error`, raises it (review round 2)."""
+
+    def __init__(self, steps: _Steps, error: BaseException | None = None) -> None:
+        self.order, self.error = steps, error
+        self.interp: Interpreter[Any] | None = None
+
+    def cv_bring_up(self, interpreter: Any) -> None:
+        self.order.steps.append("bring_up")
+        self.interp = interpreter
+        if self.error is not None:
+            raise self.error
+
+
+def _record_start(
+    monkeypatch: pytest.MonkeyPatch, steps: _Steps, *, settles: bool
+) -> asyncio.Event:
+    """Records `start()` in the steps: `start` once a start that settles has returned, and
+    `start_entered` on entry to one that never settles (review round 2, security-4). That one
+    sets the returned event once the real `start()` is done, then hangs."""
+    real_start = Interpreter.start
+    hanging = asyncio.Event()
+
+    async def start(self: Interpreter[Any]) -> Any:
+        if not settles:
+            steps.steps.append("start_entered")
+        result = await real_start(self)
+        if not settles:  # cut by the start's deadline, or cancelled
+            hanging.set()
+            await asyncio.Event().wait()
+        steps.steps.append("start")
+        return result
+
+    monkeypatch.setattr(Interpreter, "start", start)
+    return hanging
+
+
+def _record_stops(monkeypatch: pytest.MonkeyPatch) -> list[Interpreter[Any]]:
+    """Each interpreter `stop()` is called on, in call order (the real `stop()` still runs)."""
+    real_stop = Interpreter.stop
+    stops: list[Interpreter[Any]] = []
+
+    async def stop(self: Interpreter[Any], **kwargs: Any) -> None:
+        stops.append(self)
+        await real_stop(self, **kwargs)
+
+    monkeypatch.setattr(Interpreter, "stop", stop)
+    return stops
+
+
+def _spy_replay(
+    monkeypatch: pytest.MonkeyPatch, journal: InMemoryDrainJournal, steps: _Steps
+) -> None:
+    """Records `replay` in the steps when the journal's replay is called."""
+    replay = journal.replay_once
+
+    async def spy(*args: Any) -> ReplayReport:
+        steps.steps.append("replay")
+        return await replay(*args)
+
+    monkeypatch.setattr(journal, "replay_once", spy)
+
+
+async def test_a_seeded_restore_brings_up_extra_plugins_after_start_before_the_replay(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The merged order (#3801 on #3978): the seed, then the triple with the owner's extra plugins
+    after it, then `start()`, then each `cv_bring_up`, then the replay."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    _record_start(monkeypatch, steps, settles=True)
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    res = await restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)])
+    try:
+        assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start", "bring_up", "replay"]
+        names = [type(getattr(p, "_plugin", p)).__name__ for p in res.interpreter._plugins]
+        assert names == ["CvErrorHooks", "CvMetricsPlugin", "CvAuditPlugin", "_BringUp"]
+    finally:
+        await res.interpreter.stop()
+
+
+@virtual
+async def test_a_start_that_does_not_settle_never_brings_up_the_extra_plugins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A machine that did not start is stopped and paged (#3898) and never brought up (#3978)."""
+    registry = Registry(machines_dir=_FIXTURES)
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    _record_start(monkeypatch, steps, settles=False)
+    restorer = _seeded(_restorer(registry, keys, audit, pager), steps)
+    with pytest.raises(TimeoutError, match="CV-C56"):
+        await restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)])
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start_entered"]
+    assert [s for s, _ in pager.pages] == ["P1"] and steps.outcomes == [("restore", "error")]
+
+
+@virtual
+async def test_a_cancelled_start_is_stopped_once_never_paged_or_brought_up_and_passes_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2 (code-1): a restore cancelled while `start()` does not settle (replay's own
+    deadline can cut one there) stops the machine it started exactly once, sends no page, never
+    brings it up and passes the cancellation through; its steps end at the start."""
+    registry = Registry(machines_dir=_FIXTURES)
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    env = await _sealed(registry, keys, InMemoryDrainJournal())
+    hanging = _record_start(monkeypatch, steps, settles=False)
+    stops = _record_stops(monkeypatch)
+    restorer = _seeded(_restorer(registry, keys, audit, pager), steps)
+    task = asyncio.ensure_future(restorer.restore(KEY, env, extra_plugins=[_BringUp(steps)]))
+    await hanging.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    [interp] = stops
+    assert interp.status == "stopped" and pager.pages == []
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start_entered"]
+    assert steps.outcomes == []  # a cancellation is not an outcome
+
+
+async def test_a_bring_up_that_raises_stops_the_machine_pages_once_and_never_replays(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2 (security-1, code-2): an extra plugin whose `cv_bring_up` raises after a
+    settled start leaves no started machine without an owner, as a failed replay does: the
+    machine is stopped, one P1 page names the error's type only, the journal is never replayed
+    (its rows stay for the next restore) and the same error is raised without its chain."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    _record_start(monkeypatch, steps, settles=True)
+    failure = RuntimeError("the owner's registry is gone")
+    bring_up = _BringUp(steps, failure)
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with pytest.raises(RuntimeError) as raised:
+        await restorer.restore(KEY, env, extra_plugins=[bring_up])
+    assert bring_up.interp is not None and bring_up.interp.status == "stopped"
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start", "bring_up"]
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and text.startswith("restore bring-up failed (RuntimeError)")
+    assert "is stopped" in text and str(failure) not in text
+    assert raised.value is failure
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert [e.send_id for e in await journal.list_unreplayed(KEY)] == env.snapshot["cv_drained"]
+    assert steps.outcomes == [("restore", "error")]
+
+
+async def test_a_bring_up_that_raises_a_cancellation_stops_the_machine_and_passes_it_through(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 2 (security-1): a cancellation out of a bring-up stops the machine and passes
+    through, with no page and no replay."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    bring_up = _BringUp(steps, asyncio.CancelledError())
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with pytest.raises(asyncio.CancelledError):
+        await restorer.restore(KEY, env, extra_plugins=[bring_up])
+    assert bring_up.interp is not None and bring_up.interp.status == "stopped"
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "bring_up"]
+    assert pager.pages == [] and steps.outcomes == []
+    assert [e.send_id for e in await journal.list_unreplayed(KEY)] == env.snapshot["cv_drained"]
+
+
+async def test_every_plugin_is_brought_up_and_any_failure_still_fails_the_restore_safely(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The factory contains each `cv_bring_up` (#3988): a failure is logged by its type and the
+    next plugin is still brought up. A restore that then returned would be the unsafe outcome
+    (E50-T63, as ruled): it is stopped, one P1 page names each failure's type, nothing is
+    replayed and the first failure is raised."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    _record_start(monkeypatch, steps, settles=True)
+    first = RuntimeError("the owner's registry is gone")
+    plugins = [_BringUp(steps, first), _BringUp(steps), _BringUp(steps, OSError("gone too"))]
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with capture_logs() as logs, pytest.raises(RuntimeError) as raised:
+        await restorer.restore(KEY, env, extra_plugins=plugins)
+    assert raised.value is first and raised.value.__suppress_context__
+    assert steps.steps == [f"prepare:{KEY.entity_id}", "plugins", "start", *["bring_up"] * 3]
+    failed = [e["error"] for e in logs if e["event"] == "statechart_plugin_hook_failed"]
+    assert failed == ["RuntimeError", "OSError"]
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and text.startswith("restore bring-up failed (RuntimeError, OSError)")
+    interp = plugins[1].interp
+    assert interp is not None and interp.status == "stopped"
+    assert [e.send_id for e in await journal.list_unreplayed(KEY)] == env.snapshot["cv_drained"]
+    assert steps.outcomes == [("restore", "error")]
+
+
+async def test_a_bring_up_step_that_raises_itself_still_fails_the_restore_safely(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Should the factory's step raise before it returns its failures (a logger that raises, say),
+    the restore fails safely all the same: stopped, one P1 page, no replay, that error raised."""
+    keys, audit, pager, steps = FakeKeys(), FakeAudit(), FakePager(), _Steps()
+    journal = InMemoryDrainJournal()
+    env = await _sealed(registry, keys, journal)
+    _spy_replay(monkeypatch, journal, steps)
+    stops = _record_stops(monkeypatch)
+    failure = LookupError("the step itself")
+
+    def step(interp: Interpreter[Any]) -> tuple[Exception, ...]:
+        raise failure
+
+    monkeypatch.setattr(cv_factory, "cv_bring_up_restored", step)
+    restorer = _seeded(_restorer(registry, keys, audit, pager, journal), steps)
+    with pytest.raises(LookupError) as raised:
+        await restorer.restore(KEY, env)
+    [interp] = stops
+    assert raised.value is failure and interp.status == "stopped"
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and text.startswith("restore bring-up failed (LookupError)")
+    assert "replay" not in steps.steps and steps.outcomes == [("restore", "error")]
+
+
+async def test_a_hanging_pager_is_cut_by_its_deadline(
+    registry: Registry, journal: JournalSubject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3898 (SR-E50T62-04): a page that never returns is cut; the restore still returns."""
+    monkeypatch.setattr(persistence, "PAGE_TIMEOUT_S", 0.0)
+
+    class _Hangs(FakePager):
+        async def page(self, key: MachineKey, severity: str, message: str) -> None:
+            await super().page(key, severity, message)
+            await asyncio.Event().wait()
+
+    keys, audit, pager, latch = FakeKeys(), FakeAudit(), _Hangs(), ChainTripLatch()
+    env = await _sealed(registry, keys, journal, chain_trips=1)
+    with capture_logs() as logs:
+        res = await _restorer(registry, keys, audit, pager, journal, latch).restore(KEY, env)
+    try:
+        assert res.degraded and [s for s, _ in pager.pages] == ["P1"]
+        assert [e["error"] for e in _page_failures(logs)] == ["TimeoutError"]
+    finally:
+        await res.interpreter.stop()
+
+
+async def test_a_hanging_stop_is_cut_and_the_page_says_it_could_not_be_stopped(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(persistence, "STOP_TIMEOUT_S", 0.0)
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    failure = StorageQueryFailed("40001")
+    journal = _Capturing(RowStoreDrainJournal(_StampFails(failure)), stop_hangs=True)
+    env = await _sealed(registry, keys, journal)
+    try:
+        with capture_logs() as logs, pytest.raises(StorageQueryFailed) as raised:
+            await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+        assert raised.value is failure
+        stops = [e for e in logs if e["event"] == "statechart_restore_stop_failed"]
+        assert [(e["error"], e["cv_page"]) for e in stops] == [("TimeoutError", True)]
+        [(_, text)] = pager.pages
+        assert "could not be stopped, see the log" in text
+    finally:
+        assert journal.interp is not None
+        del journal.interp.stop
+        await journal.interp.stop()
+
+
+async def test_a_cancelled_replay_whose_stop_raises_still_passes_the_cancellation(
+    registry: Registry,
+) -> None:
+    """Mutant (#3898): the cancel branch's `_stop` with a raising `stop()`."""
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    journal = _Capturing(InMemoryDrainJournal(), hang=True, stop_raises=True)
+    env = await _sealed(registry, keys, journal)
+    task = asyncio.ensure_future(_restorer(registry, keys, audit, pager, journal).restore(KEY, env))
+    await journal.entered.wait()
+    try:
+        with capture_logs() as logs:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        stops = [e["error"] for e in logs if e["event"] == "statechart_restore_stop_failed"]
+        assert stops == ["RuntimeError"] and pager.pages == []
+    finally:
+        assert journal.interp is not None
+        del journal.interp.stop
+        await journal.interp.stop()
+
+
+async def test_a_cancellation_inside_the_pager_passes_through_page(registry: Registry) -> None:
+    """Mutant (#3898): `_page` contains an `Exception`, never a cancellation."""
+
+    class _Cancelled(FakePager):
+        async def page(self, key: MachineKey, severity: str, message: str) -> None:
+            raise asyncio.CancelledError
+
+    keys, audit, latch = FakeKeys(), FakeAudit(), ChainTripLatch()
+    journal = _Capturing(InMemoryDrainJournal())
+    env = await _sealed(registry, keys, journal, chain_trips=1)
+    with pytest.raises(asyncio.CancelledError):
+        await _restorer(registry, keys, audit, _Cancelled(), journal, latch).restore(KEY, env)
+    assert journal.interp is not None
+    await journal.interp.stop()
+
+
+async def test_a_cancellation_inside_stop_passes_through_stop(registry: Registry) -> None:
+    """Mutant (#3898): `_stop` contains an `Exception`, never a cancellation; the page that
+    would follow the stop is not sent."""
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    failure = StorageQueryFailed("40001")
+    journal = _Capturing(
+        RowStoreDrainJournal(_StampFails(failure)),
+        stop_raises=True,
+        stop_error=asyncio.CancelledError(),
+    )
+    env = await _sealed(registry, keys, journal)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+        assert pager.pages == []
+    finally:
+        assert journal.interp is not None
+        del journal.interp.stop
+        await journal.interp.stop()
+
+
+async def test_a_restore_page_states_the_missing_count_before_the_skipped_count(
+    registry: Registry, journal: JournalSubject
+) -> None:
+    """Mutant (#3898): the clause order of the restore page, missing first."""
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    env = await _sealed(registry, keys, journal)
+    [sealed] = journal.rows(KEY)
+    journal.drop(KEY, sealed.send_id)
+    for i in range(2):
+        journal.plant(KEY, JournalEntry(f"{i:032x}", "inbox", 10 + i, "PING", _ping(i)))
+    res = await _restorer(registry, keys, audit, pager, journal).restore(KEY, env)
+    try:
+        [(_, text)] = pager.pages
+        assert text.startswith(
+            "drain journal: 1 sealed row(s) missing, 2 unreplayed row(s) skipped "
+            "(2 not in the sealed drained set); nothing of them replayed or stamped; "
+        )
+    finally:
+        await res.interpreter.stop()
+
+
+async def test_a_failing_orphan_scan_pages_p1_by_its_type_and_raises(registry: Registry) -> None:
+    """#3898: a start without a verified snapshot whose scan fails must not start the machine."""
+    keys, audit, pager = FakeKeys(), FakeAudit(), FakePager()
+    failure = JournalListTooLargeError("refused, not truncated")
+    rows = _StampFails(failure, at="list")
+    restorer = _restorer(registry, keys, audit, pager, RowStoreDrainJournal(rows))
+    with pytest.raises(JournalListTooLargeError):
+        await restorer.page_unclaimed(KEY)
+    [(severity, text)] = pager.pages
+    assert severity == "P1" and "JournalListTooLargeError" in text and "not truncated" not in text
+    assert "not started" in text

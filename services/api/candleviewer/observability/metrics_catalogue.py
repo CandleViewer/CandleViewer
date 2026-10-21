@@ -1608,6 +1608,30 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E50",
     ),
+    # E50-T63: the persistence bundle registers both (`statechart_wiring.PersistOps`). `operation`
+    # is persist, restore, quarantine or event_flush; `outcome` ok, refused, degraded or error.
+    _s(
+        "cv_machine_persist_ops_total",
+        "counter",
+        "operations",
+        ("operation", "outcome"),
+        "Statechart persistence operations by operation and outcome (E50-T63).",
+        "page on any error for persist, restore or quarantine",
+        _P,
+        "E50",
+        max_series=16,
+    ),
+    _s(
+        "cv_machine_event_wal_pending",
+        "gauge",
+        "rows",
+        (),
+        "Machine-event rows the WAL accepted that Postgres does not hold yet (E50-T63).",
+        "> 0 for 60 s; a full WAL pages itself through machine_events.append_failed",
+        _P,
+        "E50",
+        max_series=1,
+    ),
     # 23 section 6.4: the WS machine-state registry (`ws/machines.py`); `entity_kind` is the
     # closed set of 13 kinds (`ws/topics.MACHINE_KINDS`).
     _s(

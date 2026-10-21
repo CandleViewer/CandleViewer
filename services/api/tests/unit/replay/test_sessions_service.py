@@ -1101,3 +1101,111 @@ async def test_audit_rows_are_attributable_session_records() -> None:
         )  # fmt: skip
         allowed = {"symbol", "state", "range_start", "range_end", "reason", "paper_account_id"}
         assert set(kw["after_state"]) <= allowed
+
+
+# --- E50-T63: the orphan scan, the machine key at `register`, the fallback gateway ------------
+
+
+class _Scans:
+    """`Restorer.page_unclaimed` spied: each key scanned, and the chart builds around it."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, fail: BaseException | None = None):
+        from candleviewer.statechart.persistence import Restorer
+
+        self.steps: list[str] = []
+        real = Restorer.page_unclaimed
+        built = _record_charts(monkeypatch)
+
+        async def scan(restorer: Restorer, key: Any) -> int:
+            self.steps.append(f"scan:{key.machine_kind}:{key.entity_id}:{key.env}")
+            if fail is not None:
+                raise fail
+            return await real(restorer, key)
+
+        self.built = built
+        monkeypatch.setattr(Restorer, "page_unclaimed", scan)
+
+
+async def test_a_fresh_session_runs_the_orphan_scan_before_its_chart_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#3898: a start without a verified snapshot (here: fresh) scans its key first."""
+    _sealed, kw = _persistence()
+    scans = _Scans(monkeypatch)
+    env = make_env(**kw)
+    row = await env.s.create(USER_A, request())
+    assert scans.steps == [f"scan:replay:{row.id}:demo"] and len(scans.built) == 1
+    await env.s.stop()
+
+
+async def test_a_revive_without_a_snapshot_runs_the_orphan_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "PLAY")  # a live row: revived at the next start
+    await env.s.stop()  # no persister: no snapshot is written
+    _sealed, kw = _persistence()
+    scans = _Scans(monkeypatch)
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert scans.steps == [f"scan:replay:{sid}:demo"] and again.s.state_of(sid) == "created"
+    await again.s.stop()
+
+
+async def test_a_revive_after_a_refused_restore_runs_the_orphan_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sealed, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    [(key, envelope)] = sealed.saved.items()
+    sealed.saved[key] = replace(envelope, machine_hash="0" * 64)  # refused, quarantined
+    scans = _Scans(monkeypatch)
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert scans.steps == [f"scan:replay:{sid}:demo"] and len(sealed.quarantined) == 1
+    await again.s.stop()
+
+
+async def test_a_verified_restore_runs_no_orphan_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    _sealed, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    scans = _Scans(monkeypatch)
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert scans.steps == [] and again.s.state_of(sid) == "paused"
+    await again.s.stop()
+
+
+async def test_a_failing_orphan_scan_refuses_a_fresh_start_and_leaves_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from candleviewer.storage.errors import StorageTierUnavailable
+
+    _sealed, kw = _persistence()
+    scans = _Scans(monkeypatch, fail=StorageTierUnavailable("statechart journal.list failed"))
+    env = make_env(**kw)
+    with pytest.raises(StorageTierUnavailable):
+        await env.s.create(USER_A, request())
+    assert scans.built == [] and env.handles.acquired == []  # the chart never started
+    assert await env.repo.list_idle_since(T1 + timedelta(days=400), 10) == []  # rolled back
+
+
+async def test_a_session_registers_its_machine_key_with_the_gateway() -> None:
+    from candleviewer.statechart.persistence import MachineKey
+
+    env = make_env()
+    row = await env.s.create(USER_A, request())
+    entry = env.s._gateway._entries[f"replay:{row.id}"]
+    assert entry.machine_key == MachineKey("replay", row.id, "demo")
+    await env.s.stop()
+
+
+def test_the_fallback_gateway_names_always_admit() -> None:
+    from candleviewer.statechart.gateway import ALWAYS_ADMIT
+
+    assert make_env().s._gateway._admission is ALWAYS_ADMIT

@@ -89,21 +89,26 @@ def _cv_bring_up(interp: Interpreter[Any]) -> None:
     return None
 
 
-def cv_bring_up_restored(interp: Interpreter[Any]) -> None:
+def cv_bring_up_restored(interp: Interpreter[Any]) -> tuple[Exception, ...]:
     """CV-C66': a restored `start()` enters no state, so no plugin hears an `on_transition` for the
     state the machine comes back in. Each plugin with a `cv_bring_up(interpreter)` is told here
     once (the feed publishes, 23 §6.4): after `start()`, before the replay. One that raises is
-    logged by error type and skipped: it fails neither the restore nor the plugins after it."""
+    logged by error type and the plugins after it are still told; what raised is returned, in
+    plugin order, and the restore fails on any (E50-T63): `persistence.Restorer` stops the
+    machine, pages once, never replays and raises the first. A cancellation passes through."""
+    failures: list[Exception] = []
     for plugin in interp.plugins:
         bring_up = getattr(plugin, "cv_bring_up", None)
         if bring_up is None:
             continue
         try:
             bring_up(interp)
-        except Exception as exc:  # observability never fails a restore (as `contained`)
+        except Exception as exc:  # the rest are still told; the caller fails the restore on it
             structlog.get_logger(__name__).error(
                 "statechart_plugin_hook_failed", hook="cv_bring_up", error=type(exc).__name__
             )
+            failures.append(exc)
+    return tuple(failures)
 
 
 def _assert_async_engine_only(*, sync: bool) -> None:
