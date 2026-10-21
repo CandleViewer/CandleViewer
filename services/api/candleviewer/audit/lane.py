@@ -1,5 +1,6 @@
-"""The journal-first audit lane's boot and drain (ADR-0037 decisions 7 and 8; #3009 slice S2a2),
-its directory lock and its façade (decisions 1, 2 and 9; slice S2b-2a).
+"""The journal-first audit lane's boot and drain (ADR-0037 decisions 7 and 8; #3009 slice S2a2)
+and its façade (decisions 1, 2 and 9; slice S2b-2a). `lane_lock` takes the directory lock;
+`lock_lane` maps its refusals for the boot.
 
 `docs/plan/24-internal-schemas.md` §15.6 owns the scan, the hand-over, the rows and the
 confirmation (C-16.5); this module runs them and restates none. A boot creates a new lane with
@@ -14,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import errno
-import fcntl
 import json
 import os
 import time
@@ -29,6 +29,7 @@ import structlog
 from pydantic import ValidationError
 
 from candleviewer.audit import lane_journal as lj
+from candleviewer.audit import lane_lock
 from candleviewer.audit import writer as aw
 from candleviewer.audit.actions import LANE_ACTIONS, LaneClass, UnknownAuditAction
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
@@ -271,8 +272,6 @@ class AuditLane:
                 self.journal.stop(error)
 
 
-#: Decision 9: held exclusively by the one running cv-api; S2c's release command takes it too.
-LOCK_FILE = "lane.lock"
 #: The hard-link probe's file in `lane/` (and its link, `.link`); the scan reads neither.
 PROBE_FILE = "link.probe"
 #: The façade logs `audit.lane.fallback` once per refusal reason per this many seconds, with the
@@ -295,30 +294,16 @@ def lane_dir(audit_wal_path: str) -> Path:
 
 
 def lock_lane(audit_wal_path: str) -> FileIO:
-    """Take `lane.lock` exclusively without waiting; closing the file drops it. The WAL path must
-    be absolute and free of `..`, and neither the audit directory, `lane/` nor the lock may be a
-    symlink (the `anchored_journal_dir` rule; the lock by `O_NOFOLLOW`). A missing `lane/` is made
-    `0700`; one that exists keeps its mode, in the `0700` audit directory the image creates."""
-    raw, directory = Path(audit_wal_path), lane_dir(audit_wal_path)
-    if not raw.is_absolute() or ".." in raw.parts:
-        raise LaneBootRefused("CV_AUDIT_WAL_PATH must be absolute and free of '..'")
-    for path in (raw.parent, directory):
-        if path.is_symlink():
-            raise LaneBootRefused(f"audit lane path {path.name!r} must not be a symlink")
+    """Take `lane.lock` exclusively without waiting, through the audit directory's descriptor
+    (`lane_lock`, SEC-REM-03); closing the file drops it. A missing `lane/` is made `0700`; one
+    that exists keeps its mode, in the `0700` audit directory the image creates."""
     try:
-        if lj._mkdir(directory):
-            lj.LaneFiles(directory).sync_dir(raw.parent)
-        fd = lj._open(directory / LOCK_FILE, os.O_RDONLY | os.O_CREAT)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BaseException:
-            os.close(fd)
-            raise
+        fd = lane_lock.take_lane_lock(audit_wal_path, create=True)
+    except lane_lock.LaneUnanchored as exc:
+        raise LaneBootRefused(str(exc)) from exc
     except BlockingIOError as exc:
         raise LaneBootRefused("lane.lock is held by another process") from exc
     except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            raise LaneBootRefused("audit lane path must not be a symlink") from exc
         _log().critical("audit lane lock unavailable; the lane holds", error=type(exc).__name__)
         raise LaneLockUnavailable(type(exc).__name__) from exc
     return FileIO(fd, "r")

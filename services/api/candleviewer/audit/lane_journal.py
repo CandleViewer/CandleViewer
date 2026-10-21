@@ -44,6 +44,8 @@ _LEN, _MAC = re.compile(rb"[1-9][0-9]{0,9}"), re.compile(rb"[0-9a-f]{64}")
 _HEX64, _KID = re.compile(r"[0-9a-f]{64}"), re.compile(r"[0-9a-f]{16}")
 _UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 _SEGMENT = re.compile(r"seg-([0-9]{20})\.lane")
+_NAMES = 10**20  # a segment name has 20 digits: no `first_seq` at or past this has one
+_PASSED = "an audit lane segment name is taken or passed"  # only damage takes or passes one
 _SEVERITY = ("segment_corrupt", "frame_rejected", "marker_lost", "seq_gap", "torn_tail")
 ANOMALY_REASONS = (*_SEVERITY, "record_invalid", "released")  # every anomaly row's (S4a's label)
 _FRAME_KEYS = {"v", "lane", "seq", "prev", "kid", "cls", "rec"}
@@ -427,8 +429,10 @@ def anomaly_id(keys: LaneKeys, lane: uuid.UUID | None, run: Run) -> uuid.UUID:
 @dataclass(frozen=True, slots=True)
 class LaneScan:
     """`lane` is None when no marker verified and no frame was authentic (S1b decides that lane's
-    fate). `hold` is the held frame's position, None when the marker holds (row 1); a present
-    `released` note that did not apply sets `note_ignored`, which the drain logs."""
+    fate). `hold` is where the scan holds: a held frame's position, or the end of the data when
+    no segment name is left for the boot's own (rows 13 and 16); None when the marker holds
+    (row 1). A present `released` note that did not apply sets `note_ignored`, which the drain
+    logs."""
 
     lane: uuid.UUID | None
     units: tuple[Handover | Run, ...] = field(repr=False)
@@ -509,7 +513,7 @@ class _Scan:
         self.state = replace(self.state, anchored=False)
         return 0, 0
 
-    def walk(self, i: int, off: int, note: bytes | None) -> None:
+    def walk(self, i: int, off: int, note: bytes | None, *, boot: bool) -> None:
         while i < len(self.firsts):
             data, self.at = self.data(i), (self.firsts[i], off)
             if off >= len(data):
@@ -523,12 +527,17 @@ class _Scan:
                 resume = self.release(i, off, note)
                 if resume is None:
                     return
+                if resume <= (i, off):  # else the same hold would be released for ever
+                    raise LaneError("a released note must end past its hold")
                 i, off = resume
                 continue
             else:  # rows 11, 14 and 15
                 self.join(found, data[off:end], unanchor=found != "torn_tail")
             off = end
-        if self.run is not None:  # row 16
+        start, newest = self.state.next_seq, max(self.firsts, default=0)
+        if boot and start is not None and newest >= start:  # row 16 at boot, a run open or none
+            self.sealed = self.pass_name(newest, self.at)
+        elif self.run is not None:  # row 16
             self.units.append(self.run.close(None, self.at, self.state, False))
             self.run, self.sealed = None, bool(self.firsts)
 
@@ -557,17 +566,36 @@ class _Scan:
         self.state = LaneState(frame.seq + 1, frame.mac, True)
         self.units.append(Handover(frame, raw, self.at, end, self.state))
 
-    def join(self, reason: str, raw: bytes, *, unanchor: bool) -> None:
+    def join(self, reason: str, raw: bytes, *, unanchor: bool) -> _OpenRun:
         if self.run is None:
             self.run = _OpenRun(reason, self.state.next_seq)
         self.run.add(reason, raw, self.at)
         if unanchor:
             self.state = replace(self.state, anchored=False)
+        return self.run
+
+    def pass_name(self, newest: int, end: Pos) -> bool:
+        """Rows 13 and 16 at boot: damage took `newest`, the name the boot's own segment needs,
+        so the run (opened if needed) joins `seq_gap` as in row 8 and closes at `end` with
+        `to_seq` = `newest`, and `next_seq` passes it (True). No name follows the last one,
+        20 nines: its successor's would leave `_SEGMENT`'s 20 digits, where no scan reads, so the
+        scan holds at `end` instead, a run there closed as at a hold (False)."""
+        if newest + 1 >= _NAMES:
+            if self.run is not None:
+                self.units.append(self.run.close(None, end, self.state, False))
+                self.run = None
+            self.held, self.hold = True, end
+            return False
+        run = self.join("seq_gap", b"", unanchor=True)
+        self.state = LaneState(newest + 1, self.state.prev, False)
+        self.units.append(run.close(newest, end, self.state, False))
+        self.run = None
+        return True
 
     def release(self, i: int, off: int, note: bytes | None) -> Pos | None:
         """Rows 12 and 13: close the open run as at the end of the data, then resume after a
         `released` note's bytes if it applies here (a `seq_gap` run follows bytes that end the data
-        in a segment named at or past `next_seq`), else hold."""
+        in a segment named at or past `next_seq`, or a hold when no name follows it), else hold."""
         hold = self.at
         if self.run is not None:
             self.units.append(self.run.close(None, hold, self.state, False))
@@ -586,8 +614,8 @@ class _Scan:
         self.units.append(run)
         newest, last = self.firsts[-1], len(self.firsts) - 1
         if (j, stop) == (last, len(self.data(last))) and start is not None and start <= newest:
-            self.state = LaneState(newest + 1, self.state.prev, False)  # row 13: a free name
-            self.units.append(_OpenRun("seq_gap", start).close(newest, found[0], self.state, False))
+            if not self.pass_name(newest, found[0]):  # row 13: a free name, or none: hold
+                return None
         return j, stop
 
 
@@ -602,11 +630,12 @@ def scan(
 ) -> LaneScan:
     """The §15.6 scan from `marker` (`confirmed`, None when absent) over the segments among
     `names`, each read once through `read`, with the `released` note if one exists. `trusted`
-    marks the drain's own position, a frame boundary it scanned: nothing before it is parsed."""
+    marks the drain's own position, a frame boundary it scanned: nothing before it is parsed.
+    Any other scan is a boot's, whose appender takes `next_seq` from it (row 16)."""
     run = _Scan(keys, names, read)
     start = run.begin(marker, trusted)
     if start is not None:
-        run.walk(*start, note)
+        run.walk(*start, note, boot=not trusted)
     units = tuple(run.units)
     return LaneScan(run.lane, units, run.state, run.held, run.hold, run.note_ignored, run.sealed)
 
@@ -697,14 +726,20 @@ class LaneFiles:
 
     def publish(self, seq: int, frame: bytes, max_segments: int, boot: bool) -> tuple[int, bool]:
         """fsync point 1, a new segment (R1): `.new`, its fsync, the link to the segment's name,
-        which must not exist, the unlink, the directory's fsync; returns the descriptor and True
-        past `max_segments` (R2), only a boot row's (Limits). A `.new` that fails publishes none."""
+        the unlink, the directory's fsync; returns the descriptor and True past `max_segments`
+        (R2), only a boot row's (Limits). A `.new` that fails publishes none. The name must be
+        past every segment's: one that is taken or passed (only damage does either) is refused,
+        since its frames could sort before the drain's position, where no scan reads them, and
+        so is a name past 20 digits, which no scan reads at all."""
         path = self.dir / segment_name(seq)
+        if not _SEGMENT.fullmatch(path.name):  # its frames would go where nothing reads them
+            raise OSError(errno.EOVERFLOW, "an audit lane segment name is out of range")
         new = path.with_name(f"{path.name}.new")
-        if (over := len(_segments(os.listdir(self.dir))) >= max_segments) and not boot:
+        segments = _segments(os.listdir(self.dir))
+        if (over := len(segments) >= max_segments) and not boot:
             raise LaneRefused("full")
-        if os.path.lexists(path):  # only damage takes the name; the link guards a race too
-            raise FileExistsError(errno.EEXIST, "an audit lane segment name is taken", path.name)
+        if segments and segments[-1] >= seq:  # the link guards a race on the name itself too
+            raise FileExistsError(errno.EEXIST, _PASSED, path.name)
         try:
             fd = _open(new, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND)
         except OSError:
@@ -878,9 +913,11 @@ def _boot(files: LaneFiles, keys: LaneKeys) -> tuple[list[str], object, LaneScan
     return names, found, result, files.quarantined()
 
 
-def _running_scan(files: LaneFiles, keys: LaneKeys, origin: bytes) -> LaneScan:
+def _running_scan(files: LaneFiles, keys: LaneKeys, origin: bytes) -> tuple[LaneScan, int]:
+    """The drain's scan, and the newest segment's name (0 with none)."""
     names = os.listdir(files.dir)
-    return scan(keys, marker=origin, names=names, read=files.read, trusted=True)
+    result = scan(keys, marker=origin, names=names, read=files.read, trusted=True)
+    return result, max(_segments(names), default=0)
 
 
 def _admit(rec: dict[str, object], *, first: bool) -> LaneClass:
@@ -1049,7 +1086,7 @@ class LaneJournal:
                     self._fd, self._active, self._size = fd, seq, 0
                 else:
                     await _in_thread(op, self._files.append, self._fd, frame, self._size)
-            except OSError as exc:  # R1's taken name among them
+            except OSError as exc:  # R1's taken or passed name among them
                 self.stop(exc)
                 raise LaneRefused("stopped") from None
             self._size += len(frame)
@@ -1111,14 +1148,16 @@ class LaneJournal:
     async def rescan(self, origin: LaneMarker) -> LaneScan:
         """The drain's running scan (§15.6 Scan) from `origin`, the end of the last unit it took:
         a frame boundary it scanned, so nothing before it is parsed again. A run open at the end of
-        the newest segment seals it (row 16), and bytes past the appends count (reading 2)."""
+        the newest segment seals it (row 16), and bytes past the appends count (reading 2). A
+        segment named at or past the next `seq` stops the lane: only damage names one, and the
+        next segment's name, below it, could sort before the drain's position."""
         self._require_open()
         body = encode_marker(self._keys, origin)
         return await self._run(lambda op: self._rescan(op, body))
 
     async def _rescan(self, op: _Op, body: bytes) -> LaneScan:
         async with self._held(op):  # a failed read ends the drain, whose death stops the lane
-            result = await _in_thread(op, _running_scan, self._files, self._keys, body)
+            result, newest = await _in_thread(op, _running_scan, self._files, self._keys, body)
             for unit in result.units:
                 if unit.end > self._end:  # bytes the appender did not write
                     self._count(
@@ -1126,6 +1165,8 @@ class LaneJournal:
                     )
             if result.sealed:
                 self._close()  # the next append starts a new segment
+            if newest >= self._next_seq and self.refusal is None:  # a name taken or passed
+                self.stop(FileExistsError(errno.EEXIST, _PASSED))
         return result
 
     def hold(self) -> None:

@@ -1,5 +1,5 @@
 """ADR-0037 S2c (#3009): the offline release command and what the next boot makes of its note
-(`docs/plan/24-internal-schemas.md` §15.6 Release, scan rows 12 and 13). The sink is a real
+(`docs/plan/24-internal-schemas.md` §15.6 Release, scan rows 12, 13 and 16). The sink is a real
 `AuditWriter` over the in-memory repository, the key a test vector read through S2b-1's loader
 from a file in `tmp_path`. Every async test runs on a `VirtualTimeLoop` (`audit_waits`, #3709,
 #3816): the drain's polls and backoffs, the writer's budgets and `until()`'s bound are fake
@@ -31,7 +31,7 @@ from candleviewer import audit_lane_wiring
 from candleviewer.admin.lane_release import ReleaseExit, main
 from candleviewer.audit import lane_journal as lj
 from candleviewer.audit.actions import AUDIT_ACTIONS
-from candleviewer.audit.lane import AuditLane, lock_lane
+from candleviewer.audit.lane import AuditLane, LaneFacade, lock_lane
 from candleviewer.audit.models import AuditEmission
 from candleviewer.audit.writer import AuditUnavailable, AuditWriter
 from candleviewer.observability import logging as observability_logging
@@ -80,9 +80,14 @@ async def sink(audit: Path, repo: FakeAuditRepository) -> Gate:
 
 
 async def boot(
-    audit: Path, writer: AuditWriter, keys: lj.LaneKeys = KEYS
+    audit: Path,
+    writer: AuditWriter,
+    keys: lj.LaneKeys = KEYS,
+    files: lj.LaneFiles | None = None,
+    **caps: Any,
 ) -> tuple[AuditLane, lj.LaneScan]:
-    lane = AuditLane(lj.LaneJournal(lj.LaneFiles(audit / "lane"), keys), writer, **FAST)
+    journal = lj.LaneJournal(files or lj.LaneFiles(audit / "lane"), keys, **caps)
+    lane = AuditLane(journal, writer, **FAST)
     return lane, await lane.start()
 
 
@@ -245,6 +250,147 @@ async def test_release_next_boot_counts_the_released_row_under_its_reason(
     assert r.lane.anomalies == dict.fromkeys(lj.ANOMALY_REASONS, 0) | {"released": 1, "seq_gap": 1}
 
 
+async def restart(audit: Path, writer: Gate) -> lj.LaneReason | None:
+    """A boot, its drain to the end unless the sink is shut, a stop: the refusal before the stop."""
+    lane, _ = await boot(audit, writer)
+    if not writer.shut:
+        await until(lambda: lane.confirmed == lane.journal.end)
+    refusal = lane.journal.refusal
+    await lane.close()
+    return refusal
+
+
+@pytest.mark.parametrize(
+    ("damage", "reason"), [("torn", "seq_gap"), ("mac", "frame_rejected"), ("emptied", "seq_gap")]
+)
+@virtual
+async def test_boot_records_damage_that_took_the_newest_segments_name_and_moves_past_it(
+    audit: Path, damage: str, reason: str
+) -> None:
+    """#3009 ruling (a), scan row 16 at boot: a boot with the sink down leaves its own frame 3
+    waiting, all of seg-3, then torn, tampered or emptied. The next boot records it as one
+    critical row for `seq` 3 (damage at the start of a published segment is never a crash's),
+    keeps its bytes in `quarantine/` if it has any, and writes its own frame 4 to seg-4, the free
+    name, so the lane drains; it used to need seg-3's taken name, stop and write nothing at every
+    boot. A second boot adds nothing."""
+    repo, path = FakeAuditRepository(), audit / "lane"
+    writer = await sink(audit, repo)
+    await restart(audit, writer)  # frames 1 and 2, drained
+    writer.shut = frozenset(AUDIT_ACTIONS)
+    await restart(audit, writer)  # frame 3 waits, alone in seg-3
+    writer.shut, seg = frozenset(), path / lj.segment_name(3)
+    head, body = seg.read_bytes().split(b"\n", 1)
+    if damage == "torn":  # its `len` one more than its body
+        seg.write_bytes(damaged := b"%d\n%s" % (int(head) + 1, body))
+    elif damage == "mac":  # one letter of its record: the frame parses and its MAC fails
+        seg.write_bytes(damaged := head + b"\n" + body.replace(b"resumed", b"resumeD", 1))
+    else:  # cut to nothing: the name stays taken, with no byte to keep
+        seg.write_bytes(damaged := b"")
+    refusals = [await restart(audit, writer) for _ in range(2)]
+    await writer.stop(1)
+    anomalies = [after(r) | r for r in repo.rows if r["action"] == "audit.lane_anomaly"]
+    copies = {copy.name: copy.read_bytes() for copy in path.glob("quarantine/*")}
+    resumed = [after(r) for r in repo.rows if r["action"] == "audit.lane_resumed"]
+
+    assert refusals == [None, None]
+    assert [(a["reason"], a["severity"], a["from_seq"], a["to_seq"]) for a in anomalies] == [
+        (reason, "critical", 3, 3)
+    ]
+    assert copies == ({anomalies[0]["quarantined"]: damaged} if damaged else {})
+    assert (anomalies[0]["quarantined"] is None) == (not damaged)
+    assert [(r["head_seq"], r["anchored"]) for r in resumed] == [(1, True), (3, False), (4, True)]
+
+
+class Unlinks(lj.LaneFiles):
+    """Keeps the bytes of each segment it unlinks (compaction's), by name."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.unlinked: dict[str, bytes] = {}
+
+    def unlink(self, path: Path) -> None:
+        if path.name.startswith("seg-") and path.name.endswith(".lane"):
+            self.unlinked[path.name] = path.read_bytes()
+        super().unlink(path)
+
+
+def segment_bytes(path: Path) -> dict[str, bytes]:
+    names = sorted(name for name in os.listdir(path) if name.endswith(".lane"))
+    return {name: (path / name).read_bytes() for name in names}
+
+
+def authentic(segments: dict[str, bytes]) -> set[str]:
+    """The `record_id` of every authentic frame in `segments` (name to bytes), each read alone."""
+    ids = set[str]()
+    for name in segments:
+        found = lj.scan(KEYS, marker=None, names=[name], read=segments.__getitem__)
+        ids |= {str(u.frame.rec["record_id"]) for u in found.units if isinstance(u, lj.Handover)}
+    return ids
+
+
+JUNK, Q9 = b"junk\n", f"{lj.segment_name(9)}.0"  # planted as seg-9, and its quarantine copy
+#: Per layout of the running wedge: the journal's caps; then, once the lane stopped, the
+#: segments, the head `seq` and the records the façade sent to the sink; the anomaly rows'
+#: (reason, from_seq, to_seq, bytes, quarantined).
+WEDGES: dict[str, tuple[dict[str, Any], list[int], int, int, list[tuple[object, ...]]]] = {
+    "sealed": ({}, [1, 9], 4, 2, [("segment_corrupt", 5, None, 5, Q9), ("seq_gap", 5, 9, 0, None)]),
+    "rotating": ({"segment_max_bytes": 1}, [3, 9], 3, 3, [("segment_corrupt", 4, 9, 5, Q9)]),
+}
+
+
+@pytest.mark.parametrize("layout", WEDGES)
+@virtual
+async def test_segment_planted_past_the_next_seq_while_running_stops_the_lane_and_loses_nothing(
+    audit: Path, layout: str
+) -> None:
+    """The running wedge (#3009): a segment planted while cv-api runs, named past the next
+    `seq`. Once a running scan has sealed it, the drain's position is in it, and a segment the
+    lane then published under its own, lower name would sort before that position: no running
+    scan reads it, the next boot passes the planted name as a gap, and compaction unlinks the
+    acknowledged frames in it. So the running scan that meets such a name stops the lane
+    (`sealed`: frame 4 still lands in seg-1, ahead of the drain), and publish() refuses a name
+    at or below an existing segment's (`rotating`: a segment per frame, so the first append
+    after the plant); the façade falls back. Nothing lies behind the drain, compaction unlinks
+    no frame before its hand-over, the restart accounts for the planted name and comes up, and
+    every record reaches the sink."""
+    caps, segments, head, fell, anomalies = WEDGES[layout]
+    repo, path = FakeAuditRepository(), audit / "lane"
+    writer, files = await sink(audit, repo), Unlinks(path)
+    lane, _ = await boot(audit, writer, files=files, **caps)  # frames 1 and 2
+    facade = LaneFacade(writer, lane, lambda: True)
+
+    async def emit(n: int) -> None:
+        await facade.emit("auth.logout", actor_label="owner", object_id=str(n))
+        await until(lambda: lane.confirmed == lane.journal.end)  # the drain took what it reads
+
+    await emit(3)
+    (path / lj.segment_name(9)).write_bytes(JUNK)  # planted while the lane runs; 4 is next
+    await emit(4)
+    first = lane.journal.refusal
+    for n in (5, 6):
+        await emit(n)
+    refusal, (seq, _) = lane.journal.refusal, lane.journal.head
+    fell_back, disk = facade.refused["reserved", "stopped"], segment_bytes(path)
+    running = {r["record_id"] for r in repo.rows}
+    await lane.close()
+    lane, _ = await boot(audit, writer, files=files, **caps)
+    await until(lambda: lane.confirmed == lane.journal.end)
+    restarted = lane.journal.refusal
+    await lane.close()
+    await writer.stop(1)
+    logouts = [r["object_id"] for r in repo.rows if r["action"] == "auth.logout"]
+    rows = [after(r) | r for r in repo.rows if r["action"] == "audit.lane_anomaly"]
+    fields = ("reason", "from_seq", "to_seq", "bytes", "quarantined")
+
+    assert logouts == ["3", "4", "5", "6"]  # every record reached the sink, once
+    assert authentic(disk) <= running  # nothing lay behind the drain
+    assert authentic(files.unlinked) <= {r["record_id"] for r in repo.rows}  # nor was unlinked
+    assert (first, refusal, seq, fell_back) == ("stopped", "stopped", head, fell)
+    assert [int(name[4:24]) for name in disk] == segments  # none published since the plant
+    assert [tuple(row[k] for k in fields) for row in rows] == anomalies
+    assert restarted is None
+
+
 @virtual
 async def test_release_logs_the_hold_and_the_outcome_and_never_the_words(
     audit: Path, settings: Settings
@@ -366,12 +512,28 @@ async def test_release_refuses_while_cv_api_runs(
     assert release(settings, hold) == ReleaseExit.RELEASED
 
 
+def swapping(real: Callable[..., int], lane: Path, to: Path) -> Callable[..., int]:
+    """`lj._open` that swaps `lane` for a link to `to` just before the helper opens `lane/`."""
+
+    def opening(path: Path | str, flags: int, dir_fd: int | None = None) -> int:
+        if path == "lane":
+            lane.rename(to)
+            lane.symlink_to(to)
+        return real(path, flags, dir_fd)
+
+    return opening
+
+
 #: The exit status each refusal gives, by the numbers runbook auth-rbac §12 documents.
 REFUSED = {
-    "not_held": 6, "marker_hold": 6, "no_lane": 6, "hold_mismatch": 7, "no_real_backend": 4,
-    "key_refused": 4, "relative_wal": 4, "dotdot_wal": 4, "symlinked_lane": 4,
-    "symlinked_lock": 4, "copy_fails": 4, "lock_error": 4,
+    "not_held": 6, "marker_hold": 6, "no_lane": 6, "no_name_left": 6, "hold_mismatch": 7,
+    "no_real_backend": 4, "key_refused": 4, "relative_wal": 4, "dotdot_wal": 4,
+    "symlinked_lane": 4, "symlinked_lock": 4, "swapped_lane": 4, "copy_fails": 4,
+    "lock_error": 4,
 }  # fmt: skip
+#: The position the operator names, when not the planted frames': elsewhere, or where the scan
+#: holds with no segment name left (`seg-` and 20 nines).
+NAMED = {"hold_mismatch": (1, 0), "no_name_left": (10**20 - 1, 5)}
 
 
 @pytest.mark.parametrize("case", list(REFUSED))
@@ -392,6 +554,9 @@ async def test_release_refuses_and_writes_nothing(
     lane, seg = audit / "lane", audit / "lane" / lj.segment_name(1)
     if case == "not_held":  # the planted frames cut off again
         seg.write_bytes(seg.read_bytes()[: hold[1]])
+    elif case == "no_name_left":  # no frame where the scan holds, at the end of the data
+        seg.write_bytes(seg.read_bytes()[: hold[1]])
+        (lane / lj.segment_name(NAMED[case][0])).write_bytes(b"junk\n")
     elif case == "marker_hold":  # row 1: the marker under a key nobody configured
         marker = lj.LaneMarker(LANE, hold, 4, lj.ZERO_MAC, True)
         (lane / "confirmed").write_bytes(lj.encode_marker(OTHER, marker))
@@ -412,13 +577,16 @@ async def test_release_refuses_and_writes_nothing(
         lane.symlink_to(audit / "real")
     elif case == "symlinked_lock":
         (lane / "lane.lock").symlink_to(audit / "elsewhere")
+    elif case == "swapped_lane":  # SEC-REM-03: a link once the audit directory is open
+        monkeypatch.setattr(lj, "_open", swapping(lj._open, lane, audit / "real"))
     elif case == "copy_fails":
         (lane / "quarantine").write_bytes(b"")
     elif case == "lock_error":  # an `flock` error that is not another holder: exit 4, not 5
         monkeypatch.setattr(fcntl, "flock", lambda *_: os.fsync(1 << 20))  # EBADF
     before = sorted(os.listdir(lane))
-    status = release(settings, (1, 0) if case == "hold_mismatch" else hold)
+    status = release(settings, NAMED.get(case, hold))
     said = {"hold_mismatch": f"holds at 1:{hold[1]}", "key_refused": "must be mode 0400"}
+    said["no_name_left"] = "does not hold at a frame"
 
     assert status == ReleaseExit(REFUSED[case]) and {*os.listdir(lane)} - {*before} <= {"lane.lock"}
     assert not (audit / "elsewhere").exists()

@@ -448,7 +448,7 @@ async def test_service_refuses_boot_when_the_lane_directory_is_not_anchored(
     svc = AuditService(FakeAuditRepository(), lane_keys=lambda: KEYS)
     with pytest.raises(LaneBootRefused):
         await svc.start(ctx(path))
-    assert not svc.is_active
+    assert not svc.is_active and svc.lane_lock_failures == 0  # refused, not held
     hold_run_lock(journal_dir(path), exclusive=True).close()  # its shared run lock is gone
 
 
