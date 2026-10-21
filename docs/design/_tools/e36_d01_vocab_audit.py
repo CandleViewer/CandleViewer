@@ -1,16 +1,21 @@
 """E36-D01 vocabulary audit: the words a rule is made of, as the shipped vocabulary says them.
 
-Standalone, offline, stdlib only; nothing here is user evidence. The tool reads the repo's own
-text and prints, with a source label on every row: (1) the shipped signal ids - the descriptor
-rows and the kernel-bound rows of `metrics.py`, the golden list, the estimated set, the counts by
-scope, input and unit; (2) the shipped actions, operators and triggers of `catalogue.py` (loaded
-by path: the module has no project imports); (3) SCR-081's surfaced metric and action names
-against the shipped ids - the names with no shipped id, the nearest candidates, the estimated-mark
+Standalone, offline, stdlib only; nothing here is user evidence. It does run repo code: it loads
+`catalogue.py` as a module by path and executes it (the module has no project imports), and it
+imports the shipped package `candleviewer.rules.vocabulary.metrics` for the kernel-bound
+confidences when that package is importable (otherwise they are assumed exact and the output
+says so). Everything else is a text read. It prints, with a source label on every row: (1) the
+shipped signal ids - the descriptor rows and the kernel-bound rows of `metrics.py`, the golden
+list, the estimated set, the counts by scope, input and unit; (2) the shipped actions, operators
+and triggers of `catalogue.py`; (3) SCR-081's surfaced metric and action names against the
+shipped ids - the names with no shipped id, the nearest candidates, the estimated-mark
 mismatches; (4) CMP-140's operator symbols against the 15 operator ids; (5) US-RULE-002's
 catalogue terms; (6) the PROPOSED R2 categories derived from `scope` and `inputs`, with the
 estimated ids per category; (7) the card-sort deck A size; (8) the word count of the three
-candidate summaries read from the memo. A row reads NOT FOUND when the anchor text moved; the
-tool never guesses a value and never calls the API.
+candidate summaries read from the memo; (9) the field inventory of `ir/models.py` (text parse)
+and which of those fields the memo's section 5.6 field -> phrase map leaves unphrased. A row
+reads NOT FOUND when the anchor text moved; the tool never guesses a value and never calls the
+API.
 
 Usage: python3 -I docs/design/_tools/e36_d01_vocab_audit.py          (Markdown)
        python3 -I docs/design/_tools/e36_d01_vocab_audit.py --json   (the boards' numbers)
@@ -31,6 +36,7 @@ RULES = ROOT / "services/api/candleviewer/rules"
 METRICS = RULES / "vocabulary/metrics.py"
 CATALOGUE = RULES / "vocabulary/catalogue.py"
 GOLDEN = RULES / "vocabulary/metric_names.golden.txt"
+IR_MODELS = RULES / "ir/models.py"
 SCREENS = ROOT / "docs/plan/14-screens-catalogue.md"
 COMPONENTS = ROOT / "docs/plan/15-component-catalogue.md"
 STORIES = ROOT / "docs/plan/11-user-stories.md"
@@ -56,6 +62,10 @@ NEAREST: dict[str, list[str]] = {
     "orderbook_imbalance": ["dom_imbalance_ratio", "book_pressure"],
 }
 DERIVATIVE_INPUTS = {"oi", "funding", "liquidations"}
+# The IR classes the memo's section 5.6 phrases field by field (ir/models.py).
+IR_CLASSES = ("Rule", "RuleScope", "Trigger", "Action", "RuleLimits")
+_CLASS = re.compile(r"^class (\w+)\(BaseModel\):\n((?:    .*\n|\n)*)", re.MULTILINE)
+_FIELD = re.compile(r"^    ([a-z][a-z0-9_]*): ", re.MULTILINE)
 CATEGORIES = ("price", "orderflow", "book", "derivatives", "position", "account", "replay")
 
 
@@ -206,6 +216,38 @@ def summaries() -> dict[str, dict[str, int | str]]:
     return out or {"S1": {"status": "NOT FOUND"}}
 
 
+def ir_fields() -> dict[str, list[str]]:
+    """Field names per pydantic model in `ir/models.py`, from the text (no project import)."""
+    text = IR_MODELS.read_text(encoding="utf-8")
+    out: dict[str, list[str]] = {}
+    for name, body in _CLASS.findall(text):
+        fields = [f for f in _FIELD.findall(body) if f != "model_config"]
+        if fields:
+            out[name] = fields
+    return out
+
+
+def field_map_coverage(fields: dict[str, list[str]]) -> dict[str, object]:
+    """Which fields of the five classes the memo's section 5.6 table leaves unphrased."""
+    if not MEMO.exists():
+        return {"status": "NOT FOUND"}
+    memo = MEMO.read_text(encoding="utf-8")
+    i = memo.find("### 5.6")
+    j = memo.find("## 6. ", i + 1) if i >= 0 else -1
+    if i < 0 or j < 0:
+        return {"status": "NOT FOUND"}
+    table = memo[i:j]
+    unphrased = {
+        cls: [f for f in fields.get(cls, []) if re.search(rf"[`.]{re.escape(f)}\b", table) is None]
+        for cls in IR_CLASSES
+    }
+    return {
+        "fields_per_class": {cls: len(fields.get(cls, [])) for cls in IR_CLASSES},
+        "unphrased": {cls: names for cls, names in unphrased.items() if names},
+        "table_rows": sum(1 for line in table.splitlines() if line.startswith("| `")),
+    }
+
+
 def plain(name: str) -> str:
     """`atr(n)` -> `atr`; `iceberg_present_at_level _(estimated)_` -> `iceberg_present_at_level`."""
     return re.sub(r"\(n\)$", "", name.split(" ")[0])
@@ -230,6 +272,7 @@ def main(argv: list[str]) -> int:
     ops = [] if cat is None else cat["operators"]
     action_ids = [] if cat is None else cat["action_ids"]
     cmp_ops = cmp140_operators()
+    fields = ir_fields()
     cat_report: dict[str, object] = {"error": "NOT FOUND"}
     if cat is not None:
         cat_report = {k: v for k, v in cat.items() if k != "action_ids"}
@@ -273,6 +316,8 @@ def main(argv: list[str]) -> int:
             "estimated_added": len(set(estimated) - set(resolved)),
         },
         "summaries": dict(summaries()),
+        "ir_fields": {cls: fields.get(cls, []) for cls in IR_CLASSES},
+        "field_map_section_5_6": field_map_coverage(fields),
     }
     if "--json" in argv:
         print(json.dumps(report, indent=2, ensure_ascii=False))
