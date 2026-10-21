@@ -97,20 +97,44 @@ OFFICIAL_V5: dict[int, tuple[str, type[ExchangeError], str | None]] = {
     ],
 )
 def test_map_ret_code_covers_documented_table(ret_code: int, expected_type: type) -> None:
-    error = map_ret_code(ret_code, "some message")
+    """The table as an order create meets it: the only call a duplicate can answer (R9)."""
+    error = map_ret_code(ret_code, "some message", create=True)
     assert isinstance(error, expected_type)
     assert error.exchange_ret_code == ret_code
 
 
 def test_map_ret_code_10001_generic_parameter_error() -> None:
-    error = map_ret_code(10001, "params error: qty invalid")
+    error = map_ret_code(10001, "params error: qty invalid", create=True)
     assert isinstance(error, InstrumentFilterError)
     assert not isinstance(error, DuplicateClientIdError)
 
 
 def test_map_ret_code_10001_duplicate_order_link_id() -> None:
-    error = map_ret_code(10001, "orderLinkId is duplicate")
+    error = map_ret_code(10001, "orderLinkId is duplicate", create=True)
     assert isinstance(error, DuplicateClientIdError)
+
+
+def test_a_10001_that_only_names_the_field_is_not_a_duplicate() -> None:
+    """#2877 R9: the text must say "duplicate"; naming `orderLinkId` is a parameter error."""
+    error = map_ret_code(10001, "orderLinkId is invalid", create=True)
+    assert type(error) is InstrumentFilterError
+
+
+@pytest.mark.parametrize(
+    ("ret_code", "text", "expected_type"),
+    [
+        (110072, "OrderLinkedID is duplicate", UnknownStateError),
+        (20006, "duplicate reqId", UnknownStateError),
+        (10001, "orderLinkId is duplicate", InstrumentFilterError),
+    ],
+)
+def test_a_duplicate_code_on_any_call_but_a_create_is_no_duplicate(
+    ret_code: int, text: str, expected_type: type[ExchangeError]
+) -> None:
+    """#2877 R9: a cancel or an amend meeting a duplicate code is answered, not adopted:
+    `create` is false unless the caller says so."""
+    assert type(map_ret_code(ret_code, text)) is expected_type
+    assert type(map_ret_code(ret_code, text, create=False)) is expected_type
 
 
 @pytest.mark.parametrize("ret_code", [170001, 999999, -1, 42])

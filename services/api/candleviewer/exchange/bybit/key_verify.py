@@ -6,10 +6,11 @@ borrower, or a candidate key M2 holds for one import through its signer. The hos
 environment's (`SIGNED_REST_BASES`, US-ACCT-007): no other host, no fallback (C-2.11).
 No call is retried, as the next run is the retry; the one repeat is the client's re-sign after a
 clock-drift refusal (10002, E08-S07). Each call is bounded at `CALL_TIMEOUT_S`. Both draw from the
-account-reads class of the key's per-UID budget, the `poll` share (`20-architecture.md` §4.3),
+account-reads class of the key's per-UID budget in the `poll` lane (`20-architecture.md` §4.3),
 never the order or position classes that hold the stop, cancel and SL reserve (C-12.7,
-SR-E27-05), on a governor that caps every verification call at `VERIFY_CALLS_PER_5S`. While that
-governor holds the IP (a 10018 holds every caller for 10 minutes or more, 24 §8.6) for longer
+SR-E27-05), on a view of the process's one governor that shares its IP bucket and hold (#2877
+ruling R5) and caps every verification call at `VERIFY_CALLS_PER_5S`. While the process holds
+the IP (a 10018 on any client holds every caller for 10 minutes or more, 24 §8.6) for longer
 than one call's bound, a call is refused at once, never sent: waiting would only end at the bound,
 so a pass under the hold costs no wait per key. Replies are parsed by `key_info`; errors leave in
 the M3 taxonomy.
@@ -52,6 +53,7 @@ CALL_TIMEOUT_S: Final = 5.0
 VERIFY_CALLS_PER_5S: Final = 50
 #: The `poll` share: account reads, never `EndpointClass.ORDER` or `POSITION`.
 VERIFY_CLASS: Final = EndpointClass.ACCOUNT
+VERIFY_LANE: Final = "poll"
 #: The probe's query: `wallet-balance` is an account endpoint with no `category` parameter, so
 #: SR-054's category rule does not apply (#836).
 # nosemgrep: cv-bybit-category-required reason=no-category-param owner=@basiltt review=2027-03-25
@@ -62,9 +64,10 @@ def _wall_ms() -> int:
     return int(time.time() * 1000)
 
 
-def verification_governor() -> TokenBucketGovernor:
-    """The one budget every verification call of the process shares."""
-    return TokenBucketGovernor(ip_budget_per_5s=VERIFY_CALLS_PER_5S)
+def verification_governor(process: TokenBucketGovernor) -> TokenBucketGovernor:
+    """The one budget every verification call of the process shares: the process governor's IP
+    bucket, hold and per-UID buckets, with a cap of `VERIFY_CALLS_PER_5S` of its own."""
+    return process.capped(VERIFY_CALLS_PER_5S)
 
 
 class KeyVerificationCalls:
@@ -88,7 +91,9 @@ class KeyVerificationCalls:
 
     async def key_info(self) -> ApiKeyFacts:
         self._refuse_under_ip_hold()
-        body = await self._client.signed_request("GET", KEY_INFO_PATH, endpoint_class=VERIFY_CLASS)
+        body = await self._client.signed_request(
+            "GET", KEY_INFO_PATH, endpoint_class=VERIFY_CLASS, lane=VERIFY_LANE
+        )
         return parse_key_info(body)
 
     async def probe(self) -> ProbeFacts:
@@ -98,7 +103,7 @@ class KeyVerificationCalls:
         self._refuse_under_ip_hold()
         sent = self._now_ms()
         body = await self._client.signed_request(
-            "GET", PROBE_PATH, params=_PROBE_PARAMS, endpoint_class=VERIFY_CLASS
+            "GET", PROBE_PATH, params=_PROBE_PARAMS, endpoint_class=VERIFY_CLASS, lane=VERIFY_LANE
         )
         return parse_probe(body, sent_at_ms=sent, received_at_ms=self._now_ms())
 

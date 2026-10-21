@@ -31,7 +31,7 @@ async def test_acquire_consumes_one_token() -> None:
     governor = TokenBucketGovernor(
         default_capacity=2.0, default_refill_per_s=1.0, ip_budget_per_5s=1000, clock=clock
     )
-    await governor.acquire("uid-1", EndpointClass.MARKET_DATA)
+    await governor.acquire("uid-1", EndpointClass.MARKET_DATA, lane="poll")
     assert governor.remaining("uid-1", EndpointClass.MARKET_DATA) == pytest.approx(1.0)
 
 
@@ -44,12 +44,12 @@ async def test_bucket_is_shared_across_callers_for_same_uid() -> None:
     governor = TokenBucketGovernor(
         default_capacity=1.0, default_refill_per_s=0.0, ip_budget_per_5s=1000, clock=clock
     )
-    await governor.acquire("uid-1", EndpointClass.ORDER)
+    await governor.acquire("uid-1", EndpointClass.ORDER, lane="entry")
     assert governor.remaining("uid-1", EndpointClass.ORDER) == pytest.approx(0.0)
 
     # A second caller with a *different key* but the same UID must see the
     # already-drained bucket (shared, not per-key).
-    waiter = asyncio.ensure_future(governor.acquire("uid-1", EndpointClass.ORDER))
+    waiter = asyncio.ensure_future(governor.acquire("uid-1", EndpointClass.ORDER, lane="entry"))
     await asyncio.sleep(0)
     assert not waiter.done()
     clock.advance(0.01)
@@ -64,7 +64,7 @@ async def test_different_uid_has_independent_bucket() -> None:
     governor = TokenBucketGovernor(
         default_capacity=1.0, default_refill_per_s=0.0, ip_budget_per_5s=1000, clock=clock
     )
-    await governor.acquire("uid-1", EndpointClass.ORDER)
+    await governor.acquire("uid-1", EndpointClass.ORDER, lane="entry")
     assert governor.remaining("uid-1", EndpointClass.ORDER) == pytest.approx(0.0)
     assert governor.remaining("uid-2", EndpointClass.ORDER) == pytest.approx(1.0)
 
@@ -75,7 +75,7 @@ async def test_refill_over_time_restores_tokens() -> None:
     governor = TokenBucketGovernor(
         default_capacity=1.0, default_refill_per_s=1.0, ip_budget_per_5s=1000, clock=clock
     )
-    await governor.acquire("uid-1", EndpointClass.MARKET_DATA)
+    await governor.acquire("uid-1", EndpointClass.MARKET_DATA, lane="poll")
     assert governor.remaining("uid-1", EndpointClass.MARKET_DATA) == pytest.approx(0.0)
     clock.advance(1.0)
     assert governor.remaining("uid-1", EndpointClass.MARKET_DATA) == pytest.approx(1.0)

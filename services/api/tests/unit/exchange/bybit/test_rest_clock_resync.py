@@ -65,7 +65,7 @@ async def test_signed_request_10002_resyncs_before_retry_and_resigns_with_fresh_
 
     client = _client(httpx.MockTransport(handler), offset_ms=lambda: offset[0], hook=resync)
     async with client:
-        data = await client.signed_request("GET", PATH)
+        data = await client.signed_request("GET", PATH, lane="poll")
     assert data["retCode"] == 0
     assert order == ["request", "resync", "request"]
     assert stamps == [str(int(WALL_S * 1000) - 10_000), str(int(WALL_S * 1000))]
@@ -83,7 +83,7 @@ async def test_signed_request_second_10002_raises_clock_drift_after_one_resync()
     client = _client(transport, offset_ms=lambda: 0, hook=resync)
     async with client:
         with pytest.raises(ClockDriftError):
-            await client.signed_request("GET", PATH)
+            await client.signed_request("GET", PATH, lane="poll")
     assert calls == [1]
 
 
@@ -97,7 +97,7 @@ async def test_signed_request_failing_resync_hook_still_raises_clock_drift() -> 
     client = _client(transport, offset_ms=lambda: 0, hook=resync)
     async with client:
         with pytest.raises(ClockDriftError):
-            await client.signed_request("GET", PATH)
+            await client.signed_request("GET", PATH, lane="poll")
 
 
 async def test_signed_request_10002_without_hook_retries_once_then_raises() -> None:
@@ -110,7 +110,7 @@ async def test_signed_request_10002_without_hook_retries_once_then_raises() -> N
     client = _client(httpx.MockTransport(handler), offset_ms=lambda: 0)
     async with client:
         with pytest.raises(ClockDriftError):
-            await client.signed_request("GET", PATH)
+            await client.signed_request("GET", PATH, lane="poll")
     assert n[0] == 2
 
 
@@ -134,7 +134,7 @@ async def test_signed_request_10002_with_clockguard_hook_counts_metric_and_resig
         hook=guard.resync_after_signature_failure,
     )
     async with client:
-        await client.signed_request("GET", PATH)
+        await client.signed_request("GET", PATH, lane="poll")
     after = clock_resync_triggered_total.labels(reason="signature_failure")._value.get()
     assert after == before + 1
     assert stamps[1] - stamps[0] == 10_000  # retry re-signed with the fresh offset
@@ -158,5 +158,5 @@ async def test_signed_request_hung_resync_hook_times_out_and_retry_still_happens
     client = _client(httpx.MockTransport(handler), offset_ms=lambda: 0, hook=hung)
     async with client:
         with pytest.raises(ClockDriftError):
-            await client.signed_request("GET", PATH)
+            await client.signed_request("GET", PATH, lane="poll")
     assert n[0] == 2  # the single retry still happened after the bounded wait

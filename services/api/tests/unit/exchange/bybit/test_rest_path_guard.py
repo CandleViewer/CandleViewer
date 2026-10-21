@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 
 from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.bybit.config import RestClientConfig
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient, RestPathRejected, validate_rest_path
 from candleviewer.exchange.bybit.signer import BybitSigner
 from tests._signing import CREDENTIAL_ID, fake_capability
@@ -42,7 +43,10 @@ def _client(hosts: list[str]) -> BybitRestClient:
 
     signer = BybitSigner(fake_capability("DUMMYKEY" + "q" * 10), CREDENTIAL_ID)
     return BybitRestClient(
-        RestClientConfig(base_url=BASE), signer=signer, transport=httpx.MockTransport(handler)
+        RestClientConfig(base_url=BASE),
+        signer=signer,
+        governor=TokenBucketGovernor(),
+        transport=httpx.MockTransport(handler),
     )
 
 
@@ -51,7 +55,7 @@ async def test_signed_request_bad_path_rejected_before_send(path: str) -> None:
     hosts: list[str] = []
     async with _client(hosts) as c:
         with pytest.raises(RestPathRejected) as ei:
-            await c.signed_request("GET", path)
+            await c.signed_request("GET", path, lane="poll")
     assert isinstance(ei.value, ExchangeError)
     assert "DUMMYKEY" not in str(ei.value) and "evil" not in str(ei.value)
     assert hosts == []
@@ -70,7 +74,7 @@ async def test_happy_path_unchanged() -> None:
     hosts: list[str] = []
     async with _client(hosts) as c:
         await c.get_public("/v5/market/time")
-        await c.signed_request("GET", "/v5/account/wallet-balance")
+        await c.signed_request("GET", "/v5/account/wallet-balance", lane="poll")
     assert hosts == ["api.bybit.com", "api.bybit.com"]
 
 
@@ -125,7 +129,7 @@ def test_mutated_paths_rejected_and_nothing_sent(path: str) -> None:
     async def run() -> None:
         async with _client(hosts) as c:
             with pytest.raises(RestPathRejected):
-                await c.signed_request("GET", path)
+                await c.signed_request("GET", path, lane="poll")
             with pytest.raises(RestPathRejected):
                 await c.get_public(path)
 

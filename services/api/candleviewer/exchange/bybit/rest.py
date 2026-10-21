@@ -34,6 +34,7 @@ from candleviewer.exchange.base.errors import (
     TransportError,
     UnknownStateError,
 )
+from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.exchange.bybit.metrics import (
@@ -75,8 +76,17 @@ _SAFE_PATH = re.compile(r"/v5/[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)*\Z")
 
 #: 24 §8.6 "Order creates" (SR-E29-15): a create that has left is never sent again; amend,
 #: cancel and trading-stop keep their retries. 10016/10019 leave a create's outcome unknown.
-_CREATE_PATHS = frozenset({"/v5/order/create", "/v5/order/create-batch"})
+_BATCH_PATH = "/v5/order/create-batch"
+_CREATE_PATHS = frozenset({"/v5/order/create", _BATCH_PATH})
 _AMBIGUOUS_RET_CODES = frozenset({10016, 10019})
+#: SR-054: the signed paths that take a `category`, which must be `linear`, stated by the caller.
+_CATEGORY_PREFIXES = ("/v5/order/", "/v5/position/", "/v5/execution/")
+_CATEGORY_PATHS = frozenset({"/v5/account/fee-rate"})
+#: SR-E29-08: our own key id and signature are masked in an answer before it is decoded, so a
+#: venue that echoes them puts them in no error, record or log line. A shorter value is no
+#: credential the venue issues, and masking it would rewrite the body's own words.
+_MIN_MASKED_LEN = 8
+_MASK = b"**redacted**"
 #: Raised while connecting or waiting for a pooled connection: nothing left. Any other failure
 #: may follow the send, a bare `TimeoutError` too (httpx maps its own; an unmapping transport
 #: raises it at a point this client cannot place).
@@ -180,9 +190,10 @@ class BybitRestClient:
 
     Public (unauthenticated) calls work with `signer=None`; the signed path
     (`signed_request`) requires a `BybitSigner`. Every request is shaped by
-    the shared per-UID token bucket, retried per the taxonomy's `retryable`
-    flag with full jitter (never an order create that has left: 24 §8.6
-    "Order creates"), and logged with secrets redacted.
+    the process's one governor (`governor=`, required: OM-D08), in the lane
+    its caller names, retried per the taxonomy's `retryable` flag with full
+    jitter (never an order create that has left: 24 §8.6 "Order creates"),
+    and logged with secrets redacted.
     """
 
     def __init__(
@@ -191,7 +202,7 @@ class BybitRestClient:
         *,
         uid: str = "public",
         signer: BybitSigner | None = None,
-        governor: TokenBucketGovernor | None = None,
+        governor: TokenBucketGovernor,
         clock_offset_ms_provider: ClockOffsetProvider | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -204,11 +215,8 @@ class BybitRestClient:
         self._wall_clock = wall_clock
         self._uid = uid
         self._signer = signer
-        self._governor = (
-            governor
-            if governor is not None
-            else TokenBucketGovernor(ip_budget_per_5s=config.ip_budget_per_5s)
-        )
+        #: OM-D08: the process's one governor, given by the service; never built here.
+        self._governor = governor
         self._clock = _Clock(clock_offset_ms_provider, wall_clock)
         self._sleep = sleep
         self._random = random_fn
@@ -258,9 +266,16 @@ class BybitRestClient:
         params: Mapping[str, Any] | None = None,
         endpoint_class: EndpointClass = EndpointClass.MARKET_DATA,
     ) -> dict[str, Any]:
-        """Unauthenticated `GET` — instrument catalogue, kline, server time."""
+        """Unauthenticated `GET` — instrument catalogue, kline, server time, in the `poll` lane."""
         return await self._request(
-            "GET", path, params=params, body=None, endpoint_class=endpoint_class, signed=False
+            "GET",
+            path,
+            params=params,
+            body=None,
+            endpoint_class=endpoint_class,
+            signed=False,
+            lane="poll",
+            budget_wait_s=None,
         )
 
     async def server_time(self) -> ServerTime:
@@ -276,34 +291,34 @@ class BybitRestClient:
         params: Mapping[str, Any] | None = None,
         body: Mapping[str, Any] | None = None,
         endpoint_class: EndpointClass = EndpointClass.ACCOUNT,
+        lane: RateLane,
+        budget_wait_s: float | None = None,
     ) -> dict[str, Any]:
         """Authenticated request. Raises `TypeError` if no signer was
         configured — a signed call is never silently downgraded to public.
 
-        A POST/PUT to `EndpointClass.ORDER` **must** carry `orderLinkId` in
-        `body`: this client retries signed POSTs on transport errors and
-        5xx automatically, and that is only safe for order placement when
-        every attempt reuses the same client-generated id (C-2.10) so a
-        duplicate is recognised as "already accepted" rather than
-        resubmitted under a new id. This is enforced here, not merely
-        documented, because a future OMS caller forgetting it would
-        silently double-submit orders on a retried timeout. An order create
-        is retried only if it never left (24 §8.6 "Order creates")."""
+        An order create (`/v5/order/create`, and every item of `/v5/order/create-batch`)
+        **must** carry a non-empty `orderLinkId`, under any endpoint class: a create is retried
+        only while it never left (24 §8.6 "Order creates"), and only the same client-generated id
+        lets a duplicate read as "already accepted" rather than a second order (C-2.10). Every
+        other call passes this guard: a cancel, `cancel-all` or amend by `orderId` is an exit
+        that must reach the order class (OM-D09, AC-31). A path that takes a `category` must
+        state `linear` (SR-054): it is refused, never filled in. All three refusals happen
+        before a token is taken or anything is signed. `lane` is the caller's rate lane (20
+        §4.3); `budget_wait_s` bounds each attempt's wait for a token (24 §8.7)."""
         if self._signer is None:
             raise TypeError("signed_request called without a configured BybitSigner")
-        if (
-            endpoint_class is EndpointClass.ORDER
-            and method.upper() in ("POST", "PUT")
-            and not (body and body.get("orderLinkId"))
-        ):
-            raise ValueError(
-                "signed_request: ORDER-class POST/PUT requires a non-empty "
-                "'orderLinkId' in body — this client retries automatically "
-                "and retries without a stable client id can double-submit "
-                "orders (C-2.10)"
-            )
+        _require_create_ids(path, body)
+        _require_linear_category(path, params, body)
         return await self._request(
-            method, path, params=params, body=body, endpoint_class=endpoint_class, signed=True
+            method,
+            path,
+            params=params,
+            body=body,
+            endpoint_class=endpoint_class,
+            signed=True,
+            lane=lane,
+            budget_wait_s=budget_wait_s,
         )
 
     def _query_params(self, params: Mapping[str, Any] | None) -> httpx.QueryParams | None:
@@ -344,6 +359,8 @@ class BybitRestClient:
         body: Mapping[str, Any] | None,
         endpoint_class: EndpointClass,
         signed: bool,
+        lane: RateLane,
+        budget_wait_s: float | None,
     ) -> dict[str, Any]:
         validate_rest_path(path)
         self._assert_same_host(method, path)
@@ -352,8 +369,11 @@ class BybitRestClient:
         clock_retry_used = False
         while True:
             attempt += 1
-            await self._governor.acquire(self._uid, endpoint_class)
+            await self._governor.acquire(
+                self._uid, endpoint_class, lane=lane, deadline_s=budget_wait_s
+            )
             headers: dict[str, str] = {}
+            masked: tuple[str, ...] = ()
             query = self._query_params(params)
             payload_str = self._payload_string(method, query, body)
             if signed:
@@ -374,6 +394,7 @@ class BybitRestClient:
                         "X-BAPI-SIGN": auth.signature,
                     }
                 )
+                masked = (auth.api_key, auth.signature)
             if method.upper() in ("POST", "PUT"):
                 headers["Content-Type"] = "application/json"
 
@@ -431,6 +452,7 @@ class BybitRestClient:
                     raise _ambiguous(path, body, "an oversized body") from too_large
                 raise too_large
 
+            raw = _mask(raw, masked)
             self._observe_rate_headers(response, endpoint_class)
 
             if response.status_code >= 500:
@@ -503,7 +525,7 @@ class BybitRestClient:
                 # Not a rate limit (#2863): no bucket drain, counted as the error raised.
                 venue = {"exchange_ret_code": ret_code, "exchange_ret_msg": ret_msg}
                 raise _answer_ambiguous(path, body, f"retCode {ret_code}", **venue)
-            error = map_ret_code(ret_code, ret_msg)
+            error = map_ret_code(ret_code, ret_msg, create=creates)
             if creates and isinstance(error, UnknownStateError):
                 error.retryable = False  # its outcome is open: polled and reconciled, never resent
             exchange_errors_total.labels(**{"class": error.code.value}).inc()
@@ -622,6 +644,45 @@ def _answer_ambiguous(
     """An answer to the create arrived but hides its outcome: counted as the error raised."""
     bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
     return _ambiguous(path, body, cause, **detail)
+
+
+def _has_link(item: object) -> bool:
+    link = item.get("orderLinkId") if isinstance(item, Mapping) else None
+    return isinstance(link, str) and link != ""
+
+
+def _require_create_ids(path: str, body: Mapping[str, Any] | None) -> None:
+    """An order create, or each item of a batch, carries a non-empty `orderLinkId` (C-2.10)."""
+    if path not in _CREATE_PATHS:
+        return
+    if path == _BATCH_PATH:
+        items = body.get("request") if body else None
+        complete = isinstance(items, list) and bool(items) and all(map(_has_link, items))
+    else:
+        complete = _has_link(body)
+    if not complete:
+        raise ValueError(
+            "signed_request: an order create needs a non-empty 'orderLinkId' (every item of a "
+            "batch too): a create is retried only before it leaves, under the same id (C-2.10)"
+        )
+
+
+def _require_linear_category(
+    path: str, params: Mapping[str, Any] | None, body: Mapping[str, Any] | None
+) -> None:
+    """SR-054: a category-taking path states `category=linear` itself; never filled in."""
+    if not (path.startswith(_CATEGORY_PREFIXES) or path in _CATEGORY_PATHS):
+        return
+    stated = (params or {}).get("category", (body or {}).get("category"))
+    if stated != "linear":
+        raise ValueError("signed_request: this path takes category, and only 'linear' (SR-054)")
+
+
+def _mask(raw: bytes, values: tuple[str, ...]) -> bytes:
+    for value in values:
+        if len(value) >= _MIN_MASKED_LEN:
+            raw = raw.replace(value.encode(), _MASK)
+    return raw
 
 
 def _usable_ret_code(data: object, is_http_error: bool) -> bool:

@@ -36,6 +36,7 @@ from candleviewer.exchange.bybit import key_verify
 from candleviewer.exchange.bybit import key_ws_probe as private_ws
 from candleviewer.exchange.bybit import service as bybit_service
 from candleviewer.exchange.bybit.config import RestClientConfig
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.observability.support_bundle import filter_config
 from candleviewer.settings import Environment, FeedMode, Settings
@@ -150,7 +151,9 @@ async def test_set_in_checkout_builds_a_transport_that_refuses_everything(
     assert fixture is not None
     config = RestClientConfig(base_url="https://api-demo.bybit.com", max_retries=0)
 
-    async with BybitRestClient(config, transport=fixture.rest_transport) as client:
+    async with BybitRestClient(
+        config, governor=TokenBucketGovernor(), transport=fixture.rest_transport
+    ) as client:
         with pytest.raises(TransportError) as refused:
             await client.get_public("/v5/market/time")
 

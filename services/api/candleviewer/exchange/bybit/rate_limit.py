@@ -6,6 +6,13 @@ differ per endpoint family (technical notes: "`ExchangeCapabilities.
 order_rate_per_uid_per_s` is a dict"). All callers sharing a UID — even
 across different API keys — draw from the same bucket, which is what makes
 the per-UID limit enforceable at all (ticket Context paragraph).
+
+The process builds one governor (`ExchangeBybitService`, OM-D08, #2877 ruling R5): every
+REST client is given it, so the 600-per-5 s IP bucket and the `10018` hold cover every UID and
+the public clients. Key verification draws through a `capped` view that shares that IP bucket,
+hold and per-UID buckets and adds its own 50-per-5 s cap (SR-E27-05). Every acquisition names
+its lane (`critical`, `entry`, `poll`; 20 §4.3): the buckets accept it and serve every lane
+alike until E34-T02 builds the reserve behind it (#2877 ruling R3).
 """
 
 from __future__ import annotations
@@ -14,11 +21,17 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 
+from candleviewer.exchange.base.errors import RateBudgetExceededError
+from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.bybit.config import EndpointClass
 from candleviewer.exchange.bybit.metrics import bybit_ip_hold_remaining_seconds
 
 #: Hard ceiling on one IP hold (defence in depth vs a hostile/garbled reset header).
 MAX_IP_HOLD_S = 900.0
+#: The longest single sleep while a token refills, so a hold set meanwhile is seen promptly.
+_MAX_POLL_S = 1.0
+#: The poll interval of a bucket that does not refill.
+_NO_REFILL_POLL_S = 0.05
 
 
 class _Bucket:
@@ -39,15 +52,33 @@ class _Bucket:
         self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_s)
         self.updated_at = now
 
+    def wait_s(self) -> float:
+        """Seconds until one token is spare, from the last refill (a short poll when the
+        bucket never refills, so only a header or a drain can change it)."""
+        deficit = 1.0 - self.tokens
+        return deficit / self.refill_per_s if self.refill_per_s > 0 else _NO_REFILL_POLL_S
+
+
+class _IpGate:
+    """The IP-wide bucket and the `10018` hold: one per process, shared by every view."""
+
+    __slots__ = ("bucket", "hold_until")
+
+    def __init__(self, bucket: _Bucket) -> None:
+        self.bucket = bucket
+        self.hold_until = 0.0
+
 
 class TokenBucketGovernor:
     """Owns one bucket per `(uid, endpoint_class)` and one IP-wide bucket.
 
-    `acquire` blocks (cooperatively, via `asyncio.sleep`) until a token is
-    available rather than raising — the budget is *shaped*, never silently
-    exceeded (acceptance criterion 2). `drain` is called by the client after
-    a `10018`/rate-limited response to account for exchange-side budget
-    consumption the client did not itself schedule (acceptance criterion 3).
+    `acquire` waits (cooperatively, on the injected sleep) until a token is
+    available — the budget is *shaped*, never silently exceeded (acceptance
+    criterion 2) — or, given `deadline_s`, refuses with `RateBudgetExceededError`
+    as soon as the wait would run past it, before any request is signed or sent
+    (24 §8.7). `drain` is called by the client after a `10018`/rate-limited
+    response to account for exchange-side budget consumption the client did not
+    itself schedule (acceptance criterion 3).
     """
 
     def __init__(
@@ -60,13 +91,26 @@ class TokenBucketGovernor:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._sleep = sleep
-        self._ip_hold_until: float = 0.0
         self._default_capacity = default_capacity
         self._default_refill_per_s = default_refill_per_s
         self._buckets: dict[tuple[str, EndpointClass], _Bucket] = {}
         self._now: Callable[[], float] = clock if clock is not None else time.monotonic
         ip_refill = ip_budget_per_5s / 5.0
-        self._ip_bucket = _Bucket(float(ip_budget_per_5s), ip_refill, now=self._now())
+        self._ip = _IpGate(_Bucket(float(ip_budget_per_5s), ip_refill, now=self._now()))
+        self._cap: _Bucket | None = None
+
+    def capped(self, per_5s: int) -> TokenBucketGovernor:
+        """A view that shares this governor's IP bucket, hold and per-UID buckets and adds a
+        cap of its own: `per_5s` acquisitions per five seconds across every UID it serves."""
+        view = TokenBucketGovernor.__new__(TokenBucketGovernor)
+        view._sleep = self._sleep
+        view._default_capacity = self._default_capacity
+        view._default_refill_per_s = self._default_refill_per_s
+        view._buckets = self._buckets
+        view._now = self._now
+        view._ip = self._ip
+        view._cap = _Bucket(float(per_5s), per_5s / 5.0, now=self._now())
+        return view
 
     def _get_bucket(self, uid: str, endpoint_class: EndpointClass) -> _Bucket:
         key = (uid, endpoint_class)
@@ -80,42 +124,57 @@ class TokenBucketGovernor:
             self._buckets[key] = bucket
         return bucket
 
-    async def acquire(self, uid: str, endpoint_class: EndpointClass) -> None:
-        """Wait until both the per-UID/endpoint-class bucket and the
-        IP-wide bucket have a spare token, then consume one from each."""
-        await self._wait_ip_hold()
-        bucket = self._get_bucket(uid, endpoint_class)
-        for target in (bucket, self._ip_bucket):
-            async with target.lock:
-                while True:
-                    # A hold set while we queued on this lock must not be missed.
-                    await self._wait_ip_hold()
-                    now = self._now()
-                    target._refill(now)
-                    if target.tokens >= 1.0:
-                        target.tokens -= 1.0
-                        break
-                    deficit = 1.0 - target.tokens
-                    wait_s = deficit / target.refill_per_s if target.refill_per_s > 0 else 0.05
-                    await asyncio.sleep(min(wait_s, 1.0))
+    async def acquire(
+        self,
+        uid: str,
+        endpoint_class: EndpointClass,
+        *,
+        lane: RateLane,
+        deadline_s: float | None = None,
+    ) -> None:
+        """Wait until the view's cap (if any), the per-UID/endpoint-class bucket and the
+        IP-wide bucket each have a spare token, then consume one from each. `lane` is
+        accepted and served like any other until E34-T02. With `deadline_s`, a wait (a hold
+        included) that would end later raises `RateBudgetExceededError`; a token taken before
+        the refusal is given back, so nothing is spent on a request that is never sent."""
+        limit = None if deadline_s is None else self._now() + max(0.0, deadline_s)
+        await self._wait_ip_hold(limit)
+        targets = [b for b in (self._cap, self._get_bucket(uid, endpoint_class)) if b is not None]
+        taken: list[_Bucket] = []
+        try:
+            for target in (*targets, self._ip.bucket):
+                await self._take(target, limit)
+                taken.append(target)
+        except RateBudgetExceededError:
+            for bucket in taken:
+                bucket.tokens = min(bucket.capacity, bucket.tokens + 1.0)
+            raise
+
+    async def _take(self, target: _Bucket, limit: float | None) -> None:
+        async with target.lock:
+            while True:
+                # A hold set while we queued on this lock must not be missed.
+                await self._wait_ip_hold(limit)
+                now = self._now()
+                target._refill(now)
+                if target.tokens >= 1.0:
+                    target.tokens -= 1.0
+                    return
+                wait_s = target.wait_s()
+                if limit is not None and now + wait_s > limit:
+                    raise RateBudgetExceededError(
+                        "no rate token within the lane's wait; nothing was sent",
+                        retry_after_s=wait_s,
+                    )
+                await self._sleep(min(wait_s, _MAX_POLL_S))
 
     async def acquire_ip_only(self) -> None:
         """Wait for a spare token on the IP-wide bucket only, without
         touching any per-UID/endpoint-class bucket. Used by unauthenticated,
         unbudgeted-by-endpoint-class calls (e.g. the startup reachability
         probe) that must still respect the IP-wide ceiling (C-12.7)."""
-        await self._wait_ip_hold()
-        target = self._ip_bucket
-        async with target.lock:
-            while True:
-                now = self._now()
-                target._refill(now)
-                if target.tokens >= 1.0:
-                    target.tokens -= 1.0
-                    return
-                deficit = 1.0 - target.tokens
-                wait_s = deficit / target.refill_per_s if target.refill_per_s > 0 else 0.05
-                await asyncio.sleep(min(wait_s, 1.0))
+        await self._wait_ip_hold(None)
+        await self._take(self._ip.bucket, None)
 
     def hold_ip(self, duration_s: float) -> None:
         """Throttle every caller (all UIDs, all endpoint classes) for at least
@@ -123,17 +182,22 @@ class TokenBucketGovernor:
         backoff, all accounts throttled). Holds only ever extend, never shorten."""
         now = self._now()
         capped = min(max(0.0, duration_s), MAX_IP_HOLD_S)
-        self._ip_hold_until = max(self._ip_hold_until, min(now + capped, now + MAX_IP_HOLD_S))
+        self._ip.hold_until = max(self._ip.hold_until, min(now + capped, now + MAX_IP_HOLD_S))
         bybit_ip_hold_remaining_seconds.set(self.ip_hold_remaining_s())
 
     def ip_hold_remaining_s(self) -> float:
-        return max(0.0, self._ip_hold_until - self._now())
+        return max(0.0, self._ip.hold_until - self._now())
 
-    async def _wait_ip_hold(self) -> None:
+    async def _wait_ip_hold(self, limit: float | None) -> None:
         while (remaining := self.ip_hold_remaining_s()) > 0.0:
+            if limit is not None and self._now() + remaining > limit:
+                raise RateBudgetExceededError(
+                    "an IP-level hold outlasts the lane's wait; nothing was sent",
+                    retry_after_s=remaining,
+                )
             await self._sleep(remaining)
-        if self._ip_hold_until > 0.0:
-            self._ip_hold_until = 0.0
+        if self._ip.hold_until > 0.0:
+            self._ip.hold_until = 0.0
             bybit_ip_hold_remaining_seconds.set(0.0)
 
     def remaining(self, uid: str, endpoint_class: EndpointClass) -> float:

@@ -145,8 +145,9 @@ async def test_truncated_json_on_order_class_stays_unknown_state_without_retry()
             await client.signed_request(
                 "POST",
                 "/v5/order/cancel",
-                body={"symbol": "BTCUSDT", "orderLinkId": "cv-1"},
+                body={"category": "linear", "symbol": "BTCUSDT", "orderLinkId": "cv-1"},
                 endpoint_class=EndpointClass.ORDER,
+                lane="critical",
             )
     finally:
         await client.aclose()
@@ -177,7 +178,7 @@ async def test_unmapped_ret_code_is_unknown_state_with_raw_code_preserved_for_tr
     ],
 )
 def test_10001_is_disambiguated_by_message(msg: str, expected: type[ExchangeError]) -> None:
-    err = map_ret_code(10001, msg)
+    err = map_ret_code(10001, msg, create=True)  # a duplicate answers an order create only
     assert type(err) is expected and err.exchange_ret_code == 10001
 
 
@@ -193,7 +194,7 @@ async def test_signed_request_error_path_never_logs_credentials(
     caplog.set_level(logging.DEBUG)
     try:
         with pytest.raises(RateLimitError):
-            await client.signed_request("GET", "/v5/account/wallet-balance")
+            await client.signed_request("GET", "/v5/account/wallet-balance", lane="poll")
     finally:
         await client.aclose()
     assert "CONTRACT-SECRET-9" not in caplog.text and "CONTRACT-KEY-1234" not in caplog.text

@@ -38,6 +38,7 @@ from candleviewer.exchange.bybit.public_ws import (
     public_socket_factory,
     topic_kind,
 )
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.ticker import parse_ticker_frame, ticker_topic
 from candleviewer.exchange.bybit.trades import (
@@ -84,7 +85,10 @@ class ExchangeBybitService:
         #: M2 computes the request MAC (`credentials.sign(...)`) and returns the key id,
         #: never the secret (C-2.7, #2339). Never minted here.
         self._credentials = credentials
-        self._verify_governor = verification_governor()
+        #: OM-D08 (#2877 ruling R5): the process's one governor, so its IP bucket and `10018`
+        #: hold cover every REST client built here, public, trading and key verification alike.
+        self._governor = TokenBucketGovernor()
+        self._verify_governor = verification_governor(self._governor)
         #: #2893 S4: the transport of every account REST client built here, chosen once. None in
         #: production, so httpx keeps its own; the composition root passes the dev-only account
         #: fixture's only when `CV_ACCOUNT_FIXTURE` is set, and the clients get a view of it that
@@ -146,12 +150,11 @@ class ExchangeBybitService:
         """E08-T04: unauthenticated public-stream socket factory for `env`."""
         return public_socket_factory(env, max_frame_bytes=max_frame_bytes)
 
-    @staticmethod
-    def public_rest_client(env: str) -> BybitRestClient:
-        """E04-T06: credential-less public REST client (server-time probe).
-        Public data always uses the live host (demo has no public feed)."""
+    def public_rest_client(self, env: str) -> BybitRestClient:
+        """E04-T06: credential-less public REST client (server-time probe), on the process's
+        one governor (OM-D08). Public data always uses the live host (demo has no public feed)."""
         base = "https://api-testnet.bybit.com" if env == "testnet" else "https://api.bybit.com"
-        return BybitRestClient(RestClientConfig(base_url=base))
+        return BybitRestClient(RestClientConfig(base_url=base), governor=self._governor)
 
     @staticmethod
     def kline_fetcher(
@@ -160,11 +163,12 @@ class ExchangeBybitService:
         """E12-S05: validated kline pages over a public governed client (`MARKET_DATA`)."""
         return BybitKlineFetcher(client, tick_size_for)
 
-    @classmethod
-    def funding_fetcher(cls, env: str) -> tuple[BybitFundingFetcher, Callable[[], Awaitable[None]]]:
+    def funding_fetcher(
+        self, env: str
+    ) -> tuple[BybitFundingFetcher, Callable[[], Awaitable[None]]]:
         """E24-T02-F1: settled-funding history fetcher over a governed public REST
         client (`MARKET_DATA` bucket) plus the closer for that client."""
-        client = cls.public_rest_client(env)
+        client = self.public_rest_client(env)
         return BybitFundingFetcher(client), client.aclose
 
     #: E27-T03: `(reason, code)` when a key-verification refusal is a verdict about the key.

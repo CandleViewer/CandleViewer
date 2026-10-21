@@ -134,7 +134,10 @@ async def _drive(kind: str) -> str:
     async with client:
         try:
             await client.signed_request(
-                "GET", "/v5/account/wallet-balance", params={"accountType": "UNIFIED"}
+                "GET",
+                "/v5/account/wallet-balance",
+                params={"accountType": "UNIFIED"},
+                lane="poll",
             )
         except (ExchangeError, httpx.HTTPError) as exc:
             out += [str(exc), repr(exc), repr(exc.__cause__)]

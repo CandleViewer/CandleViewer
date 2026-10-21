@@ -17,6 +17,7 @@ from candleviewer.app import AppContext, _compose_funding, build_app_context, cr
 from candleviewer.domain.funding import FundingRowRejected
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.funding import BybitFundingFetcher
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.funding_wiring import FundingRefreshTask, wire_funding
 from candleviewer.settings import Settings
@@ -62,7 +63,11 @@ class _Resolver:
 def _client() -> BybitRestClient:
     body = json.loads((FIX / "funding_history_ETHUSDT_4h.json").read_text(encoding="utf-8"))
     transport = httpx.MockTransport(lambda r: httpx.Response(200, json=body))
-    return BybitRestClient(RestClientConfig(base_url="https://api.bybit.com"), transport=transport)
+    return BybitRestClient(
+        RestClientConfig(base_url="https://api.bybit.com"),
+        governor=TokenBucketGovernor(),
+        transport=transport,
+    )
 
 
 async def _started() -> AppContext:
