@@ -8,8 +8,9 @@
   call site (the latch-backed one, or `ALWAYS_ADMIT` where the owner has not adopted the bundle, or
   where it gates on its own latch: the OMS facade, the order path's one gate).
 
-Both scan the parsed code (`ast`) of every module under `candleviewer/`, so a new site is checked
-the day it lands."""
+Both scan the parsed code (`ast`) of every module under `candleviewer/` but the Alembic revisions
+(which build neither, and one of which holds an escape `ast` warns about), so a new site is
+checked the day it lands."""
 
 from __future__ import annotations
 
@@ -19,7 +20,9 @@ from pathlib import Path
 import candleviewer
 
 PACKAGE = Path(candleviewer.__file__).resolve().parent
-_MODULES = sorted(p for p in PACKAGE.rglob("*.py") if "_generated" not in p.parts)
+_MODULES = sorted(
+    p for p in PACKAGE.rglob("*.py") if not {"_generated", "migrations"} & set(p.parts)
+)
 
 
 def _calls(name: str) -> list[tuple[str, ast.Call]]:
