@@ -56,7 +56,10 @@ ticket only moves to **Done** when the owner has approved it. Concretely:
 
 Agents never delete or restructure pages/components they did not create in the current ticket, never touch the
 shared DS library file without an explicit ticket, and never call `execute_code` on a file other than the one named
-in the ticket. Skills: the official `penpot-*` skill set (penpot-ai-kit 0.4.0) is installed in `~/.claude/skills/`;
+in the ticket. Long scripts (board, relayout and dedupe scripts) go through `docs/design/_tools/penpot_exec.py`
+(same `--server`/`--project`/`--endpoint` flags as `penpot_export.py`) instead of being pasted into `execute_code`;
+the same rule applies to them. Skills: the official `penpot-*` skill set (penpot-ai-kit 0.4.0) is installed in
+`~/.claude/skills/`;
 `penpot-router` picks the skill, `penpot-foundations` owns tokens, `penpot-build-screen` owns screens,
 `penpot-component-factory` owns `CMP-*`, `penpot-audit-accessibility` runs before every hand-off.
 
