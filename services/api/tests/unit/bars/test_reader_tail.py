@@ -544,6 +544,17 @@ async def test_the_bound_counts_the_reads_it_started_later_than_their_window_onl
     assert (_bounded_reads("renko"), _bounded_reads("time")) == (renko + 2, time_reads)
 
 
+@pytest.mark.parametrize("spec", [SPEC, RSPEC], ids=["time", "non-time"])
+@pytest.mark.parametrize("limit", [0, -1, MAX_TAIL + 1])
+async def test_read_tail_refuses_a_limit_out_of_range_before_any_statement(
+    spec: BarSpec, limit: int
+) -> None:
+    conn = _Conn([])
+    with pytest.raises(ValueError, match="limit"):
+        await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, spec, limit)
+    assert conn.calls == []
+
+
 @pytest.mark.parametrize(("k", "logged"), [(7, 7), (10**12, MAX_TAIL_SCAN_ROWS)])
 async def test_a_truncated_read_logs_its_kind_and_the_clamped_rows_its_bound_scanned(
     k: int, logged: int
@@ -556,14 +567,8 @@ async def test_a_truncated_read_logs_its_kind_and_the_clamped_rows_its_bound_sca
         tail = await reader.read_tail(SYM, RSPEC, 3)
     (line,) = [e for e in logs if e["event"] == "bars_tail_scan_truncated"]
     assert (line["kind"], line["scanned_rows"]) == ("renko", logged)
-    assert (
-        (line["window_start_us"], line["since_us"])
-        == (RSINCE, RSINCE + MIN)
-        == (
-            RSINCE,
-            tail.since_us,
-        )
-    )
+    assert (line["window_start_us"], line["since_us"]) == (RSINCE, RSINCE + MIN)
+    assert tail.since_us == RSINCE + MIN
 
 
 @pytest.mark.parametrize("error_type", [OSError, TimeoutError], ids=["os-error", "timeout"])

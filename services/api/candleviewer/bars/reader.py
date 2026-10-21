@@ -522,10 +522,9 @@ class BarTail:
     `bars` can hold fewer, since rows are dropped, skipped or malformed. They do not say whether
     older bars exist below `since_us`, nor why a short tail is short: the series' first bar, or
     the window ending the read (`tail_window_us`: for a time kind `TAIL_SPAN_FACTOR` times the
-    span of `limit` bars, within the SR-E12-02 cap; for other kinds the cap; for either kind, or
-    `bounded`, the table-row bound, #399 R1). Telling
-    an exhausted series apart needs its recording start (REST `meta.recording_started_at`)
-    compared with `since_us`.
+    span of `limit` bars, within the SR-E12-02 cap; for other kinds the cap; for either kind, the
+    table-row bound too, when `bounded`, #399 R1). Telling an exhausted series apart needs its
+    recording start (REST `meta.recording_started_at`) compared with `since_us`.
     """
 
     bars: list[tuple[int, Bar]]
