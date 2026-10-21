@@ -1687,7 +1687,7 @@ interface ReplayScrubberProps {
 - **Tests**: unit, visual, axe, keyboard (full hotkey table), performance (scrub responsiveness under load).
 
 ### CMP-171 ReplaySpeedPicker
-- **Tier**: Molecule (trading) · **Purpose**: speed-preset picker (0.5x/1x/2x/5x/10x/25x/50x/100x) feeding CMP-170.
+- **Tier**: Molecule (trading) · **Purpose**: speed-preset picker (0.5x/1x/2x/4x/10x/25x/100x plus a custom value within the API's 0.1–100 range — the canonical list decided in E26-D01, `docs/research/ux/replay-study-sessions.md` §4; the readout pairs the requested preset with the achieved rate) feeding CMP-170.
 - **Props**: `value` · `onChange` · `presets: number[]`.
 - **Tokens**: inherits CMP-009.
 - **Storybook**: Default.
