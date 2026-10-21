@@ -32,13 +32,14 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Tokens used** — Tier-2/Tier-3 only, as listed in `E16-D02.md` §11.1; none invented; Penpot token sets =
       `packages/ui/tokens` at the PR base, which includes #3925's retune of the light danger tone (E16-D02 §10.4
       finding 2)
-- [ ] **Data contract confirmed** — REST `GET /recording/symbols`, `RecordingStatus`, `StorageUsage`; WS `recorder`
+- [x] **Data contract confirmed** — REST `GET /recording/symbols`, `RecordingStatus`, `StorageUsage`; WS `recorder`
       §15.8; the recording-status amendment (`lingering`, `linger_until`, `refusal`, `level`, `write_gate`,
       `cap_bytes`, `accelerate_retention`, `role_restricted`, `policy`, the `backpressure_drop` gap reason and the
-      add-reason rule). Pending: the amendment PR (E16-D02 §2, §15)
+      add-reason rule). Merged: #3951 (2026-10-20) and #3955 (2026-10-21), 24 §19.18 (E16-D02 §2, §15)
 - [ ] **Contrast and CVD** — every pair is computed in E16-D02 §10.4 and passes. Pending: registering the pairs this
       row introduces in `tools/contrast/pairs.mjs` (status `.strong` icons and `danger.default` on
-      `color.surface.raised`; `text.secondary` on `color.surface.sunken`, which the stale rows use). That is a security-owned `tools/` change,
+      `color.surface.raised`; `text.secondary` and the four state icons, `success.default`, `warning.strong`,
+      `danger.default` and `info.strong`, on `color.surface.sunken`, which the stale rows use). That is a security-owned `tools/` change,
       which lands with the implementation ticket (E16-S05) or a small tools PR. The CVD simulation is attached with
       the boards
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — on the PR
