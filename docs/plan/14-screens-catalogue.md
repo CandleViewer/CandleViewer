@@ -1169,6 +1169,7 @@ Drag preview                Drop zones
 - **Performance:** OI and funding arrive at low frequency (<=1 Hz) and render on change only; liquidation prints can burst - they are coalesced into 250 ms buckets with a burst counter rather than one DOM node per print, and the panel must not exceed 2 ms scripting per frame during a liquidation cascade (target: 500 prints/s sustained for 10 s with no dropped frames).
 - **Analytics/audit:** `oi_panel.metric_toggled`, `oi_panel.interval_changed`, `liquidation.print_clicked`, `funding.countdown_alert_set` (analytics).
 - **Design sign-off acceptance checklist:** [ ] OI series, funding rate + countdown to settlement, and the liquidation strip drawn together [ ] predicted vs actual funding distinguished with text [ ] liquidation cascade state drawn (aggregated bucket + counter) [ ] units and side of every figure explicit [ ] empty state where the exchange gives no value [ ] stale-data shading
+- **UX research:** [e24-deriv-reading.md](../design/research/e24-deriv-reading.md) (E24-D01; heuristic walkthrough, no participants: PROPOSED pane order with a persistent header row, `deriv.*` defaults, the countdown ladder with pay / receive copy, bars over the feed, basis as a header readout, zero vs unknown; contradictions C1–C12 and gaps G1–G9 for their owners).
 
 ### SCR-055 — Speed-of-tape panel
 
