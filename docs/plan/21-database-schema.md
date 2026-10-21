@@ -275,6 +275,8 @@ erDiagram
     trade_group_definitions ||--o{ trade_groups : fires
     idempotency_anchors |o--o| trade_groups : names
     idempotency_anchors |o--o| orders : names
+    exchange_accounts ||--o{ recorded_stops : protects
+    orders |o--o{ recorded_stops : attaches
 
     idempotency_anchors {
         uuid id PK
@@ -285,6 +287,16 @@ erDiagram
         uuid trade_group_id FK
         uuid order_id FK
         smallint outcome_status
+    }
+    recorded_stops {
+        uuid id PK
+        uuid exchange_account_id FK
+        symbol_code symbol
+        smallint position_idx
+        text kind
+        text status
+        uuid order_id FK
+        text exchange_order_id
     }
     trade_groups {
         uuid id PK
@@ -2428,6 +2440,131 @@ CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors
 ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;
 ```
 
+#### 3.3.11 `recorded_stops` — the stop the OMS recorded for each position (E29-T04)
+
+The record of SR-E29-06 that `24-internal-schemas.md` §8.8 rule 6 defines, whose storage is E29-T04's ([ruling 1 on G-6, #3972](https://github.com/CandleViewer/CandleViewer/pull/3972#issuecomment-6306318883)): per position (`exchange_account_id`, `symbol`, `position_idx`) and per side a stop request sets (the stop-loss and the take-profit, which 24 §8.9 writes together), one row for each stop the OMS requests, so the position's protective stop has one source of truth, which rule-engine trails and breakeven write through. A recorded side's TP/SL order binds by its `orderId` like an `orders` row, and its fills are OMS intent (24 §8.3 rule 7, §8.8 rule 6). No existing table holds this: `positions` (§3.3.7) mirrors what an exchange read reports, and a read never becomes a record; `orders.stop_loss` and `take_profit` (§3.3.4) are one order's attached stop, written once at its insert, which an entry's row copies; `trade_group_legs.resolved_sl_price` (§3.3.3) is a fan-out's resolved stop.
+
+| Column                  | Type           | Null | Default     | Constraints / notes                                               |
+| ----------------------- | -------------- | ---- | ----------- | ----------------------------------------------------------------- |
+| `id`                    | uuid           | no   | —           | PK                                                                |
+| `exchange_account_id`   | uuid           | no   | —           | FK → exchange_accounts RESTRICT                                   |
+| `symbol`                | symbol_code    | no   | —           |                                                                   |
+| `position_idx`          | smallint       | no   | —           | 0 one-way, 1 buy-hedge, 2 sell-hedge                              |
+| `position_side`         | text           | no   | —           | Buy / Sell: the side of the position the stop protects            |
+| `kind`                  | text           | no   | —           | stop_loss / take_profit: the side of the request                  |
+| `source`                | text           | no   | —           | entry_attach / trading_stop / restore: the request that wrote it  |
+| `order_id`              | uuid           | yes  | NULL        | FK → orders RESTRICT: an `entry_attach`'s entry order, only       |
+| `tpsl_mode`             | text           | no   | —           | Full / Partial                                                    |
+| `trigger_price`         | numeric(38,18) | no   | —           | > 0                                                               |
+| `size`                  | numeric(38,18) | yes  | NULL        | > 0 in Partial mode; NULL in Full mode, which covers the position |
+| `trailing_distance`     | numeric(38,18) | yes  | NULL        | > 0: a native trail's price distance, with its activation price   |
+| `trailing_active_price` | numeric(38,18) | yes  | NULL        | > 0: the trail's activation price                                 |
+| `exchange_order_id`     | text           | yes  | NULL        | The TP/SL order bound to this side (24 §8.3 rule 7, §8.9)         |
+| `status`                | text           | no   | `'pending'` | pending / in_force / replaced / ended / void                      |
+| `audit_record_id`       | uuid           | no   | —           | `audit_log.record_id` of the request's audit record (24 §15.5)    |
+| `actor_user_id`         | uuid           | yes  | NULL        | FK → users RESTRICT; NULL for a system writer, as in `audit_log`  |
+| `created_at`            | timestamptz    | no   | `now()`     | Written before the request leaves                                 |
+| `answered_at`           | timestamptz    | yes  | NULL        | The exchange's answer to the request; NULL while it is in flight  |
+| `in_force_at`           | timestamptz    | yes  | NULL        | When a read first showed the stop                                 |
+| `closed_at`             | timestamptz    | yes  | NULL        | When the row was replaced, ended or voided                        |
+
+```sql
+CREATE TABLE recorded_stops (
+  id                    uuid PRIMARY KEY,
+  exchange_account_id   uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
+  symbol                symbol_code NOT NULL,
+  position_idx          smallint NOT NULL,
+  position_side         text NOT NULL,
+  kind                  text NOT NULL,
+  source                text NOT NULL,
+  order_id              uuid REFERENCES orders(id) ON DELETE RESTRICT,
+  tpsl_mode             text NOT NULL,
+  trigger_price         numeric(38,18) NOT NULL,
+  size                  numeric(38,18),
+  trailing_distance     numeric(38,18),
+  trailing_active_price numeric(38,18),
+  exchange_order_id     text,
+  status                text NOT NULL DEFAULT 'pending',
+  audit_record_id       uuid NOT NULL,
+  actor_user_id         uuid REFERENCES users(id) ON DELETE RESTRICT,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  answered_at           timestamptz,
+  in_force_at           timestamptz,
+  closed_at             timestamptz,
+  CONSTRAINT rs_posidx  CHECK (position_idx IN (0,1,2)),
+  CONSTRAINT rs_side    CHECK (position_side IN ('Buy','Sell')),
+  CONSTRAINT rs_kind    CHECK (kind IN ('stop_loss','take_profit')),
+  CONSTRAINT rs_source  CHECK (source IN ('entry_attach','trading_stop','restore')),
+  CONSTRAINT rs_entry   CHECK ((source = 'entry_attach') = (order_id IS NOT NULL)),
+  CONSTRAINT rs_restore CHECK (source <> 'restore' OR kind = 'stop_loss'),
+  CONSTRAINT rs_mode    CHECK (tpsl_mode IN ('Full','Partial')),
+  CONSTRAINT rs_px      CHECK (trigger_price > 0),
+  CONSTRAINT rs_size    CHECK ((tpsl_mode = 'Partial' AND size > 0 OR tpsl_mode = 'Full' AND size IS NULL) IS TRUE),
+  CONSTRAINT rs_trail   CHECK (num_nonnulls(trailing_distance, trailing_active_price) <> 1
+    AND (trailing_distance IS NULL OR (kind = 'stop_loss' AND trailing_distance > 0 AND trailing_active_price > 0))),
+  CONSTRAINT rs_finite  CHECK (trigger_price <> 'NaN' AND size <> 'NaN' AND trailing_distance <> 'NaN'
+    AND trailing_active_price <> 'NaN'),
+  CONSTRAINT rs_status  CHECK (status IN ('pending','in_force','replaced','ended','void')),
+  CONSTRAINT rs_times   CHECK ((closed_at IS NOT NULL) = (status IN ('replaced','ended','void'))
+    AND (in_force_at IS NOT NULL OR status NOT IN ('in_force','ended'))
+    AND (in_force_at IS NULL OR status IN ('in_force','replaced','ended')))
+);
+CREATE UNIQUE INDEX ux_rs_in_flight ON recorded_stops (exchange_account_id, symbol, position_idx)
+  WHERE status = 'pending' AND answered_at IS NULL AND kind = 'stop_loss';
+CREATE UNIQUE INDEX ux_rs_in_force  ON recorded_stops (exchange_account_id, symbol, position_idx, kind)
+  WHERE status = 'in_force';
+CREATE INDEX ix_rs_live    ON recorded_stops (exchange_account_id, symbol, position_idx)
+  WHERE status IN ('pending','in_force');
+CREATE INDEX ix_rs_exch_id ON recorded_stops (exchange_account_id, exchange_order_id)
+  WHERE exchange_order_id IS NOT NULL;
+CREATE INDEX ix_rs_order   ON recorded_stops (order_id) WHERE order_id IS NOT NULL;
+```
+
+The numbers have the types and bounds of the `orders` prices and quantities (§3.3.4) and `rs_finite` keeps NaN out, as `tg_finite` does (§3.3.2); `rs_size` is NULL-safe (`IS TRUE`), so a Partial-mode side without its size is refused. A trail is a stop-loss's, with both of its numbers or neither.
+
+**Writes, ahead of the request.** A row is inserted before its request leaves (write-ahead, as S8), `pending` and in flight (`answered_at` NULL), and only by a stop request the OMS sends, which is audited ahead too: `source` has no value for a read, so nothing an exchange read alone reports ever becomes a row. Every request records its stop-loss side (an entry carries its stop, C-2.6; a `trading-stop` call writes both sides, 24 §8.9; a restore records only the stop-loss), so `ux_rs_in_flight` admits one request in flight per position: a second writer's insert is refused (SQLSTATE 23505) until the first has its answer, the writer retrying then, and two writers (an entry's attach, the trading-stop path, a rule-engine trail, a restore) never interleave on one position. The answer sets `answered_at`; a refusal makes the row `void` and leaves the row in force as it was. A pending row, answered or not, stays matchable for the push that follows its request (24 §8.5 step 3c) and displaces nothing until a read shows its stop. That read (the position's stop or take-profit, with its trail, in Full mode; the bound order in Partial mode, 24 §8.8 rule 6) puts it `in_force` and, in the same transaction, the row in force for its position and kind `replaced` (`ux_rs_in_force`); a later row's coming in force can also replace a pending row whose stop no read showed. An entry's row that its entry leaves unfilled becomes `void`. A request whose outcome stays unknown keeps its position in flight, so no other stop request leaves for the position, until a read shows its stop or the writer records the answer it learns.
+
+**Ends with its position.** A complete position read the OMS applies (a push, or 24 §8.5 step 4) that shows the key flat or absent, or holding a position of the other side (a one-way reversal, a new position on the key), ends every row in force for the key (`ended`). It ends no pending row (24 §8.8 rule 6), which keeps an entry's attach for the position that entry opens. So a later position never inherits an old stop, and a new position's own row, written with its entry's attach, replaces any row in force once a read shows its stop.
+
+**Binding.** `exchange_order_id` is bound once, when the order push that follows the request (24 §8.9) or reconciliation (24 §8.5 step 3c) matches a TP/SL order to the side, and is cleared only by the release of 24 §8.3 rule 7 (a later read of that order that no longer matches, `[O-4]`); the end of the row keeps it, so the fills of a stop that closed its position still pair. `ix_rs_exch_id` serves that pairing.
+
+**Writers and readers.** E29-T04 writes an entry's attach (24 §8.8 rule 1) in B1's `VALIDATE` transaction with the order row, and the trading-stop path (24 §8.9; rules 2, 3 and 5), which rule-engine trails and breakeven (24 §10.7, E32) always go through; E29-T06 writes 24 §8.5 step 5's restore, only while the row it read is still in force. E29-T05 and E29-T06 apply the answers and reads above and bind and release the TP/SL orders, and E29-T05 materialises a recorded side's triggered order as an `orders` row with provenance `recorded_stop` (§3.3.4), found from this row through `ux_orders_exch_id`. The readers are the OMS cancel service, which refuses to cancel a recorded stop while its position is open and attaches it first for a foreign one (SR-E29-06 (ii), E29-T04), reconciliation (24 §8.5 steps 3c and 5: the matching against pending and in-force rows, the test against the row in force, the skip of a position with a request in flight), E29-T05's pairing of pushes and fills, and E32.
+
+**Audit, actor and time.** Each row's request is audited write-ahead (`sl.attached`, `sl.modified`, `sl.loosened`, and `tp.modified` for a take-profit side, 24 §15.5) with the row as the record's object: `audit_record_id` is that record's writer-assigned `record_id` (§3.10.1), with no FK, since the audit lane writes the record; `actor_user_id` and `created_at` say who asked and when, and the three later times what the exchange did.
+
+**Guard, grants and class.** `trg_rs_guard` (BEFORE UPDATE, `ENABLE ALWAYS`) refuses with SQLSTATE 23514, naming itself, any change to the request's values (every column but `status`, `exchange_order_id` and the three later times), a later time that changes once set, an `exchange_order_id` replaced by another id, and a `status` move outside `pending` → `in_force`, `void` or `replaced` and `in_force` → `replaced` or `ended`. `cv_app` holds no DELETE on the table where the role exists, and like the other OMS tables it has no row-level security: account scope is the OMS's and the routes' (C-12.4). The prices and sizes are financial personal data, class P1 like the monetary columns of `positions` and `orders` (§12), with `PII:` column comments; `actor_user_id` is a user id, as `backups.deleted_by` is, and no column holds a credential, a key, a name, an email or an IP. Rows are kept for good, like `orders` (§7). The migration lands with the implementing slice, the one that first writes a record, at the next free revision, re-parented per merge order (C-5.3, §9.4).
+
+```sql
+CREATE FUNCTION rs_guard() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE changed text;
+BEGIN
+  changed := CASE
+    WHEN (NEW.id, NEW.exchange_account_id, NEW.symbol, NEW.position_idx, NEW.position_side, NEW.kind,
+          NEW.source, NEW.order_id, NEW.tpsl_mode, NEW.trigger_price, NEW.size, NEW.trailing_distance,
+          NEW.trailing_active_price, NEW.audit_record_id, NEW.actor_user_id, NEW.created_at)
+      IS DISTINCT FROM (OLD.id, OLD.exchange_account_id, OLD.symbol, OLD.position_idx, OLD.position_side,
+          OLD.kind, OLD.source, OLD.order_id, OLD.tpsl_mode, OLD.trigger_price, OLD.size,
+          OLD.trailing_distance, OLD.trailing_active_price, OLD.audit_record_id, OLD.actor_user_id,
+          OLD.created_at) THEN 'request'
+    WHEN OLD.answered_at IS NOT NULL AND NEW.answered_at IS DISTINCT FROM OLD.answered_at THEN 'answered_at'
+    WHEN OLD.in_force_at IS NOT NULL AND NEW.in_force_at IS DISTINCT FROM OLD.in_force_at THEN 'in_force_at'
+    WHEN OLD.closed_at IS NOT NULL AND NEW.closed_at IS DISTINCT FROM OLD.closed_at THEN 'closed_at'
+    WHEN NEW.exchange_order_id <> OLD.exchange_order_id THEN 'exchange_order_id'
+    WHEN NEW.status <> OLD.status AND (OLD.status, NEW.status) NOT IN (('pending','in_force'),
+      ('pending','void'), ('pending','replaced'), ('in_force','replaced'), ('in_force','ended')) THEN 'status'
+  END;
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION 'trg_rs_guard: recorded_stops.% may not change so', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_rs_guard';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+CREATE TRIGGER trg_rs_guard BEFORE UPDATE ON recorded_stops
+  FOR EACH ROW EXECUTE FUNCTION rs_guard();
+ALTER TABLE recorded_stops ENABLE ALWAYS TRIGGER trg_rs_guard;
+```
+
 ### 3.4 Rules engine
 
 Rules compile from either editor (form or node-graph) into one **rule IR** (documented in `24-internal-schemas.md`). The IR is immutable per version; editing creates a new `rule_versions` row. `rules.active_version_id` points at the version the engine executes.
@@ -4224,6 +4361,7 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | **Pinned symbol (any stream)**        | ∞                  | ∞                                      | ∞             | pin                          | Overrides everything above                                                        |
 | `orders` (PG)                         | ∞                  | —                                      | ∞             | —                            | Ledger of record                                                                  |
 | `idempotency_anchors` (PG)            | ∞                  | —                                      | ∞             | —                            | Permanent replay anchor (SR-E29-07, §3.3.10): kept as long as the rows it names   |
+| `recorded_stops` (PG)                 | ∞                  | —                                      | ∞             | —                            | The stops each position was protected with (SR-E29-06, §3.3.11)                   |
 | `order_events` (PG)                   | 24 mo live         | 7 y                                    | 7 y           | archive_parquet              | Monthly partitions detached                                                       |
 | `executions` (PG)                     | ∞                  | 7 y mirror                             | ∞             | archive_parquet              | Financial record                                                                  |
 | `trade_groups`, `trade_group_legs`    | ∞                  | —                                      | ∞             | —                            | Trading history; the replay anchor answers at any age (SR-E29-07)                 |
@@ -4428,6 +4566,7 @@ NAMING_CONVENTION = {
 | `0045_audit_chain_hardening`    | `audit_chain()` gets its own `search_path` and draws `audit_log.id` under the chain lock (§3.10.1), so no session's path or insert path forks the chain while `CACHE 1` and READ COMMITTED hold — **#889 S3** (SR-E42-10), **#4032**; the downgrade restores 0003's function               |
 | `0046_audit_signing_keys`       | `audit_signing_keys`, the audit export signing keys (§3.1.5b, ADR-0039): sealed seeds, KEK-wrapped DEKs, one active key per environment, trigger `trg_audit_signing_keys_write_once`, no DELETE for `cv_app` — **#889 S4**; the downgrade refuses while any row exists                     |
 | `NNNN_idempotency_anchors`      | `idempotency_anchors`, its six CHECKs, `ux_ia_principal_ref`, its two triggers, no `DELETE` or `TRUNCATE` for `cv_app` (§3.3.10), `orders.provenance` (§3.3.4) — **E29-T04 #913**, planned: the next free revision when its implementation lands, re-parented per merge order (C-5.3)      |
+| `NNNN_recorded_stops`           | `recorded_stops`, its CHECKs, two unique and three other indexes, trigger `trg_rs_guard` and no `DELETE` for `cv_app` (§3.3.11) — **E29-T04 #913**, planned: with the slice that first writes a record, the next free revision, re-parented per merge order (C-5.3)                        |
 
 ---
 
@@ -4765,6 +4904,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `order_events`                                         | `payload`, `ret_code`, `ret_msg`        | P1         | jsonb / text, redacted before insert            | Can repeat money values: `redact_exchange_payload()` / `redact_exchange_text()` before insert (§3.3.5); append-only, kept on erase; not logged  |
 | `orders`                                               | `reject_code`, `reject_message`         | P1         | text, redacted before insert                    | Taxonomy code and exchange text (24 §8.1): its writer (E29-T03/T04) applies `redact_exchange_text()`, `message=True` for the text; not logged   |
 | `idempotency_anchors`                                  | `client_ref`, `request_sha256`          | P1         | plaintext; SHA-256 digest                       | The client's key and a digest of its order request (SR-E29-07): read only by the principal's own lookup; never logged or returned by any API    |
+| `recorded_stops`                                       | monetary columns                        | P1         | plaintext                                       | Financial personal data, as `positions`: the stops a position was protected with (§3.3.11); `PII:` comments; never sent to third parties        |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
 | `system_events` (`dms_hook_owed` rows)                 | `details`                               | P0         | jsonb                                           | Only the closed `from_state` and `reason` codes (E27-T04, §3.10.2); any other value is refused, so these rows need no redaction serializer      |
 | `backups`                                              | `encryption_ref`                        | S          | keyring handle                                  | opaque keyring alias only; key material (restic password, age identity) never enters the DB (§8.1); not in the `Backup` contract; never logged  |
