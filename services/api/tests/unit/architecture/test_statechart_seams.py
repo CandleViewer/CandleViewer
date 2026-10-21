@@ -6,7 +6,10 @@
   it.
 - Every `Gateway(` names its admission: the synchronous check before any send stays visible in each
   call site (the latch-backed one, or `ALWAYS_ADMIT` where the owner has not adopted the bundle, or
-  where it gates on its own latch: the OMS facade, the order path's one gate).
+  where it gates on its own latch: the OMS facade, the order path's one gate). When the OMS adopts
+  the persistence bundle, it must pass `latch=persistence.latch` into `OrderMachines(...)` or switch
+  its site to `LatchAdmission`: a restore latches into the bundle's latch, which the facade's own
+  latch would otherwise never see (review round 1, security-4; C-2.21).
 
 Both scan the parsed code (`ast`) of every module under `candleviewer/` but the Alembic revisions
 (which build neither, and one of which holds an escape `ast` warns about), so a new site is
