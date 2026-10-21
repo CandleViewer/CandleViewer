@@ -834,13 +834,20 @@ def test_the_runner_takes_only_the_pinned_k6_from_k6_bin(
     assert runner.k6_binary() == pinned  # and the path they checked is the one run and returned
 
 
+def is_file_of_python_313(self: Path, **_: object) -> bool:
+    """`Path.is_file()` from Python 3.13: `os.path.isfile`, False for every OSError. Up to 3.12 it
+    raised for EACCES and ENAMETOOLONG. The refusals must be the same under either."""
+    return os.path.isfile(self)
+
+
 @pytest.mark.parametrize(
     ("kind", "why"),
     [
         ("bare name", "not an absolute path"),  # a PATH lookup, or the working directory's
         ("relative path", "not an absolute path"),  # a real, executable file, but a relative one
         ("directory", "not a regular file"),  # absolute and searchable, but not a file
-        ("missing file", "not a regular file"),
+        ("missing file", "not a regular file"),  # stat fails with ENOENT
+        ("through a file", "not a regular file"),  # stat fails with ENOTDIR
         ("not executable", "not executable"),  # a regular file whose mode has no x bit
         pytest.param(  # stat fails with EACCES, not ENOENT
             "unsearchable parent",
@@ -848,6 +855,7 @@ def test_the_runner_takes_only_the_pinned_k6_from_k6_bin(
             marks=pytest.mark.skipif(os.geteuid() == 0, reason="root searches any directory"),
         ),
         ("over-long path", "cannot be checked"),  # stat fails with ENAMETOOLONG
+        ("symlink loop", "cannot be checked"),  # stat fails with ELOOP: any other OSError
     ],
 )
 def test_a_k6_bin_that_is_not_an_absolute_executable_file_is_refused_before_anything_runs(
@@ -860,14 +868,17 @@ def test_a_k6_bin_that_is_not_an_absolute_executable_file_is_refused_before_anyt
     for path, mode in files.items():
         path.write_text(script, encoding="utf-8")
         path.chmod(mode)
+    (tmp_path / "loop").symlink_to(tmp_path / "loop")
     value = {
         "bare name": "k6",
         "relative path": "./k6",
         "directory": str(tmp_path),
         "missing file": str(tmp_path / "gone"),
+        "through a file": str(tmp_path / "plain" / "k6"),
         "not executable": str(tmp_path / "plain"),
         "unsearchable parent": str(locked / "k6"),
         "over-long path": "/" + "k" * 5000,
+        "symlink loop": str(tmp_path / "loop"),
     }[kind]
     started: list[object] = []
 
@@ -881,11 +892,40 @@ def test_a_k6_bin_that_is_not_an_absolute_executable_file_is_refused_before_anyt
     if kind == "unsearchable parent":
         locked.chmod(0o600)  # no x bit: the k6 inside cannot be reached
     try:
-        with pytest.raises(SystemExit, match=why):
-            runner.k6_binary()
+        for is_file in (Path.is_file, is_file_of_python_313):  # the interpreter's, and 3.13's
+            monkeypatch.setattr(Path, "is_file", is_file)
+            with pytest.raises(SystemExit, match=why):
+                runner.k6_binary()
     finally:
         locked.chmod(0o700)  # so that tmp_path can be removed
     assert started == []  # no process was started for a path that failed the check
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        PermissionError(13, "Permission denied"),
+        OSError(8, "Exec format error"),
+        subprocess.CalledProcessError(1, "k6 version"),
+        subprocess.TimeoutExpired("k6 version", 30),
+    ],
+    ids=["permission denied", "exec format error", "non-zero exit", "timeout"],
+)
+def test_a_k6_bin_that_cannot_be_run_is_refused_never_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raised: Exception
+) -> None:
+    k6 = tmp_path / "k6"  # an absolute, executable, regular file: the filesystem checks pass
+    k6.write_text("#!/bin/sh\n", encoding="utf-8")
+    k6.chmod(0o755)
+
+    def fail(*_: object, **__: object) -> None:
+        raise raised
+
+    monkeypatch.setenv("K6_BIN", str(k6))
+    monkeypatch.setattr(subprocess, "run", fail)  # the one runner.k6_binary calls
+    with pytest.raises(SystemExit, match="cannot be run") as refused:
+        runner.k6_binary()
+    assert str(k6) in str(refused.value)
 
 
 def test_a_run_plan_applies_the_overrides_to_the_resolved_profile() -> None:
@@ -1523,6 +1563,26 @@ def test_a_cleared_link_goes_and_what_it_points_at_stays(tmp_path: Path) -> None
     assert not os.path.lexists(out / "bars") and (elsewhere / "BTCUSDT.state").exists()
 
 
+@pytest.mark.parametrize("name", [*runner.STALE, "bars"])
+def test_the_clear_removes_a_bars_directory_and_no_other_directory(
+    tmp_path: Path, name: str
+) -> None:
+    """`bars/` is the one directory a run's backend writes. A directory named like one of the
+    seven run files is not the harness's: the clear fails on it, as unlinking a directory does,
+    and what it holds stays."""
+    runner._fresh(tmp_path)  # an empty directory, taken and marked
+    held = tmp_path / name
+    held.mkdir()
+    (held / "kept.txt").write_text("kept\n", encoding="utf-8")
+    if name == "bars":
+        runner._fresh(tmp_path)
+        assert not held.exists()
+    else:
+        with pytest.raises(OSError):
+            runner._fresh(tmp_path)
+        assert (held / "kept.txt").read_text(encoding="utf-8") == "kept\n"
+
+
 @pytest.mark.parametrize("name", [*runner.STALE, "bars", "notes.txt"])
 def test_a_directory_the_harness_did_not_make_is_never_cleared(tmp_path: Path, name: str) -> None:
     """`--out-dir candleviewer` would otherwise delete a source tree's `bars/`, and an operator's
@@ -1540,6 +1600,8 @@ def test_a_directory_the_harness_did_not_make_is_never_cleared(tmp_path: Path, n
         runner._fresh(foreign)
     assert name in str(refused.value) and "nothing was deleted" in str(refused.value)
     assert [x.name for x in foreign.iterdir()] == [name]  # as it was, and no marker
+    if name == "bars":  # what it held is as it was
+        assert (entry / "series.py").read_text(encoding="utf-8") == "SERIES = 1\n"
     (foreign / runner.MARKER).write_text("e17-q03/1\n", encoding="utf-8")  # the operator's say-so
     runner._fresh(foreign)
     assert entry.exists() is (name == "notes.txt")  # then only the harness's own names go
