@@ -9,9 +9,11 @@ phrase per component so a hedge such as CMP-134's is visible), (5) the analytics
 the `- **Analytics/audit:**` lines of SCR-055..059 (only those lines, so a pointer line that
 mentions an event name never counts), (6) the Poisson noise floor of a trades-per-second window at
 1 / 5 / 30 s (the arithmetic the report's window recommendation quotes; a lower bound, since real
-tape is overdispersed) and (7) the Sprint 10 and 13 dates from `calendar_cv.py`. A row reads
-NOT FOUND when the anchor text moved; the tool never guesses a value and never raises on a moved
-anchor.
+tape is overdispersed), (6b) the deterministic-mean step response of those windows and of three
+rolling-baseline lengths to a sustained burst (detection latency, re-normalisation, warm-up — the
+baseline trade-off of F4c / Q13) and (7) the Sprint 10 and 13 dates from `calendar_cv.py`. A row
+reads NOT FOUND when the anchor text moved; the tool never guesses a value and never raises on a
+moved anchor.
 
 Usage: python3 -I docs/design/_tools/e25_d01_contract_audit.py          (Markdown)
        python3 -I docs/design/_tools/e25_d01_contract_audit.py --json   (the boards' numbers)
@@ -36,6 +38,12 @@ RATES = (
 WINDOWS_S = (1, 5, 30)  # the windows 11 / 14 / 22 name
 Z, PUSH_HZ, COOLDOWN_S = 3.0, 4, 60  # US-DET-002 z > 3; SCR-055 4 Hz; US-DET-002 cooldown 60 s
 SCAN_PER_S = 4.0  # one-token scan, E22-D01 F5 (heuristic)
+BURST_K = 3.0  # a sustained burst at 3x the usual rate (shape only, like the noise floor)
+BASELINES_S = {  # the three rolling-baseline lengths the sources name (F5, C3, Q13)
+    300: "shipped tape_speed_zscore base_ms=300000; 22 '1 s vs 300 s baseline'",
+    1200: "Jigsaw POT Average Time, '20 minutes is the default' (report 3.2)",
+    3600: "14 SCR-055 A11y readout 'above the 1-hour mean'",
+}
 HEDGE = "or by a backend detector service"  # CMP-134's placement hedge (15-component-catalogue.md)
 
 
@@ -214,12 +222,21 @@ def poisson_tail(n: float, k: int) -> float:
     return max(0.0, 1.0 - math.exp(log_cdf))
 
 
+def z3_threshold(n: float) -> int:
+    """The smallest count with z > Z strictly: floor(n + Z*sqrt(n)) + 1, so n = 25 gives 41.
+
+    `ceil(n + Z*sqrt(n))` was wrong when n + Z*sqrt(n) is an integer: at n = 25 it gave 40, which
+    is z = 3 exactly, not z > 3 (round-2 lens item 6).
+    """
+    return math.floor(n + Z * math.sqrt(n)) + 1
+
+
 def noise_floor() -> dict[str, object]:
     rows = {}
     for lam in RATES:
         for w in WINDOWS_S:
             n = lam * w
-            thr = math.ceil(n + Z * math.sqrt(n))
+            thr = z3_threshold(n)
             p = poisson_tail(n, thr)
             indep = 3600 / w
             rows[f"{lam}/s x {w} s"] = {
@@ -238,6 +255,47 @@ def noise_floor() -> dict[str, object]:
     }
 
 
+def step_response() -> dict[str, object]:
+    """Deterministic-mean step response at RATES[0] prints/s to a BURST_K x burst (shape only).
+
+    (a) Detection latency per fast window: after a step to BURST_K x the usual rate the window's
+    mean count ramps linearly over the window length; the latency is when it first exceeds the
+    z > 3 threshold of noise_floor(). (b) Per rolling-baseline length B, for the display window
+    WINDOWS_S[1]: inside a sustained burst the baseline mean rises linearly to the burst rate over
+    B, so the burst reads z <= 3 ("no longer extreme") at some t < B and z = 0 ("usual") at t = B;
+    after a burst at least B long ends, the baseline decays over B and the usual rate reads z < -1
+    ("below usual") for most of B. The baseline sd is the Poisson sqrt of its mean; warm-up is B
+    itself (SCR-055's "Warming up" state lasts one baseline).
+    """
+    lam, k, w_disp = RATES[0], BURST_K, WINDOWS_S[1]
+    detect = {}
+    for w in WINDOWS_S:
+        n = lam * w
+        detect[f"{w} s"] = round(w * (z3_threshold(n) - n) / ((k - 1) * n), 1)
+    n = lam * w_disp
+    # z(r) = sqrt(n) * (k - r) / sqrt(r), r = baseline mean / usual rate; solve z = Z and z = -1
+    s_hi = (-Z / math.sqrt(n) + math.sqrt((Z / math.sqrt(n)) ** 2 + 4 * k)) / 2
+    s_lo = (1 / math.sqrt(n) + math.sqrt(1 / n + 4)) / 2
+    r_extreme, r_quiet = s_hi**2, s_lo**2
+    baselines = {
+        f"{b} s": {
+            "source": src,
+            "warmup_s": b,
+            "extreme_until_s": round(b * (r_extreme - 1) / (k - 1)),
+            "usual_at_s": b,
+            "below_usual_for_s": round(b * (k - r_quiet) / (k - 1)),
+        }
+        for b, src in BASELINES_S.items()
+    }
+    return {
+        "rate_per_s": lam,
+        "burst_multiple": k,
+        "display_window_s": w_disp,
+        "detect_latency_s": detect,
+        "baselines": baselines,
+    }
+
+
 def sprints() -> dict[str, str]:
     """The sprint dates from calendar_cv.py, loaded by path (sys.path is left alone)."""
     spec = importlib.util.spec_from_file_location(
@@ -253,6 +311,9 @@ def sprints() -> dict[str, str]:
 
 
 def main(argv: list[str]) -> int:
+    # `python -I` ignores PYTHONIOENCODING / PYTHONUTF8, so a non-UTF-8 locale would otherwise
+    # encode the section signs and multiplication signs below in locale bytes (round-2 item 7).
+    sys.stdout.reconfigure(encoding="utf-8")
     data = {
         "regime": regime_vocabularies(),
         "tape": tape_windows(),
@@ -260,6 +321,7 @@ def main(argv: list[str]) -> int:
         "placement": placement(),
         "analytics": analytics(),
         "noise": noise_floor(),
+        "step": step_response(),
         "sprints": sprints(),
     }
     if "--json" in argv:
@@ -307,6 +369,24 @@ def main(argv: list[str]) -> int:
         f"\ncooldown caps alerts at {data['noise']['cooldown_cap_per_h']}/h; a 4 Hz digit swap is "
         f"{data['noise']['digit_swaps_vs_scan']:g}x the one-token scan rate"
     )
+    st = data["step"]
+    print(
+        f"\n## Step response (deterministic mean, {st['rate_per_s']} prints/s, "
+        f"a {st['burst_multiple']:g}x sustained burst; shape only)\n"
+    )
+    print(
+        "- detection latency to z > 3 per fast window: "
+        + ", ".join(f"{w}: {t} s" for w, t in st["detect_latency_s"].items())
+    )
+    print(
+        f"- rolling baseline vs the {st['display_window_s']} s display window "
+        "(warm-up | stops reading extreme | reads usual | reads below usual after it ends):"
+    )
+    for b, r in st["baselines"].items():
+        print(
+            f"  - {b} ({r['source']}): {r['warmup_s']} s | {r['extreme_until_s']} s | "
+            f"{r['usual_at_s']} s | {r['below_usual_for_s']} s"
+        )
     print("\n## Sprints (calendar_cv.py)\n")
     for k, v in data["sprints"].items():
         print(f"- {k}: {v}")
