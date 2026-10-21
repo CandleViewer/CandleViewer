@@ -551,12 +551,22 @@ def test_doctor_descriptor_origin_is_not_mistaken_for_a_secret_by_its_hostname(
 
 
 # The descriptor's hubOrigin is exempt from the identity secret scan only when it is a valid origin,
-# whichever of the env var and the descriptor wins in hub_origin().
+# and a present hubOrigin that is not one fails the doctor whichever of the env var and the
+# descriptor wins in hub_origin().
 SCAN = "identity carries no token/url/connect-code"
+ORIGIN_VALID = "identity.hubOrigin is a bare https origin"
+ORIGIN_PRESENT_INVALID = f"{ORIGIN_VALID} — descriptor hubOrigin present but invalid"
+SCAN_WORDS = ("bearer", "/mcp/", "token", "connect")
 SECRET_BEARING_ORIGINS = [
     pytest.param(FAKE_URL, id="mcp-url-with-connect-code"),
     pytest.param("Bearer " + FAKE_TOKEN, id="bearer-token"),
     pytest.param("token=" + FAKE_TOKEN, id="token-assignment"),
+]
+# Invalid values that carry none of the words the scan looks for: only the origin check can catch them.
+KEYWORD_FREE_INVALID_ORIGINS = [
+    pytest.param(FAKE_CODE, id="raw-code"),
+    pytest.param("https://user:" + "pw1234" + "@" + HUB_HOST, id="userinfo-password"),
+    pytest.param("http://" + HUB_HOST, id="http-scheme"),
 ]
 
 
@@ -569,7 +579,11 @@ def test_doctor_secret_in_the_descriptor_origin_fails_even_when_the_env_origin_w
     outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
 
     assert_fail(outcome, SCAN)  # exit 1, no READY, allowlisted lines, the value is not echoed
-    assert [ln for ln in outcome.lines if ln.startswith("FAIL")] == [f"FAIL  {SCAN}"]
+    # Two value-free FAIL lines: the scan catches the secret, the origin check the invalid value.
+    assert [ln for ln in outcome.lines if ln.startswith("FAIL")] == [
+        f"FAIL  {SCAN}",
+        f"FAIL  {ORIGIN_PRESENT_INVALID}",
+    ]
     assert f"PASS  hub origin resolved — via env {ORIGIN_ENV}" in outcome.out
 
 
@@ -593,6 +607,7 @@ def test_doctor_valid_descriptor_origin_passes_the_scan_whichever_source_wins(
     source = f"env {ORIGIN_ENV}" if env_set else "identity.hubOrigin"
     assert outcome.code == 0, outcome.out
     assert f"PASS  {SCAN}" in outcome.out
+    assert f"PASS  {ORIGIN_VALID}" in outcome.out
     assert f"PASS  hub origin resolved — via {source}" in outcome.out
     assert_allowlisted(outcome)
     assert_no_leak(outcome)
@@ -609,6 +624,51 @@ def test_doctor_descriptor_origin_is_the_one_the_stored_url_is_compared_with(
     assert_fail(outcome, URL_ORIGIN_CHECK)
     assert f"PASS  {SCAN}" in outcome.out
     assert "PASS  hub origin resolved — via identity.hubOrigin" in outcome.out
+
+
+def test_keyword_free_invalid_origins_really_carry_no_scan_word():
+    for param in KEYWORD_FREE_INVALID_ORIGINS:
+        assert not any(word in param.values[0].lower() for word in SCAN_WORDS), param.id
+
+
+@pytest.mark.parametrize("bad", KEYWORD_FREE_INVALID_ORIGINS)
+def test_doctor_keyword_free_invalid_descriptor_origin_fails_when_the_env_origin_wins(
+    cfg_root, capsys, bad
+):
+    ident = {**valid_identity(cfg_root), "hubOrigin": bad}  # the env (HUB) is set and wins
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, ORIGIN_PRESENT_INVALID)  # not READY, though the scan sees nothing wrong
+    assert [ln for ln in outcome.lines if ln.startswith("FAIL")] == [
+        f"FAIL  {ORIGIN_PRESENT_INVALID}"
+    ]
+    assert f"PASS  {SCAN}" in outcome.out
+    assert f"PASS  hub origin resolved — via env {ORIGIN_ENV}" in outcome.out
+
+
+@pytest.mark.parametrize("bad", KEYWORD_FREE_INVALID_ORIGINS)
+def test_doctor_keyword_free_invalid_descriptor_origin_fails_when_the_env_is_unset(
+    cfg_root, capsys, monkeypatch, bad
+):
+    monkeypatch.delenv(ORIGIN_ENV)
+    ident = {**valid_identity(cfg_root), "hubOrigin": bad}
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert_fail(outcome, ORIGIN_PRESENT_INVALID)
+    # The descriptor is the source here, so the hub origin itself is unresolved too.
+    assert f"FAIL  {INVALID_IN_DESCRIPTOR}" in outcome.out
+
+
+@pytest.mark.parametrize("blank", [None, "", "  "], ids=["null", "empty", "spaces"])
+def test_doctor_blank_descriptor_origin_counts_as_absent(cfg_root, capsys, blank):
+    ident = {**valid_identity(cfg_root), "hubOrigin": blank}  # the env (HUB) is set and wins
+
+    outcome = run_doctor(make_root(cfg_root, ident=ident), capsys)
+
+    assert outcome.code == 0, outcome.out
+    assert "identity.hubOrigin" not in outcome.out  # no origin line at all, as in hub_origin()
 
 
 # ============================ doctor: identity failures =============================

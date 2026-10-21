@@ -74,10 +74,11 @@ file.
 - **Agent reads:** the tracked `.claude/settings.json` denies agent `Read` of
   `.claude/settings.local.json` and any shell command naming `settings.local.json`. This is a
   guard against accidental reads, not an isolation boundary: a differently written shell command
-  can still read the file as the same Windows user. The identity and run records under
-  `.claude/relayroom/` are nonsecret by design: the doctor checks that they carry no token, URL or
-  connect code, apart from the descriptor's optional non-secret `hubOrigin` (a bare
-  `https://host[:port]`, which the doctor validates); both stay readable.
+  can still read the file as the same Windows user. The identity descriptor and the run records
+  under `.claude/relayroom/` are nonsecret by design and stay readable: the doctor scans the
+  descriptor for a token, URL or connect code (apart from its optional non-secret `hubOrigin`, a
+  bare `https://host[:port]` that must be valid whenever it is present), and for the run records it
+  only checks that one exists and that the folder is git-ignored.
 - **Session wake-up:** plain MCP does not wake an idle session; no background delivery is claimed.
 - **Exclusive ownership:** `whoami` proves the binding, not exclusivity. Owner confirmed this
   session is the sole `main-orchestrator` client (2026-10-14). Agents B and C use their own parts.

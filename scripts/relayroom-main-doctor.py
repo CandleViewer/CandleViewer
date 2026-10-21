@@ -11,8 +11,9 @@ prints only the exception class name, never its message, which could echo a secr
 Hub origin: the one origin the connect code may be sent to is never a committed literal. The doctor
 resolves it from the environment variable CANDLEVIEWER_RELAYROOM_ORIGIN, else from the optional
 `hubOrigin` key of the private descriptor (`.claude/relayroom/identity.local.json`), as a bare
-`https://host[:port]`, and FAILs closed when neither is set or the value is invalid. Only the source
-is reported; the value is never printed.
+`https://host[:port]`, and FAILs closed when neither is set or the value is invalid. A `hubOrigin` that
+is present but not a valid origin FAILs whichever source wins. Only the source is reported; the value
+is never printed.
 """
 from __future__ import annotations
 
@@ -142,6 +143,14 @@ def run(root: Path) -> int:
         scanned = {k: v for k, v in ident.items() if k != ORIGIN_KEY or parse_origin(v) is None}
         secretish = json.dumps(scanned).lower()
         check("identity carries no token/url/connect-code", not any(s in secretish for s in ("bearer", "/mcp/", "token", "connect")))
+        # A present `hubOrigin` must be a valid origin whichever source wins in hub_origin() below: with
+        # the env var set it is otherwise never validated, and a secret with no scanned word would pass.
+        # A blank value counts as absent, as there. The value itself is never printed.
+        hub_raw = ident.get(ORIGIN_KEY)
+        if not _blank(hub_raw):
+            valid = parse_origin(hub_raw) is not None
+            check("identity.hubOrigin is a bare https origin", valid,
+                  "" if valid else "descriptor hubOrigin present but invalid")
 
     # --- hub origin (private: env or identity.hubOrigin; only the source is printed, never the value) ---
     origin: str | None
