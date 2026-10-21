@@ -246,6 +246,7 @@
 ["net_binding_safe", "gauge", [], "live", "E09"]
 ["oms_db_write_seconds", "histogram", ["table"], "planned", "E29"]
 ["oms_illegal_transitions_total", "counter", [], "planned", "E29"]
+["oms_interim_ports", "gauge", ["port"], "planned", "E29"]
 ["oms_rate_reject_total", "counter", [], "live", "E04"]
 ["oms_reconcile_anomaly_total", "counter", [], "planned", "E29"]
 ["oms_state_transitions_total", "counter", ["from", "to", "source"], "planned", "E29"]
