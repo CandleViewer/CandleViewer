@@ -154,8 +154,10 @@ async def test_start_joins_the_gc_pause_timer_and_stop_takes_it_out(
 ) -> None:
     runtime = _runtime(monkeypatch, "none")
     runtime.start()
-    assert gc.callbacks.count(runtime.gc_timer) == 1
-    await runtime.stop()
+    try:
+        assert gc.callbacks.count(runtime.gc_timer) == 1
+    finally:
+        await runtime.stop()
     assert runtime.gc_timer not in gc.callbacks
 
 
@@ -169,6 +171,7 @@ async def test_stop_does_not_swallow_a_cancellation_of_its_caller(
     stop.cancel()
     with pytest.raises(asyncio.CancelledError):
         await stop
+    assert runtime.gc_timer not in gc.callbacks  # left before `stop()` awaited anything
 
 
 @pytest.mark.perf

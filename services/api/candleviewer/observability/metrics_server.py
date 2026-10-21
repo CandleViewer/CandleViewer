@@ -3,7 +3,8 @@
 The listener serves the process-wide registry on `CV_METRICS_BIND` and refuses
 to start on a public interface (`20-architecture.md` 13.1: an exposed
 `/metrics` leaks order rates and trading activity). The loop-lag sampler,
-cardinality check and fallback-snapshot ticker run alongside it.
+cardinality check and fallback-snapshot ticker run alongside it, and the
+garbage-collection pause timer is in `gc.callbacks` while it runs (#3641).
 """
 
 from __future__ import annotations
@@ -79,7 +80,8 @@ class MetricsRuntime:
         self._host, self._port = parse_private_bind(bind)
         self.metrics = metrics
         self._r0 = register_r0(metrics)
-        self.gc_timer = GcPauseTimer(self._r0["cv_gc_pause_seconds"], self._r0["cv_gc_heap_blocks"])
+        r0 = self._r0
+        self.gc_timer = GcPauseTimer(r0["cv_gc_pause_seconds"], r0["cv_gc_blocks_in_use"])
         self._server: uvicorn.Server | None = None
         self._tasks: list[asyncio.Task[None]] = []
 
@@ -108,9 +110,10 @@ class MetricsRuntime:
         self.gc_timer.install()
 
     async def stop(self) -> None:
-        """Ask the listener to exit, cancel the samplers, await all four: a dead task never keeps
-        another from being awaited (its failure was logged when it happened), and a cancellation
-        of the caller of `stop()` propagates."""
+        """Leave `gc.callbacks` first, before any await, so a cancelled `stop()` still removes the
+        timer. Then ask the listener to exit, cancel the samplers, await all four: a dead task never
+        keeps another from being awaited (its failure was logged when it happened), and a
+        cancellation of the caller of `stop()` propagates."""
         self.gc_timer.remove()
         tasks, self._tasks = self._tasks, []
         if self._server is not None:

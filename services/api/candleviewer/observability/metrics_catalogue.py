@@ -296,11 +296,11 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=3,
     ),
     _s(
-        "cv_gc_heap_blocks",
+        "cv_gc_blocks_in_use",
         "gauge",
         "blocks",
         (),
-        "Allocated pymalloc blocks after the latest full garbage collection (#3641).",
+        "Allocated pymalloc blocks after the latest full garbage collection, a heap proxy (#3641).",
         "n/a",
         _L,
         "E04",

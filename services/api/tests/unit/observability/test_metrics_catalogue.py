@@ -51,7 +51,6 @@ _SAMPLES = ("_bucket", "_count", "_sum")
 _SUFFIX_EXCEPTIONS = frozenset(
     {
         "cv_keys_failing_policy",  # named by the E27-T03 ticket's Observability section (#836)
-        "cv_gc_heap_blocks",  # pymalloc blocks: the heap proxy cheap enough to read (#3641)
         "cv_audit_lane_last_seq",  # named by ADR-0037 (U37) and the e09 threat model
         "disk_used_ratio",
         "cv_maintenance_mode",

@@ -90,13 +90,14 @@ async def run_fallback_snapshots(
 
 
 class GcPauseTimer:
-    """Times every garbage collection (#3641). A collection runs on the thread that triggers it,
-    so a full one (generation 2) is an event-loop block of its own (C-2.17). Each pause goes to
-    `cv_gc_pause_seconds{generation}`. After a full collection, the heap it walked goes to
-    `cv_gc_heap_blocks`: the allocated pymalloc blocks, about 55 us to read, where counting
-    `gc.get_objects()` costs about 19 ms and is a block itself. The callback runs inside the
-    collector on whichever thread allocates, so it only reads a clock and updates children bound
-    here."""
+    """Times every garbage collection (#3641). Under the GIL a collection on any thread stalls
+    the event loop, so a full one (generation 2) can be a C-2.17 block of its own. Each pause goes
+    to `cv_gc_pause_seconds{generation}`. After a full collection, `cv_gc_blocks_in_use` reads
+    the allocated pymalloc blocks, a proxy for the heap that collection walked: about 55 us to
+    read, where counting `gc.get_objects()` costs about 19 ms and is a block itself. It reads 0
+    until the first full collection. The callback runs inside the collector on whichever thread
+    allocates, so it only reads a clock and updates children bound here; a `stop` without its
+    `start` (an `install` from another thread mid-collection) is skipped."""
 
     def __init__(
         self,
@@ -105,18 +106,24 @@ class GcPauseTimer:
         *,
         clock: Callable[[], float] = time.perf_counter,
         blocks: Callable[[], int] = sys.getallocatedblocks,
+        on_pause: Callable[[int, float], None] | None = None,
     ) -> None:
         self._pauses = tuple(pauses.labels(str(generation)) for generation in range(3))
         self._heap = heap.child()
-        self._clock, self._blocks = clock, blocks
-        self._started = 0.0
+        self._clock, self._blocks, self._on_pause = clock, blocks, on_pause
+        self._started: float | None = None
 
     def __call__(self, phase: str, info: dict[str, int]) -> None:
         if phase == "start":
             self._started = self._clock()
             return
-        generation = info["generation"]
-        self._pauses[generation].observe(self._clock() - self._started)
+        started, self._started = self._started, None
+        if started is None:
+            return
+        generation, pause = info["generation"], self._clock() - started
+        self._pauses[generation].observe(pause)
+        if self._on_pause is not None:  # a bench keeps each pause (`bench/ingestion/engine.py`)
+            self._on_pause(generation, pause)
         if generation == 2:
             self._heap.set(self._blocks())
 
