@@ -68,9 +68,9 @@ intent, revoke-my-session's `auth.session_revoked` and the reuse intent (a repla
 `ContainedFamilies`, Q9). The lane takes them first and the writer is the fallback, so these
 answer 503, or count a record lost, only when both refuse; a service with no façade
 (`LaneNotWired`: before `start()`, or once `stop()` began) hands each one to the writer alone, which
-is logged once. Every other record here (refresh, unlock, the refusal and probe rows) stays on the
-writer. A row joins with `lane=True` on its `_audit` call; a call site outside this router that
-writes through `AuditService.lane` needs the same `LaneNotWired` guard.
+is logged once. Every other record here (refresh, unlock, extend, the refusal and probe rows)
+stays on the writer. A row joins with `lane=True` on its `_audit` call; a call site outside this
+router that writes through `AuditService.lane` needs the same `LaneNotWired` guard.
 
 Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
 `last_seen_at`. `GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout`
@@ -322,7 +322,8 @@ def _unauthorized(detail: str = "authentication required") -> JSONResponse:
 #: `api.query_allowlist`, never silently ignored (#2573, #2632). Declared query parameters
 #: (22-api-openapi.yaml): `authGetSession` has none; `authListSessions` has `Cursor` and `Limit`;
 #: `authLogout`, `authUnlock` and `revokeMySession` have none (`CsrfToken` is a header,
-#: `sessionId` a path one).
+#: `sessionId` a path one). `authExtendSession` has none either, but declares no `422`, so
+#: extend checks no query string until the contract does (#2300).
 GET_SESSION_QUERY: frozenset[str] = frozenset()
 LIST_SESSIONS_QUERY = frozenset({"cursor", "limit"})
 LOGOUT_QUERY: frozenset[str] = frozenset()
@@ -1301,7 +1302,8 @@ def make_session_router(
     @router.post("/auth/session/extend")
     async def extend_session(request: Request) -> Response:
         """CMP-098 "Extend": the explicit activity call (contract `authExtendSession`). It
-        never lifts a lock and never moves `expires_at`."""
+        never lifts a lock and never moves `expires_at`. It sends B16 no `REQUEST`: the chart
+        only records, and the row is the deadline's truth (C-2.21)."""
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
         record = await _authenticate(request, activity=False)  # its activity is `touch()`

@@ -308,6 +308,7 @@ def test_a_bearer_call_bound_to_its_own_session_passes_with_the_cookie_present(p
         ("POST", "/auth/unlock/"),
         ("POST", "/auth/unlockx"),
         ("PUT", "/auth/unlock"),
+        ("POST", "/auth/session/extend"),
     ],
 )
 def test_only_a_post_to_the_exact_logout_or_unlock_path_is_deferred_to_the_route(

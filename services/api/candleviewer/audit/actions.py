@@ -43,9 +43,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # surviving session on use (SR-029); written through the port `AuthService` attaches.
         "auth.disabled_user_session_revoked",
         "auth.idle_locked",
-        # #2300 (E09-D06 ruling): named by the `POST /auth/unlock` and
-        # `POST /auth/session/extend` contracts; the routes that emit them ship in that
-        # ticket's slice 2/2.
+        # #2300 (E09-D06 ruling): written write-ahead by `POST /auth/unlock` and
+        # `POST /auth/session/extend`.
         "auth.session_unlocked",
         "auth.unlock_failed",
         "auth.session_extended",

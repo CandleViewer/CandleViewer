@@ -31,8 +31,12 @@ async def test_extend_moves_only_the_idle_deadline_and_audits_first(w: World) ->
     assert state["idle_deadline"] == (w.clock.now + timedelta(seconds=_IDLE_S)).isoformat()
     assert state["expires_at"] == minted.expires_at.isoformat() and state["locked"] is False
     assert r.json()["server_time"] == w.clock.now.isoformat()
-    assert w.audit.writer.actions() == ["auth.session_extended"]
-    assert (await w.row(minted)).last_seen_at == w.clock.now
+    row = await w.row(minted)
+    (record,) = w.audit.writer.records
+    assert record["action"] == "auth.session_extended"
+    assert (record["actor_user_id"], record["session_id"]) == (row.user_id, minted.session_id)
+    assert record["actor_ip"] == "127.0.0.1"
+    assert row.last_seen_at == w.clock.now
 
 
 async def test_extend_with_the_audit_sink_down_is_503_and_the_deadline_does_not_move(
