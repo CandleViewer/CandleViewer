@@ -16,7 +16,9 @@ threshold step adds, and the share of prints above the cap; the WCAG contrast of
 colour pair over the real token JSON, layered per `themes.json` (dark, light, high-contrast)
 with the formula of `contrast_check.py`; and the same tape colours under the greyscale and
 deuteranopia simulation of `cvd_sim.py` (its Rec. 601 weights and Machado 2009 matrix, quoted
-so this stays stdlib), with the contrast each rendering leaves. Provenance comes from metadata
+so this stays stdlib), with the contrast each rendering leaves; and the wire bytes per print
+under binary kind 3 against the structured `TradesBatch` item a merged row's count needs, as
+JSON and as MessagePack (memo C18, 7). Provenance comes from metadata
 only: the corpus `manifest.json` `source` ("documented-shape" = assembled, "capture_fixture.py"
 = recorded, anything else = unknown), the conformance `MANIFEST.toml` (`synthetic = true`) and
 the big-trade golden README's `Source:` line, whose named corpus file's manifest entry decides
@@ -54,6 +56,14 @@ READ_ROWS_PER_S = {"full": round(WPM / 60 / TOKENS_FULL, 1), "scan": 4.0}  # sca
 R_MIN_PX, R_MAX_PX, WHALE_MULTIPLE = 3.0, 24.0, 4  # PROPOSED: r_min at big, r_max at tier 2 (4x)
 MULTIPLES = (1, 1.5, 2, 3, 4)  # of the class's big threshold; 4x = the tier-2 threshold = the cap
 RECON_WINDOW_S, RECON_SIDES = 0.25, 2  # US-BIG-004 250 ms / 1 tick; best case one row per side
+KIND3_RECORD_B, CVWB_HEADER_B, TRADES_THROTTLE_MS = 22, 24, 100  # 23 §3.4 body_kind 3; §6.1
+STRUCTURED_ITEM = {  # the 23 §14.2 TradesBatch item a merged row needs (memo C18): the §3.1 example
+    "ts_ms": 1_789_132_262_331,  # any epoch ms is 13 digits; the size is the same whatever the time
+    "price": "64012.5",  # decimals travel as strings (23 §13 common schema `decimal`)
+    "size": "0.85",
+    "side": "buy",
+    "cluster_size": 3,  # the count kind 3 does not carry (flag bit2 only)
+}
 DENSE_TAPE = "btcusdt-2026-09-01.jsonl.gz"  # the synthetic dense tape the worked examples use
 CLASS_BIG = {"majors": 250_000, "mid-caps": 50_000}  # shipped value; memo 3.6 fallback (heuristic)
 NEWLIST_TAPE = "newlist-2026-09-04.jsonl.gz"  # the new-listing seed = its p99 on a 1-2-5 step
@@ -280,6 +290,57 @@ def worked(files: list[dict]) -> dict:
         "reading": reading,
         "rates": rates,
         "bubble": bubble,
+        "encoding": encoding(),
+    }
+
+
+def _msgpack_size(o: object) -> int:
+    """Exact MessagePack size of a small map of str / int / bool values (the §14.2 item)."""
+    if isinstance(o, bool):
+        return 1
+    if isinstance(o, int):  # positive fixint, uint8, uint16, uint32, uint64
+        return 1 if o < 128 else 2 if o < 256 else 3 if o < 65_536 else 5 if o < 2**32 else 9
+    if isinstance(o, str):  # fixstr, str8, str16
+        n = len(o.encode())
+        return n + (1 if n < 32 else 2 if n < 256 else 3)
+    if isinstance(o, dict):  # fixmap (< 16 keys)
+        return 1 + sum(_msgpack_size(k) + _msgpack_size(v) for k, v in o.items())
+    raise TypeError(type(o).__name__)
+
+
+def encoding() -> dict:
+    """Wire bytes per print: kind 3 vs the structured item a merged row needs (memo C18, 7).
+
+    Kind 3 is a fixed 22-byte record (23 §3.4) read through typed-array views; the structured
+    TradesBatch item is one JSON object (`cv.v1.json`) or one MessagePack map (`cv.v1.msgpack`)
+    per print, parsed and allocated per print. Per-frame overhead (the 24-byte CVWB header and
+    the envelope) rides on 10 frames per second at the 100 ms throttle and is not counted.
+    """
+    js = len(json.dumps(STRUCTURED_ITEM, separators=(",", ":")).encode())
+    mp = _msgpack_size(STRUCTURED_ITEM)
+    return {
+        "kind3_record_bytes": KIND3_RECORD_B,
+        "cvwb_header_bytes": CVWB_HEADER_B,
+        "frames_per_s_at_throttle": 1000 // TRADES_THROTTLE_MS,
+        "structured_item": STRUCTURED_ITEM,
+        "structured_json_bytes": js,
+        "structured_msgpack_bytes": mp,
+        "ratio_over_kind3": {
+            "json": round(js / KIND3_RECORD_B, 1),
+            "msgpack": round(mp / KIND3_RECORD_B, 1),
+        },
+        "kind3_plus_u16_count": {  # C18 option (a): a 2-byte count appended to the record
+            "record_bytes": KIND3_RECORD_B + 2,
+            "kb_per_s_at_2000": round(2000 * (KIND3_RECORD_B + 2) / 1000, 1),
+        },
+        "kb_per_s": {
+            str(r): {
+                "kind3": round(r * KIND3_RECORD_B / 1000, 1),
+                "structured_json": round(r * js / 1000, 1),
+                "structured_msgpack": round(r * mp / 1000, 1),
+            }
+            for r in RATES
+        },
     }
 
 
@@ -440,6 +501,13 @@ def main(argv: list[str]) -> int:
         print(
             f"| {r} | {bo['rows_per_s']} | {bo['dwell_s']} | {rc['rows_per_s']} | {rc['dwell_s']} |"
         )
+    e = w["encoding"]
+    print(
+        f"\nWire bytes per print (memo C18, 7): kind 3 {e['kind3_record_bytes']} B; the structured "
+        f"item a merged row needs {e['structured_json_bytes']} B as JSON, "
+        f"{e['structured_msgpack_bytes']} B as MessagePack; "
+        f"kB/s at 50 / 500 / 2 000: {e['kb_per_s']}"
+    )
     b = w["bubble"]
     print(f"\nBubble radius px (PROPOSED): r {R_MIN_PX:g} at 1x the class's big threshold,")
     print(f"{R_MAX_PX:g} at {WHALE_MULTIPLE}x = the tier-2 threshold, clamped above; max gap px")
