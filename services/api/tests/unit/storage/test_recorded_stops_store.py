@@ -92,6 +92,7 @@ def test_a_partial_side_a_trail_and_a_marker_the_table_admits_pass() -> None:
     _stop(trailing_distance=Decimal(50), trailing_active_price=Decimal(63000))
     _stop(source="restore", order_id=None)
     _stop(trigger_price=Decimal("0.5"), position_marker="m")  # a sub-unit price; one character
+    _stop(trailing_distance=Decimal("0.5"), trailing_active_price=Decimal("0.8"))  # sub-unit trail
 
 
 def test_a_requests_values_never_change() -> None:
