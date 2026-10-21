@@ -6,12 +6,16 @@ rules:
       Withdrawal/transfer/funding operations are out of scope of any kind,
       through any code path (CONSTITUTION.md C-1.2 item 5, C-2.7). This
       matches a call that looks like a Bybit asset-transfer/withdrawal
-      endpoint invocation. Remove it; CandleViewer never calls a withdrawal
-      endpoint.
+      endpoint invocation, or a call that creates an API key or changes a
+      key's permissions (`/v5/user/update-api`, `/v5/user/update-sub-api`,
+      `/v5/user/create-sub-api`): such a call could grant the withdrawal
+      permission C-2.8 refuses (#2877 ruling R14). Remove it; CandleViewer
+      never calls a withdrawal endpoint and never edits a key.
     metadata:
       references:
         - CONSTITUTION.md C-1.2
         - CONSTITUTION.md C-2.7
+        - CONSTITUTION.md C-2.8
       rule-id: cv-withdrawal-endpoint-ban
     patterns:
       - pattern-either:
@@ -24,3 +28,5 @@ rules:
           - pattern: $CLIENT.universal_transfer(...)
           - pattern-regex: '["'']/v5/asset/withdraw/.*["'']'
           - pattern-regex: '["'']/v5/asset/transfer/.*["'']'
+          # #2877 R14: key creation and key-permission changes, master and sub account.
+          - pattern-regex: '["'']/v5/user/(update-api|update-sub-api|create-sub-api)["'']'
