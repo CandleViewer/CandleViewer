@@ -19,7 +19,8 @@ import urllib.error
 import urllib.request
 
 DEFAULT_SERVER = "penpot"
-ENDPOINT_RE = re.compile(r"https://[^\s?#]+|http://(127\.0\.0\.1|localhost)(:\d+)?(/[^\s?#]*)?")
+ENDPOINT_RE = re.compile(r"https://[^\s/?#@]+(/[^\s?#]*)?"
+                         r"|http://(127\.0\.0\.1|localhost)(:\d+)?(/[^\s?#]*)?")
 
 
 def _entry(server: str, project: str | None) -> tuple[str, str]:
@@ -28,11 +29,19 @@ def _entry(server: str, project: str | None) -> tuple[str, str]:
     project = os.path.abspath(os.path.expanduser(project)) if project else None
     scope = cfg.get("projects", {}).get(project, {}) if project else cfg
     url = scope.get("mcpServers", {}).get(server, {}).get("url", "")
-    if "userToken=" not in url:
+    if not url.partition("userToken=")[2]:
         where = f"project {project!r}" if project else "user scope"
         raise SystemExit(f"no MCP server entry {server!r} with a userToken in ~/.claude.json"
                          f" ({where})")
     return url.split("?", 1)[0], url.split("userToken=", 1)[1]
+
+
+def _redact(text: str, key: str) -> str:
+    token = re.split(r"[&#]", key, maxsplit=1)[0]  # a server may echo the bare token
+    forms = {key, token, json.dumps(key)[1:-1], json.dumps(token)[1:-1]} - {""}
+    for k in sorted(forms, key=len, reverse=True):
+        text = text.replace(k, "<key>")
+    return text
 
 
 def _post(url: str, body: dict, sid: str | None = None):
@@ -43,7 +52,11 @@ def _post(url: str, body: dict, sid: str | None = None):
     # urllib/http.client messages embed the URL, which carries the key: report the error type only
     try:
         req = urllib.request.Request(url, json.dumps(body).encode(), h)
-        r = urllib.request.urlopen(req, timeout=300)
+        # http is loopback only: never send it through an env proxy, which would receive the key
+        if url.startswith("http://"):
+            r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=300)
+        else:
+            r = urllib.request.urlopen(req, timeout=300)
         sid = r.headers.get("Mcp-Session-Id") or sid
         data = [json.loads(l[5:]) for l in r.read().decode().splitlines() if l.startswith("data:")]
     except urllib.error.HTTPError as e:
@@ -58,9 +71,10 @@ def _post(url: str, body: dict, sid: str | None = None):
 def export(shape_id: str, out: str, fmt: str = "png", server: str = DEFAULT_SERVER,
            project: str | None = None, endpoint: str | None = None) -> int:
     base, key = _entry(server, project)
+    src = "--endpoint / PENPOT_MCP_ENDPOINT" if endpoint else f"the URL of entry {server!r}"
     endpoint = endpoint or base
     if not ENDPOINT_RE.fullmatch(endpoint):
-        raise SystemExit("the MCP endpoint must be https (http on loopback only), with no query")
+        raise SystemExit(f"{src} must be https (http on loopback only), with no query")
     url = endpoint + "?userToken=" + key
     sid, _ = _post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                          "params": {"protocolVersion": "2025-03-26", "capabilities": {},
@@ -70,7 +84,9 @@ def export(shape_id: str, out: str, fmt: str = "png", server: str = DEFAULT_SERV
                        "params": {"name": "export_shape", "arguments": {"shapeId": shape_id, "format": fmt}}}, sid)
     msg = d[-1] if d else {"error": "the MCP reply had no data frames"}
     if "error" in msg:
-        raise SystemExit("MCP error: " + json.dumps(msg["error"]).replace(key, "<key>")[:400])
+        raise SystemExit("MCP error: " + _redact(json.dumps(msg["error"]), key)[:400])
+    if msg.get("result", {}).get("isError"):
+        raise SystemExit("MCP tool error: " + _redact(json.dumps(msg["result"]), key)[:400])
     for c in msg.get("result", {}).get("content", []):
         if c.get("type") == "image":
             raw = base64.b64decode(c["data"])
@@ -80,7 +96,7 @@ def export(shape_id: str, out: str, fmt: str = "png", server: str = DEFAULT_SERV
         if c.get("type") == "text" and fmt == "svg":
             open(out, "w", encoding="utf-8").write(c["text"])
             return len(c["text"])
-    raise SystemExit("no image in response: " + json.dumps(msg).replace(key, "<key>")[:400])
+    raise SystemExit("no image in response: " + _redact(json.dumps(msg), key)[:400])
 
 
 if __name__ == "__main__":
