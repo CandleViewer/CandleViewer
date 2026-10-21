@@ -1,8 +1,8 @@
 """The idle lock end to end (#2300; contract info "Idle lock"; Gherkin of the ticket).
 
 The real `create_app()` over the in-memory auth stack of `_stack.py`, so the CSRF guard, the
-idle-lock gate, the read-only guard, the routes and an audit writer that refuses unregistered
-actions all run as deployed. No network, no sleeps (C-13.5, C-13.7).
+idle-lock gate, the read-only guard, the routes, the real B16 chart and an audit writer that
+refuses unregistered actions all run as deployed. No network, no sleeps (C-13.5, C-13.7).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from candleviewer.auth.models import MintedSession
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from tests.csrf_helpers import csrf_headers
 
-from ._stack import ORIGIN, Stack
+from ._stack import ORIGIN, PW, Stack
 
 _IDLE_S = 300  # locks while the 12 min access token still lives
 _HTTP = ("get", "put", "post", "patch", "delete")
@@ -302,14 +302,54 @@ def test_after_a_reload_the_cookie_alone_signs_out_through_the_csrf_guard(stack:
     assert {REFRESH_COOKIE, CSRF_COOKIE} <= cleared
 
 
-def test_a_cookie_logout_bound_to_another_session_is_refused(stack: Stack) -> None:
+@pytest.mark.parametrize("path", ["/auth/logout", "/auth/unlock"])
+def test_a_cookie_logout_or_unlock_bound_to_another_session_is_refused(
+    stack: Stack, path: str
+) -> None:
+    """Before anything is audited but the refusal, a password checked or a lock lifted."""
     mine = _session(stack, "mine")
     theirs = _session(stack, "theirs")
     stack.clock.now += ACCESS_TOKEN_TTL
-    r = stack.client.post("/auth/logout", headers=_cookie_only(stack, mine, theirs))
+    body = {"password": PW} if path == "/auth/unlock" else None
+    r = stack.client.post(path, headers=_cookie_only(stack, mine, theirs), json=body)
     assert (r.status_code, _code(r)) == (403, "csrf_token_invalid")
     assert [rec["action"] for rec in stack.audit.records] == ["auth.csrf_refused"]
     assert _live(stack, mine) and _live(stack, theirs)
+    row = stack.call(stack.auth.sessions.peek_refresh, mine.refresh_token)
+    assert row is not None and row.is_idle_locked(now=stack.clock.now)
+
+
+def test_a_locked_session_reads_itself_and_unlocks_with_the_password_only(stack: Stack) -> None:
+    """AC "Unlock with the password only", through the real guards, chart and audit writer."""
+    minted = _session(stack, "returning")
+    _lock(stack)
+    headers = _headers(stack, minted)
+    info = stack.client.get("/auth/session", headers=headers)
+    assert info.status_code == 200 and info.json()["session"]["locked"] is True
+    r = stack.client.post("/auth/unlock", headers=headers, json={"password": PW})
+    assert r.status_code == 200, r.text
+    assert r.json()["session"]["locked"] is False and r.json()["step_up_expires_at"] is None
+    assert [rec["action"] for rec in stack.audit.records] == [
+        "auth.idle_locked",
+        "auth.session_unlocked",
+    ]
+    after = stack.client.get("/auth/sessions", headers=headers)
+    assert after.status_code == 200  # the gate lets the unlocked session through again
+
+
+def test_after_a_reload_the_cookie_alone_unlocks_through_the_csrf_guard(stack: Stack) -> None:
+    """The access token is gone 12 minutes into a lock and a locked session cannot refresh,
+    so the lock screen unlocks with the `cv_refresh` cookie, then refreshes."""
+    minted = _session(stack, "reloaded")
+    stack.clock.now += ACCESS_TOKEN_TTL  # locked, and the access token is gone
+    headers = _cookie_only(stack, minted, minted)
+    assert stack.client.get("/auth/session", headers=headers).json()["session"]["locked"]
+    refresh = stack.client.post("/auth/refresh", headers=headers)
+    assert (refresh.status_code, _code(refresh)) == (401, "session_idle_locked")
+    r = stack.client.post("/auth/unlock", headers=headers, json={"password": PW})
+    assert r.status_code == 200, r.text
+    rotated = stack.client.post("/auth/refresh", headers=headers)
+    assert rotated.status_code == 200, rotated.text
 
 
 def test_a_cookie_alone_never_revokes_a_session_through_the_csrf_guard(stack: Stack) -> None:

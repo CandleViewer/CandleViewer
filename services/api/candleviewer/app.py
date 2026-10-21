@@ -1563,6 +1563,8 @@ def create_app(
             csrf=csrf_codec,
             audit_tracker=csrf_audits,  # one in-flight cap + shutdown drain for refusal audits
             enrolment_refusals=enrolment_refusals,  # unlock answers as the guard does (#2295)
+            # #2300: unlock records on B16 and checks the password on login's path (step-up).
+            unlock_authority=lambda: ctx.auth.step_up if ctx.auth.step_up_is_active else None,
         )
     )
     # #2713: the shell bootstrap (`/me`, `/me/preferences`, `/me/keymap`), self only. Without an

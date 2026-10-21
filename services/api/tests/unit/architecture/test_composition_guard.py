@@ -9,8 +9,8 @@ ticket per entry); stale entries fail too, so nothing lingers once it is wired.
 `openapi_pending` holds two kinds of entry. The FROZEN E49 baseline (ticket
 ``E49-K01-F4-baseline``, 116 ops) may only shrink. Contract-first entries carry a real
 ticket (``#123`` or ``E12-S03``) and must be removed once served (the stale check fails
-until they are). The total cap is 124 = 116 frozen + 8 contract-first, each with its own ticket
-in the allowlist (#2266 D2, #966 BK-10 and #966 BK-11 served theirs; #966 BK-9 a frozen one,
+until they are). The total cap is 123 = 116 frozen + 7 contract-first, each with its own ticket
+in the allowlist (#2266 D2, #966 BK-10, #966 BK-11 and #2300 served theirs; #966 BK-9 a frozen one,
 E13-T02 the frozen `GET /indicators`, E42-T09 two of each, and E13-T03 the four frozen
 `/indicator-presets*` operations).
 Keep both caps tight: a contract PR that adds an operation raises ``PENDING_BASELINE`` by
@@ -44,7 +44,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 124
+PENDING_BASELINE = 123
 FROZEN_BASELINE = 116
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
