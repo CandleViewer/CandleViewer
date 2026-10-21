@@ -36,16 +36,23 @@ jobs:
       engine: "ECMAScript : Graal.js"
       name: cv-role-session
       source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
-  # Before any request, so the Low thresholds apply to every response the scan sees, the import's
-  # included (a job applies from where it runs). 10049 (storable and cacheable content) is not in
-  # the pinned 2.17.0 image: listing it only made ZAP exit non-zero on the plan warning.
+  # Before any request: a job applies from where it runs. No rule thresholds are set here. ZAP
+  # 2.17.0 logs the per-rule thresholds this job sets, but they do not reach the rules: in run
+  # 39600018445 the admin probe below drew no 10021, which at Low includes error responses (#3991,
+  # settling #3996's R2-S1). At their defaults the header rules read 2xx responses only, which the
+  # scanning roles never get from the admin surface. So the admin routes' headers rest on the code:
+  # `nosniff` on every response (`NoSniff`, #3990) and no HTML to frame or script. 10049 (storable
+  # and cacheable content) is not in the pinned 2.17.0 image either.
   - type: passiveScan-config
     parameters: { maxAlertsPerRule: 10, scanOnlyInScope: true }
-    rules:
-      - { id: 10020, name: Anti-clickjacking header, threshold: Low }
-      - { id: 10021, name: X-Content-Type-Options header missing, threshold: Low }
-      - { id: 10038, name: CSP header not set, threshold: Low }
-      - { id: 10055, name: CSP, threshold: Low }
+  # A refused admin response: the session reaches the admin surface and RBAC refuses it with 403,
+  # not 401, before the scan starts (matrix.yaml refuses this route to both scanning roles).
+  - type: requestor
+    name: admin-probe-after-config
+    requests:
+      - url: "${ZAP_TARGET}/admin/overview"
+        method: GET
+        responseCode: 403
   - type: requestor
     name: session-live-before-scan
     requests:

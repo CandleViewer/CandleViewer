@@ -187,13 +187,14 @@ def test_the_scan_plan_is_the_template_with_the_roles_report() -> None:
     assert TEMPLATE["jobs"][-1]["parameters"]["reportFile"] == "admin-surface"  # not mutated
 
 
-def test_the_passive_thresholds_are_set_before_the_first_request() -> None:
-    """A job applies from where it runs: with the config after the import, the import's responses
-    (the only admin-surface traffic the passive scan sees) met the default thresholds."""
+def test_the_passive_config_comes_before_the_first_request_and_sets_no_threshold() -> None:
+    """A job applies from where it runs, so the config comes before any request. It sets no rule
+    threshold: ZAP 2.17.0's do not reach the rules, as run 39600018445's probe showed (#3991)."""
     plan = plans.scan_plan(TEMPLATE, "viewer", API_FILE)
     assert [job["type"] for job in plan["jobs"]] == [
         "script",  # the session, before any request
         "passiveScan-config",  # the Low thresholds, before the first response is scanned
+        "requestor",  # admin-probe-after-config: the session reaches the surface, refused
         "requestor",  # session-live-before-scan
         "openapi",
         "passiveScan-wait",
@@ -203,7 +204,7 @@ def test_the_passive_thresholds_are_set_before_the_first_request() -> None:
     ]
     config = plan["jobs"][1]
     assert config["parameters"]["scanOnlyInScope"] is True
-    assert {rule["threshold"] for rule in config["rules"]} == {"Low"}
+    assert "rules" not in config  # a threshold set here is logged and never applied
 
 
 @pytest.fixture(scope="module")
@@ -687,18 +688,19 @@ def _row(
     return {"username": "u", "request_id": request_id, "action": action, "outcome": outcome}
 
 
-def _step_up() -> dict[str, Any]:
-    return _row(None, action="auth.step_up_required")
+def _step_up(item: dict[str, Any]) -> dict[str, Any]:
+    return _row(item["correlation_id"], action="auth.step_up_required")
 
 
-def test_each_refusal_has_its_record_by_request_id_or_as_a_step_up_refusal() -> None:
+def test_each_refusal_has_its_record_by_request_id_a_step_up_refusal_too() -> None:
     by_id, step_up, silent = (
         _request("GET /admin/overview"),
         _request("POST /admin/recorder/purge"),
         _request("GET /admin/support-bundle/{job_id}"),
     )
     skipped = _request("PUT /admin/log-level", recorded=False)
-    rows = [_row(by_id["correlation_id"]), _step_up(), _row(str(uuid.uuid4()), outcome="success")]
+    rows = [_row(by_id["correlation_id"]), _step_up(step_up)]
+    rows.append(_row(str(uuid.uuid4()), outcome="success"))
     assert denials.audit_problems("manager", [by_id, step_up, silent, skipped], rows) == []
 
 
@@ -725,17 +727,19 @@ def test_a_csrf_refusal_that_names_the_request_does_not_answer_for_it_either() -
     assert len(problems) == 2
 
 
-def test_a_nameless_rbac_denial_answers_for_one_refusal_until_3990_names_its_request() -> None:
-    first, second = _request("POST /users"), _request("GET /users/invites")
-    problems = denials.audit_problems("viewer", [first, second], [_row(None, action="rbac.denied")])
-    assert problems == ["viewer: GET /users/invites was refused with no audit record"]
-
-
-def test_a_nameless_record_of_any_other_action_answers_for_no_request() -> None:
+@pytest.mark.parametrize(
+    "action", ["auth.step_up_required", "rbac.denied", "admin.area_entered", "auth.login_failed"]
+)
+def test_a_denied_record_without_its_request_id_answers_for_none_and_fails_the_gate(
+    action: str,
+) -> None:
+    """Since #3990 every refusal record names its request (the step-up and invites stand-ins are
+    gone), so a nameless one is a regression, whatever its action."""
     item = _request("POST /admin/a")
-    rows = [_row(None), _row(None, action="auth.login_failed")]
-    assert denials.audit_problems("viewer", [item], rows) == [
-        "viewer: POST /admin/a was refused with no audit record"
+    assert denials.audit_problems("viewer", [item], [_row(None, action=action)]) == [
+        "viewer: 1 denied record(s) carry no request id: a refusal record lost its request's id "
+        "(#3990)",
+        "viewer: POST /admin/a was refused with no audit record",
     ]
 
 
@@ -757,26 +761,6 @@ def test_a_silent_refusal_fails_and_a_known_silent_one_that_is_recorded_now_fail
     assert denials.audit_problems("viewer", [silent], [_row(silent["correlation_id"])]) == [
         "viewer: GET /admin/support-bundle/{job_id} is recorded now: drop it from KNOWN_SILENT"
     ]
-
-
-def test_one_unnamed_record_answers_for_one_refusal_only() -> None:
-    first, second = _request("POST /admin/recorder/purge"), _request(
-        "PUT /admin/feature-flags/{flagKey}"
-    )
-    assert denials.audit_problems("manager", [first, second], [_step_up()]) == [
-        "manager: PUT /admin/feature-flags/{flagKey} was refused with no audit record"
-    ]
-
-
-def test_a_nameless_record_no_planned_request_needed_fails_the_gate() -> None:
-    """A nameless record proves one refusal by count, not by identity, so the count must be tight:
-    a spare one would let an unrecorded refusal hide behind it."""
-    named, step_up = _request("GET /admin/overview"), _request("POST /admin/recorder/purge")
-    rows = [_row(named["correlation_id"]), _step_up(), _step_up(), _row(None, action="rbac.denied")]
-    assert denials.audit_problems("manager", [named, step_up], rows) == [
-        "manager: 2 nameless denial record(s) answer for no planned request"
-    ]
-    assert denials.audit_problems("manager", [named, step_up], rows[:2]) == []  # the tight count
 
 
 def _denial_dir(tmp_path: Path, log: str, rows: list[dict[str, Any]]) -> list[str]:
@@ -1062,6 +1046,7 @@ def test_the_artefact_check_searches_every_secret_the_run_makes_and_the_totp_see
     }
     assert set(re.findall(r"--env (\w+)", scrub)) == generated  # none left out, none misspelt
     assert '--secret-file "$RUNNER_TEMP/cv/*.totp"' in scrub  # where seed_fixture_user.py writes
+    assert '--secret-file "$RUNNER_TEMP/cv-lane/lane.key"' in scrub  # the audit lane key
     assert not re.search(r"\$\{?(" + "|".join(generated) + r")\b", scrub)  # names, never values
 
 
@@ -1099,3 +1084,32 @@ def test_the_workflow_pins_every_action_and_image_and_uses_no_repository_secret(
     assert re.search(r"zaproxy:[\d.]+@sha256:[0-9a-f]{64}", text)
     assert re.findall(r"\bsecrets\.\w+", text) == []  # synthetic credentials only, made per run
     assert re.search(r"ZAP_TARGET: http://127\.0\.0\.1:\d+\n", text)
+
+
+def test_the_scan_keeps_zaps_own_log_for_the_scrub_and_removes_its_container() -> None:
+    """ZAP's `zap.log` (its errors and insights, #3996's R2-S5) is copied out before the container
+    goes; it lands in the work directory, which the artefact check scans before any upload."""
+    scan = _steps()["Phase B, the passive and active scan, as each role"]["run"]
+    assert 'docker run --name "zap-$role-scan"' in scan and "--rm" not in scan
+    assert 'docker cp "zap-$role-scan:/home/zap/.ZAP/zap.log" "$WORK/$role-scan-zap.log"' in scan
+    assert 'docker rm -f "zap-$role-scan"' in scan
+
+
+def test_a_dispatch_on_a_branch_files_no_nightly_issue() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    condition = workflow["jobs"]["report"]["if"]
+    assert "needs.zap-admin.result == 'failure'" in condition
+    assert "github.ref == 'refs/heads/main'" in condition
+
+
+def test_the_session_reaches_the_admin_surface_and_is_refused_before_the_scan() -> None:
+    """403, not 401: the role's session is live on the admin surface and RBAC refuses it."""
+    jobs = TEMPLATE["jobs"]
+    kinds = [job["type"] for job in jobs]
+    (probe,) = [job for job in jobs if job.get("name") == "admin-probe-after-config"]
+    assert kinds.index("passiveScan-config") < jobs.index(probe) < kinds.index("openapi")
+    assert probe["requests"] == [
+        {"url": "${ZAP_TARGET}/admin/overview", "method": "GET", "responseCode": 403}
+    ]
+    row = MATRIX["operations"]["GET /admin/overview"]["outcomes"]
+    assert {row["viewer"], row["manager_without_grant"]} == {"403"}

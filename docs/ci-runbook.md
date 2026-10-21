@@ -221,7 +221,8 @@ reached the artefact, which is then not uploaded. ZAP expands no variable inside
 so each role's session reaches its requests through `security/zap/role_session.js`, and the scan
 imports `admin-openapi.yaml`, the contract cut to the admin surface (the whole contract's
 recursive schemas pass the import's nesting limit). The `zap-admin-surface` artefact holds each
-role's plans, ZAP's logs and reports, the exported audit rows and the API's log. Triage each
+role's plans, ZAP's output, its own `zap.log` (`<role>-scan-zap.log`) and reports, the exported
+audit rows and the API's log. Triage each
 alert like any security finding: severity, disposition, remediation; an accepted one goes into
 the baseline by a reviewed PR.
 
