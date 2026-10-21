@@ -96,6 +96,51 @@ journey
     Update a per-account risk profile: 4: Admin
 ```
 
+### 1.5 Decision journey — arming a rule (E35-D01, heuristic)
+
+This journey comes from E35-D01's heuristic evaluation (`docs/design/research/e35-rule-arming-trust.md` §6) and
+assumes that report's recommended defaults (§1a). Its scores are designer judgement (DJ: a `journey` needs one), not
+measurements; the owner-run sessions of `docs/design/research/e35-d01-session-protocol.md` will replace them.
+
+```mermaid
+journey
+  title Owner and Manager: deciding to arm a rule (predicted scores)
+  section Decide to automate
+    Wants BE after 1R to run by itself, fears a wrong order: 3: Owner
+  section Build
+    Starts from a template, reads its plain-language summary: 4: Owner, Manager
+  section Simulate
+    Runs it on recorded history, sees behaviour, not profit: 3: Owner, Manager
+    Waits for the arming gate - 5 simulated fires or 24 h: 2: Owner, Manager
+  section Review the evidence
+    Orders two rules that move the same stop (SCR-086): 2: Owner, Manager
+    Reads in SCR-085 what it will do, on what, and its evidence: 4: Owner, Manager
+    Reads what stops the rule and what still protects the position: 3: Owner, Manager
+  section Arm
+    Arms on DEMO - one confirm, no typed word, no step-up: 4: Owner, Manager
+    Arms on LIVE from R4 - types the rule name, one step-up (SCR-006): 3: Owner
+  section Live
+    Rule fires and tightens the stop - Armed · DEMO and Disarm in view: 5: Owner, Manager
+  section Something goes wrong
+    Window closed - the rule keeps running on the server: 3: Owner, Manager
+    Bybit link lost - rules paused, resume by themselves: 2: Owner, Manager
+    Feed stale - still armed, skips each check and says why: 3: Owner, Manager
+    Engine down - not evaluating, stop-loss at Bybit unaffected: 2: Owner, Manager
+    Server down or its host PC asleep - rules do nothing, stop-loss at Bybit stays: 1: Owner, Manager
+    Server back - rules start again once positions are checked with Bybit: 3: Owner, Manager
+```
+
+**Abandonment points and the evidence that prevents them** (steps as numbered in the report's §6)
+
+| Step                   | Why a trader abandons                                                                                                | What the screen must show                                                                                                                                                                                                   | Report finding   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 2 Simulate on history  | No history to test, a run past 60 s, or a missing day left unnamed                                                   | Who can record the symbol (CA-6); progress and partial results; each untested window by date (CA-3); behaviour, not profit (CA-2, then CA-1)                                                                                | F1–F3            |
+| 3 Simulate live        | Arming is refused with no word on which check is missing or when it will pass                                        | Each server check with its progress or the time it passes (CA-16)                                                                                                                                                           | F22              |
+| 4 Resolve a clash      | Raw priority numbers, with no outcome stated for the stop                                                            | An ordered list under the risk band, a consequence per option; of two tightening moves of one stop, the tighter applies (SC-10)                                                                                             | F17–F20          |
+| 5 Review in SCR-085    | No evidence in the dialog, or "the backend" read as "the app", so the rule seems to need the app open                | Environment first, DEMO preselected; then restatement, Will act on (CA-14), evidence (CA-15), the estimate and order lines (CA-12, CA-13), what stops it (CA-8–CA-11)                                                       | F6–F10, F13, F21 |
+| 6–7 Commit, pending    | The typed name or the step-up, or a slow server confirmation that invites a retry                                    | DEMO preselected; LIVE: the typed name and one code-only SCR-006 step-up (E09-D06), disabled with a reason for a Manager; `Enter` in SCR-085's fields or radios never arms; "Arming…" until `rules` confirms (CA-17, CA-18) | F25, F26, F29    |
+| 9 Something goes wrong | The state does not say what stopped the rule or whether it comes back, so the trader disarms it or stops using rules | The cause and "resumes by itself" in the state (CA-20); a text per event (CA-19, CA-22–CA-24); what persists (CA-26)                                                                                                        | F7–F9, F24       |
+
 ---
 
 ## 2. Service blueprint (frontstage / backstage / systems)
