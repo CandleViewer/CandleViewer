@@ -60,7 +60,8 @@ nothing changed. A record written after the service has acted is an outcome reco
 (`_audit_outcomes`). They are, in `/auth/refresh`, the concurrent-refresh race and a disabled
 user's refusal (#2911) and, on `/auth/logout`, one `auth.session_revoked` per session revoked,
 after the one `auth.logout` intent record that names the targets (#2914). The retry half of rule 2
-is the time-boxed exception EX-07 (§16.2).
+is the journal-first lane below: a record is still lost when the lane and the writer both refuse
+it, or when its write times out or is cancelled.
 
 Journal-first audit lane (ADR-0037, #3009 S3): the rows its Q1 default admits go to
 `AuditService.lane`, the façade with `emit()`'s shape: those outcome records, the `auth.logout`
@@ -714,8 +715,8 @@ def make_session_router(
         """Write one outcome record per session id (04-security-program.md §8.3 rule 1: after the
         side effect). The service has already acted, so a lost record is counted, logged (action,
         session and error class only) and alerted, and the answer stands. No retry here: each one
-        goes through the lane's façade (ADR-0037), journal-first, and EX-07 (§16.2) stands
-        until the lane's exit. Each write, the lane's wait (`APPEND_WAIT_S`, below it) and the
+        goes through the lane's façade (ADR-0037), journal-first, and the lane is rule 2's durable
+        retry. Each write, the lane's wait (`APPEND_WAIT_S`, below it) and the
         fallback together, is bounded by `audit_timeout_s`: the writer never cuts an
         append short, so the record in flight may still land, and a sink that does not answer is not
         asked again (one bound, not one per session). The WS fan-out abandons its audit rows after

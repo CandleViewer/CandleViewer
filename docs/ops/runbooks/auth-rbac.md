@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -684,7 +684,8 @@ it (login refuses `disabled` only):
   `auth.disabled_user_session_revoked` (warning): the session, its user as the actor and the status
   read in `after_state.user_status` (`detail.after.user_status` in `GET /admin/audit`; `gone` when
   the user row is gone), no IP. `auth` may not import `audit`, so the composition root attaches the
-  writer (#3120). The record comes last, after the revocation: an audit sink that is down never
+  audit lane's façade, the writer as its fallback (#4021; the writer alone before it, #3120). The
+  record comes last, after the revocation: an audit sink that is down never
   undoes the revocation, and never holds the `401` for more than 2 seconds. Any increase means a
   session outlived a disable (SR-029): escalate with the log line and the record.
 - A cancelled request loses none of it (#3332). The revoking `UPDATE`, the count, the `WARNING`,
@@ -704,8 +705,8 @@ it (login refuses `disabled` only):
   `revoked_reason = 'user_disabled'` is then the only trace, so compare those rows in a window
   with the counter's increase over it (a disable's own transaction and sweep add rows of their
   own).
-- When the lane and the audit sink both refuse the record it is dropped, not queued (C-2.18;
-  exception EX-08, `04-security-program.md` section 16.2), and the log says so:
+- When the lane and the audit sink both refuse the record it is dropped, not queued again (C-2.18:
+  the lane is its durable retry, `04-security-program.md` section 8.3), and the log says so:
   `auth.disabled_user_session_audit_failed` (ERROR, with `session_id`, `user_id` and `error`, the
   failure's class: `BackstopAuditSaturated` at the in-flight cap, `BackstopAuditNotAttached` for a
   wiring fault). A write still running after the 2 seconds logs
@@ -1200,9 +1201,9 @@ with reason `rotation_reuse` when the service found the token already rotated (a
 the claim race to a concurrent one revoked nothing, so the log line and this row are the only
 trace); a lost `auth.session_refreshed` denial leaves the attempt's own `auth.session_refreshed`
 row (`success`) uncorrected: nothing was minted, and the user is `disabled` or gone. Never write
-the missing rows by hand: only the audit writer writes the table. There is no
-automatic retry: that half of rule 2 (`04-security-program.md` section 8.3) is the time-boxed
-exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) exists.
+the missing rows by hand: only the audit writer writes the table. The journal-first lane is rule 2's
+durable retry (`04-security-program.md` section 8.3): a row the lane and the writer both refused, or
+whose write timed out or was cancelled, is lost, counted and alerted.
 
 The backstop's record, `auth.disabled_user_session_revoked` (section 4), counts on the same series.
 `auth` writes it through the lane's façade (the lane first, the writer its fallback), so it counts
@@ -1213,16 +1214,27 @@ lane append or a durable WAL append can complete late), so check the trail. One 
 whichever of these it meets. It logs `auth.disabled_user_session_audit_failed` (or its
 `_slow` and `_failed_late` forms), not `outcome_lost`: reconcile it as section 4 says.
 
-While the sink refuses records, sign-out, session revocation, refresh, extend and unlock answer
-`503` and change nothing (C-2.9), except unlock while the sink is up but its writer refuses (a full
-or unwritable WAL) for a lock B16's chart already holds: a wrong password still counts toward the
-five failed unlocks that revoke the session and toward the SR-016 lockout, which it can apply with
-no `auth.unlock_failed` or `auth.account_locked` row (only `auth_lockouts_total` moves), so ask
-users not to retry an unlock meanwhile. A lock the chart must still record (first seen meanwhile,
-or again after a restart) gets `503` at its `auth.idle_locked` record, before the password check,
-and counts nothing. An access token lapses within 12 minutes and a longer refusal ends every session
-and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). A refresh of an
-idle-locked session is answered `401 session_idle_locked` before its record, whether or not the
+While the sink refuses records, refresh, extend and unlock answer `503` and change nothing
+(C-2.9), except unlock while the sink is up but its writer refuses (a full or unwritable WAL) for a
+lock B16's chart already holds: a wrong password still counts toward the five failed unlocks that
+revoke the session and toward the SR-016 lockout, which it can apply with no `auth.unlock_failed` or
+`auth.account_locked` row (only `auth_lockouts_total` moves), so ask users not to retry an unlock
+meanwhile. A lock the chart must still record (first seen meanwhile, or again after a restart) gets
+`503` at its `auth.idle_locked` record, before the password check, and counts nothing. A sign-in
+fails closed (nothing is minted), since the write-ahead record of a mint never goes to the lane: an
+access token lapses within 12 minutes and a longer refusal ends every session and sign-in. A
+sign-in that fails closed answers `500 internal_error`, not `503`: `POST /auth/login` and
+`POST /auth/mfa/verify` write through `_audit` (`api/auth.py`), which has no `AuditError` handler,
+so the refusal reaches the boundary handler, which logs `unhandled_exception` with a traceback that
+names the error (`AuditUnavailable` or `AuditWriterStopped`). During an outage that is the sink, not
+a defect: `cv_audit_writer_refused_total{domain="auth"}` counts each one. An enrolment-only sign-in
+and the enrolment steps answer `503`, and `POST /auth/mfa/recovery` its uniform `401`.
+Sign-out, revoke-my-session and reuse containment go to the lane first and answer `503` only while
+it refuses too, as a full or read-only audit volume makes it do (accepted residual risk RR-16,
+`04-security-program.md` section 16.1). The Owner's revocation of another user's session
+(`users.session_revoked`, `api/users.py`) and a user's disablement (`users.disable`) stay on the
+writer and fail closed while the sink refuses (ADR-0037 Q1). A
+refresh of an idle-locked session is answered `401 session_idle_locked` before its record, whether or not the
 sink accepts it, and changes nothing either (#3331). A lock that engages between the route's check
 and the service's own leaves the attempt's intent record with no outcome record and no
 `outcome_lost` line, and nothing is
@@ -1235,13 +1247,15 @@ last loss, so a lone loss at night is not delivered and the page (more than 5 in
 not cover it (#2621, section 1): in the morning, read the counter and `outcome_lost` log lines.
 
 No page does not mean the sink is healthy: the page reads only outcome rows lost after an action,
-while a refusing sink makes every sign-out, revoke, refresh, extend and unlock fail closed at its
-write-ahead record with a `503`.
-Those refusals show as `auth.session_audit.writer_refused` log lines (the alert
+while the lane takes the rows of a sign-out, a revoke-my-session and reuse containment, and a
+refusing sink makes every refresh, extend and unlock fail closed at its write-ahead record with a
+`503`, and every sign-in fail closed (nothing is minted). Those refusals
+show as `auth.session_audit.writer_refused` log lines (the alert
 runbook's third command greps them) and in `cv_audit_writer_refused_total{domain}`, which the
 AuditSinkRefusing ticket reads (§13). A page that has cleared is no
 better evidence: it sends no `[RESOLVED]` message and clears with its 15-minute window, so the test
-sign-out in the alert runbook entry (row 7) is the check.
+refresh in the alert runbook entry (row 7) is the check. A test sign-out is not: it answers `204`
+while the lane takes its rows, whether or not the sink takes records.
 
 ## 11. A disable or a grant change left a step undone (`UserLifecycleStepFailed`, `UserGrantsPushFailed`, `UserDisableFailed`)
 
@@ -1398,8 +1412,9 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746          |
 | No alert rule reads the enrolment-only refusal series (section 7)         | #2746          |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747          |
-| No durable retry of a lost audit outcome record                           | EX-07, #3009   |
-| No durable retry of a lost backstop audit record                          | EX-08, #3009   |
+| An outcome record the lane and the sink both refuse is lost (counted)     | RR-16          |
+| Mint refusal row only logged: `auth.login_failed.audit_unavailable`       | EX-10, #2914   |
+| Recovery refusal row only logged: `auth.recovery.audit_unavailable`       | EX-10, #2914   |
 | Compose runs the fake backend (no lane); the lane's alerts are tickets    | #3009, #2701   |
 
 ## Execution record

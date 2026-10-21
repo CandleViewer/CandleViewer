@@ -304,27 +304,28 @@ async def test_refresh_race_with_a_healthy_sink_writes_the_critical_denial_row()
 
 @pytest.mark.parametrize("make_error", _WRITER_ERRORS, ids=_ERROR_IDS)
 @pytest.mark.parametrize(
-    ("accept", "refused"),
+    ("accept", "refused", "backstop_lost"),
     [
-        (1, ["auth.disabled_user_session_revoked", "auth.session_refreshed"]),
-        (2, ["auth.session_refreshed"]),
+        (1, ["auth.disabled_user_session_revoked", "auth.session_refreshed"], 1),
+        (2, ["auth.session_refreshed"], 0),
     ],
     ids=["revocation_and_denial_refused", "denial_refused"],
 )
 async def test_refresh_refusal_records_of_a_disabled_user_refused_keep_the_401_and_the_revocation(
-    make_error: ErrorFactory, accept: int, refused: list[str]
+    make_error: ErrorFactory, accept: int, refused: list[str], backstop_lost: int
 ) -> None:
     """#2911, #3331: the user was disabled with this session live. The write-ahead intent lands,
     then the writer refuses the rest: the backstop's record of the revocation and the refusal
     record, or the refusal record alone. The 401 stands (never a 500), nothing is rotated or
     minted, and the session stays revoked and published. The lost refusal record is counted and
-    logged like any outcome record (#2914); a lost backstop record is logged, never counted
-    (EX-08)."""
+    logged like any outcome record (#2914); a lost backstop record is logged and counted on its
+    own action's series (#4037)."""
     w = _World(make_error, backstop=True)
     m = await w.mint()
     w.repo.user_statuses[str(_USER)] = UserStatus.DISABLED
     w.writer.accept = accept  # the write-ahead record lands, and the backstop's with 2
     lost_before = _outcome_lost("auth.session_refreshed")
+    backstop_before = _outcome_lost("auth.disabled_user_session_revoked")
     other_before = _count("auth_audit_outcome_lost_total", action="other")
     with capture_logs() as logs:
         r = w.refresh(m.refresh_token)
@@ -342,11 +343,11 @@ async def test_refresh_refusal_records_of_a_disabled_user_refused_keep_the_401_a
     )
     assert _outcome_lost("auth.session_refreshed") - lost_before == 1  # counted, so it tickets
     assert _count("auth_audit_outcome_lost_total", action="other") == other_before
+    backstop_counted = _outcome_lost("auth.disabled_user_session_revoked") - backstop_before
+    assert backstop_counted == backstop_lost
     failed = [e for e in logs if e["event"] == "auth.disabled_user_session_audit_failed"]
     error = type(w.writer.error).__name__
-    assert [(e["log_level"], e["error"]) for e in failed] == (
-        [("error", error)] if accept == 1 else []
-    )
+    assert [(e["log_level"], e["error"]) for e in failed] == [("error", error)] * backstop_lost
     assert m.refresh_token not in repr(logs)
 
 

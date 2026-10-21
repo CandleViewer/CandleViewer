@@ -725,10 +725,14 @@ class SessionService:
 
     async def _audit_backstop(self, session: SessionRecord) -> None:
         """Hand the revocation just made to the audit port. The revocation stands whatever the
-        port does: a failure is logged and dropped (never queued, C-2.18; the exception EX-08,
-        `04-security-program.md` section 16.2), a wait past the bound is logged as slow (the record
-        may still land), and neither changes the refusal. A cancel is no failure: it propagates
-        (only the loop's teardown cancels the unit this runs in, #3332)."""
+        port does: a failure is logged and dropped here (never queued, C-2.18), a wait past the
+        bound is logged as slow (the record may still land), and neither changes the refusal. The
+        composition root's port journals the record through the audit lane first, with the writer
+        as its fallback, so it is lost only when both refuse it, the port drops it (its in-flight
+        cap, the shutdown drain) or its write fails after the caller stopped waiting (the 2 s bound
+        or a cancel), and the port then counts it (`auth_audit_outcome_lost_total`,
+        04-security-program.md section 8.3). A cancel is no failure: it propagates (only the loop's
+        teardown cancels the unit this runs in, #3332)."""
         if self._backstop_audit is None:
             return
         revocation = BackstopRevocation(session.id, session.user_id, session.user_status)

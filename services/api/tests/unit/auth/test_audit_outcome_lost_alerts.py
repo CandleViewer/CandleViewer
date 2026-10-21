@@ -1,25 +1,29 @@
-"""#2914 item 5 (D1 rider, D4): the alert rules on `auth_audit_outcome_lost_total`, and the
-exception that lets the retry half of 04-security-program.md section 8.3 rule 2 wait.
+"""#2914 item 5 (D1 rider, D4): the alert rules on `auth_audit_outcome_lost_total`, the alert half
+of 04-security-program.md section 8.3 rule 2. Its retry half is the journal-first audit lane
+(ADR-0037, #3009), so for the session routes' and the backstop's records no exception in
+section 16.2 stands in for it (EX-10 covers the login routes' refusal rows until #2914's PR C).
 
 Any lost outcome record is a ticket (`system_ticket.yml`); more than 5 in 15 minutes is a page
 (`system_page.yml`, so the page policy tests of `infra/alertmanager/tests` apply to it), under a
 component of its own: the page-over-ticket inhibition matches on component and env, so a page under
 `auth` would hide the lockout, step-up and CSRF tickets while the sink fails. The page is an event
 page (#2931, `resolves: window`): it clears when its 15-minute window moves on, which happens while
-a refusing sink is still down (every sign-out then fails at its write-ahead record, which no counter
-sees), so it must send no [RESOLVED] message. promtool runs in CI; here its cases are only checked
-to exist.
+a refusing sink is still down (every refresh then fails at its write-ahead record, which the page's
+counter does not see), so it must send no [RESOLVED] message. promtool runs in CI; here its cases
+are only checked to exist.
 """
 
 from __future__ import annotations
 
+import ast
 import re
-from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
+from candleviewer.audit.actions import LANE_ACTIONS
 from candleviewer.auth.metrics import AUDIT_OUTCOME_ACTIONS
 
 _ROOT = Path(__file__).resolve().parents[5]
@@ -27,10 +31,10 @@ _ALERTS = _ROOT / "infra" / "prometheus" / "alerts"
 _PAGE_FILE, _TICKET_FILE = "system_page.yml", "system_ticket.yml"
 _PROMTOOL_CASES = _ROOT / "infra" / "prometheus" / "tests" / "system_alerts.test.yml"
 _ALERTMANAGER = _ROOT / "infra" / "alertmanager" / "alertmanager.yml"
-_REGISTER = _ROOT / "docs" / "plan" / "04-security-program.md"
 _PRR = _ROOT / "docs" / "plan" / "07-release-and-prr.md"
 _AUTH_RUNBOOK = _ROOT / "docs" / "ops" / "runbooks" / "auth-rbac.md"
 _SESSIONS = _ROOT / "services" / "api" / "candleviewer" / "api" / "sessions.py"
+_AUTH_ROUTER = _ROOT / "services" / "api" / "candleviewer" / "api" / "auth.py"
 
 TICKET = "AuthAuditOutcomeLost"
 PAGE = "AuthAuditOutcomesLostBurst"
@@ -38,8 +42,7 @@ COMPONENT = "auth_audit"
 _EXPR = "sum by (env) (increase(auth_audit_outcome_lost_total[15m])) > {n}"
 _RUNBOOK = "docs/plan/07-release-and-prr.md#alert-authauditoutcomelost"
 #: The backstop's record (#3120, `api/session_backstop_audit.py`): `auth` writes it through a port,
-#: not a session route, so EX-08 names it and EX-07 does not; the counter has covered it since
-#: #3009 S4b-1c.
+#: not a session route; the counter has covered it since #3009 S4b-1c.
 BACKSTOP = "auth.disabled_user_session_revoked"
 
 
@@ -97,34 +100,53 @@ def test_promtool_cases_load_both_rule_files_and_fire_and_stay_silent_for_both_a
     assert outcomes == {TICKET: [True, False], PAGE: [True, False]}
 
 
-def test_the_exception_the_code_points_at_is_registered_and_expires_within_30_days() -> None:
-    cited = set(re.findall(r"EX-\d+", _SESSIONS.read_text(encoding="utf-8")))
-    assert len(cited) == 1, cited
-    rows = _REGISTER.read_text(encoding="utf-8").splitlines()
-    (row,) = [line for line in rows if line.startswith(f"| {next(iter(cited))} ")]
-    cells = [c.strip() for c in row.strip().strip("|").split("|")]
-    expiry = next(c for c in cells if re.fullmatch(r"\d{4}-\d{2}-\d{2}", c))
-    assert date.fromisoformat(expiry) <= date(2026, 10, 16) + timedelta(days=30)  # the D4 ruling
-    assert "8.3 rule 2" in row and TICKET in row and PAGE in row and "CV_ALERT_QUIET_HOURS" in row
-    assert re.search(r"#\d+", cells[-1]), cells[-1]  # the exit ticket has a number, not a promise
+@pytest.mark.parametrize("action", AUDIT_OUTCOME_ACTIONS)
+def test_every_action_the_outcome_counter_covers_is_a_lane_registry_row(action: str) -> None:
+    """Rule 2's retry half is the lane, with no section 16.2 exception for the session routes' and
+    the backstop's records (#3009 S4b-1d; EX-10 covers the login routes' refusal rows until
+    #2914's PR C): every action the counter's closed set covers is a lane registry row, so each
+    goes to the lane first and is counted only once the lane and the writer both lose it. A route
+    that starts to write an outcome record adds its action to the counter and to the registry."""
+    assert action in LANE_ACTIONS
 
 
-def test_the_exceptions_and_both_runbooks_name_every_action_the_counter_covers() -> None:
-    """A route that starts to write an outcome record adds its action to the counter's closed set;
-    EX-07's scope and both runbook entries must name it too (a disabled user's refused refresh,
-    #2911, once went unnamed), and EX-07 names no action the counter does not have yet. The
-    backstop's record is EX-08's: its row and both runbook entries name it."""
-    rows = _REGISTER.read_text(encoding="utf-8").splitlines()
-    (ex07,) = [line for line in rows if line.startswith("| EX-07 ")]
-    (ex08,) = [line for line in rows if line.startswith("| EX-08 ")]
-    scope = ex07.split(" | ")[1]  # it covers exactly these actions: nothing is pre-approved
-    routes = set(AUDIT_OUTCOME_ACTIONS) - {BACKSTOP}
-    assert set(re.findall(r"`(auth\.\w+)`", scope)) == routes
-    assert f"`{BACKSTOP}`" in ex08.split(" | ")[1]
+@pytest.mark.parametrize("action", AUDIT_OUTCOME_ACTIONS)
+def test_both_runbook_entries_name_every_action_the_outcome_counter_covers(action: str) -> None:
+    """The alert runbook entry and the auth runbook's section 10 name each action the counter
+    covers (a disabled user's refused refresh, #2911, once went unnamed)."""
     runbooks = {
         "alert runbook": _section(_PRR, "### AuthAuditOutcomeLost"),
         "auth runbook": _section(_AUTH_RUNBOOK, "## 10. An audit outcome record was lost"),
     }
-    for action in AUDIT_OUTCOME_ACTIONS:
-        entries = runbooks if action == BACKSTOP else {"EX-07": ex07, **runbooks}
-        assert [name for name, text in entries.items() if f"`{action}`" not in text] == [], action
+    assert [name for name, text in runbooks.items() if f"`{action}`" not in text] == []
+
+
+def test_the_outcome_counter_covers_the_backstops_record() -> None:
+    """The backstop's record is counted on the same series since #3009 S4b-1c (#4037), so the two
+    per-action tests above cover it too."""
+    assert BACKSTOP in AUDIT_OUTCOME_ACTIONS
+
+
+def test_the_session_routes_cite_no_exception_for_their_outcome_records() -> None:
+    """No section 16.2 exception covers the routes' outcome records since the lane's exit (#3009
+    S4b-1d), so `api/sessions.py` points at none."""
+    assert re.findall(r"EX-\d+", _SESSIONS.read_text(encoding="utf-8")) == []
+
+
+def test_the_login_routes_write_no_record_through_the_lane() -> None:
+    """EX-10's premise and U42's condition (04 section 16.2; the e09 threat model, section 3.6.2):
+    until #2914's PR C adopts the façade (ADR-0037 Q2), `api/auth.py` reaches `AuditService.lane`
+    nowhere, so each record of the login routes goes through the writer and is refused with the
+    sink. That keeps a mint's write-ahead records off the lane: `auth.login`,
+    `auth.recovery_code_used` and `auth.session_revoked` are also the write-ahead records of a
+    mint, and a lane that took them would let a session be minted while the sink refuses (U42).
+    A `.lane` access or a `lane=` argument, such as `audit_service.lane.emit(...)`, fails this
+    test: PR C splits those actions, or keeps the mints on the writer, and changes it, EX-10 and
+    U42 together."""
+    reaches: list[int] = []
+    for node in ast.walk(ast.parse(_AUTH_ROUTER.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("lane"):
+            reaches.append(node.lineno)  # `audit_service.lane`, `audit_service.lane_parts()`
+        elif isinstance(node, ast.keyword) and node.arg == "lane":
+            reaches.append(node.value.lineno)  # `_audit(..., lane=True)`, as `api/sessions.py`
+    assert reaches == []

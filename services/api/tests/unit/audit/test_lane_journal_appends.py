@@ -159,7 +159,7 @@ def test_lane_actions_hold_the_adr_rows() -> None:
     denied = ("auth.session_refreshed", "auth.refresh_reuse_replayed")
     rows |= dict.fromkeys(denied, ("shared", frozenset({"denied"})))
     rows |= dict.fromkeys(("audit.lane_started", "audit.lane_resumed"), ("reserved", success))
-    rows |= {"auth.disabled_user_session_revoked": ("reserved", success)}  # #3120 (EX-08)
+    rows |= {"auth.disabled_user_session_revoked": ("reserved", success)}  # #3120, the backstop's
 
     assert dict(LANE_ACTIONS) == rows and {*LANE_ACTIONS} <= AUDIT_ACTIONS
     assert {f"audit.lane_{name}" for name in ("started", "resumed", "anomaly")} <= AUDIT_ACTIONS
