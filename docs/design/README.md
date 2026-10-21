@@ -10,13 +10,14 @@ MPL-2.0) instead of Figma. Agents drive it through the **official Penpot MCP ser
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Penpot instance | **Self-hosted Penpot 2.18** since 2026-10-21 (URL, team/file ids and credentials: owner's private notes)                                                              | **Never write the instance URL, team/file ids or credentials in this repository or in PR text** (public repo). Page ids were preserved by the import, so existing page-id references stay valid. The SaaS file is a read-only backup.                                                  |
 | MCP server      | **Hosted:** `<instance>/mcp/stream?userToken=<MCP key>` (Streamable HTTP)                                                                                             | Registered at **local scope** as `penpot`, **one key per lane**, created under _Your account → Integrations → MCP Server_. Keys never go in the repo, messages or logs. Tools: `high_level_overview`, `penpot_api_info`, `execute_code`, `export_shape` (no `import_image` on hosted). |
-| Plugin          | Penpot's built-in **MCP plugin** (Plugins menu in any open file)                                                                                                      | The plugin _is_ the bridge: without an open, connected plugin every tool call fails with "No plugin instance connected".                                                                                                                                                               |
+| Plugin          | Penpot's built-in **MCP plugin** (Plugins menu in any open file; the toolbar **MCP** toggle keeps the connection alive)                                               | The plugin _is_ the bridge: without an open, connected plugin every tool call fails with "No plugin instance connected". Re-enable the toolbar **MCP** toggle after any page reload.                                                                                                   |
 | Local fallback  | a local checkout of Penpot's `mcp` package (path in the contributor's private notes) → `start-penpot-mcp.cmd` (`:4401/mcp`, plugin `:4400/manifest.json`, WS `:4402`) | Built 2026-09-25 from Penpot `develop`. Use if the hosted endpoint is down.                                                                                                                                                                                                            |
 
 ## Session ritual (human, once per session)
 
 1. Open the design file in Penpot in a browser tab.
-2. Plugins menu → **Penpot MCP** → **Connect**.
+2. Plugins menu → **Penpot MCP** → **Connect**. The toolbar **MCP** toggle is the control that keeps the connection
+   alive: re-enable it after any page reload (it reads Off afterwards).
 3. Keep that tab and the plugin panel open for the whole agent session (browser tab suspension drops the bridge).
 
 ## Fonts
@@ -27,7 +28,8 @@ Team fonts uploaded 2026-09-25: **Inter** v4.1 and **JetBrains Mono** v2.304, ea
 present, so Penpot silently skipped the files (upstream bug, to be filed). Fixed set: the contributor's local fonts
 folder (the JetBrains Mono fixed build). The file uses the Google fonts `gfont-inter` / `gfont-jetbrains-mono`; valid
 `fontVariantId` values are `regular`, `500`, `600`, `700` (+ italic forms); look fonts up exactly
-(`penpot.fonts.all.find(f => f.fontId === 'gfont-inter')`) because name lookups prefix-match Inter Tight.
+(`penpot.fonts.all.find(f => f.fontId === 'gfont-inter')`) because Penpot 2.18's `findByName`/`findById` match
+case-insensitive substrings, not only prefixes (`Inter` or `gfont-inter` also hit Inter Tight).
 
 ## Approval rule (owner decision 2026-09-25) — **every UI/UX design ticket requires human approval**
 
