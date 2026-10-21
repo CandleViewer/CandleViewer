@@ -342,7 +342,7 @@ describe("refresh ahead of expiry, one refresh at a time", () => {
     expect(toSignIn).not.toHaveBeenCalled();
   });
 
-  it("a CSRF re-issue that never answers is given up after 10 s: the lock goes to the next tab", async () => {
+  it("a CSRF re-issue that never answers is given up by 10 s: the lock goes to the next tab", async () => {
     const locks = serialLocks();
     vi.stubGlobal("navigator", { locks });
     fetchMock
@@ -948,7 +948,7 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
     await expect(reloaded).resolves.toBe("ok");
   });
 
-  it("a probe that never answers is given up after 10 s: the lock goes to the next tab, nothing is presented, and the next ask probes again", async () => {
+  it("a probe that never answers is given up by 10 s: the lock goes to the next tab, nothing more is presented, and the next ask probes again", async () => {
     await sentThenGone();
     const locks = serialLocks();
     vi.stubGlobal("navigator", { locks });

@@ -139,10 +139,11 @@ Negative / risks:
 ## Amendment 1 (2026-10-21, #2712)
 
 Refines decision 1; does not reverse it. The access token is still held in memory only, never in
-storage. Same-origin tabs of one browser share it memory to memory: a tab posts each token it receives
-(`{accessToken, expiresAtMs}`), or a `cleared` signal when its session ends, on the BroadcastChannel
-`cv.auth.token`. They share it because each rotation revokes the previous access token, so tabs that
-each kept their own would revoke one another at every refresh. A BroadcastChannel reaches only
-same-origin contexts of that browser (tabs, workers, iframes), so the channel gives no reader outside
-the origin. The only thing the client writes to storage is the send time of a refresh in flight
-(`cv.auth.refresh_sent_at`), never the token.
+storage. Same-origin tabs of one browser share it memory to memory: a tab posts each token it
+receives (`{accessToken, expiresAtMs}`), or a `cleared` signal when its session ends, on the
+BroadcastChannel `cv.auth.token`. They share it because each rotation revokes the previous access
+token, so tabs that each kept their own would revoke one another at every refresh. A
+BroadcastChannel reaches only same-origin contexts of that browser (tabs, workers, iframes), so the
+channel gives no reader outside the origin. The only thing the token client writes to storage is
+the send time of its last refresh (`cv.auth.refresh_sent_at`), kept until an answer shows what
+became of the cookie; never the token.
