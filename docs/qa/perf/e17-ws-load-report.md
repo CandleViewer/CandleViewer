@@ -33,7 +33,7 @@ is a pass, 1 a budget missed with its check named, 2 an INVALID run (a validity 
 judged). k6 never phones home (`K6_NO_USAGE_REPORT=true`), resolves no extension, and the script refuses a
 non-loopback target. A run clears its directory of an earlier run's artefacts and bar state first, but only a
 directory the harness made: an empty one, or one that holds the `.cv-bench-ws-run` marker a run writes (a regular
-file). Any other is refused, untouched (use an empty `--out-dir`), and no step follows a symlink inside it.
+file). Any other is refused, untouched (use an empty `--out-dir`); the refusal and the clear follow no symlink inside it.
 
 **A run is only as long as it says.** A run shorter than its profile (`--duration-s`, `--warmup-s`, the workflow's
 `duration_s`) is labelled `smoke`: the gate never holds it to a full baseline, and `record` refuses it, so a short
@@ -56,8 +56,8 @@ job `perf-pack-full`, the same runner) is queued or running: its first step refu
 concurrency group, because GitHub keeps one pending run per group and would cancel a pending soak dispatch, and a
 job queued behind a 24 h soak on a one-job-at-a-time runner would only fail GitHub's 24 h queue limit. The
 `runs` input defaults to 3 so the gate and the reproducibility check have their runs, and a red run does not end
-the loop (the step exits with the worst code of its runs). The `ws_path` input is `/ws` unless the gateway is
-served under a prefix. The checkout keeps no token, the machine profile is named (`bench-runner`, as the soak's
+the loop (the step exits with the worst code of its runs). The `ws_path` input is the path k6 connects to (`/ws` by
+default). The checkout keeps no token, the machine profile is named (`bench-runner`, as the soak's
 is), and `scripts/tests/test_perf_ws_load.py` pins these properties and runs the load step under `bash -e`.
 
 ## What is under load
