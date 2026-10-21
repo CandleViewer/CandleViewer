@@ -3486,17 +3486,6 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
-        "cv_audit_lane_journal_first",
-        "gauge",
-        "bool",
-        (),
-        "1 while the facade sends lane records journal-first (the flag value it uses).",
-        "dashboard (SR-S2B2A-02: the admin API shows the stored value)",
-        _L,
-        "E09",
-        exported=True,
-    ),
-    _s(
         "cv_audit_lane_quarantine_bytes",
         "gauge",
         "bytes",

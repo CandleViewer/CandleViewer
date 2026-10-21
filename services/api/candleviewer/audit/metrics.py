@@ -5,7 +5,7 @@ no iteration over a dict the loop resizes. Names, kinds, labels and HELP are the
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, get_args
 
 from candleviewer.audit.actions import LaneClass
@@ -34,9 +34,9 @@ def _by(name: str, keys: Iterable[str], counts: Mapping[Any, float]) -> ScrapedF
     return _family(name, (((key,), counts.get(key, 0)) for key in keys))
 
 
-def lane_families(audit: AuditService, journal_first: Callable[[], bool]) -> list[ScrapedFamily]:
-    """Every family, read now; `journal_first` returns the flag's cached value, never a store read.
-    A writer, lane or façade that is not the real one (a test's stand-in) reads as unwired."""
+def lane_families(audit: AuditService) -> list[ScrapedFamily]:
+    """Every family, read now. A writer, lane or façade that is not the real one (a test's
+    stand-in) reads as unwired."""
     writer, lane, facade = audit.lane_parts()
     domains = writer.refused_by_domain if isinstance(writer, AuditWriter) else {}
     refused = facade.refused if isinstance(facade, LaneFacade) else {}
@@ -53,7 +53,6 @@ def lane_families(audit: AuditService, journal_first: Callable[[], bool]) -> lis
         _by("cv_audit_lane_drain_failures_total", DRAIN_FAILURES, failures),
         _family("cv_audit_lane_lock_failures_total", [((), audit.lane_lock_failures)]),
         _family("cv_audit_lane_link_failures_total", [((), audit.lane_link_failures)]),
-        _family("cv_audit_lane_journal_first", [((), journal_first())]),
     ]
     names = _LANE_COUNTERS.split()
     if lane is None or journal is None:
@@ -78,7 +77,7 @@ def lane_families(audit: AuditService, journal_first: Callable[[], bool]) -> lis
 
 
 def export_audit_lane_metrics(
-    registry: CollectorRegistry, *, env: str, audit: AuditService, journal_first: Callable[[], bool]
+    registry: CollectorRegistry, *, env: str, audit: AuditService
 ) -> ScrapeCollector:
     """Serve the families on the scraped `registry` with `env` (the composition root's call)."""
-    return ScrapeCollector(registry, env=env, read=lambda: lane_families(audit, journal_first))
+    return ScrapeCollector(registry, env=env, read=lambda: lane_families(audit))

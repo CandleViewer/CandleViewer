@@ -8,10 +8,15 @@ the actor and the status read; no IP (the service has no request), token or hash
 never depends on it: C-2.9 asks for one transaction where possible, `auth` cannot reach the audit
 store, and refusing to revoke because the sink is down would leave the session alive.
 
+The composition root hands it the audit lane's façade (`AuditService.lane`, ADR-0037), the one the
+session routes use for their lane rows: the record is a `reserved` row of the lane's registry and
+the writer is the façade's fallback; with no façade (`LaneNotWired`) the writer takes it.
+
 The write is bounded as the CSRF refusal audits are (`api/csrf.py`, C-2.18): a tracked task under
 `asyncio.shield` in the app's shared `RefusalAuditTracker` (capped in flight, drained at shutdown),
 so a caller that stops waiting never cancels it mid-append. One that cannot start or fails raises
-to the caller, which logs it and refuses all the same; if the caller left, the tracker logs it."""
+to the caller, which logs it and refuses all the same (the façade fails only once the writer
+refuses too); if the caller left, the tracker logs it."""
 
 from __future__ import annotations
 

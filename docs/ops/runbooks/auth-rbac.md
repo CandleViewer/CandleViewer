@@ -1284,9 +1284,8 @@ compose runs the fake backend (no lane, §12) and gives the `api` service one la
   (`cv_audit_writer_refused_total{domain}`) on the metrics listener (`127.0.0.1:9108`, §6), read at
   the scrape from memory: per-process counters at 0 from start, and the lane's gauges (depth,
   bytes, the oldest unit's age, the head `seq`, the state, `quarantine/`'s size) only while a lane
-  runs. `cv_audit_lane_journal_first` is the flag value the façade uses, cached: during a flag-store
-  outage the admin API shows the stored value, the gauge the one in force. The writer's count is of
-  refusals, not slowness: a hung WAL shows as deadline misses until its failure latch refuses.
+  runs. The writer's count is of refusals, not slowness: a hung WAL shows as deadline misses until
+  its failure latch refuses.
   A count a boot sets before the first scrape (an anomaly row of its scan, frame 1 of a new lane)
   is read while the process is under 15 minutes old, so a long stop hides none of them.
 - **Severity.** Every lane alert is a `ticket` for now. ADR-0037 makes seven of them pages, never

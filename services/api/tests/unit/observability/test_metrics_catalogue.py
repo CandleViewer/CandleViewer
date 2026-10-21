@@ -52,7 +52,6 @@ _SUFFIX_EXCEPTIONS = frozenset(
     {
         "cv_keys_failing_policy",  # named by the E27-T03 ticket's Observability section (#836)
         "cv_audit_lane_last_seq",  # named by ADR-0037 (U37) and the e09 threat model
-        "cv_audit_lane_journal_first",  # the 1/0 flag gauge named by S2b-2a's review (SR-S2B2A-02)
         "disk_used_ratio",
         "cv_maintenance_mode",
         "cv_incidents_open",

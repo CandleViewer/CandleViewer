@@ -24,7 +24,7 @@ from candleviewer.audit.metrics import export_audit_lane_metrics
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
-from candleviewer.audit.service import AuditService, LaneKeyLoader
+from candleviewer.audit.service import AuditService, LaneKeyLoader, LaneNotWired
 from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
 from candleviewer.observability.metrics import Metrics
@@ -65,6 +65,7 @@ class SecretsBundle:
 __all__ = [
     "AuditHandle",
     "AuditVerifyRunner",
+    "LaneNotWired",
     "SecretsBundle",
     "SecretsHandle",
     "SecretsMeta",

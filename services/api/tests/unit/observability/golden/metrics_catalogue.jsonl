@@ -97,7 +97,6 @@
 ["cv_audit_lane_depth", "gauge", [], "live", "E09"]
 ["cv_audit_lane_drain_failures_total", "counter", ["reason"], "live", "E09"]
 ["cv_audit_lane_drained_total", "counter", [], "live", "E09"]
-["cv_audit_lane_journal_first", "gauge", [], "live", "E09"]
 ["cv_audit_lane_last_seq", "gauge", [], "live", "E09"]
 ["cv_audit_lane_link_failures_total", "counter", [], "live", "E09"]
 ["cv_audit_lane_lock_failures_total", "counter", [], "live", "E09"]
