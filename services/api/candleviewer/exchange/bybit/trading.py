@@ -5,8 +5,9 @@ pinned by a test under `tests/unit/exchange/bybit/test_trading_*.py`:
 
 1. The `orderLinkId` guard covers creates only (the REST client, OM-D09); cancel, `cancel-all`
    and an amend by `orderId` go on the order class in the `critical` lane (AC-31, SR-E29-14).
-2. Every account's client draws on the process's one governor (OM-D08, ruling R5); the port
-   takes each request's token once, with the wait its lane allows (T04's rate step).
+2. Every account's client draws on the process's one governor (OM-D08, ruling R5); each
+   attempt of a call takes its own token, and the lane's wait bounds the whole call, retries
+   included (T04's rate step, 24 §8.7).
 3. Orders go over REST only: this module holds no trade socket (C-2.11, SR-040a).
 4. `category` is `linear`, written on every call that takes it (SR-054).
 5. Replies are parsed strictly and every row is checked against the call's account (E8-8,
@@ -325,6 +326,7 @@ class BybitTradingPort:
             clock_offset_ms_provider=self._clock_offset_ms,
             transport=self._transport,
             sleep=self._sleep,
+            monotonic=self._monotonic,
         )
         self._clients[account.account_id] = (account.key_ref, client)
         if held is not None:

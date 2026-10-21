@@ -104,15 +104,33 @@ class RecordingGovernor(TokenBucketGovernor):
 
 
 @dataclass
+class FakeClock:
+    """Monotonic time that only the injected sleep advances; it records every sleep."""
+
+    now_s: float = 0.0
+    sleeps: list[float] = field(default_factory=list)
+
+    def now(self) -> float:
+        return self.now_s
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now_s += seconds
+
+
+@dataclass
 class Venue:
     """Answers each path with its scripted bodies in order (the last one repeats) and records
     every request. An unscripted path fails the test."""
 
-    answers: dict[str, list[tuple[int, Any]]] = field(default_factory=dict)
+    answers: dict[str, list[tuple[int, Any, dict[str, str]]]] = field(default_factory=dict)
     sent: list[httpx.Request] = field(default_factory=list)
 
-    def on(self, path: str, *bodies: Any, status: int = 200) -> Venue:
-        self.answers.setdefault(path, []).extend((status, body) for body in bodies)
+    def on(
+        self, path: str, *bodies: Any, status: int = 200, headers: Mapping[str, str] | None = None
+    ) -> Venue:
+        answers = self.answers.setdefault(path, [])
+        answers.extend((status, body, dict(headers or {})) for body in bodies)
         return self
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -120,10 +138,10 @@ class Venue:
         queue = self.answers.get(request.url.path)
         if not queue:
             pytest.fail(f"unscripted venue call: {request.method} {request.url.path}")
-        status, body = queue.pop(0) if len(queue) > 1 else queue[0]
+        status, body, headers = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(body, bytes):
-            return httpx.Response(status, content=body)
-        return httpx.Response(status, json=body)
+            return httpx.Response(status, content=body, headers=headers)
+        return httpx.Response(status, json=body, headers=headers)
 
     def bodies(self) -> list[dict[str, Any]]:
         """The JSON bodies the port sent: our own requests, already bounded by the client."""
@@ -154,8 +172,13 @@ def make_port(
     max_retries: int = 0,
     entry_wait_s: float = 0.75,
     now_us: Callable[[], TsUs] = lambda: NOW_US,
+    clock: FakeClock | None = None,
 ) -> BybitTradingPort:
-    """The port over `venue`, signed by the M2 double, on `governor` (a recording one)."""
+    """The port over `venue`, signed by the M2 double, on `governor` (a recording one). With
+    `clock`, the port sleeps on it and measures its lanes' waits by it."""
+    timing: dict[str, Any] = (
+        {"sleep": _no_sleep} if clock is None else {"sleep": clock.sleep, "monotonic": clock.now}
+    )
     return BybitTradingPort(
         environment=environment,
         credentials=fake_capability(SIGNER_ID, calls),
@@ -163,8 +186,8 @@ def make_port(
         transport=httpx.MockTransport(venue.handler),
         max_retries=max_retries,
         entry_wait_s=entry_wait_s,
-        sleep=_no_sleep,
         now_us=now_us,
+        **timing,
     )
 
 

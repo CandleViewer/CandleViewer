@@ -122,3 +122,41 @@ def test_the_client_masks_only_values_long_enough_to_be_its_credentials() -> Non
     masked = _mask(body, ("fixture-signer-id", "k"))
     assert masked == b'{"retMsg":"key **redacted** and k","takeProfit":"0"}'
     assert _mask(body, ()) == body
+
+
+#: A figure a reply could carry (an equity, a balance): it must stay out of every error text.
+_FIGURE = "987654321.123456789"
+
+
+def _port(handler: Callable[[httpx.Request], httpx.Response]) -> BybitTradingPort:
+    return BybitTradingPort(
+        environment="demo",
+        credentials=fake_capability("fixture-signer-id"),
+        governor=RecordingGovernor(),
+        transport=httpx.MockTransport(handler),
+        max_retries=0,
+    )
+
+
+@pytest.mark.parametrize("call", ["read", "cancel"])
+async def test_a_reply_without_a_return_code_leaves_none_of_its_content_in_the_error(
+    call: str,
+) -> None:
+    """Ruling 11: the error names the body's type and size, never what it holds."""
+    unanswered = {"retMsg": "OK", "result": {"totalEquity": _FIGURE, "orderId": _FIGURE}}
+    port = _port(lambda _request: httpx.Response(200, json=unanswered))
+
+    texts = await _run(port, call)
+
+    assert any("no usable retCode (dict," in text for text in texts)
+    assert all(_FIGURE not in text for text in texts)
+
+
+async def test_a_transport_fault_leaves_none_of_its_httpx_text_in_the_error() -> None:
+    def gone(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout(f"socket gone reading {_FIGURE}", request=request)
+
+    texts = await _run(_port(gone), "read")
+
+    assert any("(ReadTimeout)" in text for text in texts)
+    assert all(_FIGURE not in text for text in texts)

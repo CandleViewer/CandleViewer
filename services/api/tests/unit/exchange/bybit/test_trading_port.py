@@ -12,12 +12,15 @@ Replies are the transcribed shapes of `rest/trading-*.json` (ruling R2).
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
+import time
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 import candleviewer.exchange.bybit as adapter_package
@@ -32,13 +35,14 @@ from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.exchange.bybit.signer import BybitSigner
-from candleviewer.exchange.bybit.trading import BybitTradingPort
+from candleviewer.exchange.bybit.trading import CRITICAL_WAIT_S, BybitTradingPort
 from tests._corpus import rest
 from tests._signing import CREDENTIAL_ID, Call, fake_capability
 from tests.unit.exchange.bybit._trading import (
     ACCOUNT_B,
     NOW_US,
     SIGNER_ID,
+    FakeClock,
     RecordingGovernor,
     Venue,
     account,
@@ -188,6 +192,122 @@ async def test_a_critical_exit_under_a_long_ip_hold_is_refused_with_nothing_sent
         await port.cancel_order(request)
 
     assert venue.sent == [] and refused.value.retry_after_s == pytest.approx(600.0)
+
+
+# -- 2. the lane's wait bounds the whole call, retries included (24 §8.7) ----------------------
+
+#: The documented rate-limit envelope (`rest/error_10018.json`); a `10006` is the same envelope
+#: with the other code, a test input.
+LIMITED_10018 = rest("rest/error_10018.json")
+LIMITED_10006 = {**LIMITED_10018, "retCode": 10006}
+
+
+def _cancel(ref_account: Any = None) -> CancelOrderRequest:
+    ref_account = account() if ref_account is None else ref_account
+    return CancelOrderRequest(account=ref_account, symbol="BTCUSDT", exchange_order_id=ORDER_ID)
+
+
+def _reset_in(seconds: float) -> dict[str, str]:
+    """The venue's reset header, `seconds` from now on the wall clock the client reads."""
+    return {"X-Bapi-Limit-Reset-Timestamp": str(int((time.time() + seconds) * 1000))}
+
+
+async def test_a_critical_exit_answered_10006_retries_within_its_wait() -> None:
+    clock = FakeClock()
+    governor = RecordingGovernor(clock=clock.now, sleep=clock.sleep)
+    venue = Venue().on("/v5/order/cancel", LIMITED_10006, CANCEL)
+    port = make_port(venue, governor=governor, max_retries=3, clock=clock)
+
+    ack = await port.cancel_order(_cancel())
+
+    assert ack.ok and len(venue.sent) == 2
+    [pause] = clock.sleeps
+    assert 1.0 <= pause <= CRITICAL_WAIT_S  # the jittered first backoff, inside the lane's wait
+    deadlines = [deadline for *_, deadline in governor.acquired]
+    assert deadlines == [CRITICAL_WAIT_S, pytest.approx(CRITICAL_WAIT_S - pause)]
+
+
+@pytest.mark.parametrize("reset", [600.0, None], ids=["reset-header-600s", "no-header"])
+@pytest.mark.parametrize("lane", ["critical", "entry"])
+async def test_a_10018_comes_back_at_once_as_a_retryable_rejection(
+    lane: str, reset: float | None
+) -> None:
+    """The hold it sets outlasts every lane's wait: no sleep, the venue's answer, whatever the
+    retries (the default configuration takes three)."""
+    clock = FakeClock()
+    governor = RecordingGovernor(clock=clock.now, sleep=clock.sleep)
+    headers = None if reset is None else _reset_in(reset)
+    venue = (
+        Venue()
+        .on("/v5/order/cancel", LIMITED_10018, headers=headers)
+        .on("/v5/order/create", LIMITED_10018, headers=headers)
+    )
+    port = make_port(venue, governor=governor, max_retries=3, clock=clock)
+
+    if lane == "critical":
+        ack = await port.cancel_order(_cancel())
+    else:
+        ack = await port.place_order(place())
+
+    assert (ack.ok, ack.error_code, ack.retryable, ack.exchange_ret_code) == (
+        False,
+        "RATE_LIMITED",
+        True,
+        10018,
+    )
+    assert len(venue.sent) == 1 and sum(clock.sleeps) == 0.0 <= WAITS[lane]
+    assert governor.ip_hold_remaining_s() >= 600.0
+
+
+async def test_an_entry_answered_10006_comes_back_at_once_as_a_retryable_rejection() -> None:
+    """The first backoff (1 s at least) outlasts the entry lane's 0.75 s: no sleep, no retry."""
+    clock = FakeClock()
+    venue = Venue().on("/v5/order/create", LIMITED_10006)
+    port = make_port(venue, max_retries=3, clock=clock)
+
+    ack = await port.place_order(place())
+
+    assert (ack.ok, ack.error_code, ack.retryable) == (False, "RATE_LIMITED", True)
+    assert (len(venue.sent), clock.sleeps) == (1, [])
+
+
+async def test_a_token_refused_for_a_retry_returns_the_answer_not_nothing_sent() -> None:
+    """The answer left and came back: the refusal of the retry's token is not "nothing was
+    sent" (24 §8.7), so the call answers with the venue's own rejection."""
+    clock = FakeClock()
+    governor = RecordingGovernor(
+        default_capacity=1.0, default_refill_per_s=0.1, clock=clock.now, sleep=clock.sleep
+    )
+    venue = Venue().on("/v5/order/cancel", LIMITED_10006, CANCEL)
+    port = make_port(venue, governor=governor, max_retries=3, clock=clock)
+
+    ack = await port.cancel_order(_cancel())
+
+    assert (ack.ok, ack.error_code, ack.exchange_ret_code, ack.retryable) == (
+        False,
+        "RATE_LIMITED",
+        10006,
+        True,
+    )
+    assert len(venue.sent) == 1 and sum(clock.sleeps) <= CRITICAL_WAIT_S
+
+
+async def test_the_service_port_answers_a_10018_as_an_ack_with_its_default_retries() -> None:
+    """The factory's port (three retries, the process governor, real sleeps) answers at once."""
+    venue = Venue().on("/v5/order/cancel", LIMITED_10018, headers=_reset_in(600.0))
+    svc = ExchangeBybitService(
+        credentials=fake_capability(SIGNER_ID),
+        environment="demo",
+        rest_transport=httpx.MockTransport(venue.handler),
+    )
+    port = svc.trading_port("demo")
+
+    async with asyncio.timeout(5.0):  # a regression would sleep out the 600 s hold
+        ack = await port.cancel_order(_cancel())
+
+    assert port._config.max_retries == 3
+    assert (ack.ok, ack.error_code, ack.retryable) == (False, "RATE_LIMITED", True)
+    assert len(venue.sent) == 1 and svc._governor.ip_hold_remaining_s() >= 590.0
 
 
 # -- 3. one governor per process (OM-D08, R5) ---------------------------------------------------
