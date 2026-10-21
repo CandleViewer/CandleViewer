@@ -345,6 +345,18 @@ def test_a_snap_whose_push_raises_stays_pending_and_takes_no_d(
     assert _seen(bad) == [("snap", 3, _HELD)]
 
 
+def test_a_raising_revoke_is_contained_to_its_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`revoke_topic` (§6.4): a push that raises is contained; every frame is still returned."""
+    hub = SequencingHub()
+    _, order, ((bad, _), (good, _)) = _machines(hub)
+    monkeypatch.setattr(bad.emitter, "push", _raises)
+    with capture_logs() as logs:
+        revoked = hub.revoke_topic(order.ch, "topic_removed", resubscribe=False, now_ms=7)
+    assert [(a, f["t"]) for a, f in revoked] == [(bad.authz, "revoked"), (good.authz, "revoked")]
+    assert good.take() == [revoked[1][1]] and bad.authz.find(order.ch) is None
+    assert [(e["event"], e["log_level"]) for e in logs] == [("ws revoke failed", "warning")]
+
+
 def test_a_failure_that_repeats_logs_once_an_interval_with_a_count_but_orders_every_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

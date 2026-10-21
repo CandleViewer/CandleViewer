@@ -31,7 +31,7 @@ from candleviewer.storage.repositories.account_access_sqlalchemy import SqlAlche
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.ws.lifecycle import ConnectRateLimiter
-from candleviewer.ws.limits import MACHINE_ENTRIES_MAX
+from candleviewer.ws_wiring import MachineRevocationAudit, loop_call_later
 from tests.contract.rbac import rbac_harness as rbac
 from tests.csrf_helpers import csrf_headers
 
@@ -188,8 +188,17 @@ def test_owner_sees_an_account_no_grant_row_lists(deployed: SimpleNamespace, fam
     assert _subscribe_once(deployed.app, "owner", sample, UNLISTED) == "sub_ok"
 
 
-def test_deployed_app_caps_the_machine_registry(deployed: SimpleNamespace) -> None:
-    assert deployed.app.state.ws_registry.services.machines.max_entries == MACHINE_ENTRIES_MAX
+def test_deployed_app_bounds_times_and_audits_machine_registry(deployed: SimpleNamespace) -> None:
+    """23 §16.2 and §6.4 as deployed (R2-n6): the literal bounds; the loop's timers, so each entity
+    is coalesced whatever the backpressure flag; the `evicted` audit; and the runtime closes it."""
+    state = deployed.app.state
+    machines = state.ws_registry.services.machines
+    assert (machines.max_entries, machines.terminal_max) == (20_000, 10_000)
+    assert (machines.retention_s, machines.coalesce_s) == (60.0, 0.1)
+    assert machines._call_later is loop_call_later and state.ws_runtime.machines is machines
+    assert isinstance(audit := machines.on_revoked, MachineRevocationAudit)
+    assert audit.registry is state.ws_registry
+    assert audit([]) is None and not audit.tasks  # a synchronous caller has no loop: it only logs
 
 
 def test_deployed_app_snaps_a_machine_from_the_registry_sub_reads(
@@ -202,7 +211,7 @@ def test_deployed_app_snaps_a_machine_from_the_registry_sub_reads(
         _open(ws, "owner")
         assert _sub(ws, row["sample"], None) == "sub_ok"
         snap = _recv(ws)
-    assert (snap["t"], snap["p"]) == ("snap", {"state": "seeded"})
+    assert (snap["t"], snap["p"]) == ("snap", rbac.seed_payload("kill_switch"))
 
 
 def test_deployed_app_wakes_a_pending_machine_subscription(deployed: SimpleNamespace) -> None:

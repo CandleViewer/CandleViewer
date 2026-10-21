@@ -64,6 +64,7 @@ from candleviewer.ws.topics import (
 
 if TYPE_CHECKING:
     from candleviewer.ws.permissions import ConnectionAuthz, Subscription
+    from candleviewer.ws.revocation import RevokedReason
 
 SnapReason = Literal[
     "initial",
@@ -919,6 +920,8 @@ class Sink(Protocol):
     @property
     def cache(self) -> SnapshotCache: ...
 
+    def push(self, frame: dict[str, Any]) -> None: ...  # a control frame as is (a `revoked`)
+
     @property
     def on_rebuild(self) -> Callable[[list[Subscription]], None] | None: ...
 
@@ -1030,6 +1033,24 @@ class SequencingHub:
                     except Exception as snap_exc:  # contained to `sub`: the fan-out goes on
                         self._snapshot_failed(authz, sub, snap_exc)
         return sent
+
+    def revoke_topic(
+        self, ch: str, reason: RevokedReason, *, resubscribe: bool, now_ms: int
+    ) -> list[tuple[ConnectionAuthz, dict[str, Any]]]:
+        """End every live subscription of `ch` (§6.4: its `machines` entry was removed), whatever
+        its scope, dropped first (flag on, `on_drop` discards its window), then queue its `revoked`.
+        Returns (connection, frame) pairs for the audit rows; a `push` that raises is contained."""
+        revoked: list[tuple[ConnectionAuthz, dict[str, Any]]] = []
+        for authz, sink in list(self._conns.values()):
+            if (sub := authz.find(ch)) is None:
+                continue
+            frame = authz.revoke(sub, reason, now_ms, resubscribe=resubscribe)
+            revoked.append((authz, frame))
+            try:
+                sink.push(frame)
+            except Exception as exc:  # contained to its connection: the others are revoked too
+                self._log_failed("revoke", authz, sub, exc)
+        return revoked
 
     def publish_private(self, account: uuid.UUID, frames: Iterable[tuple[str, Any]]) -> int:
         """One account event spanning several private topics, in §16.1 S5 causal order. The

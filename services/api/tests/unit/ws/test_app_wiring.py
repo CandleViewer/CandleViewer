@@ -35,6 +35,7 @@ from candleviewer.ws.bars_source import BarsSnapshotSource
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.indicators_publish import IndicatorsPublisher
 from candleviewer.ws.indicators_source import IndicatorsSnapshotSource
+from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.metrics import CV_WS_NAMES
 from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.upstream import UpstreamRefs
@@ -46,7 +47,9 @@ from candleviewer.ws_wiring import (
     WsEvents,
     WsRuntime,
     ingestion_streams,
+    loop_call_later,
 )
+from tests.unit.ws.test_machines import _payload
 
 USER = uuid.uuid4()
 ACC = uuid.uuid4()
@@ -466,6 +469,29 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
     assert runtime.hub.shutting_down is False
     runtime._sweeper.cancel()
     await asyncio.wait({runtime._sweeper})
+
+
+async def test_runtime_stop_cancels_the_machine_registry_timers() -> None:
+    """E17-T08: once the notice ends, no `machines` window or retention timer is left armed."""
+    machines = MachineStateRegistry(call_later=loop_call_later, coalesce_s=3600.0)
+    switch = MachineEntity("kill_switch")
+    machines.publish(switch, _payload("kill_switch", "clear"))
+    machines.terminal(switch, _payload("kill_switch", "engaged"))  # waits for its window
+    timers = [machines._entries[switch.ch].timer, machines._sweep_timer]
+    runtime = WsRuntime(GatewayHub(), UpstreamRefs(), _settings(), machines=machines)
+    await runtime.stop()
+    assert all(t is not None and t.cancelled() for t in timers) and machines._sweep_timer is None
+    book = MachineEntity("book", "BTCUSDT")  # a window armed after the notice: a later call ends it
+    machines.publish(book, _payload("book", "live")), machines.publish(book, _payload("book", "x"))
+    timer = machines._entries[book.ch].timer
+    await runtime.stop()
+    assert timer is not None and timer.cancelled()
+
+
+async def test_loop_call_later_runs_its_callback_on_the_running_loop() -> None:
+    fired = asyncio.Event()
+    loop_call_later(0, fired.set)
+    await asyncio.wait_for(fired.wait(), 5)
 
 
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:

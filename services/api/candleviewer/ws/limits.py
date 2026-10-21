@@ -100,9 +100,12 @@ REBUILD_WINDOW_S = 60.0
 #: raise that): one full attach of 8 connections of `MAX_SUBSCRIPTIONS`, the §16.2 defaults.
 REBUILD_MAX_PER_USER = 4 * REBUILD_MAX_PER_CONNECTION
 #: §16.2: `machines.{entity}.state` registry entries, live and terminal. Past it a payload for a
-#: new entity is refused, counted and logged (rate-limited); no entry is evicted, so no live
+#: new entity is refused, counted and logged (rate-limited); no live entry is evicted, so no live
 #: machine's state is lost.
 MACHINE_ENTRIES_MAX = 20_000
+#: §6.4: a terminal entry stays this long; at most `MACHINE_TERMINAL_MAX` are kept, oldest first.
+MACHINE_TERMINAL_RETENTION_S = 60.0
+MACHINE_TERMINAL_MAX = 10_000
 AUTH_TIMEOUT_S = 10.0
 #: #2155 (C-2.18): the bound on each call an `auth` makes (the session service's `authenticate`,
 #: the principal read and its SR-189 re-read). Past it: `bye internal_error` + `1011`. Longer than

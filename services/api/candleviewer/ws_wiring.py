@@ -48,7 +48,8 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
-from candleviewer.ws.permissions import ConnectionRegistry, Subscription
+from candleviewer.ws.machines import MachineStateRegistry
+from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, SnapshotSource
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
 
@@ -353,6 +354,34 @@ class WsEvents:
         await self.registry.kill_switch_changed()
 
 
+def loop_call_later(delay: float, callback: Callable[[], None]) -> asyncio.TimerHandle:
+    """`MachineStateRegistry`'s timers: the running loop's, the loop the registry runs on."""
+    return asyncio.get_running_loop().call_later(delay, callback)
+
+
+class MachineRevocationAudit:
+    """`MachineStateRegistry.on_revoked` (§6.4): writes a removal's `evicted` rows as a resync
+    does (`audit_revoked`), a task per connection held until done (C-2.18); with no loop it logs."""
+
+    def __init__(self, registry: ConnectionRegistry) -> None:
+        self.registry = registry
+        self.tasks: set[asyncio.Task[None]] = set()
+
+    def __call__(self, revoked: list[tuple[ConnectionAuthz, dict[str, Any]]]) -> None:
+        by_conn: dict[int, tuple[ConnectionAuthz, list[dict[str, Any]]]] = {}
+        for authz, frame in revoked:
+            by_conn.setdefault(id(authz), (authz, []))[1].append(frame)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:  # a synchronous caller: no loop, so no writer either
+            logger().warning("ws machine revocations not audited", count=len(revoked))
+            return
+        for authz, frames in by_conn.values():
+            task = spawn(self.registry.audit_revoked(authz, frames), name="ws-revoked-audit")
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+
+
 class WsRuntime:
     """Lifespan owner of the gateway's background work and its planned shutdown."""
 
@@ -363,9 +392,11 @@ class WsRuntime:
         settings: Settings,
         *,
         clock: Callable[[], float] = time.monotonic,
+        machines: MachineStateRegistry | None = None,
     ) -> None:
         self.hub = hub
         self.upstream = upstream
+        self.machines = machines
         self._settings = settings
         self._clock = clock
         self._sweeper: asyncio.Task[None] | None = None
@@ -396,6 +427,9 @@ class WsRuntime:
             except asyncio.CancelledError:
                 self._notified = False  # cut short (force_exit): a later call may notify again
                 raise
+            finally:
+                if self.machines is not None:  # the sockets are closing, cut short or not
+                    self.machines.close()
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
                     await self.hub.wait_empty()
@@ -403,4 +437,6 @@ class WsRuntime:
             self._sweeper.cancel()
             await asyncio.wait({self._sweeper})  # never raises; our own cancel is consumed
             self._sweeper = None
+        if self.machines is not None:  # every call: a timer armed since the notice is cancelled too
+            self.machines.close()
         return notified
