@@ -642,7 +642,7 @@ flowchart TD
   F -->|yes| G[B18 engaged: completion summary from KillSwitchResult.actions with the verification time; audit per account]
   F -->|flatten residue| H[B18 engaged_incomplete: shown as incomplete, owner paged, RETRY_FLATTEN - never rounded up]
   F -->|cancel failure| H2["B18 today: engaged + critical alert (cancelling error arm); SR-E39-06 / G-1 make it engaged_incomplete in E39-S03"]
-  K[Automatic engagement: root KILL - clock drift, credential failure, chain mismatch, restore] --> H
+  K["Automatic engagement: root KILL - clock drift, credential failure, chain mismatch, restore; working orders: not cancelled - 14 still resting, cancel from the blotter; a new FREEZE is not accepted while engaged (B18 today vs target: SR-E39-06, E39-S03)"] --> H
   G --> I{Owner action to resume}
   H --> I
   H2 --> I
@@ -651,7 +651,7 @@ flowchart TD
 
 **Distinction from per-manager FREEZE (Risk Dashboard, flow implicit in `10-personas.md` §3 scenario 5):** FREEZE targets one manager/account; the global kill switch covers every account in every environment and is Owner-only. Both use the same request (`setKillSwitch`, scope `accounts` vs `global`), the same single confirm and the same options; neither closes positions unless "also flatten" is ticked (`30-release-roadmap.md` §7.2 "stops new risk, does not force-close"). Whether a frozen manager may still send reduce-only closes during the engagement is open (OD-11 in E39-D01: SR-E39-02 vs the #249 ruling's engaged row vs SR-081(5)); until decided the manager's banner promises nothing beyond "ask the owner".
 
-**Breach → lockout → override (B20, per account; extends §18.7):** cap breach or manual lock → `locked` (new entries blocked, flatten only per the account policy, `until` server-computed at lock time; NULL = manual lock, never cleared by a clock) → manager sees SCR-073 with the reason, since/until, what still works, and "Ask the owner for an override" → owner clears it on SCR-071 with a typed reason (≥ 10 characters, server-enforced) and step-up, optionally granting a typed `extra_loss_usd` allowance bounded by `risk_policy.override_extra_loss_max_usd` (default 0; the lock re-arms at the bound or at the window end, decision D-4), audited at high severity → or it expires at the stored end. Board `E39-D01 / flow / breach-lockout-override`.
+**Breach → lockout → override (B20, per account; extends §18.7):** cap breach or manual lock → `locked` (new entries blocked, flatten only per the account policy, `until` server-computed at lock time; NULL = manual lock, never cleared by a clock; working orders are B20 today vs target — `locked` has no cancel action today, cancelling exposure-opening orders is the SR-E39-06 target, E39-S02) → manager sees SCR-073 with the reason, since/until, what still works, and "Ask the owner for an override" → owner clears it on SCR-071 with a typed reason (≥ 10 characters, server-enforced) and step-up, optionally granting a typed `extra_loss_usd` allowance bounded by `risk_policy.override_extra_loss_max_usd` (default 0; the lock re-arms at the bound or at the window end, decision D-4), audited at high severity → or it expires at the stored end. Board `E39-D01 / flow / breach-lockout-override`.
 
 ---
 

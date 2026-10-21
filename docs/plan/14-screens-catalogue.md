@@ -1519,7 +1519,7 @@ Drag preview                Drop zones
 - **Components:** CMP-049 Table, CMP-105 AccountMultiSelect, CMP-116 PnLBadge, CMP-117 RiskLockoutBanner, CMP-138 RiskCapMeter, CMP-167 JournalEquityCurveChart, CMP-178 SystemHealthTile, CMP-211 PanicButtons.
 - **Stories:** US-ADMIN-004, US-PROF-004, US-RULE-012, US-POS-009.
 - **Design sign-off acceptance checklist:** [ ] portfolio header (equity, uPnL, day P&L, drawdown) and per-account table drawn [ ] exposure by symbol with % of equity [ ] limit-usage bars paired with numeric text [ ] breach and near-breach states drawn with non-colour encoding [ ] manager-scoped variant showing only permitted accounts [ ] kill-switch entry point [ ] stale/unknown state when an account feed is down
-- **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.3 (state inventory), §8 (copy deck), §11 (open decisions OD-1, OD-2).
+- **UX research:** [E39-D01](../design/E39/E39-D01.md) §7.3 (state inventory), §8 (copy deck), §11 (open decision OD-2).
 
 ### SCR-072 — Kill-switch / freeze confirmation modal
 
