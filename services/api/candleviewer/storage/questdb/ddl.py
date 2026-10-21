@@ -4,8 +4,8 @@ Parses `backend/db/questdb/*.sql` into a small, structured representation the
 migration runner and the column-drift guard both use. Deliberately minimal:
 only the shapes the DDL files actually use (`CREATE TABLE IF NOT EXISTS`,
 column defs, `TIMESTAMP(...)`, `PARTITION BY`, `WAL`, `DEDUP UPSERT KEYS`).
-This is not a general SQL parser. It also names the target of the two statements the runner guards
-when it resumes a file a crash cut short: `add_column_target` and `drop_target` (#3093).
+This is not a general SQL parser.
+`add_column_target` and `drop_target` name what the runner guards when it resumes (#3093).
 """
 
 from __future__ import annotations

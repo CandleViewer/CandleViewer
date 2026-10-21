@@ -216,8 +216,8 @@ class _LaggingMigrationsExecutor:
     An INSERT is acknowledged once committed (`recorded`) but a SELECT sees only what the apply job
     applied (`applied`). Time passes between statements, so each INSERT first applies everything
     earlier: only the newest record is ever behind, and needs `_APPLY_LAG_POLLS` status polls. Like
-    the server, it rejects a plain `ADD COLUMN` of an existing column. Only `_cv_migrations` is a
-    WAL table here: the resume guard (#3093) finds no other table, so it lets every statement run.
+    the server, it rejects a plain `ADD COLUMN` of an existing column.
+    Only `_cv_migrations` is a WAL table here, so the resume guard (#3093) skips no statement.
     """
 
     def __init__(self, *, suspended: bool = False) -> None:

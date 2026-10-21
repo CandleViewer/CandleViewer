@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -79,7 +80,8 @@ class _Engine:
     """The QuestDB the runner talks to. Once `crash_after` DDL statements ran, the next statement
     (a DDL one or a record's INSERT) raises `Crash` and never reaches the engine."""
 
-    def __init__(self) -> None:
+    def __init__(self, spell: Callable[[str], str] = str) -> None:
+        self.spell = spell  # `str` is as measured; the sweep also spells in other cases
         self.tables: dict[str, _Table] = {}
         self.records: list[str] = []
         self.executed: list[str] = []
@@ -133,8 +135,9 @@ class _Engine:
         if "table_columns" in sql:
             if (table := self.tables.get(sql.split("'")[1])) is None:
                 raise RuntimeError("exception in function factory")  # 8.1.1: an absent table raises
+            spell = self.spell
             shown = [
-                {"column": name, "type": kind, "upsertKey": name in table.keys}
+                {"column": spell(name), "type": spell(kind), "upsertKey": name in table.keys}
                 for name, kind in table.applied.items()
             ]
             self._apply(table)  # the apply job keeps running while the client reads
@@ -155,11 +158,12 @@ async def _migrated(*, records_kept: int) -> _Engine:
     return engine
 
 
+@pytest.mark.parametrize("spell", [str, str.title, str.lower])
 @pytest.mark.parametrize("statements_before_the_crash", range(_statements_through(len(FILES)) + 1))
 async def test_a_rerun_after_a_crash_finishes_every_file_and_keeps_the_rows(
-    statements_before_the_crash: int,
+    statements_before_the_crash: int, spell: Callable[[str], str]
 ) -> None:
-    engine = _Engine()
+    engine = _Engine(spell)
     engine.crash_after = statements_before_the_crash
     with pytest.raises(Crash):
         await run_migrations(engine, DDL_DIR, sleep=_no_sleep)
@@ -248,6 +252,17 @@ async def test_a_column_present_with_another_type_is_drift_and_its_file_stays_un
 
     assert "LONG" in str(exc.value) and "TIMESTAMP" in str(exc.value)
     assert engine.records == NAMES[:5]
+
+
+async def test_an_ilp_shaped_table_stops_the_run_at_0003_before_any_drop() -> None:
+    engine = await _migrated(records_kept=2)
+    for table in engine.tables.values():
+        table.keys = set()  # ILP creates the DDL's columns and no upsert keys (#3897)
+
+    with pytest.raises(StorageSchemaDrift, match="table bars_time lacks its DDL upsert keys"):
+        await run_migrations(engine, DDL_DIR, sleep=_no_sleep)
+
+    assert engine.records == NAMES[:2] and not [s for s in engine.executed if s.startswith("DROP")]
 
 
 async def test_the_guard_reads_columns_only_after_the_alter_was_applied() -> None:
