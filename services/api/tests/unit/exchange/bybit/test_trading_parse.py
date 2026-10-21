@@ -338,11 +338,49 @@ def test_account_info_maps_every_margin_mode(
     assert (info.margin_mode, info.unified_margin, info.position_mode) == (*expected, None)
 
 
+#: A unit input with every field the execution parser reads (names as documented).
+EXEC_ROW: dict[str, Any] = {
+    "symbol": "BTCUSDT", "orderId": "e-1", "orderLinkId": link(), "side": "Sell",
+    "execFee": "-0.01", "execId": "x-1", "execPrice": "60000", "execQty": "0.01",
+    "execType": "Trade", "execTime": T_MS, "feeCurrency": "USDT", "isMaker": True, "seq": 7,
+}  # fmt: skip
+#: Every `execType` of the enum page at the transcriptions' docs commit (`docs/v5/enum.mdx`,
+#: `bybit-exchange/docs@19518b90fb36`), as listed there.
+DOCUMENTED_EXEC_TYPES = frozenset(
+    {
+        "Trade", "AdlTrade", "Funding", "BustTrade", "Delivery", "Settle", "BlockTrade",
+        "MovePosition", "FutureSpread", "ForwardSplitSettle", "ForwardSplitOpen",
+        "ReverseSplitSettle", "ReverseSplitOpen", "UNKNOWN",
+    }
+)  # fmt: skip
+
+
+def test_the_parser_knows_every_documented_execution_type_and_no_other() -> None:
+    assert tp.FILL_TYPES | tp.NOT_FILLS == DOCUMENTED_EXEC_TYPES
+    assert not tp.FILL_TYPES & tp.NOT_FILLS
+
+
+@pytest.mark.parametrize("exec_type", sorted(DOCUMENTED_EXEC_TYPES))
+def test_every_documented_execution_type_is_read_as_a_fill_or_set_aside(exec_type: str) -> None:
+    """A documented type never fails the read (it would halt fill reconciliation): it moves a
+    position and is a fill, or it is a fee or unnamed and is set aside before the parse."""
+    row = EXEC_ROW | {"execType": exec_type}
+    if exec_type in tp.NOT_FILLS:
+        assert not tp.is_fill(row)
+    else:
+        fill = tp.to_execution(tp.parse(tp.ExecutionRow, row, "executions"), account(), 42)
+        assert tp.is_fill(row) and (fill.exec_id, fill.qty) == ("x-1", Decimal("0.01"))
+
+
+def test_an_undocumented_execution_type_fails_the_read() -> None:
+    row = EXEC_ROW | {"execType": "NotInTheEnumPage"}
+    assert tp.is_fill(row)
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ExecutionRow, row, "executions")
+
+
 def test_an_execution_row_maps_with_the_ingest_time() -> None:
-    row = {"symbol": "BTCUSDT", "orderId": "e-1", "orderLinkId": link(), "side": "Sell",
-           "execFee": "-0.01", "execId": "x-1", "execPrice": "60000", "execQty": "0.01",
-           "execType": "Trade", "execTime": T_MS, "feeCurrency": "USDT", "isMaker": True,
-           "seq": 7}  # fmt: skip
+    row = EXEC_ROW
     fill = tp.to_execution(tp.parse(tp.ExecutionRow, row, "executions"), account(), 42)
     assert (fill.order_link_id, fill.fee, fill.is_maker, fill.ts_ingest, fill.seq) == (
         link(),

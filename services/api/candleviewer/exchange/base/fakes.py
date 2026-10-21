@@ -63,6 +63,7 @@ from .models import (
 )
 
 __all__ = [
+    "CANCEL_ALL_LIMIT",
     "FakeCall",
     "FakeExchange",
     "FakeReject",
@@ -192,6 +193,9 @@ class FakeExchange:
 #: The neutral scope a fake `cancel_all` cancels: plain orders only, never conditional or
 #: take-profit/stop-loss orders (the scope the exchange adapter sends, 24 §14.2 rule 12).
 CANCEL_ALL_SCOPE: Final = "order"
+#: The most orders one `cancel_all` cancels, as the venue's futures cancel-all does (24 §14.2
+#: rule 12): one call is no proof of a flat book.
+CANCEL_ALL_LIMIT: Final = 500
 _TERMINAL: Final = frozenset({"rejected", "filled", "cancelled", "deactivated"})
 
 
@@ -304,7 +308,9 @@ class FakeTradingPort:
     key on the wire, a create without a generated id of its account, a bad window), records
     every call as a `FakeCall` with its lane, and behaves like the venue where the OMS depends
     on it: a reused id is rejected as a duplicate even after the order is terminal, exchange
-    ids are deterministic, `cancel_all` cancels plain orders only and records its scope in
+    ids are deterministic, `cancel_all` cancels plain orders only, at most `cancel_all_limit`
+    of them per call (the venue picks them at random; the fake takes the oldest first, so a
+    caller repeats it until `open_orders` is empty), and records its scope in
     `cancel_all_scopes`. Each method can be scripted (`script`): an exception is raised (a
     transport error before the send, an auth, clock or rate error, `RateBudgetExceededError`),
     a `FakeReject` comes back as `OrderAck(ok=False)`, and `LandedThenAmbiguous` lands a
@@ -320,10 +326,14 @@ class FakeTradingPort:
         now_us: Callable[[], TsUs] = lambda: 0,
         private_events: Sequence[PrivateEvent] = (),
         queue_size: int = 1024,
+        cancel_all_limit: int = CANCEL_ALL_LIMIT,
     ) -> None:
+        if cancel_all_limit < 1:
+            raise ValueError("a cancel-all cancels at least one order")
         self.capabilities = (
             capabilities if capabilities is not None else fake_capabilities(environment)
         )
+        self._cancel_all_limit = cancel_all_limit
         self.environment: Environment = self.capabilities.environment
         self.calls: list[FakeCall] = []
         self.cancel_all_scopes: list[tuple[AccountId, Symbol | None, str]] = []
@@ -469,7 +479,7 @@ class FakeTradingPort:
             if order.account_id == account.account_id
             and order.order_kind == CANCEL_ALL_SCOPE
             and symbol in (None, order.symbol)
-        ]
+        ][: self._cancel_all_limit]
         acks = []
         for key in keys:
             order = self._close(key, "cancelled")

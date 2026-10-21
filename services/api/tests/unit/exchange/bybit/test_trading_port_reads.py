@@ -128,14 +128,27 @@ async def test_a_window_that_ends_before_it_starts_is_refused_unsent(name: str) 
     assert venue.sent == []
 
 
-async def test_a_funding_row_is_no_fill_and_is_counted() -> None:
-    """The enum lists `Funding` as an execution type: a settlement, not a fill of an order."""
-    funding = _last(_rows(EXECUTIONS, execType="Funding"))
+@pytest.mark.parametrize("exec_type", ["Funding", "UNKNOWN"])
+async def test_a_row_that_fills_no_order_is_set_aside_and_counted(exec_type: str) -> None:
+    """The enum lists `Funding` (a fee, not a fill of an order) and `UNKNOWN` (a classic
+    account's row, of no named type) as execution types: neither fails the read."""
+    row = _last(_rows(EXECUTIONS, execType=exec_type))
     before = _refused("not_a_fill")
-    fills = await make_port(Venue().on("/v5/execution/list", funding)).executions(
+    fills = await make_port(Venue().on("/v5/execution/list", row)).executions(
         account(), NOW_US - DAY_US, NOW_US
     )
     assert fills == [] and _refused("not_a_fill") == before + 1
+
+
+@pytest.mark.parametrize("exec_type", ["Settle", "ForwardSplitSettle", "ReverseSplitOpen"])
+async def test_a_documented_type_that_moves_the_position_is_read_as_a_fill(
+    exec_type: str,
+) -> None:
+    row = _last(_rows(EXECUTIONS, execType=exec_type, symbol="ETHUSDT"))
+    fills = await make_port(Venue().on("/v5/execution/list", row)).executions(
+        account(), NOW_US - DAY_US, NOW_US
+    )
+    assert [fill.symbol for fill in fills] == ["ETHUSDT"]
 
 
 @pytest.mark.parametrize(

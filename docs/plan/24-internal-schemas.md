@@ -3972,9 +3972,15 @@ The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends
     `entry`. The REST client refuses a create, or a batch item, without an `orderLinkId`, and no
     other call for its lack, so an exit by `orderId` reaches the order class. `cancel-all` always
     sends `orderFilter=Order`, assumed pending E29-K01 to leave a position's TP/SL orders alone
-    (SR-E29-06); the OMS cancels conditional entries one by one. Every row a read returns that
-    carries one of our ids (`OUR_ID`) of another environment or account (`acct4`) is dropped and
-    counted, never raised (SR-E29-02).
+    (SR-E29-06); the OMS cancels conditional entries one by one. A `cancel-all` is no proof of a
+    flat book: the venue cancels at most 500 orders a call on futures, picking them at random
+    beyond that, and answers only those, so the OMS repeats it until `open_orders` is empty
+    (`FakeTradingPort` caps a call the same way, `cancel_all_limit`). Every row a read returns
+    that carries one of our ids (`OUR_ID`) of another environment or account (`acct4`) is dropped
+    and counted in `bybit_rows_refused_total` (`reason` `environment` or `account`), never raised
+    (SR-E29-02). An execution row that fills no order, a `Funding` fee or a classic account's
+    `UNKNOWN`, is set aside and counted there as `not_a_fill`; every other documented execution
+    type moves a position and is read as a fill.
 
 ### 14.3 Bybit implementation notes
 

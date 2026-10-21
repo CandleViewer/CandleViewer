@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Annotated, Any, ClassVar, Final, Literal
+from typing import Annotated, Any, ClassVar, Final, Literal, get_args
 
 import structlog
 from pydantic import (
@@ -50,7 +50,9 @@ from candleviewer.exchange.bybit.metrics import (
 )
 
 __all__ = [
+    "FILL_TYPES",
     "MODEL_LABELS",
+    "NOT_FILLS",
     "AccountInfoResult",
     "BatchReply",
     "CancelAllResult",
@@ -338,9 +340,11 @@ class ExecutionRow(_Venue):
     execId: VenueId
     execPrice: Price
     execQty: Quantity
+    #: Every documented type that moves a position (`FILL_TYPES`); the others are set aside.
     execType: Literal[
-        "Trade", "AdlTrade", "BustTrade", "Delivery", "BlockTrade", "MovePosition",
-        "FutureSpread",
+        "Trade", "AdlTrade", "BustTrade", "Delivery", "Settle", "BlockTrade", "MovePosition",
+        "FutureSpread", "ForwardSplitSettle", "ForwardSplitOpen", "ReverseSplitSettle",
+        "ReverseSplitOpen",
     ]  # fmt: skip
     execTime: Millis
     feeCurrency: Annotated[str, StringConstraints(max_length=16)]
@@ -562,6 +566,14 @@ _MARGIN: Final[Mapping[str, Literal["regular", "portfolio", "isolated"]]] = {
 }
 #: `unifiedMarginStatus` values of a unified trading account; `1` is classic.
 _UNIFIED: Final = frozenset({3, 4, 5, 6})
+#: The documented `execType` values (enum page, `bybit-exchange/docs@19518b90fb36`) that fill no
+#: order: a funding fee, and the type a classic account may return, which says nothing of what
+#: the row is (the product trades unified accounts only). Set aside and counted (`not_a_fill`).
+NOT_FILLS: Final = frozenset({"Funding", "UNKNOWN"})
+#: The documented types that move a position, each parsed into an `Execution`: trades, the
+#: venue's own closes (ADL, takeover liquidation, delivery, settlement) and the stock-split
+#: settle-and-reopen pairs.
+FILL_TYPES: Final = frozenset(get_args(ExecutionRow.model_fields["execType"].annotation))
 
 
 def normalised_link(raw: str, exchange_order_id: str) -> OrderLinkId:
@@ -632,8 +644,9 @@ def to_order(row: OrderRow, account: AccountRef) -> Order:
 
 
 def is_fill(raw: Mapping[str, Any]) -> bool:
-    """A funding settlement is listed with the fills but fills no order."""
-    return raw.get("execType") != "Funding"
+    """Whether an execution row is parsed as a fill: every documented type but `NOT_FILLS`. An
+    undocumented type is parsed too, and fails the read (the documented set, E8-8)."""
+    return raw.get("execType") not in NOT_FILLS
 
 
 def to_execution(row: ExecutionRow, account: AccountRef, ts_ingest: TsUs) -> Execution:

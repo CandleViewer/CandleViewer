@@ -25,6 +25,7 @@ from candleviewer.exchange.base.errors import (
     TransportError,
 )
 from candleviewer.exchange.base.fakes import (
+    CANCEL_ALL_LIMIT,
     CANCEL_ALL_SCOPE,
     FakeCall,
     FakeOutcome,
@@ -233,6 +234,25 @@ async def test_cancel_all_cancels_plain_orders_only_and_records_its_scope() -> N
     port.script("cancel_all", FakeReject(OmsErrorCode.RATE_LIMITED))
     [refused] = await port.cancel_all(_ref(), None)
     assert (refused.ok, refused.order_link_id) == (False, None)
+
+
+async def test_one_cancel_all_takes_at_most_its_limit_the_oldest_first() -> None:
+    """As the venue's futures cancel-all takes 500 a call (24 §14.2 rule 12): the caller repeats
+    it until the book is empty."""
+    port = FakeTradingPort(environment="demo", now_us=lambda: T0, cancel_all_limit=2)
+    for seq in range(3):
+        await port.place_order(_place(seq))
+    first = await port.cancel_all(_ref(), None)
+    assert [a.order_link_id for a in first] == [_link(0), _link(1)]
+    assert [o.order_link_id for o in await port.open_orders(_ref())] == [_link(2)]
+    assert [a.order_link_id for a in await port.cancel_all(_ref(), None)] == [_link(2)]
+    assert await port.cancel_all(_ref(), None) == []
+
+
+def test_the_cancel_all_limit_is_the_venues_by_default_and_never_below_one() -> None:
+    assert FakeTradingPort()._cancel_all_limit == CANCEL_ALL_LIMIT == 500
+    with pytest.raises(ValueError, match="at least one"):
+        FakeTradingPort(cancel_all_limit=0)
 
 
 def _order(order_link_id: str, exchange_order_id: str, *, kind: str = "order") -> Order:

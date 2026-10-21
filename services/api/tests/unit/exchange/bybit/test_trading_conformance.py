@@ -37,6 +37,12 @@ from tests.unit.exchange.bybit._trading import (
 
 CANCEL = rest("rest/trading-cancel-reply.json")
 ORDER_ID = CANCEL["result"]["orderId"]
+BATCH = rest("rest/trading-create-batch-reply.json")
+CANCEL_ALL = rest("rest/trading-cancel-all-reply.json")
+REALTIME = rest("rest/trading-order-realtime.json")
+DUPLICATE = rest("rest/trading-error-110072.json")
+#: The fake's cancel-all cap in these cases: one call takes two orders, as the venue takes 500.
+FAKE_CANCEL_ALL_LIMIT = 2
 
 
 @dataclass
@@ -49,6 +55,8 @@ class Harness:
     prime_create: Callable[[str], None]
     prime_ext_cancel: Callable[[], None]
     prime_cancel_all: Callable[[], None]
+    prime_batch_duplicate: Callable[[str, str], None]
+    prime_capped_book: Callable[[], None]
 
 
 def _exchange() -> Harness:
@@ -62,7 +70,27 @@ def _exchange() -> Harness:
         venue.on("/v5/order/cancel", CANCEL)
 
     def prime_cancel_all() -> None:
-        venue.on("/v5/order/cancel-all", rest("rest/trading-cancel-all-reply.json"))
+        venue.on("/v5/order/cancel-all", CANCEL_ALL)
+
+    def prime_batch_duplicate(fresh: str, taken: str) -> None:
+        """The batch shape with our ids: the first item placed, the second a duplicate."""
+        item = BATCH["result"]["list"][0]
+        items = [{**item, "orderLinkId": fresh, "orderId": "e-1"}, {**item, "orderLinkId": taken}]
+        codes = [{"code": 0, "msg": "OK"}, {"code": 110072, "msg": DUPLICATE["retMsg"]}]
+        items[1]["orderId"] = ""
+        reply = {**with_result(BATCH, list=items), "retExtInfo": {"list": codes}}
+        venue.on("/v5/order/create-batch", reply)
+
+    def prime_capped_book() -> None:
+        """Three open orders; the first cancel-all takes two, the second the last one."""
+        left = {**REALTIME["result"]["list"][0], "orderId": "e-left"}
+        taken = {"orderId": left["orderId"], "orderLinkId": left["orderLinkId"]}
+        venue.on("/v5/order/cancel-all", CANCEL_ALL, with_result(CANCEL_ALL, list=[taken]))
+        venue.on(
+            "/v5/order/realtime",
+            with_result(REALTIME, list=[left], nextPageCursor=""),
+            with_result(REALTIME, list=[], nextPageCursor=""),
+        )
 
     return Harness(
         port=make_port(venue, governor=governor),
@@ -71,11 +99,15 @@ def _exchange() -> Harness:
         prime_create=prime_create,
         prime_ext_cancel=prime_ext_cancel,
         prime_cancel_all=prime_cancel_all,
+        prime_batch_duplicate=prime_batch_duplicate,
+        prime_capped_book=prime_capped_book,
     )
 
 
 def _fake() -> Harness:
-    port = FakeTradingPort(environment="demo", now_us=lambda: NOW_US)
+    port = FakeTradingPort(
+        environment="demo", now_us=lambda: NOW_US, cancel_all_limit=FAKE_CANCEL_ALL_LIMIT
+    )
 
     def seed_ext() -> None:
         port.seed_order(_order(ext_key(ORDER_ID), ORDER_ID), uid="100001")
@@ -83,6 +115,13 @@ def _fake() -> Harness:
     def seed_two() -> None:
         port.seed_order(_order(link(seq=7), "fake-a"), uid="100001")
         port.seed_order(_order(link(seq=8), "fake-b"), uid="100001")
+
+    def seed_taken(_fresh: str, taken: str) -> None:
+        port.seed_order(_order(taken, "fake-taken"), uid="100001")
+
+    def seed_three() -> None:
+        seed_two()
+        port.seed_order(_order(link(seq=9), "fake-c"), uid="100001")
 
     calls: list[FakeCall] = port.calls
     return Harness(
@@ -92,6 +131,8 @@ def _fake() -> Harness:
         prime_create=lambda _link: None,
         prime_ext_cancel=seed_ext,
         prime_cancel_all=seed_two,
+        prime_batch_duplicate=seed_taken,
+        prime_capped_book=seed_three,
     )
 
 
@@ -149,6 +190,29 @@ async def test_both_cancel_all_in_the_critical_lane(harness: Harness) -> None:
     acks = await harness.port.cancel_all(account(), None)
     assert len(acks) == 2 and all(a.ok for a in acks)
     assert harness.lanes() == ["critical"]
+
+
+async def test_both_leave_what_one_cancel_all_cannot_take_for_a_repeat(harness: Harness) -> None:
+    """24 §14.2 rule 12: a cancel-all is no proof of a flat book (the venue takes 500 orders a
+    call, at random beyond that), so the OMS repeats it until `open_orders` is empty."""
+    harness.prime_capped_book()
+    first = await harness.port.cancel_all(account(), None)
+    left = await harness.port.open_orders(account())
+    assert len(first) == 2 and all(a.ok for a in first) and len(left) == 1
+    second = await harness.port.cancel_all(account(), None)
+    assert len(second) == 1 and await harness.port.open_orders(account()) == []
+
+
+async def test_both_answer_a_batch_item_whose_id_was_taken_with_a_duplicate_ack(
+    harness: Harness,
+) -> None:
+    """24 §14.4's item contract: one ack per request, in order; a duplicate item is an `ok`
+    false `DUPLICATE_CLIENT_ID` ack for the OMS to look up, never raised."""
+    fresh, taken = link(seq=3), link(seq=4)
+    harness.prime_batch_duplicate(fresh, taken)
+    acks = await harness.port.place_batch([place(order_link_id=fresh), place(order_link_id=taken)])
+    assert [(a.ok, a.order_link_id) for a in acks] == [(True, fresh), (False, taken)]
+    assert (acks[1].error_code, acks[1].retryable) == ("DUPLICATE_CLIENT_ID", False)
 
 
 async def test_both_take_a_create_or_an_amend_in_its_requests_lane(harness: Harness) -> None:

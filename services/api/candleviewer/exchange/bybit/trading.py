@@ -591,6 +591,8 @@ class BybitTradingPort:
         return self._accepted(link, reply.orderId, answer, "cancel_order", fields, response)
 
     async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
+        """One call cancels at most the venue's cap and only what it lists: no proof of a flat
+        book, so the OMS repeats it until `open_orders` is empty (24 §14.2 rule 12)."""
         self._check_environment(account)
         body = _cancel_all_body(symbol)
         answer = await self._trade("cancel_all", account, lane="critical", body=body)
